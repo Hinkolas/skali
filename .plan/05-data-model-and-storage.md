@@ -21,41 +21,71 @@
 
 ## Entity overview
 
+A **Project is the bundle** — a logical system (e.g. a website + its database +
+its uploads volume), not a single app. It owns **typed resources** —
+`application`, `database`, `volume` — that **bind** to each other, and a set of
+**Environments** that realize the bundle (see `17` for the resource model).
+
 ```
 User ──< Token
-Node ──< Instance
 Registry ──< Project
-Project ──< Environment ──< Release ──< Instance
-Project ──< Build
-Environment ──< Route
-Environment ──< EnvVar
+
+Project  (the BUNDLE / logical system)
+  ├──< Application ──< Build           (the buildable resource; 1 in 0.1.0, N [soon])
+  └──< Environment                     (production, staging, …)
+         ├──< Release ──< Instance
+         ├──< Route
+         ├──< EnvVar
+         ├──< Database  ─ on DatabasePool   (a logical DB, realized per env)
+         ├──< Volume    ─ on Node            (quota'd disk, realized per env)
+         └──< Binding   (this env's Application ⟷ its Database / Volume)
+
+DatabasePool (cluster-level, node-pinned) ──< Database   (shared pool: many DBs)
+Database ──< Backup                                       (skali-scheduled)
+Node ──< Instance · Volume · DatabasePool   (volumes & pools are pinned/stateful)
 JoinToken            (one-time node enrollment secrets)
 ClusterCA            (the cluster's CA key/cert; one row)
 ```
 
 Relationships in words:
 
-- A **Project** is the *build* unit: it belongs to a Registry (the built-in
-  managed registry by default; a connected external one optionally — see `04`),
-  holds the build config, and has many Builds and one or more Environments.
-- An **Environment** is a named *running configuration* of a Project
-  (`production`, `staging`, …): its own Routes, EnvVars, replicas, placement,
-  egress, and resource limits, plus its own Release history. Every Project gets a
-  default Environment (`production`) implicitly, so simple single-env projects
-  never have to think about this (progressive disclosure). Multi-environment UX
-  (`skali env create`, `skali promote`) is `[soon]`; the **dimension is in the
-  schema from 0.1.0** so it never needs retrofitting.
-- A **Build** is `(source) → image digest`, owned by the Project (env-agnostic).
-  Because env is injected at **runtime**, one Build's image normally serves every
-  Environment — a `promote` reuses the digest, never rebuilds (`04`). The
-  exception is build-baked config (e.g. `NEXT_PUBLIC_*`): a Project flagged
-  `build_per_env` builds a separate image per Environment instead.
+- A **Project** is the **bundle** — the logical system. It belongs to a Registry
+  (the built-in managed registry by default; a connected external one optionally
+  — `04`) and owns one or more **Applications**, plus the `database`/`volume`
+  resources realized in its Environments. (Was "the build unit"; build now hangs
+  off the Application resource.)
+- An **Application** is the **buildable** resource: it carries the build config
+  and has many Builds. **0.1.0 has exactly one per Project**; the schema allows N
+  so multi-service / Compose (`03`) is non-breaking `[soon]`.
+- An **Environment** is a named *realization* of the bundle (`production`,
+  `staging`, …): its own Routes, EnvVars, replicas, placement, egress, resource
+  limits, **its realized Databases/Volumes, its Bindings**, plus its Release
+  history. Every Project gets a default Environment (`production`) implicitly, so
+  simple projects never think about this (progressive disclosure).
+- A **Build** is `(source) → image digest`, owned by the **Application**
+  (env-agnostic). Env is injected at **runtime**, so one Build's image normally
+  serves every Environment — a `promote` reuses the digest, never rebuilds (`04`);
+  the exception is build-baked config (`NEXT_PUBLIC_*`) → `build_per_env`.
 - A **Release** is an immutable desired-state snapshot for an **Environment**
   (image digest + that env's snapshot + replica/placement intent). The "current"
-  Release is the desired version *for that environment*.
-- An **Instance** is one running container realizing a Release on a Node (actual
-  runtime, reconciled).
-- A **Node** has roles and addressing; it hosts Instances.
+  Release is the desired version *for that environment*. **Releases exist for the
+  Application only** — databases/volumes are stateful and provisioned, not
+  released (`17`).
+- A **Database** is a logical DB realized **per Environment** on a
+  **DatabasePool** (a skalid-supervised engine container). The pool's `scope`
+  decides allocation: a *shared* pool hosts many logical DBs (cheap; "20 sites,
+  one server"), a *dedicated* pool hosts one. Allocation is a placement policy,
+  decoupled from the config's "I need a database" declaration (`17`).
+- A **Volume** is a **quota-enforced** disk, realized **per Environment** and
+  **pinned to a Node**. The enforced `size_limit` + reserved host headroom is the
+  disk-safety floor (`17`): a runaway fills its own quota, never the host.
+- A **Binding** wires an Environment's Application to one of its Databases/Volumes
+  — injecting a `DATABASE_URL` (database) or a mount path (volume) into the
+  Release. N apps may bind one shared resource.
+- An **Instance** is one running container realizing a Release on a Node.
+- **Databases/Volumes/DatabasePools are stateful**: pinned to a node,
+  provisioned once, never blue/green, never auto-rescheduled, never auto-pruned
+  (`03`/`17`). This is the deliberate carve-out from "workers are stateless."
 
 ## Schema sketch (illustrative DDL)
 
@@ -107,13 +137,22 @@ CREATE TABLE registries (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE projects (             -- the BUILD unit (env-agnostic)
+CREATE TABLE projects (             -- the BUNDLE (logical system); owns resources + environments
   id            TEXT PRIMARY KEY,
   name          TEXT NOT NULL,
   slug          TEXT NOT NULL UNIQUE,
   registry_id   TEXT NOT NULL REFERENCES registries(id),
-  build_per_env INTEGER NOT NULL DEFAULT 0,  -- 1 = build-baked config; image not shareable across envs (04)
   created_at    TEXT NOT NULL
+);
+
+CREATE TABLE applications (         -- the BUILDABLE resource; 1 per project in 0.1.0, N is [soon]
+  id            TEXT PRIMARY KEY,
+  project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,             -- 'web' (default)
+  build_per_env INTEGER NOT NULL DEFAULT 0, -- 1 = build-baked config; image not shareable across envs (04)
+  -- build config (dockerfile/context/args/builder) lives here now (was project-level)
+  created_at    TEXT NOT NULL,
+  UNIQUE(project_id, name)
 );
 
 CREATE TABLE environments (         -- a named running configuration of a project
@@ -153,9 +192,78 @@ CREATE TABLE env_vars (             -- variables, keyed by ENVIRONMENT
   UNIQUE(environment_id, key)
 );
 
-CREATE TABLE builds (             -- the build JOB QUEUE; master is the scheduler (see 04)
+-- ── data-pillar resources (stateful; pinned; provisioned-once — see 03/17) ──
+
+CREATE TABLE volumes (              -- a quota-enforced disk, realized PER ENVIRONMENT, pinned to a node
   id            TEXT PRIMARY KEY,
   project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,      -- 'uploads'
+  node_id       TEXT NOT NULL REFERENCES nodes(id),  -- pinned (stateful; never auto-moved)
+  size_limit    TEXT NOT NULL,      -- '10Gi' — ENFORCED (disk-safety floor, 17)
+  driver        TEXT NOT NULL DEFAULT 'local-quota', -- [future] nfs / dedicated storage host
+  volume_ref    TEXT,               -- docker volume name once provisioned
+  managed_by    TEXT,               -- owning config shard / 'server'; scopes prune authority (11)
+  status        TEXT NOT NULL,      -- pending|ready|degraded
+  created_at    TEXT NOT NULL,
+  UNIQUE(environment_id, name)
+);
+
+CREATE TABLE database_pools (       -- a skalid-supervised engine container; shared by many logical DBs
+  id            TEXT PRIMARY KEY,
+  engine        TEXT NOT NULL,      -- 'postgres' (0.1.0); 'mysql'|'redis' [later]
+  version       TEXT NOT NULL,
+  node_id       TEXT NOT NULL REFERENCES nodes(id),       -- pinned (stateful)
+  data_volume_id TEXT REFERENCES volumes(id),             -- its data dir is itself a quota'd volume
+  scope         TEXT NOT NULL DEFAULT 'shared',           -- 'shared' (multi-tenant) | 'dedicated'
+  container_id  TEXT,
+  status        TEXT NOT NULL,      -- pending|ready|degraded
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE databases (            -- a logical DB, realized PER ENVIRONMENT (prod main ≠ staging main)
+  id            TEXT PRIMARY KEY,
+  project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,      -- 'main'
+  engine        TEXT NOT NULL,      -- 'postgres'
+  allocation    TEXT NOT NULL DEFAULT 'shared', -- shared|dedicated|dedicated_host (placement policy, 17)
+  pool_id       TEXT REFERENCES database_pools(id),
+  db_name       TEXT NOT NULL,      -- physical DB name within the pool
+  role_name     TEXT NOT NULL,      -- isolated role: no superuser, cannot see sibling DBs (08)
+  secret_enc    BLOB NOT NULL,      -- generated password; plaintext 0.1.0, encrypted [soon]
+  managed_by    TEXT,               -- owning config shard / 'server'; scopes prune authority (11)
+  status        TEXT NOT NULL,      -- pending|ready|degraded
+  created_at    TEXT NOT NULL,
+  UNIQUE(environment_id, name)
+);
+
+CREATE TABLE bindings (             -- the cross-type glue: an env's application ⟷ a database/volume
+  id             TEXT PRIMARY KEY,
+  environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+  target_type    TEXT NOT NULL,     -- 'database' | 'volume'
+  target_id      TEXT NOT NULL,     -- databases.id | volumes.id (N apps may bind one shared target)
+  inject         TEXT,              -- database: env var name(s), default by engine (e.g. DATABASE_URL)
+  mount_path     TEXT,              -- volume: container mount path (e.g. /data/uploads)
+  created_at     TEXT NOT NULL,
+  UNIQUE(environment_id, application_id, target_type, target_id)
+);
+
+CREATE TABLE backups (              -- skali-scheduled database backups (a named Coolify pain)
+  id          TEXT PRIMARY KEY,
+  database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,        -- 'logical' (pg_dump) in 0.1.0
+  location    TEXT NOT NULL,        -- path on a backup-target volume/host
+  size_bytes  INTEGER,
+  status      TEXT NOT NULL,        -- running|succeeded|failed
+  started_at  TEXT NOT NULL,
+  finished_at TEXT
+);
+
+CREATE TABLE builds (             -- the build JOB QUEUE; master is the scheduler (see 04)
+  id            TEXT PRIMARY KEY,
+  application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,  -- builds belong to the app resource
   source_ref    TEXT,               -- 'cli-upload:<hash>' | 'cli-local:<hash>' | git sha | image ref
   build_location TEXT NOT NULL DEFAULT 'node', -- 'node' | 'local' (built on a client by skali CLI)
   target_platform TEXT NOT NULL DEFAULT 'linux/amd64', -- arch the image is for; needs a matching builder (0.1.0: native only)
@@ -174,7 +282,8 @@ CREATE TABLE releases (             -- immutable desired-state versions, per ENV
   environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
   build_id       TEXT REFERENCES builds(id),
   image_digest   TEXT NOT NULL,     -- what actually runs; pinned digest (may be promoted from another env)
-  env_snapshot   BLOB NOT NULL,     -- this env's vars at release time; plaintext in 0.1.0, encrypted [soon]
+  env_snapshot   BLOB NOT NULL,     -- this env's vars at release time + binding-injected values
+                                    --   (DATABASE_URL, mount paths); plaintext 0.1.0, encrypted [soon]
   replicas       INTEGER NOT NULL,
   placement      TEXT,
   promoted_from  TEXT REFERENCES releases(id),  -- set when this release reused another env's digest (04)
@@ -213,12 +322,19 @@ CREATE TABLE cluster_ca (           -- single row: the cluster CA
 ## Desired vs actual in the schema
 
 - **Desired state** = the `is_current` `releases` across all `environments` +
-  their `routes` + `replicas` / `placement`. Each Environment converges
-  independently (staging and production roll out on their own schedules).
-- **Actual state** = `instances` (+ live container status reported by workers).
+  their `routes` / `replicas` / `placement` + each environment's declared
+  `databases` / `volumes` / `bindings`. Each Environment converges independently
+  (staging and production roll out on their own schedules).
+- **Actual state** = `instances` (+ live container status reported by workers),
+  plus the realized state of pools/volumes/databases.
 - The reconciler (`03`) diffs the two and converges. `instances` is the master's
   *cache* of actual state, refreshed from worker reports — the worker's Docker is
   the ultimate truth for "is it running," reconciled against the DB's desired.
+- **Stateful resources converge differently.** For `volumes` / `database_pools` /
+  `databases` the reconciler ensures **existence and health only** — it provisions
+  what's missing and repairs health, but **never destroys-to-recreate on drift and
+  never auto-moves** them (that would be data loss / migration). Their rows are
+  durable desired-state, not a recreatable cache. See the carve-out in `03`/`17`.
 
 ## Secrets at rest ([soon] — deferred out of 0.1.0)
 
@@ -227,8 +343,8 @@ CREATE TABLE cluster_ca (           -- single row: the cluster CA
 > when we add it.
 
 - **0.1.0 stores sensitive values as plaintext** in SQLite: env var values,
-  registry credentials, the CA private key, and release env snapshots. A stolen
-  DB file would leak them. This is an accepted, documented 0.1.0 limitation —
+  registry credentials, **managed-database passwords (`databases.secret_enc`)**,
+  the CA private key, and release env snapshots. A stolen DB file would leak them. This is an accepted, documented 0.1.0 limitation —
   protect the DB file with filesystem permissions and host security for now.
 - **[soon] security pass:** wrap the sensitive columns with authenticated
   encryption (XChaCha20-Poly1305 / AES-GCM), keyed by an operator-provided master
@@ -245,9 +361,19 @@ CREATE TABLE cluster_ca (           -- single row: the cluster CA
   concurrent deploys/promotes targeting the same Environment serialize rather than
   racing the reconciler. Different environments of one project deploy
   concurrently.
-- Foreign keys **ON**; cascade deletes for owned children.
-- Backups: the DB file under the data dir; document `litestream` as an optional
-  continuous-backup add-on (also a stepping stone toward `[future]` master HA).
+- Foreign keys **ON**; cascade deletes for owned children. **But stateful
+  resources are never silently cascaded away:** the service layer refuses to tear
+  down a Project/Environment that still holds live `databases`/`volumes` unless the
+  caller confirms (`--prune`), so a `DELETE` can't destroy user data by accident
+  (`03`/`11`). Row-level cascade is the cleanup *mechanism*; the gate is the
+  *policy*.
+- **Two distinct kinds of backup, don't conflate them:**
+  - *Control-DB backup* — skali's own SQLite under the data dir; document
+    `litestream` as an optional continuous-backup add-on (also a stepping stone
+    toward `[future]` master HA).
+  - *User-database backup* — the `backups` table: skali-scheduled `pg_dump`-style
+    backups of the **user's** managed databases, written to a backup-target volume
+    (`17`). This is the "no more per-project backup toil" feature.
 - **Ephemeral build-context blobs** also live under the data dir, content-addressed
   by the `cli-upload:<hash>` in `builds.source_ref` — written on upload, fetched by
   the assigned builder, GC'd at terminal build state (`04`). Not authoritative

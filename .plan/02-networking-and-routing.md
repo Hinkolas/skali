@@ -185,6 +185,26 @@ container cannot pivot to the control plane or the rest of the cluster.
     only by the node proxy. For locked-down workloads.
   - The container→control-plane block is **always on**, in every mode.
 
+### East-west connectivity: app ↔ database (binding-gated)
+
+App→database traffic is **east-west** and unlike everything above it does **not**
+go through Traefik — it's **raw TCP** (the Postgres wire protocol), not HTTP, so
+Traefik (ingress/L7 only) never sees it.
+
+- **Default is deny.** Network-per-app isolation means an app cannot reach a
+  shared database pool any more than it can reach a sibling app's containers.
+- **A binding opens exactly one path.** When app *X* binds a database on pool *P*
+  (`17`), the daemon grants *X* reachability to *P*'s listener only — by attaching
+  *X*'s web container to *P*'s data network (or opening *P*'s port to *X*'s
+  subnet). An app with no binding to *P* still can't reach it, and the
+  always-on container→control-plane block is unaffected.
+- **Shared pools stay isolated per tenant.** Many apps may reach one shared pool
+  (each via its own binding), but Postgres-level role isolation (`08`/`17`) keeps
+  each logical database private — network reachability ≠ data access.
+
+So the dense "20 apps, one Postgres server" topology coexists with strict default
+isolation: connectivity is **granted per binding, never ambient.**
+
 ## Default ports (configurable)
 
 | Purpose | Default | Exposure |
@@ -194,6 +214,7 @@ container cannot pivot to the control plane or the rest of the cluster.
 | Node proxy entrypoint | `:7080` | private |
 | Edge proxy | `:80` / `:443` | **public** |
 | Built-in registry | `:5000` | private |
+| Database pool (Postgres) | `:5432` (per pool) | private, **binding-gated** |
 
 ## Resilience notes
 

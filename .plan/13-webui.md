@@ -29,11 +29,17 @@
 
 ## Feature surface (mirrors the API)
 
-- **0.1.0:** auth/login; projects list + detail; trigger/observe deploys with
-  **live build logs (SSE)**; runtime log tail (SSE); env management; routes/domain
-  management; nodes list; registries.
+- **0.1.0:** auth/login; **bundle** (project) list + detail showing its
+  applications, databases, and volumes; trigger/observe deploys with **live build
+  logs (SSE)**; runtime log tail (SSE); env management; routes/domain management;
+  **managed databases** (create, connection string, backups + restore);
+  **volumes** (create, size limit, usage); **bindings** (wire app⟷resource); nodes
+  list + per-node storage capacity/headroom; registries.
 - **[soon]:** rollback UI, replica/scaling controls, build history, RBAC user
-  management, metrics dashboards.
+  management, metrics dashboards, allocation/move controls for databases.
+- **[future]:** **connect external object storage** (S3/R2/MinIO) and surface it
+  in the UI — the deferred storage convenience (`16`/`17`); it is a *connected
+  backend* shown here, not a provisioned runtime resource.
 
 ## Streaming in the browser
 

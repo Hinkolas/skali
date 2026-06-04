@@ -19,6 +19,9 @@ skali/                        # one Go module
 │   ├── ca/                   # cluster CA: issue/sign/verify node certs
 │   ├── auth/                 # tokens, password hashing, middleware
 │   ├── registry/             # built-in registry management; registry auth
+│   ├── database/             # managed DB pools: provision pools, logical DBs + roles, backups (17)
+│   ├── volume/               # quota-enforced volumes; disk-safety floor enforcement (17)
+│   ├── binding/              # app⟷resource bindings: DATABASE_URL injection, mounts, connectivity grant
 │   ├── transport/
 │   │   ├── rest/             # chi handlers, SSE, middleware
 │   │   └── grpc/             # gRPC server impl (wraps LocalExecutor)
@@ -67,8 +70,9 @@ requiring every contributor to install the toolchains.
 
 - CLI: `spf13/cobra`, `charmbracelet/huh`, an HTTP client.
 - Daemon: `go-chi/chi`, `google.golang.org/grpc`, `docker/docker` (SDK),
-  `pressly/goose`, `modernc.org/sqlite`, an AEAD lib (`golang.org/x/crypto`),
-  argon2id, ULID/UUID.
+  `pressly/goose`, `modernc.org/sqlite`, a Postgres client (`jackc/pgx`) to
+  administer managed pools (CREATE DATABASE/ROLE, drive `pg_dump` backups — `17`),
+  an AEAD lib (`golang.org/x/crypto`), argon2id, ULID/UUID.
 - Codegen: `sqlc`, `buf`.
 
 ## Testing strategy

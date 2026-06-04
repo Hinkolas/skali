@@ -1,15 +1,19 @@
 # 12 — Canonical Deploy Flow (end to end)
 
 This ties every component together: the exact sequence behind `skali auth login`
-then `skali deploy` for a brand-new project on a single-node cluster (node A holds
-all roles). This is the 0.1.0 acceptance scenario.
+then `skali deploy` for a brand-new **bundle** on a single-node cluster (node A
+holds all roles). The bundle is the canonical example from `00`: a SvelteKit app +
+a Postgres **database** + an uploads **volume**. This is the 0.1.0 acceptance
+scenario — the application spine **plus** the two data pillars.
 
 ## Preconditions
 
 - `skalid start` is running on node A (master+edge+worker+builder) — which also
-  brought up the managed `registry:2` container (the default `builtin` Registry).
+  brought up the managed `registry:2` container (the default `builtin` Registry)
+  and prepared the quota-enforced storage path (`10`/`17`).
 - A wildcard DNS record `*.apps.example.com` → node A's public IP.
-- The developer has a project dir with a `Dockerfile`, no `.skali/` yet.
+- The developer has a project dir with a `Dockerfile`, no `.skali/` yet. The app
+  reads `DATABASE_URL` and writes uploads to `/data/uploads`.
 
 ## Step 0 — login (once)
 
@@ -26,19 +30,38 @@ $ skali auth login --master https://skali.example.com
 $ skali deploy
   no .skali/ found → runs the shared init wizard (same flow as `skali init`),
   configuring the default `production` environment:
-    name      = my-website
-    domain    = my-website.apps.example.com
+    name      = my-shop
+    domain    = my-shop.apps.example.com
     node      = node-a            (only worker)
     replicas  = 1
     dockerfile= ./Dockerfile
-  → POST /api/v1/projects {name, registry=builtin, build…}
-       (server also creates the default `production` environment)
-  → POST /api/v1/projects/{id}/routes?env=production {host: my-website.apps.example.com, port:3000}
+    database  = main (postgres, shared)     # offered by the wizard
+    volume    = uploads (10Gi) → /data/uploads
+  → POST /api/v1/projects {name, registry=builtin}     (creates project + default
+       `production` env + the `web` application)
+  → POST /api/v1/projects/{id}/routes?env=production {host: my-shop.apps.example.com, port:3000}
   → master returns project id (prj_…)
-  → CLI writes .skali/config.yaml (with project.id) + .gitignore entry
+  → CLI writes .skali/config.yaml (project.id + databases/volumes/binds, 11) + .gitignore
 ```
 
-## Step 2 — upload context & build
+## Step 2 — apply topology: provision data resources & resolve bindings
+
+```
+  CLI applies the env's declared topology BEFORE building (11) — stateful data
+  must exist before the app boots (03/17):
+  → POST /api/v1/projects/{id}/volumes?env=production {name: uploads, size: 10Gi}
+       master places it on node-a → Executor.EnsureVolume (quota set, headroom checked)
+  → POST /api/v1/projects/{id}/databases?env=production {name: main, engine: postgres, allocation: shared}
+       master ensures a shared Postgres POOL on node-a → Executor.EnsurePool
+       → Executor.EnsureDatabase: CREATE DATABASE + isolated ROLE (no superuser)
+       → derives DATABASE_URL (pool endpoint + db + role + generated password)
+  → POST /api/v1/projects/{id}/bindings?env=production
+       {app: web, database: main, inject: DATABASE_URL}
+       {app: web, volume: uploads, mount: /data/uploads}
+  (a binding referencing an undefined resource would ERROR here — deterministic, 11)
+```
+
+## Step 3 — upload context & build
 
 ```
   CLI tars build context (honoring .dockerignore)
@@ -51,60 +74,66 @@ $ skali deploy
 
   master → Executor.BuildImage(local, in 0.1.0):
      docker build (BuildKit) from uploaded context
-     tag = <builtin-registry>/my-website:<build_id>
+     tag = <builtin-registry>/my-shop:<build_id>
      docker push → built-in registry (loopback on node-a)
      resolve pushed digest  (sha256:…)
   build logs stream: builder → master → client SSE (live in terminal)
   master records Build(image_digest, status=succeeded)
 ```
 
-## Step 3 — release & reconcile (health-gated rollout)
+## Step 4 — release & reconcile (health-gated rollout)
 
 ```
-  master creates Release(environment=production, image_digest, env_snapshot,
-                         replicas=1, placement) and marks is_current=1  (desired)
+  master creates Release(environment=production, image_digest, replicas=1, placement,
+     env_snapshot = env vars + binding-injected DATABASE_URL) and marks is_current=1
   reconciler diffs desired vs actual for node-a (production env):
-     Executor.EnsureNetworks (per-app net + skali-proxy net)
+     (data resources from Step 2 already ensured — volume present, pool+DB ready)
+     Executor.EnsureNetworks (per-app net + skali-proxy net + binding path to the pool, 02)
      Executor.PullImage(digest)            # already local → fast
      Executor.RunContainer(spec with Traefik labels:
-         Host(`my-website.apps.example.com`), service port 3000,
+         Host(`my-shop.apps.example.com`), service port 3000,
          healthcheck, skali.project/environment/release/instance labels,
-         networks, egress=internet firewalling)
+         env DATABASE_URL=…, mount uploads → /data/uploads,
+         networks (incl. binding-gated reach to pool), egress=internet firewalling)
      wait for container HEALTHY (health-gate)
   node-a Traefik (Docker provider) discovers the container via labels,
      begins routing the host to it
   reconciler records Instance(status=healthy)
 ```
 
-## Step 4 — serve
+## Step 5 — serve
 
 ```
-  user → https://my-website.apps.example.com
+  user → https://my-shop.apps.example.com
        → edge Traefik on node-a (TLS via ACME HTTP-01, terminates)
        → (edge==worker, no hop) routes via Docker labels → container :3000
+       → app reads/writes Postgres (DATABASE_URL) + uploads (/data/uploads)
        → response
 ```
 
-## Step 5 — finish
+## Step 6 — finish
 
 ```
   master marks deploy succeeded
   CLI SSE shows rollout complete, prints:
-     ✓ my-website is live at https://my-website.apps.example.com
+     ✓ my-shop is live at https://my-shop.apps.example.com
        release rel_…  on node-a
   .skali/config.yaml already holds project.id → directory is linked
 ```
 
 ## Subsequent deploys
 
-`skali deploy` now finds `.skali/config.yaml`, skips the wizard, uploads context,
-builds a new image digest, creates a **new Release**, and the reconciler does a
-**start-new-then-stop-old** health-gated swap (`03`) — zero-downtime. A bad build
+`skali deploy` now finds `.skali/config.yaml`, skips the wizard, applies topology
+(data resources are **ensured, not recreated** — the Postgres DB and the uploads
+volume **persist** across deploys, `17`), uploads context, builds a new image
+digest, creates a **new Release**, and the reconciler does a
+**start-new-then-stop-old** health-gated swap (`03`) — zero-downtime. The new
+container comes up already wired to the *same* database and volume. A bad build
 leaves the previous Release serving.
 
 ## Multi-node variation (when node B is added later)
 
-Only steps 3–4 change:
+Only steps 4–5 change for the **application**:
 
 - Release placement targets node-b → reconciler calls **`RemoteExecutor`**
   (gRPC, mTLS) to pull+run on node-b.
@@ -112,6 +141,9 @@ Only steps 3–4 change:
   (remote-app), so edge Traefik on node-a forwards over the private network to
   node-b's proxy, which routes to the container. One extra hop; everything else
   identical.
+- **Data resources stay pinned.** The pool/volume on node-a don't move; node-b's
+  app reaches node-a's pool over the private net via the binding-gated path (`02`).
+  Stateful relocation is `[future]` (`17`).
 
 ## Environments variation
 
@@ -125,10 +157,14 @@ Adding a second environment is **config-driven and in 0.1.0**:
   push --env staging` syncs `.env.staging`.
 - `skali deploy --env staging` builds and ships to staging only; production keeps
   serving its current release untouched.
+- **Staging gets its own data.** `staging`'s `main` database and `uploads` volume
+  are **separate instances** from production's (realized per environment, `05`/`17`)
+  — typically on a *shared* pool (cheaper) while prod runs `dedicated_host`. The
+  app's `DATABASE_URL` differs per env automatically.
 - **[soon]** after verifying, `skali promote staging production` releases
   **staging's exact digest** into production with production's own
   vars/routes/resources — **no rebuild** — advancing production by all the commits
   validated on staging.
 
-This is the whole system exercised end to end. If steps 0–5 work on one node,
+This is the whole system exercised end to end. If steps 0–6 work on one node,
 0.1.0 is met.

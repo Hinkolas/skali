@@ -40,15 +40,16 @@ skali
 │   ├── use <name>
 │   └── add <name> --master <url>
 ├── init            # run the setup wizard: create the project (+ default env) + write .skali/ (no deploy)
-├── deploy [dir]    # reconcile target env's topology from config + build new source + ship it; --env
-├── apply           # reconcile environment topology (config.yaml → server); no build/release; --env, --prune
+├── link            # attach THIS dir's shard to an existing project: --project <slug> (polyrepo, 11)
+├── deploy [dir]    # reconcile target env from config (incl. resources) + build new source + ship it; --env
+├── apply           # reconcile environment topology + resources (config.yaml → server); no build/release; --env, --prune
 ├── promote <from> <to>   # [soon] reuse the source env's current image → release to target env (no rebuild)
 ├── redeploy        # re-release current image with latest env/config, roll out; --env
 ├── restart         # bounce the current Release's instances (no new Release); --env
-├── projects
+├── projects        # the BUNDLE (applications + databases + volumes + environments)
 │   ├── list
 │   ├── show <id|name>
-│   └── delete <id|name>
+│   └── delete <id|name>       # gated: refuses if live databases/volumes exist without --prune (05)
 ├── env             # ENVIRONMENTS (production, staging, …) — the deployment target
 │   ├── list                  # environments declared in config + on server (flags drift)
 │   ├── create <name>         # scaffold/adjust the env in .skali/config.yaml (LOCAL; apply with `skali apply`/`deploy`)
@@ -69,10 +70,29 @@ skali
 ├── releases        # per-environment history
 │   ├── list                  # --env
 │   └── rollback <release-id>
-└── domains         # routes for an environment; --env
-    ├── list
-    ├── add <host>
-    └── rm <host>
+├── domains         # routes for an environment; --env
+│   ├── list
+│   ├── add <host>
+│   └── rm <host>
+├── db              # DATABASES (managed Postgres); --env  (17)
+│   ├── list                  # databases in the env + allocation + pool
+│   ├── create <name>         # provision (or write the definition into config); --engine --version --allocation
+│   ├── show <name>           # status, connection (masked), which shard defined it
+│   ├── url <name>            # print the connection string (the injected DATABASE_URL)
+│   ├── backups <name>        # list backups; `backups run <name>` triggers one
+│   ├── restore <name> <backup-id>   # guided restore
+│   └── rm <name>             # tear down — gated/confirmed (stateful, 17); owner-only
+├── volume          # VOLUMES (quota-enforced disk); --env  (17)
+│   ├── list                  # volumes + size_limit + usage + node
+│   ├── create <name> --size 10Gi
+│   ├── show <name>
+│   └── rm <name>             # gated/confirmed (stateful); owner-only
+├── bind            # BINDINGS: wire a resource into the app; --env  (17)
+│   ├── database <name> [--as DATABASE_URL]
+│   ├── volume <name> --mount /data/uploads
+│   └── rm <database|volume> <name>
+└── config          # work with the local .skali config
+    └── validate              # [soon] pre-flight: schema + cross-shard convergence (conflicts/dangling refs) (11)
 ```
 
 ## `skali deploy` behavior
@@ -90,10 +110,13 @@ skali
      deploy **errors and tells the user to run `skali init`** (or pass the
      required flags, e.g. `--name`, `--host`, `--node`).
 3. **If `.skali/` exists:** read project id, build config, and the target env's
-   declared topology. Deploy **reconciles that env's topology** to the server first
-   (the additive/drift-correct `apply` step; destructive only with `--prune`), then
-   builds — so routes/resources declared in `config.yaml` take effect on deploy
-   (see `11`).
+   declared topology + resources. Deploy **reconciles that env to the config**
+   first (the additive/drift-correct `apply` step; destructive only with `--prune`)
+   — this **provisions/ensures declared databases and volumes and resolves
+   bindings** *before* the rollout, so the injected `DATABASE_URL` / mounts exist
+   when the new Release starts (`17`). A `binds:` reference to a resource **no shard
+   defines** is a deterministic **error** here (`11`), not an implicit create. Then
+   it builds. (Stateful resources are ensured, never recreated — `17`.)
 4. **Optional env sync.** With `--env-file` (or, by default for the target env,
    the file mapped in `config.yaml`'s `env_file`), push those vars into the target
    **environment** — adding new keys freely, but **warning and confirming before
@@ -168,6 +191,26 @@ server to the file.
   own vars/routes/resources, and rolls out — **no second build** (`04`). This is
   the "verify on staging, then ship the exact thing to prod" path; production
   jumps to staging's validated image in one release.
+
+## Resources: databases, volumes, bindings
+
+`skali db` / `skali volume` / `skali bind` manage the bundle's data resources
+(`17`). Like environments, they're **declarative-first**: by default these
+commands **edit the local `.skali` config** (adding a `databases:`/`volumes:`/
+`binds:` entry), and `skali apply`/`deploy` reconciles the server to it — so the
+config stays the requirements list (`11`). For ad-hoc/server-managed resources
+(the "I don't want it in git" case), `--server` provisions directly without
+touching the file; later shards just **reference** it by name.
+
+- **`skali db create main --engine postgres --allocation shared`** declares a
+  database requirement; on apply, skali provisions the logical DB on a pool of the
+  chosen allocation and (once bound) injects `DATABASE_URL`.
+- **`skali bind database main`** wires it into this shard's application.
+- **`skali db url main`** prints the connection string; **`skali db backups`** /
+  **`restore`** drive the managed backups (`17`).
+- **Removal is gated.** `skali db rm` / `skali volume rm` tear down **stateful**
+  data — they confirm, and only the **owning shard** may remove a shared resource
+  (`11`); a consumer dropping its binding (`skali bind rm`) never destroys data.
 
 ## `init` vs `deploy` (one shared wizard)
 

@@ -38,11 +38,14 @@ Claude-Code-style browser login (mints the *same* opaque token).
 
 | Method | Path | Purpose |
 |--------|------|---------|
+A **Project is the bundle** (`17`): it owns Applications + the databases/volumes
+realized in its Environments.
+
 | `GET` | `/projects` | List |
-| `POST` | `/projects` | Create (name, registry, build settings) + its default `production` environment |
-| `GET` | `/projects/{id}` | Detail (environments, current releases, status) |
-| `PATCH` | `/projects/{id}` | Update project-level settings (registry, build_per_env) |
-| `DELETE` | `/projects/{id}` | Remove project + all environments + tear down instances |
+| `POST` | `/projects` | Create (name, registry) + its default `production` environment + its application |
+| `GET` | `/projects/{id}` | Detail (applications, databases, volumes, environments, current releases, status) |
+| `PATCH` | `/projects/{id}` | Update project-level settings (registry) |
+| `DELETE` | `/projects/{id}` | Remove project — **refused if live databases/volumes exist unless `?prune=true`** (won't destroy data by accident, `05`) |
 
 ### Environments
 
@@ -117,6 +120,40 @@ are routes of different envs). All take `?env={name}` (default `production`).
 `[soon]` A route/environment may carry an **access policy** (basic-auth; `[future]`
 IP allowlist / forward-auth) set via the route/environment PATCH and rendered as a
 Traefik middleware — e.g. to keep a staging site private. See `02`/`11`.
+
+### Databases, volumes & bindings (per environment)
+
+The managed-data pillars (`17`). All take `?env={name}` (default `production`).
+Provisioning is **stateful and gated**: deletes confirm and never auto-destroy
+data; reconcile is ensure-only.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/projects/{id}/databases?env={name}` | List databases + allocation + pool + status |
+| `POST` | `/projects/{id}/databases?env={name}` | Declare/provision a DB (name, engine, version, allocation) |
+| `GET` | `/projects/{id}/databases/{name}?env={name}` | Detail (connection masked, defining shard) |
+| `GET` | `/projects/{id}/databases/{name}/url?env={name}` | The connection string (the injected `DATABASE_URL`) |
+| `DELETE` | `/projects/{id}/databases/{name}?env={name}` | Tear down — **gated/confirmed** (stateful); owner-only |
+| `GET` / `POST` | `/projects/{id}/databases/{name}/backups` | List / trigger backups (`17`) |
+| `POST` | `/projects/{id}/databases/{name}/restore` | Guided restore from a backup id |
+| `GET` | `/projects/{id}/volumes?env={name}` | List volumes + `size_limit` + usage + node |
+| `POST` | `/projects/{id}/volumes?env={name}` | Declare/provision a volume (name, size) |
+| `DELETE` | `/projects/{id}/volumes/{name}?env={name}` | Tear down — **gated/confirmed** (stateful); owner-only |
+| `GET` | `/projects/{id}/bindings?env={name}` | List the env's app⟷resource bindings |
+| `POST` | `/projects/{id}/bindings?env={name}` | Bind app→database (`inject`) / app→volume (`mount_path`) |
+| `DELETE` | `/projects/{id}/bindings/{id}` | Remove a binding (drops the wiring only — never the data) |
+
+`POST /apply` (above) is the declarative path that reconciles these in bulk from
+`config.yaml`; these endpoints are the granular form. A binding that references a
+resource **no shard defines** is rejected with a clear error (deterministic, `11`).
+
+### Pools & cluster storage (admin)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/pools` | Managed database pools: engine, node, scope (shared/dedicated), tenants, health |
+| `POST` | `/pools` | Pre-provision a pool (else created on demand by allocation) |
+| `GET` | `/storage` | Per-node volume capacity, usage, reserved headroom (disk-safety, `17`) |
 
 ### Runtime logs & status
 

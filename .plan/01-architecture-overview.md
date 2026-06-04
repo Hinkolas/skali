@@ -25,7 +25,7 @@ roles**. This keeps a single mental model from one node to a hundred.
 |------|----------------|---------|
 | `master` | Control plane: REST API, SQLite source of truth, orchestrator, CA, built-in registry | One per cluster |
 | `edge` | Public ingress: terminates TLS, routes `host → node` | ACME + Traefik HTTP provider |
-| `worker` | Runs application containers | Docker + Traefik Docker provider |
+| `worker` | Runs application containers, **database pools, and volumes** | Docker + Traefik Docker provider; pinned stateful data (`17`) |
 | `builder` | Builds images, pushes to a registry | Docker/BuildKit |
 
 In **0.1.0 a single node holds all four roles.** Adding a node later means
@@ -95,7 +95,8 @@ Transport stays thin; the multi-node seam is a single interface.
 ```
 transport/      REST (chi) for clients · gRPC server for nodes
                 — decode, authn/authz, call service, encode/stream. No logic.
-service/        domain logic: Projects, Environments, Builds, Releases, Auth,
+service/        domain logic: Projects (bundles), Applications, Databases,
+                Volumes, Bindings, Environments, Builds, Releases, Auth,
                 orchestration. — transport-agnostic. The reconciler lives here.
 executor/       Executor interface — THE multi-node seam.
                 ├─ LocalExecutor  → Docker Go SDK on this host
@@ -113,9 +114,13 @@ the Docker-touching code is written **once** and reused at both ends. See `03`.
 
 ## Key invariants
 
-1. **SQLite on the master is the single source of truth.** Workers are
-   stateless; they hold only running containers, which are reconciled toward the
-   desired state stored on the master.
+1. **SQLite on the master is the single source of truth.** Application workers are
+   **stateless** — they hold only running containers, reconciled toward the desired
+   state on the master. **Carve-out:** `database` and `volume` resources are
+   **stateful** — pinned to a node, provisioned once, never blue/green, never
+   auto-rescheduled or auto-pruned. The master DB still describes them, but their
+   on-node data is authoritative and is never destroyed-to-recreate (`03`/`17`).
+   This is the deliberate exception that makes managed data possible.
 2. **The deploy unit is an image digest, never a build context.** Builds produce
    digests; releases reference them. This makes nodes stateless, rollback trivial,
    and lets one image be **promoted** across environments without rebuilding (`04`).

@@ -80,6 +80,8 @@ but it *contains hostile workloads by design*.
 | Control-plane mTLS | a hostile container / breached host issuing fleet commands | CA-signed node certs, verified per connection; no replayable bearer secret on the wire |
 | Container firewalling (`DOCKER-USER`) | containers reaching the control plane / cluster mgmt | drop container-subnet → host control ports & cluster net (always on) |
 | Network-per-app | lateral movement between tenants' apps | isolated Docker networks + shared proxy net |
+| Shared-pool DB isolation | cross-tenant data access in a shared Postgres | per-database role, no superuser, `REVOKE` cross-DB; reach is **binding-gated** (`02`/`17`) |
+| Volume quotas | a runaway volume exhausting the host (**availability**) | enforced `size_limit` + reserved headroom — the disk-safety floor (`17`) |
 | Egress policy | exfiltration from locked-down apps | `internet`/`isolated` per project |
 | Secrets at rest **[soon]** | stolen DB file | **deferred out of 0.1.0** — plaintext in the DB for now (protect via host + file permissions); AEAD keyed by an operator-provided master key in a later security pass |
 | User tokens | unauthorized client actions | opaque, hashed, revocable; RBAC `[soon]` |
@@ -88,6 +90,23 @@ but it *contains hostile workloads by design*.
 Mental rule (restated): the private network protects you from outsiders;
 control-plane mTLS + container firewalling protect you from the code you
 deliberately run inside it.
+
+## Managed-data security (databases & volumes)
+
+The data pillars (`17`) add two boundaries worth stating explicitly:
+
+- **Shared pools are multi-tenant, so isolation is a security property, not a
+  convenience.** Each logical database gets its **own role with no superuser**,
+  scoped so it cannot enumerate, connect to, or read sibling databases on the same
+  pool (`REVOKE`/`GRANT` per database). The per-database password is generated and
+  stored server-side (`databases.secret_enc`, plaintext in 0.1.0 like other
+  secrets, AEAD in the `[soon]` pass). Network reachability to a pool is
+  **binding-gated** (`02`) — an app reaches a pool only because it bound a database
+  there; no ambient access.
+- **Volume quotas are an availability control.** The enforced `size_limit` +
+  reserved host headroom (`17`) mean a compromised or buggy app can fill *its own*
+  volume but cannot starve the host, the control DB, or neighbours — turning a
+  whole-node outage into a single-app degradation.
 
 ## Data-plane encryption (optional, deferred)
 

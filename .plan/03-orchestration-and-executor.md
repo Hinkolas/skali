@@ -26,6 +26,14 @@ type Executor interface {
     InspectContainer(ctx context.Context, id InstanceID) (InstanceStatus, error)
     StreamLogs(ctx context.Context, id InstanceID, opts LogOptions) (<-chan LogLine, error)
     WatchEvents(ctx context.Context) (<-chan NodeEvent, error) // docker events → reconciler
+
+    // Stateful data resources (17). Same seam, different lifecycle: these
+    // ENSURE (idempotent), they never destroy-to-recreate. The container-level
+    // primitives above run the engine container; these manage what's inside it.
+    EnsureVolume(ctx context.Context, spec VolumeSpec) error      // quota-enforced disk (disk-safety floor)
+    EnsurePool(ctx context.Context, spec PoolSpec) error          // run/own a Postgres engine container
+    EnsureDatabase(ctx context.Context, spec DatabaseSpec) error  // CREATE DATABASE + isolated ROLE in a pool
+    RunBackup(ctx context.Context, spec BackupSpec) (<-chan LogLine, error) // pg_dump → backup target
 }
 ```
 
@@ -74,6 +82,28 @@ anyway. Streaming stays uniform because the interface returns channels;
   goes away) is **`[soon]/[future]`**, not 0.1.0 — it needs failure detection +
   placement policy and risks split-brain. 0.1.0 reconciles within live nodes
   only.
+
+### Stateful resources reconcile differently (the carve-out)
+
+Application instances are recreatable; **databases, pools, and volumes (`17`) are
+not.** The reconciler converges them with a deliberately weaker, safer contract:
+
+- **Ensure existence + health only.** Provision a declared volume/pool/database
+  that's missing; repair a stopped engine container; **never** delete-and-recreate
+  to "fix" drift. There is no actual→desired *destruction* step for these.
+- **Pinned — never auto-moved.** A volume/pool stays on its node. The reconciler
+  will not place its data elsewhere; "moving" data is an explicit, `[future]`
+  migration that needs a replicated/network volume backend, not a re-run.
+- **Dead-node data is not rescheduled.** If the node holding a database dies, the
+  database surfaces as **degraded and waits** — recreating it elsewhere would be
+  silent data loss. (Contrast: a stateless Instance *would* be rescheduled, once
+  that feature lands.)
+- **Removal is always explicit.** Teardown happens only via a gated, confirmed
+  operation (`--prune`/`skali db rm`, `11`), never as an automatic consequence of
+  a config edit or a reconcile pass.
+- **Ordering.** On deploy, the reconciler ensures a Release's bound resources
+  (volumes mounted, databases reachable, `DATABASE_URL` injected) **before** it
+  starts the new Instances, so the app never boots without its data wired up.
 
 ### Robustness principles (the reconciler must be boring and safe)
 
@@ -157,6 +187,11 @@ A deploy does not "run a container" imperatively. It:
 - **Resource limits** (`[soon]`): CPU/memory limits (and proxy upload-size limits)
   from the **Environment** config map to Docker host-config / Traefik constraints —
   so e.g. production can grant more RAM and larger uploads than staging.
+- **Bindings → ContainerSpec.** When the app's container is created, each binding
+  (`17`) contributes to its spec: a **volume** binding adds a mount at its
+  `mount_path`; a **database** binding adds the injected env (`DATABASE_URL`, from
+  the release snapshot) and the binding-gated network attachment to the pool
+  (`02`). So the running container already has its data wired in at start.
 - **Build is a second, optional driver.** `Executor.BuildImage` runs a build on a
   **builder node**. The *same* BuildKit build-and-push routine (shared
   `internal/builder`) can also run **client-side in the `skali` CLI** (local build,
@@ -173,11 +208,18 @@ A deploy does not "run a container" imperatively. It:
   an arch mismatch is reported as an error rather than scheduling an unrunnable
   container. (Emulated cross-arch is `[future]`, `04`.)
 
-## Multi-service apps (Compose)
+## Databases & multi-service apps
 
-0.1.0 deploys a **single service** built from a `Dockerfile`. Real apps often
-need a DB/cache/etc. **[soon]:** support a committed `compose.yaml` as the
-Project's service definition. We parse it with `compose-go` and translate
-services into skali Instances + labels — still driving the engine via the Docker
-SDK, never the compose CLI. The data model (`05`) already allows a Project to
-own multiple services to make this non-breaking.
+Real apps need a database/cache — and in skali that's a **managed `database`
+resource** (`17`), not a container the user wires up by hand: declare it, bind it,
+get an injected `DATABASE_URL`, with backups and quota handled. This is the whole
+point of the bundle model (`00`), and it's **in 0.1.0**.
+
+What's still single in 0.1.0 is the **application**: one buildable service per
+Project. **[soon]:** multiple application services per bundle (a website + an admin
+panel + a worker) via a committed `compose.yaml` parsed with `compose-go` and
+translated into skali Instances + labels — still driving the engine via the Docker
+SDK, never the compose CLI. The schema already allows N `applications` per project
+(`05`), so it's non-breaking. (Note the split: a *Postgres* belongs in the
+`database` pillar, not as a Compose service — Compose is for additional **app**
+services that build/run, not for managed data.)

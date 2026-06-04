@@ -1,7 +1,35 @@
 # 15 — Roadmap
 
 Versioned milestones. The architecture is designed so each later item slots in
-without rework (interfaces, roles, image-based deploys, derived routing config).
+without rework (interfaces, roles, image-based deploys, derived routing config,
+the typed-resource model).
+
+## 0.1.0 — Definition of Done (the single source of scope)
+
+This is the authoritative "line in the sand." Anything not here is `[soon]`/
+`[future]`; anything tagged `[soon]`/`[future]` elsewhere is **not** 0.1.0. We
+build the **three resource pillars horizontally** (`00`/`17`): get a minimal slice
+of each working on the base schema, then deepen — rather than finishing the
+application deeply before starting data.
+
+**0.1.0 is met when, on one node, the canonical *bundle* (`12`) works end to end:**
+a SvelteKit app **+ a managed Postgres database + a quota-enforced uploads volume**,
+declared together, bound together, deployed with one `skali deploy` — the app live
+over HTTPS, reading `DATABASE_URL`, writing to its mounted volume, with the
+database backed up and the volume size enforced.
+
+Concretely, that means all three pillars below, plus the platform spine:
+
+- **Application pillar:** build (local or builder-node) → registry → release →
+  health-gated rollout → routes via Traefik → rollback.
+- **Database pillar:** declare a Postgres database; provision on a shared pool (and
+  `dedicated`/`dedicated_host` allocation); isolated role; injected `DATABASE_URL`
+  via a binding; scheduled logical backups.
+- **Storage pillar:** declare a volume; **enforced `size_limit` + reserved host
+  headroom (the disk-safety floor)**; mounted into the app via a binding.
+- **Spine:** the resource/binding model + sharded-config convergence (`11`/`17`),
+  the stateful reconciler carve-out (`03`), and the base schema (`05`) that all of
+  the above sit on.
 
 ## 0.1.0 — the canonical flow (single node)
 
@@ -35,6 +63,20 @@ The acceptance scenario from `12`:
 - [ ] **Architecture-aware** scheduling + placement: nodes report `arch`; native
       build/run matching with a clear error on mismatch.
 - [ ] Release + reconciler + health-gated rollout; routes via Traefik labels.
+- [ ] **Resource/binding model** (`17`): typed resources (`application`/`database`/
+      `volume`), `bindings` table, `applications` split from `projects` (bundle).
+- [ ] **Stateful reconciler carve-out** (`03`): data resources are ensure-only,
+      pinned, never blue/green/auto-reschedule/auto-prune; gated teardown.
+- [ ] **Managed databases (Postgres):** skalid-supervised pools; `shared` +
+      `dedicated`/`dedicated_host` allocation; logical DB + isolated role;
+      `DATABASE_URL` injected via binding; binding-gated east-west connectivity.
+- [ ] **Database backups:** scheduled `pg_dump` to a backup-target volume; list /
+      trigger / guided restore.
+- [ ] **Volumes + the disk-safety floor:** quota-enforced volumes, reserved host
+      headroom, isolated data partition; mounted into apps via binding.
+- [ ] **Sharded config + convergence** (`11`): `skali link`; declare-by-name
+      resolution; conflict / dangling-reference = deterministic **error**;
+      authority-scoped prune; config-as-requirements (partial desired-state).
 - [ ] Edge Traefik with ACME HTTP-01; wildcard DNS routing.
 - [ ] Container network isolation + `DOCKER-USER` firewalling.
 - [ ] `.skali/` config written back with project id.
@@ -65,11 +107,19 @@ The acceptance scenario from `12`:
 - [ ] **Repo auto-detection:** on `init`/`deploy`, read `git remote origin` and, if
       a GitHub app is connected, **offer** to link the matching repo + pre-fill the
       wizard (detect-and-suggest, never silent-link).
-- [ ] Resource limits (CPU/mem, upload size) per environment.
-- [ ] **Secrets at rest** (env, CA key, registry creds): AEAD + operator master key.
+- [ ] **CPU/mem + upload-size limits** per environment (volume *quotas* already ship
+      in 0.1.0; this is the compute side).
+- [ ] **Secrets at rest** (env, CA key, registry creds, **DB passwords**): AEAD +
+      operator master key.
 - [ ] Image/registry garbage collection (skali-owned retention + blob GC).
-- [ ] Compose support: committed `compose.yaml` → multi-service projects.
+- [ ] Compose support: committed `compose.yaml` → multiple **application** services
+      per bundle (data stays the `database` pillar, not Compose services — `03`).
 - [ ] Web UI: rollback, scaling, build history.
+- [ ] **Data pillars, deepened:** connection pooler (pgbouncer) in front of shared
+      pools; more engines (MySQL/Redis/valkey) on the same pool/allocation model;
+      PITR / off-site backup targets; volume usage metrics + alerts.
+- [ ] **Network/dedicated-host volume backend** — a volume that can outlive a
+      single node, the prerequisite for stateful rescheduling.
 
 ## 0.3.x — deploy ergonomics & platform
 
@@ -98,7 +148,6 @@ The acceptance scenario from `12`:
       multi-arch manifest builds (amd64+arm64 under one tag) for mixed clusters.
 - [ ] DNS-01 wildcard certificates behind a pluggable DNS-provider integration.
 - [ ] Per-host metrics / basic dashboards; Prometheus endpoint.
-- [ ] Persistent volumes / bind storage management for stateful services.
 - [ ] Scheduled jobs / one-off tasks (run a container to completion).
 
 ## Later / exploratory [future]
@@ -119,6 +168,14 @@ The acceptance scenario from `12`:
 - [ ] Built-in nameserver (auto-manage DNS records; coarse geo-steering — never
       the primary LB).
 - [ ] External secret providers (Vault, cloud KMS) behind the secrets interface.
+- [ ] **Object storage (S3/R2/MinIO)** — deliberately deferred out of the runtime
+      model (`16`/`17`): arrives as a **connect-and-surface-in-UI** convenience (an
+      external bucket shown like an external registry, creds injected), **not** a
+      provisioned/mounted resource type. The 0.1.0 storage pillar stays disk-only.
+- [ ] **Database major-version upgrades** (`pg_upgrade`) and online engine
+      migrations — operationally heavy; the pool model leaves room (`17`).
+- [ ] **Stateful rescheduling** of databases/volumes (depends on the network/
+      dedicated-host volume backend from 0.2.x).
 - [ ] Cloud-provider LB integration as an optional *front* layer for edge HA
       (e.g. Hetzner LB / floating IP).
 - [ ] Multi-tenant / team accounts, audit log, SSO/OAuth login.
@@ -138,3 +195,7 @@ The acceptance scenario from `12`:
 - Auth **token type is decoupled from acquisition** → browser/OAuth login later
   is additive.
 - Node behavior is **role composition** → scaling roles across nodes is config.
+- Resources are **typed + bound** → more DB engines, network volume backends, and
+  (eventually) object storage are new *types/backends* on the same model, not
+  bolt-ons; allocation is decoupled from declaration so "shared → dedicated" is a
+  knob, not a migration (`17`).

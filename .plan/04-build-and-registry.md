@@ -14,6 +14,12 @@ The payoff: **"deploy an existing image" and "build then deploy" are the same
 path** — one just skips the build. `skali deploy` from a Dockerfile builds then
 releases; a future `skali deploy --image nginx:1.27` is release-only.
 
+> **Builds are for the `application` resource only.** Managed **database** pools
+> (`17`) run **stock engine images** (`postgres:16`, …) that skalid pulls — they
+> never go through this build pipeline, and **volumes** have no image at all. So
+> "build" in this chapter always means application source → image; the data pillars
+> are provisioned, not built (`10`/`17`).
+
 ## Where the source comes from vs where the image goes
 
 These are two different things and must not be conflated:
@@ -113,9 +119,9 @@ image* normally serves every Environment. **Promotion** exploits this:
 > only works when per-environment differences are injected at **runtime**. Config
 > **baked at build time** (frontend bundlers inlining `NEXT_PUBLIC_*`, `VITE_*`,
 > `REACT_APP_*`; anything compiled in) makes images env-specific — a staging build
-> literally contains `staging.example.com`. Such Projects set `build_per_env`
-> (`05`): skali builds a separate image per Environment (correct, but no "saved
-> build"). Default is build-once-then-promote.
+> literally contains `staging.example.com`. Such an **application** sets
+> `build_per_env` (`05`): skali builds a separate image per Environment (correct,
+> but no "saved build"). Default is build-once-then-promote.
 
 ## Build execution: per-host capability + selectable location
 

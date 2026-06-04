@@ -29,6 +29,18 @@ registry:
   # External registries are connected as data via REST/UI (a Registry record),
   # not here — e.g. a separate release registry for promotion (04).
 
+storage:                      # volumes + the disk-safety floor (17)
+  volumes_dir: /var/lib/skali/volumes  # data path for app/pool volumes — keep on a
+                                       # partition ISOLATED from data_dir / host root
+  reserve: 10%                # headroom skalid refuses to provision into (or 5Gi, …)
+  # quota_backend: xfs        # enforcement mechanism (xfs/zfs project quota | loopback) — [impl]
+
+databases:                    # managed engine pools (Postgres in 0.1.0), supervised like the registry
+  postgres:
+    image: postgres:16
+    # shared pools host many logical DBs; dedicated allocation = one pool per DB (17)
+    # backups: written to a backup-target volume on a schedule (17)
+
 proxy:
   provider: traefik
   acme:
@@ -67,8 +79,10 @@ skalid
    pointed at the master's `/internal/traefik/http`.
 6. **worker role:** connect to the local Docker socket; ensure skali networks
    exist; install `DOCKER-USER` firewall rules (`02`); ensure the node Traefik
-   (Docker provider) is running; begin streaming Docker events upward / serving
-   `Inventory`.
+   (Docker provider) is running; **prepare the storage path** (`storage.volumes_dir`
+   + quota backend) and report free space + headroom; begin streaming Docker events
+   upward / serving `Inventory`. Any **database pools / volumes** pinned to this
+   node are reconciled (ensure-only, `03`/`17`) by the master once it connects.
 7. **master role (registry):** ensure the managed `registry:2` container is
    running (storage under the data dir, bound to the private net, cluster-CA
    auth); register it as the default `builtin` Registry record on first boot.
@@ -78,11 +92,12 @@ skalid
 10. Announce readiness; begin heartbeating (arch + roles + builder load, `07`) if
     not the master, or reconciling if master.
 
-## Managing Traefik & the registry
+## Managing Traefik, the registry & database pools
 
 skalid manages its infrastructure dependencies **as containers it owns** (creates,
 configures, supervises via the Docker SDK) rather than expecting the user to run
-them. The same pattern covers both:
+them. **The same pattern that runs Traefik and the registry runs the managed
+database pools** — they are skali-owned infrastructure, not user containers:
 
 - **Traefik** — edge and worker proxies are the same image with different enabled
   providers; skalid sets the entrypoints, ACME resolver, and provider config.
@@ -90,11 +105,20 @@ them. The same pattern covers both:
   dependency, on par with Traefik** (not optional, not `[soon]`). skalid owns its
   lifecycle: storage under the data dir, cluster-CA auth, restart policy, and the
   retention/GC passes (`04`). It backs the default `builtin` Registry.
+- **Database pools** — managed **`postgres`** engine containers (`17`), supervised
+  the same way: skalid runs them, pins them to a node, puts their data dir on a
+  **quota-enforced volume**, creates isolated logical databases + roles inside them
+  on demand, and runs the **scheduled backups**. Shared pools host many tenants;
+  dedicated allocation = one pool per database. Stateful, so ensure-only (`03`).
+- **Volumes** — skalid provisions app/pool volumes under `storage.volumes_dir`,
+  **enforces each `size_limit`**, and **reserves headroom** so a runaway can't
+  exhaust the host (`17`'s disk-safety floor).
 - An operator may additionally **connect an external registry** as data (a
   `Registry` record via REST/UI) — e.g. a separate release registry for promotion
   — but that's configuration, not a managed container.
 - Net effect: "install skalid, run `start`" yields a working node with proxy +
-  registry — no manual Traefik/registry setup.
+  registry + the ability to provision databases and quota'd storage — no manual
+  Traefik/registry/Postgres setup.
 
 ## Lifecycle & ops
 

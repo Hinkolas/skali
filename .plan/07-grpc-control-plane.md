@@ -41,6 +41,12 @@ service NodeService {
   rpc RemoveContainer(RemoveContainerRequest) returns (RemoveContainerReply);
   rpc InspectContainer(InspectContainerRequest) returns (InstanceStatus);
   rpc StreamLogs(StreamLogsRequest) returns (stream LogLine);
+
+  // Stateful data resources (17) — idempotent "ensure" semantics, never recreate
+  rpc EnsureVolume(EnsureVolumeRequest) returns (EnsureVolumeReply);     // quota-enforced disk
+  rpc EnsurePool(EnsurePoolRequest) returns (EnsurePoolReply);           // Postgres engine container
+  rpc EnsureDatabase(EnsureDatabaseRequest) returns (EnsureDatabaseReply); // logical DB + isolated role
+  rpc RunBackup(RunBackupRequest) returns (stream BackupLog);            // pg_dump → backup target
 }
 ```
 
@@ -49,7 +55,12 @@ carries the full `ContainerSpec` (image digest, env, labels incl. Traefik
 routing labels, network attachments, resource limits, health check).
 `BuildImageRequest` carries the **source reference** — a context-blob handle the
 builder fetches from the master (`04`), or `[soon]` a git ref to clone — plus the
-`target_platform`, build args, and target image/tag.
+`target_platform`, build args, and target image/tag. The data-resource requests
+carry the corresponding specs from `17`: `EnsureVolumeRequest` includes the
+**`size_limit`** (the quota the daemon enforces — disk-safety floor), `EnsurePool`
+the engine/version/data-volume, `EnsureDatabase` the db + isolated role to create
+in a named pool, and `RunBackup` the database + backup target. All are **idempotent
+ensures**, matching the stateful carve-out (`03`).
 
 **`HeartbeatReply` reports node facts the master schedules on:** the node's
 **architecture** (`amd64`/`arm64`, read from the local Docker engine), its enabled
