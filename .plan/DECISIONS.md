@@ -6,6 +6,50 @@ open**. Each entry is terse; the cited chapters carry the detail.
 
 ---
 
+## Control-plane database: skalid-managed Postgres `[soon]`; external `DATABASE_URL` is the default today
+
+Two ways skalid gets its control-plane Postgres:
+
+- **Self-managed `[soon]`:** once the container engine exists, `skalid` spins up
+  and supervises its own Postgres container (the same ownership pattern as
+  Traefik/registry) and connects to it — the operator manages no dev/prod DB
+  dependency at all. The published port is configurable via a server flag
+  (e.g. `--db-port 54321`).
+- **External (the default now, and always available):** point `DATABASE_URL` at
+  any existing Postgres — managed cloud DB, host-installed, or a shared dev
+  container. This is the only implemented path until the container engine
+  lands.
+
+Local dev uses the machine-global shared dev containers (`~/Taskfile.yml`,
+`task -g db:start`) — no per-project compose files. Project automation uses
+**go-task, not make** (`Taskfile.yml`).
+
+## Technical foundation = smbx port; `.plan` is authoritative for UX/DX only
+
+**Decided:** the implementation mirrors the smbx project (`~/Github/hinkolas/smbx`)
+— its tech stack, code structure, and auth system — refactored from
+username+password to **email+password**. The `.plan/` chapters remain authoritative
+for **UX/DX** (command trees, endpoint surface, product feel); where their
+*technical* choices conflict with smbx, smbx wins and the chapters get revised
+opportunistically as implementation proceeds.
+
+- **Stack:** Go + chi, **Postgres + pgx/sqlc/goose** (control plane; supersedes
+  SQLite in `05`), UUIDv7 ids (supersedes ULID pin in `16`), env-driven config via
+  go-envconfig/godotenv (supersedes the `skalid.yaml` config file in `10` for now),
+  slog + OTEL. Dev DB via `compose.yaml`; production later runs Postgres as a
+  skalid-supervised container — same ownership pattern as Traefik (`10`).
+- **Auth:** smbx system ported whole — opaque tokens (sha256-hashed, sliding 30d
+  sessions), argon2id, login rate limiting, full TOTP 2FA + backup codes + login
+  challenges, session management. Aligns with `08`'s opaque-token decision; the
+  `05` users/tokens DDL is superseded by smbx's users/accounts/sessions schema.
+- **Web UI = SvelteKit BFF (adapter-node), just another API client.** One
+  token-based API for all clients (web BFF, CLI, native `[future]`). The BFF owns
+  the browser cookie; the token never reaches browser JS. **Supersedes `13`'s
+  adapter-static + `go:embed` + "no Node on servers"** — the BFF becomes a
+  skalid-managed container `[soon]`, same supervision pattern as Traefik.
+- **Bootstrap:** no public signup; users created via `skalid user create`
+  (operator CLI, smbx pattern). Single-admin 0.1.0 unchanged.
+
 ## Platform scope: three resource pillars (app + database + storage)
 
 skali is a **hosting platform** (the Sevalla idea), not just an app deployer (the
@@ -35,9 +79,36 @@ type. (`16`/`17`/`15`.)
 The "runaway volume filled the host disk and killed every app" failure gets a hard
 answer: **every volume has an enforced `size_limit`**, volumes live on a partition
 isolated from host/control data, and skalid **reserves headroom** and refuses to
-provision past it. A runaway fills its own quota, blast radius of one. The
-enforcement *mechanism* (XFS/ZFS quota vs loopback vs monitor-and-act) is left open
-in `16`; the *invariant* is committed. (`17`/`10`.)
+provision past it. A runaway fills its own quota, blast radius of one. (`17`/`10`.)
+
+## Volume quota enforcement = XFS project quotas on a skali-managed filesystem
+
+**Decided** (was `16 §A`): the per-volume hard cap is enforced with **XFS project
+quotas**, on a filesystem **skali owns**.
+
+- **skali owns one XFS filesystem** for `storage.volumes_dir`: a native XFS
+  partition if the operator points `volumes_dir` at one, **else a managed image/LV
+  that skalid creates** (`mkfs.xfs`, mounted once with `prjquota`). So there is
+  **no operator disk-setup prerequisite** — "install skalid, get quota'd volumes."
+- **Each volume = its own XFS project ID + a hard block limit** (`size_limit`).
+  Writes past it get `ENOSPC` immediately (kernel-level, no polling race).
+  Resizing a volume = change the project quota number (online, trivial); growing
+  the whole store = grow the backing + `xfs_growfs`.
+- **One managed FS, not one loop device per volume** — so good performance for the
+  fsync-heavy database pools (whose data dirs are volumes too), and pool data may
+  optionally be placed on a **native XFS partition** for max throughput.
+- **Host floor** holds because the volumes FS is bounded and separate from root +
+  control data, with reserved headroom.
+- **Monitoring is always-on** (per-volume usage metrics + a breach alarm) as a
+  backstop, regardless of the hard cap.
+- **`quota_backend` stays pluggable** (`10`): native-XFS-partition is the same
+  backend with a different backing; **ZFS datasets / btrfs qgroups are `[future]`
+  backends** for operators who already run them.
+
+**Rejected:** loopback-per-volume (per-volume loop devices + double-layering hurt
+DB performance, clunky resize) as the *default* — kept conceptually as the
+zero-XFS fallback only if needed; **monitor-and-act alone** (soft — a fast writer
+overshoots between polls, fails the "never happen" bar). (`17`/`10`/`16`.)
 
 ## Stateful carve-out to the reconciler
 

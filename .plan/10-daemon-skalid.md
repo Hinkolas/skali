@@ -30,10 +30,13 @@ registry:
   # not here — e.g. a separate release registry for promotion (04).
 
 storage:                      # volumes + the disk-safety floor (17)
-  volumes_dir: /var/lib/skali/volumes  # data path for app/pool volumes — keep on a
-                                       # partition ISOLATED from data_dir / host root
+  volumes_dir: /var/lib/skali/volumes  # app/pool volumes. Point at a native XFS
+                                       # partition for best perf, else skalid creates
+                                       # a managed XFS filesystem here (no setup needed).
   reserve: 10%                # headroom skalid refuses to provision into (or 5Gi, …)
-  # quota_backend: xfs        # enforcement mechanism (xfs/zfs project quota | loopback) — [impl]
+  quota_backend: xfs          # XFS PROJECT QUOTAS (default, decided): one managed XFS
+                              # FS, one project-id+hard-limit per volume → ENOSPC at cap.
+                              # [future] backends: zfs (datasets), btrfs (qgroups).
 
 databases:                    # managed engine pools (Postgres in 0.1.0), supervised like the registry
   postgres:

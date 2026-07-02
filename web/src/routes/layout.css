@@ -1,32 +1,81 @@
 /**
- * Global theme, deliberately minimal for now: just enough dark design tokens
- * for the auth screens. The real design system lands with the UI design
- * phase. Everything is CSS-first Tailwind v4 — no tailwind.config.js.
+ * Global theme — CSS-first Tailwind v4, no tailwind.config.js.
+ *
+ * Token → utility naming: --color-surface-raised → bg-surface-raised,
+ * --color-service-db → text-service-db / bg-service-db, --shadow-glow →
+ * shadow-glow, --font-mono → font-mono. Tinted chips use opacity modifiers
+ * (bg-service-app/15, bg-status-success/10).
+ *
+ * Recipes used throughout:
+ * - primary button: bg-linear-135 from-accent-from to-accent-to
+ *   text-surface-base shadow-glow
+ * - active nav item: bg-accent/10 inset-ring inset-ring-accent/25
+ *   text-accent-nav
  */
 
 @import 'tailwindcss';
+@import '@fontsource-variable/instrument-sans';
+@import '@fontsource-variable/jetbrains-mono';
 
 @theme {
-	/* Surface Colors */
-	--color-surface-base: oklch(0.145 0.005 285);
-	--color-surface-raised: #0d0f11;
-	--color-surface-overlay: oklch(0.23 0.005 285);
+	--font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', monospace;
 
-	/* Border Colors */
-	--color-border-default: oklch(0.27 0.005 285);
-	--color-border-subtle: oklch(0.22 0.005 285);
+	/* Surfaces */
+	--color-surface-base: #0b0b0f; /* page background */
+	--color-surface-raised: #121216; /* sidebar, cards */
+	--color-surface-overlay: #17171c; /* switcher/user cards, modal panels */
+	--color-surface-input: #0d0d11; /* inputs, copy fields */
+	--color-surface-canvas: #0e0e12; /* graph canvas */
+	--color-surface-node: #14141a; /* graph node cards */
+	--color-surface-drawer: #16161c; /* graph detail drawer */
 
-	/* Text Colors */
-	--color-text-primary: oklch(0.985 0 0);
-	--color-text-secondary: oklch(0.65 0.01 285);
-	--color-text-muted: oklch(0.55 0.01 285);
+	/* Borders (white-alpha ramp) */
+	--color-border-subtle: rgb(255 255 255 / 0.06); /* row dividers */
+	--color-border-default: rgb(255 255 255 / 0.07); /* card borders */
+	--color-border-raised: rgb(255 255 255 / 0.09); /* switcher cards, graph nodes */
+	--color-border-strong: rgb(255 255 255 / 0.12); /* inputs, secondary buttons */
 
-	/* Accent Colors */
-	--color-accent: oklch(0.62 0.19 260);
-	--color-accent-hover: oklch(0.55 0.19 260);
+	/* Text ramp — all six steps are load-bearing, don't collapse */
+	--color-text-primary: #ececf1; /* headings, values */
+	--color-text-secondary: #c9cad4; /* emphasized meta, service rows */
+	--color-text-tertiary: #a9aab6; /* form labels, inactive nav */
+	--color-text-muted: #9899a6; /* subtitles, table cells */
+	--color-text-faint: #84858f; /* mono meta, back links */
+	--color-text-ghost: #64656f; /* section headers, placeholders */
 
-	/* Status Colors */
-	--color-status-danger: oklch(0.64 0.21 25);
+	/* Accent (violet) */
+	--color-accent: #8b7cf6;
+	--color-accent-light: #a99bf8; /* AP badges, graph port labels */
+	--color-accent-nav: #cfc6fb; /* active nav text, avatar initials */
+	--color-accent-from: #9d8bfa; /* gradient start */
+	--color-accent-to: #7359f0; /* gradient end */
+
+	/* Status */
+	--color-status-success: #4ec98c;
+	--color-status-warning: #d9a54f;
+	--color-status-danger: #e0596e;
+
+	/* Service types */
+	--color-service-app: #a99bf8;
+	--color-service-db: #68c4d8;
+	--color-service-cache: #d69ccd;
+	--color-service-storage: #d9a54f;
+	--color-service-ingress: #c9cad4;
+
+	/* Violet glows for primary buttons / logo tiles */
+	--shadow-glow: 0 0 18px rgb(124 98 242 / 0.28);
+	--shadow-glow-lg: 0 0 26px rgb(124 98 242 / 0.4);
+}
+
+/* Page-level radial glows (positioned gradients are awkward as utilities) */
+@utility bg-glow-app {
+	background: #0b0b0f
+		radial-gradient(900px 600px at 10% -5%, rgb(124 98 242 / 0.09), transparent 60%);
+}
+@utility bg-glow-login {
+	background: #0b0b0f
+		radial-gradient(560px 380px at 50% 12%, rgb(124 98 242 / 0.13), transparent 65%);
 }
 
 html,
@@ -34,4 +83,15 @@ body {
 	height: 100%;
 	background-color: var(--color-surface-base);
 	color: var(--color-text-primary);
+	font-family: var(--font-sans);
+	overscroll-behavior: none;
+	-webkit-font-smoothing: antialiased;
+}
+
+::selection {
+	background: rgb(139 124 246 / 0.35);
+}
+
+::placeholder {
+	color: var(--color-text-ghost);
 }

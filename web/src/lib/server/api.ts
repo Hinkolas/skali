@@ -51,7 +51,10 @@ export function clearSessionCookie(cookies: Cookies): void {
  * the real device (session lists) and rate limits key on the real client IP —
  * not the BFF's. The API trusts X-Real-IP because it sits behind the BFF.
  */
-export function clientMeta(request: Request, getClientAddress: () => string): Record<string, string> {
+export function clientMeta(
+	request: Request,
+	getClientAddress: () => string
+): Record<string, string> {
 	const headers: Record<string, string> = {};
 	const ua = request.headers.get('user-agent');
 	if (ua) headers['user-agent'] = ua;

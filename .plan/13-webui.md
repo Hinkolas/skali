@@ -1,5 +1,12 @@
 # 13 — Web UI
 
+> **SUPERSEDED (see `DECISIONS.md`, "Technical foundation = smbx port"):** the web
+> UI is now a **SvelteKit BFF (adapter-node)** — just another client of the one
+> token-based API, owning the browser session cookie and proxying `/api/v1/*` to
+> the daemon; later it runs as a skalid-managed container (same pattern as
+> Traefik). The adapter-static + `go:embed` + "no Node on servers" design below no
+> longer applies; the **feature surface** sections remain valid UX guidance.
+
 ## Stack & embedding
 
 - **SvelteKit** with **`adapter-static`** → compiled to static assets.

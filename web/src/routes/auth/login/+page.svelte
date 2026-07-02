@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
+	import { toast } from '$lib/stores/toast.svelte';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
@@ -21,7 +22,7 @@
 	});
 
 	const inputClass =
-		'h-10 w-full rounded-md border border-border-default bg-surface-base px-3 text-[14px] text-text-primary transition-colors placeholder:text-text-muted focus:border-accent focus:bg-surface-overlay focus:outline-none';
+		'w-full rounded-[10px] border border-border-strong bg-surface-input px-3.25 py-2.75 text-[13.5px] text-text-primary transition-colors focus:border-accent/50 focus:outline-none';
 
 	const submitEnhance = () => {
 		submitting = true;
@@ -36,25 +37,20 @@
 	<title>Sign in — skali</title>
 </svelte:head>
 
-<div class="rounded-xl border border-border-default bg-surface-raised p-7 shadow-2xl">
+<div class="bg-surface-raised border-border-raised flex flex-col gap-3.5 rounded-2xl border p-6.5">
 	{#if totpStep}
 		<div class="flex items-center gap-2.5">
-			<ShieldCheck size={20} strokeWidth={1.75} class="text-accent" />
-			<h1 class="text-[20px] font-semibold text-text-primary">Two-factor code</h1>
+			<ShieldCheck size={20} strokeWidth={1.75} class="text-accent-light" />
+			<h2 class="text-text-primary text-[16px] font-semibold">Two-factor code</h2>
 		</div>
-		<p class="mt-1 text-[13.5px] text-text-muted">
+		<p class="text-text-muted -mt-1.5 text-[13px]">
 			Enter the 6-digit code from your authenticator app, or one of your backup codes.
 		</p>
 
-		<form
-			method="post"
-			action="?/verify"
-			use:enhance={submitEnhance}
-			class="mt-6 flex flex-col gap-4"
-		>
+		<form method="post" action="?/verify" use:enhance={submitEnhance} class="flex flex-col gap-3.5">
 			<input type="hidden" name="challenge_token" value={form?.challengeToken ?? ''} />
 			<label class="flex flex-col gap-1.5">
-				<span class="text-[13px] font-medium text-text-secondary">Code</span>
+				<span class="text-text-tertiary text-[12.5px] font-medium">Code</span>
 				<input
 					bind:this={codeInput}
 					type="text"
@@ -64,13 +60,13 @@
 					autocomplete="one-time-code"
 					spellcheck="false"
 					placeholder="123456"
-					class="{inputClass} tracking-[0.3em]"
+					class="{inputClass} font-mono tracking-[0.3em]"
 				/>
 			</label>
 
 			{#if form?.message}
 				<div
-					class="rounded-md border border-status-danger/40 bg-status-danger/10 px-3 py-2 text-[13px] text-status-danger"
+					class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[10px] border px-3 py-2 text-[13px]"
 				>
 					{form.message}
 				</div>
@@ -79,7 +75,7 @@
 			<button
 				type="submit"
 				disabled={submitting}
-				class="mt-2 inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md bg-accent text-[14px] font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-default disabled:opacity-70"
+				class="from-accent-from to-accent-to text-surface-base shadow-glow mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-linear-135 p-3 text-[14px] font-semibold transition-[filter] hover:brightness-108 disabled:cursor-default disabled:opacity-70"
 			>
 				{#if submitting}
 					<LoaderCircle size={16} strokeWidth={2.25} class="animate-spin" />
@@ -90,27 +86,19 @@
 			</button>
 		</form>
 
-		<p class="mt-5 text-center text-[13px] text-text-secondary">
+		<p class="text-center text-[13px]">
 			<a
 				href={resolve('/auth/login')}
 				data-sveltekit-reload
-				class="font-medium text-accent hover:text-accent-hover"
+				class="text-text-faint hover:text-text-secondary font-medium transition-colors"
 			>
 				Back to sign in
 			</a>
 		</p>
 	{:else}
-		<h1 class="text-[20px] font-semibold text-text-primary">Sign in</h1>
-		<p class="mt-1 text-[13.5px] text-text-muted">Welcome back — sign in to your cluster.</p>
-
-		<form
-			method="post"
-			action="?/login"
-			use:enhance={submitEnhance}
-			class="mt-6 flex flex-col gap-4"
-		>
+		<form method="post" action="?/login" use:enhance={submitEnhance} class="flex flex-col gap-3.5">
 			<label class="flex flex-col gap-1.5">
-				<span class="text-[13px] font-medium text-text-secondary">Email</span>
+				<span class="text-text-tertiary text-[12.5px] font-medium">Email</span>
 				<input
 					bind:this={emailInput}
 					type="email"
@@ -119,26 +107,30 @@
 					autocomplete="username"
 					spellcheck="false"
 					value={form?.email ?? ''}
-					placeholder="you@example.com"
+					placeholder="you@company.dev"
 					class={inputClass}
 				/>
 			</label>
 
 			<label class="flex flex-col gap-1.5">
-				<span class="text-[13px] font-medium text-text-secondary">Password</span>
+				<span class="text-text-tertiary flex text-[12.5px] font-medium">
+					Password
+					<span class="text-text-faint ml-auto cursor-pointer text-[12px] font-normal">Forgot?</span
+					>
+				</span>
 				<input
 					type="password"
 					name="password"
 					required
 					autocomplete="current-password"
-					placeholder="••••••••"
+					placeholder="••••••••••"
 					class={inputClass}
 				/>
 			</label>
 
 			{#if form?.message}
 				<div
-					class="rounded-md border border-status-danger/40 bg-status-danger/10 px-3 py-2 text-[13px] text-status-danger"
+					class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[10px] border px-3 py-2 text-[13px]"
 				>
 					{form.message}
 				</div>
@@ -147,7 +139,7 @@
 			<button
 				type="submit"
 				disabled={submitting}
-				class="mt-2 inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md bg-accent text-[14px] font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-default disabled:opacity-70"
+				class="from-accent-from to-accent-to text-surface-base shadow-glow mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-linear-135 p-3 text-[14px] font-semibold transition-[filter] hover:brightness-108 disabled:cursor-default disabled:opacity-70"
 			>
 				{#if submitting}
 					<LoaderCircle size={16} strokeWidth={2.25} class="animate-spin" />
@@ -155,6 +147,20 @@
 				{:else}
 					<span>Sign in</span>
 				{/if}
+			</button>
+
+			<div class="text-text-ghost flex items-center gap-2.5 text-[11px]">
+				<span class="bg-border-default h-px flex-1"></span>
+				or
+				<span class="bg-border-default h-px flex-1"></span>
+			</div>
+
+			<button
+				type="button"
+				onclick={() => toast.info('Access tokens are coming soon')}
+				class="border-border-strong text-text-secondary cursor-pointer rounded-[10px] border p-2.75 text-center text-[13.5px] font-medium transition-colors hover:bg-white/4"
+			>
+				Use access token
 			</button>
 		</form>
 	{/if}

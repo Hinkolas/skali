@@ -1,27 +1,25 @@
 <script lang="ts">
-	import Server from '@lucide/svelte/icons/server';
-
 	let { children } = $props();
 </script>
 
-<div
-	class="relative flex min-h-screen items-center justify-center overflow-hidden bg-surface-base px-4 py-12"
->
-	<div
-		class="pointer-events-none absolute inset-0 z-0 opacity-[0.07]"
-		style="background-image: radial-gradient(#71717a 1px, transparent 1px); background-size: 24px 24px;"
-	></div>
-
-	<div class="relative z-10 w-full max-w-md">
-		<div class="mb-6 flex flex-col items-center gap-2.5">
+<div class="bg-glow-login flex min-h-screen items-center justify-center px-4 py-12">
+	<div class="flex w-[380px] flex-col">
+		<div class="mb-6.5 flex flex-col items-center gap-3.5">
 			<div
-				class="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-overlay text-accent shadow-sm ring-1 ring-border-default"
+				class="from-accent-from to-accent-to text-surface-base shadow-glow-lg grid h-10.5 w-10.5 place-items-center rounded-xl bg-linear-135 text-[22px] font-bold"
 			>
-				<Server class="h-6 w-6" />
+				s
 			</div>
-			<span class="text-sm font-medium text-text-secondary">skali</span>
+			<h1 class="text-text-primary text-[20px] font-semibold tracking-[-0.015em]">
+				Sign in to skali
+			</h1>
+			<div class="font-mono text-text-faint text-[11px]">skali.acme.dev · 3 nodes</div>
 		</div>
 
 		{@render children()}
+
+		<div class="font-mono text-text-ghost mt-5.5 text-center text-[10.5px]">
+			skali v0.6.1 · self-hosted · <span class="text-text-faint">$ skali login</span>
+		</div>
 	</div>
 </div>

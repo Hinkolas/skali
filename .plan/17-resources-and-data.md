@@ -130,17 +130,29 @@ host disk and every app on the box died; this should never happen."* The floor:
    `skalid`, the control DB, or sibling apps on other partitions.
 
 So a runaway fills *its own quota* and that app degrades — blast radius of one,
-not the whole node. The floor is committed for 0.1.0; the **enforcement
-mechanism** is an implementation choice with tradeoffs (left open in `16`):
+not the whole node.
 
-- **filesystem project quotas** (XFS/ZFS/btrfs) on the data dir — most robust,
-  needs a quota-capable FS;
-- **fixed-size loopback-backed volumes** — a hard cap on any FS, at some overhead;
-- **usage monitoring + enforcement action** (alert, then set read-only) — a
-  softer backstop, useful alongside either of the above.
+**Enforcement mechanism: XFS project quotas on a skali-managed filesystem**
+(decided, `DECISIONS.md`):
 
-Whatever the mechanism, the *invariant* (a volume can't exceed its quota; the host
-keeps headroom) holds.
+- skali **owns one XFS filesystem** for `storage.volumes_dir` — a native XFS
+  partition if you point `volumes_dir` at one, **else a managed image/LV skalid
+  creates** (`mkfs.xfs`, mounted with `prjquota`). No operator disk setup required.
+- **Each volume is an XFS project ID with a hard block limit.** Exceeding it →
+  `ENOSPC` at the kernel, instantly — no polling window to overshoot. Resizing a
+  volume is just changing the quota number (online); growing the store is
+  `xfs_growfs`.
+- **One managed FS, not a loop device per volume** — so the fsync-heavy database
+  pools (their data dirs are volumes too) keep good performance, and pool data can
+  optionally sit on a **native XFS partition** for max throughput.
+- **Usage monitoring is always-on** (per-volume metrics + a breach alarm) as a
+  backstop on top of the hard cap.
+- The `quota_backend` knob (`10`) stays pluggable: **ZFS datasets / btrfs qgroups
+  are `[future]` backends** for operators who already run them; loopback-per-volume
+  is kept only as a conceptual zero-XFS fallback.
+
+The *invariant* (a volume can't exceed its quota; the host keeps headroom) holds
+under this mechanism with no setup burden on the operator.
 
 ### Volume backends `[soon]`
 

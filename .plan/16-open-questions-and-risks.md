@@ -6,38 +6,31 @@ short. Each item notes a recommendation so we have a default.
 
 ## New & open from the resource/data work (`17`)
 
-### A. Volume quota enforcement mechanism
-The disk-safety *invariant* is decided (`DECISIONS.md`/`17`): every volume has an
-enforced `size_limit`, host headroom is reserved. **Open: the mechanism.** Options:
-**filesystem project quotas** (XFS/ZFS/btrfs — robust, needs a quota-capable FS on
-the data path), **fixed-size loopback-backed volumes** (hard cap on any FS, some
-overhead), or **monitor-and-act** (measure usage, then alert / set read-only — a
-soft backstop). **Recommendation:** target XFS/ZFS project quotas where available,
-loopback as the portable fallback, monitoring on top regardless. *Decide what we
-can assume about operators' filesystems.*
+> **Volume quota enforcement** is now **decided** → see `DECISIONS.md` ("Volume
+> quota enforcement = XFS project quotas on a skali-managed filesystem") and `17`.
 
-### B. Pool placement & scheduling policy
+### A. Pool placement & scheduling policy
 Where does a new **shared** pool land, and when do we spin up another vs. pack more
 databases onto an existing one? **Open.** **Recommendation:** 0.1.0 = one shared
 pool per engine on the (single) node, simple "pack until a configurable per-pool DB
 cap, then create another"; richer bin-packing / load-aware placement `[soon]`.
 Dedicated/`dedicated_host` allocations are explicit and bypass this.
 
-### C. Connection pooling for shared pools
+### B. Connection pooling for shared pools
 Many small apps × a few connections each can exhaust a Postgres connection budget
 on a shared pool. **Open: do we need pgbouncer in 0.1.0 or `[soon]`?**
 **Recommendation:** ship 0.1.0 with sane per-database connection caps; add a
 pgbouncer-style pooler in front of shared pools in `0.2.x` (`15`). *Watch this if
 early bundles are connection-heavy.*
 
-### D. Backup target for 0.1.0
+### C. Backup target for 0.1.0
 Scheduled `pg_dump` has to write *somewhere*. **Open:** a local backup-target
 volume only (simple, but same-node ⇒ weak DR) vs. requiring an off-node target.
 **Recommendation:** 0.1.0 = a dedicated local backup volume (better than nothing,
 honest about its DR limits); off-node / off-site targets `[soon]` (`15`). Document
 that same-node backups don't survive node loss.
 
-### E. Cross-shard convergence: when is the picture "complete"?
+### D. Cross-shard convergence: when is the picture "complete"?
 In a polyrepo bundle (`11`), the master only sees a shard's declarations when that
 shard `apply`s. So a `binds: [database: main]` reference can be "dangling" simply
 because the *defining* shard hasn't applied **yet**, not because it's wrong.
@@ -48,7 +41,7 @@ yet applied," and let `skali config validate` (`[soon]`) check the known
 cross-shard picture. *Revisit if ordering between repo deploys becomes painful (CI
 may need a defined apply order, or a "define-first" convention).*
 
-### F. Database engine version upgrades
+### E. Database engine version upgrades
 Major-version upgrades (`pg_upgrade`) of a pool are operationally heavy and risk
 downtime/data. **Decided out of 0.1.0** (`15` `[future]`); **open** how we do them
 safely later (in-place vs. dump-restore-into-new-pool vs. logical replication
