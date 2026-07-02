@@ -1,0 +1,89 @@
+# skali
+
+Self-hostable hosting platform: deploy an app from a Dockerfile to a live
+HTTPS URL on your own hardware, with managed Postgres and quota-enforced
+volumes declared alongside it. Design docs live in [`.plan/`](.plan/) —
+authoritative for UX/DX; the technical foundation mirrors the smbx
+architecture (Go + chi + Postgres, one token-based API for every client,
+SvelteKit BFF).
+
+**Status:** milestone 1 — auth + API shape. One API (`/v1`), three consumers:
+
+- **`skalid`** — the daemon. Serves the REST API; also carries the operator
+  commands (`user`, `migrate`).
+- **`skali`** — the CLI. A pure REST client with kubectl-style contexts.
+- **`web/`** — SvelteKit BFF (adapter-node). Owns the browser session cookie
+  and proxies `/api/v1/*` to the daemon; the bearer token never reaches
+  browser JavaScript. Later it runs as a skalid-managed container.
+
+Auth is email+password (argon2id) with optional TOTP 2FA and backup codes;
+sessions are opaque bearer tokens (sha256-hashed at rest, 30-day sliding
+expiry, instant revocation). There is no signup endpoint — users are created
+by the operator.
+
+## Quickstart (dev)
+
+Requirements: Go 1.26+, Node 22+, [go-task](https://taskfile.dev), Docker
+(for the shared dev Postgres), sqlc (only when changing queries).
+
+The control-plane database is an **external Postgres by default**: skalid
+connects to whatever `DATABASE_URL` points at (managed DB, host install, or
+the machine-global shared dev container from `~/Taskfile.yml`). Later, skalid
+optionally provisions its own Postgres through its container engine
+(`--db-port` etc.) so no dependency needs managing at all — see
+`.plan/DECISIONS.md`.
+
+```sh
+# 1. Environment (DATABASE_URL, AUTH_SECRET, …)
+cp .env.example .env    # then set AUTH_SECRET: openssl rand -base64 32
+
+# 2. Shared dev Postgres + skali's database (idempotent)
+task db
+
+# 3. Migrate + create the admin user
+go run ./cmd/skalid migrate up
+go run ./cmd/skalid user create --email you@example.com
+
+# 4. Run the API (:7070) — ensures the dev db first
+task dev
+
+# 5. CLI
+go run ./cmd/skali auth login --master http://localhost:7070
+go run ./cmd/skali auth whoami
+
+# 6. Web UI (vite dev server on :5173, BFF → API)
+cd web && cp .env.example .env && npm install
+task dev:web
+```
+
+The OpenAPI contract is served at `GET /openapi.yaml` and lives in
+[`api/openapi.yaml`](api/openapi.yaml); a router-walk test keeps it honest.
+
+## Layout
+
+```
+api/           OpenAPI 3.1 contract (embedded, served by the daemon)
+cmd/skalid     daemon: serve (default) | user | migrate
+cmd/skali      client CLI: auth, context
+migrations/    goose migrations (embedded; also sqlc's schema source)
+query/         sqlc query sources → generated into internal/store
+internal/
+  api/         HTTP layer: router, middleware, error envelope, handlers
+  auth/        auth service: argon2id, opaque sessions, TOTP 2FA, rate limits
+  client/      typed REST client used by cmd/skali
+  cliconfig/   ~/.config/skali/config.yaml contexts
+  config/      env-driven config (godotenv + envconfig)
+  obs/         slog + OpenTelemetry (env-only, zero egress by default)
+  store/       pgx pool/tx glue + sqlc-generated queries
+  testdb/      ephemeral Postgres database per test
+web/           SvelteKit BFF (adapter-node)
+```
+
+## Tests
+
+```sh
+# DB-backed tests create ephemeral databases on this server per test:
+export TEST_DATABASE_URL=postgres://dev:dev@localhost:5432/dev?sslmode=disable
+task test
+cd web && npm run check
+```

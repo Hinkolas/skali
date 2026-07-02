@@ -1,0 +1,448 @@
+openapi: 3.1.0
+info:
+  title: skali API
+  description: |
+    Client-facing API of skali. Authentication is email+password with
+    optional TOTP two-factor; sessions are opaque bearer tokens. The same
+    API serves every client: the web BFF, the `skali` CLI, and future
+    native apps.
+
+    There is no registration endpoint: users are created by the server
+    operator (`skalid user create`). All error responses share the `Error`
+    envelope; clients should branch on `error.code`, not on messages.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    identifier: Apache-2.0
+servers:
+  - url: /
+    description: Same host the spec is served from.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/auth/login:
+    post:
+      operationId: login
+      summary: Log in with email and password
+      description: |
+        Returns a `session` when the user has no second factor, or a
+        `challenge` when 2FA is enabled — exchange it with a code at
+        `/v1/auth/2fa/verify` within its expiry. Exactly one of the two
+        properties is present.
+      security: []
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 254
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Password accepted.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SessionCreatedResponse"
+                  - $ref: "#/components/schemas/ChallengeResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/2fa/verify:
+    post:
+      operationId: verifyTwoFactor
+      summary: Complete a 2FA login
+      description: |
+        Exchanges a login challenge plus a 6-digit TOTP code — or a backup
+        code — for a session. Challenges are single-use, expire after a few
+        minutes, and are deleted after 5 failed codes.
+      security: []
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_token, code]
+              properties:
+                challenge_token:
+                  type: string
+                code:
+                  type: string
+                  description: 6-digit TOTP code or a backup code.
+      responses:
+        "200":
+          description: Second factor accepted; session created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCreatedResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke the current session
+      tags: [auth]
+      responses:
+        "204":
+          description: Session revoked.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/auth/session:
+    get:
+      operationId: getCurrentSession
+      summary: Get the authenticated user and session
+      tags: [auth]
+      responses:
+        "200":
+          description: The caller's user and session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, session]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  session: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/auth/sessions:
+    get:
+      operationId: listSessions
+      summary: List active sessions
+      tags: [auth]
+      responses:
+        "200":
+          description: All unexpired sessions of the caller, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/auth/sessions/{id}:
+    delete:
+      operationId: revokeSession
+      summary: Revoke one of the caller's sessions
+      tags: [auth]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Session revoked.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/auth/password:
+    post:
+      operationId: changePassword
+      summary: Change the password
+      description: Revokes every other session; only the requesting one survives.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        "204":
+          description: Password changed.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/auth/2fa/enable:
+    post:
+      operationId: enableTwoFactor
+      summary: Start TOTP enrollment
+      description: |
+        Returns the TOTP secret, its otpauth:// URI (QR-code source), and the
+        backup codes — none of which are ever retrievable again. Enrollment
+        stays pending, and login stays password-only, until the code is
+        confirmed at `/v1/auth/2fa/confirm`. Calling this again while pending
+        replaces the enrollment.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Pending enrollment created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TwoFactorEnrollment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/auth/2fa/confirm:
+    post:
+      operationId: confirmTwoFactor
+      summary: Activate a pending TOTP enrollment
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: 6-digit TOTP code from the authenticator app.
+      responses:
+        "204":
+          description: Two-factor is now enforced at login.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/auth/2fa/disable:
+    post:
+      operationId: disableTwoFactor
+      summary: Disable two-factor authentication
+      description: |
+        Requires the password plus a valid TOTP or backup code when the
+        enrollment is confirmed; a pending enrollment is cancelled with the
+        password alone (send an empty `code`).
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, code]
+              properties:
+                password:
+                  type: string
+                code:
+                  type: string
+      responses:
+        "204":
+          description: Two-factor disabled.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/auth/2fa/backup-codes:
+    post:
+      operationId: regenerateBackupCodes
+      summary: Regenerate backup codes
+      description: Replaces all existing backup codes, used and unused.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Fresh backup codes; the previous ones are dead.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [backup_codes]
+                properties:
+                  backup_codes:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque session token from login / 2FA verify.
+
+  responses:
+    BadRequest:
+      description: Malformed request body or failed validation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing/invalid token, wrong credentials, or wrong code.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: The resource does not exist or belongs to another user.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: The resource is in a state that does not allow the operation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too many attempts; retry after the window passes.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    User:
+      type: object
+      required: [id, email, name, two_factor_enabled, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        two_factor_enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    Session:
+      type: object
+      description: A session as listed in session management; never carries the token.
+      required: [id, expires_at, ip_address, user_agent, created_at, current]
+      properties:
+        id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+          description: True for the session the request authenticated with.
+
+    SessionCreated:
+      type: object
+      description: A freshly created session. The token is shown exactly once.
+      required: [token, expires_at, user]
+      properties:
+        token:
+          type: string
+          description: Opaque bearer token; store it securely.
+        expires_at:
+          type: string
+          format: date-time
+        user: { $ref: "#/components/schemas/User" }
+
+    SessionCreatedResponse:
+      type: object
+      required: [session]
+      properties:
+        session: { $ref: "#/components/schemas/SessionCreated" }
+
+    Challenge:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+          description: Single-use challenge token for /v1/auth/2fa/verify.
+        expires_at:
+          type: string
+          format: date-time
+
+    ChallengeResponse:
+      type: object
+      required: [challenge]
+      properties:
+        challenge: { $ref: "#/components/schemas/Challenge" }
+
+    TwoFactorEnrollment:
+      type: object
+      required: [secret, otpauth_uri, backup_codes]
+      properties:
+        secret:
+          type: string
+          description: Base32 TOTP secret, for manual authenticator entry.
+        otpauth_uri:
+          type: string
+          description: otpauth:// URI to render as a QR code.
+        backup_codes:
+          type: array
+          items: { type: string }
+          description: Single-use recovery codes; shown only once.
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - bad_request
+                - invalid_credentials
+                - invalid_token
+                - invalid_code
+                - not_found
+                - conflict
+                - rate_limited
+                - internal
+            message:
+              type: string

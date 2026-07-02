@@ -1,0 +1,51 @@
+# Project tasks. Dev dependencies come from the machine-global setup
+# (~/Taskfile.yml): one shared dev-postgres container, one database per
+# project — `task db` provisions skali's. Later, skalid manages its own
+# control-plane Postgres through its container engine and this goes away
+# entirely (see .plan/DECISIONS.md).
+
+version: "3"
+
+silent: true
+
+# The binaries load .env themselves (godotenv); this makes it reach bare
+# `go test` too (TEST_DATABASE_URL).
+dotenv: [".env"]
+
+vars:
+  DB_NAME: skali
+
+tasks:
+  build:
+    desc: Build both binaries into bin/
+    cmds:
+      - go build -o bin/skalid ./cmd/skalid
+      - go build -o bin/skali ./cmd/skali
+
+  generate:
+    desc: Regenerate the sqlc store from migrations/ + query/
+    cmds:
+      - sqlc generate
+
+  test:
+    desc: Run the Go test suite (DB tests need TEST_DATABASE_URL, see .env.example)
+    cmds:
+      # web/ is excluded: node_modules occasionally ships stray Go packages.
+      - go test $(go list ./... | grep -v '/web/')
+
+  db:
+    desc: Ensure the shared dev Postgres is up and skali's database exists
+    cmds:
+      - task -g db:start DB_NAME={{.DB_NAME}}
+
+  dev:
+    desc: Run the daemon against the shared dev Postgres
+    deps: [db]
+    cmds:
+      - go run ./cmd/skalid serve
+
+  dev:web:
+    desc: Run the SvelteKit BFF dev server
+    dir: web
+    cmds:
+      - npm run dev

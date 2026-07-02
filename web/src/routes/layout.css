@@ -1,0 +1,37 @@
+/**
+ * Global theme, deliberately minimal for now: just enough dark design tokens
+ * for the auth screens. The real design system lands with the UI design
+ * phase. Everything is CSS-first Tailwind v4 — no tailwind.config.js.
+ */
+
+@import 'tailwindcss';
+
+@theme {
+	/* Surface Colors */
+	--color-surface-base: oklch(0.145 0.005 285);
+	--color-surface-raised: #0d0f11;
+	--color-surface-overlay: oklch(0.23 0.005 285);
+
+	/* Border Colors */
+	--color-border-default: oklch(0.27 0.005 285);
+	--color-border-subtle: oklch(0.22 0.005 285);
+
+	/* Text Colors */
+	--color-text-primary: oklch(0.985 0 0);
+	--color-text-secondary: oklch(0.65 0.01 285);
+	--color-text-muted: oklch(0.55 0.01 285);
+
+	/* Accent Colors */
+	--color-accent: oklch(0.62 0.19 260);
+	--color-accent-hover: oklch(0.55 0.19 260);
+
+	/* Status Colors */
+	--color-status-danger: oklch(0.64 0.21 25);
+}
+
+html,
+body {
+	height: 100%;
+	background-color: var(--color-surface-base);
+	color: var(--color-text-primary);
+}

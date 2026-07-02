@@ -1,0 +1,52 @@
+# ==============================================================================
+# Root-level ignores. Framework-specific rules live in subdirectory .gitignore
+# files (e.g. web/.gitignore for SvelteKit).
+# ==============================================================================
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Secrets & environment ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+credentials.*
+
+# --- Editor / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# --- Logs & temp ---
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# --- Go build output ---
+/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# --- Go workspace files ---
+go.work
+go.work.sum
