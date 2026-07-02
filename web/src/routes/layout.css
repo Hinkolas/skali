@@ -68,14 +68,34 @@
 	--shadow-glow-lg: 0 0 26px rgb(124 98 242 / 0.4);
 }
 
-/* Page-level radial glows (positioned gradients are awkward as utilities) */
+/* Page-level radial glows. Both originate from the skali logo tile: the app
+   shell anchors it at the sidebar logo's viewport position (~43px from the
+   top-left corner); the login page positions a bg-glow-halo element centered
+   on its logo. */
 @utility bg-glow-app {
 	background: #0b0b0f
-		radial-gradient(900px 600px at 10% -5%, rgb(124 98 242 / 0.09), transparent 60%);
+		radial-gradient(
+			900px 600px at 43px 43px,
+			rgb(124 98 242 / 0.09) 0%,
+			rgb(124 98 242 / 0.055) 20%,
+			rgb(124 98 242 / 0.029) 40%,
+			rgb(124 98 242 / 0.012) 60%,
+			rgb(124 98 242 / 0.003) 80%,
+			rgb(124 98 242 / 0) 100%
+		);
 }
-@utility bg-glow-login {
-	background: #0b0b0f
-		radial-gradient(560px 380px at 50% 12%, rgb(124 98 242 / 0.13), transparent 65%);
+/* Eased stops: a two-stop radial fades linearly, which leaves a visible ring
+   where it ends (Mach banding). These approximate a smooth ease-out curve. */
+@utility bg-glow-halo {
+	background: radial-gradient(
+		closest-side,
+		rgb(124 98 242 / 0.13) 0%,
+		rgb(124 98 242 / 0.08) 20%,
+		rgb(124 98 242 / 0.042) 40%,
+		rgb(124 98 242 / 0.017) 60%,
+		rgb(124 98 242 / 0.004) 80%,
+		rgb(124 98 242 / 0) 100%
+	);
 }
 
 html,
