@@ -40,15 +40,22 @@
 		return () => clearInterval(t);
 	});
 
-	// --- selection: the ?node= URL param is the single source of truth -------
-	// Shallow replaceState never re-runs loads, adds no history entries, and
-	// doesn't fire afterNavigate (so the SidePanel host's route-close can't
-	// misfire). Deep links restore the panel after hydration.
-	const selected = $derived(page.url.searchParams.get('node'));
+	// --- selection: local state, mirrored into ?node= for deep links ---------
+	// page.url CANNOT be the reactive source of truth here: shallow
+	// replaceState updates the address bar but never reassigns page.url (kit
+	// clones the old page object), so a $derived on its searchParams only sees
+	// the param after a full load. Local state drives the panel; replaceState
+	// mirrors it into the URL without re-running loads, adding history
+	// entries, or firing afterNavigate (so the SidePanel host's route-close
+	// can't misfire). Deep links restore the panel via the init value.
+	let selected = $state(page.url.searchParams.get('node'));
 
 	function select(id: string | null) {
-		const url = new URL(page.url);
-		if (id === null && !url.searchParams.has('node')) return; // no-op (e.g. onClose after close)
+		if (selected === id) return; // no-op (e.g. onClose after close)
+		selected = id;
+		// location, not page.url: page.url goes stale after the first shallow
+		// replaceState and would resurrect the old param state.
+		const url = new URL(location.href);
 		if (id) url.searchParams.set('node', id);
 		else url.searchParams.delete('node');
 		replaceState(url, {});
