@@ -11,6 +11,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { ASSIGNABLE_NODE_ROLES, type Node, type NodeRole } from '$lib/types/nodes';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	let { node, close }: { node: Node; close: (updated?: boolean) => void } = $props();
 
@@ -61,10 +62,9 @@
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">Edit node</h2>
-	<p class="font-mono text-text-muted mt-1 text-[12px]">{node.advertise_addr || node.id}</p>
-</div>
+<ModalHeader title="Edit node">
+	<span class="font-mono text-[12px]">{node.advertise_addr || node.id}</span>
+</ModalHeader>
 
 <form
 	class="flex flex-col gap-3.5 px-5.5 py-4"
@@ -117,7 +117,7 @@
 			placeholder="203.0.113.10:443"
 			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 font-mono text-[13px] transition-colors focus:outline-none"
 		/>
-		<p class="text-text-ghost text-[11.5px]">
+		<p class="text-text-ghost text-[12px] leading-relaxed">
 			Where public DNS points for this node (edge role). Leave empty for private-only nodes.
 		</p>
 	</label>

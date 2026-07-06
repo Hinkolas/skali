@@ -12,6 +12,7 @@
 	import { SERVICE_KIND_META } from '$lib/service-types';
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
 	let { close, projectName }: { close: (created?: boolean) => void; projectName?: string } =
@@ -35,12 +36,7 @@
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">New service</h2>
-	<p class="text-text-muted mt-1 text-[13px]">
-		Add a service to {projectName ?? 'this project'}.
-	</p>
-</div>
+<ModalHeader title="New service" description="Add a service to {projectName ?? 'this project'}." />
 
 <div class="flex flex-col gap-3.5 px-5.5 py-4">
 	<div class="grid grid-cols-2 gap-2">

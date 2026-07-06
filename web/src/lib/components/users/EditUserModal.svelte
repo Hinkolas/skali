@@ -11,6 +11,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import type { AuthUser, Role } from '$lib/types/auth';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	let {
 		user,
@@ -52,10 +53,7 @@
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">Edit user</h2>
-	<p class="text-text-muted mt-1 text-[13px]">{user.email}</p>
-</div>
+<ModalHeader title="Edit user" description={user.email} />
 
 <form
 	class="flex flex-col gap-3.5 px-5.5 py-4"
@@ -93,7 +91,7 @@
 			{/each}
 		</div>
 		{#if self}
-			<p class="text-text-ghost text-[11.5px]">
+			<p class="text-text-ghost text-[12px] leading-relaxed">
 				You cannot change your own role — ask another admin.
 			</p>
 		{/if}

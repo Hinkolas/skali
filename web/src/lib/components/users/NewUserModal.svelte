@@ -11,6 +11,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import type { Role } from '$lib/types/auth';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	let { close }: { close: (created?: boolean) => void } = $props();
 
@@ -43,12 +44,10 @@
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">New user</h2>
-	<p class="text-text-muted mt-1 text-[13px]">
-		There is no self-service signup: you set the initial password and hand it over.
-	</p>
-</div>
+<ModalHeader
+	title="New user"
+	description="There is no self-service signup: you set the initial password and hand it over."
+/>
 
 <form
 	class="flex flex-col gap-3.5 px-5.5 py-4"
@@ -104,7 +103,7 @@
 				</button>
 			{/each}
 		</div>
-		<p class="text-text-ghost text-[11.5px]">
+		<p class="text-text-ghost text-[12px] leading-relaxed">
 			Admins additionally manage users and instance settings.
 		</p>
 	</div>

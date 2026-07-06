@@ -75,7 +75,11 @@
 
 	const times = $derived((history ?? []).map((s) => Date.parse(s.sampled_at)));
 
-	function seriesOf(label: string, color: string, f: (s: NodeMetricsSample) => number): ChartSeries {
+	function seriesOf(
+		label: string,
+		color: string,
+		f: (s: NodeMetricsSample) => number
+	): ChartSeries {
 		const points: ChartPoint[] = decimate(
 			(history ?? []).map((s, i) => ({ t: times[i], v: f(s) }))
 		);
@@ -145,7 +149,9 @@
 </script>
 
 <!-- header -->
-<div class="border-border-subtle flex items-start justify-between gap-3 border-b px-4.5 pt-4 pb-3.5">
+<div
+	class="border-border-subtle flex items-start justify-between gap-3 border-b px-4.5 pt-4 pb-3.5"
+>
 	<div class="min-w-0">
 		<div class="flex items-center gap-2">
 			<h2 class="text-text-primary truncate text-[15px] font-semibold tracking-tight">

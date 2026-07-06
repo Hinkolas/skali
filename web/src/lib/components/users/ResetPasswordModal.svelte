@@ -11,6 +11,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import type { AuthUser } from '$lib/types/auth';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	let { user, close }: { user: AuthUser; close: (reset?: boolean) => void } = $props();
 
@@ -35,13 +36,10 @@
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">Reset password</h2>
-	<p class="text-text-muted mt-1 text-[13px]">
-		Sets a new password for <span class="text-text-secondary">{user.email}</span> and signs them out everywhere.
-		This is the recovery path — there is no reset email.
-	</p>
-</div>
+<ModalHeader title="Reset password">
+	Sets a new password for <span class="text-text-secondary">{user.email}</span> and signs them out everywhere.
+	This is the recovery path — there is no reset email.
+</ModalHeader>
 
 <form
 	class="flex flex-col gap-3.5 px-5.5 py-4"

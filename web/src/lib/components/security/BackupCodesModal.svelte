@@ -10,18 +10,16 @@
 
 <script lang="ts">
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 	import BackupCodes from '$lib/components/security/BackupCodes.svelte';
 
 	let { codes, close }: { codes: string[]; close: (saved?: boolean) => void } = $props();
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">New backup codes</h2>
-	<p class="text-text-muted mt-1 text-[13px]">
-		Your previous codes no longer work. Store these somewhere safe before closing — this is the only
-		time they are shown.
-	</p>
-</div>
+<ModalHeader
+	title="New backup codes"
+	description="Your previous codes no longer work. Store these somewhere safe before closing — this is the only time they are shown."
+/>
 
 <div class="px-5.5 py-4">
 	<BackupCodes {codes} />

@@ -9,6 +9,7 @@
 <script lang="ts">
 	import { ASSIGNABLE_NODE_ROLES, type NodeRole } from '$lib/types/nodes';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	// Role picker only — the sudo-gated mint call runs in the page AFTER this
 	// modal closes, so the reauth modal (single modal slot) is never displaced.
@@ -28,13 +29,10 @@
 	};
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">Add node</h2>
-	<p class="text-text-muted mt-1 text-[13px]">
-		Pick the roles the new node should hold. You get a one-time join token and the command to run
-		on the machine.
-	</p>
-</div>
+<ModalHeader
+	title="Add node"
+	description="Pick the roles the new node should hold. You get a one-time join token and the command to run on the machine."
+/>
 
 <div class="flex flex-col gap-1.5 px-5.5 py-4">
 	<span class="text-text-tertiary text-[12.5px] font-medium">Roles</span>
@@ -49,11 +47,11 @@
 					: 'border-border-strong text-text-tertiary hover:bg-white/4'}"
 			>
 				<span>{role}</span>
-				<span class="text-text-ghost text-[11.5px] font-normal">{roleHint[role]}</span>
+				<span class="text-text-ghost text-[12px] font-normal">{roleHint[role]}</span>
 			</button>
 		{/each}
 	</div>
-	<p class="text-text-ghost mt-1 text-[11.5px]">
+	<p class="text-text-ghost mt-1.5 text-[12px] leading-relaxed">
 		Roles can be changed later. The master role is fixed to this control-plane node.
 	</p>
 </div>

@@ -9,6 +9,7 @@
 <script lang="ts">
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	let { close }: { close: (created?: boolean) => void } = $props();
 
@@ -23,12 +24,10 @@
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">New project</h2>
-	<p class="text-text-muted mt-1 text-[13px]">
-		A project bundles applications, databases and volumes.
-	</p>
-</div>
+<ModalHeader
+	title="New project"
+	description="A project bundles applications, databases and volumes."
+/>
 
 <div class="flex flex-col gap-3.5 px-5.5 py-4">
 	<label class="flex flex-col gap-1.5">

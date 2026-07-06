@@ -1,6 +1,7 @@
 <script lang="ts">
 	import X from '@lucide/svelte/icons/x';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import type { DialogProps } from '$lib/stores/dialog.svelte';
 
 	// Built-in content for the high-level `dialog` store: a simple title +
@@ -33,8 +34,20 @@
 	}
 </script>
 
-<div class="flex items-start justify-between gap-4 px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">{title}</h2>
+<div class="flex items-start justify-between gap-4 px-5.5 pt-5 pb-5">
+	<div>
+		{#if variant === 'danger'}
+			<div
+				class="border-status-danger/25 bg-status-danger/10 text-status-danger mb-3 flex size-9 items-center justify-center rounded-[10px] border"
+			>
+				<TriangleAlert size={18} strokeWidth={1.75} />
+			</div>
+		{/if}
+		<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">{title}</h2>
+		{#if description}
+			<p class="text-text-muted mt-1.5 text-[13px] leading-relaxed">{description}</p>
+		{/if}
+	</div>
 	<button
 		type="button"
 		onclick={() => close(false)}
@@ -45,12 +58,6 @@
 		<X class="size-4" />
 	</button>
 </div>
-
-{#if description}
-	<p class="text-text-muted px-5.5 pb-5 text-[13.5px] leading-relaxed">{description}</p>
-{:else}
-	<div class="pb-3"></div>
-{/if}
 
 <div class="border-border-subtle bg-surface-raised/50 flex justify-end gap-2 border-t px-5.5 py-3">
 	{#if !alert}

@@ -10,6 +10,7 @@
 	import { api, ApiError } from '$lib/api/client';
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	let { close }: { close: (changed?: boolean) => void } = $props();
 
@@ -46,12 +47,10 @@
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">Change password</h2>
-	<p class="text-text-muted mt-1 text-[13px]">
-		Every other session is signed out immediately; only this one survives.
-	</p>
-</div>
+<ModalHeader
+	title="Change password"
+	description="Every other session is signed out immediately; only this one survives."
+/>
 
 <form
 	class="flex flex-col gap-3.5 px-5.5 py-4"

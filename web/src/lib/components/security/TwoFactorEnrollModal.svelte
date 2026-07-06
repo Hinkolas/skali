@@ -15,6 +15,7 @@
 	import type { TwoFactorEnrollment } from '$lib/types/auth';
 	import Button from '$lib/components/ui/Button.svelte';
 	import CopyField from '$lib/components/ui/CopyField.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 	import BackupCodes from '$lib/components/security/BackupCodes.svelte';
 
 	let {
@@ -53,15 +54,10 @@
 </script>
 
 {#if step === 'confirm'}
-	<div class="px-5.5 pt-5 pb-2">
-		<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">
-			Set up two-factor authentication
-		</h2>
-		<p class="text-text-muted mt-1 text-[13px]">
-			Scan the QR code with your authenticator app (or enter the secret manually), then confirm
-			with the current 6-digit code. Abandoning this step leaves 2FA disabled.
-		</p>
-	</div>
+	<ModalHeader
+		title="Set up two-factor authentication"
+		description="Scan the QR code with your authenticator app (or enter the secret manually), then confirm with the current 6-digit code. Abandoning this step leaves 2FA disabled."
+	/>
 
 	<form
 		class="flex flex-col gap-3.5 px-5.5 py-4"
@@ -114,15 +110,10 @@
 		<Button variant="primary" disabled={!code} {busy} onclick={confirm}>Confirm</Button>
 	</div>
 {:else}
-	<div class="px-5.5 pt-5 pb-2">
-		<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">
-			Save your backup codes
-		</h2>
-		<p class="text-text-muted mt-1 text-[13px]">
-			Two-factor authentication is now enabled. Store these codes somewhere safe before closing —
-			this is the only time they are shown.
-		</p>
-	</div>
+	<ModalHeader
+		title="Save your backup codes"
+		description="Two-factor authentication is now enabled. Store these codes somewhere safe before closing — this is the only time they are shown."
+	/>
 
 	<div class="px-5.5 py-4">
 		<BackupCodes codes={enrollment.backup_codes} />

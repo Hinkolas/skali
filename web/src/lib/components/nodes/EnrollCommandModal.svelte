@@ -14,6 +14,7 @@
 	import type { JoinTokenCreated } from '$lib/types/nodes';
 	import Button from '$lib/components/ui/Button.svelte';
 	import CopyField from '$lib/components/ui/CopyField.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	let { result, close }: { result: JoinTokenCreated; close: () => void } = $props();
 
@@ -31,17 +32,18 @@
 	}
 
 	function expiresIn(): string {
-		const mins = Math.max(0, Math.round((new Date(result.expires_at).getTime() - Date.now()) / 60_000));
+		const mins = Math.max(
+			0,
+			Math.round((new Date(result.expires_at).getTime() - Date.now()) / 60_000)
+		);
 		return `${mins} minute${mins === 1 ? '' : 's'}`;
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">Run this on the new machine</h2>
-	<p class="text-text-muted mt-1 text-[13px]">
-		Install skalid, paste the command, then start the node with <span class="font-mono">skalid agent</span>.
-	</p>
-</div>
+<ModalHeader title="Run this on the new machine">
+	Install skalid, paste the command, then start the node with
+	<span class="font-mono">skalid agent</span>.
+</ModalHeader>
 
 <div class="flex flex-col gap-3 px-5.5 py-4">
 	<div
@@ -66,7 +68,7 @@
 
 	<CopyField label="Token" value={result.token} masked />
 
-	<p class="text-text-faint text-[11.5px]">
+	<p class="text-text-faint text-[12px] leading-relaxed">
 		The token is single-use, expires in {expiresIn()}, and is never shown again. It pins this
 		cluster's certificate authority, so the new node only trusts your master.
 	</p>

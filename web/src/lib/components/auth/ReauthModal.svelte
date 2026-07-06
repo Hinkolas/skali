@@ -11,6 +11,7 @@
 	import { api, ApiError } from '$lib/api/client';
 	import { authState } from '$lib/stores/auth.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
 	let { close }: { close: (ok?: boolean) => void } = $props();
 
@@ -43,20 +44,14 @@
 	}
 </script>
 
-<div class="px-5.5 pt-5 pb-2">
-	<div class="flex items-center gap-2.5">
-		<ShieldCheck size={18} strokeWidth={1.75} class="text-accent-light" />
-		<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">Confirm access</h2>
-	</div>
-	<p class="text-text-muted mt-1.5 text-[13px]">
-		{#if twoFactor}
-			You're entering sudo mode. Enter the 6-digit code from your authenticator app, or one of your
-			backup codes (backup codes are spent when used).
-		{:else}
-			You're entering sudo mode. For security, enter your password to continue.
-		{/if}
-	</p>
-</div>
+<ModalHeader title="Confirm access" icon={ShieldCheck}>
+	{#if twoFactor}
+		You're entering sudo mode. Enter the 6-digit code from your authenticator app, or one of your
+		backup codes (backup codes are spent when used).
+	{:else}
+		You're entering sudo mode. For security, enter your password to continue.
+	{/if}
+</ModalHeader>
 
 <form
 	class="flex flex-col gap-3.5 px-5.5 py-4"
