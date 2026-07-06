@@ -6,6 +6,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/sethvargo/go-envconfig"
@@ -44,6 +45,10 @@ type API struct {
 	// AuthSecret keys everything the auth system encrypts at rest (e.g. TOTP
 	// secrets); rotating it forces users to re-enroll 2FA.
 	AuthSecret string `env:"AUTH_SECRET,required"`
+
+	// ReauthWindow is how long a session stays "fresh" for sudo-gated
+	// endpoints after login or an explicit reauthentication.
+	ReauthWindow time.Duration `env:"REAUTH_WINDOW,default=15m"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.
@@ -53,6 +58,9 @@ func (a *API) Validate() error {
 	}
 	if len(a.AuthSecret) < 32 {
 		return fmt.Errorf("AUTH_SECRET: must be at least 32 characters (generate with `openssl rand -base64 32`)")
+	}
+	if a.ReauthWindow <= 0 {
+		return fmt.Errorf("REAUTH_WINDOW: must be positive")
 	}
 	return nil
 }

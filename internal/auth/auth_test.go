@@ -121,6 +121,162 @@ func TestSessionExpiryAndSlidingRefresh(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidToken)
 }
 
+func TestReauthenticatePasswordUser(t *testing.T) {
+	svc, st := newTestService(t)
+	ctx := context.Background()
+
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
+	require.NoError(t, err)
+	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
+	require.NoError(t, err)
+
+	user, sess, err := svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+	require.True(t, svc.IsSessionFresh(sess), "a session is fresh right after login")
+
+	// Past the reauth window (but well within the session TTL).
+	base := time.Now()
+	svc.now = func() time.Time { return base.Add(16 * time.Minute) }
+	_, sess, err = svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+	require.False(t, svc.IsSessionFresh(sess))
+
+	// A failed attempt must not refresh the window.
+	err = svc.Reauthenticate(ctx, user, sess.ID, "wrong", "", meta.IPAddress)
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	_, sess, err = svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+	require.False(t, svc.IsSessionFresh(sess))
+
+	require.NoError(t, svc.Reauthenticate(ctx, user, sess.ID, "hunter2hunter2", "", meta.IPAddress))
+	_, sess, err = svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+	require.True(t, svc.IsSessionFresh(sess))
+}
+
+func TestReauthenticateTwoFactorUser(t *testing.T) {
+	svc, st := newTestService(t)
+	ctx := context.Background()
+
+	enr, now := enrollTwoFactor(t, svc, st, "nick@example.com")
+	user, err := st.GetUserByEmail(ctx, "nick@example.com")
+	require.NoError(t, err)
+
+	// Open a session through the challenge flow.
+	*now = now.Add(30 * time.Second)
+	code, err := totp.GenerateCode(enr.Secret, *now)
+	require.NoError(t, err)
+	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
+	require.NoError(t, err)
+	sess, err := svc.VerifyTwoFactor(ctx, res.Challenge.Token, code, meta)
+	require.NoError(t, err)
+
+	*now = now.Add(16 * time.Minute)
+	_, dbSess, err := svc.Authenticate(ctx, sess.Token)
+	require.NoError(t, err)
+	require.False(t, svc.IsSessionFresh(dbSess))
+
+	// 2FA users must present a code; the password does not count.
+	err = svc.Reauthenticate(ctx, &user, dbSess.ID, "hunter2hunter2", "", meta.IPAddress)
+	require.ErrorIs(t, err, ErrInvalidCode)
+
+	code, err = totp.GenerateCode(enr.Secret, *now)
+	require.NoError(t, err)
+	require.NoError(t, svc.Reauthenticate(ctx, &user, dbSess.ID, "", code, meta.IPAddress))
+	_, dbSess, err = svc.Authenticate(ctx, sess.Token)
+	require.NoError(t, err)
+	require.True(t, svc.IsSessionFresh(dbSess))
+
+	// The reauth consumed the TOTP step: the same code cannot be replayed.
+	*now = now.Add(16 * time.Minute)
+	err = svc.Reauthenticate(ctx, &user, dbSess.ID, "", code, meta.IPAddress)
+	require.ErrorIs(t, err, ErrInvalidCode)
+}
+
+// A pending (unconfirmed) enrollment leaves TwoFactorEnabled false, so reauth
+// still runs the password path.
+func TestReauthenticatePendingEnrollmentUsesPassword(t *testing.T) {
+	svc, st := newTestService(t)
+	ctx := context.Background()
+
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
+	require.NoError(t, err)
+	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
+	require.NoError(t, err)
+	user, sess, err := svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+
+	_, err = svc.EnableTwoFactor(ctx, user.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Reauthenticate(ctx, user, sess.ID, "hunter2hunter2", "", meta.IPAddress))
+}
+
+// The sliding session refresh must never count as a reauthentication.
+func TestSlidingRefreshDoesNotBumpReauth(t *testing.T) {
+	svc, st := newTestService(t)
+	ctx := context.Background()
+
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
+	require.NoError(t, err)
+	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
+	require.NoError(t, err)
+	_, before, err := svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+
+	// Past the update-age: Authenticate slides the expiry…
+	base := time.Now()
+	svc.now = func() time.Time { return base.Add(25 * time.Hour) }
+	_, after, err := svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+	require.True(t, after.ExpiresAt.After(before.ExpiresAt))
+
+	// …but the reauth stamp is untouched and the session is stale.
+	require.Equal(t, before.ReauthenticatedAt.UTC(), after.ReauthenticatedAt.UTC())
+	require.False(t, svc.IsSessionFresh(after))
+}
+
+func TestReauthenticateRateLimited(t *testing.T) {
+	svc, st := newTestService(t)
+	ctx := context.Background()
+
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
+	require.NoError(t, err)
+	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
+	require.NoError(t, err)
+	user, sess, err := svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+
+	for range reauthUserLimit {
+		err = svc.Reauthenticate(ctx, user, sess.ID, "wrong", "", meta.IPAddress)
+		require.ErrorIs(t, err, ErrInvalidCredentials)
+	}
+	// Budget exhausted: even the correct password is rejected.
+	err = svc.Reauthenticate(ctx, user, sess.ID, "hunter2hunter2", "", meta.IPAddress)
+	require.ErrorIs(t, err, ErrRateLimited)
+
+	// A fresh window clears the limiter.
+	base := time.Now()
+	svc.now = func() time.Time { return base.Add(rateLimitWindow + time.Minute) }
+	require.NoError(t, svc.Reauthenticate(ctx, user, sess.ID, "hunter2hunter2", "", meta.IPAddress))
+}
+
+func TestReauthenticateSessionGone(t *testing.T) {
+	svc, st := newTestService(t)
+	ctx := context.Background()
+
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
+	require.NoError(t, err)
+	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
+	require.NoError(t, err)
+	user, sess, err := svc.Authenticate(ctx, res.Session.Token)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Logout(ctx, res.Session.Token))
+	err = svc.Reauthenticate(ctx, user, sess.ID, "hunter2hunter2", "", meta.IPAddress)
+	require.ErrorIs(t, err, ErrInvalidToken)
+}
+
 func TestListAndRevokeSessions(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
@@ -192,7 +348,7 @@ func enrollTwoFactor(t *testing.T, svc *Service, st *store.Store, email string) 
 	now := time.Now()
 	svc.now = func() time.Time { return now }
 
-	enr, err := svc.EnableTwoFactor(ctx, user.ID, "hunter2hunter2")
+	enr, err := svc.EnableTwoFactor(ctx, user.ID)
 	require.NoError(t, err)
 	require.NotEmpty(t, enr.Secret)
 	require.Contains(t, enr.OTPAuthURI, "otpauth://totp/")
@@ -324,37 +480,32 @@ func TestDisableTwoFactor(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
-	enr, now := enrollTwoFactor(t, svc, st, "nick@example.com")
+	enrollTwoFactor(t, svc, st, "nick@example.com")
 	user, err := st.GetUserByEmail(ctx, "nick@example.com")
 	require.NoError(t, err)
 	require.True(t, user.TwoFactorEnabled)
 
-	require.ErrorIs(t, svc.DisableTwoFactor(ctx, user.ID, "wrong", "000000"), ErrInvalidCredentials)
-	require.ErrorIs(t, svc.DisableTwoFactor(ctx, user.ID, "hunter2hunter2", "000000"), ErrInvalidCode)
-
-	*now = now.Add(30 * time.Second)
-	code, err := totp.GenerateCode(enr.Secret, *now)
-	require.NoError(t, err)
-	require.NoError(t, svc.DisableTwoFactor(ctx, user.ID, "hunter2hunter2", code))
+	require.NoError(t, svc.DisableTwoFactor(ctx, user.ID))
 
 	// Login is password-only again.
 	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
 	require.NoError(t, err)
 	require.NotNil(t, res.Session)
 
-	require.ErrorIs(t, svc.DisableTwoFactor(ctx, user.ID, "hunter2hunter2", "000000"), ErrTwoFactorNotEnabled)
+	require.ErrorIs(t, svc.DisableTwoFactor(ctx, user.ID), ErrTwoFactorNotEnabled)
 }
 
-func TestDisablePendingEnrollmentNeedsNoCode(t *testing.T) {
+// Disabling cancels a pending (unconfirmed) enrollment too.
+func TestDisablePendingEnrollment(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
 	user, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
-	_, err = svc.EnableTwoFactor(ctx, user.ID, "hunter2hunter2")
+	_, err = svc.EnableTwoFactor(ctx, user.ID)
 	require.NoError(t, err)
 
-	require.NoError(t, svc.DisableTwoFactor(ctx, user.ID, "hunter2hunter2", ""))
+	require.NoError(t, svc.DisableTwoFactor(ctx, user.ID))
 }
 
 func TestEnableTwoFactorAlreadyEnabled(t *testing.T) {
@@ -365,7 +516,7 @@ func TestEnableTwoFactorAlreadyEnabled(t *testing.T) {
 	user, err := st.GetUserByEmail(ctx, "nick@example.com")
 	require.NoError(t, err)
 
-	_, err = svc.EnableTwoFactor(ctx, user.ID, "hunter2hunter2")
+	_, err = svc.EnableTwoFactor(ctx, user.ID)
 	require.ErrorIs(t, err, ErrTwoFactorAlreadyEnabled)
 }
 
@@ -377,7 +528,7 @@ func TestRegenerateBackupCodes(t *testing.T) {
 	user, err := st.GetUserByEmail(ctx, "nick@example.com")
 	require.NoError(t, err)
 
-	fresh, err := svc.RegenerateBackupCodes(ctx, user.ID, "hunter2hunter2")
+	fresh, err := svc.RegenerateBackupCodes(ctx, user.ID)
 	require.NoError(t, err)
 	require.Len(t, fresh, backupCodeCount)
 	require.NotEqual(t, enr.BackupCodes, fresh)

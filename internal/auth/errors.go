@@ -15,4 +15,5 @@ var (
 	ErrEmailTaken              = errors.New("auth: email already taken")
 	ErrInvalidRole             = errors.New("auth: role must be admin or member")
 	ErrLastAdmin               = errors.New("auth: cannot demote or delete the last admin")
+	ErrReauthRequired          = errors.New("auth: recent authentication required")
 )

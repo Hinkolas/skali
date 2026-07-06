@@ -78,7 +78,7 @@ func runServe() error {
 	defer pool.Close()
 	st := store.NewStore(pool)
 
-	authSvc, err := auth.New(st, auth.Config{Secret: cfg.AuthSecret})
+	authSvc, err := auth.New(st, auth.Config{Secret: cfg.AuthSecret, ReauthWindow: cfg.ReauthWindow})
 	if err != nil {
 		return err
 	}

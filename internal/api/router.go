@@ -57,15 +57,26 @@ func NewRouter(d Deps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(RequireAuth(d.Auth))
 
+			// Never behind the reauth gate: logout and session revocation are
+			// defensive, /auth/reauth is the gate's escape hatch, and
+			// 2fa/confirm carries its own proof (a code from the pending
+			// enrollment).
 			r.Post("/auth/logout", h.logout)
+			r.Post("/auth/reauth", h.reauthenticate)
 			r.Get("/auth/session", h.currentSession)
 			r.Get("/auth/sessions", h.listSessions)
 			r.Delete("/auth/sessions/{id}", h.revokeSession)
-			r.Post("/auth/password", h.changePassword)
-			r.Post("/auth/2fa/enable", h.enableTwoFactor)
 			r.Post("/auth/2fa/confirm", h.confirmTwoFactor)
-			r.Post("/auth/2fa/disable", h.disableTwoFactor)
-			r.Post("/auth/2fa/backup-codes", h.regenerateBackupCodes)
+
+			// Sensitive self-service: sudo mode.
+			r.Group(func(r chi.Router) {
+				r.Use(RequireFresh(d.Auth))
+
+				r.Post("/auth/password", h.changePassword)
+				r.Post("/auth/2fa/enable", h.enableTwoFactor)
+				r.Post("/auth/2fa/disable", h.disableTwoFactor)
+				r.Post("/auth/2fa/backup-codes", h.regenerateBackupCodes)
+			})
 
 			// Instance management, admins only.
 			uh := &usersHandlers{st: d.Store}
@@ -73,10 +84,18 @@ func NewRouter(d Deps) http.Handler {
 				r.Use(RequireAdmin)
 
 				r.Get("/users", uh.list)
-				r.Post("/users", uh.create)
-				r.Patch("/users/{id}", uh.update)
-				r.Delete("/users/{id}", uh.delete)
-				r.Post("/users/{id}/password", uh.resetPassword)
+
+				// Writes additionally need sudo mode. RequireAdmin sits
+				// outside RequireFresh so non-admins get "forbidden", never a
+				// reauth prompt that would not help them.
+				r.Group(func(r chi.Router) {
+					r.Use(RequireFresh(d.Auth))
+
+					r.Post("/users", uh.create)
+					r.Patch("/users/{id}", uh.update)
+					r.Delete("/users/{id}", uh.delete)
+					r.Post("/users/{id}/password", uh.resetPassword)
+				})
 			})
 		})
 	})

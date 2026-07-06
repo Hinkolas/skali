@@ -51,6 +51,22 @@ func RequireAdmin(next http.Handler) http.Handler {
 	})
 }
 
+// RequireFresh gates sudo-mode endpoints: the session must have proven the
+// user's identity within the reauth window. It must sit inside RequireAuth so
+// the session is already on the context. Clients recover from the 403 by
+// confirming identity at POST /v1/auth/reauth and retrying.
+func RequireFresh(svc *auth.Service) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if sess := SessionFrom(r.Context()); sess == nil || !svc.IsSessionFresh(sess) {
+				writeError(w, http.StatusForbidden, codeReauthRequired, "recent authentication required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // bearerToken extracts the token from "Authorization: Bearer <token>",
 // matching the scheme case-insensitively per RFC 9110.
 func bearerToken(r *http.Request) (string, bool) {

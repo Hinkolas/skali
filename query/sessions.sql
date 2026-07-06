@@ -1,6 +1,6 @@
 -- name: CreateSession :one
-INSERT INTO sessions (id, user_id, token_hash, expires_at, ip_address, user_agent)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO sessions (id, user_id, token_hash, expires_at, ip_address, user_agent, reauthenticated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetSessionAndUserByTokenHash :one
@@ -11,6 +11,12 @@ WHERE sessions.token_hash = $1;
 
 -- name: ExtendSession :exec
 UPDATE sessions SET expires_at = $2, updated_at = now() WHERE id = $1;
+
+-- name: TouchSessionReauthenticated :execrows
+-- Deliberately leaves updated_at alone: that column drives the sliding-refresh
+-- policy, which is independent of sudo-mode freshness.
+UPDATE sessions SET reauthenticated_at = $3
+WHERE id = $1 AND user_id = $2;
 
 -- name: DeleteSessionByTokenHash :execrows
 DELETE FROM sessions WHERE token_hash = $1;

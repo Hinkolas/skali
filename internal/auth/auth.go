@@ -33,12 +33,14 @@ type Config struct {
 	SessionTTL       time.Duration // bearer session lifetime
 	SessionUpdateAge time.Duration // sliding refresh: extend when a session's last touch is older than this
 	ChallengeTTL     time.Duration // window between password login and 2FA code entry
+	ReauthWindow     time.Duration // sudo mode: how long a session counts as freshly authenticated
 }
 
 const (
 	defaultSessionTTL       = 30 * 24 * time.Hour
 	defaultSessionUpdateAge = 24 * time.Hour
 	defaultChallengeTTL     = 5 * time.Minute
+	defaultReauthWindow     = 15 * time.Minute
 )
 
 // Login attempt limits (fixed windows, per process).
@@ -46,6 +48,7 @@ const (
 	loginUserLimit  = 10
 	loginIPLimit    = 30
 	twoFactorLimit  = 30
+	reauthUserLimit = 10
 	rateLimitWindow = 15 * time.Minute
 	// challengeMaxAttempts caps code guesses per login challenge; afterwards
 	// the user must present the password again.
@@ -79,6 +82,9 @@ func New(st *store.Store, cfg Config) (*Service, error) {
 	}
 	if cfg.ChallengeTTL == 0 {
 		cfg.ChallengeTTL = defaultChallengeTTL
+	}
+	if cfg.ReauthWindow == 0 {
+		cfg.ReauthWindow = defaultReauthWindow
 	}
 	key, err := deriveKey(cfg.Secret)
 	if err != nil {
@@ -245,6 +251,52 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return nil
 }
 
+// IsSessionFresh reports whether the session's last (re)authentication falls
+// within the reauth window. Pure predicate over the already-loaded session so
+// the sudo-mode HTTP gate costs no extra query.
+func (s *Service) IsSessionFresh(sess *store.Session) bool {
+	return s.now().Sub(sess.ReauthenticatedAt) <= s.cfg.ReauthWindow
+}
+
+// Reauthenticate re-proves the caller's identity and re-stamps the current
+// session only — other sessions of the same user stay stale. Factor policy:
+// users with confirmed 2FA present a TOTP or backup code (which is consumed,
+// so it cannot be replayed at login); everyone else presents their password.
+func (s *Service) Reauthenticate(ctx context.Context, user *store.User, sessionID uuid.UUID, password, code, ip string) error {
+	userOK := s.limiter.allow("reauth:user:"+user.ID.String(), reauthUserLimit, rateLimitWindow)
+	// Same IP key as VerifyTwoFactor so guessing budgets are shared, not added.
+	ipOK := s.limiter.allow("2fa:ip:"+ip, twoFactorLimit, rateLimitWindow)
+	if !userOK || !ipOK {
+		return ErrRateLimited
+	}
+
+	if user.TwoFactorEnabled {
+		ok, err := s.checkSecondFactor(ctx, user.ID, code)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrInvalidCode
+		}
+	} else if err := s.verifyUserPassword(ctx, user.ID, password); err != nil {
+		return err
+	}
+
+	n, err := s.st.TouchSessionReauthenticated(ctx, store.TouchSessionReauthenticatedParams{
+		ID:                sessionID,
+		UserID:            user.ID,
+		ReauthenticatedAt: s.now(),
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// The session was revoked while the user was proving their identity.
+		return ErrInvalidToken
+	}
+	return nil
+}
+
 func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID) ([]store.Session, error) {
 	return s.st.ListSessionsByUser(ctx, userID)
 }
@@ -285,11 +337,9 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, current,
 
 // EnableTwoFactor starts (or restarts) TOTP enrollment. The enrollment stays
 // pending — and login stays password-only — until ConfirmTwoFactor sees a
-// valid code.
-func (s *Service) EnableTwoFactor(ctx context.Context, userID uuid.UUID, password string) (*TwoFactorEnrollment, error) {
-	if err := s.verifyUserPassword(ctx, userID, password); err != nil {
-		return nil, err
-	}
+// valid code. Callers are expected to sit behind the reauth gate; there is no
+// in-band credential check.
+func (s *Service) EnableTwoFactor(ctx context.Context, userID uuid.UUID) (*TwoFactorEnrollment, error) {
 	tf, err := s.st.GetTwoFactorByUserID(ctx, userID)
 	if err == nil && tf.ConfirmedAt != nil {
 		return nil, ErrTwoFactorAlreadyEnabled
@@ -372,27 +422,16 @@ func (s *Service) ConfirmTwoFactor(ctx context.Context, userID uuid.UUID, code s
 	})
 }
 
-// DisableTwoFactor removes 2FA. A confirmed enrollment additionally requires a
-// valid TOTP or backup code; a pending one is simply cancelled.
-func (s *Service) DisableTwoFactor(ctx context.Context, userID uuid.UUID, password, code string) error {
-	if err := s.verifyUserPassword(ctx, userID, password); err != nil {
-		return err
-	}
-	tf, err := s.st.GetTwoFactorByUserID(ctx, userID)
-	if err != nil {
+// DisableTwoFactor removes 2FA: a confirmed enrollment is deleted, a pending
+// one is simply cancelled. Callers are expected to sit behind the reauth gate
+// (a 2FA user reauthenticated with a code moments ago); there is no in-band
+// credential check.
+func (s *Service) DisableTwoFactor(ctx context.Context, userID uuid.UUID) error {
+	if _, err := s.st.GetTwoFactorByUserID(ctx, userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrTwoFactorNotEnabled
 		}
 		return err
-	}
-	if tf.ConfirmedAt != nil {
-		ok, err := s.checkSecondFactor(ctx, userID, code)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return ErrInvalidCode
-		}
 	}
 	return s.st.WithTx(ctx, func(q *store.Queries) error {
 		if _, err := q.DeleteTwoFactorByUserID(ctx, userID); err != nil {
@@ -402,11 +441,10 @@ func (s *Service) DisableTwoFactor(ctx context.Context, userID uuid.UUID, passwo
 	})
 }
 
-// RegenerateBackupCodes replaces all backup codes (used and unused).
-func (s *Service) RegenerateBackupCodes(ctx context.Context, userID uuid.UUID, password string) ([]string, error) {
-	if err := s.verifyUserPassword(ctx, userID, password); err != nil {
-		return nil, err
-	}
+// RegenerateBackupCodes replaces all backup codes (used and unused). Callers
+// are expected to sit behind the reauth gate; there is no in-band credential
+// check.
+func (s *Service) RegenerateBackupCodes(ctx context.Context, userID uuid.UUID) ([]string, error) {
 	tf, err := s.st.GetTwoFactorByUserID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -625,12 +663,13 @@ func (s *Service) createSession(ctx context.Context, q *store.Queries, user stor
 		return nil, err
 	}
 	row, err := q.CreateSession(ctx, store.CreateSessionParams{
-		ID:        id,
-		UserID:    user.ID,
-		TokenHash: hashToken(tok),
-		ExpiresAt: s.now().Add(s.cfg.SessionTTL),
-		IpAddress: meta.IPAddress,
-		UserAgent: meta.UserAgent,
+		ID:                id,
+		UserID:            user.ID,
+		TokenHash:         hashToken(tok),
+		ExpiresAt:         s.now().Add(s.cfg.SessionTTL),
+		IpAddress:         meta.IPAddress,
+		UserAgent:         meta.UserAgent,
+		ReauthenticatedAt: s.now(),
 	})
 	if err != nil {
 		return nil, err

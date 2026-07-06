@@ -27,6 +27,7 @@ const (
 	codeInvalidToken       = "invalid_token"
 	codeInvalidCode        = "invalid_code"
 	codeForbidden          = "forbidden"
+	codeReauthRequired     = "reauth_required"
 	codeNotFound           = "not_found"
 	codeConflict           = "conflict"
 	codeRateLimited        = "rate_limited"
@@ -45,6 +46,8 @@ func writeAuthError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, codeInvalidCode, "invalid code")
 	case errors.Is(err, auth.ErrRateLimited):
 		writeError(w, http.StatusTooManyRequests, codeRateLimited, "too many attempts, try again later")
+	case errors.Is(err, auth.ErrReauthRequired):
+		writeError(w, http.StatusForbidden, codeReauthRequired, "recent authentication required")
 	case errors.Is(err, auth.ErrTwoFactorAlreadyEnabled):
 		writeError(w, http.StatusConflict, codeConflict, "two-factor authentication is already enabled")
 	case errors.Is(err, auth.ErrTwoFactorNotEnabled):

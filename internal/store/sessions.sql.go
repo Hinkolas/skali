@@ -13,18 +13,19 @@ import (
 )
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (id, user_id, token_hash, expires_at, ip_address, user_agent)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, token_hash, expires_at, ip_address, user_agent, created_at, updated_at
+INSERT INTO sessions (id, user_id, token_hash, expires_at, ip_address, user_agent, reauthenticated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, token_hash, expires_at, ip_address, user_agent, created_at, updated_at, reauthenticated_at
 `
 
 type CreateSessionParams struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	TokenHash []byte
-	ExpiresAt time.Time
-	IpAddress string
-	UserAgent string
+	ID                uuid.UUID
+	UserID            uuid.UUID
+	TokenHash         []byte
+	ExpiresAt         time.Time
+	IpAddress         string
+	UserAgent         string
+	ReauthenticatedAt time.Time
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
@@ -35,6 +36,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.ExpiresAt,
 		arg.IpAddress,
 		arg.UserAgent,
+		arg.ReauthenticatedAt,
 	)
 	var i Session
 	err := row.Scan(
@@ -46,6 +48,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.UserAgent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReauthenticatedAt,
 	)
 	return i, err
 }
@@ -135,7 +138,7 @@ func (q *Queries) ExtendSession(ctx context.Context, arg ExtendSessionParams) er
 }
 
 const getSessionAndUserByTokenHash = `-- name: GetSessionAndUserByTokenHash :one
-SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.created_at, sessions.updated_at, users.id, users.email, users.name, users.two_factor_enabled, users.created_at, users.updated_at, users.role
+SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.created_at, sessions.updated_at, sessions.reauthenticated_at, users.id, users.email, users.name, users.two_factor_enabled, users.created_at, users.updated_at, users.role
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -158,6 +161,7 @@ func (q *Queries) GetSessionAndUserByTokenHash(ctx context.Context, tokenHash []
 		&i.Session.UserAgent,
 		&i.Session.CreatedAt,
 		&i.Session.UpdatedAt,
+		&i.Session.ReauthenticatedAt,
 		&i.User.ID,
 		&i.User.Email,
 		&i.User.Name,
@@ -170,7 +174,7 @@ func (q *Queries) GetSessionAndUserByTokenHash(ctx context.Context, tokenHash []
 }
 
 const listSessionsByUser = `-- name: ListSessionsByUser :many
-SELECT id, user_id, token_hash, expires_at, ip_address, user_agent, created_at, updated_at FROM sessions
+SELECT id, user_id, token_hash, expires_at, ip_address, user_agent, created_at, updated_at, reauthenticated_at FROM sessions
 WHERE user_id = $1 AND expires_at > now()
 ORDER BY created_at DESC
 `
@@ -193,6 +197,7 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID uuid.UUID) ([]S
 			&i.UserAgent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ReauthenticatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -202,4 +207,25 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID uuid.UUID) ([]S
 		return nil, err
 	}
 	return items, nil
+}
+
+const touchSessionReauthenticated = `-- name: TouchSessionReauthenticated :execrows
+UPDATE sessions SET reauthenticated_at = $3
+WHERE id = $1 AND user_id = $2
+`
+
+type TouchSessionReauthenticatedParams struct {
+	ID                uuid.UUID
+	UserID            uuid.UUID
+	ReauthenticatedAt time.Time
+}
+
+// Deliberately leaves updated_at alone: that column drives the sliding-refresh
+// policy, which is independent of sudo-mode freshness.
+func (q *Queries) TouchSessionReauthenticated(ctx context.Context, arg TouchSessionReauthenticatedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, touchSessionReauthenticated, arg.ID, arg.UserID, arg.ReauthenticatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

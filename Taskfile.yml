@@ -39,9 +39,13 @@ tasks:
       - task -g db:start DB_NAME={{.DB_NAME}}
 
   dev:
-    desc: Run the daemon against the shared dev Postgres
+    desc: Run the daemon against the shared dev Postgres (takes over :7070)
     deps: [db]
     cmds:
+      # Free the port first so a restart always wins, whatever started the
+      # previous instance (an old terminal, a background task, …). 7070
+      # mirrors the HTTP_ADDR default.
+      - lsof -ti :7070 | xargs kill 2>/dev/null || true
       - go run ./cmd/skalid serve
 
   dev:web:

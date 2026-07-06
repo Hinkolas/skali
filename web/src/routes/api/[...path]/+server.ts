@@ -6,7 +6,9 @@ import { json, type RequestHandler } from '@sveltejs/kit';
 import { apiFetch, clientMeta } from '$lib/server/api';
 
 // Session-issuing endpoints are never proxied — their responses contain raw
-// bearer tokens, which must stay between the BFF and the API.
+// bearer tokens, which must stay between the BFF and the API. v1/auth/reauth
+// does NOT belong here: it returns 204 (no token) and the client-side sudo
+// interceptor depends on reaching it through this proxy.
 const DENIED_PREFIXES = ['v1/auth/login', 'v1/auth/2fa/verify'];
 
 const proxy: RequestHandler = async ({ params, request, url, locals, fetch, getClientAddress }) => {

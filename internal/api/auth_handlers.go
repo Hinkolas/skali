@@ -194,6 +194,29 @@ func (h *authHandlers) revokeSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// POST /v1/auth/reauth
+func (h *authHandlers) reauthenticate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Password string `json:"password"`
+		Code     string `json:"code"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+		return
+	}
+	if req.Password == "" && req.Code == "" {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "password or code is required")
+		return
+	}
+
+	err := h.auth.Reauthenticate(r.Context(), UserFrom(r.Context()), SessionFrom(r.Context()).ID, req.Password, req.Code, clientIP(r))
+	if err != nil {
+		writeAuthError(r.Context(), w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // POST /v1/auth/password
 func (h *authHandlers) changePassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -217,17 +240,10 @@ func (h *authHandlers) changePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST /v1/auth/2fa/enable
+// POST /v1/auth/2fa/enable — no request body; identity proof comes from the
+// reauth gate in front of this handler.
 func (h *authHandlers) enableTwoFactor(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Password string `json:"password"`
-	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
-		return
-	}
-
-	enr, err := h.auth.EnableTwoFactor(r.Context(), UserFrom(r.Context()).ID, req.Password)
+	enr, err := h.auth.EnableTwoFactor(r.Context(), UserFrom(r.Context()).ID)
 	if err != nil {
 		writeAuthError(r.Context(), w, err)
 		return
@@ -256,35 +272,20 @@ func (h *authHandlers) confirmTwoFactor(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST /v1/auth/2fa/disable
+// POST /v1/auth/2fa/disable — no request body; identity proof comes from the
+// reauth gate in front of this handler.
 func (h *authHandlers) disableTwoFactor(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Password string `json:"password"`
-		Code     string `json:"code"`
-	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
-		return
-	}
-
-	if err := h.auth.DisableTwoFactor(r.Context(), UserFrom(r.Context()).ID, req.Password, req.Code); err != nil {
+	if err := h.auth.DisableTwoFactor(r.Context(), UserFrom(r.Context()).ID); err != nil {
 		writeAuthError(r.Context(), w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST /v1/auth/2fa/backup-codes
+// POST /v1/auth/2fa/backup-codes — no request body; identity proof comes from
+// the reauth gate in front of this handler.
 func (h *authHandlers) regenerateBackupCodes(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Password string `json:"password"`
-	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
-		return
-	}
-
-	codes, err := h.auth.RegenerateBackupCodes(r.Context(), UserFrom(r.Context()).ID, req.Password)
+	codes, err := h.auth.RegenerateBackupCodes(r.Context(), UserFrom(r.Context()).ID)
 	if err != nil {
 		writeAuthError(r.Context(), w, err)
 		return

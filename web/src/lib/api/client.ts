@@ -12,7 +12,12 @@ export class ApiError extends Error {
 	}
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+	method: string,
+	path: string,
+	body?: unknown,
+	retried = false
+): Promise<T> {
 	let res: Response;
 	try {
 		res = await fetch(`/api${path}`, {
@@ -27,6 +32,16 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 	const data = await res.json().catch(() => null);
 	if (!res.ok) {
 		const detail = data?.error;
+		// Sudo mode: gated endpoints reject stale sessions with reauth_required.
+		// Confirm identity once (concurrent failures share a single modal via
+		// requireReauth) and transparently replay the original request — the
+		// gate rejected it before the handler ran, so the replay is the first
+		// real execution. `retried` stops a second rejection from looping.
+		// Dynamic import: client → reauth store → ReauthModal → client is a cycle.
+		if (res.status === 403 && detail?.code === 'reauth_required' && !retried) {
+			const { requireReauth } = await import('$lib/stores/reauth.svelte');
+			if (await requireReauth()) return request<T>(method, path, body, true);
+		}
 		// A 401 usually means the session died mid-use — a full navigation lands
 		// on the login page. But invalid_credentials/invalid_code are user errors
 		// (wrong password or TOTP code in settings flows), not a dead session.

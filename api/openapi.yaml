@@ -13,6 +13,12 @@ info:
     manages users and instance settings) or `member` — checked per
     request. All error responses share the `Error` envelope; clients
     should branch on `error.code`, not on messages.
+
+    Security-critical operations sit behind sudo mode: they require the
+    session to have proven the user's identity recently (within the
+    operator-configured reauth window). A stale session receives
+    `403 reauth_required`; clients recover by confirming identity at
+    `/v1/auth/reauth` and retrying the original request.
   version: 0.1.0
   license:
     name: Apache 2.0
@@ -162,11 +168,42 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/auth/reauth:
+    post:
+      operationId: reauthenticate
+      summary: Confirm identity for sudo mode
+      description: |
+        Re-proves the caller's identity and refreshes the current session's
+        sudo-mode window; other sessions of the same user are unaffected.
+        Factor policy: accounts with confirmed two-factor present a TOTP or
+        backup code (`code`; the code is consumed), all others present their
+        `password`.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                code:
+                  type: string
+      responses:
+        "204":
+          description: Identity confirmed; the session is fresh again.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /v1/auth/password:
     post:
       operationId: changePassword
       summary: Change the password
-      description: Revokes every other session; only the requesting one survives.
+      description: |
+        Revokes every other session; only the requesting one survives.
+        Sudo-mode gated; additionally requires the current password.
       tags: [auth]
       requestBody:
         required: true
@@ -186,6 +223,7 @@ paths:
           description: Password changed.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
 
   /v1/auth/2fa/enable:
     post:
@@ -196,18 +234,8 @@ paths:
         backup codes — none of which are ever retrievable again. Enrollment
         stays pending, and login stays password-only, until the code is
         confirmed at `/v1/auth/2fa/confirm`. Calling this again while pending
-        replaces the enrollment.
+        replaces the enrollment. Sudo-mode gated; no request body.
       tags: [auth]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [password]
-              properties:
-                password:
-                  type: string
       responses:
         "200":
           description: Pending enrollment created.
@@ -215,8 +243,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TwoFactorEnrollment"
-        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /v1/auth/2fa/confirm:
@@ -247,45 +275,25 @@ paths:
       operationId: disableTwoFactor
       summary: Disable two-factor authentication
       description: |
-        Requires the password plus a valid TOTP or backup code when the
-        enrollment is confirmed; a pending enrollment is cancelled with the
-        password alone (send an empty `code`).
+        Removes a confirmed enrollment or cancels a pending one. Sudo-mode
+        gated; identity proof comes from the reauth window, so there is no
+        request body.
       tags: [auth]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [password, code]
-              properties:
-                password:
-                  type: string
-                code:
-                  type: string
       responses:
         "204":
           description: Two-factor disabled.
-        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /v1/auth/2fa/backup-codes:
     post:
       operationId: regenerateBackupCodes
       summary: Regenerate backup codes
-      description: Replaces all existing backup codes, used and unused.
+      description: |
+        Replaces all existing backup codes, used and unused. Sudo-mode gated;
+        no request body.
       tags: [auth]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [password]
-              properties:
-                password:
-                  type: string
       responses:
         "200":
           description: Fresh backup codes; the previous ones are dead.
@@ -298,8 +306,8 @@ paths:
                   backup_codes:
                     type: array
                     items: { type: string }
-        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /v1/users:
@@ -480,7 +488,10 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
-      description: The caller is authenticated but lacks the admin role.
+      description: |
+        The caller is authenticated but lacks the admin role
+        (`error.code = forbidden`), or — on sudo-mode-gated writes — recent
+        authentication is required (`error.code = reauth_required`).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -496,6 +507,14 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     RateLimited:
       description: Too many attempts; retry after the window passes.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ReauthRequired:
+      description: |
+        Recent authentication required (`error.code = reauth_required`):
+        the session's sudo-mode window has lapsed. Confirm identity at
+        `/v1/auth/reauth` and retry the original request.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -616,6 +635,7 @@ components:
                 - invalid_token
                 - invalid_code
                 - forbidden
+                - reauth_required
                 - not_found
                 - conflict
                 - rate_limited

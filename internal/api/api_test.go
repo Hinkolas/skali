@@ -92,6 +92,15 @@ func (a *testAPI) login(email, password string) string {
 	return sess["token"].(string)
 }
 
+// staleAllSessions pushes every session's last reauthentication past the
+// default 15m window. The service's clock seam is unexported, so tests age the
+// rows instead of advancing time.
+func (a *testAPI) staleAllSessions() {
+	a.t.Helper()
+	_, err := a.st.Pool.Exec(a.t.Context(), "UPDATE sessions SET reauthenticated_at = now() - interval '16 minutes'")
+	require.NoError(a.t, err)
+}
+
 func errorCode(t *testing.T, body map[string]any) string {
 	t.Helper()
 	errObj, ok := body["error"].(map[string]any)
@@ -242,12 +251,7 @@ func TestTwoFactorFlowOverHTTP(t *testing.T) {
 	a.createUser("nick@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
 
-	// Enable requires the password.
-	status, body := a.do("POST", "/v1/auth/2fa/enable", token, map[string]string{"password": "wrong"})
-	require.Equal(t, http.StatusUnauthorized, status)
-	require.Equal(t, "invalid_credentials", errorCode(t, body))
-
-	status, body = a.do("POST", "/v1/auth/2fa/enable", token, map[string]string{"password": "hunter2hunter2"})
+	status, body := a.do("POST", "/v1/auth/2fa/enable", token, nil)
 	require.Equal(t, http.StatusOK, status)
 	secret := body["secret"].(string)
 	require.NotEmpty(t, secret)
@@ -266,7 +270,7 @@ func TestTwoFactorFlowOverHTTP(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, status)
 
 	// Re-enabling is a conflict now.
-	status, body = a.do("POST", "/v1/auth/2fa/enable", token, map[string]string{"password": "hunter2hunter2"})
+	status, body = a.do("POST", "/v1/auth/2fa/enable", token, nil)
 	require.Equal(t, http.StatusConflict, status)
 	require.Equal(t, "conflict", errorCode(t, body))
 
@@ -294,19 +298,126 @@ func TestTwoFactorFlowOverHTTP(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, status)
 	require.Equal(t, "invalid_token", errorCode(t, body))
 
-	// Regenerate backup codes, then disable 2FA with a fresh one.
-	status, body = a.do("POST", "/v1/auth/2fa/backup-codes", twoFAToken, map[string]string{"password": "hunter2hunter2"})
+	// Regenerate backup codes, then disable 2FA. The 2FA session is freshly
+	// minted, so the sudo gate is transparent here.
+	status, body = a.do("POST", "/v1/auth/2fa/backup-codes", twoFAToken, nil)
 	require.Equal(t, http.StatusOK, status)
 	fresh := body["backup_codes"].([]any)
 	require.Len(t, fresh, 10)
 
-	status, _ = a.do("POST", "/v1/auth/2fa/disable", twoFAToken, map[string]string{
-		"password": "hunter2hunter2", "code": fresh[0].(string),
-	})
+	status, _ = a.do("POST", "/v1/auth/2fa/disable", twoFAToken, nil)
 	require.Equal(t, http.StatusNoContent, status)
 
 	// Login is password-only again.
 	a.login("nick@example.com", "hunter2hunter2")
+}
+
+func TestReauthGateAndEndpoint(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("nick@example.com", "hunter2hunter2")
+	token := a.login("nick@example.com", "hunter2hunter2")
+
+	// Fresh from login, the sudo gate is transparent.
+	status, _ := a.do("POST", "/v1/auth/password", token, map[string]string{
+		"current_password": "hunter2hunter2", "new_password": "correct-horse",
+	})
+	require.Equal(t, http.StatusNoContent, status)
+
+	a.staleAllSessions()
+
+	status, body := a.do("POST", "/v1/auth/password", token, map[string]string{
+		"current_password": "correct-horse", "new_password": "hunter2hunter2",
+	})
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "reauth_required", errorCode(t, body))
+
+	// Empty reauth request.
+	status, body = a.do("POST", "/v1/auth/reauth", token, map[string]string{})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "bad_request", errorCode(t, body))
+
+	// Wrong password does not refresh the window.
+	status, body = a.do("POST", "/v1/auth/reauth", token, map[string]string{"password": "wrong"})
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, "invalid_credentials", errorCode(t, body))
+	status, _ = a.do("POST", "/v1/auth/password", token, map[string]string{
+		"current_password": "correct-horse", "new_password": "hunter2hunter2",
+	})
+	require.Equal(t, http.StatusForbidden, status)
+
+	// Correct password re-opens the gate and the original call succeeds.
+	status, _ = a.do("POST", "/v1/auth/reauth", token, map[string]string{"password": "correct-horse"})
+	require.Equal(t, http.StatusNoContent, status)
+	status, _ = a.do("POST", "/v1/auth/password", token, map[string]string{
+		"current_password": "correct-horse", "new_password": "hunter2hunter2",
+	})
+	require.Equal(t, http.StatusNoContent, status)
+}
+
+func TestReauthWithTwoFactor(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("nick@example.com", "hunter2hunter2")
+	token := a.login("nick@example.com", "hunter2hunter2")
+
+	// Enroll and confirm 2FA over HTTP.
+	status, body := a.do("POST", "/v1/auth/2fa/enable", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	secret := body["secret"].(string)
+	codes := body["backup_codes"].([]any)
+	code, err := totp.GenerateCode(secret, time.Now())
+	require.NoError(t, err)
+	status, _ = a.do("POST", "/v1/auth/2fa/confirm", token, map[string]string{"code": code})
+	require.Equal(t, http.StatusNoContent, status)
+
+	a.staleAllSessions()
+
+	status, body = a.do("POST", "/v1/auth/2fa/backup-codes", token, nil)
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "reauth_required", errorCode(t, body))
+
+	// 2FA users must present a code, not a password.
+	status, body = a.do("POST", "/v1/auth/reauth", token, map[string]string{"password": "hunter2hunter2"})
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, "invalid_code", errorCode(t, body))
+
+	// A backup code works…
+	status, _ = a.do("POST", "/v1/auth/reauth", token, map[string]string{"code": codes[0].(string)})
+	require.Equal(t, http.StatusNoContent, status)
+	status, _ = a.do("POST", "/v1/auth/2fa/backup-codes", token, nil)
+	require.Equal(t, http.StatusOK, status)
+
+	// …and is consumed by the reauth.
+	a.staleAllSessions()
+	status, body = a.do("POST", "/v1/auth/reauth", token, map[string]string{"code": codes[0].(string)})
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, "invalid_code", errorCode(t, body))
+}
+
+func TestAdminWritesGated(t *testing.T) {
+	a := newTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	a.createUser("member@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+	member := a.login("member@example.com", "hunter2hunter2")
+
+	a.staleAllSessions()
+
+	// Reads stay open for a stale admin; writes need sudo mode.
+	status, _ := a.do("GET", "/v1/users", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	status, body := a.do("POST", "/v1/users", admin, map[string]string{
+		"email": "new@example.com", "password": "hunter2hunter2", "role": "member",
+	})
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "reauth_required", errorCode(t, body))
+
+	// Non-admins get forbidden, never a reauth prompt (RequireAdmin sits
+	// outside RequireFresh).
+	status, body = a.do("POST", "/v1/users", member, map[string]string{
+		"email": "new@example.com", "password": "hunter2hunter2", "role": "member",
+	})
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "forbidden", errorCode(t, body))
 }
 
 func TestHealthzAndOpenAPI(t *testing.T) {
@@ -346,5 +457,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 16, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 17, routes, "route count changed; update the OpenAPI spec and this number")
 }

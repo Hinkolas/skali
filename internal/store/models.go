@@ -37,14 +37,15 @@ type LoginChallenge struct {
 }
 
 type Session struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	TokenHash []byte
-	ExpiresAt time.Time
-	IpAddress string
-	UserAgent string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID                uuid.UUID
+	UserID            uuid.UUID
+	TokenHash         []byte
+	ExpiresAt         time.Time
+	IpAddress         string
+	UserAgent         string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	ReauthenticatedAt time.Time
 }
 
 type TwoFactor struct {
