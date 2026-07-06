@@ -10,6 +10,7 @@
 </script>
 
 <script lang="ts">
+	import { renderSVG } from 'uqr';
 	import { api, ApiError } from '$lib/api/client';
 	import type { TwoFactorEnrollment } from '$lib/types/auth';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -26,6 +27,8 @@
 	let busy = $state(false);
 	let message = $state('');
 	let codeInput = $state<HTMLInputElement | null>(null);
+
+	const qrSvg = $derived(renderSVG(enrollment.otpauth_uri, { border: 1 }));
 
 	$effect(() => {
 		if (step === 'confirm') codeInput?.focus();
@@ -55,7 +58,7 @@
 			Set up two-factor authentication
 		</h2>
 		<p class="text-text-muted mt-1 text-[13px]">
-			Add skali to your authenticator app with the secret below (or the otpauth URI), then confirm
+			Scan the QR code with your authenticator app (or enter the secret manually), then confirm
 			with the current 6-digit code. Abandoning this step leaves 2FA disabled.
 		</p>
 	</div>
@@ -67,9 +70,14 @@
 			confirm();
 		}}
 	>
-		<!-- No QR rendering on purpose: the app ships zero extra dependencies.
-		     If wanted later, `uqr` generates an SVG from enrollment.otpauth_uri
-		     in one call. -->
+		<div class="flex justify-center py-1">
+			<!-- White tile regardless of theme: scanners need dark-on-light plus a quiet zone. -->
+			<div class="rounded-[10px] bg-white p-2.5 [&>svg]:size-40">
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -- SVG is generated locally by uqr from the enrollment URI -->
+				{@html qrSvg}
+			</div>
+		</div>
+
 		<CopyField label="Secret" value={enrollment.secret} />
 		<CopyField label="URI" value={enrollment.otpauth_uri} />
 

@@ -1,9 +1,13 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import Monitor from '@lucide/svelte/icons/monitor';
+	import Smartphone from '@lucide/svelte/icons/smartphone';
 	import X from '@lucide/svelte/icons/x';
 	import { api, ApiError } from '$lib/api/client';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { relativeTime } from '$lib/format';
+	import { describeUserAgent } from '$lib/useragent';
 	import type { SessionInfo } from '$lib/types/auth';
 	import Table from '$lib/components/ui/Table.svelte';
 
@@ -43,12 +47,22 @@
 	<h2 class="text-text-primary mb-2.5 text-[14px] font-semibold tracking-tight">Active sessions</h2>
 	<Table columns={['Device', 'IP address', 'Signed in', 'Expires', '']} {grid}>
 		{#each sessions as session (session.id)}
+			{@const device = describeUserAgent(session.user_agent)}
 			<div
 				class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {grid}"
 			>
-				<div class="flex min-w-0 items-center gap-2">
+				<div class="flex min-w-0 items-center gap-2.5">
+					<div
+						class="bg-surface-input text-text-tertiary grid size-7 flex-none place-items-center rounded-lg"
+					>
+						{#if device?.mobile}
+							<Smartphone size={13} strokeWidth={1.75} />
+						{:else}
+							<Monitor size={13} strokeWidth={1.75} />
+						{/if}
+					</div>
 					<span class="text-text-secondary truncate text-[12.5px]" title={session.user_agent}>
-						{session.user_agent || 'Unknown device'}
+						{device?.label ?? (session.user_agent || 'Unknown device')}
 					</span>
 					{#if session.current}
 						<span
@@ -61,7 +75,9 @@
 				<div class="font-mono text-text-muted truncate text-[11px]">
 					{session.ip_address || '—'}
 				</div>
-				<div class="font-mono text-text-muted text-[11px]">{formatDate(session.created_at)}</div>
+				<div class="font-mono text-text-muted text-[11px]" title={formatDate(session.created_at)}>
+					{relativeTime(session.created_at)}
+				</div>
 				<div class="font-mono text-text-muted text-[11px]">{formatDate(session.expires_at)}</div>
 				<div class="flex justify-end">
 					{#if !session.current}
