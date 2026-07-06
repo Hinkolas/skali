@@ -529,6 +529,39 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /v1/nodes/{id}/metrics:
+    get:
+      operationId: listNodeMetrics
+      summary: Node metrics history
+      description: |
+        Admin only. The node's resource history over the last 24 hours,
+        averaged into 2-minute buckets (at most 720 samples). Buckets in which
+        the node reported nothing are absent — offline windows appear as gaps,
+        never as zeros.
+      tags: [nodes]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Bucketed metrics history, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [samples]
+                properties:
+                  samples:
+                    type: array
+                    items: { $ref: "#/components/schemas/NodeMetricsSample" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/nodes/{id}:
     patch:
       operationId: updateNode
@@ -717,12 +750,49 @@ components:
         last_seen:
           type: [string, "null"]
           format: date-time
+        metrics:
+          oneOf:
+            - { $ref: "#/components/schemas/NodeMetrics" }
+            - type: "null"
+          description: Latest resource snapshot; null until the node first reports.
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+
+    NodeMetrics:
+      type: object
+      description: |
+        A node resource snapshot. Rates are bytes/second; `cpu_pct` is 0–100
+        normalized across effective cores (the cgroup quota when the node runs
+        in a limited container); `load1` is the host-wide 1-minute load average.
+      required:
+        [cpu_pct, mem_used, mem_total, disk_used, disk_total,
+         net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1]
+      properties:
+        cpu_pct: { type: number }
+        mem_used: { type: integer }
+        mem_total: { type: integer }
+        disk_used: { type: integer }
+        disk_total: { type: integer }
+        net_rx_rate: { type: integer }
+        net_tx_rate: { type: integer }
+        disk_read_rate: { type: integer }
+        disk_write_rate: { type: integer }
+        load1: { type: number }
+
+    NodeMetricsSample:
+      allOf:
+        - { $ref: "#/components/schemas/NodeMetrics" }
+        - type: object
+          required: [sampled_at]
+          properties:
+            sampled_at:
+              type: string
+              format: date-time
+              description: Bucket timestamp (~8-minute averages).
 
     JoinTokenCreated:
       type: object

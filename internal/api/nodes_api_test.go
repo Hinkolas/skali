@@ -152,6 +152,62 @@ func TestUpdateNode(t *testing.T) {
 	require.Equal(t, "not_found", errorCode(t, body))
 }
 
+func TestNodeMetricsHistory(t *testing.T) {
+	a := newTestAPI(t)
+	_, workerID := a.seedNodes()
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	token := a.login("admin@example.com", "hunter2hunter2")
+
+	// Seed two history rows in the same bucket window plus latest values on
+	// the row, mimicking two poller ticks.
+	ctx := t.Context()
+	for range 2 {
+		_, err := a.st.Pool.Exec(ctx, `
+			INSERT INTO node_metrics (node_id, cpu_pct, mem_used, mem_total, disk_used,
+				disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1)
+			VALUES ($1, 40, 500, 1000, 10, 100, 2048, 1024, 0, 0, 1.5)`, workerID)
+		require.NoError(t, err)
+	}
+	_, err := a.st.Pool.Exec(ctx, `
+		UPDATE nodes SET cpu_pct = 40, mem_used = 500, mem_total = 1000, disk_used = 10,
+			disk_total = 100, net_rx_rate = 2048, net_tx_rate = 1024,
+			disk_read_rate = 0, disk_write_rate = 0, load1 = 1.5
+		WHERE id = $1`, workerID)
+	require.NoError(t, err)
+
+	// Latest metrics appear in the node list payload.
+	status, body := a.do("GET", "/v1/nodes", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	for _, n := range body["nodes"].([]any) {
+		node := n.(map[string]any)
+		if node["id"] == workerID {
+			metrics := node["metrics"].(map[string]any)
+			require.EqualValues(t, 40, metrics["cpu_pct"])
+			require.EqualValues(t, 1000, metrics["mem_total"])
+		} else {
+			require.Nil(t, node["metrics"], "master never reported")
+		}
+	}
+
+	// History is bucketed: two same-bucket rows average into one sample.
+	status, body = a.do("GET", "/v1/nodes/"+workerID+"/metrics", token, nil)
+	require.Equal(t, http.StatusOK, status, "body: %v", body)
+	samples := body["samples"].([]any)
+	require.Len(t, samples, 1)
+	sample := samples[0].(map[string]any)
+	require.EqualValues(t, 40, sample["cpu_pct"])
+	require.EqualValues(t, 2048, sample["net_rx_rate"])
+	require.NotEmpty(t, sample["sampled_at"])
+
+	// Unknown node 404s; members are forbidden.
+	status, _ = a.do("GET", "/v1/nodes/00000000-0000-0000-0000-000000000001/metrics", token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	a.createUser("member2@example.com", "hunter2hunter2")
+	memberToken := a.login("member2@example.com", "hunter2hunter2")
+	status, _ = a.do("GET", "/v1/nodes/"+workerID+"/metrics", memberToken, nil)
+	require.Equal(t, http.StatusForbidden, status)
+}
+
 func TestDeleteNode(t *testing.T) {
 	a := newTestAPI(t)
 	masterID, workerID := a.seedNodes()

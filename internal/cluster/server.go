@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/Hinkolas/skali/internal/clusterpb"
+	"github.com/Hinkolas/skali/internal/hostinfo"
 )
 
 // NodeServer is the worker-side NodeService: the surface the master drives.
@@ -20,17 +21,18 @@ import (
 // join it later.
 type NodeServer struct {
 	clusterpb.UnimplementedNodeServiceServer
-	nodeID string
+	nodeID  string
+	sampler *hostinfo.Sampler
 }
 
 func (s *NodeServer) Heartbeat(ctx context.Context, _ *clusterpb.HeartbeatRequest) (*clusterpb.HeartbeatResponse, error) {
-	return nodeFacts(s.nodeID), nil
+	return heartbeatResponse(s.nodeID, s.sampler), nil
 }
 
 // NewAgentServer builds the worker's gRPC server. Every connection is mTLS:
 // the client must present a cluster-CA-signed cert with the master's CN —
 // only the master holds the CA key, so nobody else can mint one.
-func NewAgentServer(id *Identity) *grpc.Server {
+func NewAgentServer(id *Identity, sampler *hostinfo.Sampler) *grpc.Server {
 	tlsCfg := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{id.Cert},
@@ -48,17 +50,17 @@ func NewAgentServer(id *Identity) *grpc.Server {
 		},
 	}
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
-	clusterpb.RegisterNodeServiceServer(srv, &NodeServer{nodeID: id.NodeID.String()})
+	clusterpb.RegisterNodeServiceServer(srv, &NodeServer{nodeID: id.NodeID.String(), sampler: sampler})
 	return srv
 }
 
 // ServeAgent runs the worker's gRPC server until ctx is canceled.
-func ServeAgent(ctx context.Context, id *Identity, grpcAddr string) error {
+func ServeAgent(ctx context.Context, id *Identity, grpcAddr string, sampler *hostinfo.Sampler) error {
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		return err
 	}
-	srv := NewAgentServer(id)
+	srv := NewAgentServer(id, sampler)
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(lis) }()

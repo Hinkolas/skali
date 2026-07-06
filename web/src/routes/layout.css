@@ -63,6 +63,14 @@
 	--color-service-storage: #d9a54f;
 	--color-service-ingress: #c9cad4;
 
+	/* Chart series — validated (CVD + contrast) against surface-raised.
+	   chart-1 duplicates the accent on purpose so charts survive an accent
+	   rebrand; chart-2 is a darkened service-storage amber (the token itself
+	   is too light for chart marks). Do NOT use the service-* set for series:
+	   its adjacent pairs fail colorblind separation. */
+	--color-chart-1: #8b7cf6;
+	--color-chart-2: #b8802c;
+
 	/* Violet glows for primary buttons / logo tiles */
 	--shadow-glow: 0 0 18px rgb(124 98 242 / 0.28);
 	--shadow-glow-lg: 0 0 26px rgb(124 98 242 / 0.4);

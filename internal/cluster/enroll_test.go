@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/Hinkolas/skali/internal/clusterpb"
+	"github.com/Hinkolas/skali/internal/hostinfo"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
 )
@@ -43,6 +44,16 @@ func startMaster(t *testing.T) (*store.Store, *CA, string) {
 	t.Cleanup(srv.Stop)
 
 	return st, ca, lis.Addr().String()
+}
+
+// warmSampler returns a sampler with two synchronous samples taken, so
+// heartbeats carry a metrics snapshot.
+func warmSampler(t *testing.T) *hostinfo.Sampler {
+	t.Helper()
+	s := hostinfo.New(t.TempDir())
+	s.SampleNow(context.Background())
+	s.SampleNow(context.Background())
+	return s
 }
 
 func enrollOptions(t *testing.T, masterAddr, token string) EnrollOptions {
@@ -185,7 +196,7 @@ func TestAgentMTLS(t *testing.T) {
 	// Run the worker's NodeService on a random port.
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	agent := NewAgentServer(identity)
+	agent := NewAgentServer(identity, warmSampler(t))
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 

@@ -2,6 +2,7 @@
 	import { setUser } from '$lib/stores/auth.svelte';
 	import { modal } from '$lib/stores/modal.svelte';
 	import Sidebar from '$lib/components/shell/Sidebar.svelte';
+	import SidePanel from '$lib/components/ui/SidePanel.svelte';
 	import CommandPaletteModal, {
 		modalOptions as commandPaletteOptions
 	} from '$lib/components/shell/CommandPaletteModal.svelte';
@@ -28,4 +29,7 @@
 	<main class="min-w-0 flex-1 overflow-y-auto px-5.5 pt-5.5">
 		{@render children()}
 	</main>
+	<!-- Right-hand detail panel (store-driven); a flex sibling so <main>
+	     cedes space instead of being overlaid. -->
+	<SidePanel />
 </div>

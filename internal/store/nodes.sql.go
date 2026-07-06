@@ -90,7 +90,7 @@ func (q *Queries) CreateJoinToken(ctx context.Context, arg CreateJoinTokenParams
 const createNode = `-- name: CreateNode :one
 INSERT INTO nodes (id, name, roles, advertise_addr, arch, os, skalid_version, cert_serial)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at
+RETURNING id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at, cpu_pct, mem_used, mem_total, disk_used, disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1
 `
 
 type CreateNodeParams struct {
@@ -130,6 +130,16 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (Node, e
 		&i.LastSeen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CpuPct,
+		&i.MemUsed,
+		&i.MemTotal,
+		&i.DiskUsed,
+		&i.DiskTotal,
+		&i.NetRxRate,
+		&i.NetTxRate,
+		&i.DiskReadRate,
+		&i.DiskWriteRate,
+		&i.Load1,
 	)
 	return i, err
 }
@@ -182,7 +192,7 @@ func (q *Queries) GetJoinTokenByID(ctx context.Context, id uuid.UUID) (JoinToken
 }
 
 const getMasterNode = `-- name: GetMasterNode :one
-SELECT id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at FROM nodes WHERE 'master' = ANY(roles) LIMIT 1
+SELECT id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at, cpu_pct, mem_used, mem_total, disk_used, disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1 FROM nodes WHERE 'master' = ANY(roles) LIMIT 1
 `
 
 func (q *Queries) GetMasterNode(ctx context.Context) (Node, error) {
@@ -202,12 +212,22 @@ func (q *Queries) GetMasterNode(ctx context.Context) (Node, error) {
 		&i.LastSeen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CpuPct,
+		&i.MemUsed,
+		&i.MemTotal,
+		&i.DiskUsed,
+		&i.DiskTotal,
+		&i.NetRxRate,
+		&i.NetTxRate,
+		&i.DiskReadRate,
+		&i.DiskWriteRate,
+		&i.Load1,
 	)
 	return i, err
 }
 
 const getNodeByID = `-- name: GetNodeByID :one
-SELECT id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at FROM nodes WHERE id = $1
+SELECT id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at, cpu_pct, mem_used, mem_total, disk_used, disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1 FROM nodes WHERE id = $1
 `
 
 func (q *Queries) GetNodeByID(ctx context.Context, id uuid.UUID) (Node, error) {
@@ -227,12 +247,128 @@ func (q *Queries) GetNodeByID(ctx context.Context, id uuid.UUID) (Node, error) {
 		&i.LastSeen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CpuPct,
+		&i.MemUsed,
+		&i.MemTotal,
+		&i.DiskUsed,
+		&i.DiskTotal,
+		&i.NetRxRate,
+		&i.NetTxRate,
+		&i.DiskReadRate,
+		&i.DiskWriteRate,
+		&i.Load1,
 	)
 	return i, err
 }
 
+const insertNodeMetrics = `-- name: InsertNodeMetrics :exec
+INSERT INTO node_metrics (node_id, cpu_pct, mem_used, mem_total, disk_used,
+    disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+`
+
+type InsertNodeMetricsParams struct {
+	NodeID        uuid.UUID
+	CpuPct        float32
+	MemUsed       int64
+	MemTotal      int64
+	DiskUsed      int64
+	DiskTotal     int64
+	NetRxRate     int64
+	NetTxRate     int64
+	DiskReadRate  int64
+	DiskWriteRate int64
+	Load1         float32
+}
+
+func (q *Queries) InsertNodeMetrics(ctx context.Context, arg InsertNodeMetricsParams) error {
+	_, err := q.db.Exec(ctx, insertNodeMetrics,
+		arg.NodeID,
+		arg.CpuPct,
+		arg.MemUsed,
+		arg.MemTotal,
+		arg.DiskUsed,
+		arg.DiskTotal,
+		arg.NetRxRate,
+		arg.NetTxRate,
+		arg.DiskReadRate,
+		arg.DiskWriteRate,
+		arg.Load1,
+	)
+	return err
+}
+
+const listNodeMetricsBucketed = `-- name: ListNodeMetricsBucketed :many
+SELECT
+    date_bin('2 minutes', sampled_at, 'epoch'::timestamptz)::timestamptz AS bucket,
+    avg(cpu_pct)::real            AS cpu_pct,
+    avg(mem_used)::bigint         AS mem_used,
+    avg(mem_total)::bigint        AS mem_total,
+    avg(disk_used)::bigint        AS disk_used,
+    avg(disk_total)::bigint       AS disk_total,
+    avg(net_rx_rate)::bigint      AS net_rx_rate,
+    avg(net_tx_rate)::bigint      AS net_tx_rate,
+    avg(disk_read_rate)::bigint   AS disk_read_rate,
+    avg(disk_write_rate)::bigint  AS disk_write_rate,
+    avg(load1)::real              AS load1
+FROM node_metrics
+WHERE node_id = $1 AND sampled_at > now() - interval '24 hours'
+GROUP BY bucket
+ORDER BY bucket
+`
+
+type ListNodeMetricsBucketedRow struct {
+	Bucket        time.Time
+	CpuPct        float32
+	MemUsed       int64
+	MemTotal      int64
+	DiskUsed      int64
+	DiskTotal     int64
+	NetRxRate     int64
+	NetTxRate     int64
+	DiskReadRate  int64
+	DiskWriteRate int64
+	Load1         float32
+}
+
+// Bucketed 24h history for the UI: ≤720 points instead of ~5760 raw rows.
+// 2-minute buckets keep freshly-enrolled nodes from staring at an empty chart
+// for a quarter hour; the client decimates further to ~180 render points.
+// Buckets with no samples are simply absent (gap semantics preserved).
+func (q *Queries) ListNodeMetricsBucketed(ctx context.Context, nodeID uuid.UUID) ([]ListNodeMetricsBucketedRow, error) {
+	rows, err := q.db.Query(ctx, listNodeMetricsBucketed, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNodeMetricsBucketedRow
+	for rows.Next() {
+		var i ListNodeMetricsBucketedRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.CpuPct,
+			&i.MemUsed,
+			&i.MemTotal,
+			&i.DiskUsed,
+			&i.DiskTotal,
+			&i.NetRxRate,
+			&i.NetTxRate,
+			&i.DiskReadRate,
+			&i.DiskWriteRate,
+			&i.Load1,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNodes = `-- name: ListNodes :many
-SELECT id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at FROM nodes ORDER BY created_at
+SELECT id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at, cpu_pct, mem_used, mem_total, disk_used, disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1 FROM nodes ORDER BY created_at
 `
 
 func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
@@ -258,6 +394,16 @@ func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
 			&i.LastSeen,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CpuPct,
+			&i.MemUsed,
+			&i.MemTotal,
+			&i.DiskUsed,
+			&i.DiskTotal,
+			&i.NetRxRate,
+			&i.NetTxRate,
+			&i.DiskReadRate,
+			&i.DiskWriteRate,
+			&i.Load1,
 		); err != nil {
 			return nil, err
 		}
@@ -284,8 +430,30 @@ func (q *Queries) MarkStaleNodesOffline(ctx context.Context, lastSeen *time.Time
 	return result.RowsAffected(), nil
 }
 
+const pruneNodeMetrics = `-- name: PruneNodeMetrics :execrows
+DELETE FROM node_metrics WHERE sampled_at < now() - interval '24 hours'
+`
+
+func (q *Queries) PruneNodeMetrics(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneNodeMetrics)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordNodeHeartbeat = `-- name: RecordNodeHeartbeat :exec
 UPDATE nodes SET arch = $2, os = $3, skalid_version = $4,
+    cpu_pct         = COALESCE($5, cpu_pct),
+    mem_used        = COALESCE($6, mem_used),
+    mem_total       = COALESCE($7, mem_total),
+    disk_used       = COALESCE($8, disk_used),
+    disk_total      = COALESCE($9, disk_total),
+    net_rx_rate     = COALESCE($10, net_rx_rate),
+    net_tx_rate     = COALESCE($11, net_tx_rate),
+    disk_read_rate  = COALESCE($12, disk_read_rate),
+    disk_write_rate = COALESCE($13, disk_write_rate),
+    load1           = COALESCE($14, load1),
     status = 'online', last_seen = now(), updated_at = now()
 WHERE id = $1
 `
@@ -295,21 +463,43 @@ type RecordNodeHeartbeatParams struct {
 	Arch          *string
 	Os            *string
 	SkalidVersion *string
+	CpuPct        *float32
+	MemUsed       *int64
+	MemTotal      *int64
+	DiskUsed      *int64
+	DiskTotal     *int64
+	NetRxRate     *int64
+	NetTxRate     *int64
+	DiskReadRate  *int64
+	DiskWriteRate *int64
+	Load1         *float32
 }
 
+// Metrics params are nullable: a node whose sampler isn't warm yet heartbeats
+// without a snapshot, and the previous latest values are left untouched.
 func (q *Queries) RecordNodeHeartbeat(ctx context.Context, arg RecordNodeHeartbeatParams) error {
 	_, err := q.db.Exec(ctx, recordNodeHeartbeat,
 		arg.ID,
 		arg.Arch,
 		arg.Os,
 		arg.SkalidVersion,
+		arg.CpuPct,
+		arg.MemUsed,
+		arg.MemTotal,
+		arg.DiskUsed,
+		arg.DiskTotal,
+		arg.NetRxRate,
+		arg.NetTxRate,
+		arg.DiskReadRate,
+		arg.DiskWriteRate,
+		arg.Load1,
 	)
 	return err
 }
 
 const setNodeName = `-- name: SetNodeName :one
 UPDATE nodes SET name = $2, updated_at = now() WHERE id = $1
-RETURNING id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at
+RETURNING id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at, cpu_pct, mem_used, mem_total, disk_used, disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1
 `
 
 type SetNodeNameParams struct {
@@ -334,13 +524,23 @@ func (q *Queries) SetNodeName(ctx context.Context, arg SetNodeNameParams) (Node,
 		&i.LastSeen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CpuPct,
+		&i.MemUsed,
+		&i.MemTotal,
+		&i.DiskUsed,
+		&i.DiskTotal,
+		&i.NetRxRate,
+		&i.NetTxRate,
+		&i.DiskReadRate,
+		&i.DiskWriteRate,
+		&i.Load1,
 	)
 	return i, err
 }
 
 const setNodePublicAddr = `-- name: SetNodePublicAddr :one
 UPDATE nodes SET public_addr = $2, updated_at = now() WHERE id = $1
-RETURNING id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at
+RETURNING id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at, cpu_pct, mem_used, mem_total, disk_used, disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1
 `
 
 type SetNodePublicAddrParams struct {
@@ -365,13 +565,23 @@ func (q *Queries) SetNodePublicAddr(ctx context.Context, arg SetNodePublicAddrPa
 		&i.LastSeen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CpuPct,
+		&i.MemUsed,
+		&i.MemTotal,
+		&i.DiskUsed,
+		&i.DiskTotal,
+		&i.NetRxRate,
+		&i.NetTxRate,
+		&i.DiskReadRate,
+		&i.DiskWriteRate,
+		&i.Load1,
 	)
 	return i, err
 }
 
 const setNodeRoles = `-- name: SetNodeRoles :one
 UPDATE nodes SET roles = $2, updated_at = now() WHERE id = $1
-RETURNING id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at
+RETURNING id, name, roles, advertise_addr, public_addr, arch, os, skalid_version, cert_serial, status, last_seen, created_at, updated_at, cpu_pct, mem_used, mem_total, disk_used, disk_total, net_rx_rate, net_tx_rate, disk_read_rate, disk_write_rate, load1
 `
 
 type SetNodeRolesParams struct {
@@ -396,6 +606,16 @@ func (q *Queries) SetNodeRoles(ctx context.Context, arg SetNodeRolesParams) (Nod
 		&i.LastSeen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CpuPct,
+		&i.MemUsed,
+		&i.MemTotal,
+		&i.DiskUsed,
+		&i.DiskTotal,
+		&i.NetRxRate,
+		&i.NetTxRate,
+		&i.DiskReadRate,
+		&i.DiskWriteRate,
+		&i.Load1,
 	)
 	return i, err
 }

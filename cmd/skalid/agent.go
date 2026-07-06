@@ -10,6 +10,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/config"
+	"github.com/Hinkolas/skali/internal/hostinfo"
 	"github.com/Hinkolas/skali/internal/obs"
 )
 
@@ -44,7 +45,15 @@ func runAgent() error {
 	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr)
+	// Resource sampler: feeds heartbeat metrics and (when an OTLP endpoint is
+	// configured) the OTel gauges.
+	sampler := hostinfo.New(cfg.DataDir)
+	if err := hostinfo.RegisterGauges(sampler); err != nil {
+		return err
+	}
+	go sampler.Run(sigCtx)
+
+	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr, sampler)
 	if sigCtx.Err() != nil {
 		slog.Info("shutdown signal received", "service", serviceName)
 	}

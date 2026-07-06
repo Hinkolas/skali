@@ -67,6 +67,31 @@ type Node struct {
 	LastSeen      *time.Time
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	CpuPct        *float32
+	MemUsed       *int64
+	MemTotal      *int64
+	DiskUsed      *int64
+	DiskTotal     *int64
+	NetRxRate     *int64
+	NetTxRate     *int64
+	DiskReadRate  *int64
+	DiskWriteRate *int64
+	Load1         *float32
+}
+
+type NodeMetric struct {
+	NodeID        uuid.UUID
+	SampledAt     time.Time
+	CpuPct        float32
+	MemUsed       int64
+	MemTotal      int64
+	DiskUsed      int64
+	DiskTotal     int64
+	NetRxRate     int64
+	NetTxRate     int64
+	DiskReadRate  int64
+	DiskWriteRate int64
+	Load1         float32
 }
 
 type Session struct {

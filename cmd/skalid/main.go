@@ -28,6 +28,7 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/config"
+	"github.com/Hinkolas/skali/internal/hostinfo"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -114,7 +115,14 @@ func runServe() error {
 	}
 	defer grpcSrv.GracefulStop()
 
-	poller, err := cluster.NewPoller(st, ca, self.ID, 0, 0)
+	// The master's own resource sampler ("/" until a data dir exists) feeds
+	// its node row via the poller's self-stamp, and the OTel gauges.
+	sampler := hostinfo.New("/")
+	if err := hostinfo.RegisterGauges(sampler); err != nil {
+		return err
+	}
+
+	poller, err := cluster.NewPoller(st, ca, self.ID, sampler, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -139,6 +147,7 @@ func runServe() error {
 	loopCtx, cancelLoops := context.WithCancel(ctx)
 	defer cancelLoops()
 	go sweepLoop(loopCtx, authSvc)
+	go sampler.Run(loopCtx)
 	go poller.Run(loopCtx)
 
 	slog.InfoContext(ctx, "starting", "service", serviceName,

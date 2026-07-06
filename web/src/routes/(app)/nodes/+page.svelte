@@ -2,11 +2,14 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
 	import { api, ApiError } from '$lib/api/client';
 	import { modal } from '$lib/stores/modal.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
+	import { sidepanel } from '$lib/stores/sidepanel.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { relativeTime } from '$lib/format';
 	import { NODE_ROLE_META, NODE_STATE_META } from '$lib/service-types';
 	import type { JoinTokenCreated, Node, NodeRole } from '$lib/types/nodes';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
@@ -22,6 +25,7 @@
 	import EditNodeModal, {
 		modalOptions as editNodeOptions
 	} from '$lib/components/nodes/EditNodeModal.svelte';
+	import NodeDetailPanel from '$lib/components/nodes/NodeDetailPanel.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -36,14 +40,40 @@
 		return () => clearInterval(t);
 	});
 
-	function relativeTime(iso: string | null): string {
-		if (!iso) return 'never';
-		const secs = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-		if (secs < 60) return `${secs}s ago`;
-		if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-		if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-		return `${Math.floor(secs / 86400)}d ago`;
+	// --- selection: the ?node= URL param is the single source of truth -------
+	// Shallow replaceState never re-runs loads, adds no history entries, and
+	// doesn't fire afterNavigate (so the SidePanel host's route-close can't
+	// misfire). Deep links restore the panel after hydration.
+	const selected = $derived(page.url.searchParams.get('node'));
+
+	function select(id: string | null) {
+		const url = new URL(page.url);
+		if (id === null && !url.searchParams.has('node')) return; // no-op (e.g. onClose after close)
+		if (id) url.searchParams.set('node', id);
+		else url.searchParams.delete('node');
+		replaceState(url, {});
 	}
+
+	// Panel lifecycle: re-runs when the selection OR the polled node list
+	// changes. Same component + fresh props = in-place update (no remount, no
+	// transition replay); the panel's history fetch keys on the node id, so
+	// poll churn doesn't reset charts.
+	$effect(() => {
+		if (!selected) {
+			sidepanel.close();
+			return;
+		}
+		const node = data.nodes.find((n) => n.id === selected);
+		if (!node) {
+			select(null); // deleted underneath us, or a bogus deep link
+			return;
+		}
+		sidepanel.open(
+			NodeDetailPanel,
+			{ node, onedit: () => editNode(node), onremove: () => deleteNode(node) },
+			{ label: `${node.name} details`, onClose: () => select(null) }
+		);
+	});
 
 	// The sudo-gated mint call runs BETWEEN the two modals — never while one
 	// is open — so the reauth modal (single modal slot) is not displaced.
@@ -112,8 +142,23 @@
 			{#each data.nodes as node (node.id)}
 				{@const isMaster = node.roles.includes('master')}
 				{@const state = NODE_STATE_META[node.status]}
+				{@const isSelected = selected === node.id}
+				<!-- Not a <button>: the row hosts the edit/delete buttons, and
+				     interactive elements can't nest. -->
 				<div
-					class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {nodeGrid}"
+					role="button"
+					tabindex="0"
+					onclick={() => select(isSelected ? null : node.id)}
+					onkeydown={(e) => {
+						if (e.target !== e.currentTarget) return; // Enter on inner buttons must not toggle
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							select(isSelected ? null : node.id);
+						}
+					}}
+					class="border-border-subtle grid cursor-pointer items-center border-b px-4.5 py-3 transition-colors last:border-0 {isSelected
+						? 'bg-accent/8 inset-ring inset-ring-accent/20'
+						: 'hover:bg-white/2'} {nodeGrid}"
 				>
 					<div class="flex min-w-0 flex-col gap-px">
 						<span class="text-text-primary truncate text-[13px] font-medium">{node.name}</span>
@@ -152,7 +197,10 @@
 					<div class="flex items-center justify-end gap-1">
 						<button
 							type="button"
-							onclick={() => editNode(node)}
+							onclick={(e) => {
+								e.stopPropagation();
+								editNode(node);
+							}}
 							class="text-text-ghost hover:text-text-secondary cursor-pointer rounded-lg p-1.5 transition-colors hover:bg-white/5"
 							aria-label="Edit {node.name}"
 							title="Edit"
@@ -162,7 +210,10 @@
 						<button
 							type="button"
 							disabled={isMaster}
-							onclick={() => deleteNode(node)}
+							onclick={(e) => {
+								e.stopPropagation();
+								deleteNode(node);
+							}}
 							class="rounded-lg p-1.5 transition-colors {isMaster
 								? 'text-text-ghost/40 cursor-default'
 								: 'text-text-ghost hover:text-status-danger cursor-pointer hover:bg-white/5'}"

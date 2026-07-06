@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/store"
@@ -24,22 +25,38 @@ type nodesHandlers struct {
 }
 
 type nodePayload struct {
-	ID            uuid.UUID  `json:"id"`
-	Name          string     `json:"name"`
-	Roles         []string   `json:"roles"`
-	AdvertiseAddr string     `json:"advertise_addr"`
-	PublicAddr    *string    `json:"public_addr"`
-	Arch          *string    `json:"arch"`
-	OS            *string    `json:"os"`
-	SkalidVersion *string    `json:"skalid_version"`
-	Status        string     `json:"status"`
-	LastSeen      *time.Time `json:"last_seen"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID            uuid.UUID           `json:"id"`
+	Name          string              `json:"name"`
+	Roles         []string            `json:"roles"`
+	AdvertiseAddr string              `json:"advertise_addr"`
+	PublicAddr    *string             `json:"public_addr"`
+	Arch          *string             `json:"arch"`
+	OS            *string             `json:"os"`
+	SkalidVersion *string             `json:"skalid_version"`
+	Status        string              `json:"status"`
+	LastSeen      *time.Time          `json:"last_seen"`
+	Metrics       *nodeMetricsPayload `json:"metrics"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+}
+
+// nodeMetricsPayload is the latest resource snapshot; rates are bytes/second,
+// cpu_pct is 0–100 across effective cores.
+type nodeMetricsPayload struct {
+	CPUPct        float32 `json:"cpu_pct"`
+	MemUsed       int64   `json:"mem_used"`
+	MemTotal      int64   `json:"mem_total"`
+	DiskUsed      int64   `json:"disk_used"`
+	DiskTotal     int64   `json:"disk_total"`
+	NetRxRate     int64   `json:"net_rx_rate"`
+	NetTxRate     int64   `json:"net_tx_rate"`
+	DiskReadRate  int64   `json:"disk_read_rate"`
+	DiskWriteRate int64   `json:"disk_write_rate"`
+	Load1         float32 `json:"load1"`
 }
 
 func newNodePayload(n *store.Node) nodePayload {
-	return nodePayload{
+	p := nodePayload{
 		ID:            n.ID,
 		Name:          n.Name,
 		Roles:         n.Roles,
@@ -53,6 +70,31 @@ func newNodePayload(n *store.Node) nodePayload {
 		CreatedAt:     n.CreatedAt,
 		UpdatedAt:     n.UpdatedAt,
 	}
+	// The poller writes all metric columns atomically, so one sentinel column
+	// decides presence.
+	if n.CpuPct != nil {
+		p.Metrics = &nodeMetricsPayload{
+			CPUPct:        *n.CpuPct,
+			MemUsed:       deref(n.MemUsed),
+			MemTotal:      deref(n.MemTotal),
+			DiskUsed:      deref(n.DiskUsed),
+			DiskTotal:     deref(n.DiskTotal),
+			NetRxRate:     deref(n.NetRxRate),
+			NetTxRate:     deref(n.NetTxRate),
+			DiskReadRate:  deref(n.DiskReadRate),
+			DiskWriteRate: deref(n.DiskWriteRate),
+			Load1:         deref(n.Load1),
+		}
+	}
+	return p
+}
+
+func deref[T any](p *T) T {
+	var zero T
+	if p == nil {
+		return zero
+	}
+	return *p
 }
 
 // pathNodeID parses the {id} route param, writing a 404 on malformed ids so
@@ -105,6 +147,54 @@ func (h *nodesHandlers) createToken(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt     time.Time `json:"expires_at"`
 		EnrollCommand string    `json:"enroll_command"`
 	}{result.Token, result.ExpiresAt, result.EnrollCommand})
+}
+
+// nodeMetricSamplePayload is one bucketed history point (2-minute average).
+type nodeMetricSamplePayload struct {
+	SampledAt time.Time `json:"sampled_at"`
+	nodeMetricsPayload
+}
+
+// GET /v1/nodes/{id}/metrics
+func (h *nodesHandlers) metrics(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathNodeID(w, r)
+	if !ok {
+		return
+	}
+	if _, err := h.st.GetNodeByID(r.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, codeNotFound, "not found")
+			return
+		}
+		writeClusterError(r.Context(), w, err)
+		return
+	}
+	rows, err := h.st.ListNodeMetricsBucketed(r.Context(), id)
+	if err != nil {
+		writeClusterError(r.Context(), w, err)
+		return
+	}
+	samples := make([]nodeMetricSamplePayload, len(rows))
+	for i, row := range rows {
+		samples[i] = nodeMetricSamplePayload{
+			SampledAt: row.Bucket,
+			nodeMetricsPayload: nodeMetricsPayload{
+				CPUPct:        row.CpuPct,
+				MemUsed:       row.MemUsed,
+				MemTotal:      row.MemTotal,
+				DiskUsed:      row.DiskUsed,
+				DiskTotal:     row.DiskTotal,
+				NetRxRate:     row.NetRxRate,
+				NetTxRate:     row.NetTxRate,
+				DiskReadRate:  row.DiskReadRate,
+				DiskWriteRate: row.DiskWriteRate,
+				Load1:         row.Load1,
+			},
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Samples []nodeMetricSamplePayload `json:"samples"`
+	}{samples})
 }
 
 // PATCH /v1/nodes/{id}

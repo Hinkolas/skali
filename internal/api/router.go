@@ -88,6 +88,7 @@ func NewRouter(d Deps) http.Handler {
 
 				r.Get("/users", uh.list)
 				r.Get("/nodes", nh.list)
+				r.Get("/nodes/{id}/metrics", nh.metrics)
 
 				// Writes additionally need sudo mode. RequireAdmin sits
 				// outside RequireFresh so non-admins get "forbidden", never a

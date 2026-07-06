@@ -245,7 +245,9 @@ type HeartbeatResponse struct {
 	Os            string `protobuf:"bytes,3,opt,name=os,proto3" json:"os,omitempty"`
 	SkalidVersion string `protobuf:"bytes,4,opt,name=skalid_version,json=skalidVersion,proto3" json:"skalid_version,omitempty"`
 	CpuCount      uint32 `protobuf:"varint,5,opt,name=cpu_count,json=cpuCount,proto3" json:"cpu_count,omitempty"`
-	MemoryBytes   uint64 `protobuf:"varint,6,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"` // total RAM; 0 where not detectable
+	// Resource snapshot; absent until the node's sampler has two samples
+	// (rates need a delta).
+	Metrics       *NodeMetrics `protobuf:"bytes,7,opt,name=metrics,proto3" json:"metrics,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -315,9 +317,129 @@ func (x *HeartbeatResponse) GetCpuCount() uint32 {
 	return 0
 }
 
-func (x *HeartbeatResponse) GetMemoryBytes() uint64 {
+func (x *HeartbeatResponse) GetMetrics() *NodeMetrics {
 	if x != nil {
-		return x.MemoryBytes
+		return x.Metrics
+	}
+	return nil
+}
+
+// NodeMetrics is the node's latest resource snapshot. Rates are computed on
+// the node (bytes/second over the sample interval); cpu_percent is 0-100
+// normalized across effective cores (the cgroup quota when the node runs in
+// a limited container).
+type NodeMetrics struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	CpuPercent           float64                `protobuf:"fixed64,1,opt,name=cpu_percent,json=cpuPercent,proto3" json:"cpu_percent,omitempty"`
+	MemoryUsedBytes      uint64                 `protobuf:"varint,2,opt,name=memory_used_bytes,json=memoryUsedBytes,proto3" json:"memory_used_bytes,omitempty"`
+	MemoryTotalBytes     uint64                 `protobuf:"varint,3,opt,name=memory_total_bytes,json=memoryTotalBytes,proto3" json:"memory_total_bytes,omitempty"`
+	DiskUsedBytes        uint64                 `protobuf:"varint,4,opt,name=disk_used_bytes,json=diskUsedBytes,proto3" json:"disk_used_bytes,omitempty"` // filesystem backing the node's data dir
+	DiskTotalBytes       uint64                 `protobuf:"varint,5,opt,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty"`
+	NetRxBytesPerSec     uint64                 `protobuf:"varint,6,opt,name=net_rx_bytes_per_sec,json=netRxBytesPerSec,proto3" json:"net_rx_bytes_per_sec,omitempty"`
+	NetTxBytesPerSec     uint64                 `protobuf:"varint,7,opt,name=net_tx_bytes_per_sec,json=netTxBytesPerSec,proto3" json:"net_tx_bytes_per_sec,omitempty"`
+	DiskReadBytesPerSec  uint64                 `protobuf:"varint,8,opt,name=disk_read_bytes_per_sec,json=diskReadBytesPerSec,proto3" json:"disk_read_bytes_per_sec,omitempty"`
+	DiskWriteBytesPerSec uint64                 `protobuf:"varint,9,opt,name=disk_write_bytes_per_sec,json=diskWriteBytesPerSec,proto3" json:"disk_write_bytes_per_sec,omitempty"`
+	Load1                float64                `protobuf:"fixed64,10,opt,name=load1,proto3" json:"load1,omitempty"` // 1-min load average; host-wide, advisory
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *NodeMetrics) Reset() {
+	*x = NodeMetrics{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeMetrics) ProtoMessage() {}
+
+func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeMetrics.ProtoReflect.Descriptor instead.
+func (*NodeMetrics) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *NodeMetrics) GetCpuPercent() float64 {
+	if x != nil {
+		return x.CpuPercent
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetMemoryUsedBytes() uint64 {
+	if x != nil {
+		return x.MemoryUsedBytes
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetMemoryTotalBytes() uint64 {
+	if x != nil {
+		return x.MemoryTotalBytes
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetDiskUsedBytes() uint64 {
+	if x != nil {
+		return x.DiskUsedBytes
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetDiskTotalBytes() uint64 {
+	if x != nil {
+		return x.DiskTotalBytes
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetNetRxBytesPerSec() uint64 {
+	if x != nil {
+		return x.NetRxBytesPerSec
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetNetTxBytesPerSec() uint64 {
+	if x != nil {
+		return x.NetTxBytesPerSec
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetDiskReadBytesPerSec() uint64 {
+	if x != nil {
+		return x.DiskReadBytesPerSec
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetDiskWriteBytesPerSec() uint64 {
+	if x != nil {
+		return x.DiskWriteBytesPerSec
+	}
+	return 0
+}
+
+func (x *NodeMetrics) GetLoad1() float64 {
+	if x != nil {
+		return x.Load1
 	}
 	return 0
 }
@@ -340,14 +462,27 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\bcert_pem\x18\x02 \x01(\fR\acertPem\x12\x15\n" +
 	"\x06ca_pem\x18\x03 \x01(\fR\x05caPem\x12\x14\n" +
 	"\x05roles\x18\x04 \x03(\tR\x05roles\"\x12\n" +
-	"\x10HeartbeatRequest\"\xb7\x01\n" +
+	"\x10HeartbeatRequest\"\xd3\x01\n" +
 	"\x11HeartbeatResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
 	"\x04arch\x18\x02 \x01(\tR\x04arch\x12\x0e\n" +
 	"\x02os\x18\x03 \x01(\tR\x02os\x12%\n" +
 	"\x0eskalid_version\x18\x04 \x01(\tR\rskalidVersion\x12\x1b\n" +
-	"\tcpu_count\x18\x05 \x01(\rR\bcpuCount\x12!\n" +
-	"\fmemory_bytes\x18\x06 \x01(\x04R\vmemoryBytes2`\n" +
+	"\tcpu_count\x18\x05 \x01(\rR\bcpuCount\x127\n" +
+	"\ametrics\x18\a \x01(\v2\x1d.skali.cluster.v1.NodeMetricsR\ametricsJ\x04\b\x06\x10\a\"\xbe\x03\n" +
+	"\vNodeMetrics\x12\x1f\n" +
+	"\vcpu_percent\x18\x01 \x01(\x01R\n" +
+	"cpuPercent\x12*\n" +
+	"\x11memory_used_bytes\x18\x02 \x01(\x04R\x0fmemoryUsedBytes\x12,\n" +
+	"\x12memory_total_bytes\x18\x03 \x01(\x04R\x10memoryTotalBytes\x12&\n" +
+	"\x0fdisk_used_bytes\x18\x04 \x01(\x04R\rdiskUsedBytes\x12(\n" +
+	"\x10disk_total_bytes\x18\x05 \x01(\x04R\x0ediskTotalBytes\x12.\n" +
+	"\x14net_rx_bytes_per_sec\x18\x06 \x01(\x04R\x10netRxBytesPerSec\x12.\n" +
+	"\x14net_tx_bytes_per_sec\x18\a \x01(\x04R\x10netTxBytesPerSec\x124\n" +
+	"\x17disk_read_bytes_per_sec\x18\b \x01(\x04R\x13diskReadBytesPerSec\x126\n" +
+	"\x18disk_write_bytes_per_sec\x18\t \x01(\x04R\x14diskWriteBytesPerSec\x12\x14\n" +
+	"\x05load1\x18\n" +
+	" \x01(\x01R\x05load12`\n" +
 	"\x11EnrollmentService\x12K\n" +
 	"\x06Enroll\x12\x1f.skali.cluster.v1.EnrollRequest\x1a .skali.cluster.v1.EnrollResponse2c\n" +
 	"\vNodeService\x12T\n" +
@@ -365,23 +500,25 @@ func file_skali_cluster_v1_cluster_proto_rawDescGZIP() []byte {
 	return file_skali_cluster_v1_cluster_proto_rawDescData
 }
 
-var file_skali_cluster_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_skali_cluster_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_skali_cluster_v1_cluster_proto_goTypes = []any{
 	(*EnrollRequest)(nil),     // 0: skali.cluster.v1.EnrollRequest
 	(*EnrollResponse)(nil),    // 1: skali.cluster.v1.EnrollResponse
 	(*HeartbeatRequest)(nil),  // 2: skali.cluster.v1.HeartbeatRequest
 	(*HeartbeatResponse)(nil), // 3: skali.cluster.v1.HeartbeatResponse
+	(*NodeMetrics)(nil),       // 4: skali.cluster.v1.NodeMetrics
 }
 var file_skali_cluster_v1_cluster_proto_depIdxs = []int32{
-	0, // 0: skali.cluster.v1.EnrollmentService.Enroll:input_type -> skali.cluster.v1.EnrollRequest
-	2, // 1: skali.cluster.v1.NodeService.Heartbeat:input_type -> skali.cluster.v1.HeartbeatRequest
-	1, // 2: skali.cluster.v1.EnrollmentService.Enroll:output_type -> skali.cluster.v1.EnrollResponse
-	3, // 3: skali.cluster.v1.NodeService.Heartbeat:output_type -> skali.cluster.v1.HeartbeatResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	4, // 0: skali.cluster.v1.HeartbeatResponse.metrics:type_name -> skali.cluster.v1.NodeMetrics
+	0, // 1: skali.cluster.v1.EnrollmentService.Enroll:input_type -> skali.cluster.v1.EnrollRequest
+	2, // 2: skali.cluster.v1.NodeService.Heartbeat:input_type -> skali.cluster.v1.HeartbeatRequest
+	1, // 3: skali.cluster.v1.EnrollmentService.Enroll:output_type -> skali.cluster.v1.EnrollResponse
+	3, // 4: skali.cluster.v1.NodeService.Heartbeat:output_type -> skali.cluster.v1.HeartbeatResponse
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_skali_cluster_v1_cluster_proto_init() }
@@ -395,7 +532,7 @@ func file_skali_cluster_v1_cluster_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skali_cluster_v1_cluster_proto_rawDesc), len(file_skali_cluster_v1_cluster_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

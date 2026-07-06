@@ -466,6 +466,7 @@ export const NODES: Node[] = [
 		skalid_version: '0.1.0',
 		status: 'online',
 		last_seen: '2026-07-01T12:00:00Z',
+		metrics: null,
 		created_at: '2026-05-01T09:00:00Z',
 		updated_at: '2026-07-01T12:00:00Z'
 	},
@@ -480,6 +481,7 @@ export const NODES: Node[] = [
 		skalid_version: '0.1.0',
 		status: 'online',
 		last_seen: '2026-07-01T12:00:00Z',
+		metrics: null,
 		created_at: '2026-05-02T09:00:00Z',
 		updated_at: '2026-07-01T12:00:00Z'
 	},
@@ -494,6 +496,7 @@ export const NODES: Node[] = [
 		skalid_version: '0.1.0',
 		status: 'online',
 		last_seen: '2026-07-01T12:00:00Z',
+		metrics: null,
 		created_at: '2026-05-03T09:00:00Z',
 		updated_at: '2026-07-01T12:00:00Z'
 	}

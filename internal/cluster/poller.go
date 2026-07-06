@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/Hinkolas/skali/internal/clusterpb"
+	"github.com/Hinkolas/skali/internal/hostinfo"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/version"
 )
@@ -37,6 +38,7 @@ type Poller struct {
 	ca         *CA
 	clientCert tls.Certificate
 	selfID     uuid.UUID
+	sampler    *hostinfo.Sampler // the master's own node metrics
 	interval   time.Duration
 	staleAfter time.Duration
 }
@@ -44,7 +46,7 @@ type Poller struct {
 // NewPoller mints the master's dialing identity from the CA (in memory; the
 // master holds the CA key anyway). interval/staleAfter of 0 take defaults —
 // the seam exists for tests.
-func NewPoller(st *store.Store, ca *CA, selfID uuid.UUID, interval, staleAfter time.Duration) (*Poller, error) {
+func NewPoller(st *store.Store, ca *CA, selfID uuid.UUID, sampler *hostinfo.Sampler, interval, staleAfter time.Duration) (*Poller, error) {
 	clientCert, err := ca.IssueClientCert()
 	if err != nil {
 		return nil, err
@@ -56,7 +58,7 @@ func NewPoller(st *store.Store, ca *CA, selfID uuid.UUID, interval, staleAfter t
 		staleAfter = defaultStaleAfter
 	}
 	return &Poller{
-		st: st, ca: ca, clientCert: clientCert, selfID: selfID,
+		st: st, ca: ca, clientCert: clientCert, selfID: selfID, sampler: sampler,
 		interval: interval, staleAfter: staleAfter,
 	}, nil
 }
@@ -78,10 +80,11 @@ func (p *Poller) Run(ctx context.Context) {
 
 func (p *Poller) tick(ctx context.Context) {
 	// The master's own row is stamped locally — no gRPC to self.
-	arch, os_, ver := runtime.GOARCH, runtime.GOOS, version.Version
-	if err := p.st.RecordNodeHeartbeat(ctx, store.RecordNodeHeartbeatParams{
-		ID: p.selfID, Arch: &arch, Os: &os_, SkalidVersion: &ver,
-	}); err != nil {
+	var selfMetrics *clusterpb.NodeMetrics
+	if snap, ok := p.sampler.Latest(); ok {
+		selfMetrics = metricsProto(snap)
+	}
+	if err := p.recordHeartbeat(ctx, p.selfID, runtime.GOARCH, runtime.GOOS, version.Version, selfMetrics); err != nil {
 		slog.WarnContext(ctx, "record self heartbeat", "err", err)
 	}
 
@@ -120,6 +123,59 @@ func (p *Poller) tick(ctx context.Context) {
 	if _, err := p.st.SweepExpiredJoinTokens(ctx); err != nil {
 		slog.WarnContext(ctx, "sweep join tokens", "err", err)
 	}
+	if _, err := p.st.PruneNodeMetrics(ctx); err != nil {
+		slog.WarnContext(ctx, "prune node metrics", "err", err)
+	}
+}
+
+// recordHeartbeat stamps a node row (facts + latest metrics) and appends a
+// history sample. History rows exist only for heartbeats that carried
+// metrics — offline windows and cold samplers leave no rows, which the UI
+// renders as chart gaps (never zero-filled).
+func (p *Poller) recordHeartbeat(ctx context.Context, nodeID uuid.UUID, arch, osName, ver string, m *clusterpb.NodeMetrics) error {
+	params := store.RecordNodeHeartbeatParams{
+		ID:            nodeID,
+		Arch:          nilIfEmpty(arch),
+		Os:            nilIfEmpty(osName),
+		SkalidVersion: nilIfEmpty(ver),
+	}
+	if m != nil {
+		cpu, load := float32(m.GetCpuPercent()), float32(m.GetLoad1())
+		params.CpuPct = &cpu
+		params.Load1 = &load
+		params.MemUsed = i64ptr(m.GetMemoryUsedBytes())
+		params.MemTotal = i64ptr(m.GetMemoryTotalBytes())
+		params.DiskUsed = i64ptr(m.GetDiskUsedBytes())
+		params.DiskTotal = i64ptr(m.GetDiskTotalBytes())
+		params.NetRxRate = i64ptr(m.GetNetRxBytesPerSec())
+		params.NetTxRate = i64ptr(m.GetNetTxBytesPerSec())
+		params.DiskReadRate = i64ptr(m.GetDiskReadBytesPerSec())
+		params.DiskWriteRate = i64ptr(m.GetDiskWriteBytesPerSec())
+	}
+	if err := p.st.RecordNodeHeartbeat(ctx, params); err != nil {
+		return err
+	}
+	if m == nil {
+		return nil
+	}
+	return p.st.InsertNodeMetrics(ctx, store.InsertNodeMetricsParams{
+		NodeID:        nodeID,
+		CpuPct:        float32(m.GetCpuPercent()),
+		MemUsed:       int64(m.GetMemoryUsedBytes()),
+		MemTotal:      int64(m.GetMemoryTotalBytes()),
+		DiskUsed:      int64(m.GetDiskUsedBytes()),
+		DiskTotal:     int64(m.GetDiskTotalBytes()),
+		NetRxRate:     int64(m.GetNetRxBytesPerSec()),
+		NetTxRate:     int64(m.GetNetTxBytesPerSec()),
+		DiskReadRate:  int64(m.GetDiskReadBytesPerSec()),
+		DiskWriteRate: int64(m.GetDiskWriteBytesPerSec()),
+		Load1:         float32(m.GetLoad1()),
+	})
+}
+
+func i64ptr(v uint64) *int64 {
+	n := int64(v)
+	return &n
 }
 
 // heartbeat dials one worker and records its facts. Connections are per-tick
@@ -144,12 +200,8 @@ func (p *Poller) heartbeat(ctx context.Context, node store.Node) error {
 		return fmt.Errorf("cluster: node at %s identifies as %s, expected %s",
 			node.AdvertiseAddr, resp.GetNodeId(), node.ID)
 	}
-	return p.st.RecordNodeHeartbeat(ctx, store.RecordNodeHeartbeatParams{
-		ID:            node.ID,
-		Arch:          nilIfEmpty(resp.GetArch()),
-		Os:            nilIfEmpty(resp.GetOs()),
-		SkalidVersion: nilIfEmpty(resp.GetSkalidVersion()),
-	})
+	return p.recordHeartbeat(ctx, node.ID,
+		resp.GetArch(), resp.GetOs(), resp.GetSkalidVersion(), resp.GetMetrics())
 }
 
 // dialTLS authenticates a specific worker: its cert must chain to the cluster

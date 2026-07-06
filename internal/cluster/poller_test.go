@@ -27,11 +27,11 @@ func TestPollerOnlineOfflineTransitions(t *testing.T) {
 	identity, _, err := RunEnroll(ctx, opts)
 	require.NoError(t, err)
 
-	agent := NewAgentServer(identity)
+	agent := NewAgentServer(identity, warmSampler(t))
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
-	poller, err := NewPoller(st, ca, self.ID, 25*time.Millisecond, 100*time.Millisecond)
+	poller, err := NewPoller(st, ca, self.ID, warmSampler(t), 25*time.Millisecond, 100*time.Millisecond)
 	require.NoError(t, err)
 	pollCtx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
@@ -62,6 +62,22 @@ func TestPollerOnlineOfflineTransitions(t *testing.T) {
 	require.NotNil(t, node.Arch)
 	require.NotNil(t, node.LastSeen)
 
+	// Metrics flow: latest values land on both rows (the agent's warm sampler
+	// via gRPC, the master's via the local self-stamp) and history rows
+	// accumulate for charting.
+	require.NotNil(t, node.MemTotal)
+	require.NotNil(t, node.CpuPct)
+	master, err := st.GetNodeByID(ctx, self.ID)
+	require.NoError(t, err)
+	require.NotNil(t, master.MemTotal)
+	var historyRows int
+	require.NoError(t, st.Pool.QueryRow(ctx,
+		"SELECT count(*) FROM node_metrics WHERE node_id = $1", identity.NodeID).Scan(&historyRows))
+	require.Positive(t, historyRows)
+	samples, err := st.ListNodeMetricsBucketed(ctx, identity.NodeID)
+	require.NoError(t, err)
+	require.NotEmpty(t, samples)
+
 	// Kill the agent: after the staleness threshold the worker flips
 	// offline; the master stays online.
 	agent.Stop()
@@ -87,7 +103,7 @@ func TestPollerRefusesStaleCertSerial(t *testing.T) {
 	identity, _, err := RunEnroll(ctx, opts)
 	require.NoError(t, err)
 
-	agent := NewAgentServer(identity)
+	agent := NewAgentServer(identity, warmSampler(t))
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
@@ -99,7 +115,7 @@ func TestPollerRefusesStaleCertSerial(t *testing.T) {
 	node, err := st.GetNodeByID(ctx, identity.NodeID)
 	require.NoError(t, err)
 
-	poller, err := NewPoller(st, ca, self.ID, time.Hour, time.Hour)
+	poller, err := NewPoller(st, ca, self.ID, warmSampler(t), time.Hour, time.Hour)
 	require.NoError(t, err)
 	err = poller.heartbeat(ctx, node)
 	require.Error(t, err)
