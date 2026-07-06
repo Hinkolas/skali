@@ -31,6 +31,8 @@ export interface NavItemDef {
 	icon: NavIcon;
 	/** Only this slug has a designed page; everything else renders a stub. */
 	stub?: boolean;
+	/** Hidden from users without the admin instance role. */
+	adminOnly?: boolean;
 }
 
 export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
@@ -53,8 +55,8 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 	{
 		section: 'Administration',
 		items: [
-			{ label: 'Users', slug: 'users', icon: Users, stub: true },
-			{ label: 'System', slug: 'system', icon: Settings2, stub: true }
+			{ label: 'Users', slug: 'users', icon: Users, adminOnly: true },
+			{ label: 'System', slug: 'system', icon: Settings2, stub: true, adminOnly: true }
 		]
 	}
 ];

@@ -13,4 +13,6 @@ var (
 	ErrTwoFactorNotEnabled     = errors.New("auth: two-factor not enabled")
 	ErrNotFound                = errors.New("auth: not found")
 	ErrEmailTaken              = errors.New("auth: email already taken")
+	ErrInvalidRole             = errors.New("auth: role must be admin or member")
+	ErrLastAdmin               = errors.New("auth: cannot demote or delete the last admin")
 )

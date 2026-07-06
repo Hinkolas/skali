@@ -91,6 +91,18 @@ func (q *Queries) DeleteSessionByTokenHash(ctx context.Context, tokenHash []byte
 	return result.RowsAffected(), nil
 }
 
+const deleteSessionsByUser = `-- name: DeleteSessionsByUser :execrows
+DELETE FROM sessions WHERE user_id = $1
+`
+
+func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSessionsByUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteUserSessionsExcept = `-- name: DeleteUserSessionsExcept :execrows
 DELETE FROM sessions WHERE user_id = $1 AND id <> $2
 `
@@ -123,7 +135,7 @@ func (q *Queries) ExtendSession(ctx context.Context, arg ExtendSessionParams) er
 }
 
 const getSessionAndUserByTokenHash = `-- name: GetSessionAndUserByTokenHash :one
-SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.created_at, sessions.updated_at, users.id, users.email, users.name, users.two_factor_enabled, users.created_at, users.updated_at
+SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.created_at, sessions.updated_at, users.id, users.email, users.name, users.two_factor_enabled, users.created_at, users.updated_at, users.role
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -152,6 +164,7 @@ func (q *Queries) GetSessionAndUserByTokenHash(ctx context.Context, tokenHash []
 		&i.User.TwoFactorEnabled,
 		&i.User.CreatedAt,
 		&i.User.UpdatedAt,
+		&i.User.Role,
 	)
 	return i, err
 }

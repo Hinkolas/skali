@@ -4,9 +4,9 @@
 // Besides serving (the default), the binary carries the operator commands —
 // one artifact to deploy and exec into:
 //
-//	skalid [serve]                 run the HTTP server
-//	skalid user create|list|delete manage app users (there is no signup endpoint)
-//	skalid migrate up|status       apply / inspect database migrations
+//	skalid [serve]                          run the HTTP server
+//	skalid user create|list|set-role|delete manage app users (there is no signup endpoint)
+//	skalid migrate up|status                apply / inspect database migrations
 package main
 
 import (
@@ -85,7 +85,7 @@ func runServe() error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(api.Deps{Auth: authSvc, DB: pool}),
+		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)

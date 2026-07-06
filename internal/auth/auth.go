@@ -474,12 +474,15 @@ func validatePassword(password string) error {
 // CreateUser provisions a user with a credential account. It is package-level
 // (not a Service method) so the operator CLI can create users with only a
 // database connection — no AUTH_SECRET required.
-func CreateUser(ctx context.Context, st *store.Store, email, name, password string) (*store.User, error) {
+func CreateUser(ctx context.Context, st *store.Store, email, name, password, role string) (*store.User, error) {
 	if err := validateEmail(email); err != nil {
 		return nil, err
 	}
 	if err := validatePassword(password); err != nil {
 		return nil, err
+	}
+	if !ValidRole(role) {
+		return nil, ErrInvalidRole
 	}
 	phc, err := hashPassword(password)
 	if err != nil {
@@ -492,7 +495,7 @@ func CreateUser(ctx context.Context, st *store.Store, email, name, password stri
 		if err != nil {
 			return err
 		}
-		user, err = q.CreateUser(ctx, store.CreateUserParams{ID: userID, Email: email, Name: name})
+		user, err = q.CreateUser(ctx, store.CreateUserParams{ID: userID, Email: email, Name: name, Role: role})
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation

@@ -9,6 +9,16 @@
 	let { org }: { org: Org } = $props();
 
 	const pathname = $derived(page.url.pathname);
+
+	// page.data.user comes from the (app) server layout, so admin-only items
+	// are resolved during SSR too (no post-hydration pop-in).
+	const isAdmin = $derived(page.data.user?.role === 'admin');
+	const groups = $derived(
+		ORG_NAV.map((group) => ({
+			...group,
+			items: group.items.filter((item) => !item.adminOnly || isAdmin)
+		})).filter((group) => group.items.length > 0)
+	);
 </script>
 
 <div class="px-3">
@@ -23,7 +33,7 @@
 	</SwitcherCard>
 </div>
 
-{#each ORG_NAV as group (group.section)}
+{#each groups as group (group.section)}
 	<NavSection label={group.section} />
 	<div class="flex flex-col gap-0.5 px-3">
 		{#each group.items as item (item.slug)}

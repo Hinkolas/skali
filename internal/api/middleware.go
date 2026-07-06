@@ -38,6 +38,19 @@ func RequireAuth(a auth.Authenticator) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireAdmin guards instance-management routes; it must sit inside
+// RequireAuth so the user is already on the context. The role is read from
+// the per-request user row, so a demotion takes effect immediately.
+func RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user := UserFrom(r.Context()); user == nil || user.Role != auth.RoleAdmin {
+			writeError(w, http.StatusForbidden, codeForbidden, "admin role required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // bearerToken extracts the token from "Authorization: Bearer <token>",
 // matching the scheme case-insensitively per RFC 9110.
 func bearerToken(r *http.Request) (string, bool) {

@@ -11,20 +11,41 @@ import (
 	"github.com/google/uuid"
 )
 
+const countAdminsForUpdate = `-- name: CountAdminsForUpdate :one
+SELECT count(*) FROM (
+    SELECT id FROM users WHERE role = 'admin' FOR UPDATE
+) admins
+`
+
+// Locks the admin rows so concurrent demote/delete transactions serialize on
+// the last-admin check instead of both passing it.
+func (q *Queries) CountAdminsForUpdate(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countAdminsForUpdate)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (id, email, name)
-VALUES ($1, $2, $3)
-RETURNING id, email, name, two_factor_enabled, created_at, updated_at
+INSERT INTO users (id, email, name, role)
+VALUES ($1, $2, $3, $4)
+RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role
 `
 
 type CreateUserParams struct {
 	ID    uuid.UUID
 	Email string
 	Name  string
+	Role  string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, arg.ID, arg.Email, arg.Name)
+	row := q.db.QueryRow(ctx, createUser,
+		arg.ID,
+		arg.Email,
+		arg.Name,
+		arg.Role,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -33,6 +54,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.TwoFactorEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }
@@ -49,8 +71,20 @@ func (q *Queries) DeleteUserByEmail(ctx context.Context, lower string) (int64, e
 	return result.RowsAffected(), nil
 }
 
+const deleteUserByID = `-- name: DeleteUserByID :execrows
+DELETE FROM users WHERE id = $1
+`
+
+func (q *Queries) DeleteUserByID(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUserByID, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, name, two_factor_enabled, created_at, updated_at FROM users WHERE lower(email) = lower($1)
+SELECT id, email, name, two_factor_enabled, created_at, updated_at, role FROM users WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
@@ -63,12 +97,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.TwoFactorEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, name, two_factor_enabled, created_at, updated_at FROM users WHERE id = $1
+SELECT id, email, name, two_factor_enabled, created_at, updated_at, role FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -81,12 +116,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.TwoFactorEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, email, name, two_factor_enabled, created_at, updated_at FROM users ORDER BY created_at
+SELECT id, email, name, two_factor_enabled, created_at, updated_at, role FROM users ORDER BY created_at
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
@@ -105,6 +141,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 			&i.TwoFactorEnabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}
@@ -114,6 +151,56 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const setUserName = `-- name: SetUserName :one
+UPDATE users SET name = $2, updated_at = now() WHERE id = $1
+RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role
+`
+
+type SetUserNameParams struct {
+	ID   uuid.UUID
+	Name string
+}
+
+func (q *Queries) SetUserName(ctx context.Context, arg SetUserNameParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserName, arg.ID, arg.Name)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.TwoFactorEnabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Role,
+	)
+	return i, err
+}
+
+const setUserRole = `-- name: SetUserRole :one
+UPDATE users SET role = $2, updated_at = now() WHERE id = $1
+RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role
+`
+
+type SetUserRoleParams struct {
+	ID   uuid.UUID
+	Role string
+}
+
+func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserRole, arg.ID, arg.Role)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.TwoFactorEnabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Role,
+	)
+	return i, err
 }
 
 const setUserTwoFactorEnabled = `-- name: SetUserTwoFactorEnabled :exec

@@ -26,5 +26,8 @@ ORDER BY created_at DESC;
 -- name: DeleteUserSessionsExcept :execrows
 DELETE FROM sessions WHERE user_id = $1 AND id <> $2;
 
+-- name: DeleteSessionsByUser :execrows
+DELETE FROM sessions WHERE user_id = $1;
+
 -- name: DeleteExpiredSessions :execrows
 DELETE FROM sessions WHERE expires_at <= now();

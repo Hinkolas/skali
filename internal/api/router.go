@@ -14,11 +14,13 @@ import (
 
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/store"
 )
 
 type Deps struct {
-	Auth *auth.Service
-	DB   *pgxpool.Pool
+	Auth  *auth.Service
+	Store *store.Store
+	DB    *pgxpool.Pool
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -64,6 +66,18 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/auth/2fa/confirm", h.confirmTwoFactor)
 			r.Post("/auth/2fa/disable", h.disableTwoFactor)
 			r.Post("/auth/2fa/backup-codes", h.regenerateBackupCodes)
+
+			// Instance management, admins only.
+			uh := &usersHandlers{st: d.Store}
+			r.Group(func(r chi.Router) {
+				r.Use(RequireAdmin)
+
+				r.Get("/users", uh.list)
+				r.Post("/users", uh.create)
+				r.Patch("/users/{id}", uh.update)
+				r.Delete("/users/{id}", uh.delete)
+				r.Post("/users/{id}/password", uh.resetPassword)
+			})
 		})
 	})
 

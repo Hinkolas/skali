@@ -21,7 +21,7 @@ import (
 // AUTH_SECRET or other serve-only settings.
 func runUser(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: skalid user <create|list|delete> [flags]")
+		return errors.New("usage: skalid user <create|list|set-role|delete> [flags]")
 	}
 	ctx := context.Background()
 
@@ -41,10 +41,12 @@ func runUser(args []string) error {
 		return userCreate(ctx, st, args[1:])
 	case "list":
 		return userList(ctx, st)
+	case "set-role":
+		return userSetRole(ctx, st, args[1:])
 	case "delete":
 		return userDelete(ctx, st, args[1:])
 	default:
-		return fmt.Errorf("unknown user command %q (available: create, list, delete)", args[0])
+		return fmt.Errorf("unknown user command %q (available: create, list, set-role, delete)", args[0])
 	}
 }
 
@@ -52,12 +54,13 @@ func userCreate(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("user create", flag.ContinueOnError)
 	email := fs.String("email", "", "login email (required)")
 	name := fs.String("name", "", "display name")
+	role := fs.String("role", auth.RoleMember, "instance role: admin or member (the first user needs admin)")
 	passwordStdin := fs.Bool("password-stdin", false, "read the password from stdin instead of prompting")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *email == "" {
-		return errors.New("usage: skalid user create --email <address> [--name <display>] [--password-stdin]")
+		return errors.New("usage: skalid user create --email <address> [--name <display>] [--role admin|member] [--password-stdin]")
 	}
 
 	password, err := readPassword(*passwordStdin)
@@ -65,11 +68,37 @@ func userCreate(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 
-	user, err := auth.CreateUser(ctx, st, *email, *name, password)
+	user, err := auth.CreateUser(ctx, st, *email, *name, password, *role)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("created user %s (%s)\n", user.Email, user.ID)
+	fmt.Printf("created %s %s (%s)\n", user.Role, user.Email, user.ID)
+	return nil
+}
+
+// userSetRole is the operator override for role changes — unlike the API it
+// has no caller identity, so only the last-admin guard applies. It exists so
+// a lost-admin instance is recoverable from the server itself.
+func userSetRole(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("user set-role", flag.ContinueOnError)
+	email := fs.String("email", "", "login email (required)")
+	role := fs.String("role", "", "instance role: admin or member (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" || *role == "" {
+		return errors.New("usage: skalid user set-role --email <address> --role admin|member")
+	}
+
+	user, err := st.GetUserByEmail(ctx, *email)
+	if err != nil {
+		return fmt.Errorf("no user with email %q", *email)
+	}
+	user, err = auth.SetUserRole(ctx, st, user.ID, *role)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s is now %s\n", user.Email, user.Role)
 	return nil
 }
 
@@ -117,7 +146,7 @@ func userList(ctx context.Context, st *store.Store) error {
 		if u.TwoFactorEnabled {
 			twoFA = "  [2fa]"
 		}
-		fmt.Printf("%s  %s  created %s%s\n", u.ID, u.Email, u.CreatedAt.Format("2006-01-02"), twoFA)
+		fmt.Printf("%s  %-6s  %s  created %s%s\n", u.ID, u.Role, u.Email, u.CreatedAt.Format("2006-01-02"), twoFA)
 	}
 	return nil
 }

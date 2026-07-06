@@ -7,9 +7,12 @@ info:
     API serves every client: the web BFF, the `skali` CLI, and future
     native apps.
 
-    There is no registration endpoint: users are created by the server
-    operator (`skalid user create`). All error responses share the `Error`
-    envelope; clients should branch on `error.code`, not on messages.
+    There is no registration endpoint: users are created by an instance
+    admin (`/v1/users`) or by the server operator (`skalid user create`).
+    Every user carries an instance-wide role — `admin` (additionally
+    manages users and instance settings) or `member` — checked per
+    request. All error responses share the `Error` envelope; clients
+    should branch on `error.code`, not on messages.
   version: 0.1.0
   license:
     name: Apache 2.0
@@ -299,6 +302,165 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /v1/users:
+    get:
+      operationId: listUsers
+      summary: List all users
+      description: Admin only. Every user of the instance, oldest first.
+      tags: [users]
+      responses:
+        "200":
+          description: All users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createUser
+      summary: Create a user
+      description: |
+        Admin only. Provisions a user with an initial password; there is no
+        self-service signup or invitation email by design. `role` defaults
+        to `member`.
+      tags: [users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 254
+                name:
+                  type: string
+                password:
+                  type: string
+                  minLength: 8
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/users/{id}:
+    patch:
+      operationId: updateUser
+      summary: Update a user's name or role
+      description: |
+        Admin only. Changing your own role is refused (`409`), as is
+        demoting the last admin.
+      tags: [users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: At least one property must be present.
+              properties:
+                name:
+                  type: string
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: deleteUser
+      summary: Delete a user
+      description: |
+        Admin only. Deletes the user with their sessions and 2FA enrollment.
+        Deleting yourself or the last admin is refused (`409`).
+      tags: [users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: User deleted.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/users/{id}/password:
+    post:
+      operationId: resetUserPassword
+      summary: Reset a user's password
+      description: |
+        Admin only. Sets a new password without the old one — the recovery
+        path, since there is no email-based reset. Revokes every session of
+        the user.
+      tags: [users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_password]
+              properties:
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        "204":
+          description: Password reset; all of the user's sessions are revoked.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -314,6 +476,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
       description: Missing/invalid token, wrong credentials, or wrong code.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: The caller is authenticated but lacks the admin role.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -334,9 +501,16 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
+    Role:
+      type: string
+      description: |
+        Instance-wide role. Admins additionally manage users and instance
+        settings; members have full access to all projects.
+      enum: [admin, member]
+
     User:
       type: object
-      required: [id, email, name, two_factor_enabled, created_at]
+      required: [id, email, name, role, two_factor_enabled, created_at]
       properties:
         id:
           type: string
@@ -346,6 +520,7 @@ components:
           format: email
         name:
           type: string
+        role: { $ref: "#/components/schemas/Role" }
         two_factor_enabled:
           type: boolean
         created_at:
@@ -440,6 +615,7 @@ components:
                 - invalid_credentials
                 - invalid_token
                 - invalid_code
+                - forbidden
                 - not_found
                 - conflict
                 - rate_limited

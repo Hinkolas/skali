@@ -64,4 +64,5 @@ type User struct {
 	TwoFactorEnabled bool
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	Role             string
 }

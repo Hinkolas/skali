@@ -26,6 +26,7 @@ const (
 	codeInvalidCredentials = "invalid_credentials"
 	codeInvalidToken       = "invalid_token"
 	codeInvalidCode        = "invalid_code"
+	codeForbidden          = "forbidden"
 	codeNotFound           = "not_found"
 	codeConflict           = "conflict"
 	codeRateLimited        = "rate_limited"
@@ -50,7 +51,11 @@ func writeAuthError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, codeConflict, "two-factor authentication is not enabled")
 	case errors.Is(err, auth.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "not found")
-	case errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrInvalidEmail):
+	case errors.Is(err, auth.ErrEmailTaken):
+		writeError(w, http.StatusConflict, codeConflict, "a user with this email already exists")
+	case errors.Is(err, auth.ErrLastAdmin):
+		writeError(w, http.StatusConflict, codeConflict, "cannot demote or delete the last admin")
+	case errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrInvalidEmail), errors.Is(err, auth.ErrInvalidRole):
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
 	default:
 		slog.ErrorContext(ctx, "api: internal error", "err", err)

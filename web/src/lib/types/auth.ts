@@ -1,9 +1,13 @@
 // Shapes mirror the skali API (api/openapi.yaml), snake_case included.
 
+/** Instance-wide role: admins additionally manage users and instance settings. */
+export type Role = 'admin' | 'member';
+
 export interface AuthUser {
 	id: string;
 	email: string;
 	name: string;
+	role: Role;
 	two_factor_enabled: boolean;
 	created_at: string;
 }

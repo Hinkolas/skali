@@ -34,14 +34,20 @@ func newTestAPI(t *testing.T) *testAPI {
 	svc, err := auth.New(st, auth.Config{Secret: strings.Repeat("s", 32)})
 	require.NoError(t, err)
 
-	srv := httptest.NewServer(NewRouter(Deps{Auth: svc, DB: pool}))
+	srv := httptest.NewServer(NewRouter(Deps{Auth: svc, Store: st, DB: pool}))
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc}
 }
 
 func (a *testAPI) createUser(email, password string) {
 	a.t.Helper()
-	_, err := auth.CreateUser(a.t.Context(), a.st, email, "", password)
+	_, err := auth.CreateUser(a.t.Context(), a.st, email, "", password, auth.RoleMember)
+	require.NoError(a.t, err)
+}
+
+func (a *testAPI) createAdmin(email, password string) {
+	a.t.Helper()
+	_, err := auth.CreateUser(a.t.Context(), a.st, email, "", password, auth.RoleAdmin)
 	require.NoError(a.t, err)
 }
 
@@ -327,7 +333,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	a := newTestAPI(t)
 
 	spec := string(apispec.OpenAPI)
-	router := NewRouter(Deps{Auth: a.svc, DB: a.st.Pool}).(chi.Routes)
+	router := NewRouter(Deps{Auth: a.svc, Store: a.st, DB: a.st.Pool}).(chi.Routes)
 
 	routes := 0
 	err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
@@ -340,5 +346,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 11, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 16, routes, "route count changed; update the OpenAPI spec and this number")
 }

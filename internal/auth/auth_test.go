@@ -27,13 +27,13 @@ func TestCreateUserAndLogin(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
-	user, err := CreateUser(ctx, st, "Nick@example.com", "Nick H", "hunter2hunter2")
+	user, err := CreateUser(ctx, st, "Nick@example.com", "Nick H", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
 	require.Equal(t, "Nick@example.com", user.Email)
 	require.False(t, user.TwoFactorEnabled)
 
 	// Emails are unique case-insensitively.
-	_, err = CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2")
+	_, err = CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
 	require.ErrorIs(t, err, ErrEmailTaken)
 
 	// Login matches case-insensitively too.
@@ -71,11 +71,11 @@ func TestCreateUserValidation(t *testing.T) {
 		"Nick <nick@example.com>", // display-name form must not be normalized away
 		" nick@example.com",       // surrounding whitespace
 	} {
-		_, err := CreateUser(ctx, st, email, "", "hunter2hunter2")
+		_, err := CreateUser(ctx, st, email, "", "hunter2hunter2", RoleMember)
 		require.ErrorIs(t, err, ErrInvalidEmail, "email=%q", email)
 	}
 
-	_, err := CreateUser(ctx, st, "nick@example.com", "", "short")
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "short", RoleMember)
 	require.ErrorIs(t, err, ErrWeakPassword)
 }
 
@@ -83,7 +83,7 @@ func TestLogout(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
-	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2")
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
 	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestSessionExpiryAndSlidingRefresh(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
-	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2")
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
 	res, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
 	require.NoError(t, err)
@@ -125,9 +125,9 @@ func TestListAndRevokeSessions(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
-	user, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2")
+	user, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
-	other, err := CreateUser(ctx, st, "mallory@example.com", "", "hunter2hunter2")
+	other, err := CreateUser(ctx, st, "mallory@example.com", "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
 
 	s1, err := svc.Login(ctx, "nick@example.com", "hunter2hunter2", meta)
@@ -156,7 +156,7 @@ func TestChangePassword(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
-	user, err := CreateUser(ctx, st, "nick@example.com", "", "old-password")
+	user, err := CreateUser(ctx, st, "nick@example.com", "", "old-password", RoleMember)
 	require.NoError(t, err)
 	keep, err := svc.Login(ctx, "nick@example.com", "old-password", meta)
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func enrollTwoFactor(t *testing.T, svc *Service, st *store.Store, email string) 
 	t.Helper()
 	ctx := context.Background()
 
-	user, err := CreateUser(ctx, st, email, "", "hunter2hunter2")
+	user, err := CreateUser(ctx, st, email, "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
 
 	now := time.Now()
@@ -349,7 +349,7 @@ func TestDisablePendingEnrollmentNeedsNoCode(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
-	user, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2")
+	user, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
 	_, err = svc.EnableTwoFactor(ctx, user.ID, "hunter2hunter2")
 	require.NoError(t, err)
@@ -398,7 +398,7 @@ func TestLoginRateLimited(t *testing.T) {
 	svc, st := newTestService(t)
 	ctx := context.Background()
 
-	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2")
+	_, err := CreateUser(ctx, st, "nick@example.com", "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
 
 	now := time.Now()
@@ -424,7 +424,7 @@ func TestSweepExpired(t *testing.T) {
 
 	// nick (2FA) yields an expired challenge, alice an expired session; the
 	// session from nick's pending-phase login stays valid and must survive.
-	_, err := CreateUser(ctx, st, "alice@example.com", "", "hunter2hunter2")
+	_, err := CreateUser(ctx, st, "alice@example.com", "", "hunter2hunter2", RoleMember)
 	require.NoError(t, err)
 	enrollTwoFactor(t, svc, st, "nick@example.com")
 
