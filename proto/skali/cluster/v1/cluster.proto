@@ -1,0 +1,64 @@
+// The skali control plane: daemon-to-daemon only, never exposed to CLI/web
+// clients (those use the REST API). Trust model:
+//
+//   - EnrollmentService runs on the MASTER's TLS listener. It is the only RPC
+//     surface reachable without a client cert: trust comes from the one-time
+//     join token, whose embedded fingerprint pins the cluster CA the client
+//     must see before it sends anything.
+//   - NodeService runs on every WORKER; the master dials it. Both sides
+//     authenticate with cluster-CA-signed certs (mTLS). A node's identity is
+//     its UUID, carried in its cert's CN and DNS SAN.
+syntax = "proto3";
+
+package skali.cluster.v1;
+
+option go_package = "github.com/Hinkolas/skali/internal/clusterpb;clusterpb";
+
+// EnrollmentService admits new nodes into the cluster.
+service EnrollmentService {
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+}
+
+message EnrollRequest {
+  // Full join token: <id>.<secret>.<ca-fingerprint>.
+  string token = 1;
+  // PKCS#10 CSR (PEM). The master takes only the public key; subject and any
+  // requested extensions are ignored.
+  bytes csr_pem = 2;
+  // host:port the master will dial for this node's NodeService.
+  string advertise_addr = 3;
+  // Initial node name shown in the UI (typically the machine hostname).
+  string hostname = 4;
+  string arch = 5;            // runtime.GOARCH
+  string os = 6;              // runtime.GOOS
+  string skalid_version = 7;
+}
+
+message EnrollResponse {
+  // The node's UUID — also the CN and DNS SAN of the issued cert.
+  string node_id = 1;
+  // Node cert signed by the cluster CA (PEM).
+  bytes cert_pem = 2;
+  // Cluster CA cert (PEM); the worker's trust root from here on.
+  bytes ca_pem = 3;
+  // Roles granted by the join token.
+  repeated string roles = 4;
+}
+
+// NodeService is the per-worker control surface. Container lifecycle RPCs
+// (the Executor seam) will join Heartbeat here.
+service NodeService {
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message HeartbeatRequest {}
+
+message HeartbeatResponse {
+  // Echoed so the master can detect a node answering on another's address.
+  string node_id = 1;
+  string arch = 2;
+  string os = 3;
+  string skalid_version = 4;
+  uint32 cpu_count = 5;
+  uint64 memory_bytes = 6;    // total RAM; 0 where not detectable
+}

@@ -7,10 +7,13 @@ authoritative for UX/DX; the technical foundation mirrors the smbx
 architecture (Go + chi + Postgres, one token-based API for every client,
 SvelteKit BFF).
 
-**Status:** milestone 1 — auth + API shape. One API (`/v1`), three consumers:
+**Status:** milestone 2 — auth + API shape + node system (multi-node
+clusters: enrollment, mTLS gRPC control plane, heartbeats, Nodes UI). One API
+(`/v1`), three consumers:
 
-- **`skalid`** — the daemon. Serves the REST API; also carries the operator
-  commands (`user`, `migrate`).
+- **`skalid`** — the daemon. On the master it serves the REST API and the
+  cluster control plane; on other machines it runs as a worker (`agent`).
+  Also carries the operator commands (`user`, `migrate`, `enroll`).
 - **`skali`** — the CLI. A pure REST client with kubectl-style contexts.
 - **`web/`** — SvelteKit BFF (adapter-node). Owns the browser session cookie
   and proxies `/api/v1/*` to the daemon; the bearer token never reaches
@@ -59,20 +62,45 @@ task dev:web
 The OpenAPI contract is served at `GET /openapi.yaml` and lives in
 [`api/openapi.yaml`](api/openapi.yaml); a router-walk test keeps it honest.
 
+## Adding a node
+
+One `skalid` master per cluster; other machines join as workers over a
+mTLS gRPC control plane (master dials workers; only the master needs to be
+reachable by new nodes at enrollment).
+
+```sh
+# On the master: set CLUSTER_ADDR (the externally reachable gRPC address,
+# e.g. 10.0.0.1:7443) in the environment, then mint a join token in the web
+# UI (Nodes → Add node) — it renders the full command for the new machine:
+
+# On the new machine:
+skalid enroll --master 10.0.0.1:7443 --token <one-time-token>
+skalid agent
+```
+
+The join token is single-use, expires after an hour, and pins the cluster
+CA's fingerprint, so the enrolling node authenticates the master before
+trusting it. Steady-state node identity is a CA-signed cert (the node's UUID);
+removing a node in the UI revokes it.
+
 ## Layout
 
 ```
 api/           OpenAPI 3.1 contract (embedded, served by the daemon)
-cmd/skalid     daemon: serve (default) | user | migrate
+cmd/skalid     daemon: serve (default) | user | migrate | enroll | agent
 cmd/skali      client CLI: auth, context
 migrations/    goose migrations (embedded; also sqlc's schema source)
+proto/         gRPC control-plane contract (buf; generated into internal/clusterpb)
 query/         sqlc query sources → generated into internal/store
 internal/
   api/         HTTP layer: router, middleware, error envelope, handlers
   auth/        auth service: argon2id, opaque sessions, TOTP 2FA, rate limits
   client/      typed REST client used by cmd/skali
   cliconfig/   ~/.config/skali/config.yaml contexts
+  cluster/     node system: cluster CA, join tokens, enrollment, agent, poller
+  clusterpb/   generated gRPC bindings (buf generate; checked in)
   config/      env-driven config (godotenv + envconfig)
+  crypt/       shared at-rest encryption (AES-GCM, HKDF-derived keys)
   obs/         slog + OpenTelemetry (env-only, zero egress by default)
   store/       pgx pool/tx glue + sqlc-generated queries
   testdb/      ephemeral Postgres database per test

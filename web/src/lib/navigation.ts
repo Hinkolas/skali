@@ -41,7 +41,7 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 		items: [
 			{ label: 'Dashboard', slug: 'dashboard', icon: LayoutDashboard, stub: true },
 			{ label: 'Projects', slug: 'projects', icon: FolderKanban },
-			{ label: 'Nodes', slug: 'nodes', icon: Server, stub: true },
+			{ label: 'Nodes', slug: 'nodes', icon: Server, adminOnly: true },
 			{ label: 'Domains', slug: 'domains', icon: Globe, stub: true }
 		]
 	},

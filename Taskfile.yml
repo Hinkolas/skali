@@ -14,18 +14,25 @@ dotenv: [".env"]
 
 vars:
   DB_NAME: skali
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev
+  LDFLAGS: -X github.com/Hinkolas/skali/internal/version.Version={{.VERSION}}
 
 tasks:
   build:
     desc: Build both binaries into bin/
     cmds:
-      - go build -o bin/skalid ./cmd/skalid
-      - go build -o bin/skali ./cmd/skali
+      - go build -ldflags "{{.LDFLAGS}}" -o bin/skalid ./cmd/skalid
+      - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
 
   generate:
-    desc: Regenerate the sqlc store from migrations/ + query/
+    desc: Regenerate the sqlc store (migrations/ + query/) and gRPC bindings (proto/)
     cmds:
       - sqlc generate
+      # buf + protoc-gen-go + protoc-gen-go-grpc come from the machine-global
+      # dev setup (go install ...@latest), same as sqlc.
+      - buf lint
+      - buf generate
 
   test:
     desc: Run the Go test suite (DB tests need TEST_DATABASE_URL, see .env.example)

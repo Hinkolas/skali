@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import type { NodeInfo, Org, Project, Service } from '$lib/mock/types';
+	import type { Org, Project, Service } from '$lib/mock/types';
+	import type { Node } from '$lib/types/nodes';
 	import { toast } from '$lib/stores/toast.svelte';
 	import SidebarOrgNav from './SidebarOrgNav.svelte';
 	import SidebarProjectNav from './SidebarProjectNav.svelte';
@@ -15,7 +16,7 @@
 	const data = $derived(
 		page.data as {
 			org: Org;
-			nodes: NodeInfo[];
+			nodes: Node[];
 			project?: Project;
 			services?: Service[];
 			service?: Service;
@@ -30,8 +31,8 @@
 			}
 			return `on ${service.node} · healthy`;
 		}
-		const healthy = data.nodes.filter((n) => n.state === 'healthy').length;
-		return `${healthy}/${data.nodes.length} nodes healthy`;
+		const online = data.nodes.filter((n) => n.status === 'online').length;
+		return `${online}/${data.nodes.length} nodes online`;
 	});
 </script>
 

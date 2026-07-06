@@ -1,7 +1,8 @@
 // The mock dataset behind the UI prototype — values mirror the design draft
 // (Skali App.dc.html) so the implementation can be compared side-by-side.
 
-import type { Deployment, NodeInfo, Org, Project, ProjectGraph, Service } from './types';
+import type { Deployment, Org, Project, ProjectGraph, Service } from './types';
+import type { Node } from '$lib/types/nodes';
 
 export const ORG: Org = {
 	id: 'org_01',
@@ -453,33 +454,48 @@ export const SERVICES: Service[] = [
 	}
 ];
 
-export const NODES: NodeInfo[] = [
+export const NODES: Node[] = [
 	{
+		id: '0195b6a0-0000-7000-8000-000000000001',
 		name: 'node-01',
-		address: '10.0.0.11',
-		provider: 'hetzner',
-		cpu_pct: '12%',
-		memory: '3.1/8G',
-		service_count: 6,
-		state: 'healthy'
+		roles: ['master', 'worker'],
+		advertise_addr: '10.0.0.11:7443',
+		public_addr: null,
+		arch: 'amd64',
+		os: 'linux',
+		skalid_version: '0.1.0',
+		status: 'online',
+		last_seen: '2026-07-01T12:00:00Z',
+		created_at: '2026-05-01T09:00:00Z',
+		updated_at: '2026-07-01T12:00:00Z'
 	},
 	{
+		id: '0195b6a0-0000-7000-8000-000000000002',
 		name: 'node-02',
-		address: '10.0.0.12',
-		provider: 'hetzner',
-		cpu_pct: '7%',
-		memory: '2.4/8G',
-		service_count: 3,
-		state: 'healthy'
+		roles: ['worker', 'edge'],
+		advertise_addr: '10.0.0.12:7443',
+		public_addr: '203.0.113.10:443',
+		arch: 'amd64',
+		os: 'linux',
+		skalid_version: '0.1.0',
+		status: 'online',
+		last_seen: '2026-07-01T12:00:00Z',
+		created_at: '2026-05-02T09:00:00Z',
+		updated_at: '2026-07-01T12:00:00Z'
 	},
 	{
+		id: '0195b6a0-0000-7000-8000-000000000003',
 		name: 'node-03',
-		address: '10.0.0.13',
-		provider: 'home-lab',
-		cpu_pct: '4%',
-		memory: '1.2/16G',
-		service_count: 1,
-		state: 'healthy'
+		roles: ['worker'],
+		advertise_addr: '10.0.0.13:7443',
+		public_addr: null,
+		arch: 'arm64',
+		os: 'linux',
+		skalid_version: '0.1.0',
+		status: 'online',
+		last_seen: '2026-07-01T12:00:00Z',
+		created_at: '2026-05-03T09:00:00Z',
+		updated_at: '2026-07-01T12:00:00Z'
 	}
 ];
 

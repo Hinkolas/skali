@@ -3,7 +3,8 @@
 // bodies do.
 
 import { GRAPHS, NODES, ORG, PROJECTS, SERVICES } from './data';
-import type { NodeInfo, Org, Project, ProjectGraph, Service } from './types';
+import type { Org, Project, ProjectGraph, Service } from './types';
+import type { Node } from '$lib/types/nodes';
 
 export type * from './types';
 
@@ -30,7 +31,9 @@ export async function getService(
 	return SERVICES.find((s) => s.project_slug === projectSlug && s.slug === serviceSlug) ?? null;
 }
 
-export async function listNodes(): Promise<NodeInfo[]> {
+// TODO(nodes): the sidebar still reads this mock — /v1/nodes is admin-only,
+// so feeding it real data needs a member-visible summary endpoint first.
+export async function listNodes(): Promise<Node[]> {
 	return NODES;
 }
 

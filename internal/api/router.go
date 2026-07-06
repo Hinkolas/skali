@@ -14,13 +14,15 @@ import (
 
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
 type Deps struct {
-	Auth  *auth.Service
-	Store *store.Store
-	DB    *pgxpool.Pool
+	Auth    *auth.Service
+	Store   *store.Store
+	DB      *pgxpool.Pool
+	Cluster *cluster.Service
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -80,10 +82,12 @@ func NewRouter(d Deps) http.Handler {
 
 			// Instance management, admins only.
 			uh := &usersHandlers{st: d.Store}
+			nh := &nodesHandlers{st: d.Store, cluster: d.Cluster}
 			r.Group(func(r chi.Router) {
 				r.Use(RequireAdmin)
 
 				r.Get("/users", uh.list)
+				r.Get("/nodes", nh.list)
 
 				// Writes additionally need sudo mode. RequireAdmin sits
 				// outside RequireFresh so non-admins get "forbidden", never a
@@ -95,6 +99,10 @@ func NewRouter(d Deps) http.Handler {
 					r.Patch("/users/{id}", uh.update)
 					r.Delete("/users/{id}", uh.delete)
 					r.Post("/users/{id}/password", uh.resetPassword)
+
+					r.Post("/nodes/tokens", nh.createToken)
+					r.Patch("/nodes/{id}", nh.update)
+					r.Delete("/nodes/{id}", nh.delete)
 				})
 			})
 		})

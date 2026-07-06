@@ -27,6 +27,23 @@ type BackupCode struct {
 	CreatedAt   time.Time
 }
 
+type ClusterCa struct {
+	ID        bool
+	CertPem   string
+	KeyCipher []byte
+	CreatedAt time.Time
+}
+
+type JoinToken struct {
+	ID        uuid.UUID
+	Hash      []byte
+	Roles     []string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedBy *uuid.UUID
+	CreatedAt time.Time
+}
+
 type LoginChallenge struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
@@ -34,6 +51,22 @@ type LoginChallenge struct {
 	Attempts  int32
 	ExpiresAt time.Time
 	CreatedAt time.Time
+}
+
+type Node struct {
+	ID            uuid.UUID
+	Name          string
+	Roles         []string
+	AdvertiseAddr string
+	PublicAddr    *string
+	Arch          *string
+	Os            *string
+	SkalidVersion *string
+	CertSerial    *string
+	Status        string
+	LastSeen      *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type Session struct {

@@ -6,19 +6,17 @@ package config
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/sethvargo/go-envconfig"
 )
 
-// Base is configuration shared by every binary.
-type Base struct {
-	// Core infrastructure.
-	DatabaseURL string `env:"DATABASE_URL,required"`
-
-	// Logging. Traces/metrics are configured via the standard OTEL_* env vars,
-	// which the OpenTelemetry SDK / autoexport read directly — not here.
+// Logging is shared by every binary, including ones with no database access.
+// Traces/metrics are configured via the standard OTEL_* env vars, which the
+// OpenTelemetry SDK / autoexport read directly — not here.
+type Logging struct {
 	LogLevel  string `env:"LOG_LEVEL,default=info"`
 	LogFormat string `env:"LOG_FORMAT,default=text"`
 	LogOutput string `env:"LOG_OUTPUT,default=stdout"`
@@ -26,14 +24,29 @@ type Base struct {
 }
 
 // Validate checks enum-like fields so misconfiguration fails fast at startup.
+func (l *Logging) Validate() error {
+	if err := oneOf("LOG_LEVEL", l.LogLevel, "debug", "info", "warn", "error"); err != nil {
+		return err
+	}
+	if err := oneOf("LOG_FORMAT", l.LogFormat, "text", "json"); err != nil {
+		return err
+	}
+	return oneOf("LOG_OUTPUT", l.LogOutput, "stdout", "file", "both")
+}
+
+// Base is configuration shared by every binary that talks to the control-plane
+// database (serve, migrate, user). The worker-side agent/enroll commands use
+// Agent instead — they have no database.
+type Base struct {
+	// Core infrastructure.
+	DatabaseURL string `env:"DATABASE_URL,required"`
+
+	Logging
+}
+
+// Validate shadows Logging.Validate, so it must chain to it explicitly.
 func (b *Base) Validate() error {
-	if err := oneOf("LOG_LEVEL", b.LogLevel, "debug", "info", "warn", "error"); err != nil {
-		return err
-	}
-	if err := oneOf("LOG_FORMAT", b.LogFormat, "text", "json"); err != nil {
-		return err
-	}
-	return oneOf("LOG_OUTPUT", b.LogOutput, "stdout", "file", "both")
+	return b.Logging.Validate()
 }
 
 // API is the configuration for cmd/skalid. The default port avoids 7000,
@@ -49,6 +62,17 @@ type API struct {
 	// ReauthWindow is how long a session stays "fresh" for sudo-gated
 	// endpoints after login or an explicit reauthentication.
 	ReauthWindow time.Duration `env:"REAUTH_WINDOW,default=15m"`
+
+	// GRPCAddr is the master's cluster-plane listener (TLS gRPC). It serves
+	// node enrollment; workers' NodeService servers use the same default on
+	// their side (see Agent).
+	GRPCAddr string `env:"GRPC_ADDR,default=:7443"`
+
+	// ClusterAddr is the externally reachable host:port of GRPCAddr — the
+	// address baked into rendered `skalid enroll` commands. Optional at boot
+	// so existing single-node deploys keep working; minting a join token
+	// fails while it is unset.
+	ClusterAddr string `env:"CLUSTER_ADDR"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.
@@ -61,6 +85,36 @@ func (a *API) Validate() error {
 	}
 	if a.ReauthWindow <= 0 {
 		return fmt.Errorf("REAUTH_WINDOW: must be positive")
+	}
+	if a.ClusterAddr != "" {
+		if _, _, err := net.SplitHostPort(a.ClusterAddr); err != nil {
+			return fmt.Errorf("CLUSTER_ADDR: must be host:port (e.g. 10.0.0.1:7443): %w", err)
+		}
+	}
+	return nil
+}
+
+// Agent is the configuration for worker-side commands (`skalid enroll`,
+// `skalid agent`). Workers are stateless: no database, no auth secret — their
+// only persistent state is the node identity under DataDir.
+type Agent struct {
+	Logging
+
+	// DataDir holds the node identity written by `skalid enroll`
+	// (CA cert, node cert+key, node metadata).
+	DataDir string `env:"DATA_DIR,default=/var/lib/skalid"`
+
+	// GRPCAddr is the worker's NodeService listener the master dials.
+	GRPCAddr string `env:"GRPC_ADDR,default=:7443"`
+}
+
+// Validate shadows Logging.Validate, so it must chain to it explicitly.
+func (a *Agent) Validate() error {
+	if err := a.Logging.Validate(); err != nil {
+		return err
+	}
+	if a.DataDir == "" {
+		return fmt.Errorf("DATA_DIR: must not be empty")
 	}
 	return nil
 }

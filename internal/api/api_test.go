@@ -16,9 +16,14 @@ import (
 
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
 )
+
+// testClusterAddr is the CLUSTER_ADDR the test master pretends to have; it
+// appears in rendered enroll commands.
+const testClusterAddr = "10.0.0.1:7443"
 
 type testAPI struct {
 	t   *testing.T
@@ -33,8 +38,13 @@ func newTestAPI(t *testing.T) *testAPI {
 	st := store.NewStore(pool)
 	svc, err := auth.New(st, auth.Config{Secret: strings.Repeat("s", 32)})
 	require.NoError(t, err)
+	ca, err := cluster.EnsureCA(t.Context(), st, strings.Repeat("s", 32))
+	require.NoError(t, err)
 
-	srv := httptest.NewServer(NewRouter(Deps{Auth: svc, Store: st, DB: pool}))
+	srv := httptest.NewServer(NewRouter(Deps{
+		Auth: svc, Store: st, DB: pool,
+		Cluster: cluster.NewService(st, ca, testClusterAddr),
+	}))
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc}
 }
@@ -457,5 +467,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 17, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 21, routes, "route count changed; update the OpenAPI spec and this number")
 }

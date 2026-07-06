@@ -135,16 +135,6 @@ export interface StorageService extends ServiceBase {
 
 export type Service = ApplicationService | DatabaseService | CacheService | StorageService;
 
-export interface NodeInfo {
-	name: string;
-	address: string;
-	provider: string;
-	cpu_pct: string;
-	memory: string;
-	service_count: number;
-	state: 'healthy' | 'degraded' | 'offline';
-}
-
 /* ── Service graph (positions copied from the design draft) ────────────── */
 
 export interface GraphChip {

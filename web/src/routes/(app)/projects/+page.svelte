@@ -9,11 +9,12 @@
 	import NewProjectModal, {
 		modalOptions as newProjectModalOptions
 	} from '$lib/components/project/NewProjectModal.svelte';
+	import { NODE_ROLE_META, NODE_STATE_META } from '$lib/service-types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	const nodeGrid = 'grid-cols-[1.4fr_1.6fr_1fr_1fr_1fr_0.9fr]';
+	const nodeGrid = 'grid-cols-[1.4fr_1.6fr_1.4fr_1fr_0.9fr]';
 </script>
 
 <svelte:head>
@@ -48,27 +49,26 @@
 </div>
 
 <div class="pb-6">
-	<Table columns={['Node', 'Address', 'CPU', 'Memory', 'Services', 'State']} grid={nodeGrid}>
-		{#each data.nodes as node (node.name)}
+	<Table columns={['Node', 'Address', 'Roles', 'Version', 'State']} grid={nodeGrid}>
+		{#each data.nodes as node (node.id)}
+			{@const state = NODE_STATE_META[node.status]}
 			<div
 				class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {nodeGrid}"
 			>
 				<div class="font-mono text-text-primary text-[12px]">{node.name}</div>
-				<div class="font-mono text-text-faint text-[11px]">{node.address} · {node.provider}</div>
-				<div class="font-mono text-text-muted text-[11px]">{node.cpu_pct}</div>
-				<div class="font-mono text-text-muted text-[11px]">{node.memory}</div>
-				<div class="font-mono text-text-muted text-[11px]">{node.service_count}</div>
-				<div
-					class="flex items-center gap-1.5 text-[11.5px] {node.state === 'healthy'
-						? 'text-status-success'
-						: 'text-status-warning'}"
-				>
-					<span
-						class="size-[7px] rounded-full {node.state === 'healthy'
-							? 'bg-status-success'
-							: 'bg-status-warning'}"
-					></span>
-					{node.state}
+				<div class="font-mono text-text-faint text-[11px]">{node.advertise_addr}</div>
+				<div class="flex flex-wrap items-center gap-1">
+					{#each node.roles as role (role)}
+						{@const meta = NODE_ROLE_META[role]}
+						<span class="font-mono rounded-full px-2 py-0.5 text-[9.5px] {meta.text} {meta.bg}">
+							{role}
+						</span>
+					{/each}
+				</div>
+				<div class="font-mono text-text-muted text-[11px]">{node.skalid_version ?? '—'}</div>
+				<div class="flex items-center gap-1.5 text-[11.5px] {state.text}">
+					<span class="size-[7px] rounded-full {state.dot}"></span>
+					{state.label}
 				</div>
 			</div>
 		{/each}

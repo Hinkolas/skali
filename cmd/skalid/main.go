@@ -1,12 +1,15 @@
-// Command skalid is the skali daemon: it serves the client-facing REST API
-// consumed by the web BFF, the skali CLI, and future native clients.
+// Command skalid is the skali daemon. On the master it serves the
+// client-facing REST API (web BFF, skali CLI, future native clients) plus the
+// cluster control plane; on every other node it runs as a worker agent.
 //
 // Besides serving (the default), the binary carries the operator commands —
 // one artifact to deploy and exec into:
 //
-//	skalid [serve]                          run the HTTP server
+//	skalid [serve]                          run the master (REST API + cluster control plane)
 //	skalid user create|list|set-role|delete manage app users (there is no signup endpoint)
 //	skalid migrate up|status                apply / inspect database migrations
+//	skalid enroll --master --token          join this machine to a cluster (one-time)
+//	skalid agent                            run as a worker node (after enroll)
 package main
 
 import (
@@ -14,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +26,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/api"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/store"
@@ -46,8 +51,12 @@ func run() error {
 		return runUser(args[1:])
 	case "migrate":
 		return runMigrate(args[1:])
+	case "enroll":
+		return runEnroll(args[1:])
+	case "agent":
+		return runAgent()
 	default:
-		return fmt.Errorf("unknown command %q (available: serve, user, migrate)", args[0])
+		return fmt.Errorf("unknown command %q (available: serve, user, migrate, enroll, agent)", args[0])
 	}
 }
 
@@ -83,9 +92,36 @@ func runServe() error {
 		return err
 	}
 
+	// Cluster plane: CA, the master's own node row, the enrollment gRPC
+	// listener, and the worker heartbeat poller.
+	ca, err := cluster.EnsureCA(ctx, st, cfg.AuthSecret)
+	if err != nil {
+		return err
+	}
+	self, err := cluster.EnsureSelfNode(ctx, st, cfg.ClusterAddr)
+	if err != nil {
+		return err
+	}
+	clusterSvc := cluster.NewService(st, ca, cfg.ClusterAddr)
+
+	grpcSrv, err := cluster.NewMasterServer(st, ca, clusterCertHosts(cfg.ClusterAddr))
+	if err != nil {
+		return err
+	}
+	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
+	if err != nil {
+		return err
+	}
+	defer grpcSrv.GracefulStop()
+
+	poller, err := cluster.NewPoller(st, ca, self.ID, 0, 0)
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool}),
+		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)
@@ -94,12 +130,19 @@ func runServe() error {
 			serveErr <- err
 		}
 	}()
+	go func() {
+		if err := grpcSrv.Serve(grpcLis); err != nil {
+			serveErr <- err
+		}
+	}()
 
-	sweepCtx, cancelSweep := context.WithCancel(ctx)
-	defer cancelSweep()
-	go sweepLoop(sweepCtx, authSvc)
+	loopCtx, cancelLoops := context.WithCancel(ctx)
+	defer cancelLoops()
+	go sweepLoop(loopCtx, authSvc)
+	go poller.Run(loopCtx)
 
-	slog.InfoContext(ctx, "starting", "service", serviceName, "http_addr", cfg.HTTPAddr)
+	slog.InfoContext(ctx, "starting", "service", serviceName,
+		"http_addr", cfg.HTTPAddr, "grpc_addr", cfg.GRPCAddr, "node_id", self.ID)
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -129,6 +172,19 @@ func sweepLoop(ctx context.Context, svc *auth.Service) {
 			}
 		}
 	}
+}
+
+// clusterCertHosts derives the SANs for the master's gRPC listener cert from
+// CLUSTER_ADDR (loopback is always appended by NewMasterServer).
+func clusterCertHosts(clusterAddr string) []string {
+	if clusterAddr == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(clusterAddr)
+	if err != nil {
+		return nil
+	}
+	return []string{host}
 }
 
 func shutdownWithin(fn func(context.Context) error, d time.Duration) {

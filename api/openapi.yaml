@@ -469,6 +469,137 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/nodes:
+    get:
+      operationId: listNodes
+      summary: List cluster nodes
+      description: |
+        Admin only. Every node of the cluster, oldest first — including the
+        master's own row. `status` is derived from heartbeats (a node flips
+        `offline` after missing them for the staleness window).
+      tags: [nodes]
+      responses:
+        "200":
+          description: All nodes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes]
+                properties:
+                  nodes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Node" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/nodes/tokens:
+    post:
+      operationId: createJoinToken
+      summary: Mint a one-time node join token
+      description: |
+        Admin only, sudo mode. Creates a single-use enrollment token (valid
+        for one hour) and the ready-to-paste `skalid enroll` command for the
+        new machine. The token embeds a fingerprint of the cluster CA, so
+        the enrolling node can authenticate the master before trusting it.
+        Requires `CLUSTER_ADDR` to be configured on the master (`409`).
+        The token is shown exactly once.
+      tags: [nodes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                roles:
+                  type: array
+                  description: Roles granted at enrollment. Defaults to `[worker]`.
+                  items:
+                    type: string
+                    enum: [edge, worker, builder]
+      responses:
+        "201":
+          description: Join token created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JoinTokenCreated" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/nodes/{id}:
+    patch:
+      operationId: updateNode
+      summary: Update a node's name, roles, or public address
+      description: |
+        Admin only, sudo mode. The `master` role is fixed — it can be
+        neither granted nor removed (`409`). Setting `public_addr` to an
+        empty string clears it.
+      tags: [nodes]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: At least one property must be present.
+              properties:
+                name:
+                  type: string
+                roles:
+                  type: array
+                  items: { $ref: "#/components/schemas/NodeRole" }
+                public_addr:
+                  type: string
+                  description: Where public DNS points for this node (edge role). Empty string clears it.
+      responses:
+        "200":
+          description: The updated node.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [node]
+                properties:
+                  node: { $ref: "#/components/schemas/Node" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: deleteNode
+      summary: Remove a node from the cluster
+      description: |
+        Admin only, sudo mode. Deletes the node row and implicitly revokes
+        the node's certificate (its serial no longer matches any node). The
+        machine keeps running but is orphaned; re-adding it requires a fresh
+        join token. The master node cannot be removed (`409`).
+      tags: [nodes]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Node removed.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -545,6 +676,68 @@ components:
         created_at:
           type: string
           format: date-time
+
+    NodeRole:
+      type: string
+      description: |
+        A node's responsibilities. `master` runs the control plane (one per
+        cluster, assigned at boot, immutable); `edge` terminates public
+        ingress; `worker` runs application containers; `builder` builds
+        images.
+      enum: [master, edge, worker, builder]
+
+    Node:
+      type: object
+      required: [id, name, roles, advertise_addr, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/NodeRole" }
+        advertise_addr:
+          type: string
+          description: host:port the master dials on the private network.
+        public_addr:
+          type: [string, "null"]
+          description: Where public DNS points (edge role); operator-set.
+        arch:
+          type: [string, "null"]
+          description: Reported by heartbeat (e.g. amd64, arm64).
+        os:
+          type: [string, "null"]
+        skalid_version:
+          type: [string, "null"]
+        status:
+          type: string
+          enum: [online, offline]
+        last_seen:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    JoinTokenCreated:
+      type: object
+      description: A freshly minted join token. Shown exactly once.
+      required: [token, expires_at, enroll_command]
+      properties:
+        token:
+          type: string
+          description: One-time enrollment secret, `<id>.<secret>.<ca-fingerprint>`.
+        expires_at:
+          type: string
+          format: date-time
+        enroll_command:
+          type: string
+          description: Ready-to-paste command for the new machine.
 
     Session:
       type: object

@@ -1,0 +1,11 @@
+# buf configuration (proto lint + breaking-change detection).
+# Codegen is wired through `task generate` (see buf.gen.yaml).
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE
