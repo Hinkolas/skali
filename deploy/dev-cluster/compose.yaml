@@ -1,0 +1,96 @@
+# 3-node skali dev cluster: 1 master + 2 workers, each with its own Docker
+# engine (DinD), on one private network — the compose network plays the
+# "operator-provided private network" from the network contract (.plan/02).
+# Drive it via `task cluster:up|down|logs|ps` from the repo root.
+#
+# Every `up` after a `down` is a pristine cluster (DB and node identities are
+# container-local); only the inner engines' image caches persist in volumes.
+name: skali-dev-cluster
+
+x-node: &node
+  build:
+    context: ../..
+    dockerfile: deploy/dev-cluster/Dockerfile
+    args:
+      VERSION: ${CLUSTER_VERSION:-dev-cluster}
+  privileged: true # required for the inner Docker engine (DinD)
+  init: true
+  environment: &node-env
+    DOCKER_TLS_CERTDIR: "" # inner engine: local socket only, no TLS certs
+    ADMIN_EMAIL: dev@skali.local
+    ADMIN_PASSWORD: skali-dev-password
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: skali
+      POSTGRES_PASSWORD: skali
+      POSTGRES_DB: skali
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skali -d skali"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  master:
+    <<: *node
+    hostname: master
+    environment:
+      <<: *node-env
+      ROLE: master
+      DATABASE_URL: postgres://skali:skali@postgres:5432/skali?sslmode=disable
+      AUTH_SECRET: dev-cluster-auth-secret-0123456789abcdef
+      CLUSTER_ADDR: master:7443
+    ports:
+      - "7070:7070" # REST API — the host web BFF (task dev:web) points here
+      - "7443:7443" # cluster gRPC — also lets you enroll extra host processes
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7070/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+    volumes:
+      - master-docker:/var/lib/docker
+
+  worker-1:
+    <<: *node
+    hostname: worker-1
+    environment:
+      <<: *node-env
+      ROLE: worker
+      NODE_ROLES: worker
+    depends_on:
+      master:
+        condition: service_healthy
+    healthcheck: &worker-health
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7443"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+    volumes:
+      - worker-1-docker:/var/lib/docker
+
+  worker-2:
+    <<: *node
+    hostname: worker-2
+    environment:
+      <<: *node-env
+      ROLE: worker
+      NODE_ROLES: worker
+    depends_on:
+      master:
+        condition: service_healthy
+    healthcheck: *worker-health
+    volumes:
+      - worker-2-docker:/var/lib/docker
+
+volumes:
+  master-docker:
+  worker-1-docker:
+  worker-2-docker:

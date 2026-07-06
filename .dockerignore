@@ -1,0 +1,9 @@
+# Keep the dev-cluster build context lean (deploy/dev-cluster/Dockerfile
+# builds from the repo root). Only the Go sources matter to the image.
+.git
+bin/
+web/node_modules/
+web/.svelte-kit/
+web/build/
+.env
+*.log
