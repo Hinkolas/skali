@@ -2,6 +2,8 @@
 	import X from '@lucide/svelte/icons/x';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
+	import ChartLine from '@lucide/svelte/icons/chart-line';
 	import { api } from '$lib/api/client';
 	import { decimate, type ChartPoint, type ChartSeries } from '$lib/charts';
 	import { formatBytes, formatPct, formatRate, relativeTime } from '$lib/format';
@@ -10,6 +12,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
+	import Tabs, { type TabDef } from '$lib/components/ui/Tabs.svelte';
 	import TimeSeriesChart from '$lib/components/ui/TimeSeriesChart.svelte';
 
 	let {
@@ -33,11 +36,21 @@
 	// legacy store subscriptions.
 	const stateMeta = $derived(NODE_STATE_META[node.status]);
 
+	// --- tabs -------------------------------------------------------------------
+	// Deliberately NOT reset when the selected node changes: staying on
+	// Metrics while clicking through nodes is how you compare them.
+	const TABS: TabDef[] = [
+		{ id: 'overview', label: 'Overview', icon: LayoutDashboard },
+		{ id: 'metrics', label: 'Metrics', icon: ChartLine }
+	];
+	let tab = $state('overview');
+
 	// --- history fetch + poll -------------------------------------------------
 	// Keyed on the MEMOIZED id: the page re-opens the panel with a fresh node
 	// object every 10s, but an unchanged primitive id does not re-run this
 	// effect — history survives poll churn and only resets when the selected
-	// node actually changes.
+	// node actually changes. Not gated on the active tab: the fetch is cheap
+	// and keeping it warm makes switching to Metrics instant.
 	const nodeId = $derived(node.id);
 
 	let history = $state<NodeMetricsSample[] | null>(null);
@@ -181,122 +194,131 @@
 	</button>
 </div>
 
+<!-- tabs: fixed strip, only the pane below scrolls -->
+<div class="px-4.5 pt-3">
+	<Tabs tabs={TABS} active={tab} onchange={(id) => (tab = id)} label="{node.name} sections" />
+</div>
+
 <!-- body -->
 <div class="flex-1 overflow-y-auto px-4.5 pb-4">
-	<!-- facts -->
-	<h3 class="text-text-ghost mt-4 mb-1.5 text-[10px] font-semibold tracking-[0.12em] uppercase">
-		Node
-	</h3>
-	<div class="flex flex-col">
-		<KeyValueRow k="ID" v={node.id} labelWidth="w-24" />
-		<KeyValueRow k="Private addr" v={node.advertise_addr || '—'} labelWidth="w-24" />
-		{#if node.public_addr}
-			<KeyValueRow k="Public addr" v={node.public_addr} labelWidth="w-24" />
-		{/if}
-		<KeyValueRow
-			k="System"
-			v={[node.os, node.arch].filter(Boolean).join('/') || '—'}
-			labelWidth="w-24"
-		/>
-		<KeyValueRow k="Version" v={node.skalid_version ?? '—'} labelWidth="w-24" />
-		<KeyValueRow k="Last seen" v={relativeTime(node.last_seen)} labelWidth="w-24" />
-		<KeyValueRow
-			k="Added"
-			v={new Date(node.created_at).toLocaleDateString(undefined, {
-				year: 'numeric',
-				month: 'short',
-				day: 'numeric'
-			})}
-			labelWidth="w-24"
-		/>
-	</div>
-
-	<!-- current -->
-	<h3 class="text-text-ghost mt-5 mb-1.5 text-[10px] font-semibold tracking-[0.12em] uppercase">
-		Current
-	</h3>
-	{#if node.metrics}
-		{@const m = node.metrics}
-		{@const cpuP = Math.min(100, m.cpu_pct)}
-		{@const memP = pct(m.mem_used, m.mem_total)}
-		{@const diskP = pct(m.disk_used, m.disk_total)}
-		<div class="grid grid-cols-2 gap-2">
-			<div class="rounded-[10px] bg-white/3 px-3 py-2.5">
-				<div class="text-text-ghost text-[9.5px] font-semibold tracking-[0.1em] uppercase">CPU</div>
-				<div class="font-mono text-text-primary mt-1 text-[13px]">{formatPct(m.cpu_pct)}</div>
-				<div class="mt-1.5"><ProgressBar pct={cpuP} class={barClass(cpuP)} /></div>
-			</div>
-			<div class="rounded-[10px] bg-white/3 px-3 py-2.5">
-				<div class="text-text-ghost text-[9.5px] font-semibold tracking-[0.1em] uppercase">
-					Memory
-				</div>
-				<div class="font-mono text-text-primary mt-1 text-[13px]">
-					{formatBytes(m.mem_used)}
-					<span class="text-text-faint text-[11px]">/ {formatBytes(m.mem_total)}</span>
-				</div>
-				<div class="mt-1.5"><ProgressBar pct={memP} class={barClass(memP)} /></div>
-			</div>
-			<div class="rounded-[10px] bg-white/3 px-3 py-2.5">
-				<div class="text-text-ghost text-[9.5px] font-semibold tracking-[0.1em] uppercase">
-					Disk
-				</div>
-				<div class="font-mono text-text-primary mt-1 text-[13px]">
-					{formatBytes(m.disk_used)}
-					<span class="text-text-faint text-[11px]">/ {formatBytes(m.disk_total)}</span>
-				</div>
-				<div class="mt-1.5"><ProgressBar pct={diskP} class={barClass(diskP)} /></div>
-			</div>
-			<div class="rounded-[10px] bg-white/3 px-3 py-2.5">
-				<div class="text-text-ghost text-[9.5px] font-semibold tracking-[0.1em] uppercase">
-					Network
-				</div>
-				<div class="font-mono text-text-primary mt-1 text-[12px]">
-					↓ {formatRate(m.net_rx_rate)}
-				</div>
-				<div class="font-mono text-text-secondary text-[12px]">↑ {formatRate(m.net_tx_rate)}</div>
-			</div>
+	{#if tab === 'overview'}
+		<!-- facts -->
+		<h3 class="text-text-ghost mt-4 mb-1.5 text-[10px] font-semibold tracking-[0.12em] uppercase">
+			Node
+		</h3>
+		<div class="flex flex-col">
+			<KeyValueRow k="ID" v={node.id} labelWidth="w-24" />
+			<KeyValueRow k="Private addr" v={node.advertise_addr || '—'} labelWidth="w-24" />
+			{#if node.public_addr}
+				<KeyValueRow k="Public addr" v={node.public_addr} labelWidth="w-24" />
+			{/if}
+			<KeyValueRow
+				k="System"
+				v={[node.os, node.arch].filter(Boolean).join('/') || '—'}
+				labelWidth="w-24"
+			/>
+			<KeyValueRow k="Version" v={node.skalid_version ?? '—'} labelWidth="w-24" />
+			<KeyValueRow k="Last seen" v={relativeTime(node.last_seen)} labelWidth="w-24" />
+			<KeyValueRow
+				k="Added"
+				v={new Date(node.created_at).toLocaleDateString(undefined, {
+					year: 'numeric',
+					month: 'short',
+					day: 'numeric'
+				})}
+				labelWidth="w-24"
+			/>
 		</div>
-	{:else}
-		<p class="text-text-ghost text-[12px]">No metrics reported yet.</p>
-	{/if}
 
-	<!-- history -->
-	<h3 class="text-text-ghost mt-5 mb-1.5 text-[10px] font-semibold tracking-[0.12em] uppercase">
-		History · 24h
-	</h3>
-	{#if node.status === 'offline' && history?.length}
-		<p class="text-status-warning mb-2 text-[11px]">Offline — showing last received data.</p>
-	{/if}
-	{#if charts}
-		<div class="flex flex-col gap-4">
-			{#each charts as chart (chart.title)}
-				<div>
-					<div class="mb-0.5 flex items-baseline justify-between">
-						<span class="text-text-tertiary text-[12px] font-medium">{chart.title}</span>
-						{#if chart.latest}
-							<span class="font-mono text-text-muted text-[11px]">{chart.latest}</span>
-						{/if}
+		<!-- current -->
+		<h3 class="text-text-ghost mt-5 mb-1.5 text-[10px] font-semibold tracking-[0.12em] uppercase">
+			Current
+		</h3>
+		{#if node.metrics}
+			{@const m = node.metrics}
+			{@const cpuP = Math.min(100, m.cpu_pct)}
+			{@const memP = pct(m.mem_used, m.mem_total)}
+			{@const diskP = pct(m.disk_used, m.disk_total)}
+			<div class="grid grid-cols-2 gap-2">
+				<div class="rounded-[10px] bg-white/3 px-3 py-2.5">
+					<div class="text-text-ghost text-[9.5px] font-semibold tracking-[0.1em] uppercase">
+						CPU
 					</div>
-					<TimeSeriesChart
-						series={chart.series}
-						yDomain={chart.yDomain}
-						formatValue={chart.format}
-						label="{chart.title} over the last 24 hours"
-					/>
+					<div class="font-mono text-text-primary mt-1 text-[13px]">{formatPct(m.cpu_pct)}</div>
+					<div class="mt-1.5"><ProgressBar pct={cpuP} class={barClass(cpuP)} /></div>
 				</div>
-			{/each}
-		</div>
-	{:else if historyFailed}
-		<p class="text-text-muted text-[12px]">Could not load metrics history.</p>
-	{:else if history !== null}
-		<p class="text-text-ghost text-[12px]">No metrics recorded yet.</p>
-	{:else}
-		<!-- loading: fixed-height skeletons so the panel doesn't jump -->
-		<div class="flex flex-col gap-4">
-			{#each ['cpu', 'mem', 'net'] as key (key)}
-				<div class="h-[110px] animate-pulse rounded-lg bg-white/3"></div>
-			{/each}
-		</div>
+				<div class="rounded-[10px] bg-white/3 px-3 py-2.5">
+					<div class="text-text-ghost text-[9.5px] font-semibold tracking-[0.1em] uppercase">
+						Memory
+					</div>
+					<div class="font-mono text-text-primary mt-1 text-[13px]">
+						{formatBytes(m.mem_used)}
+						<span class="text-text-faint text-[11px]">/ {formatBytes(m.mem_total)}</span>
+					</div>
+					<div class="mt-1.5"><ProgressBar pct={memP} class={barClass(memP)} /></div>
+				</div>
+				<div class="rounded-[10px] bg-white/3 px-3 py-2.5">
+					<div class="text-text-ghost text-[9.5px] font-semibold tracking-[0.1em] uppercase">
+						Disk
+					</div>
+					<div class="font-mono text-text-primary mt-1 text-[13px]">
+						{formatBytes(m.disk_used)}
+						<span class="text-text-faint text-[11px]">/ {formatBytes(m.disk_total)}</span>
+					</div>
+					<div class="mt-1.5"><ProgressBar pct={diskP} class={barClass(diskP)} /></div>
+				</div>
+				<div class="rounded-[10px] bg-white/3 px-3 py-2.5">
+					<div class="text-text-ghost text-[9.5px] font-semibold tracking-[0.1em] uppercase">
+						Network
+					</div>
+					<div class="font-mono text-text-primary mt-1 text-[12px]">
+						↓ {formatRate(m.net_rx_rate)}
+					</div>
+					<div class="font-mono text-text-secondary text-[12px]">↑ {formatRate(m.net_tx_rate)}</div>
+				</div>
+			</div>
+		{:else}
+			<p class="text-text-ghost text-[12px]">No metrics reported yet.</p>
+		{/if}
+	{:else if tab === 'metrics'}
+		<!-- history -->
+		<h3 class="text-text-ghost mt-4 mb-1.5 text-[10px] font-semibold tracking-[0.12em] uppercase">
+			History · 24h
+		</h3>
+		{#if node.status === 'offline' && history?.length}
+			<p class="text-status-warning mb-2 text-[11px]">Offline — showing last received data.</p>
+		{/if}
+		{#if charts}
+			<div class="flex flex-col gap-4">
+				{#each charts as chart (chart.title)}
+					<div>
+						<div class="mb-0.5 flex items-baseline justify-between">
+							<span class="text-text-tertiary text-[12px] font-medium">{chart.title}</span>
+							{#if chart.latest}
+								<span class="font-mono text-text-muted text-[11px]">{chart.latest}</span>
+							{/if}
+						</div>
+						<TimeSeriesChart
+							series={chart.series}
+							yDomain={chart.yDomain}
+							formatValue={chart.format}
+							label="{chart.title} over the last 24 hours"
+						/>
+					</div>
+				{/each}
+			</div>
+		{:else if historyFailed}
+			<p class="text-text-muted text-[12px]">Could not load metrics history.</p>
+		{:else if history !== null}
+			<p class="text-text-ghost text-[12px]">No metrics recorded yet.</p>
+		{:else}
+			<!-- loading: fixed-height skeletons so the panel doesn't jump -->
+			<div class="flex flex-col gap-4">
+				{#each ['cpu', 'mem', 'net'] as key (key)}
+					<div class="h-[110px] animate-pulse rounded-lg bg-white/3"></div>
+				{/each}
+			</div>
+		{/if}
 	{/if}
 </div>
 
