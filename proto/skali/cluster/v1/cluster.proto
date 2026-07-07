@@ -77,12 +77,50 @@ message HeartbeatResponse {
   // or engine unreachable) — never "no containers"; the master must leave
   // its records untouched. A present report is authoritative for the node.
   ContainerReport containers = 8;
+  // Observed image/volume inventory, same absent-means-unknown doctrine.
+  // Sampled slower than containers (inventory changes on pulls and deploys,
+  // not continuously).
+  InventoryReport inventory = 9;
 }
 
 // ContainerReport wraps the container list so "absent" and "empty" stay
 // distinguishable on the wire.
 message ContainerReport {
   repeated ContainerInfo containers = 1;
+}
+
+// InventoryReport wraps the node's image/volume inventory so "absent" and
+// "empty" stay distinguishable on the wire. Unlike containers this is
+// unfiltered: whole-node disk visibility, managed or not.
+message InventoryReport {
+  repeated ImageInfo images = 1;
+  repeated VolumeInfo volumes = 2;
+}
+
+// ImageInfo is one image present on the node.
+message ImageInfo {
+  string id = 1;  // content-addressable "sha256:…"
+  // Empty means dangling ("<none>" placeholders are dropped node-side).
+  repeated string repo_tags = 2;
+  repeated string repo_digests = 3;
+  int64 size_bytes = 4;
+  int64 created_at_unix = 5;  // 0 = unknown
+  // Containers referencing the image, any owner or state; 0 = unused.
+  uint32 containers = 6;
+}
+
+// VolumeInfo is one named volume on the node (anonymous volumes included).
+// No sizes: only the daemon's system-df walk computes them, too expensive
+// for a sampler.
+message VolumeInfo {
+  string name = 1;
+  string driver = 2;
+  string scope = 3;  // local|global
+  string mountpoint = 4;
+  map<string, string> labels = 5;
+  int64 created_at_unix = 6;  // 0 = unknown
+  // Containers mounting the volume, any owner or state; 0 = unused.
+  uint32 containers = 7;
 }
 
 // ContainerInfo is one observed skali-managed container.

@@ -202,3 +202,57 @@ func containerReport(sampler *engine.Sampler) *clusterpb.ContainerReport {
 	}
 	return report
 }
+
+func imageInfoProto(img engine.Image) *clusterpb.ImageInfo {
+	info := &clusterpb.ImageInfo{
+		Id:          img.ID,
+		RepoTags:    img.RepoTags,
+		RepoDigests: img.RepoDigests,
+		SizeBytes:   img.SizeBytes,
+		Containers:  uint32(img.Containers),
+	}
+	if !img.CreatedAt.IsZero() {
+		info.CreatedAtUnix = img.CreatedAt.Unix()
+	}
+	return info
+}
+
+func volumeInfoProto(v engine.Volume) *clusterpb.VolumeInfo {
+	info := &clusterpb.VolumeInfo{
+		Name:       v.Name,
+		Driver:     v.Driver,
+		Scope:      v.Scope,
+		Mountpoint: v.Mountpoint,
+		Labels:     v.Labels,
+		Containers: uint32(v.Containers),
+	}
+	if !v.CreatedAt.IsZero() {
+		info.CreatedAtUnix = v.CreatedAt.Unix()
+	}
+	return info
+}
+
+// inventoryReport renders the inventory sampler's snapshot for the wire; nil
+// when the engine state is unknown (absent on the wire = unknown, never
+// empty). A nil sampler is tolerated and reads as unknown — the poller's
+// self path and test harnesses run without one.
+func inventoryReport(sampler *engine.InventorySampler) *clusterpb.InventoryReport {
+	if sampler == nil {
+		return nil
+	}
+	inv, ok := sampler.Latest()
+	if !ok {
+		return nil
+	}
+	report := &clusterpb.InventoryReport{
+		Images:  make([]*clusterpb.ImageInfo, 0, len(inv.Images)),
+		Volumes: make([]*clusterpb.VolumeInfo, 0, len(inv.Volumes)),
+	}
+	for _, img := range inv.Images {
+		report.Images = append(report.Images, imageInfoProto(img))
+	}
+	for _, v := range inv.Volumes {
+		report.Volumes = append(report.Volumes, volumeInfoProto(v))
+	}
+	return report
+}

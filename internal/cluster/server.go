@@ -30,13 +30,15 @@ type NodeServer struct {
 	sampler    *hostinfo.Sampler
 	eng        engine.Engine
 	containers *engine.Sampler
+	inventory  *engine.InventorySampler
 }
 
 func (s *NodeServer) Heartbeat(ctx context.Context, _ *clusterpb.HeartbeatRequest) (*clusterpb.HeartbeatResponse, error) {
-	// Cache-only: both samplers answer from their latest reading; a heartbeat
+	// Cache-only: all samplers answer from their latest reading; a heartbeat
 	// never blocks on the engine or the kernel.
 	resp := heartbeatResponse(s.nodeID, s.sampler)
 	resp.Containers = containerReport(s.containers)
+	resp.Inventory = inventoryReport(s.inventory)
 	return resp, nil
 }
 
@@ -104,7 +106,7 @@ func grpcEngineErr(err error) error {
 // NewAgentServer builds the worker's gRPC server. Every connection is mTLS:
 // the client must present a cluster-CA-signed cert with the master's CN —
 // only the master holds the CA key, so nobody else can mint one.
-func NewAgentServer(id *Identity, sampler *hostinfo.Sampler, eng engine.Engine, containers *engine.Sampler) *grpc.Server {
+func NewAgentServer(id *Identity, sampler *hostinfo.Sampler, eng engine.Engine, containers *engine.Sampler, inventory *engine.InventorySampler) *grpc.Server {
 	tlsCfg := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{id.Cert},
@@ -127,17 +129,18 @@ func NewAgentServer(id *Identity, sampler *hostinfo.Sampler, eng engine.Engine, 
 		sampler:    sampler,
 		eng:        eng,
 		containers: containers,
+		inventory:  inventory,
 	})
 	return srv
 }
 
 // ServeAgent runs the worker's gRPC server until ctx is canceled.
-func ServeAgent(ctx context.Context, id *Identity, grpcAddr string, sampler *hostinfo.Sampler, eng engine.Engine, containers *engine.Sampler) error {
+func ServeAgent(ctx context.Context, id *Identity, grpcAddr string, sampler *hostinfo.Sampler, eng engine.Engine, containers *engine.Sampler, inventory *engine.InventorySampler) error {
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		return err
 	}
-	srv := NewAgentServer(id, sampler, eng, containers)
+	srv := NewAgentServer(id, sampler, eng, containers, inventory)
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(lis) }()

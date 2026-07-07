@@ -30,7 +30,7 @@ func testContainerDeps(t *testing.T) (*enginetest.Fake, *engine.Sampler) {
 
 // startAgentWithEngine enrolls a worker, serves its NodeService over a fake
 // engine, and returns a master-authenticated client for it.
-func startAgentWithEngine(t *testing.T, fake *enginetest.Fake) (clusterpb.NodeServiceClient, *engine.Sampler) {
+func startAgentWithEngine(t *testing.T, fake *enginetest.Fake) (clusterpb.NodeServiceClient, *engine.Sampler, *engine.InventorySampler) {
 	t.Helper()
 	ctx := context.Background()
 	st, ca, masterAddr := startMaster(t)
@@ -46,7 +46,9 @@ func startAgentWithEngine(t *testing.T, fake *enginetest.Fake) (clusterpb.NodeSe
 
 	containers := engine.NewSampler(fake)
 	containers.SampleNow(ctx)
-	agent := NewAgentServer(identity, warmSampler(t), fake, containers)
+	inventory := engine.NewInventorySampler(fake)
+	inventory.SampleNow(ctx)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, inventory)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
@@ -61,13 +63,13 @@ func startAgentWithEngine(t *testing.T, fake *enginetest.Fake) (clusterpb.NodeSe
 		})))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
-	return clusterpb.NewNodeServiceClient(conn), containers
+	return clusterpb.NewNodeServiceClient(conn), containers, inventory
 }
 
 func TestNodeServiceContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 	fake := enginetest.New("nginx:alpine")
-	client, containers := startAgentWithEngine(t, fake)
+	client, containers, _ := startAgentWithEngine(t, fake)
 
 	// Create + start in one round trip.
 	created, err := client.CreateContainer(ctx, &clusterpb.CreateContainerRequest{
@@ -107,7 +109,7 @@ func TestNodeServiceContainerLifecycle(t *testing.T) {
 func TestNodeServiceErrorMapping(t *testing.T) {
 	ctx := context.Background()
 	fake := enginetest.New("nginx:alpine")
-	client, _ := startAgentWithEngine(t, fake)
+	client, _, _ := startAgentWithEngine(t, fake)
 
 	// Missing kind label: rejected before the engine is touched.
 	_, err := client.CreateContainer(ctx, &clusterpb.CreateContainerRequest{
@@ -143,7 +145,7 @@ func TestNodeServiceErrorMapping(t *testing.T) {
 func TestHeartbeatContainerReportAbsentWhenUnknown(t *testing.T) {
 	ctx := context.Background()
 	fake := enginetest.New("nginx:alpine")
-	client, containers := startAgentWithEngine(t, fake)
+	client, containers, _ := startAgentWithEngine(t, fake)
 
 	// Engine goes unreachable: the report must vanish (unknown), not read as
 	// "no containers".
@@ -156,4 +158,33 @@ func TestHeartbeatContainerReportAbsentWhenUnknown(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, hb.GetContainers())
 	require.NotNil(t, hb.GetMetrics(), "host metrics are independent of the engine")
+}
+
+func TestHeartbeatInventoryReport(t *testing.T) {
+	ctx := context.Background()
+	fake := enginetest.New("nginx:alpine")
+	fake.Inv = engine.Inventory{
+		Images:  []engine.Image{{ID: "sha256:abc", RepoTags: []string{"nginx:alpine"}, SizeBytes: 42, Containers: 1}},
+		Volumes: []engine.Volume{{Name: "data", Driver: "local", Containers: 1}},
+	}
+	client, _, inventory := startAgentWithEngine(t, fake)
+
+	// The warmed sampler's snapshot rides the heartbeat.
+	hb, err := client.Heartbeat(ctx, &clusterpb.HeartbeatRequest{})
+	require.NoError(t, err)
+	inv := hb.GetInventory()
+	require.NotNil(t, inv)
+	require.Len(t, inv.GetImages(), 1)
+	require.Equal(t, "sha256:abc", inv.GetImages()[0].GetId())
+	require.Equal(t, uint32(1), inv.GetImages()[0].GetContainers())
+	require.Len(t, inv.GetVolumes(), 1)
+	require.Equal(t, "data", inv.GetVolumes()[0].GetName())
+
+	// Engine unreachable: the report must vanish (unknown), never read as
+	// "empty node".
+	fake.InventoryErr = context.DeadlineExceeded
+	inventory.SampleNow(ctx)
+	hb, err = client.Heartbeat(ctx, &clusterpb.HeartbeatRequest{})
+	require.NoError(t, err)
+	require.Nil(t, hb.GetInventory())
 }

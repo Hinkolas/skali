@@ -54,8 +54,8 @@ func runAgent() error {
 	}
 	go sampler.Run(sigCtx)
 
-	// Container engine + observer. Construction is offline and the sampler
-	// tolerates an unreachable engine (heartbeats report "unknown"), so an
+	// Container engine + observers. Construction is offline and the samplers
+	// tolerate an unreachable engine (heartbeats report "unknown"), so an
 	// agent whose dockerd is still booting comes up fine.
 	eng, err := engine.NewDocker(cfg.EngineSocket)
 	if err != nil {
@@ -64,8 +64,10 @@ func runAgent() error {
 	defer eng.Close()
 	containers := engine.NewSampler(eng)
 	go containers.Run(sigCtx)
+	inventory := engine.NewInventorySampler(eng)
+	go inventory.Run(sigCtx)
 
-	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr, sampler, eng, containers)
+	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr, sampler, eng, containers, inventory)
 	if sigCtx.Err() != nil {
 		slog.Info("shutdown signal received", "service", serviceName)
 	}

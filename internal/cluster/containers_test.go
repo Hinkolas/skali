@@ -35,7 +35,7 @@ func TestContainerOpsRemoteEndToEnd(t *testing.T) {
 	fake := enginetest.New("nginx:alpine")
 	containers := engine.NewSampler(fake)
 	containers.SampleNow(ctx)
-	agent := NewAgentServer(identity, warmSampler(t), fake, containers)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
