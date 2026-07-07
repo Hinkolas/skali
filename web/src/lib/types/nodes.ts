@@ -122,5 +122,50 @@ export interface ContainerCreateRequest {
 	start?: boolean;
 }
 
+/**
+ * One image observed on a node. Unfiltered inventory — every image on the
+ * machine, skali-managed or not; `containers` counts references from
+ * containers in any state (0 = unused).
+ */
+export interface NodeImage {
+	/** Content-addressable image id (`sha256:…`). */
+	id: string;
+	/** Empty for dangling images. */
+	repo_tags: string[];
+	repo_digests: string[];
+	size_bytes: number;
+	dangling: boolean;
+	containers: number;
+	/** The image's own build time; null when unknown. */
+	created_at: string | null;
+	first_seen: string;
+	last_seen: string;
+}
+
+export interface NodeImageList {
+	images: NodeImage[];
+}
+
+/**
+ * One named volume observed on a node (anonymous volumes included). No size —
+ * computing it walks the volume's filesystem.
+ */
+export interface NodeVolume {
+	name: string;
+	driver: string;
+	scope: 'local' | 'global';
+	/** Node-local storage path. */
+	mountpoint: string;
+	labels: Record<string, string>;
+	containers: number;
+	created_at: string | null;
+	first_seen: string;
+	last_seen: string;
+}
+
+export interface NodeVolumeList {
+	volumes: NodeVolume[];
+}
+
 /** Roles an operator can grant — `master` is fixed at boot. */
 export const ASSIGNABLE_NODE_ROLES: NodeRole[] = ['worker', 'edge', 'builder'];

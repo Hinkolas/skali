@@ -5,6 +5,8 @@
 	import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 	import ChartLine from '@lucide/svelte/icons/chart-line';
 	import Container from '@lucide/svelte/icons/container';
+	import Layers from '@lucide/svelte/icons/layers';
+	import HardDrive from '@lucide/svelte/icons/hard-drive';
 	import Play from '@lucide/svelte/icons/play';
 	import Square from '@lucide/svelte/icons/square';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -26,8 +28,12 @@
 		Node,
 		NodeContainer,
 		NodeContainerList,
+		NodeImage,
+		NodeImageList,
 		NodeMetricsHistory,
-		NodeMetricsSample
+		NodeMetricsSample,
+		NodeVolume,
+		NodeVolumeList
 	} from '$lib/types/nodes';
 	import Button from '$lib/components/ui/Button.svelte';
 	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
@@ -65,7 +71,9 @@
 	const TABS: TabDef[] = [
 		{ id: 'overview', label: 'Overview', icon: LayoutDashboard },
 		{ id: 'metrics', label: 'Metrics', icon: ChartLine },
-		{ id: 'containers', label: 'Containers', icon: Container }
+		{ id: 'containers', label: 'Containers', icon: Container },
+		{ id: 'images', label: 'Images', icon: Layers },
+		{ id: 'volumes', label: 'Volumes', icon: HardDrive }
 	];
 	let tab = $state('overview');
 
@@ -213,6 +221,54 @@
 			clearInterval(t);
 		};
 	});
+
+	// --- inventory: fetch + poll ---------------------------------------------
+	// Same shape again, on a slower poll: the node samples its inventory every
+	// 60s, so 30s here just keeps the pane fresh without hammering the API.
+	let images = $state<NodeImage[] | null>(null);
+	let imagesFailed = $state(false);
+	let volumes = $state<NodeVolume[] | null>(null);
+	let volumesFailed = $state(false);
+
+	$effect(() => {
+		const id = nodeId; // sole tracked dependency
+		images = null;
+		imagesFailed = false;
+		volumes = null;
+		volumesFailed = false;
+		let alive = true;
+		const load = async () => {
+			try {
+				const res = await api.get<NodeImageList>(`/v1/nodes/${id}/images`);
+				if (alive) {
+					images = res.images;
+					imagesFailed = false;
+				}
+			} catch {
+				if (alive && images === null) imagesFailed = true;
+			}
+			try {
+				const res = await api.get<NodeVolumeList>(`/v1/nodes/${id}/volumes`);
+				if (alive) {
+					volumes = res.volumes;
+					volumesFailed = false;
+				}
+			} catch {
+				if (alive && volumes === null) volumesFailed = true;
+			}
+		};
+		load();
+		const t = setInterval(load, 30_000);
+		return () => {
+			alive = false;
+			clearInterval(t);
+		};
+	});
+
+	/** Primary display name: first tag, or the shortened digest for dangling images. */
+	function imageName(img: NodeImage): string {
+		return img.repo_tags[0] ?? img.id.replace('sha256:', '').slice(0, 12);
+	}
 
 	// --- container actions -------------------------------------------------------
 	// Mutations patch the local list from the response; the 10s poll (and the
@@ -541,6 +597,98 @@
 			<div class="flex flex-col gap-2">
 				{#each ['a', 'b', 'c'] as key (key)}
 					<div class="h-[64px] animate-pulse rounded-[10px] bg-white/3"></div>
+				{/each}
+			</div>
+		{/if}
+	{:else if tab === 'images'}
+		<h3 class="text-text-ghost mt-4 mb-1.5 text-[10px] font-semibold tracking-[0.12em] uppercase">
+			Images
+		</h3>
+		{#if images?.length}
+			<div class="flex flex-col gap-2">
+				{#each images as img (img.id)}
+					{@const unused = img.containers === 0}
+					<div class="rounded-[10px] bg-white/3 px-3 py-2.5 {unused ? 'opacity-60' : ''}">
+						<div class="flex items-center justify-between gap-2">
+							<span class="font-mono text-text-primary truncate text-[12px] font-medium">
+								{imageName(img)}
+							</span>
+							<span class="font-mono text-text-muted flex-none text-[11px]">
+								{formatBytes(img.size_bytes)}
+							</span>
+						</div>
+						<div class="mt-1 flex items-center justify-between gap-2 text-[11px]">
+							<span class="text-text-faint truncate">
+								{#if img.repo_tags.length > 1}
+									+{img.repo_tags.length - 1} more tag{img.repo_tags.length > 2 ? 's' : ''}
+								{:else}
+									{img.id.replace('sha256:', '').slice(0, 12)}
+								{/if}
+							</span>
+							<span class="text-text-muted flex flex-none items-center gap-1.5">
+								{#if img.dangling}
+									<span class="text-status-warning">dangling</span>
+									·
+								{/if}
+								{img.containers === 0 ? 'unused' : `in use by ${img.containers}`}
+							</span>
+						</div>
+					</div>
+				{/each}
+			</div>
+			<p class="text-text-ghost mt-3 text-[11px] leading-relaxed">
+				Every image on this node, largest first — skali-managed or not. Cleanup lands with the
+				image lifecycle milestone.
+			</p>
+		{:else if imagesFailed}
+			<p class="text-text-muted text-[12px]">Could not load images.</p>
+		{:else if images !== null}
+			<p class="text-text-ghost text-[12px]">No images observed on this node yet.</p>
+		{:else}
+			<div class="flex flex-col gap-2">
+				{#each ['a', 'b', 'c'] as key (key)}
+					<div class="h-[52px] animate-pulse rounded-[10px] bg-white/3"></div>
+				{/each}
+			</div>
+		{/if}
+	{:else if tab === 'volumes'}
+		<h3 class="text-text-ghost mt-4 mb-1.5 text-[10px] font-semibold tracking-[0.12em] uppercase">
+			Volumes
+		</h3>
+		{#if volumes?.length}
+			<div class="flex flex-col gap-2">
+				{#each volumes as vol (vol.name)}
+					{@const unused = vol.containers === 0}
+					<div class="rounded-[10px] bg-white/3 px-3 py-2.5 {unused ? 'opacity-60' : ''}">
+						<div class="flex items-center justify-between gap-2">
+							<span class="font-mono text-text-primary truncate text-[12px] font-medium">
+								{vol.name}
+							</span>
+							<span class="font-mono text-text-muted flex-none text-[11px]">{vol.driver}</span>
+						</div>
+						<div class="mt-1 flex items-center justify-between gap-2 text-[11px]">
+							<span class="text-text-faint truncate">
+								{vol.created_at ? `created ${relativeTime(vol.created_at)}` : '—'}
+							</span>
+							<span class="text-text-muted flex-none">
+								{vol.containers === 0 ? 'unused' : `in use by ${vol.containers}`}
+							</span>
+						</div>
+					</div>
+				{/each}
+			</div>
+			<p class="text-text-ghost mt-3 text-[11px] leading-relaxed">
+				Every named volume on this node, anonymous ones included. Sizes are not sampled — they
+				require walking each volume's filesystem.
+			</p>
+		{:else if volumesFailed}
+			<p class="text-text-muted text-[12px]">Could not load volumes.</p>
+		{:else if volumes !== null}
+			<p class="text-text-ghost text-[12px]">No volumes on this node.</p>
+		{:else}
+			<div class="flex flex-col gap-2">
+				{#each ['a', 'b', 'c'] as key (key)}
+					<div class="h-[52px] animate-pulse rounded-[10px] bg-white/3"></div>
 				{/each}
 			</div>
 		{/if}
