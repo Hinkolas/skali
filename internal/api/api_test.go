@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/cluster"
+	"github.com/Hinkolas/skali/internal/engine/enginetest"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
 )
@@ -26,10 +28,12 @@ import (
 const testClusterAddr = "10.0.0.1:7443"
 
 type testAPI struct {
-	t   *testing.T
-	srv *httptest.Server
-	st  *store.Store
-	svc *auth.Service
+	t      *testing.T
+	srv    *httptest.Server
+	st     *store.Store
+	svc    *auth.Service
+	eng    *enginetest.Fake
+	selfID uuid.UUID
 }
 
 func newTestAPI(t *testing.T) *testAPI {
@@ -41,12 +45,22 @@ func newTestAPI(t *testing.T) *testAPI {
 	ca, err := cluster.EnsureCA(t.Context(), st, strings.Repeat("s", 32))
 	require.NoError(t, err)
 
+	// The container surface runs over a fake engine on the master's own node
+	// (the local-handle path) and a real conn pool for everything else.
+	self, err := cluster.EnsureSelfNode(t.Context(), st, testClusterAddr)
+	require.NoError(t, err)
+	conns, err := cluster.NewConnPool(ca)
+	require.NoError(t, err)
+	t.Cleanup(conns.Close)
+	eng := enginetest.New("nginx:alpine")
+
 	srv := httptest.NewServer(NewRouter(Deps{
 		Auth: svc, Store: st, DB: pool,
-		Cluster: cluster.NewService(st, ca, testClusterAddr),
+		Cluster:    cluster.NewService(st, ca, testClusterAddr),
+		Containers: cluster.NewContainerOps(st, conns, self.ID, eng),
 	}))
 	t.Cleanup(srv.Close)
-	return &testAPI{t: t, srv: srv, st: st, svc: svc}
+	return &testAPI{t: t, srv: srv, st: st, svc: svc, eng: eng, selfID: self.ID}
 }
 
 func (a *testAPI) createUser(email, password string) {
@@ -467,5 +481,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 22, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 27, routes, "route count changed; update the OpenAPI spec and this number")
 }

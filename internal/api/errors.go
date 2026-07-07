@@ -31,6 +31,7 @@ const (
 	codeNotFound           = "not_found"
 	codeConflict           = "conflict"
 	codeRateLimited        = "rate_limited"
+	codeNodeUnreachable    = "node_unreachable"
 	codeInternal           = "internal"
 )
 

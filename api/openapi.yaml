@@ -633,6 +633,199 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /v1/nodes/{id}/containers:
+    get:
+      operationId: listNodeContainers
+      summary: List a node's containers
+      description: |
+        Admin only. The node's skali-managed containers as last observed by
+        the master (heartbeat cadence, ~15s; mutations through this API
+        reflect immediately). Containers that disappeared from the node keep
+        a `gone` row for up to an hour, then vanish.
+
+        This whole surface is a low-level admin escape hatch; the typed
+        resource APIs (applications, databases) are the product surface.
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Observed containers, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [containers]
+                properties:
+                  containers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Container" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createNodeContainer
+      summary: Create a container on a node
+      description: |
+        Admin only, sudo mode. Creates (and by default starts) a container
+        from a raw spec on the given node. The container is stamped
+        `skali.managed=true` plus the given `kind`; user labels must not use
+        the `skali.` prefix. Pulling a missing image can take minutes — the
+        request blocks until the container exists (up to a 5-minute
+        server-side ceiling).
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContainerCreateRequest" }
+      responses:
+        "201":
+          description: The created container as observed post-start.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [container]
+                properties:
+                  container: { $ref: "#/components/schemas/Container" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/NodeUnreachable" }
+
+  /v1/nodes/{id}/containers/{cid}/start:
+    post:
+      operationId: startNodeContainer
+      summary: Start a container
+      description: Admin only, sudo mode.
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cid
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Engine container id.
+      responses:
+        "200":
+          description: The container's post-start state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [container]
+                properties:
+                  container: { $ref: "#/components/schemas/Container" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/NodeUnreachable" }
+
+  /v1/nodes/{id}/containers/{cid}/stop:
+    post:
+      operationId: stopNodeContainer
+      summary: Stop a container
+      description: |
+        Admin only, sudo mode. Graceful stop; the optional body sets how long
+        the engine waits before killing (engine default when omitted).
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cid
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Engine container id.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timeout_seconds:
+                  type: integer
+                  minimum: 0
+      responses:
+        "200":
+          description: The container's post-stop state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [container]
+                properties:
+                  container: { $ref: "#/components/schemas/Container" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/NodeUnreachable" }
+
+  /v1/nodes/{id}/containers/{cid}:
+    delete:
+      operationId: deleteNodeContainer
+      summary: Remove a container
+      description: |
+        Admin only, sudo mode. Removing a running container requires
+        `force=true` (`409` otherwise). Idempotent: a container the node no
+        longer knows still deletes the master's record and returns `204`.
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cid
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Engine container id.
+        - name: force
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "204":
+          description: Container removed.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/NodeUnreachable" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -679,6 +872,14 @@ components:
         Recent authentication required (`error.code = reauth_required`):
         the session's sudo-mode window has lapsed. Confirm identity at
         `/v1/auth/reauth` and retry the original request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NodeUnreachable:
+      description: |
+        The node (or its container engine) could not be reached
+        (`error.code = node_unreachable`). The cluster state is unchanged;
+        retry once the node is back.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -794,6 +995,177 @@ components:
               format: date-time
               description: Bucket timestamp (~8-minute averages).
 
+    ContainerKind:
+      type: string
+      description: |
+        How skali manages a container. `application` instances belong to a
+        project; a `database` container is an engine pool that may host
+        logical databases of many projects; `system` containers are skali's
+        own infrastructure (proxy, registry, ...).
+      enum: [application, database, system]
+
+    Container:
+      type: object
+      description: One observed skali-managed container on a node.
+      required:
+        [id, name, image, kind, state, health, exit_code, restart_count,
+         labels, stats, created_at, started_at, first_seen, last_seen]
+      properties:
+        id:
+          type: string
+          description: Engine container id.
+        name:
+          type: string
+        image:
+          type: string
+        kind: { $ref: "#/components/schemas/ContainerKind" }
+        state:
+          type: string
+          description: |
+            Engine-reported state, plus `gone` for containers that vanished
+            from the node's reports (kept briefly for visibility).
+          enum: [created, running, paused, restarting, removing, exited, dead, gone]
+        health:
+          type: [string, "null"]
+          description: Healthcheck state; null when none is configured.
+          enum: [starting, healthy, unhealthy, null]
+        exit_code:
+          type: [integer, "null"]
+        restart_count:
+          type: integer
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: Full label map including the skali.* identity labels.
+        stats:
+          oneOf:
+            - { $ref: "#/components/schemas/ContainerStats" }
+            - type: "null"
+          description: Latest stats; null until the node has sampled twice.
+        created_at:
+          type: [string, "null"]
+          format: date-time
+          description: The container's own creation time on the engine.
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+
+    ContainerStats:
+      type: object
+      description: |
+        Per-container resource snapshot. `cpu_pct` uses docker-stats
+        semantics — 100 means one full core, so values can exceed 100 on
+        multi-core containers. Rates are bytes/second.
+      required: [cpu_pct, mem_used, mem_limit, net_rx_rate, net_tx_rate]
+      properties:
+        cpu_pct: { type: number }
+        mem_used: { type: integer }
+        mem_limit:
+          type: integer
+          description: As reported by the engine; the host total when unlimited.
+        net_rx_rate: { type: integer }
+        net_tx_rate: { type: integer }
+
+    ContainerCreateRequest:
+      type: object
+      required: [name, image, kind]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+        image:
+          type: string
+        kind: { $ref: "#/components/schemas/ContainerKind" }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        command:
+          type: array
+          items: { type: string }
+          description: Overrides the image CMD.
+        mounts:
+          type: array
+          items:
+            type: object
+            required: [type, source, target]
+            properties:
+              type:
+                type: string
+                enum: [bind, volume]
+              source:
+                type: string
+                description: Host path (bind) or volume name (volume).
+              target:
+                type: string
+              read_only:
+                type: boolean
+                default: false
+        ports:
+          type: array
+          items:
+            type: object
+            required: [container_port]
+            properties:
+              host_ip:
+                type: string
+                description: Empty binds all interfaces.
+              host_port:
+                type: integer
+                description: 0 picks an ephemeral port.
+              container_port:
+                type: integer
+              protocol:
+                type: string
+                enum: [tcp, udp]
+                default: tcp
+        restart_policy:
+          type: string
+          enum: [no, always, unless-stopped, on-failure]
+          default: no
+        restart_max_retries:
+          type: integer
+          description: Only valid with `on-failure`.
+        cpus:
+          type: number
+          description: CPU limit in cores (0.5 = half a core); 0 = unlimited.
+        memory_limit:
+          type: integer
+          description: Memory limit in bytes; 0 = unlimited.
+        networks:
+          type: array
+          items: { type: string }
+          description: Existing engine network names to attach.
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: User labels; the `skali.` prefix is reserved (400).
+        healthcheck:
+          type: object
+          required: [test]
+          properties:
+            test:
+              type: array
+              items: { type: string }
+              description: E.g. ["CMD-SHELL", "curl -f http://localhost/ || exit 1"].
+            interval_seconds: { type: integer }
+            timeout_seconds: { type: integer }
+            start_period_seconds: { type: integer }
+            retries: { type: integer }
+        pull:
+          type: string
+          enum: [if-missing, always, never]
+          default: if-missing
+        start:
+          type: boolean
+          default: true
+          description: Start the container after creating it.
+
     JoinTokenCreated:
       type: object
       description: A freshly minted join token. Shown exactly once.
@@ -902,6 +1274,7 @@ components:
                 - not_found
                 - conflict
                 - rate_limited
+                - node_unreachable
                 - internal
             message:
               type: string

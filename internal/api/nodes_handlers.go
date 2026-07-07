@@ -256,6 +256,14 @@ func writeClusterError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, codeConflict, "CLUSTER_ADDR is not configured on the master; set it to the externally reachable gRPC address")
 	case errors.Is(err, cluster.ErrInvalidRole):
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+	case errors.Is(err, cluster.ErrContainerNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "not found")
+	case errors.Is(err, cluster.ErrContainerConflict):
+		writeError(w, http.StatusConflict, codeConflict, err.Error())
+	case errors.Is(err, cluster.ErrInvalidSpec):
+		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+	case errors.Is(err, cluster.ErrNodeUnreachable), errors.Is(err, cluster.ErrEngineUnavailable):
+		writeError(w, http.StatusBadGateway, codeNodeUnreachable, err.Error())
 	default:
 		slog.ErrorContext(ctx, "api: internal error", "err", err)
 		writeError(w, http.StatusInternalServerError, codeInternal, "internal error")
