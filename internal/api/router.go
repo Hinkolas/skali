@@ -26,6 +26,9 @@ type Deps struct {
 	// Containers may be nil at construction (partial test harnesses);
 	// handlers dereference it only at request time.
 	Containers *cluster.ContainerOps
+	// Registry is nil when the master runs no image mirror (CLUSTER_ADDR
+	// unset); its routes then answer 503 registry_disabled.
+	Registry RegistryOps
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -87,6 +90,7 @@ func NewRouter(d Deps) http.Handler {
 			uh := &usersHandlers{st: d.Store}
 			nh := &nodesHandlers{st: d.Store, cluster: d.Cluster}
 			ch := &containersHandlers{st: d.Store, containers: d.Containers}
+			rh := &registryHandlers{registry: d.Registry}
 			r.Group(func(r chi.Router) {
 				r.Use(RequireAdmin)
 
@@ -99,6 +103,9 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/containers", ch.list)
 				r.Get("/images", ch.images)
 				r.Get("/volumes", ch.volumes)
+
+				// The mirror catalog: what the cluster registry serves.
+				r.Get("/registry/images", rh.list)
 
 				// Writes additionally need sudo mode. RequireAdmin sits
 				// outside RequireFresh so non-admins get "forbidden", never a
@@ -121,6 +128,9 @@ func NewRouter(d Deps) http.Handler {
 					r.Delete("/nodes/{id}/containers/{cid}", ch.remove)
 					r.Post("/nodes/{id}/images/pull", ch.pullImage)
 					r.Delete("/nodes/{id}/images", ch.removeImage)
+
+					r.Post("/registry/images", rh.importImage)
+					r.Delete("/registry/images/{id}", rh.deleteImage)
 				})
 			})
 		})

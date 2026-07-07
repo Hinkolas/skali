@@ -166,9 +166,20 @@ func runServe() error {
 
 	containerOps := cluster.NewContainerOps(st, conns, self.ID, eng)
 
+	// The mirror importer shares the registry gate; a nil RegistryOps keeps
+	// the routes answering 503 registry_disabled.
+	var registryOps api.RegistryOps
+	if regAddr != "" {
+		importer, err := mirror.NewImporter(st, ca, regAddr)
+		if err != nil {
+			return err
+		}
+		registryOps = importer
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Containers: containerOps}),
+		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Containers: containerOps, Registry: registryOps}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)

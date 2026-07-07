@@ -33,10 +33,18 @@ type testAPI struct {
 	st     *store.Store
 	svc    *auth.Service
 	eng    *enginetest.Fake
+	reg    *stubRegistryOps
 	selfID uuid.UUID
 }
 
 func newTestAPI(t *testing.T) *testAPI {
+	a := newTestAPIWithRegistry(t, &stubRegistryOps{})
+	return a
+}
+
+// newTestAPIWithRegistry parameterizes the registry surface: pass nil (the
+// untyped literal) for a registry-less master.
+func newTestAPIWithRegistry(t *testing.T, reg RegistryOps) *testAPI {
 	t.Helper()
 	pool := testdb.New(t)
 	st := store.NewStore(pool)
@@ -58,9 +66,12 @@ func newTestAPI(t *testing.T) *testAPI {
 		Auth: svc, Store: st, DB: pool,
 		Cluster:    cluster.NewService(st, ca, testClusterAddr),
 		Containers: cluster.NewContainerOps(st, conns, self.ID, eng),
+		Registry:   reg,
 	}))
 	t.Cleanup(srv.Close)
-	return &testAPI{t: t, srv: srv, st: st, svc: svc, eng: eng, selfID: self.ID}
+	a := &testAPI{t: t, srv: srv, st: st, svc: svc, eng: eng, selfID: self.ID}
+	a.reg, _ = reg.(*stubRegistryOps)
+	return a
 }
 
 func (a *testAPI) createUser(email, password string) {
@@ -481,5 +492,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 31, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 34, routes, "route count changed; update the OpenAPI spec and this number")
 }

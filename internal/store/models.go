@@ -142,6 +142,16 @@ type NodeVolume struct {
 	LastSeen      time.Time
 }
 
+type RegistryImage struct {
+	ID         uuid.UUID
+	Repository string
+	Tag        string
+	Digest     string
+	SizeBytes  int64
+	ImportedAt time.Time
+	UpdatedAt  time.Time
+}
+
 type Session struct {
 	ID                uuid.UUID
 	UserID            uuid.UUID

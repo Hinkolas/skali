@@ -925,8 +925,7 @@ paths:
         Admin only. Every image on every node as last observed by the master
         — unfiltered (skali-managed or not: this is whole-cluster disk
         visibility), sorted largest first. `containers` counts references
-        from containers in any state; `0` means unused. Read-only: image
-        mutations (pull, remove, GC) arrive in a later milestone.
+        from containers in any state; `0` means unused.
       tags: [containers]
       parameters:
         - name: node
@@ -988,6 +987,99 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/registry/images:
+    get:
+      operationId: listRegistryImages
+      summary: List the mirror catalog
+      description: |
+        Admin only. Images the master imported into the cluster registry,
+        digest-pinned from upstream — the authoritative record of what the
+        mirror serves (the master is its only writer). Answers
+        `503 registry_disabled` when the master runs no registry
+        (`CLUSTER_ADDR` unset).
+      tags: [registry]
+      responses:
+        "200":
+          description: The catalog, sorted by repository then tag.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [images]
+                properties:
+                  images:
+                    type: array
+                    items: { $ref: "#/components/schemas/RegistryImage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/RegistryUnavailable" }
+    post:
+      operationId: importRegistryImage
+      summary: Import an image into the mirror
+      description: |
+        Admin only, sudo mode. Copies the upstream image into the cluster
+        registry digest-pinned, multi-arch index preserved, registry to
+        registry — the master's engine is not involved and only the master
+        needs public egress. Tag references only: the catalog pins
+        `(repository, tag)` to a digest; re-importing a tag moves the pin.
+        The mirrored repository is `mirror/<upstream-host>/<path>`, so
+        `postgres:17` lands at
+        `<registry>/mirror/docker.io/library/postgres:17`. Imports can take
+        minutes (up to a 15-minute server-side ceiling).
+      tags: [registry]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reference]
+              properties:
+                reference:
+                  type: string
+                  description: Upstream tag reference, e.g. `postgres:17`.
+      responses:
+        "201":
+          description: The catalog entry, digest-pinned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [image]
+                properties:
+                  image: { $ref: "#/components/schemas/RegistryImage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/RegistryUnavailable" }
+
+  /v1/registry/images/{id}:
+    delete:
+      operationId: deleteRegistryImage
+      summary: Remove an image from the mirror
+      description: |
+        Admin only, sudo mode. Deletes the catalog entry and its manifest
+        from the registry (nodes can no longer pull it). Disk is not freed
+        yet — blob garbage collection is a later milestone. Two tags pinning
+        the same digest share a manifest; deleting either removes it for
+        both.
+      tags: [registry]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Removed.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/RegistryUnavailable" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1042,6 +1134,15 @@ components:
         The node (or its container engine) could not be reached
         (`error.code = node_unreachable`). The cluster state is unchanged;
         retry once the node is back.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RegistryUnavailable:
+      description: |
+        The cluster registry cannot serve the request: the master runs no
+        registry (`error.code = registry_disabled`, set `CLUSTER_ADDR`), or
+        the registry container is unreachable
+        (`error.code = registry_unavailable`, it may still be starting).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -1335,6 +1436,37 @@ components:
           type: string
           format: date-time
 
+    RegistryImage:
+      type: object
+      description: |
+        One mirror catalog entry: an upstream tag the master imported into
+        the cluster registry, pinned to the digest it had at import time.
+        Nodes pull it as `<registry>/<repository>:<tag>`.
+      required:
+        [id, repository, tag, digest, size_bytes, imported_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        repository:
+          type: string
+          description: Mirror-relative, e.g. `mirror/docker.io/library/postgres`.
+        tag:
+          type: string
+        digest:
+          type: string
+          description: The pinned upstream manifest/index digest (`sha256:…`).
+        size_bytes:
+          type: integer
+          description: Unique blob bytes across the whole (multi-arch) index.
+        imported_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          description: Advances when a re-import moves the pin.
+
     ContainerCreateRequest:
       type: object
       required: [name, image, kind]
@@ -1538,6 +1670,8 @@ components:
                 - conflict
                 - rate_limited
                 - node_unreachable
+                - registry_disabled
+                - registry_unavailable
                 - internal
             message:
               type: string

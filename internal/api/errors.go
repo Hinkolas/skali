@@ -22,17 +22,19 @@ type errorDetail struct {
 }
 
 const (
-	codeBadRequest         = "bad_request"
-	codeInvalidCredentials = "invalid_credentials"
-	codeInvalidToken       = "invalid_token"
-	codeInvalidCode        = "invalid_code"
-	codeForbidden          = "forbidden"
-	codeReauthRequired     = "reauth_required"
-	codeNotFound           = "not_found"
-	codeConflict           = "conflict"
-	codeRateLimited        = "rate_limited"
-	codeNodeUnreachable    = "node_unreachable"
-	codeInternal           = "internal"
+	codeBadRequest          = "bad_request"
+	codeInvalidCredentials  = "invalid_credentials"
+	codeInvalidToken        = "invalid_token"
+	codeInvalidCode         = "invalid_code"
+	codeForbidden           = "forbidden"
+	codeReauthRequired      = "reauth_required"
+	codeNotFound            = "not_found"
+	codeConflict            = "conflict"
+	codeRateLimited         = "rate_limited"
+	codeNodeUnreachable     = "node_unreachable"
+	codeRegistryDisabled    = "registry_disabled"
+	codeRegistryUnavailable = "registry_unavailable"
+	codeInternal            = "internal"
 )
 
 // writeAuthError maps auth sentinel errors onto the envelope; anything
