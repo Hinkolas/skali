@@ -32,6 +32,113 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type RestartPolicy int32
+
+const (
+	RestartPolicy_RESTART_POLICY_UNSPECIFIED    RestartPolicy = 0 // treated as NO
+	RestartPolicy_RESTART_POLICY_NO             RestartPolicy = 1
+	RestartPolicy_RESTART_POLICY_ALWAYS         RestartPolicy = 2
+	RestartPolicy_RESTART_POLICY_UNLESS_STOPPED RestartPolicy = 3
+	RestartPolicy_RESTART_POLICY_ON_FAILURE     RestartPolicy = 4
+)
+
+// Enum value maps for RestartPolicy.
+var (
+	RestartPolicy_name = map[int32]string{
+		0: "RESTART_POLICY_UNSPECIFIED",
+		1: "RESTART_POLICY_NO",
+		2: "RESTART_POLICY_ALWAYS",
+		3: "RESTART_POLICY_UNLESS_STOPPED",
+		4: "RESTART_POLICY_ON_FAILURE",
+	}
+	RestartPolicy_value = map[string]int32{
+		"RESTART_POLICY_UNSPECIFIED":    0,
+		"RESTART_POLICY_NO":             1,
+		"RESTART_POLICY_ALWAYS":         2,
+		"RESTART_POLICY_UNLESS_STOPPED": 3,
+		"RESTART_POLICY_ON_FAILURE":     4,
+	}
+)
+
+func (x RestartPolicy) Enum() *RestartPolicy {
+	p := new(RestartPolicy)
+	*p = x
+	return p
+}
+
+func (x RestartPolicy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RestartPolicy) Descriptor() protoreflect.EnumDescriptor {
+	return file_skali_cluster_v1_cluster_proto_enumTypes[0].Descriptor()
+}
+
+func (RestartPolicy) Type() protoreflect.EnumType {
+	return &file_skali_cluster_v1_cluster_proto_enumTypes[0]
+}
+
+func (x RestartPolicy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RestartPolicy.Descriptor instead.
+func (RestartPolicy) EnumDescriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{0}
+}
+
+type PullPolicy int32
+
+const (
+	PullPolicy_PULL_POLICY_UNSPECIFIED PullPolicy = 0 // treated as IF_MISSING
+	PullPolicy_PULL_POLICY_IF_MISSING  PullPolicy = 1
+	PullPolicy_PULL_POLICY_ALWAYS      PullPolicy = 2
+	PullPolicy_PULL_POLICY_NEVER       PullPolicy = 3
+)
+
+// Enum value maps for PullPolicy.
+var (
+	PullPolicy_name = map[int32]string{
+		0: "PULL_POLICY_UNSPECIFIED",
+		1: "PULL_POLICY_IF_MISSING",
+		2: "PULL_POLICY_ALWAYS",
+		3: "PULL_POLICY_NEVER",
+	}
+	PullPolicy_value = map[string]int32{
+		"PULL_POLICY_UNSPECIFIED": 0,
+		"PULL_POLICY_IF_MISSING":  1,
+		"PULL_POLICY_ALWAYS":      2,
+		"PULL_POLICY_NEVER":       3,
+	}
+)
+
+func (x PullPolicy) Enum() *PullPolicy {
+	p := new(PullPolicy)
+	*p = x
+	return p
+}
+
+func (x PullPolicy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PullPolicy) Descriptor() protoreflect.EnumDescriptor {
+	return file_skali_cluster_v1_cluster_proto_enumTypes[1].Descriptor()
+}
+
+func (PullPolicy) Type() protoreflect.EnumType {
+	return &file_skali_cluster_v1_cluster_proto_enumTypes[1]
+}
+
+func (x PullPolicy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PullPolicy.Descriptor instead.
+func (PullPolicy) EnumDescriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{1}
+}
+
 type EnrollRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Full join token: <id>.<secret>.<ca-fingerprint>.
@@ -247,7 +354,11 @@ type HeartbeatResponse struct {
 	CpuCount      uint32 `protobuf:"varint,5,opt,name=cpu_count,json=cpuCount,proto3" json:"cpu_count,omitempty"`
 	// Resource snapshot; absent until the node's sampler has two samples
 	// (rates need a delta).
-	Metrics       *NodeMetrics `protobuf:"bytes,7,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	Metrics *NodeMetrics `protobuf:"bytes,7,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	// Observed container state. ABSENT means unknown (container sampler cold
+	// or engine unreachable) — never "no containers"; the master must leave
+	// its records untouched. A present report is authoritative for the node.
+	Containers    *ContainerReport `protobuf:"bytes,8,opt,name=containers,proto3" json:"containers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -324,6 +435,1008 @@ func (x *HeartbeatResponse) GetMetrics() *NodeMetrics {
 	return nil
 }
 
+func (x *HeartbeatResponse) GetContainers() *ContainerReport {
+	if x != nil {
+		return x.Containers
+	}
+	return nil
+}
+
+// ContainerReport wraps the container list so "absent" and "empty" stay
+// distinguishable on the wire.
+type ContainerReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Containers    []*ContainerInfo       `protobuf:"bytes,1,rep,name=containers,proto3" json:"containers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerReport) Reset() {
+	*x = ContainerReport{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerReport) ProtoMessage() {}
+
+func (x *ContainerReport) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerReport.ProtoReflect.Descriptor instead.
+func (*ContainerReport) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ContainerReport) GetContainers() []*ContainerInfo {
+	if x != nil {
+		return x.Containers
+	}
+	return nil
+}
+
+// ContainerInfo is one observed skali-managed container.
+type ContainerInfo struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`     // engine container id (64-hex)
+	Name     string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"` // no leading slash
+	Image    string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	State    string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`   // created|running|paused|restarting|removing|exited|dead
+	Health   string                 `protobuf:"bytes,5,opt,name=health,proto3" json:"health,omitempty"` // ""|starting|healthy|unhealthy ("" = no healthcheck)
+	ExitCode int32                  `protobuf:"varint,6,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	// Full label map including skali.* — the master maps containers back to
+	// resources purely from these.
+	Labels        map[string]string `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CreatedAtUnix int64             `protobuf:"varint,8,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
+	StartedAtUnix int64             `protobuf:"varint,9,opt,name=started_at_unix,json=startedAtUnix,proto3" json:"started_at_unix,omitempty"` // 0 = never started
+	RestartCount  uint32            `protobuf:"varint,10,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`
+	// Latest stats; absent until the node's container sampler has two samples.
+	Stats         *ContainerStats `protobuf:"bytes,11,opt,name=stats,proto3" json:"stats,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerInfo) Reset() {
+	*x = ContainerInfo{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerInfo) ProtoMessage() {}
+
+func (x *ContainerInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerInfo.ProtoReflect.Descriptor instead.
+func (*ContainerInfo) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ContainerInfo) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetHealth() string {
+	if x != nil {
+		return x.Health
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *ContainerInfo) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *ContainerInfo) GetCreatedAtUnix() int64 {
+	if x != nil {
+		return x.CreatedAtUnix
+	}
+	return 0
+}
+
+func (x *ContainerInfo) GetStartedAtUnix() int64 {
+	if x != nil {
+		return x.StartedAtUnix
+	}
+	return 0
+}
+
+func (x *ContainerInfo) GetRestartCount() uint32 {
+	if x != nil {
+		return x.RestartCount
+	}
+	return 0
+}
+
+func (x *ContainerInfo) GetStats() *ContainerStats {
+	if x != nil {
+		return x.Stats
+	}
+	return nil
+}
+
+// ContainerStats is one derived per-container snapshot. cpu_percent uses
+// docker-stats semantics: 100 = one full core (not normalized to the node).
+type ContainerStats struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	CpuPercent       float64                `protobuf:"fixed64,1,opt,name=cpu_percent,json=cpuPercent,proto3" json:"cpu_percent,omitempty"`
+	MemoryUsedBytes  uint64                 `protobuf:"varint,2,opt,name=memory_used_bytes,json=memoryUsedBytes,proto3" json:"memory_used_bytes,omitempty"`
+	MemoryLimitBytes uint64                 `protobuf:"varint,3,opt,name=memory_limit_bytes,json=memoryLimitBytes,proto3" json:"memory_limit_bytes,omitempty"` // as reported; host total when unlimited
+	NetRxBytesPerSec uint64                 `protobuf:"varint,4,opt,name=net_rx_bytes_per_sec,json=netRxBytesPerSec,proto3" json:"net_rx_bytes_per_sec,omitempty"`
+	NetTxBytesPerSec uint64                 `protobuf:"varint,5,opt,name=net_tx_bytes_per_sec,json=netTxBytesPerSec,proto3" json:"net_tx_bytes_per_sec,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ContainerStats) Reset() {
+	*x = ContainerStats{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerStats) ProtoMessage() {}
+
+func (x *ContainerStats) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerStats.ProtoReflect.Descriptor instead.
+func (*ContainerStats) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ContainerStats) GetCpuPercent() float64 {
+	if x != nil {
+		return x.CpuPercent
+	}
+	return 0
+}
+
+func (x *ContainerStats) GetMemoryUsedBytes() uint64 {
+	if x != nil {
+		return x.MemoryUsedBytes
+	}
+	return 0
+}
+
+func (x *ContainerStats) GetMemoryLimitBytes() uint64 {
+	if x != nil {
+		return x.MemoryLimitBytes
+	}
+	return 0
+}
+
+func (x *ContainerStats) GetNetRxBytesPerSec() uint64 {
+	if x != nil {
+		return x.NetRxBytesPerSec
+	}
+	return 0
+}
+
+func (x *ContainerStats) GetNetTxBytesPerSec() uint64 {
+	if x != nil {
+		return x.NetTxBytesPerSec
+	}
+	return 0
+}
+
+// ContainerSpec mirrors the engine-level spec (internal/engine). Labels must
+// be complete — the master stamps skali.managed/skali.kind before sending;
+// the node re-stamps ownership defensively and rejects a missing kind.
+type ContainerSpec struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Name              string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Image             string                 `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
+	Env               map[string]string      `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Command           []string               `protobuf:"bytes,4,rep,name=command,proto3" json:"command,omitempty"`
+	Entrypoint        []string               `protobuf:"bytes,5,rep,name=entrypoint,proto3" json:"entrypoint,omitempty"`
+	Mounts            []*ContainerMount      `protobuf:"bytes,6,rep,name=mounts,proto3" json:"mounts,omitempty"`
+	Ports             []*ContainerPort       `protobuf:"bytes,7,rep,name=ports,proto3" json:"ports,omitempty"`
+	RestartPolicy     RestartPolicy          `protobuf:"varint,8,opt,name=restart_policy,json=restartPolicy,proto3,enum=skali.cluster.v1.RestartPolicy" json:"restart_policy,omitempty"`
+	RestartMaxRetries uint32                 `protobuf:"varint,9,opt,name=restart_max_retries,json=restartMaxRetries,proto3" json:"restart_max_retries,omitempty"` // on-failure only
+	NanoCpus          int64                  `protobuf:"varint,10,opt,name=nano_cpus,json=nanoCpus,proto3" json:"nano_cpus,omitempty"`                             // 1e9 = one core; 0 = unlimited
+	MemoryLimitBytes  int64                  `protobuf:"varint,11,opt,name=memory_limit_bytes,json=memoryLimitBytes,proto3" json:"memory_limit_bytes,omitempty"`   // 0 = unlimited
+	Networks          []string               `protobuf:"bytes,12,rep,name=networks,proto3" json:"networks,omitempty"`
+	Labels            map[string]string      `protobuf:"bytes,13,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Healthcheck       *Healthcheck           `protobuf:"bytes,14,opt,name=healthcheck,proto3" json:"healthcheck,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ContainerSpec) Reset() {
+	*x = ContainerSpec{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerSpec) ProtoMessage() {}
+
+func (x *ContainerSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerSpec.ProtoReflect.Descriptor instead.
+func (*ContainerSpec) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ContainerSpec) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ContainerSpec) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *ContainerSpec) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *ContainerSpec) GetCommand() []string {
+	if x != nil {
+		return x.Command
+	}
+	return nil
+}
+
+func (x *ContainerSpec) GetEntrypoint() []string {
+	if x != nil {
+		return x.Entrypoint
+	}
+	return nil
+}
+
+func (x *ContainerSpec) GetMounts() []*ContainerMount {
+	if x != nil {
+		return x.Mounts
+	}
+	return nil
+}
+
+func (x *ContainerSpec) GetPorts() []*ContainerPort {
+	if x != nil {
+		return x.Ports
+	}
+	return nil
+}
+
+func (x *ContainerSpec) GetRestartPolicy() RestartPolicy {
+	if x != nil {
+		return x.RestartPolicy
+	}
+	return RestartPolicy_RESTART_POLICY_UNSPECIFIED
+}
+
+func (x *ContainerSpec) GetRestartMaxRetries() uint32 {
+	if x != nil {
+		return x.RestartMaxRetries
+	}
+	return 0
+}
+
+func (x *ContainerSpec) GetNanoCpus() int64 {
+	if x != nil {
+		return x.NanoCpus
+	}
+	return 0
+}
+
+func (x *ContainerSpec) GetMemoryLimitBytes() int64 {
+	if x != nil {
+		return x.MemoryLimitBytes
+	}
+	return 0
+}
+
+func (x *ContainerSpec) GetNetworks() []string {
+	if x != nil {
+		return x.Networks
+	}
+	return nil
+}
+
+func (x *ContainerSpec) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *ContainerSpec) GetHealthcheck() *Healthcheck {
+	if x != nil {
+		return x.Healthcheck
+	}
+	return nil
+}
+
+type ContainerMount struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // bind|volume
+	Source        string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
+	Target        string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	ReadOnly      bool                   `protobuf:"varint,4,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerMount) Reset() {
+	*x = ContainerMount{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerMount) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerMount) ProtoMessage() {}
+
+func (x *ContainerMount) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerMount.ProtoReflect.Descriptor instead.
+func (*ContainerMount) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ContainerMount) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *ContainerMount) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *ContainerMount) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *ContainerMount) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+type ContainerPort struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	HostIp        string                 `protobuf:"bytes,1,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"` // empty = all interfaces
+	HostPort      uint32                 `protobuf:"varint,2,opt,name=host_port,json=hostPort,proto3" json:"host_port,omitempty"`
+	ContainerPort uint32                 `protobuf:"varint,3,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`
+	Protocol      string                 `protobuf:"bytes,4,opt,name=protocol,proto3" json:"protocol,omitempty"` // tcp|udp; empty = tcp
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerPort) Reset() {
+	*x = ContainerPort{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerPort) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerPort) ProtoMessage() {}
+
+func (x *ContainerPort) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerPort.ProtoReflect.Descriptor instead.
+func (*ContainerPort) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ContainerPort) GetHostIp() string {
+	if x != nil {
+		return x.HostIp
+	}
+	return ""
+}
+
+func (x *ContainerPort) GetHostPort() uint32 {
+	if x != nil {
+		return x.HostPort
+	}
+	return 0
+}
+
+func (x *ContainerPort) GetContainerPort() uint32 {
+	if x != nil {
+		return x.ContainerPort
+	}
+	return 0
+}
+
+func (x *ContainerPort) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+type Healthcheck struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Test          []string               `protobuf:"bytes,1,rep,name=test,proto3" json:"test,omitempty"`
+	IntervalMs    int64                  `protobuf:"varint,2,opt,name=interval_ms,json=intervalMs,proto3" json:"interval_ms,omitempty"`
+	TimeoutMs     int64                  `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	Retries       uint32                 `protobuf:"varint,4,opt,name=retries,proto3" json:"retries,omitempty"`
+	StartPeriodMs int64                  `protobuf:"varint,5,opt,name=start_period_ms,json=startPeriodMs,proto3" json:"start_period_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Healthcheck) Reset() {
+	*x = Healthcheck{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Healthcheck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Healthcheck) ProtoMessage() {}
+
+func (x *Healthcheck) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Healthcheck.ProtoReflect.Descriptor instead.
+func (*Healthcheck) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *Healthcheck) GetTest() []string {
+	if x != nil {
+		return x.Test
+	}
+	return nil
+}
+
+func (x *Healthcheck) GetIntervalMs() int64 {
+	if x != nil {
+		return x.IntervalMs
+	}
+	return 0
+}
+
+func (x *Healthcheck) GetTimeoutMs() int64 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
+func (x *Healthcheck) GetRetries() uint32 {
+	if x != nil {
+		return x.Retries
+	}
+	return 0
+}
+
+func (x *Healthcheck) GetStartPeriodMs() int64 {
+	if x != nil {
+		return x.StartPeriodMs
+	}
+	return 0
+}
+
+type CreateContainerRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Spec       *ContainerSpec         `protobuf:"bytes,1,opt,name=spec,proto3" json:"spec,omitempty"`
+	PullPolicy PullPolicy             `protobuf:"varint,2,opt,name=pull_policy,json=pullPolicy,proto3,enum=skali.cluster.v1.PullPolicy" json:"pull_policy,omitempty"`
+	// Start the container after creating it.
+	Start         bool `protobuf:"varint,3,opt,name=start,proto3" json:"start,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateContainerRequest) Reset() {
+	*x = CreateContainerRequest{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateContainerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateContainerRequest) ProtoMessage() {}
+
+func (x *CreateContainerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateContainerRequest.ProtoReflect.Descriptor instead.
+func (*CreateContainerRequest) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *CreateContainerRequest) GetSpec() *ContainerSpec {
+	if x != nil {
+		return x.Spec
+	}
+	return nil
+}
+
+func (x *CreateContainerRequest) GetPullPolicy() PullPolicy {
+	if x != nil {
+		return x.PullPolicy
+	}
+	return PullPolicy_PULL_POLICY_UNSPECIFIED
+}
+
+func (x *CreateContainerRequest) GetStart() bool {
+	if x != nil {
+		return x.Start
+	}
+	return false
+}
+
+// Create/Start/Stop responses carry the post-operation state so the master
+// can record it immediately instead of waiting for the next heartbeat.
+type CreateContainerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Container     *ContainerInfo         `protobuf:"bytes,1,opt,name=container,proto3" json:"container,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateContainerResponse) Reset() {
+	*x = CreateContainerResponse{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateContainerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateContainerResponse) ProtoMessage() {}
+
+func (x *CreateContainerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateContainerResponse.ProtoReflect.Descriptor instead.
+func (*CreateContainerResponse) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CreateContainerResponse) GetContainer() *ContainerInfo {
+	if x != nil {
+		return x.Container
+	}
+	return nil
+}
+
+type StartContainerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ContainerId   string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartContainerRequest) Reset() {
+	*x = StartContainerRequest{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartContainerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartContainerRequest) ProtoMessage() {}
+
+func (x *StartContainerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartContainerRequest.ProtoReflect.Descriptor instead.
+func (*StartContainerRequest) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *StartContainerRequest) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+type StartContainerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Container     *ContainerInfo         `protobuf:"bytes,1,opt,name=container,proto3" json:"container,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartContainerResponse) Reset() {
+	*x = StartContainerResponse{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartContainerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartContainerResponse) ProtoMessage() {}
+
+func (x *StartContainerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartContainerResponse.ProtoReflect.Descriptor instead.
+func (*StartContainerResponse) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *StartContainerResponse) GetContainer() *ContainerInfo {
+	if x != nil {
+		return x.Container
+	}
+	return nil
+}
+
+type StopContainerRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	ContainerId string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	// Graceful-stop timeout; 0 = engine default.
+	TimeoutSeconds uint32 `protobuf:"varint,2,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *StopContainerRequest) Reset() {
+	*x = StopContainerRequest{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopContainerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopContainerRequest) ProtoMessage() {}
+
+func (x *StopContainerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopContainerRequest.ProtoReflect.Descriptor instead.
+func (*StopContainerRequest) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *StopContainerRequest) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *StopContainerRequest) GetTimeoutSeconds() uint32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+type StopContainerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Container     *ContainerInfo         `protobuf:"bytes,1,opt,name=container,proto3" json:"container,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopContainerResponse) Reset() {
+	*x = StopContainerResponse{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopContainerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopContainerResponse) ProtoMessage() {}
+
+func (x *StopContainerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopContainerResponse.ProtoReflect.Descriptor instead.
+func (*StopContainerResponse) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *StopContainerResponse) GetContainer() *ContainerInfo {
+	if x != nil {
+		return x.Container
+	}
+	return nil
+}
+
+type RemoveContainerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ContainerId   string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	Force         bool                   `protobuf:"varint,2,opt,name=force,proto3" json:"force,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveContainerRequest) Reset() {
+	*x = RemoveContainerRequest{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveContainerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveContainerRequest) ProtoMessage() {}
+
+func (x *RemoveContainerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveContainerRequest.ProtoReflect.Descriptor instead.
+func (*RemoveContainerRequest) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RemoveContainerRequest) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *RemoveContainerRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+type RemoveContainerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveContainerResponse) Reset() {
+	*x = RemoveContainerResponse{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveContainerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveContainerResponse) ProtoMessage() {}
+
+func (x *RemoveContainerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveContainerResponse.ProtoReflect.Descriptor instead.
+func (*RemoveContainerResponse) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{18}
+}
+
 // NodeMetrics is the node's latest resource snapshot. Rates are computed on
 // the node (bytes/second over the sample interval); cpu_percent is 0-100
 // normalized across effective cores (the cgroup quota when the node runs in
@@ -346,7 +1459,7 @@ type NodeMetrics struct {
 
 func (x *NodeMetrics) Reset() {
 	*x = NodeMetrics{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -358,7 +1471,7 @@ func (x *NodeMetrics) String() string {
 func (*NodeMetrics) ProtoMessage() {}
 
 func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -371,7 +1484,7 @@ func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeMetrics.ProtoReflect.Descriptor instead.
 func (*NodeMetrics) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{4}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *NodeMetrics) GetCpuPercent() float64 {
@@ -462,14 +1575,106 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\bcert_pem\x18\x02 \x01(\fR\acertPem\x12\x15\n" +
 	"\x06ca_pem\x18\x03 \x01(\fR\x05caPem\x12\x14\n" +
 	"\x05roles\x18\x04 \x03(\tR\x05roles\"\x12\n" +
-	"\x10HeartbeatRequest\"\xd3\x01\n" +
+	"\x10HeartbeatRequest\"\x96\x02\n" +
 	"\x11HeartbeatResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
 	"\x04arch\x18\x02 \x01(\tR\x04arch\x12\x0e\n" +
 	"\x02os\x18\x03 \x01(\tR\x02os\x12%\n" +
 	"\x0eskalid_version\x18\x04 \x01(\tR\rskalidVersion\x12\x1b\n" +
 	"\tcpu_count\x18\x05 \x01(\rR\bcpuCount\x127\n" +
-	"\ametrics\x18\a \x01(\v2\x1d.skali.cluster.v1.NodeMetricsR\ametricsJ\x04\b\x06\x10\a\"\xbe\x03\n" +
+	"\ametrics\x18\a \x01(\v2\x1d.skali.cluster.v1.NodeMetricsR\ametrics\x12A\n" +
+	"\n" +
+	"containers\x18\b \x01(\v2!.skali.cluster.v1.ContainerReportR\n" +
+	"containersJ\x04\b\x06\x10\a\"R\n" +
+	"\x0fContainerReport\x12?\n" +
+	"\n" +
+	"containers\x18\x01 \x03(\v2\x1f.skali.cluster.v1.ContainerInfoR\n" +
+	"containers\"\xc1\x03\n" +
+	"\rContainerInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\x12\x14\n" +
+	"\x05state\x18\x04 \x01(\tR\x05state\x12\x16\n" +
+	"\x06health\x18\x05 \x01(\tR\x06health\x12\x1b\n" +
+	"\texit_code\x18\x06 \x01(\x05R\bexitCode\x12C\n" +
+	"\x06labels\x18\a \x03(\v2+.skali.cluster.v1.ContainerInfo.LabelsEntryR\x06labels\x12&\n" +
+	"\x0fcreated_at_unix\x18\b \x01(\x03R\rcreatedAtUnix\x12&\n" +
+	"\x0fstarted_at_unix\x18\t \x01(\x03R\rstartedAtUnix\x12#\n" +
+	"\rrestart_count\x18\n" +
+	" \x01(\rR\frestartCount\x126\n" +
+	"\x05stats\x18\v \x01(\v2 .skali.cluster.v1.ContainerStatsR\x05stats\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xeb\x01\n" +
+	"\x0eContainerStats\x12\x1f\n" +
+	"\vcpu_percent\x18\x01 \x01(\x01R\n" +
+	"cpuPercent\x12*\n" +
+	"\x11memory_used_bytes\x18\x02 \x01(\x04R\x0fmemoryUsedBytes\x12,\n" +
+	"\x12memory_limit_bytes\x18\x03 \x01(\x04R\x10memoryLimitBytes\x12.\n" +
+	"\x14net_rx_bytes_per_sec\x18\x04 \x01(\x04R\x10netRxBytesPerSec\x12.\n" +
+	"\x14net_tx_bytes_per_sec\x18\x05 \x01(\x04R\x10netTxBytesPerSec\"\xf8\x05\n" +
+	"\rContainerSpec\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05image\x18\x02 \x01(\tR\x05image\x12:\n" +
+	"\x03env\x18\x03 \x03(\v2(.skali.cluster.v1.ContainerSpec.EnvEntryR\x03env\x12\x18\n" +
+	"\acommand\x18\x04 \x03(\tR\acommand\x12\x1e\n" +
+	"\n" +
+	"entrypoint\x18\x05 \x03(\tR\n" +
+	"entrypoint\x128\n" +
+	"\x06mounts\x18\x06 \x03(\v2 .skali.cluster.v1.ContainerMountR\x06mounts\x125\n" +
+	"\x05ports\x18\a \x03(\v2\x1f.skali.cluster.v1.ContainerPortR\x05ports\x12F\n" +
+	"\x0erestart_policy\x18\b \x01(\x0e2\x1f.skali.cluster.v1.RestartPolicyR\rrestartPolicy\x12.\n" +
+	"\x13restart_max_retries\x18\t \x01(\rR\x11restartMaxRetries\x12\x1b\n" +
+	"\tnano_cpus\x18\n" +
+	" \x01(\x03R\bnanoCpus\x12,\n" +
+	"\x12memory_limit_bytes\x18\v \x01(\x03R\x10memoryLimitBytes\x12\x1a\n" +
+	"\bnetworks\x18\f \x03(\tR\bnetworks\x12C\n" +
+	"\x06labels\x18\r \x03(\v2+.skali.cluster.v1.ContainerSpec.LabelsEntryR\x06labels\x12?\n" +
+	"\vhealthcheck\x18\x0e \x01(\v2\x1d.skali.cluster.v1.HealthcheckR\vhealthcheck\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"q\n" +
+	"\x0eContainerMount\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12\x16\n" +
+	"\x06source\x18\x02 \x01(\tR\x06source\x12\x16\n" +
+	"\x06target\x18\x03 \x01(\tR\x06target\x12\x1b\n" +
+	"\tread_only\x18\x04 \x01(\bR\breadOnly\"\x88\x01\n" +
+	"\rContainerPort\x12\x17\n" +
+	"\ahost_ip\x18\x01 \x01(\tR\x06hostIp\x12\x1b\n" +
+	"\thost_port\x18\x02 \x01(\rR\bhostPort\x12%\n" +
+	"\x0econtainer_port\x18\x03 \x01(\rR\rcontainerPort\x12\x1a\n" +
+	"\bprotocol\x18\x04 \x01(\tR\bprotocol\"\xa3\x01\n" +
+	"\vHealthcheck\x12\x12\n" +
+	"\x04test\x18\x01 \x03(\tR\x04test\x12\x1f\n" +
+	"\vinterval_ms\x18\x02 \x01(\x03R\n" +
+	"intervalMs\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12\x18\n" +
+	"\aretries\x18\x04 \x01(\rR\aretries\x12&\n" +
+	"\x0fstart_period_ms\x18\x05 \x01(\x03R\rstartPeriodMs\"\xa2\x01\n" +
+	"\x16CreateContainerRequest\x123\n" +
+	"\x04spec\x18\x01 \x01(\v2\x1f.skali.cluster.v1.ContainerSpecR\x04spec\x12=\n" +
+	"\vpull_policy\x18\x02 \x01(\x0e2\x1c.skali.cluster.v1.PullPolicyR\n" +
+	"pullPolicy\x12\x14\n" +
+	"\x05start\x18\x03 \x01(\bR\x05start\"X\n" +
+	"\x17CreateContainerResponse\x12=\n" +
+	"\tcontainer\x18\x01 \x01(\v2\x1f.skali.cluster.v1.ContainerInfoR\tcontainer\":\n" +
+	"\x15StartContainerRequest\x12!\n" +
+	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\"W\n" +
+	"\x16StartContainerResponse\x12=\n" +
+	"\tcontainer\x18\x01 \x01(\v2\x1f.skali.cluster.v1.ContainerInfoR\tcontainer\"b\n" +
+	"\x14StopContainerRequest\x12!\n" +
+	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\x12'\n" +
+	"\x0ftimeout_seconds\x18\x02 \x01(\rR\x0etimeoutSeconds\"V\n" +
+	"\x15StopContainerResponse\x12=\n" +
+	"\tcontainer\x18\x01 \x01(\v2\x1f.skali.cluster.v1.ContainerInfoR\tcontainer\"Q\n" +
+	"\x16RemoveContainerRequest\x12!\n" +
+	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\x12\x14\n" +
+	"\x05force\x18\x02 \x01(\bR\x05force\"\x19\n" +
+	"\x17RemoveContainerResponse\"\xbe\x03\n" +
 	"\vNodeMetrics\x12\x1f\n" +
 	"\vcpu_percent\x18\x01 \x01(\x01R\n" +
 	"cpuPercent\x12*\n" +
@@ -482,11 +1687,27 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\x17disk_read_bytes_per_sec\x18\b \x01(\x04R\x13diskReadBytesPerSec\x126\n" +
 	"\x18disk_write_bytes_per_sec\x18\t \x01(\x04R\x14diskWriteBytesPerSec\x12\x14\n" +
 	"\x05load1\x18\n" +
-	" \x01(\x01R\x05load12`\n" +
+	" \x01(\x01R\x05load1*\xa3\x01\n" +
+	"\rRestartPolicy\x12\x1e\n" +
+	"\x1aRESTART_POLICY_UNSPECIFIED\x10\x00\x12\x15\n" +
+	"\x11RESTART_POLICY_NO\x10\x01\x12\x19\n" +
+	"\x15RESTART_POLICY_ALWAYS\x10\x02\x12!\n" +
+	"\x1dRESTART_POLICY_UNLESS_STOPPED\x10\x03\x12\x1d\n" +
+	"\x19RESTART_POLICY_ON_FAILURE\x10\x04*t\n" +
+	"\n" +
+	"PullPolicy\x12\x1b\n" +
+	"\x17PULL_POLICY_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16PULL_POLICY_IF_MISSING\x10\x01\x12\x16\n" +
+	"\x12PULL_POLICY_ALWAYS\x10\x02\x12\x15\n" +
+	"\x11PULL_POLICY_NEVER\x10\x032`\n" +
 	"\x11EnrollmentService\x12K\n" +
-	"\x06Enroll\x12\x1f.skali.cluster.v1.EnrollRequest\x1a .skali.cluster.v1.EnrollResponse2c\n" +
+	"\x06Enroll\x12\x1f.skali.cluster.v1.EnrollRequest\x1a .skali.cluster.v1.EnrollResponse2\xfa\x03\n" +
 	"\vNodeService\x12T\n" +
-	"\tHeartbeat\x12\".skali.cluster.v1.HeartbeatRequest\x1a#.skali.cluster.v1.HeartbeatResponseB8Z6github.com/Hinkolas/skali/internal/clusterpb;clusterpbb\x06proto3"
+	"\tHeartbeat\x12\".skali.cluster.v1.HeartbeatRequest\x1a#.skali.cluster.v1.HeartbeatResponse\x12f\n" +
+	"\x0fCreateContainer\x12(.skali.cluster.v1.CreateContainerRequest\x1a).skali.cluster.v1.CreateContainerResponse\x12c\n" +
+	"\x0eStartContainer\x12'.skali.cluster.v1.StartContainerRequest\x1a(.skali.cluster.v1.StartContainerResponse\x12`\n" +
+	"\rStopContainer\x12&.skali.cluster.v1.StopContainerRequest\x1a'.skali.cluster.v1.StopContainerResponse\x12f\n" +
+	"\x0fRemoveContainer\x12(.skali.cluster.v1.RemoveContainerRequest\x1a).skali.cluster.v1.RemoveContainerResponseB8Z6github.com/Hinkolas/skali/internal/clusterpb;clusterpbb\x06proto3"
 
 var (
 	file_skali_cluster_v1_cluster_proto_rawDescOnce sync.Once
@@ -500,25 +1721,69 @@ func file_skali_cluster_v1_cluster_proto_rawDescGZIP() []byte {
 	return file_skali_cluster_v1_cluster_proto_rawDescData
 }
 
-var file_skali_cluster_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_skali_cluster_v1_cluster_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_skali_cluster_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_skali_cluster_v1_cluster_proto_goTypes = []any{
-	(*EnrollRequest)(nil),     // 0: skali.cluster.v1.EnrollRequest
-	(*EnrollResponse)(nil),    // 1: skali.cluster.v1.EnrollResponse
-	(*HeartbeatRequest)(nil),  // 2: skali.cluster.v1.HeartbeatRequest
-	(*HeartbeatResponse)(nil), // 3: skali.cluster.v1.HeartbeatResponse
-	(*NodeMetrics)(nil),       // 4: skali.cluster.v1.NodeMetrics
+	(RestartPolicy)(0),              // 0: skali.cluster.v1.RestartPolicy
+	(PullPolicy)(0),                 // 1: skali.cluster.v1.PullPolicy
+	(*EnrollRequest)(nil),           // 2: skali.cluster.v1.EnrollRequest
+	(*EnrollResponse)(nil),          // 3: skali.cluster.v1.EnrollResponse
+	(*HeartbeatRequest)(nil),        // 4: skali.cluster.v1.HeartbeatRequest
+	(*HeartbeatResponse)(nil),       // 5: skali.cluster.v1.HeartbeatResponse
+	(*ContainerReport)(nil),         // 6: skali.cluster.v1.ContainerReport
+	(*ContainerInfo)(nil),           // 7: skali.cluster.v1.ContainerInfo
+	(*ContainerStats)(nil),          // 8: skali.cluster.v1.ContainerStats
+	(*ContainerSpec)(nil),           // 9: skali.cluster.v1.ContainerSpec
+	(*ContainerMount)(nil),          // 10: skali.cluster.v1.ContainerMount
+	(*ContainerPort)(nil),           // 11: skali.cluster.v1.ContainerPort
+	(*Healthcheck)(nil),             // 12: skali.cluster.v1.Healthcheck
+	(*CreateContainerRequest)(nil),  // 13: skali.cluster.v1.CreateContainerRequest
+	(*CreateContainerResponse)(nil), // 14: skali.cluster.v1.CreateContainerResponse
+	(*StartContainerRequest)(nil),   // 15: skali.cluster.v1.StartContainerRequest
+	(*StartContainerResponse)(nil),  // 16: skali.cluster.v1.StartContainerResponse
+	(*StopContainerRequest)(nil),    // 17: skali.cluster.v1.StopContainerRequest
+	(*StopContainerResponse)(nil),   // 18: skali.cluster.v1.StopContainerResponse
+	(*RemoveContainerRequest)(nil),  // 19: skali.cluster.v1.RemoveContainerRequest
+	(*RemoveContainerResponse)(nil), // 20: skali.cluster.v1.RemoveContainerResponse
+	(*NodeMetrics)(nil),             // 21: skali.cluster.v1.NodeMetrics
+	nil,                             // 22: skali.cluster.v1.ContainerInfo.LabelsEntry
+	nil,                             // 23: skali.cluster.v1.ContainerSpec.EnvEntry
+	nil,                             // 24: skali.cluster.v1.ContainerSpec.LabelsEntry
 }
 var file_skali_cluster_v1_cluster_proto_depIdxs = []int32{
-	4, // 0: skali.cluster.v1.HeartbeatResponse.metrics:type_name -> skali.cluster.v1.NodeMetrics
-	0, // 1: skali.cluster.v1.EnrollmentService.Enroll:input_type -> skali.cluster.v1.EnrollRequest
-	2, // 2: skali.cluster.v1.NodeService.Heartbeat:input_type -> skali.cluster.v1.HeartbeatRequest
-	1, // 3: skali.cluster.v1.EnrollmentService.Enroll:output_type -> skali.cluster.v1.EnrollResponse
-	3, // 4: skali.cluster.v1.NodeService.Heartbeat:output_type -> skali.cluster.v1.HeartbeatResponse
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	21, // 0: skali.cluster.v1.HeartbeatResponse.metrics:type_name -> skali.cluster.v1.NodeMetrics
+	6,  // 1: skali.cluster.v1.HeartbeatResponse.containers:type_name -> skali.cluster.v1.ContainerReport
+	7,  // 2: skali.cluster.v1.ContainerReport.containers:type_name -> skali.cluster.v1.ContainerInfo
+	22, // 3: skali.cluster.v1.ContainerInfo.labels:type_name -> skali.cluster.v1.ContainerInfo.LabelsEntry
+	8,  // 4: skali.cluster.v1.ContainerInfo.stats:type_name -> skali.cluster.v1.ContainerStats
+	23, // 5: skali.cluster.v1.ContainerSpec.env:type_name -> skali.cluster.v1.ContainerSpec.EnvEntry
+	10, // 6: skali.cluster.v1.ContainerSpec.mounts:type_name -> skali.cluster.v1.ContainerMount
+	11, // 7: skali.cluster.v1.ContainerSpec.ports:type_name -> skali.cluster.v1.ContainerPort
+	0,  // 8: skali.cluster.v1.ContainerSpec.restart_policy:type_name -> skali.cluster.v1.RestartPolicy
+	24, // 9: skali.cluster.v1.ContainerSpec.labels:type_name -> skali.cluster.v1.ContainerSpec.LabelsEntry
+	12, // 10: skali.cluster.v1.ContainerSpec.healthcheck:type_name -> skali.cluster.v1.Healthcheck
+	9,  // 11: skali.cluster.v1.CreateContainerRequest.spec:type_name -> skali.cluster.v1.ContainerSpec
+	1,  // 12: skali.cluster.v1.CreateContainerRequest.pull_policy:type_name -> skali.cluster.v1.PullPolicy
+	7,  // 13: skali.cluster.v1.CreateContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
+	7,  // 14: skali.cluster.v1.StartContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
+	7,  // 15: skali.cluster.v1.StopContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
+	2,  // 16: skali.cluster.v1.EnrollmentService.Enroll:input_type -> skali.cluster.v1.EnrollRequest
+	4,  // 17: skali.cluster.v1.NodeService.Heartbeat:input_type -> skali.cluster.v1.HeartbeatRequest
+	13, // 18: skali.cluster.v1.NodeService.CreateContainer:input_type -> skali.cluster.v1.CreateContainerRequest
+	15, // 19: skali.cluster.v1.NodeService.StartContainer:input_type -> skali.cluster.v1.StartContainerRequest
+	17, // 20: skali.cluster.v1.NodeService.StopContainer:input_type -> skali.cluster.v1.StopContainerRequest
+	19, // 21: skali.cluster.v1.NodeService.RemoveContainer:input_type -> skali.cluster.v1.RemoveContainerRequest
+	3,  // 22: skali.cluster.v1.EnrollmentService.Enroll:output_type -> skali.cluster.v1.EnrollResponse
+	5,  // 23: skali.cluster.v1.NodeService.Heartbeat:output_type -> skali.cluster.v1.HeartbeatResponse
+	14, // 24: skali.cluster.v1.NodeService.CreateContainer:output_type -> skali.cluster.v1.CreateContainerResponse
+	16, // 25: skali.cluster.v1.NodeService.StartContainer:output_type -> skali.cluster.v1.StartContainerResponse
+	18, // 26: skali.cluster.v1.NodeService.StopContainer:output_type -> skali.cluster.v1.StopContainerResponse
+	20, // 27: skali.cluster.v1.NodeService.RemoveContainer:output_type -> skali.cluster.v1.RemoveContainerResponse
+	22, // [22:28] is the sub-list for method output_type
+	16, // [16:22] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_skali_cluster_v1_cluster_proto_init() }
@@ -531,13 +1796,14 @@ func file_skali_cluster_v1_cluster_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skali_cluster_v1_cluster_proto_rawDesc), len(file_skali_cluster_v1_cluster_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   5,
+			NumEnums:      2,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
 		GoTypes:           file_skali_cluster_v1_cluster_proto_goTypes,
 		DependencyIndexes: file_skali_cluster_v1_cluster_proto_depIdxs,
+		EnumInfos:         file_skali_cluster_v1_cluster_proto_enumTypes,
 		MessageInfos:      file_skali_cluster_v1_cluster_proto_msgTypes,
 	}.Build()
 	File_skali_cluster_v1_cluster_proto = out.File

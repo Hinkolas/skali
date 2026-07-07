@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/Hinkolas/skali/internal/clusterpb"
+	"github.com/Hinkolas/skali/internal/engine/enginetest"
 	"github.com/Hinkolas/skali/internal/hostinfo"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
@@ -196,7 +197,8 @@ func TestAgentMTLS(t *testing.T) {
 	// Run the worker's NodeService on a random port.
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	agent := NewAgentServer(identity, warmSampler(t))
+	_, containers := testContainerDeps(t)
+	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 

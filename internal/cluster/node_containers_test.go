@@ -1,0 +1,159 @@
+package cluster
+
+import (
+	"context"
+	"crypto/tls"
+	"net"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
+
+	"github.com/Hinkolas/skali/internal/clusterpb"
+	"github.com/Hinkolas/skali/internal/engine"
+	"github.com/Hinkolas/skali/internal/engine/enginetest"
+)
+
+// testContainerDeps returns a fake engine plus a warmed container sampler
+// over it — the container-side analog of warmSampler for agent servers.
+func testContainerDeps(t *testing.T) (*enginetest.Fake, *engine.Sampler) {
+	t.Helper()
+	fake := enginetest.New()
+	s := engine.NewSampler(fake)
+	s.SampleNow(context.Background())
+	return fake, s
+}
+
+// startAgentWithEngine enrolls a worker, serves its NodeService over a fake
+// engine, and returns a master-authenticated client for it.
+func startAgentWithEngine(t *testing.T, fake *enginetest.Fake) (clusterpb.NodeServiceClient, *engine.Sampler) {
+	t.Helper()
+	ctx := context.Background()
+	st, ca, masterAddr := startMaster(t)
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	token, _, err := MintJoinToken(ctx, st, ca, []string{"worker"}, nil)
+	require.NoError(t, err)
+	opts := enrollOptions(t, masterAddr, token)
+	opts.AdvertiseAddr = lis.Addr().String()
+	identity, _, err := RunEnroll(ctx, opts)
+	require.NoError(t, err)
+
+	containers := engine.NewSampler(fake)
+	containers.SampleNow(ctx)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers)
+	go agent.Serve(lis) //nolint:errcheck
+	t.Cleanup(agent.Stop)
+
+	clientCert, err := ca.IssueClientCert()
+	require.NoError(t, err)
+	conn, err := grpc.NewClient(lis.Addr().String(),
+		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+			MinVersion:   tls.VersionTLS13,
+			Certificates: []tls.Certificate{clientCert},
+			RootCAs:      ca.Pool(),
+			ServerName:   identity.NodeID.String(),
+		})))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return clusterpb.NewNodeServiceClient(conn), containers
+}
+
+func TestNodeServiceContainerLifecycle(t *testing.T) {
+	ctx := context.Background()
+	fake := enginetest.New("nginx:alpine")
+	client, containers := startAgentWithEngine(t, fake)
+
+	// Create + start in one round trip.
+	created, err := client.CreateContainer(ctx, &clusterpb.CreateContainerRequest{
+		Spec: specToProto(engine.ContainerSpec{
+			Name:   "web",
+			Image:  "nginx:alpine",
+			Labels: map[string]string{engine.LabelKind: engine.KindApplication},
+		}),
+		Start: true,
+	})
+	require.NoError(t, err)
+	c := created.GetContainer()
+	require.Equal(t, "web", c.GetName())
+	require.Equal(t, "running", c.GetState())
+	require.Equal(t, "true", c.GetLabels()[engine.LabelManaged])
+	require.Equal(t, engine.KindApplication, c.GetLabels()[engine.LabelKind])
+
+	// The heartbeat report carries it once the sampler has seen it.
+	containers.SampleNow(ctx)
+	hb, err := client.Heartbeat(ctx, &clusterpb.HeartbeatRequest{})
+	require.NoError(t, err)
+	require.NotNil(t, hb.GetContainers())
+	require.Len(t, hb.GetContainers().GetContainers(), 1)
+	require.Equal(t, c.GetId(), hb.GetContainers().GetContainers()[0].GetId())
+
+	// Stop and remove; post-op state comes back on the wire.
+	stopped, err := client.StopContainer(ctx, &clusterpb.StopContainerRequest{ContainerId: c.GetId()})
+	require.NoError(t, err)
+	require.Equal(t, "exited", stopped.GetContainer().GetState())
+
+	_, err = client.RemoveContainer(ctx, &clusterpb.RemoveContainerRequest{ContainerId: c.GetId()})
+	require.NoError(t, err)
+	_, ok := fake.Get(c.GetId())
+	require.False(t, ok)
+}
+
+func TestNodeServiceErrorMapping(t *testing.T) {
+	ctx := context.Background()
+	fake := enginetest.New("nginx:alpine")
+	client, _ := startAgentWithEngine(t, fake)
+
+	// Missing kind label: rejected before the engine is touched.
+	_, err := client.CreateContainer(ctx, &clusterpb.CreateContainerRequest{
+		Spec: specToProto(engine.ContainerSpec{Name: "x", Image: "nginx:alpine"}),
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	// Unknown container id.
+	_, err = client.StartContainer(ctx, &clusterpb.StartContainerRequest{ContainerId: "nope"})
+	require.Equal(t, codes.NotFound, status.Code(err))
+
+	// Name conflict.
+	spec := specToProto(engine.ContainerSpec{
+		Name: "dup", Image: "nginx:alpine",
+		Labels: map[string]string{engine.LabelKind: engine.KindSystem},
+	})
+	_, err = client.CreateContainer(ctx, &clusterpb.CreateContainerRequest{Spec: spec})
+	require.NoError(t, err)
+	_, err = client.CreateContainer(ctx, &clusterpb.CreateContainerRequest{Spec: spec})
+	require.Equal(t, codes.AlreadyExists, status.Code(err))
+
+	// Missing image under pull-never.
+	_, err = client.CreateContainer(ctx, &clusterpb.CreateContainerRequest{
+		Spec: specToProto(engine.ContainerSpec{
+			Name: "noimg", Image: "ghost:latest",
+			Labels: map[string]string{engine.LabelKind: engine.KindSystem},
+		}),
+		PullPolicy: clusterpb.PullPolicy_PULL_POLICY_NEVER,
+	})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+}
+
+func TestHeartbeatContainerReportAbsentWhenUnknown(t *testing.T) {
+	ctx := context.Background()
+	fake := enginetest.New("nginx:alpine")
+	client, containers := startAgentWithEngine(t, fake)
+
+	// Engine goes unreachable: the report must vanish (unknown), not read as
+	// "no containers".
+	fake.ListErr = context.DeadlineExceeded
+	containers.SampleNow(ctx)
+
+	deadline, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	hb, err := client.Heartbeat(deadline, &clusterpb.HeartbeatRequest{})
+	require.NoError(t, err)
+	require.Nil(t, hb.GetContainers())
+	require.NotNil(t, hb.GetMetrics(), "host metrics are independent of the engine")
+}

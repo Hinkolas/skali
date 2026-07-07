@@ -73,6 +73,11 @@ type API struct {
 	// so existing single-node deploys keep working; minting a join token
 	// fails while it is unset.
 	ClusterAddr string `env:"CLUSTER_ADDR"`
+
+	// EngineSocket is the master's own container engine endpoint (Docker or
+	// a Podman compatibility socket) — the master is a node too and runs
+	// containers locally without gRPC.
+	EngineSocket string `env:"ENGINE_SOCKET,default=unix:///var/run/docker.sock"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.
@@ -91,6 +96,9 @@ func (a *API) Validate() error {
 			return fmt.Errorf("CLUSTER_ADDR: must be host:port (e.g. 10.0.0.1:7443): %w", err)
 		}
 	}
+	if a.EngineSocket == "" {
+		return fmt.Errorf("ENGINE_SOCKET: must not be empty")
+	}
 	return nil
 }
 
@@ -106,6 +114,10 @@ type Agent struct {
 
 	// GRPCAddr is the worker's NodeService listener the master dials.
 	GRPCAddr string `env:"GRPC_ADDR,default=:7443"`
+
+	// EngineSocket is the node's container engine endpoint (Docker or a
+	// Podman compatibility socket).
+	EngineSocket string `env:"ENGINE_SOCKET,default=unix:///var/run/docker.sock"`
 }
 
 // Validate shadows Logging.Validate, so it must chain to it explicitly.
@@ -115,6 +127,9 @@ func (a *Agent) Validate() error {
 	}
 	if a.DataDir == "" {
 		return fmt.Errorf("DATA_DIR: must not be empty")
+	}
+	if a.EngineSocket == "" {
+		return fmt.Errorf("ENGINE_SOCKET: must not be empty")
 	}
 	return nil
 }

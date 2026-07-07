@@ -45,10 +45,19 @@ message EnrollResponse {
   repeated string roles = 4;
 }
 
-// NodeService is the per-worker control surface. Container lifecycle RPCs
-// (the Executor seam) will join Heartbeat here.
+// NodeService is the per-worker control surface: heartbeat plus the
+// imperative container lifecycle (the Executor seam). Nodes are dumb
+// executors — they hold no desired state and run no reconciler; the master
+// drives them and reconciles against the observed state heartbeats report.
+//
+// Log streaming (rpc StreamContainerLogs(...) returns (stream ...)) joins
+// here in a later milestone.
 service NodeService {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc CreateContainer(CreateContainerRequest) returns (CreateContainerResponse);
+  rpc StartContainer(StartContainerRequest) returns (StartContainerResponse);
+  rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
+  rpc RemoveContainer(RemoveContainerRequest) returns (RemoveContainerResponse);
 }
 
 message HeartbeatRequest {}
@@ -64,7 +73,140 @@ message HeartbeatResponse {
   // Resource snapshot; absent until the node's sampler has two samples
   // (rates need a delta).
   NodeMetrics metrics = 7;
+  // Observed container state. ABSENT means unknown (container sampler cold
+  // or engine unreachable) — never "no containers"; the master must leave
+  // its records untouched. A present report is authoritative for the node.
+  ContainerReport containers = 8;
 }
+
+// ContainerReport wraps the container list so "absent" and "empty" stay
+// distinguishable on the wire.
+message ContainerReport {
+  repeated ContainerInfo containers = 1;
+}
+
+// ContainerInfo is one observed skali-managed container.
+message ContainerInfo {
+  string id = 1;    // engine container id (64-hex)
+  string name = 2;  // no leading slash
+  string image = 3;
+  string state = 4;   // created|running|paused|restarting|removing|exited|dead
+  string health = 5;  // ""|starting|healthy|unhealthy ("" = no healthcheck)
+  int32 exit_code = 6;
+  // Full label map including skali.* — the master maps containers back to
+  // resources purely from these.
+  map<string, string> labels = 7;
+  int64 created_at_unix = 8;
+  int64 started_at_unix = 9;  // 0 = never started
+  uint32 restart_count = 10;
+  // Latest stats; absent until the node's container sampler has two samples.
+  ContainerStats stats = 11;
+}
+
+// ContainerStats is one derived per-container snapshot. cpu_percent uses
+// docker-stats semantics: 100 = one full core (not normalized to the node).
+message ContainerStats {
+  double cpu_percent = 1;
+  uint64 memory_used_bytes = 2;
+  uint64 memory_limit_bytes = 3;  // as reported; host total when unlimited
+  uint64 net_rx_bytes_per_sec = 4;
+  uint64 net_tx_bytes_per_sec = 5;
+}
+
+// ContainerSpec mirrors the engine-level spec (internal/engine). Labels must
+// be complete — the master stamps skali.managed/skali.kind before sending;
+// the node re-stamps ownership defensively and rejects a missing kind.
+message ContainerSpec {
+  string name = 1;
+  string image = 2;
+  map<string, string> env = 3;
+  repeated string command = 4;
+  repeated string entrypoint = 5;
+  repeated ContainerMount mounts = 6;
+  repeated ContainerPort ports = 7;
+  RestartPolicy restart_policy = 8;
+  uint32 restart_max_retries = 9;  // on-failure only
+  int64 nano_cpus = 10;            // 1e9 = one core; 0 = unlimited
+  int64 memory_limit_bytes = 11;   // 0 = unlimited
+  repeated string networks = 12;
+  map<string, string> labels = 13;
+  Healthcheck healthcheck = 14;
+}
+
+message ContainerMount {
+  string type = 1;  // bind|volume
+  string source = 2;
+  string target = 3;
+  bool read_only = 4;
+}
+
+message ContainerPort {
+  string host_ip = 1;  // empty = all interfaces
+  uint32 host_port = 2;
+  uint32 container_port = 3;
+  string protocol = 4;  // tcp|udp; empty = tcp
+}
+
+message Healthcheck {
+  repeated string test = 1;
+  int64 interval_ms = 2;
+  int64 timeout_ms = 3;
+  uint32 retries = 4;
+  int64 start_period_ms = 5;
+}
+
+enum RestartPolicy {
+  RESTART_POLICY_UNSPECIFIED = 0;  // treated as NO
+  RESTART_POLICY_NO = 1;
+  RESTART_POLICY_ALWAYS = 2;
+  RESTART_POLICY_UNLESS_STOPPED = 3;
+  RESTART_POLICY_ON_FAILURE = 4;
+}
+
+enum PullPolicy {
+  PULL_POLICY_UNSPECIFIED = 0;  // treated as IF_MISSING
+  PULL_POLICY_IF_MISSING = 1;
+  PULL_POLICY_ALWAYS = 2;
+  PULL_POLICY_NEVER = 3;
+}
+
+message CreateContainerRequest {
+  ContainerSpec spec = 1;
+  PullPolicy pull_policy = 2;
+  // Start the container after creating it.
+  bool start = 3;
+}
+
+// Create/Start/Stop responses carry the post-operation state so the master
+// can record it immediately instead of waiting for the next heartbeat.
+message CreateContainerResponse {
+  ContainerInfo container = 1;
+}
+
+message StartContainerRequest {
+  string container_id = 1;
+}
+
+message StartContainerResponse {
+  ContainerInfo container = 1;
+}
+
+message StopContainerRequest {
+  string container_id = 1;
+  // Graceful-stop timeout; 0 = engine default.
+  uint32 timeout_seconds = 2;
+}
+
+message StopContainerResponse {
+  ContainerInfo container = 1;
+}
+
+message RemoveContainerRequest {
+  string container_id = 1;
+  bool force = 2;
+}
+
+message RemoveContainerResponse {}
 
 // NodeMetrics is the node's latest resource snapshot. Rates are computed on
 // the node (bytes/second over the sample interval); cpu_percent is 0-100

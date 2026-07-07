@@ -10,6 +10,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/config"
+	"github.com/Hinkolas/skali/internal/engine"
 	"github.com/Hinkolas/skali/internal/hostinfo"
 	"github.com/Hinkolas/skali/internal/obs"
 )
@@ -53,7 +54,18 @@ func runAgent() error {
 	}
 	go sampler.Run(sigCtx)
 
-	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr, sampler)
+	// Container engine + observer. Construction is offline and the sampler
+	// tolerates an unreachable engine (heartbeats report "unknown"), so an
+	// agent whose dockerd is still booting comes up fine.
+	eng, err := engine.NewDocker(cfg.EngineSocket)
+	if err != nil {
+		return err
+	}
+	defer eng.Close()
+	containers := engine.NewSampler(eng)
+	go containers.Run(sigCtx)
+
+	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr, sampler, eng, containers)
 	if sigCtx.Err() != nil {
 		slog.Info("shutdown signal received", "service", serviceName)
 	}

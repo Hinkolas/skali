@@ -136,17 +136,30 @@ var EnrollmentService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	NodeService_Heartbeat_FullMethodName = "/skali.cluster.v1.NodeService/Heartbeat"
+	NodeService_Heartbeat_FullMethodName       = "/skali.cluster.v1.NodeService/Heartbeat"
+	NodeService_CreateContainer_FullMethodName = "/skali.cluster.v1.NodeService/CreateContainer"
+	NodeService_StartContainer_FullMethodName  = "/skali.cluster.v1.NodeService/StartContainer"
+	NodeService_StopContainer_FullMethodName   = "/skali.cluster.v1.NodeService/StopContainer"
+	NodeService_RemoveContainer_FullMethodName = "/skali.cluster.v1.NodeService/RemoveContainer"
 )
 
 // NodeServiceClient is the client API for NodeService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// NodeService is the per-worker control surface. Container lifecycle RPCs
-// (the Executor seam) will join Heartbeat here.
+// NodeService is the per-worker control surface: heartbeat plus the
+// imperative container lifecycle (the Executor seam). Nodes are dumb
+// executors — they hold no desired state and run no reconciler; the master
+// drives them and reconciles against the observed state heartbeats report.
+//
+// Log streaming (rpc StreamContainerLogs(...) returns (stream ...)) joins
+// here in a later milestone.
 type NodeServiceClient interface {
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	CreateContainer(ctx context.Context, in *CreateContainerRequest, opts ...grpc.CallOption) (*CreateContainerResponse, error)
+	StartContainer(ctx context.Context, in *StartContainerRequest, opts ...grpc.CallOption) (*StartContainerResponse, error)
+	StopContainer(ctx context.Context, in *StopContainerRequest, opts ...grpc.CallOption) (*StopContainerResponse, error)
+	RemoveContainer(ctx context.Context, in *RemoveContainerRequest, opts ...grpc.CallOption) (*RemoveContainerResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -167,14 +180,63 @@ func (c *nodeServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest,
 	return out, nil
 }
 
+func (c *nodeServiceClient) CreateContainer(ctx context.Context, in *CreateContainerRequest, opts ...grpc.CallOption) (*CreateContainerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateContainerResponse)
+	err := c.cc.Invoke(ctx, NodeService_CreateContainer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) StartContainer(ctx context.Context, in *StartContainerRequest, opts ...grpc.CallOption) (*StartContainerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartContainerResponse)
+	err := c.cc.Invoke(ctx, NodeService_StartContainer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) StopContainer(ctx context.Context, in *StopContainerRequest, opts ...grpc.CallOption) (*StopContainerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StopContainerResponse)
+	err := c.cc.Invoke(ctx, NodeService_StopContainer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RemoveContainer(ctx context.Context, in *RemoveContainerRequest, opts ...grpc.CallOption) (*RemoveContainerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveContainerResponse)
+	err := c.cc.Invoke(ctx, NodeService_RemoveContainer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
 //
-// NodeService is the per-worker control surface. Container lifecycle RPCs
-// (the Executor seam) will join Heartbeat here.
+// NodeService is the per-worker control surface: heartbeat plus the
+// imperative container lifecycle (the Executor seam). Nodes are dumb
+// executors — they hold no desired state and run no reconciler; the master
+// drives them and reconciles against the observed state heartbeats report.
+//
+// Log streaming (rpc StreamContainerLogs(...) returns (stream ...)) joins
+// here in a later milestone.
 type NodeServiceServer interface {
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	CreateContainer(context.Context, *CreateContainerRequest) (*CreateContainerResponse, error)
+	StartContainer(context.Context, *StartContainerRequest) (*StartContainerResponse, error)
+	StopContainer(context.Context, *StopContainerRequest) (*StopContainerResponse, error)
+	RemoveContainer(context.Context, *RemoveContainerRequest) (*RemoveContainerResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -187,6 +249,18 @@ type UnimplementedNodeServiceServer struct{}
 
 func (UnimplementedNodeServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
+}
+func (UnimplementedNodeServiceServer) CreateContainer(context.Context, *CreateContainerRequest) (*CreateContainerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateContainer not implemented")
+}
+func (UnimplementedNodeServiceServer) StartContainer(context.Context, *StartContainerRequest) (*StartContainerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartContainer not implemented")
+}
+func (UnimplementedNodeServiceServer) StopContainer(context.Context, *StopContainerRequest) (*StopContainerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StopContainer not implemented")
+}
+func (UnimplementedNodeServiceServer) RemoveContainer(context.Context, *RemoveContainerRequest) (*RemoveContainerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveContainer not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -227,6 +301,78 @@ func _NodeService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_CreateContainer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateContainerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).CreateContainer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_CreateContainer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).CreateContainer(ctx, req.(*CreateContainerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_StartContainer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartContainerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).StartContainer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_StartContainer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).StartContainer(ctx, req.(*StartContainerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_StopContainer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopContainerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).StopContainer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_StopContainer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).StopContainer(ctx, req.(*StopContainerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_RemoveContainer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveContainerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RemoveContainer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RemoveContainer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RemoveContainer(ctx, req.(*RemoveContainerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -237,6 +383,22 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Heartbeat",
 			Handler:    _NodeService_Heartbeat_Handler,
+		},
+		{
+			MethodName: "CreateContainer",
+			Handler:    _NodeService_CreateContainer_Handler,
+		},
+		{
+			MethodName: "StartContainer",
+			Handler:    _NodeService_StartContainer_Handler,
+		},
+		{
+			MethodName: "StopContainer",
+			Handler:    _NodeService_StopContainer_Handler,
+		},
+		{
+			MethodName: "RemoveContainer",
+			Handler:    _NodeService_RemoveContainer_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

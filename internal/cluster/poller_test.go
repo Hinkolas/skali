@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/engine/enginetest"
 )
 
 func TestPollerOnlineOfflineTransitions(t *testing.T) {
@@ -27,7 +29,8 @@ func TestPollerOnlineOfflineTransitions(t *testing.T) {
 	identity, _, err := RunEnroll(ctx, opts)
 	require.NoError(t, err)
 
-	agent := NewAgentServer(identity, warmSampler(t))
+	_, containers := testContainerDeps(t)
+	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
@@ -103,7 +106,8 @@ func TestPollerRefusesStaleCertSerial(t *testing.T) {
 	identity, _, err := RunEnroll(ctx, opts)
 	require.NoError(t, err)
 
-	agent := NewAgentServer(identity, warmSampler(t))
+	_, containers := testContainerDeps(t)
+	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
