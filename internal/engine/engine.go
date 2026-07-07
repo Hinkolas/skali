@@ -38,6 +38,7 @@ var (
 	ErrConflict          = errors.New("engine: container name already in use")
 	ErrNotManaged        = errors.New("engine: container is not managed by skali")
 	ErrImageMissing      = errors.New("engine: image not present on node")
+	ErrInvalidReference  = errors.New("engine: invalid image reference")
 	ErrEngineUnavailable = errors.New("engine: container engine unavailable")
 )
 
@@ -187,6 +188,14 @@ type Inventory struct {
 type Engine interface {
 	Pull(ctx context.Context, image string) error
 	ImageExists(ctx context.Context, image string) (bool, error)
+	// InspectImage resolves a reference (tag or sha256: id) to the image's
+	// observed state, including its in-use count.
+	InspectImage(ctx context.Context, ref string) (Image, error)
+	// RemoveImage removes (or merely untags) an image, returning the ids of
+	// images actually deleted — empty when only a tag was removed from a
+	// multi-tagged image. Images used by a container fail with ErrConflict
+	// unless force.
+	RemoveImage(ctx context.Context, ref string, force bool) ([]string, error)
 	Create(ctx context.Context, spec ContainerSpec) (string, error)
 	Start(ctx context.Context, id string) error
 	// Stop gracefully stops a container; timeout <= 0 uses the daemon default.

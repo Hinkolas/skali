@@ -72,6 +72,14 @@ func (f *Fake) Pull(_ context.Context, image string) error {
 	defer f.mu.Unlock()
 	f.images[image] = true
 	f.Pulled = append(f.Pulled, image)
+	// Mirror the pull into the inventory so InspectImage and heartbeat
+	// reports see it, the way a real daemon would.
+	if f.findImage(image) == nil {
+		f.Inv.Images = append(f.Inv.Images, engine.Image{
+			ID:       "sha256:fake-" + image,
+			RepoTags: []string{image},
+		})
+	}
 	return nil
 }
 
@@ -79,6 +87,51 @@ func (f *Fake) ImageExists(_ context.Context, image string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.images[image], nil
+}
+
+func (f *Fake) InspectImage(_ context.Context, ref string) (engine.Image, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	img := f.findImage(ref)
+	if img == nil {
+		return engine.Image{}, fmt.Errorf("%w: %s", engine.ErrNotFound, ref)
+	}
+	return *img, nil
+}
+
+func (f *Fake) RemoveImage(_ context.Context, ref string, force bool) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	img := f.findImage(ref)
+	if img == nil {
+		return nil, fmt.Errorf("%w: %s", engine.ErrNotFound, ref)
+	}
+	if img.Containers > 0 && !force {
+		return nil, fmt.Errorf("%w: image is in use", engine.ErrConflict)
+	}
+	removed := *img // copy: the compaction below invalidates the pointer
+	kept := f.Inv.Images[:0]
+	for _, i := range f.Inv.Images {
+		if i.ID != removed.ID {
+			kept = append(kept, i)
+		}
+	}
+	f.Inv.Images = kept
+	for _, t := range removed.RepoTags {
+		delete(f.images, t)
+	}
+	return []string{removed.ID}, nil
+}
+
+// findImage resolves a reference (tag or id) against the inventory; callers
+// hold the lock.
+func (f *Fake) findImage(ref string) *engine.Image {
+	for i := range f.Inv.Images {
+		if f.Inv.Images[i].ID == ref || slices.Contains(f.Inv.Images[i].RepoTags, ref) {
+			return &f.Inv.Images[i]
+		}
+	}
+	return nil
 }
 
 func (f *Fake) Create(_ context.Context, spec engine.ContainerSpec) (string, error) {

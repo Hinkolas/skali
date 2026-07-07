@@ -196,6 +196,51 @@ func TestDockerInventory(t *testing.T) {
 	require.NotEmpty(t, vol.Driver)
 }
 
+func TestDockerImagePrimitives(t *testing.T) {
+	eng := testEngine(t)
+	ctx := t.Context()
+
+	// A tiny image nothing else in the suite depends on, so removal is safe.
+	const img = "busybox:1.36"
+	require.NoError(t, eng.Pull(ctx, img))
+
+	inspected, err := eng.InspectImage(ctx, img)
+	require.NoError(t, err)
+	require.NotEmpty(t, inspected.ID)
+	require.Positive(t, inspected.SizeBytes)
+	require.NotEmpty(t, inspected.RepoTags)
+
+	// In use by a container: remove refuses without force.
+	id, err := eng.Create(ctx, engine.ContainerSpec{
+		Name:    fmt.Sprintf("skali-engine-imgtest-%d", time.Now().UnixNano()),
+		Image:   img,
+		Command: []string{"sleep", "300"},
+		Labels:  map[string]string{engine.LabelKind: engine.KindSystem},
+	})
+	require.NoError(t, err)
+	removeOnCleanup(t, id)
+	inspected, err = eng.InspectImage(ctx, img)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, inspected.Containers, 1)
+	// Removal by ID conflicts while a container references the image. (Tag
+	// removal is store-dependent — the containerd store silently untags — so
+	// the test pins the by-id semantics both stores share.)
+	_, err = eng.RemoveImage(ctx, inspected.ID, false)
+	require.ErrorIs(t, err, engine.ErrConflict)
+
+	// Container gone: the image deletes for real. Force, because by-id
+	// deletion of a tag+digest-referenced image refuses without it.
+	require.NoError(t, eng.Remove(ctx, id, true))
+	deleted, err := eng.RemoveImage(ctx, inspected.ID, true)
+	require.NoError(t, err)
+	require.NotEmpty(t, deleted, "by-id removal must delete, not just untag")
+	_, err = eng.InspectImage(ctx, inspected.ID)
+	require.ErrorIs(t, err, engine.ErrNotFound)
+
+	// Bogus references classify cleanly instead of surfacing opaque errors.
+	require.ErrorIs(t, eng.Pull(ctx, "###"), engine.ErrInvalidReference)
+}
+
 func containsID(cs []engine.Container, id string) bool {
 	for _, c := range cs {
 		if c.ID == id {

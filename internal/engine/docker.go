@@ -10,6 +10,7 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/distribution/reference"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/mount"
@@ -40,6 +41,12 @@ func NewDocker(socket string) (*Docker, error) {
 func (d *Docker) Close() error { return d.cli.Close() }
 
 func (d *Docker) Pull(ctx context.Context, image string) error {
+	// The client parses the reference before dialing and returns the parse
+	// error untyped; validate here so garbage classifies instead of
+	// surfacing as an opaque internal error.
+	if _, err := reference.ParseNormalizedNamed(image); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidReference, err)
+	}
 	resp, err := d.cli.ImagePull(ctx, image, client.ImagePullOptions{})
 	if err != nil {
 		return classify(err)
@@ -58,6 +65,40 @@ func (d *Docker) ImageExists(ctx context.Context, image string) (bool, error) {
 		return false, classify(err)
 	}
 	return true, nil
+}
+
+func (d *Docker) InspectImage(ctx context.Context, ref string) (Image, error) {
+	res, err := d.cli.ImageInspect(ctx, ref)
+	if err != nil {
+		return Image{}, classify(err)
+	}
+	imageRefs, _, err := d.refCounts(ctx)
+	if err != nil {
+		return Image{}, err
+	}
+	img := Image{
+		ID:          res.ID,
+		RepoTags:    normalizeTags(res.RepoTags),
+		RepoDigests: normalizeDigests(res.RepoDigests),
+		SizeBytes:   res.Size,
+		Containers:  imageRefs[res.ID],
+	}
+	img.CreatedAt, _ = time.Parse(time.RFC3339Nano, res.Created)
+	return img, nil
+}
+
+func (d *Docker) RemoveImage(ctx context.Context, ref string, force bool) ([]string, error) {
+	res, err := d.cli.ImageRemove(ctx, ref, client.ImageRemoveOptions{Force: force})
+	if err != nil {
+		return nil, classify(err)
+	}
+	var deleted []string
+	for _, it := range res.Items {
+		if it.Deleted != "" {
+			deleted = append(deleted, it.Deleted)
+		}
+	}
+	return deleted, nil
 }
 
 func (d *Docker) Create(ctx context.Context, spec ContainerSpec) (string, error) {
@@ -149,20 +190,9 @@ func (d *Docker) Inventory(ctx context.Context) (Inventory, error) {
 	if err != nil {
 		return Inventory{}, classify(err)
 	}
-	ctrRes, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
+	imageRefs, volumeRefs, err := d.refCounts(ctx)
 	if err != nil {
-		return Inventory{}, classify(err)
-	}
-
-	imageRefs := make(map[string]int, len(ctrRes.Items))
-	volumeRefs := make(map[string]int)
-	for _, c := range ctrRes.Items {
-		imageRefs[c.ImageID]++
-		for _, m := range c.Mounts {
-			if m.Type == mount.TypeVolume && m.Name != "" {
-				volumeRefs[m.Name]++
-			}
-		}
+		return Inventory{}, err
 	}
 
 	inv := Inventory{
@@ -259,27 +289,60 @@ func containerFromSummary(s container.Summary) Container {
 	return c
 }
 
+// refCounts joins one unfiltered container listing (any owner, any state)
+// into per-image and per-volume in-use counts: an image or volume referenced
+// by anyone's container must never look unused.
+func (d *Docker) refCounts(ctx context.Context) (imageRefs, volumeRefs map[string]int, err error) {
+	res, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return nil, nil, classify(err)
+	}
+	imageRefs = make(map[string]int, len(res.Items))
+	volumeRefs = make(map[string]int)
+	for _, c := range res.Items {
+		imageRefs[c.ImageID]++
+		for _, m := range c.Mounts {
+			if m.Type == mount.TypeVolume && m.Name != "" {
+				volumeRefs[m.Name]++
+			}
+		}
+	}
+	return imageRefs, volumeRefs, nil
+}
+
 func imageFromSummary(s image.Summary, refs int) Image {
 	img := Image{
-		ID:         s.ID,
-		SizeBytes:  s.Size,
-		Containers: refs,
+		ID:          s.ID,
+		RepoTags:    normalizeTags(s.RepoTags),
+		RepoDigests: normalizeDigests(s.RepoDigests),
+		SizeBytes:   s.Size,
+		Containers:  refs,
 	}
 	if s.Created > 0 {
 		img.CreatedAt = time.Unix(s.Created, 0)
 	}
-	// "<none>" placeholders express danglingness; they are not tags.
-	for _, t := range s.RepoTags {
-		if t != "<none>:<none>" {
-			img.RepoTags = append(img.RepoTags, t)
-		}
-	}
-	for _, d := range s.RepoDigests {
-		if d != "<none>@<none>" {
-			img.RepoDigests = append(img.RepoDigests, d)
-		}
-	}
 	return img
+}
+
+// "<none>" placeholders express danglingness; they are not tags.
+func normalizeTags(tags []string) []string {
+	var out []string
+	for _, t := range tags {
+		if t != "<none>:<none>" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func normalizeDigests(digests []string) []string {
+	var out []string
+	for _, d := range digests {
+		if d != "<none>@<none>" {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func volumeFromAPI(v volume.Volume, refs int) Volume {
@@ -336,6 +399,8 @@ func classify(err error) error {
 		return fmt.Errorf("%w: %v", ErrNotFound, err)
 	case cerrdefs.IsConflict(err):
 		return fmt.Errorf("%w: %v", ErrConflict, err)
+	case cerrdefs.IsInvalidArgument(err):
+		return fmt.Errorf("%w: %v", ErrInvalidReference, err)
 	default:
 		return err
 	}
