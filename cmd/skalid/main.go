@@ -134,6 +134,7 @@ func runServe() error {
 		return err
 	}
 	containers := engine.NewSampler(eng)
+	inventory := engine.NewInventorySampler(eng)
 
 	// One connection per node, shared by the poller and container lifecycle
 	// calls.
@@ -143,7 +144,7 @@ func runServe() error {
 	}
 	defer conns.Close()
 
-	poller, err := cluster.NewPoller(st, conns, self.ID, sampler, containers, 0, 0)
+	poller, err := cluster.NewPoller(st, conns, self.ID, sampler, containers, inventory, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -172,6 +173,7 @@ func runServe() error {
 	go sweepLoop(loopCtx, authSvc)
 	go sampler.Run(loopCtx)
 	go containers.Run(loopCtx)
+	go inventory.Run(loopCtx)
 	go poller.Run(loopCtx)
 
 	slog.InfoContext(ctx, "starting", "service", serviceName,

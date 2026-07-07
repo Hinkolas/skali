@@ -41,7 +41,7 @@ func TestPollerOnlineOfflineTransitions(t *testing.T) {
 	conns, err := NewConnPool(ca)
 	require.NoError(t, err)
 	t.Cleanup(conns.Close)
-	poller, err := NewPoller(st, conns, self.ID, warmSampler(t), nil, 25*time.Millisecond, 100*time.Millisecond)
+	poller, err := NewPoller(st, conns, self.ID, warmSampler(t), nil, nil, 25*time.Millisecond, 100*time.Millisecond)
 	require.NoError(t, err)
 	pollCtx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
@@ -129,7 +129,7 @@ func TestPollerRefusesStaleCertSerial(t *testing.T) {
 	conns, err := NewConnPool(ca)
 	require.NoError(t, err)
 	t.Cleanup(conns.Close)
-	poller, err := NewPoller(st, conns, self.ID, warmSampler(t), nil, time.Hour, time.Hour)
+	poller, err := NewPoller(st, conns, self.ID, warmSampler(t), nil, nil, time.Hour, time.Hour)
 	require.NoError(t, err)
 	err = poller.heartbeat(ctx, node)
 	require.Error(t, err)
@@ -216,7 +216,7 @@ func TestPollerRecordsContainers(t *testing.T) {
 	conns, err := NewConnPool(ca)
 	require.NoError(t, err)
 	t.Cleanup(conns.Close)
-	poller, err := NewPoller(st, conns, self.ID, warmSampler(t), nil, 25*time.Millisecond, 100*time.Millisecond)
+	poller, err := NewPoller(st, conns, self.ID, warmSampler(t), nil, nil, 25*time.Millisecond, 100*time.Millisecond)
 	require.NoError(t, err)
 	pollCtx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
@@ -259,3 +259,81 @@ func TestPollerRecordsContainers(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond)
 }
 
+// TestPollerRecordsInventory drives the image/volume observed-state path:
+// rows land from the heartbeat report, an absent report (engine down) leaves
+// them untouched, and a present report deletes what it no longer mentions.
+func TestPollerRecordsInventory(t *testing.T) {
+	ctx := context.Background()
+	st, ca, masterAddr := startMaster(t)
+
+	self, err := EnsureSelfNode(ctx, st, "")
+	require.NoError(t, err)
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	token, _, err := MintJoinToken(ctx, st, ca, []string{"worker"}, nil)
+	require.NoError(t, err)
+	opts := enrollOptions(t, masterAddr, token)
+	opts.AdvertiseAddr = lis.Addr().String()
+	identity, _, err := RunEnroll(ctx, opts)
+	require.NoError(t, err)
+
+	fake := enginetest.New()
+	fake.Inv = engine.Inventory{
+		Images: []engine.Image{
+			{ID: "sha256:aaa", RepoTags: []string{"nginx:alpine"}, SizeBytes: 100, Containers: 1},
+			{ID: "sha256:bbb", SizeBytes: 50}, // no tags: dangling
+		},
+		Volumes: []engine.Volume{{Name: "data", Driver: "local", Scope: "local", Mountpoint: "/vol/data"}},
+	}
+	_, containers := testContainerDeps(t)
+	inventory := engine.NewInventorySampler(fake)
+	inventory.SampleNow(ctx)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, inventory)
+	go agent.Serve(lis) //nolint:errcheck
+	t.Cleanup(agent.Stop)
+
+	conns, err := NewConnPool(ca)
+	require.NoError(t, err)
+	t.Cleanup(conns.Close)
+	poller, err := NewPoller(st, conns, self.ID, warmSampler(t), nil, nil, 25*time.Millisecond, 100*time.Millisecond)
+	require.NoError(t, err)
+	pollCtx, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	go poller.Run(pollCtx)
+
+	// Rows land, dangling derived from empty tags.
+	require.Eventually(t, func() bool {
+		imgs, err := st.ListNodeImages(ctx, identity.NodeID)
+		return err == nil && len(imgs) == 2
+	}, 5*time.Second, 20*time.Millisecond)
+	imgs, err := st.ListNodeImages(ctx, identity.NodeID)
+	require.NoError(t, err)
+	require.Equal(t, "sha256:aaa", imgs[0].ImageID, "largest first")
+	require.Equal(t, []string{"nginx:alpine"}, imgs[0].RepoTags)
+	require.False(t, imgs[0].Dangling)
+	require.Equal(t, int32(1), imgs[0].Containers)
+	require.True(t, imgs[1].Dangling)
+	vols, err := st.ListNodeVolumes(ctx, identity.NodeID)
+	require.NoError(t, err)
+	require.Len(t, vols, 1)
+	require.Equal(t, "data", vols[0].Name)
+	require.JSONEq(t, "{}", string(vols[0].Labels), "unlabeled volume keeps '{}'")
+
+	// Engine unreachable: the report goes absent; rows must stay put.
+	fake.InventoryErr = context.DeadlineExceeded
+	inventory.SampleNow(ctx)
+	time.Sleep(150 * time.Millisecond) // several ticks
+	imgs, err = st.ListNodeImages(ctx, identity.NodeID)
+	require.NoError(t, err)
+	require.Len(t, imgs, 2, "unknown report must not touch rows")
+
+	// Engine back, dangling image removed behind skali's back: row deleted.
+	fake.InventoryErr = nil
+	fake.Inv.Images = fake.Inv.Images[:1]
+	inventory.SampleNow(ctx)
+	require.Eventually(t, func() bool {
+		imgs, err := st.ListNodeImages(ctx, identity.NodeID)
+		return err == nil && len(imgs) == 1 && imgs[0].ImageID == "sha256:aaa"
+	}, 5*time.Second, 20*time.Millisecond)
+}

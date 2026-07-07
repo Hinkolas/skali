@@ -101,6 +101,19 @@ type NodeContainer struct {
 	LastSeen         time.Time
 }
 
+type NodeImage struct {
+	NodeID       uuid.UUID
+	ImageID      string
+	RepoTags     []string
+	RepoDigests  []string
+	SizeBytes    int64
+	Dangling     bool
+	Containers   int32
+	ImageCreated *time.Time
+	FirstSeen    time.Time
+	LastSeen     time.Time
+}
+
 type NodeMetric struct {
 	NodeID        uuid.UUID
 	SampledAt     time.Time
@@ -114,6 +127,19 @@ type NodeMetric struct {
 	DiskReadRate  int64
 	DiskWriteRate int64
 	Load1         float32
+}
+
+type NodeVolume struct {
+	NodeID        uuid.UUID
+	Name          string
+	Driver        string
+	Scope         string
+	Mountpoint    string
+	Labels        []byte
+	Containers    int32
+	VolumeCreated *time.Time
+	FirstSeen     time.Time
+	LastSeen      time.Time
 }
 
 type Session struct {

@@ -36,15 +36,16 @@ type Poller struct {
 	st         *store.Store
 	conns      *ConnPool
 	selfID     uuid.UUID
-	sampler    *hostinfo.Sampler // the master's own node metrics
-	containers *engine.Sampler   // the master's own containers; nil in tests
+	sampler    *hostinfo.Sampler        // the master's own node metrics
+	containers *engine.Sampler          // the master's own containers; nil in tests
+	inventory  *engine.InventorySampler // the master's own images/volumes; nil in tests
 	interval   time.Duration
 	staleAfter time.Duration
 }
 
 // NewPoller wires the poller over the shared connection pool.
 // interval/staleAfter of 0 take defaults — the seam exists for tests.
-func NewPoller(st *store.Store, conns *ConnPool, selfID uuid.UUID, sampler *hostinfo.Sampler, containers *engine.Sampler, interval, staleAfter time.Duration) (*Poller, error) {
+func NewPoller(st *store.Store, conns *ConnPool, selfID uuid.UUID, sampler *hostinfo.Sampler, containers *engine.Sampler, inventory *engine.InventorySampler, interval, staleAfter time.Duration) (*Poller, error) {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
@@ -53,7 +54,7 @@ func NewPoller(st *store.Store, conns *ConnPool, selfID uuid.UUID, sampler *host
 	}
 	return &Poller{
 		st: st, conns: conns, selfID: selfID, sampler: sampler, containers: containers,
-		interval: interval, staleAfter: staleAfter,
+		inventory: inventory, interval: interval, staleAfter: staleAfter,
 	}, nil
 }
 
@@ -83,7 +84,8 @@ func (p *Poller) tick(ctx context.Context) {
 	if p.containers != nil {
 		selfContainers = containerReport(p.containers)
 	}
-	if err := p.recordHeartbeat(ctx, p.selfID, runtime.GOARCH, runtime.GOOS, version.Version, selfMetrics, selfContainers); err != nil {
+	selfInventory := inventoryReport(p.inventory) // nil-tolerant
+	if err := p.recordHeartbeat(ctx, p.selfID, runtime.GOARCH, runtime.GOOS, version.Version, selfMetrics, selfContainers, selfInventory); err != nil {
 		slog.WarnContext(ctx, "record self heartbeat", "err", err)
 	}
 
@@ -134,11 +136,11 @@ func (p *Poller) tick(ctx context.Context) {
 }
 
 // recordHeartbeat stamps a node row (facts + latest metrics), appends a
-// metrics history sample, and records the container report. History rows
-// exist only for heartbeats that carried metrics — offline windows and cold
-// samplers leave no rows, which the UI renders as chart gaps (never
-// zero-filled).
-func (p *Poller) recordHeartbeat(ctx context.Context, nodeID uuid.UUID, arch, osName, ver string, m *clusterpb.NodeMetrics, report *clusterpb.ContainerReport) error {
+// metrics history sample, and records the container and inventory reports.
+// History rows exist only for heartbeats that carried metrics — offline
+// windows and cold samplers leave no rows, which the UI renders as chart
+// gaps (never zero-filled).
+func (p *Poller) recordHeartbeat(ctx context.Context, nodeID uuid.UUID, arch, osName, ver string, m *clusterpb.NodeMetrics, report *clusterpb.ContainerReport, inv *clusterpb.InventoryReport) error {
 	params := store.RecordNodeHeartbeatParams{
 		ID:            nodeID,
 		Arch:          nilIfEmpty(arch),
@@ -162,6 +164,9 @@ func (p *Poller) recordHeartbeat(ctx context.Context, nodeID uuid.UUID, arch, os
 		return err
 	}
 	if err := p.recordContainers(ctx, nodeID, report); err != nil {
+		return err
+	}
+	if err := p.recordInventory(ctx, nodeID, inv); err != nil {
 		return err
 	}
 	if m == nil {
@@ -213,6 +218,99 @@ func (p *Poller) recordContainers(ctx context.Context, nodeID uuid.UUID, report 
 		ContainerIds: seen,
 	})
 	return err
+}
+
+// recordInventory applies one node's image/volume report to observed state.
+// A nil report means UNKNOWN (engine unreachable, sampler cold) and must
+// leave rows untouched — deleting anything here would wipe the node's
+// inventory every time an agent restarts. A present report is authoritative
+// for the node: rows it omits are deleted (inventory mirrors reality, no
+// gone breadcrumbs).
+func (p *Poller) recordInventory(ctx context.Context, nodeID uuid.UUID, inv *clusterpb.InventoryReport) error {
+	if inv == nil {
+		return nil
+	}
+
+	imageIDs := make([]string, 0, len(inv.GetImages()))
+	for _, img := range inv.GetImages() {
+		imageIDs = append(imageIDs, img.GetId())
+		if err := p.st.UpsertNodeImage(ctx, upsertNodeImageParams(nodeID, img)); err != nil {
+			// FK failures on a concurrently-deleted node are harmless.
+			slog.DebugContext(ctx, "upsert node image",
+				"node_id", nodeID, "image_id", img.GetId(), "err", err)
+		}
+	}
+	if _, err := p.st.DeleteMissingNodeImages(ctx, store.DeleteMissingNodeImagesParams{
+		NodeID:   nodeID,
+		ImageIds: imageIDs,
+	}); err != nil {
+		return err
+	}
+
+	names := make([]string, 0, len(inv.GetVolumes()))
+	for _, v := range inv.GetVolumes() {
+		names = append(names, v.GetName())
+		if err := p.st.UpsertNodeVolume(ctx, upsertNodeVolumeParams(nodeID, v)); err != nil {
+			slog.DebugContext(ctx, "upsert node volume",
+				"node_id", nodeID, "name", v.GetName(), "err", err)
+		}
+	}
+	_, err := p.st.DeleteMissingNodeVolumes(ctx, store.DeleteMissingNodeVolumesParams{
+		NodeID: nodeID,
+		Names:  names,
+	})
+	return err
+}
+
+func upsertNodeImageParams(nodeID uuid.UUID, img *clusterpb.ImageInfo) store.UpsertNodeImageParams {
+	// Empty repeated fields arrive as nil, which pgx writes as SQL NULL —
+	// normalize so the NOT NULL array columns hold '{}' instead.
+	tags, digests := img.GetRepoTags(), img.GetRepoDigests()
+	if tags == nil {
+		tags = []string{}
+	}
+	if digests == nil {
+		digests = []string{}
+	}
+	params := store.UpsertNodeImageParams{
+		NodeID:      nodeID,
+		ImageID:     img.GetId(),
+		RepoTags:    tags,
+		RepoDigests: digests,
+		SizeBytes:   img.GetSizeBytes(),
+		Dangling:    len(tags) == 0,
+		Containers:  int32(img.GetContainers()),
+	}
+	if ts := img.GetCreatedAtUnix(); ts != 0 {
+		t := time.Unix(ts, 0)
+		params.ImageCreated = &t
+	}
+	return params
+}
+
+func upsertNodeVolumeParams(nodeID uuid.UUID, v *clusterpb.VolumeInfo) store.UpsertNodeVolumeParams {
+	labels := v.GetLabels()
+	if labels == nil {
+		labels = map[string]string{} // unlabeled volumes are the norm; keep JSONB '{}'
+	}
+	raw, err := json.Marshal(labels)
+	if err != nil { // unreachable for map[string]string; belt and braces
+		raw = []byte("{}")
+	}
+	params := store.UpsertNodeVolumeParams{
+		NodeID:     nodeID,
+		Name:       v.GetName(),
+		Driver:     v.GetDriver(),
+		Scope:      v.GetScope(),
+		Mountpoint: v.GetMountpoint(),
+		Labels:     raw,
+		Containers: int32(v.GetContainers()),
+	}
+	if ts := v.GetCreatedAtUnix(); ts != 0 {
+		t := time.Unix(ts, 0)
+		params.VolumeCreated = &t
+	}
+	return params
 }
 
 // upsertNodeContainerParams maps one wire container onto the observed-state
@@ -283,5 +381,5 @@ func (p *Poller) heartbeat(ctx context.Context, node store.Node) error {
 			node.AdvertiseAddr, resp.GetNodeId(), node.ID)
 	}
 	return p.recordHeartbeat(ctx, node.ID,
-		resp.GetArch(), resp.GetOs(), resp.GetSkalidVersion(), resp.GetMetrics(), resp.GetContainers())
+		resp.GetArch(), resp.GetOs(), resp.GetSkalidVersion(), resp.GetMetrics(), resp.GetContainers(), resp.GetInventory())
 }
