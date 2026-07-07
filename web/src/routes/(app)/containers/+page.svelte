@@ -487,8 +487,8 @@
 				{/each}
 			</Table>
 			<p class="text-text-ghost mt-3 text-[11px] leading-relaxed">
-				Largest first, unfiltered — whole-cluster disk visibility. Cleanup lands with the image
-				lifecycle milestone.
+				Largest first, unfiltered — whole-cluster disk visibility. Automated cleanup of unneeded
+				images lands with the application layer.
 			</p>
 		{/if}
 	{:else if tab === 'volumes'}

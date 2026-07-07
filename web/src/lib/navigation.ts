@@ -9,6 +9,7 @@ import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import Server from '@lucide/svelte/icons/server';
 import Container from '@lucide/svelte/icons/container';
+import Package from '@lucide/svelte/icons/package';
 import Globe from '@lucide/svelte/icons/globe';
 import Bell from '@lucide/svelte/icons/bell';
 import Archive from '@lucide/svelte/icons/archive';
@@ -60,6 +61,8 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 			// The raw engine surface: a debugging tool, deliberately away from
 			// the product pages a member ever sees.
 			{ label: 'Containers', slug: 'containers', icon: Container, adminOnly: true },
+			// The mirror catalog: what the cluster registry serves.
+			{ label: 'Registry', slug: 'registry', icon: Package, adminOnly: true },
 			{ label: 'System', slug: 'system', icon: Settings2, stub: true, adminOnly: true }
 		]
 	}
