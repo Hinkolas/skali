@@ -143,6 +143,7 @@ const (
 	NodeService_RemoveContainer_FullMethodName = "/skali.cluster.v1.NodeService/RemoveContainer"
 	NodeService_PullImage_FullMethodName       = "/skali.cluster.v1.NodeService/PullImage"
 	NodeService_RemoveImage_FullMethodName     = "/skali.cluster.v1.NodeService/RemoveImage"
+	NodeService_WatchEvents_FullMethodName     = "/skali.cluster.v1.NodeService/WatchEvents"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -166,6 +167,11 @@ type NodeServiceClient interface {
 	// from container create) and removes (the building block later GC drives).
 	PullImage(ctx context.Context, in *PullImageRequest, opts ...grpc.CallOption) (*PullImageResponse, error)
 	RemoveImage(ctx context.Context, in *RemoveImageRequest, opts ...grpc.CallOption) (*RemoveImageResponse, error)
+	// WatchEvents is a doorbell: the node rings after it has already resampled
+	// locally, so a heartbeat poked in response reads fresh cache. Lossy by
+	// design — the master's periodic poll remains the level-triggered source
+	// of truth; a lost event costs latency, never correctness.
+	WatchEvents(ctx context.Context, in *WatchEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchEventsResponse], error)
 }
 
 type nodeServiceClient struct {
@@ -246,6 +252,25 @@ func (c *nodeServiceClient) RemoveImage(ctx context.Context, in *RemoveImageRequ
 	return out, nil
 }
 
+func (c *nodeServiceClient) WatchEvents(ctx context.Context, in *WatchEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchEventsResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[0], NodeService_WatchEvents_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchEventsRequest, WatchEventsResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchEventsClient = grpc.ServerStreamingClient[WatchEventsResponse]
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -267,6 +292,11 @@ type NodeServiceServer interface {
 	// from container create) and removes (the building block later GC drives).
 	PullImage(context.Context, *PullImageRequest) (*PullImageResponse, error)
 	RemoveImage(context.Context, *RemoveImageRequest) (*RemoveImageResponse, error)
+	// WatchEvents is a doorbell: the node rings after it has already resampled
+	// locally, so a heartbeat poked in response reads fresh cache. Lossy by
+	// design — the master's periodic poll remains the level-triggered source
+	// of truth; a lost event costs latency, never correctness.
+	WatchEvents(*WatchEventsRequest, grpc.ServerStreamingServer[WatchEventsResponse]) error
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -297,6 +327,9 @@ func (UnimplementedNodeServiceServer) PullImage(context.Context, *PullImageReque
 }
 func (UnimplementedNodeServiceServer) RemoveImage(context.Context, *RemoveImageRequest) (*RemoveImageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveImage not implemented")
+}
+func (UnimplementedNodeServiceServer) WatchEvents(*WatchEventsRequest, grpc.ServerStreamingServer[WatchEventsResponse]) error {
+	return status.Error(codes.Unimplemented, "method WatchEvents not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -445,6 +478,17 @@ func _NodeService_RemoveImage_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_WatchEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchEventsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).WatchEvents(m, &grpc.GenericServerStream[WatchEventsRequest, WatchEventsResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchEventsServer = grpc.ServerStreamingServer[WatchEventsResponse]
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -481,6 +525,12 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _NodeService_RemoveImage_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "WatchEvents",
+			Handler:       _NodeService_WatchEvents_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "skali/cluster/v1/cluster.proto",
 }

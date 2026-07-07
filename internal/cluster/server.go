@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	"github.com/Hinkolas/skali/internal/clusterpb"
@@ -31,6 +32,7 @@ type NodeServer struct {
 	eng        engine.Engine
 	containers *engine.Sampler
 	inventory  *engine.InventorySampler
+	notifier   *engine.Notifier // nil = WatchEvents unavailable
 }
 
 func (s *NodeServer) Heartbeat(ctx context.Context, _ *clusterpb.HeartbeatRequest) (*clusterpb.HeartbeatResponse, error) {
@@ -109,6 +111,30 @@ func (s *NodeServer) RemoveImage(ctx context.Context, req *clusterpb.RemoveImage
 	return &clusterpb.RemoveImageResponse{DeletedIds: deleted}, nil
 }
 
+// WatchEvents streams doorbell rings to the master. Each ring is sent after
+// the node has already resampled, so a heartbeat poked in response reads
+// fresh cache. Overlapping streams (a reconnect racing the old stream's
+// teardown) are just independent subscribers; the stale one dies with its
+// connection.
+func (s *NodeServer) WatchEvents(_ *clusterpb.WatchEventsRequest, stream grpc.ServerStreamingServer[clusterpb.WatchEventsResponse]) error {
+	if s.notifier == nil {
+		return status.Error(codes.Unavailable, "cluster: node has no event notifier")
+	}
+	bell, cancel := s.notifier.Subscribe()
+	defer cancel()
+	for {
+		select {
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case <-bell:
+			// kind stays empty: one ring can coalesce several kinds of change.
+			if err := stream.Send(&clusterpb.WatchEventsResponse{}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 // resampleInventory refreshes the cached inventory after an image mutation so
 // the very next heartbeat is already consistent with what just happened.
 func (s *NodeServer) resampleInventory(ctx context.Context) {
@@ -139,7 +165,7 @@ func grpcEngineErr(err error) error {
 // NewAgentServer builds the worker's gRPC server. Every connection is mTLS:
 // the client must present a cluster-CA-signed cert with the master's CN —
 // only the master holds the CA key, so nobody else can mint one.
-func NewAgentServer(id *Identity, sampler *hostinfo.Sampler, eng engine.Engine, containers *engine.Sampler, inventory *engine.InventorySampler) *grpc.Server {
+func NewAgentServer(id *Identity, sampler *hostinfo.Sampler, eng engine.Engine, containers *engine.Sampler, inventory *engine.InventorySampler, notifier *engine.Notifier) *grpc.Server {
 	tlsCfg := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{id.Cert},
@@ -156,24 +182,31 @@ func NewAgentServer(id *Identity, sampler *hostinfo.Sampler, eng engine.Engine, 
 			return nil
 		},
 	}
-	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
+	srv := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(tlsCfg)),
+		// The pool's connections ping every 30s to bound half-open
+		// WatchEvents streams; anything at or above half that cadence must
+		// not be answered with GOAWAY (grpc-go's default MinTime is 5m).
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 15 * time.Second}),
+	)
 	clusterpb.RegisterNodeServiceServer(srv, &NodeServer{
 		nodeID:     id.NodeID.String(),
 		sampler:    sampler,
 		eng:        eng,
 		containers: containers,
 		inventory:  inventory,
+		notifier:   notifier,
 	})
 	return srv
 }
 
 // ServeAgent runs the worker's gRPC server until ctx is canceled.
-func ServeAgent(ctx context.Context, id *Identity, grpcAddr string, sampler *hostinfo.Sampler, eng engine.Engine, containers *engine.Sampler, inventory *engine.InventorySampler) error {
+func ServeAgent(ctx context.Context, id *Identity, grpcAddr string, sampler *hostinfo.Sampler, eng engine.Engine, containers *engine.Sampler, inventory *engine.InventorySampler, notifier *engine.Notifier) error {
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		return err
 	}
-	srv := NewAgentServer(id, sampler, eng, containers, inventory)
+	srv := NewAgentServer(id, sampler, eng, containers, inventory, notifier)
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(lis) }()

@@ -34,7 +34,7 @@ func TestPollerOnlineOfflineTransitions(t *testing.T) {
 	require.NoError(t, err)
 
 	_, containers := testContainerDeps(t)
-	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers, nil)
+	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers, nil, nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
@@ -114,7 +114,7 @@ func TestPollerRefusesStaleCertSerial(t *testing.T) {
 	require.NoError(t, err)
 
 	_, containers := testContainerDeps(t)
-	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers, nil)
+	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers, nil, nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
@@ -209,7 +209,7 @@ func TestPollerRecordsContainers(t *testing.T) {
 	containers := engine.NewSampler(fake)
 	containers.SampleNow(ctx) // first sample: state known, stats pending
 	containers.SampleNow(ctx) // second: stats derived
-	agent := NewAgentServer(identity, warmSampler(t), fake, containers, nil)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, nil, nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
@@ -289,7 +289,7 @@ func TestPollerRecordsInventory(t *testing.T) {
 	_, containers := testContainerDeps(t)
 	inventory := engine.NewInventorySampler(fake)
 	inventory.SampleNow(ctx)
-	agent := NewAgentServer(identity, warmSampler(t), fake, containers, inventory)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, inventory, nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 

@@ -35,7 +35,7 @@ func TestContainerOpsRemoteEndToEnd(t *testing.T) {
 	fake := enginetest.New("nginx:alpine")
 	containers := engine.NewSampler(fake)
 	containers.SampleNow(ctx)
-	agent := NewAgentServer(identity, warmSampler(t), fake, containers, nil)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, nil, nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 
@@ -109,7 +109,7 @@ func TestImageOpsRemoteEndToEnd(t *testing.T) {
 
 	fake := enginetest.New()
 	_, containers := testContainerDeps(t)
-	agent := NewAgentServer(identity, warmSampler(t), fake, containers, engine.NewInventorySampler(fake))
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, engine.NewInventorySampler(fake), nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 

@@ -62,9 +62,24 @@ service NodeService {
   // from container create) and removes (the building block later GC drives).
   rpc PullImage(PullImageRequest) returns (PullImageResponse);
   rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse);
+  // WatchEvents is a doorbell: the node rings after it has already resampled
+  // locally, so a heartbeat poked in response reads fresh cache. Lossy by
+  // design — the master's periodic poll remains the level-triggered source
+  // of truth; a lost event costs latency, never correctness.
+  rpc WatchEvents(WatchEventsRequest) returns (stream WatchEventsResponse);
 }
 
 message HeartbeatRequest {}
+
+message WatchEventsRequest {}
+
+// WatchEventsResponse is one doorbell ring. kind is advisory and may be
+// empty — one ring can coalesce several kinds of change, and the master
+// resyncs the whole node regardless. The field exists so a future master can
+// skip pokes it knows are irrelevant.
+message WatchEventsResponse {
+  string kind = 1;  // container|image|volume|"" (coalesced)
+}
 
 message HeartbeatResponse {
   // Echoed so the master can detect a node answering on another's address.

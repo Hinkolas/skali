@@ -198,7 +198,7 @@ func TestAgentMTLS(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	_, containers := testContainerDeps(t)
-	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers, nil)
+	agent := NewAgentServer(identity, warmSampler(t), enginetest.New(), containers, nil, nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 

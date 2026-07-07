@@ -5,10 +5,12 @@ import (
 	"crypto/x509"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -67,7 +69,12 @@ func (p *ConnPool) Get(node store.Node) (*grpc.ClientConn, error) {
 	}
 
 	conn, err := grpc.NewClient(node.AdvertiseAddr,
-		grpc.WithTransportCredentials(credentials.NewTLS(p.dialTLS(node.ID, serial))))
+		grpc.WithTransportCredentials(credentials.NewTLS(p.dialTLS(node.ID, serial))),
+		// Unary calls carry their own timeouts, but the long-lived
+		// WatchEvents streams would otherwise sit on a half-open TCP
+		// connection until the OS gives up; pings bound that to ~40s. The
+		// agent's keepalive enforcement (server.go) permits this cadence.
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}))
 	if err != nil {
 		return nil, err
 	}

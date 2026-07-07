@@ -41,6 +41,7 @@ type Poller struct {
 	inventory  *engine.InventorySampler // the master's own images/volumes; nil in tests
 	interval   time.Duration
 	staleAfter time.Duration
+	poke       chan uuid.UUID // doorbell-triggered single-node resyncs
 }
 
 // NewPoller wires the poller over the shared connection pool.
@@ -55,27 +56,63 @@ func NewPoller(st *store.Store, conns *ConnPool, selfID uuid.UUID, sampler *host
 	return &Poller{
 		st: st, conns: conns, selfID: selfID, sampler: sampler, containers: containers,
 		inventory: inventory, interval: interval, staleAfter: staleAfter,
+		poke: make(chan uuid.UUID, 64),
 	}, nil
 }
 
+// Poke requests an immediate resync of one node — the watcher calls this when
+// a doorbell rings. Non-blocking and lossy: if the buffer is full the poke is
+// dropped, and the next tick covers the node anyway.
+func (p *Poller) Poke(id uuid.UUID) {
+	select {
+	case p.poke <- id:
+	default:
+	}
+}
+
 // Run ticks until ctx is canceled. One immediate tick first, so nodes show
-// fresh status right after boot instead of after a full interval.
+// fresh status right after boot instead of after a full interval. Between
+// ticks it serves pokes: single-node resyncs with none of the tick's hygiene
+// (stale-marking and sweeps stay interval-driven).
 func (p *Poller) Run(ctx context.Context) {
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
+	p.tick(ctx)
 	for {
-		p.tick(ctx)
 		select {
 		case <-ctx.Done():
 			return
+		case id := <-p.poke:
+			p.resync(ctx, id)
 		case <-ticker.C:
+			p.tick(ctx)
 		}
 	}
 }
 
-func (p *Poller) tick(ctx context.Context) {
-	// The master's own row is stamped locally — no gRPC to self. Containers
-	// take the same local shortcut through the master's own sampler.
+// resync brings one node's records current outside the tick cadence.
+func (p *Poller) resync(ctx context.Context, id uuid.UUID) {
+	if id == p.selfID {
+		p.stampSelf(ctx)
+		return
+	}
+	node, err := p.st.GetNodeByID(ctx, id)
+	if err != nil {
+		slog.DebugContext(ctx, "resync unknown node", "node_id", id, "err", err)
+		return
+	}
+	if node.AdvertiseAddr == "" {
+		return
+	}
+	if err := p.heartbeat(ctx, node); err != nil {
+		slog.DebugContext(ctx, "poked heartbeat failed",
+			"node_id", node.ID, "addr", node.AdvertiseAddr, "err", err)
+	}
+}
+
+// stampSelf records the master's own row locally — no gRPC to self.
+// Containers take the same local shortcut through the master's own sampler.
+func (p *Poller) stampSelf(ctx context.Context) {
 	var selfMetrics *clusterpb.NodeMetrics
 	if snap, ok := p.sampler.Latest(); ok {
 		selfMetrics = metricsProto(snap)
@@ -88,6 +125,10 @@ func (p *Poller) tick(ctx context.Context) {
 	if err := p.recordHeartbeat(ctx, p.selfID, runtime.GOARCH, runtime.GOOS, version.Version, selfMetrics, selfContainers, selfInventory); err != nil {
 		slog.WarnContext(ctx, "record self heartbeat", "err", err)
 	}
+}
+
+func (p *Poller) tick(ctx context.Context) {
+	p.stampSelf(ctx)
 
 	nodes, err := p.st.ListNodes(ctx)
 	if err != nil {

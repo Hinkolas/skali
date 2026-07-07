@@ -48,7 +48,7 @@ func startAgentWithEngine(t *testing.T, fake *enginetest.Fake) (clusterpb.NodeSe
 	containers.SampleNow(ctx)
 	inventory := engine.NewInventorySampler(fake)
 	inventory.SampleNow(ctx)
-	agent := NewAgentServer(identity, warmSampler(t), fake, containers, inventory)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, inventory, nil)
 	go agent.Serve(lis) //nolint:errcheck
 	t.Cleanup(agent.Stop)
 

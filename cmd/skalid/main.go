@@ -151,6 +151,9 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+	// Doorbells: one WatchEvents stream per worker, plus the master's own
+	// notifier consumed locally — every ring becomes an immediate resync.
+	watcher := cluster.NewWatcher(st, conns, self.ID, poller.Poke)
 
 	containerOps := cluster.NewContainerOps(st, conns, self.ID, eng)
 
@@ -179,6 +182,19 @@ func runServe() error {
 	go inventory.Run(loopCtx)
 	go notifier.Run(loopCtx)
 	go poller.Run(loopCtx)
+	go watcher.Run(loopCtx)
+	go func() {
+		bell, cancel := notifier.Subscribe()
+		defer cancel()
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-bell:
+				poller.Poke(self.ID)
+			}
+		}
+	}()
 
 	slog.InfoContext(ctx, "starting", "service", serviceName,
 		"http_addr", cfg.HTTPAddr, "grpc_addr", cfg.GRPCAddr, "node_id", self.ID)

@@ -71,7 +71,7 @@ func runAgent() error {
 	notifier := engine.NewNotifier(eng, containers, inventory)
 	go notifier.Run(sigCtx)
 
-	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr, sampler, eng, containers, inventory)
+	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr, sampler, eng, containers, inventory, notifier)
 	if sigCtx.Err() != nil {
 		slog.Info("shutdown signal received", "service", serviceName)
 	}

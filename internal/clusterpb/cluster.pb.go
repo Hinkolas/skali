@@ -344,6 +344,90 @@ func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
 	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{2}
 }
 
+type WatchEventsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchEventsRequest) Reset() {
+	*x = WatchEventsRequest{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchEventsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchEventsRequest) ProtoMessage() {}
+
+func (x *WatchEventsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchEventsRequest.ProtoReflect.Descriptor instead.
+func (*WatchEventsRequest) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{3}
+}
+
+// WatchEventsResponse is one doorbell ring. kind is advisory and may be
+// empty — one ring can coalesce several kinds of change, and the master
+// resyncs the whole node regardless. The field exists so a future master can
+// skip pokes it knows are irrelevant.
+type WatchEventsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"` // container|image|volume|"" (coalesced)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchEventsResponse) Reset() {
+	*x = WatchEventsResponse{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchEventsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchEventsResponse) ProtoMessage() {}
+
+func (x *WatchEventsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchEventsResponse.ProtoReflect.Descriptor instead.
+func (*WatchEventsResponse) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *WatchEventsResponse) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
 type HeartbeatResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Echoed so the master can detect a node answering on another's address.
@@ -369,7 +453,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[3]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -381,7 +465,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[3]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -394,7 +478,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{3}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *HeartbeatResponse) GetNodeId() string {
@@ -464,7 +548,7 @@ type ContainerReport struct {
 
 func (x *ContainerReport) Reset() {
 	*x = ContainerReport{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -476,7 +560,7 @@ func (x *ContainerReport) String() string {
 func (*ContainerReport) ProtoMessage() {}
 
 func (x *ContainerReport) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[4]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -489,7 +573,7 @@ func (x *ContainerReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerReport.ProtoReflect.Descriptor instead.
 func (*ContainerReport) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{4}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ContainerReport) GetContainers() []*ContainerInfo {
@@ -512,7 +596,7 @@ type InventoryReport struct {
 
 func (x *InventoryReport) Reset() {
 	*x = InventoryReport{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[5]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -524,7 +608,7 @@ func (x *InventoryReport) String() string {
 func (*InventoryReport) ProtoMessage() {}
 
 func (x *InventoryReport) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[5]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -537,7 +621,7 @@ func (x *InventoryReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InventoryReport.ProtoReflect.Descriptor instead.
 func (*InventoryReport) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{5}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *InventoryReport) GetImages() []*ImageInfo {
@@ -571,7 +655,7 @@ type ImageInfo struct {
 
 func (x *ImageInfo) Reset() {
 	*x = ImageInfo{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[6]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -583,7 +667,7 @@ func (x *ImageInfo) String() string {
 func (*ImageInfo) ProtoMessage() {}
 
 func (x *ImageInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[6]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -596,7 +680,7 @@ func (x *ImageInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImageInfo.ProtoReflect.Descriptor instead.
 func (*ImageInfo) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{6}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ImageInfo) GetId() string {
@@ -660,7 +744,7 @@ type VolumeInfo struct {
 
 func (x *VolumeInfo) Reset() {
 	*x = VolumeInfo{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[7]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -672,7 +756,7 @@ func (x *VolumeInfo) String() string {
 func (*VolumeInfo) ProtoMessage() {}
 
 func (x *VolumeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[7]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -685,7 +769,7 @@ func (x *VolumeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeInfo.ProtoReflect.Descriptor instead.
 func (*VolumeInfo) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{7}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *VolumeInfo) GetName() string {
@@ -760,7 +844,7 @@ type ContainerInfo struct {
 
 func (x *ContainerInfo) Reset() {
 	*x = ContainerInfo{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[8]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -772,7 +856,7 @@ func (x *ContainerInfo) String() string {
 func (*ContainerInfo) ProtoMessage() {}
 
 func (x *ContainerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[8]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -785,7 +869,7 @@ func (x *ContainerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerInfo.ProtoReflect.Descriptor instead.
 func (*ContainerInfo) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{8}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ContainerInfo) GetId() string {
@@ -880,7 +964,7 @@ type ContainerStats struct {
 
 func (x *ContainerStats) Reset() {
 	*x = ContainerStats{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[9]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -892,7 +976,7 @@ func (x *ContainerStats) String() string {
 func (*ContainerStats) ProtoMessage() {}
 
 func (x *ContainerStats) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[9]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -905,7 +989,7 @@ func (x *ContainerStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerStats.ProtoReflect.Descriptor instead.
 func (*ContainerStats) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{9}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ContainerStats) GetCpuPercent() float64 {
@@ -968,7 +1052,7 @@ type ContainerSpec struct {
 
 func (x *ContainerSpec) Reset() {
 	*x = ContainerSpec{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[10]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -980,7 +1064,7 @@ func (x *ContainerSpec) String() string {
 func (*ContainerSpec) ProtoMessage() {}
 
 func (x *ContainerSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[10]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -993,7 +1077,7 @@ func (x *ContainerSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerSpec.ProtoReflect.Descriptor instead.
 func (*ContainerSpec) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{10}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ContainerSpec) GetName() string {
@@ -1106,7 +1190,7 @@ type ContainerMount struct {
 
 func (x *ContainerMount) Reset() {
 	*x = ContainerMount{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[11]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1118,7 +1202,7 @@ func (x *ContainerMount) String() string {
 func (*ContainerMount) ProtoMessage() {}
 
 func (x *ContainerMount) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[11]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1131,7 +1215,7 @@ func (x *ContainerMount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerMount.ProtoReflect.Descriptor instead.
 func (*ContainerMount) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{11}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ContainerMount) GetType() string {
@@ -1174,7 +1258,7 @@ type ContainerPort struct {
 
 func (x *ContainerPort) Reset() {
 	*x = ContainerPort{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[12]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1186,7 +1270,7 @@ func (x *ContainerPort) String() string {
 func (*ContainerPort) ProtoMessage() {}
 
 func (x *ContainerPort) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[12]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1199,7 +1283,7 @@ func (x *ContainerPort) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerPort.ProtoReflect.Descriptor instead.
 func (*ContainerPort) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{12}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ContainerPort) GetHostIp() string {
@@ -1243,7 +1327,7 @@ type Healthcheck struct {
 
 func (x *Healthcheck) Reset() {
 	*x = Healthcheck{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[13]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1255,7 +1339,7 @@ func (x *Healthcheck) String() string {
 func (*Healthcheck) ProtoMessage() {}
 
 func (x *Healthcheck) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[13]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1268,7 +1352,7 @@ func (x *Healthcheck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Healthcheck.ProtoReflect.Descriptor instead.
 func (*Healthcheck) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{13}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Healthcheck) GetTest() []string {
@@ -1318,7 +1402,7 @@ type CreateContainerRequest struct {
 
 func (x *CreateContainerRequest) Reset() {
 	*x = CreateContainerRequest{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[14]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1330,7 +1414,7 @@ func (x *CreateContainerRequest) String() string {
 func (*CreateContainerRequest) ProtoMessage() {}
 
 func (x *CreateContainerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[14]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1343,7 +1427,7 @@ func (x *CreateContainerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateContainerRequest.ProtoReflect.Descriptor instead.
 func (*CreateContainerRequest) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{14}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CreateContainerRequest) GetSpec() *ContainerSpec {
@@ -1378,7 +1462,7 @@ type CreateContainerResponse struct {
 
 func (x *CreateContainerResponse) Reset() {
 	*x = CreateContainerResponse{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[15]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1390,7 +1474,7 @@ func (x *CreateContainerResponse) String() string {
 func (*CreateContainerResponse) ProtoMessage() {}
 
 func (x *CreateContainerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[15]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1403,7 +1487,7 @@ func (x *CreateContainerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateContainerResponse.ProtoReflect.Descriptor instead.
 func (*CreateContainerResponse) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{15}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CreateContainerResponse) GetContainer() *ContainerInfo {
@@ -1422,7 +1506,7 @@ type StartContainerRequest struct {
 
 func (x *StartContainerRequest) Reset() {
 	*x = StartContainerRequest{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[16]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1434,7 +1518,7 @@ func (x *StartContainerRequest) String() string {
 func (*StartContainerRequest) ProtoMessage() {}
 
 func (x *StartContainerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[16]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1447,7 +1531,7 @@ func (x *StartContainerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartContainerRequest.ProtoReflect.Descriptor instead.
 func (*StartContainerRequest) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{16}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *StartContainerRequest) GetContainerId() string {
@@ -1466,7 +1550,7 @@ type StartContainerResponse struct {
 
 func (x *StartContainerResponse) Reset() {
 	*x = StartContainerResponse{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[17]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1478,7 +1562,7 @@ func (x *StartContainerResponse) String() string {
 func (*StartContainerResponse) ProtoMessage() {}
 
 func (x *StartContainerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[17]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1491,7 +1575,7 @@ func (x *StartContainerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartContainerResponse.ProtoReflect.Descriptor instead.
 func (*StartContainerResponse) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{17}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *StartContainerResponse) GetContainer() *ContainerInfo {
@@ -1512,7 +1596,7 @@ type StopContainerRequest struct {
 
 func (x *StopContainerRequest) Reset() {
 	*x = StopContainerRequest{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[18]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1524,7 +1608,7 @@ func (x *StopContainerRequest) String() string {
 func (*StopContainerRequest) ProtoMessage() {}
 
 func (x *StopContainerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[18]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1537,7 +1621,7 @@ func (x *StopContainerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopContainerRequest.ProtoReflect.Descriptor instead.
 func (*StopContainerRequest) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{18}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *StopContainerRequest) GetContainerId() string {
@@ -1563,7 +1647,7 @@ type StopContainerResponse struct {
 
 func (x *StopContainerResponse) Reset() {
 	*x = StopContainerResponse{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[19]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1575,7 +1659,7 @@ func (x *StopContainerResponse) String() string {
 func (*StopContainerResponse) ProtoMessage() {}
 
 func (x *StopContainerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[19]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1588,7 +1672,7 @@ func (x *StopContainerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopContainerResponse.ProtoReflect.Descriptor instead.
 func (*StopContainerResponse) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{19}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *StopContainerResponse) GetContainer() *ContainerInfo {
@@ -1608,7 +1692,7 @@ type RemoveContainerRequest struct {
 
 func (x *RemoveContainerRequest) Reset() {
 	*x = RemoveContainerRequest{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[20]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1620,7 +1704,7 @@ func (x *RemoveContainerRequest) String() string {
 func (*RemoveContainerRequest) ProtoMessage() {}
 
 func (x *RemoveContainerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[20]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1633,7 +1717,7 @@ func (x *RemoveContainerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveContainerRequest.ProtoReflect.Descriptor instead.
 func (*RemoveContainerRequest) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{20}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RemoveContainerRequest) GetContainerId() string {
@@ -1658,7 +1742,7 @@ type RemoveContainerResponse struct {
 
 func (x *RemoveContainerResponse) Reset() {
 	*x = RemoveContainerResponse{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[21]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1670,7 +1754,7 @@ func (x *RemoveContainerResponse) String() string {
 func (*RemoveContainerResponse) ProtoMessage() {}
 
 func (x *RemoveContainerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[21]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1683,7 +1767,7 @@ func (x *RemoveContainerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveContainerResponse.ProtoReflect.Descriptor instead.
 func (*RemoveContainerResponse) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{21}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{23}
 }
 
 type PullImageRequest struct {
@@ -1696,7 +1780,7 @@ type PullImageRequest struct {
 
 func (x *PullImageRequest) Reset() {
 	*x = PullImageRequest{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[22]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1708,7 +1792,7 @@ func (x *PullImageRequest) String() string {
 func (*PullImageRequest) ProtoMessage() {}
 
 func (x *PullImageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[22]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1721,7 +1805,7 @@ func (x *PullImageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullImageRequest.ProtoReflect.Descriptor instead.
 func (*PullImageRequest) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{22}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *PullImageRequest) GetReference() string {
@@ -1742,7 +1826,7 @@ type PullImageResponse struct {
 
 func (x *PullImageResponse) Reset() {
 	*x = PullImageResponse{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[23]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1754,7 +1838,7 @@ func (x *PullImageResponse) String() string {
 func (*PullImageResponse) ProtoMessage() {}
 
 func (x *PullImageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[23]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1767,7 +1851,7 @@ func (x *PullImageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullImageResponse.ProtoReflect.Descriptor instead.
 func (*PullImageResponse) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{23}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *PullImageResponse) GetImage() *ImageInfo {
@@ -1788,7 +1872,7 @@ type RemoveImageRequest struct {
 
 func (x *RemoveImageRequest) Reset() {
 	*x = RemoveImageRequest{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[24]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1800,7 +1884,7 @@ func (x *RemoveImageRequest) String() string {
 func (*RemoveImageRequest) ProtoMessage() {}
 
 func (x *RemoveImageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[24]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1813,7 +1897,7 @@ func (x *RemoveImageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveImageRequest.ProtoReflect.Descriptor instead.
 func (*RemoveImageRequest) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{24}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *RemoveImageRequest) GetReference() string {
@@ -1841,7 +1925,7 @@ type RemoveImageResponse struct {
 
 func (x *RemoveImageResponse) Reset() {
 	*x = RemoveImageResponse{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[25]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1853,7 +1937,7 @@ func (x *RemoveImageResponse) String() string {
 func (*RemoveImageResponse) ProtoMessage() {}
 
 func (x *RemoveImageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[25]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1866,7 +1950,7 @@ func (x *RemoveImageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveImageResponse.ProtoReflect.Descriptor instead.
 func (*RemoveImageResponse) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{25}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *RemoveImageResponse) GetDeletedIds() []string {
@@ -1898,7 +1982,7 @@ type NodeMetrics struct {
 
 func (x *NodeMetrics) Reset() {
 	*x = NodeMetrics{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[26]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1910,7 +1994,7 @@ func (x *NodeMetrics) String() string {
 func (*NodeMetrics) ProtoMessage() {}
 
 func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[26]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1923,7 +2007,7 @@ func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeMetrics.ProtoReflect.Descriptor instead.
 func (*NodeMetrics) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{26}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *NodeMetrics) GetCpuPercent() float64 {
@@ -2014,7 +2098,10 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\bcert_pem\x18\x02 \x01(\fR\acertPem\x12\x15\n" +
 	"\x06ca_pem\x18\x03 \x01(\fR\x05caPem\x12\x14\n" +
 	"\x05roles\x18\x04 \x03(\tR\x05roles\"\x12\n" +
-	"\x10HeartbeatRequest\"\xd7\x02\n" +
+	"\x10HeartbeatRequest\"\x14\n" +
+	"\x12WatchEventsRequest\")\n" +
+	"\x13WatchEventsResponse\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\"\xd7\x02\n" +
 	"\x11HeartbeatResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
 	"\x04arch\x18\x02 \x01(\tR\x04arch\x12\x0e\n" +
@@ -2180,7 +2267,7 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\x12PULL_POLICY_ALWAYS\x10\x02\x12\x15\n" +
 	"\x11PULL_POLICY_NEVER\x10\x032`\n" +
 	"\x11EnrollmentService\x12K\n" +
-	"\x06Enroll\x12\x1f.skali.cluster.v1.EnrollRequest\x1a .skali.cluster.v1.EnrollResponse2\xac\x05\n" +
+	"\x06Enroll\x12\x1f.skali.cluster.v1.EnrollRequest\x1a .skali.cluster.v1.EnrollResponse2\x8a\x06\n" +
 	"\vNodeService\x12T\n" +
 	"\tHeartbeat\x12\".skali.cluster.v1.HeartbeatRequest\x1a#.skali.cluster.v1.HeartbeatResponse\x12f\n" +
 	"\x0fCreateContainer\x12(.skali.cluster.v1.CreateContainerRequest\x1a).skali.cluster.v1.CreateContainerResponse\x12c\n" +
@@ -2188,7 +2275,8 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\rStopContainer\x12&.skali.cluster.v1.StopContainerRequest\x1a'.skali.cluster.v1.StopContainerResponse\x12f\n" +
 	"\x0fRemoveContainer\x12(.skali.cluster.v1.RemoveContainerRequest\x1a).skali.cluster.v1.RemoveContainerResponse\x12T\n" +
 	"\tPullImage\x12\".skali.cluster.v1.PullImageRequest\x1a#.skali.cluster.v1.PullImageResponse\x12Z\n" +
-	"\vRemoveImage\x12$.skali.cluster.v1.RemoveImageRequest\x1a%.skali.cluster.v1.RemoveImageResponseB8Z6github.com/Hinkolas/skali/internal/clusterpb;clusterpbb\x06proto3"
+	"\vRemoveImage\x12$.skali.cluster.v1.RemoveImageRequest\x1a%.skali.cluster.v1.RemoveImageResponse\x12\\\n" +
+	"\vWatchEvents\x12$.skali.cluster.v1.WatchEventsRequest\x1a%.skali.cluster.v1.WatchEventsResponse0\x01B8Z6github.com/Hinkolas/skali/internal/clusterpb;clusterpbb\x06proto3"
 
 var (
 	file_skali_cluster_v1_cluster_proto_rawDescOnce sync.Once
@@ -2203,82 +2291,86 @@ func file_skali_cluster_v1_cluster_proto_rawDescGZIP() []byte {
 }
 
 var file_skali_cluster_v1_cluster_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_skali_cluster_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_skali_cluster_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_skali_cluster_v1_cluster_proto_goTypes = []any{
 	(RestartPolicy)(0),              // 0: skali.cluster.v1.RestartPolicy
 	(PullPolicy)(0),                 // 1: skali.cluster.v1.PullPolicy
 	(*EnrollRequest)(nil),           // 2: skali.cluster.v1.EnrollRequest
 	(*EnrollResponse)(nil),          // 3: skali.cluster.v1.EnrollResponse
 	(*HeartbeatRequest)(nil),        // 4: skali.cluster.v1.HeartbeatRequest
-	(*HeartbeatResponse)(nil),       // 5: skali.cluster.v1.HeartbeatResponse
-	(*ContainerReport)(nil),         // 6: skali.cluster.v1.ContainerReport
-	(*InventoryReport)(nil),         // 7: skali.cluster.v1.InventoryReport
-	(*ImageInfo)(nil),               // 8: skali.cluster.v1.ImageInfo
-	(*VolumeInfo)(nil),              // 9: skali.cluster.v1.VolumeInfo
-	(*ContainerInfo)(nil),           // 10: skali.cluster.v1.ContainerInfo
-	(*ContainerStats)(nil),          // 11: skali.cluster.v1.ContainerStats
-	(*ContainerSpec)(nil),           // 12: skali.cluster.v1.ContainerSpec
-	(*ContainerMount)(nil),          // 13: skali.cluster.v1.ContainerMount
-	(*ContainerPort)(nil),           // 14: skali.cluster.v1.ContainerPort
-	(*Healthcheck)(nil),             // 15: skali.cluster.v1.Healthcheck
-	(*CreateContainerRequest)(nil),  // 16: skali.cluster.v1.CreateContainerRequest
-	(*CreateContainerResponse)(nil), // 17: skali.cluster.v1.CreateContainerResponse
-	(*StartContainerRequest)(nil),   // 18: skali.cluster.v1.StartContainerRequest
-	(*StartContainerResponse)(nil),  // 19: skali.cluster.v1.StartContainerResponse
-	(*StopContainerRequest)(nil),    // 20: skali.cluster.v1.StopContainerRequest
-	(*StopContainerResponse)(nil),   // 21: skali.cluster.v1.StopContainerResponse
-	(*RemoveContainerRequest)(nil),  // 22: skali.cluster.v1.RemoveContainerRequest
-	(*RemoveContainerResponse)(nil), // 23: skali.cluster.v1.RemoveContainerResponse
-	(*PullImageRequest)(nil),        // 24: skali.cluster.v1.PullImageRequest
-	(*PullImageResponse)(nil),       // 25: skali.cluster.v1.PullImageResponse
-	(*RemoveImageRequest)(nil),      // 26: skali.cluster.v1.RemoveImageRequest
-	(*RemoveImageResponse)(nil),     // 27: skali.cluster.v1.RemoveImageResponse
-	(*NodeMetrics)(nil),             // 28: skali.cluster.v1.NodeMetrics
-	nil,                             // 29: skali.cluster.v1.VolumeInfo.LabelsEntry
-	nil,                             // 30: skali.cluster.v1.ContainerInfo.LabelsEntry
-	nil,                             // 31: skali.cluster.v1.ContainerSpec.EnvEntry
-	nil,                             // 32: skali.cluster.v1.ContainerSpec.LabelsEntry
+	(*WatchEventsRequest)(nil),      // 5: skali.cluster.v1.WatchEventsRequest
+	(*WatchEventsResponse)(nil),     // 6: skali.cluster.v1.WatchEventsResponse
+	(*HeartbeatResponse)(nil),       // 7: skali.cluster.v1.HeartbeatResponse
+	(*ContainerReport)(nil),         // 8: skali.cluster.v1.ContainerReport
+	(*InventoryReport)(nil),         // 9: skali.cluster.v1.InventoryReport
+	(*ImageInfo)(nil),               // 10: skali.cluster.v1.ImageInfo
+	(*VolumeInfo)(nil),              // 11: skali.cluster.v1.VolumeInfo
+	(*ContainerInfo)(nil),           // 12: skali.cluster.v1.ContainerInfo
+	(*ContainerStats)(nil),          // 13: skali.cluster.v1.ContainerStats
+	(*ContainerSpec)(nil),           // 14: skali.cluster.v1.ContainerSpec
+	(*ContainerMount)(nil),          // 15: skali.cluster.v1.ContainerMount
+	(*ContainerPort)(nil),           // 16: skali.cluster.v1.ContainerPort
+	(*Healthcheck)(nil),             // 17: skali.cluster.v1.Healthcheck
+	(*CreateContainerRequest)(nil),  // 18: skali.cluster.v1.CreateContainerRequest
+	(*CreateContainerResponse)(nil), // 19: skali.cluster.v1.CreateContainerResponse
+	(*StartContainerRequest)(nil),   // 20: skali.cluster.v1.StartContainerRequest
+	(*StartContainerResponse)(nil),  // 21: skali.cluster.v1.StartContainerResponse
+	(*StopContainerRequest)(nil),    // 22: skali.cluster.v1.StopContainerRequest
+	(*StopContainerResponse)(nil),   // 23: skali.cluster.v1.StopContainerResponse
+	(*RemoveContainerRequest)(nil),  // 24: skali.cluster.v1.RemoveContainerRequest
+	(*RemoveContainerResponse)(nil), // 25: skali.cluster.v1.RemoveContainerResponse
+	(*PullImageRequest)(nil),        // 26: skali.cluster.v1.PullImageRequest
+	(*PullImageResponse)(nil),       // 27: skali.cluster.v1.PullImageResponse
+	(*RemoveImageRequest)(nil),      // 28: skali.cluster.v1.RemoveImageRequest
+	(*RemoveImageResponse)(nil),     // 29: skali.cluster.v1.RemoveImageResponse
+	(*NodeMetrics)(nil),             // 30: skali.cluster.v1.NodeMetrics
+	nil,                             // 31: skali.cluster.v1.VolumeInfo.LabelsEntry
+	nil,                             // 32: skali.cluster.v1.ContainerInfo.LabelsEntry
+	nil,                             // 33: skali.cluster.v1.ContainerSpec.EnvEntry
+	nil,                             // 34: skali.cluster.v1.ContainerSpec.LabelsEntry
 }
 var file_skali_cluster_v1_cluster_proto_depIdxs = []int32{
-	28, // 0: skali.cluster.v1.HeartbeatResponse.metrics:type_name -> skali.cluster.v1.NodeMetrics
-	6,  // 1: skali.cluster.v1.HeartbeatResponse.containers:type_name -> skali.cluster.v1.ContainerReport
-	7,  // 2: skali.cluster.v1.HeartbeatResponse.inventory:type_name -> skali.cluster.v1.InventoryReport
-	10, // 3: skali.cluster.v1.ContainerReport.containers:type_name -> skali.cluster.v1.ContainerInfo
-	8,  // 4: skali.cluster.v1.InventoryReport.images:type_name -> skali.cluster.v1.ImageInfo
-	9,  // 5: skali.cluster.v1.InventoryReport.volumes:type_name -> skali.cluster.v1.VolumeInfo
-	29, // 6: skali.cluster.v1.VolumeInfo.labels:type_name -> skali.cluster.v1.VolumeInfo.LabelsEntry
-	30, // 7: skali.cluster.v1.ContainerInfo.labels:type_name -> skali.cluster.v1.ContainerInfo.LabelsEntry
-	11, // 8: skali.cluster.v1.ContainerInfo.stats:type_name -> skali.cluster.v1.ContainerStats
-	31, // 9: skali.cluster.v1.ContainerSpec.env:type_name -> skali.cluster.v1.ContainerSpec.EnvEntry
-	13, // 10: skali.cluster.v1.ContainerSpec.mounts:type_name -> skali.cluster.v1.ContainerMount
-	14, // 11: skali.cluster.v1.ContainerSpec.ports:type_name -> skali.cluster.v1.ContainerPort
+	30, // 0: skali.cluster.v1.HeartbeatResponse.metrics:type_name -> skali.cluster.v1.NodeMetrics
+	8,  // 1: skali.cluster.v1.HeartbeatResponse.containers:type_name -> skali.cluster.v1.ContainerReport
+	9,  // 2: skali.cluster.v1.HeartbeatResponse.inventory:type_name -> skali.cluster.v1.InventoryReport
+	12, // 3: skali.cluster.v1.ContainerReport.containers:type_name -> skali.cluster.v1.ContainerInfo
+	10, // 4: skali.cluster.v1.InventoryReport.images:type_name -> skali.cluster.v1.ImageInfo
+	11, // 5: skali.cluster.v1.InventoryReport.volumes:type_name -> skali.cluster.v1.VolumeInfo
+	31, // 6: skali.cluster.v1.VolumeInfo.labels:type_name -> skali.cluster.v1.VolumeInfo.LabelsEntry
+	32, // 7: skali.cluster.v1.ContainerInfo.labels:type_name -> skali.cluster.v1.ContainerInfo.LabelsEntry
+	13, // 8: skali.cluster.v1.ContainerInfo.stats:type_name -> skali.cluster.v1.ContainerStats
+	33, // 9: skali.cluster.v1.ContainerSpec.env:type_name -> skali.cluster.v1.ContainerSpec.EnvEntry
+	15, // 10: skali.cluster.v1.ContainerSpec.mounts:type_name -> skali.cluster.v1.ContainerMount
+	16, // 11: skali.cluster.v1.ContainerSpec.ports:type_name -> skali.cluster.v1.ContainerPort
 	0,  // 12: skali.cluster.v1.ContainerSpec.restart_policy:type_name -> skali.cluster.v1.RestartPolicy
-	32, // 13: skali.cluster.v1.ContainerSpec.labels:type_name -> skali.cluster.v1.ContainerSpec.LabelsEntry
-	15, // 14: skali.cluster.v1.ContainerSpec.healthcheck:type_name -> skali.cluster.v1.Healthcheck
-	12, // 15: skali.cluster.v1.CreateContainerRequest.spec:type_name -> skali.cluster.v1.ContainerSpec
+	34, // 13: skali.cluster.v1.ContainerSpec.labels:type_name -> skali.cluster.v1.ContainerSpec.LabelsEntry
+	17, // 14: skali.cluster.v1.ContainerSpec.healthcheck:type_name -> skali.cluster.v1.Healthcheck
+	14, // 15: skali.cluster.v1.CreateContainerRequest.spec:type_name -> skali.cluster.v1.ContainerSpec
 	1,  // 16: skali.cluster.v1.CreateContainerRequest.pull_policy:type_name -> skali.cluster.v1.PullPolicy
-	10, // 17: skali.cluster.v1.CreateContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
-	10, // 18: skali.cluster.v1.StartContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
-	10, // 19: skali.cluster.v1.StopContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
-	8,  // 20: skali.cluster.v1.PullImageResponse.image:type_name -> skali.cluster.v1.ImageInfo
+	12, // 17: skali.cluster.v1.CreateContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
+	12, // 18: skali.cluster.v1.StartContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
+	12, // 19: skali.cluster.v1.StopContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
+	10, // 20: skali.cluster.v1.PullImageResponse.image:type_name -> skali.cluster.v1.ImageInfo
 	2,  // 21: skali.cluster.v1.EnrollmentService.Enroll:input_type -> skali.cluster.v1.EnrollRequest
 	4,  // 22: skali.cluster.v1.NodeService.Heartbeat:input_type -> skali.cluster.v1.HeartbeatRequest
-	16, // 23: skali.cluster.v1.NodeService.CreateContainer:input_type -> skali.cluster.v1.CreateContainerRequest
-	18, // 24: skali.cluster.v1.NodeService.StartContainer:input_type -> skali.cluster.v1.StartContainerRequest
-	20, // 25: skali.cluster.v1.NodeService.StopContainer:input_type -> skali.cluster.v1.StopContainerRequest
-	22, // 26: skali.cluster.v1.NodeService.RemoveContainer:input_type -> skali.cluster.v1.RemoveContainerRequest
-	24, // 27: skali.cluster.v1.NodeService.PullImage:input_type -> skali.cluster.v1.PullImageRequest
-	26, // 28: skali.cluster.v1.NodeService.RemoveImage:input_type -> skali.cluster.v1.RemoveImageRequest
-	3,  // 29: skali.cluster.v1.EnrollmentService.Enroll:output_type -> skali.cluster.v1.EnrollResponse
-	5,  // 30: skali.cluster.v1.NodeService.Heartbeat:output_type -> skali.cluster.v1.HeartbeatResponse
-	17, // 31: skali.cluster.v1.NodeService.CreateContainer:output_type -> skali.cluster.v1.CreateContainerResponse
-	19, // 32: skali.cluster.v1.NodeService.StartContainer:output_type -> skali.cluster.v1.StartContainerResponse
-	21, // 33: skali.cluster.v1.NodeService.StopContainer:output_type -> skali.cluster.v1.StopContainerResponse
-	23, // 34: skali.cluster.v1.NodeService.RemoveContainer:output_type -> skali.cluster.v1.RemoveContainerResponse
-	25, // 35: skali.cluster.v1.NodeService.PullImage:output_type -> skali.cluster.v1.PullImageResponse
-	27, // 36: skali.cluster.v1.NodeService.RemoveImage:output_type -> skali.cluster.v1.RemoveImageResponse
-	29, // [29:37] is the sub-list for method output_type
-	21, // [21:29] is the sub-list for method input_type
+	18, // 23: skali.cluster.v1.NodeService.CreateContainer:input_type -> skali.cluster.v1.CreateContainerRequest
+	20, // 24: skali.cluster.v1.NodeService.StartContainer:input_type -> skali.cluster.v1.StartContainerRequest
+	22, // 25: skali.cluster.v1.NodeService.StopContainer:input_type -> skali.cluster.v1.StopContainerRequest
+	24, // 26: skali.cluster.v1.NodeService.RemoveContainer:input_type -> skali.cluster.v1.RemoveContainerRequest
+	26, // 27: skali.cluster.v1.NodeService.PullImage:input_type -> skali.cluster.v1.PullImageRequest
+	28, // 28: skali.cluster.v1.NodeService.RemoveImage:input_type -> skali.cluster.v1.RemoveImageRequest
+	5,  // 29: skali.cluster.v1.NodeService.WatchEvents:input_type -> skali.cluster.v1.WatchEventsRequest
+	3,  // 30: skali.cluster.v1.EnrollmentService.Enroll:output_type -> skali.cluster.v1.EnrollResponse
+	7,  // 31: skali.cluster.v1.NodeService.Heartbeat:output_type -> skali.cluster.v1.HeartbeatResponse
+	19, // 32: skali.cluster.v1.NodeService.CreateContainer:output_type -> skali.cluster.v1.CreateContainerResponse
+	21, // 33: skali.cluster.v1.NodeService.StartContainer:output_type -> skali.cluster.v1.StartContainerResponse
+	23, // 34: skali.cluster.v1.NodeService.StopContainer:output_type -> skali.cluster.v1.StopContainerResponse
+	25, // 35: skali.cluster.v1.NodeService.RemoveContainer:output_type -> skali.cluster.v1.RemoveContainerResponse
+	27, // 36: skali.cluster.v1.NodeService.PullImage:output_type -> skali.cluster.v1.PullImageResponse
+	29, // 37: skali.cluster.v1.NodeService.RemoveImage:output_type -> skali.cluster.v1.RemoveImageResponse
+	6,  // 38: skali.cluster.v1.NodeService.WatchEvents:output_type -> skali.cluster.v1.WatchEventsResponse
+	30, // [30:39] is the sub-list for method output_type
+	21, // [21:30] is the sub-list for method input_type
 	21, // [21:21] is the sub-list for extension type_name
 	21, // [21:21] is the sub-list for extension extendee
 	0,  // [0:21] is the sub-list for field type_name
@@ -2295,7 +2387,7 @@ func file_skali_cluster_v1_cluster_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skali_cluster_v1_cluster_proto_rawDesc), len(file_skali_cluster_v1_cluster_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   31,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
