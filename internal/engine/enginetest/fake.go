@@ -24,6 +24,9 @@ type Fake struct {
 	byID   map[string]*engine.Container
 	images map[string]bool
 
+	eventSubs map[int]chan engine.EventKind
+	eventNext int
+
 	// StatsFn, when set, supplies raw counters per container id; unset, Stats
 	// returns zeroed counters stamped with the current time.
 	StatsFn func(id string) (engine.RawStats, error)
@@ -34,10 +37,17 @@ type Fake struct {
 	// Inv is what Inventory returns; InventoryErr is its unreachable seam.
 	Inv          engine.Inventory
 	InventoryErr error
+	// EventsErr, when set, fails the NEXT Events subscription immediately and
+	// then clears itself, so reconnect paths can be exercised.
+	EventsErr error
 }
 
 func New(images ...string) *Fake {
-	f := &Fake{byID: map[string]*engine.Container{}, images: map[string]bool{}}
+	f := &Fake{
+		byID:      map[string]*engine.Container{},
+		images:    map[string]bool{},
+		eventSubs: map[int]chan engine.EventKind{},
+	}
 	for _, img := range images {
 		f.images[img] = true
 	}
@@ -263,6 +273,52 @@ func (f *Fake) Logs(_ context.Context, id string, _ int, _ bool) (io.ReadCloser,
 		return nil, fmt.Errorf("%w: %s", engine.ErrNotFound, id)
 	}
 	return io.NopCloser(strings.NewReader("")), nil
+}
+
+// Events mirrors the real adapter's contract: one error on the channel when
+// the subscription dies (here: ctx cancellation or a seeded EventsErr), and
+// events only while subscribed.
+func (f *Fake) Events(ctx context.Context) (<-chan engine.EventKind, <-chan error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(chan engine.EventKind, 16)
+	errs := make(chan error, 1)
+	if f.EventsErr != nil {
+		errs <- f.EventsErr
+		f.EventsErr = nil
+		return out, errs
+	}
+	f.eventNext++
+	id := f.eventNext
+	f.eventSubs[id] = out
+	go func() {
+		<-ctx.Done()
+		f.mu.Lock()
+		delete(f.eventSubs, id)
+		f.mu.Unlock()
+		errs <- ctx.Err()
+	}()
+	return out, errs
+}
+
+// Subscribed reports the number of active Events subscriptions.
+func (f *Fake) Subscribed() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.eventSubs)
+}
+
+// Emit delivers an event to every active Events subscription (non-blocking:
+// a full subscriber buffer drops the event, like a slow real consumer would).
+func (f *Fake) Emit(kind engine.EventKind) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, ch := range f.eventSubs {
+		select {
+		case ch <- kind:
+		default:
+		}
+	}
 }
 
 // managed is the fake's label boundary, mirroring the real adapter.

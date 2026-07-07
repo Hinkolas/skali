@@ -211,4 +211,9 @@ type Engine interface {
 	// Logs returns the daemon's log stream (multiplexed stdout/stderr framing
 	// when the container has no TTY). tail <= 0 means the full log.
 	Logs(ctx context.Context, id string, tail int, follow bool) (io.ReadCloser, error)
+	// Events streams coarse change notifications until ctx is canceled. The
+	// error channel yields exactly one error when the stream dies; callers
+	// must resubscribe. Like Inventory, the stream is unfiltered — see the
+	// package doc.
+	Events(ctx context.Context) (<-chan EventKind, <-chan error)
 }

@@ -66,6 +66,10 @@ func runAgent() error {
 	go containers.Run(sigCtx)
 	inventory := engine.NewInventorySampler(eng)
 	go inventory.Run(sigCtx)
+	// Engine events resample immediately, so observed state doesn't wait for
+	// a sampler tick.
+	notifier := engine.NewNotifier(eng, containers, inventory)
+	go notifier.Run(sigCtx)
 
 	err = cluster.ServeAgent(sigCtx, identity, cfg.GRPCAddr, sampler, eng, containers, inventory)
 	if sigCtx.Err() != nil {

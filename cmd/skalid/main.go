@@ -135,6 +135,9 @@ func runServe() error {
 	}
 	containers := engine.NewSampler(eng)
 	inventory := engine.NewInventorySampler(eng)
+	// Engine events resample immediately, so observed state doesn't wait for
+	// a sampler tick.
+	notifier := engine.NewNotifier(eng, containers, inventory)
 
 	// One connection per node, shared by the poller and container lifecycle
 	// calls.
@@ -174,6 +177,7 @@ func runServe() error {
 	go sampler.Run(loopCtx)
 	go containers.Run(loopCtx)
 	go inventory.Run(loopCtx)
+	go notifier.Run(loopCtx)
 	go poller.Run(loopCtx)
 
 	slog.InfoContext(ctx, "starting", "service", serviceName,
