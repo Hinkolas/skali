@@ -43,7 +43,6 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 			{ label: 'Dashboard', slug: 'dashboard', icon: LayoutDashboard, stub: true },
 			{ label: 'Projects', slug: 'projects', icon: FolderKanban },
 			{ label: 'Nodes', slug: 'nodes', icon: Server, adminOnly: true },
-			{ label: 'Containers', slug: 'containers', icon: Container, adminOnly: true },
 			{ label: 'Domains', slug: 'domains', icon: Globe, stub: true }
 		]
 	},
@@ -58,6 +57,9 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 		section: 'Administration',
 		items: [
 			{ label: 'Users', slug: 'users', icon: Users, adminOnly: true },
+			// The raw engine surface: a debugging tool, deliberately away from
+			// the product pages a member ever sees.
+			{ label: 'Containers', slug: 'containers', icon: Container, adminOnly: true },
 			{ label: 'System', slug: 'system', icon: Settings2, stub: true, adminOnly: true }
 		]
 	}
