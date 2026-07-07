@@ -79,6 +79,28 @@ type Node struct {
 	Load1         *float32
 }
 
+type NodeContainer struct {
+	NodeID           uuid.UUID
+	ContainerID      string
+	Name             string
+	Image            string
+	Kind             string
+	State            string
+	Health           *string
+	ExitCode         *int32
+	RestartCount     int32
+	Labels           []byte
+	ContainerCreated *time.Time
+	ContainerStarted *time.Time
+	CpuPct           *float32
+	MemUsed          *int64
+	MemLimit         *int64
+	NetRxRate        *int64
+	NetTxRate        *int64
+	FirstSeen        time.Time
+	LastSeen         time.Time
+}
+
 type NodeMetric struct {
 	NodeID        uuid.UUID
 	SampledAt     time.Time

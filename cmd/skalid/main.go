@@ -28,6 +28,7 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/config"
+	"github.com/Hinkolas/skali/internal/engine"
 	"github.com/Hinkolas/skali/internal/hostinfo"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/store"
@@ -81,6 +82,16 @@ func runServe() error {
 	}
 	defer shutdownWithin(shutdownObs, 5*time.Second)
 
+	// Container engine before the database: construction is offline (a
+	// missing daemon fails per-operation, not here), and a future milestone
+	// boots the master's own control-plane Postgres through this engine
+	// before the connection below can exist.
+	eng, err := engine.NewDocker(cfg.EngineSocket)
+	if err != nil {
+		return err
+	}
+	defer eng.Close()
+
 	pool, err := store.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -116,13 +127,23 @@ func runServe() error {
 	defer grpcSrv.GracefulStop()
 
 	// The master's own resource sampler ("/" until a data dir exists) feeds
-	// its node row via the poller's self-stamp, and the OTel gauges.
+	// its node row via the poller's self-stamp, and the OTel gauges. The
+	// container sampler does the same for the master's own containers.
 	sampler := hostinfo.New("/")
 	if err := hostinfo.RegisterGauges(sampler); err != nil {
 		return err
 	}
+	containers := engine.NewSampler(eng)
 
-	poller, err := cluster.NewPoller(st, ca, self.ID, sampler, 0, 0)
+	// One connection per node, shared by the poller and container lifecycle
+	// calls.
+	conns, err := cluster.NewConnPool(ca)
+	if err != nil {
+		return err
+	}
+	defer conns.Close()
+
+	poller, err := cluster.NewPoller(st, conns, self.ID, sampler, containers, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -148,6 +169,7 @@ func runServe() error {
 	defer cancelLoops()
 	go sweepLoop(loopCtx, authSvc)
 	go sampler.Run(loopCtx)
+	go containers.Run(loopCtx)
 	go poller.Run(loopCtx)
 
 	slog.InfoContext(ctx, "starting", "service", serviceName,

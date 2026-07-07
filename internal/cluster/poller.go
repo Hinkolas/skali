@@ -2,8 +2,7 @@ package cluster
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -11,10 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 
 	"github.com/Hinkolas/skali/internal/clusterpb"
+	"github.com/Hinkolas/skali/internal/engine"
 	"github.com/Hinkolas/skali/internal/hostinfo"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/version"
@@ -30,27 +28,23 @@ const (
 )
 
 // Poller is the master's heartbeat loop: it dials every worker's NodeService
-// on an interval, records facts + last_seen, and flips unreachable nodes
-// offline after a staleness threshold. It also owns cluster hygiene
-// (sweeping dead join tokens).
+// on an interval, records facts + observed containers + last_seen, and flips
+// unreachable nodes offline after a staleness threshold. It also owns
+// cluster hygiene (sweeping dead join tokens, pruning history and gone
+// containers).
 type Poller struct {
 	st         *store.Store
-	ca         *CA
-	clientCert tls.Certificate
+	conns      *ConnPool
 	selfID     uuid.UUID
 	sampler    *hostinfo.Sampler // the master's own node metrics
+	containers *engine.Sampler   // the master's own containers; nil in tests
 	interval   time.Duration
 	staleAfter time.Duration
 }
 
-// NewPoller mints the master's dialing identity from the CA (in memory; the
-// master holds the CA key anyway). interval/staleAfter of 0 take defaults —
-// the seam exists for tests.
-func NewPoller(st *store.Store, ca *CA, selfID uuid.UUID, sampler *hostinfo.Sampler, interval, staleAfter time.Duration) (*Poller, error) {
-	clientCert, err := ca.IssueClientCert()
-	if err != nil {
-		return nil, err
-	}
+// NewPoller wires the poller over the shared connection pool.
+// interval/staleAfter of 0 take defaults — the seam exists for tests.
+func NewPoller(st *store.Store, conns *ConnPool, selfID uuid.UUID, sampler *hostinfo.Sampler, containers *engine.Sampler, interval, staleAfter time.Duration) (*Poller, error) {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
@@ -58,7 +52,7 @@ func NewPoller(st *store.Store, ca *CA, selfID uuid.UUID, sampler *hostinfo.Samp
 		staleAfter = defaultStaleAfter
 	}
 	return &Poller{
-		st: st, ca: ca, clientCert: clientCert, selfID: selfID, sampler: sampler,
+		st: st, conns: conns, selfID: selfID, sampler: sampler, containers: containers,
 		interval: interval, staleAfter: staleAfter,
 	}, nil
 }
@@ -79,12 +73,17 @@ func (p *Poller) Run(ctx context.Context) {
 }
 
 func (p *Poller) tick(ctx context.Context) {
-	// The master's own row is stamped locally — no gRPC to self.
+	// The master's own row is stamped locally — no gRPC to self. Containers
+	// take the same local shortcut through the master's own sampler.
 	var selfMetrics *clusterpb.NodeMetrics
 	if snap, ok := p.sampler.Latest(); ok {
 		selfMetrics = metricsProto(snap)
 	}
-	if err := p.recordHeartbeat(ctx, p.selfID, runtime.GOARCH, runtime.GOOS, version.Version, selfMetrics); err != nil {
+	var selfContainers *clusterpb.ContainerReport
+	if p.containers != nil {
+		selfContainers = containerReport(p.containers)
+	}
+	if err := p.recordHeartbeat(ctx, p.selfID, runtime.GOARCH, runtime.GOOS, version.Version, selfMetrics, selfContainers); err != nil {
 		slog.WarnContext(ctx, "record self heartbeat", "err", err)
 	}
 
@@ -96,7 +95,9 @@ func (p *Poller) tick(ctx context.Context) {
 
 	sem := make(chan struct{}, maxConcurrentPolls)
 	var wg sync.WaitGroup
+	ids := make(map[uuid.UUID]struct{}, len(nodes))
 	for _, node := range nodes {
+		ids[node.ID] = struct{}{}
 		if node.ID == p.selfID || node.AdvertiseAddr == "" {
 			continue
 		}
@@ -112,6 +113,7 @@ func (p *Poller) tick(ctx context.Context) {
 		}()
 	}
 	wg.Wait()
+	p.conns.Retain(ids)
 
 	cutoff := time.Now().Add(-p.staleAfter)
 	if n, err := p.st.MarkStaleNodesOffline(ctx, &cutoff); err != nil {
@@ -126,13 +128,17 @@ func (p *Poller) tick(ctx context.Context) {
 	if _, err := p.st.PruneNodeMetrics(ctx); err != nil {
 		slog.WarnContext(ctx, "prune node metrics", "err", err)
 	}
+	if _, err := p.st.PruneGoneNodeContainers(ctx); err != nil {
+		slog.WarnContext(ctx, "prune gone containers", "err", err)
+	}
 }
 
-// recordHeartbeat stamps a node row (facts + latest metrics) and appends a
-// history sample. History rows exist only for heartbeats that carried
-// metrics — offline windows and cold samplers leave no rows, which the UI
-// renders as chart gaps (never zero-filled).
-func (p *Poller) recordHeartbeat(ctx context.Context, nodeID uuid.UUID, arch, osName, ver string, m *clusterpb.NodeMetrics) error {
+// recordHeartbeat stamps a node row (facts + latest metrics), appends a
+// metrics history sample, and records the container report. History rows
+// exist only for heartbeats that carried metrics — offline windows and cold
+// samplers leave no rows, which the UI renders as chart gaps (never
+// zero-filled).
+func (p *Poller) recordHeartbeat(ctx context.Context, nodeID uuid.UUID, arch, osName, ver string, m *clusterpb.NodeMetrics, report *clusterpb.ContainerReport) error {
 	params := store.RecordNodeHeartbeatParams{
 		ID:            nodeID,
 		Arch:          nilIfEmpty(arch),
@@ -155,6 +161,9 @@ func (p *Poller) recordHeartbeat(ctx context.Context, nodeID uuid.UUID, arch, os
 	if err := p.st.RecordNodeHeartbeat(ctx, params); err != nil {
 		return err
 	}
+	if err := p.recordContainers(ctx, nodeID, report); err != nil {
+		return err
+	}
 	if m == nil {
 		return nil
 	}
@@ -173,24 +182,97 @@ func (p *Poller) recordHeartbeat(ctx context.Context, nodeID uuid.UUID, arch, os
 	})
 }
 
+// recordContainers applies one node's container report to observed state. A
+// nil report means UNKNOWN (engine unreachable, sampler cold) and must leave
+// rows untouched — flipping anything to gone here would mass-expire
+// containers every time an agent restarts. A present report is authoritative
+// for the node: rows it omits flip to gone.
+func (p *Poller) recordContainers(ctx context.Context, nodeID uuid.UUID, report *clusterpb.ContainerReport) error {
+	if report == nil {
+		return nil
+	}
+	seen := make([]string, 0, len(report.GetContainers()))
+	for _, info := range report.GetContainers() {
+		seen = append(seen, info.GetId())
+		params, err := upsertNodeContainerParams(nodeID, info)
+		if err != nil {
+			// Non-conformant (e.g. hand-labeled without a valid kind): visible
+			// to the operator via logs, never persisted.
+			slog.DebugContext(ctx, "skip container report entry",
+				"node_id", nodeID, "container_id", info.GetId(), "err", err)
+			continue
+		}
+		if err := p.st.UpsertNodeContainer(ctx, params); err != nil {
+			// FK failures on a concurrently-deleted node are harmless.
+			slog.DebugContext(ctx, "upsert node container",
+				"node_id", nodeID, "container_id", info.GetId(), "err", err)
+		}
+	}
+	_, err := p.st.MarkMissingNodeContainersGone(ctx, store.MarkMissingNodeContainersGoneParams{
+		NodeID:       nodeID,
+		ContainerIds: seen,
+	})
+	return err
+}
+
+// upsertNodeContainerParams maps one wire container onto the observed-state
+// row. The kind is extracted from the labels so the table (and everything
+// reading it) can query it directly.
+func upsertNodeContainerParams(nodeID uuid.UUID, info *clusterpb.ContainerInfo) (store.UpsertNodeContainerParams, error) {
+	kind := info.GetLabels()[engine.LabelKind]
+	if err := engine.ValidateKind(kind); err != nil {
+		return store.UpsertNodeContainerParams{}, err
+	}
+	labels, err := json.Marshal(info.GetLabels())
+	if err != nil {
+		return store.UpsertNodeContainerParams{}, fmt.Errorf("cluster: marshal labels: %w", err)
+	}
+	exitCode := info.GetExitCode()
+	params := store.UpsertNodeContainerParams{
+		NodeID:       nodeID,
+		ContainerID:  info.GetId(),
+		Name:         info.GetName(),
+		Image:        info.GetImage(),
+		Kind:         kind,
+		State:        info.GetState(),
+		Health:       nilIfEmpty(info.GetHealth()),
+		ExitCode:     &exitCode,
+		RestartCount: int32(info.GetRestartCount()),
+		Labels:       labels,
+	}
+	if ts := info.GetCreatedAtUnix(); ts != 0 {
+		t := time.Unix(ts, 0)
+		params.ContainerCreated = &t
+	}
+	if ts := info.GetStartedAtUnix(); ts != 0 {
+		t := time.Unix(ts, 0)
+		params.ContainerStarted = &t
+	}
+	if s := info.GetStats(); s != nil {
+		cpu := float32(s.GetCpuPercent())
+		params.CpuPct = &cpu
+		params.MemUsed = i64ptr(s.GetMemoryUsedBytes())
+		params.MemLimit = i64ptr(s.GetMemoryLimitBytes())
+		params.NetRxRate = i64ptr(s.GetNetRxBytesPerSec())
+		params.NetTxRate = i64ptr(s.GetNetTxBytesPerSec())
+	}
+	return params, nil
+}
+
 func i64ptr(v uint64) *int64 {
 	n := int64(v)
 	return &n
 }
 
-// heartbeat dials one worker and records its facts. Connections are per-tick
-// for now — a cached-connection pool is a later optimization once RPC volume
-// grows beyond one heartbeat per interval.
+// heartbeat dials one worker over the shared pool and records its facts.
 func (p *Poller) heartbeat(ctx context.Context, node store.Node) error {
 	ctx, cancel := context.WithTimeout(ctx, heartbeatTimeout)
 	defer cancel()
 
-	conn, err := grpc.NewClient(node.AdvertiseAddr,
-		grpc.WithTransportCredentials(credentials.NewTLS(p.dialTLS(node))))
+	conn, err := p.conns.Get(node)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 
 	resp, err := clusterpb.NewNodeServiceClient(conn).Heartbeat(ctx, &clusterpb.HeartbeatRequest{})
 	if err != nil {
@@ -201,28 +283,5 @@ func (p *Poller) heartbeat(ctx context.Context, node store.Node) error {
 			node.AdvertiseAddr, resp.GetNodeId(), node.ID)
 	}
 	return p.recordHeartbeat(ctx, node.ID,
-		resp.GetArch(), resp.GetOs(), resp.GetSkalidVersion(), resp.GetMetrics())
-}
-
-// dialTLS authenticates a specific worker: its cert must chain to the cluster
-// CA, carry the node's UUID as SAN (standard hostname verification via
-// ServerName), and match the serial recorded at enrollment — a deleted or
-// re-enrolled node's old cert is refused even though the CA once signed it.
-func (p *Poller) dialTLS(node store.Node) *tls.Config {
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{p.clientCert},
-		RootCAs:      p.ca.Pool(),
-		ServerName:   node.ID.String(),
-		VerifyPeerCertificate: func(_ [][]byte, chains [][]*x509.Certificate) error {
-			if len(chains) == 0 || len(chains[0]) == 0 {
-				return fmt.Errorf("cluster: no verified chain")
-			}
-			serial := chains[0][0].SerialNumber.Text(16)
-			if node.CertSerial == nil || serial != *node.CertSerial {
-				return fmt.Errorf("cluster: node %s presented unexpected cert serial", node.ID)
-			}
-			return nil
-		},
-	}
+		resp.GetArch(), resp.GetOs(), resp.GetSkalidVersion(), resp.GetMetrics(), resp.GetContainers())
 }
