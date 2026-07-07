@@ -19,8 +19,17 @@ export interface Node {
 	last_seen: string | null;
 	/** Latest resource snapshot; null until the node first reports. */
 	metrics: NodeMetrics | null;
+	/** At-a-glance engine counts; present on the list endpoint only. */
+	engine?: NodeEngineCounts;
 	created_at: string;
 	updated_at: string;
+}
+
+/** Engine counts per node; containers exclude `gone` breadcrumbs. */
+export interface NodeEngineCounts {
+	containers: number;
+	images: number;
+	volumes: number;
 }
 
 /**
@@ -91,6 +100,8 @@ export interface NodeContainerStats {
 export interface NodeContainer {
 	/** Engine container id. */
 	id: string;
+	node_id: string;
+	node_name: string;
 	name: string;
 	image: string;
 	kind: ContainerKind;
@@ -130,6 +141,8 @@ export interface ContainerCreateRequest {
 export interface NodeImage {
 	/** Content-addressable image id (`sha256:…`). */
 	id: string;
+	node_id: string;
+	node_name: string;
 	/** Empty for dangling images. */
 	repo_tags: string[];
 	repo_digests: string[];
@@ -152,6 +165,8 @@ export interface NodeImageList {
  */
 export interface NodeVolume {
 	name: string;
+	node_id: string;
+	node_name: string;
 	driver: string;
 	scope: 'local' | 'global';
 	/** Node-local storage path. */
