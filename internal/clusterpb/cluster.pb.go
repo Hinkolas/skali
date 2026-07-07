@@ -1686,6 +1686,196 @@ func (*RemoveContainerResponse) Descriptor() ([]byte, []int) {
 	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{21}
 }
 
+type PullImageRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Tag or digest reference (e.g. "nginx:alpine").
+	Reference     string `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullImageRequest) Reset() {
+	*x = PullImageRequest{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullImageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullImageRequest) ProtoMessage() {}
+
+func (x *PullImageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullImageRequest.ProtoReflect.Descriptor instead.
+func (*PullImageRequest) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *PullImageRequest) GetReference() string {
+	if x != nil {
+		return x.Reference
+	}
+	return ""
+}
+
+// Carries the post-pull state (in-use count included) so the master records
+// it immediately instead of waiting for the next inventory report.
+type PullImageResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Image         *ImageInfo             `protobuf:"bytes,1,opt,name=image,proto3" json:"image,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullImageResponse) Reset() {
+	*x = PullImageResponse{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullImageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullImageResponse) ProtoMessage() {}
+
+func (x *PullImageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullImageResponse.ProtoReflect.Descriptor instead.
+func (*PullImageResponse) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *PullImageResponse) GetImage() *ImageInfo {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+type RemoveImageRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Tag or sha256: id.
+	Reference     string `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
+	Force         bool   `protobuf:"varint,2,opt,name=force,proto3" json:"force,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveImageRequest) Reset() {
+	*x = RemoveImageRequest{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveImageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveImageRequest) ProtoMessage() {}
+
+func (x *RemoveImageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveImageRequest.ProtoReflect.Descriptor instead.
+func (*RemoveImageRequest) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *RemoveImageRequest) GetReference() string {
+	if x != nil {
+		return x.Reference
+	}
+	return ""
+}
+
+func (x *RemoveImageRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+type RemoveImageResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Ids of images actually deleted; empty when the reference was merely
+	// untagged from a multi-tagged image (rows stay, heartbeats refresh tags).
+	DeletedIds    []string `protobuf:"bytes,1,rep,name=deleted_ids,json=deletedIds,proto3" json:"deleted_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveImageResponse) Reset() {
+	*x = RemoveImageResponse{}
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveImageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveImageResponse) ProtoMessage() {}
+
+func (x *RemoveImageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveImageResponse.ProtoReflect.Descriptor instead.
+func (*RemoveImageResponse) Descriptor() ([]byte, []int) {
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *RemoveImageResponse) GetDeletedIds() []string {
+	if x != nil {
+		return x.DeletedIds
+	}
+	return nil
+}
+
 // NodeMetrics is the node's latest resource snapshot. Rates are computed on
 // the node (bytes/second over the sample interval); cpu_percent is 0-100
 // normalized across effective cores (the cgroup quota when the node runs in
@@ -1708,7 +1898,7 @@ type NodeMetrics struct {
 
 func (x *NodeMetrics) Reset() {
 	*x = NodeMetrics{}
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[22]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1720,7 +1910,7 @@ func (x *NodeMetrics) String() string {
 func (*NodeMetrics) ProtoMessage() {}
 
 func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[22]
+	mi := &file_skali_cluster_v1_cluster_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1733,7 +1923,7 @@ func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeMetrics.ProtoReflect.Descriptor instead.
 func (*NodeMetrics) Descriptor() ([]byte, []int) {
-	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{22}
+	return file_skali_cluster_v1_cluster_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *NodeMetrics) GetCpuPercent() float64 {
@@ -1953,7 +2143,17 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\x16RemoveContainerRequest\x12!\n" +
 	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\x12\x14\n" +
 	"\x05force\x18\x02 \x01(\bR\x05force\"\x19\n" +
-	"\x17RemoveContainerResponse\"\xbe\x03\n" +
+	"\x17RemoveContainerResponse\"0\n" +
+	"\x10PullImageRequest\x12\x1c\n" +
+	"\treference\x18\x01 \x01(\tR\treference\"F\n" +
+	"\x11PullImageResponse\x121\n" +
+	"\x05image\x18\x01 \x01(\v2\x1b.skali.cluster.v1.ImageInfoR\x05image\"H\n" +
+	"\x12RemoveImageRequest\x12\x1c\n" +
+	"\treference\x18\x01 \x01(\tR\treference\x12\x14\n" +
+	"\x05force\x18\x02 \x01(\bR\x05force\"6\n" +
+	"\x13RemoveImageResponse\x12\x1f\n" +
+	"\vdeleted_ids\x18\x01 \x03(\tR\n" +
+	"deletedIds\"\xbe\x03\n" +
 	"\vNodeMetrics\x12\x1f\n" +
 	"\vcpu_percent\x18\x01 \x01(\x01R\n" +
 	"cpuPercent\x12*\n" +
@@ -1980,13 +2180,15 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\x12PULL_POLICY_ALWAYS\x10\x02\x12\x15\n" +
 	"\x11PULL_POLICY_NEVER\x10\x032`\n" +
 	"\x11EnrollmentService\x12K\n" +
-	"\x06Enroll\x12\x1f.skali.cluster.v1.EnrollRequest\x1a .skali.cluster.v1.EnrollResponse2\xfa\x03\n" +
+	"\x06Enroll\x12\x1f.skali.cluster.v1.EnrollRequest\x1a .skali.cluster.v1.EnrollResponse2\xac\x05\n" +
 	"\vNodeService\x12T\n" +
 	"\tHeartbeat\x12\".skali.cluster.v1.HeartbeatRequest\x1a#.skali.cluster.v1.HeartbeatResponse\x12f\n" +
 	"\x0fCreateContainer\x12(.skali.cluster.v1.CreateContainerRequest\x1a).skali.cluster.v1.CreateContainerResponse\x12c\n" +
 	"\x0eStartContainer\x12'.skali.cluster.v1.StartContainerRequest\x1a(.skali.cluster.v1.StartContainerResponse\x12`\n" +
 	"\rStopContainer\x12&.skali.cluster.v1.StopContainerRequest\x1a'.skali.cluster.v1.StopContainerResponse\x12f\n" +
-	"\x0fRemoveContainer\x12(.skali.cluster.v1.RemoveContainerRequest\x1a).skali.cluster.v1.RemoveContainerResponseB8Z6github.com/Hinkolas/skali/internal/clusterpb;clusterpbb\x06proto3"
+	"\x0fRemoveContainer\x12(.skali.cluster.v1.RemoveContainerRequest\x1a).skali.cluster.v1.RemoveContainerResponse\x12T\n" +
+	"\tPullImage\x12\".skali.cluster.v1.PullImageRequest\x1a#.skali.cluster.v1.PullImageResponse\x12Z\n" +
+	"\vRemoveImage\x12$.skali.cluster.v1.RemoveImageRequest\x1a%.skali.cluster.v1.RemoveImageResponseB8Z6github.com/Hinkolas/skali/internal/clusterpb;clusterpbb\x06proto3"
 
 var (
 	file_skali_cluster_v1_cluster_proto_rawDescOnce sync.Once
@@ -2001,7 +2203,7 @@ func file_skali_cluster_v1_cluster_proto_rawDescGZIP() []byte {
 }
 
 var file_skali_cluster_v1_cluster_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_skali_cluster_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_skali_cluster_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_skali_cluster_v1_cluster_proto_goTypes = []any{
 	(RestartPolicy)(0),              // 0: skali.cluster.v1.RestartPolicy
 	(PullPolicy)(0),                 // 1: skali.cluster.v1.PullPolicy
@@ -2027,50 +2229,59 @@ var file_skali_cluster_v1_cluster_proto_goTypes = []any{
 	(*StopContainerResponse)(nil),   // 21: skali.cluster.v1.StopContainerResponse
 	(*RemoveContainerRequest)(nil),  // 22: skali.cluster.v1.RemoveContainerRequest
 	(*RemoveContainerResponse)(nil), // 23: skali.cluster.v1.RemoveContainerResponse
-	(*NodeMetrics)(nil),             // 24: skali.cluster.v1.NodeMetrics
-	nil,                             // 25: skali.cluster.v1.VolumeInfo.LabelsEntry
-	nil,                             // 26: skali.cluster.v1.ContainerInfo.LabelsEntry
-	nil,                             // 27: skali.cluster.v1.ContainerSpec.EnvEntry
-	nil,                             // 28: skali.cluster.v1.ContainerSpec.LabelsEntry
+	(*PullImageRequest)(nil),        // 24: skali.cluster.v1.PullImageRequest
+	(*PullImageResponse)(nil),       // 25: skali.cluster.v1.PullImageResponse
+	(*RemoveImageRequest)(nil),      // 26: skali.cluster.v1.RemoveImageRequest
+	(*RemoveImageResponse)(nil),     // 27: skali.cluster.v1.RemoveImageResponse
+	(*NodeMetrics)(nil),             // 28: skali.cluster.v1.NodeMetrics
+	nil,                             // 29: skali.cluster.v1.VolumeInfo.LabelsEntry
+	nil,                             // 30: skali.cluster.v1.ContainerInfo.LabelsEntry
+	nil,                             // 31: skali.cluster.v1.ContainerSpec.EnvEntry
+	nil,                             // 32: skali.cluster.v1.ContainerSpec.LabelsEntry
 }
 var file_skali_cluster_v1_cluster_proto_depIdxs = []int32{
-	24, // 0: skali.cluster.v1.HeartbeatResponse.metrics:type_name -> skali.cluster.v1.NodeMetrics
+	28, // 0: skali.cluster.v1.HeartbeatResponse.metrics:type_name -> skali.cluster.v1.NodeMetrics
 	6,  // 1: skali.cluster.v1.HeartbeatResponse.containers:type_name -> skali.cluster.v1.ContainerReport
 	7,  // 2: skali.cluster.v1.HeartbeatResponse.inventory:type_name -> skali.cluster.v1.InventoryReport
 	10, // 3: skali.cluster.v1.ContainerReport.containers:type_name -> skali.cluster.v1.ContainerInfo
 	8,  // 4: skali.cluster.v1.InventoryReport.images:type_name -> skali.cluster.v1.ImageInfo
 	9,  // 5: skali.cluster.v1.InventoryReport.volumes:type_name -> skali.cluster.v1.VolumeInfo
-	25, // 6: skali.cluster.v1.VolumeInfo.labels:type_name -> skali.cluster.v1.VolumeInfo.LabelsEntry
-	26, // 7: skali.cluster.v1.ContainerInfo.labels:type_name -> skali.cluster.v1.ContainerInfo.LabelsEntry
+	29, // 6: skali.cluster.v1.VolumeInfo.labels:type_name -> skali.cluster.v1.VolumeInfo.LabelsEntry
+	30, // 7: skali.cluster.v1.ContainerInfo.labels:type_name -> skali.cluster.v1.ContainerInfo.LabelsEntry
 	11, // 8: skali.cluster.v1.ContainerInfo.stats:type_name -> skali.cluster.v1.ContainerStats
-	27, // 9: skali.cluster.v1.ContainerSpec.env:type_name -> skali.cluster.v1.ContainerSpec.EnvEntry
+	31, // 9: skali.cluster.v1.ContainerSpec.env:type_name -> skali.cluster.v1.ContainerSpec.EnvEntry
 	13, // 10: skali.cluster.v1.ContainerSpec.mounts:type_name -> skali.cluster.v1.ContainerMount
 	14, // 11: skali.cluster.v1.ContainerSpec.ports:type_name -> skali.cluster.v1.ContainerPort
 	0,  // 12: skali.cluster.v1.ContainerSpec.restart_policy:type_name -> skali.cluster.v1.RestartPolicy
-	28, // 13: skali.cluster.v1.ContainerSpec.labels:type_name -> skali.cluster.v1.ContainerSpec.LabelsEntry
+	32, // 13: skali.cluster.v1.ContainerSpec.labels:type_name -> skali.cluster.v1.ContainerSpec.LabelsEntry
 	15, // 14: skali.cluster.v1.ContainerSpec.healthcheck:type_name -> skali.cluster.v1.Healthcheck
 	12, // 15: skali.cluster.v1.CreateContainerRequest.spec:type_name -> skali.cluster.v1.ContainerSpec
 	1,  // 16: skali.cluster.v1.CreateContainerRequest.pull_policy:type_name -> skali.cluster.v1.PullPolicy
 	10, // 17: skali.cluster.v1.CreateContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
 	10, // 18: skali.cluster.v1.StartContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
 	10, // 19: skali.cluster.v1.StopContainerResponse.container:type_name -> skali.cluster.v1.ContainerInfo
-	2,  // 20: skali.cluster.v1.EnrollmentService.Enroll:input_type -> skali.cluster.v1.EnrollRequest
-	4,  // 21: skali.cluster.v1.NodeService.Heartbeat:input_type -> skali.cluster.v1.HeartbeatRequest
-	16, // 22: skali.cluster.v1.NodeService.CreateContainer:input_type -> skali.cluster.v1.CreateContainerRequest
-	18, // 23: skali.cluster.v1.NodeService.StartContainer:input_type -> skali.cluster.v1.StartContainerRequest
-	20, // 24: skali.cluster.v1.NodeService.StopContainer:input_type -> skali.cluster.v1.StopContainerRequest
-	22, // 25: skali.cluster.v1.NodeService.RemoveContainer:input_type -> skali.cluster.v1.RemoveContainerRequest
-	3,  // 26: skali.cluster.v1.EnrollmentService.Enroll:output_type -> skali.cluster.v1.EnrollResponse
-	5,  // 27: skali.cluster.v1.NodeService.Heartbeat:output_type -> skali.cluster.v1.HeartbeatResponse
-	17, // 28: skali.cluster.v1.NodeService.CreateContainer:output_type -> skali.cluster.v1.CreateContainerResponse
-	19, // 29: skali.cluster.v1.NodeService.StartContainer:output_type -> skali.cluster.v1.StartContainerResponse
-	21, // 30: skali.cluster.v1.NodeService.StopContainer:output_type -> skali.cluster.v1.StopContainerResponse
-	23, // 31: skali.cluster.v1.NodeService.RemoveContainer:output_type -> skali.cluster.v1.RemoveContainerResponse
-	26, // [26:32] is the sub-list for method output_type
-	20, // [20:26] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	8,  // 20: skali.cluster.v1.PullImageResponse.image:type_name -> skali.cluster.v1.ImageInfo
+	2,  // 21: skali.cluster.v1.EnrollmentService.Enroll:input_type -> skali.cluster.v1.EnrollRequest
+	4,  // 22: skali.cluster.v1.NodeService.Heartbeat:input_type -> skali.cluster.v1.HeartbeatRequest
+	16, // 23: skali.cluster.v1.NodeService.CreateContainer:input_type -> skali.cluster.v1.CreateContainerRequest
+	18, // 24: skali.cluster.v1.NodeService.StartContainer:input_type -> skali.cluster.v1.StartContainerRequest
+	20, // 25: skali.cluster.v1.NodeService.StopContainer:input_type -> skali.cluster.v1.StopContainerRequest
+	22, // 26: skali.cluster.v1.NodeService.RemoveContainer:input_type -> skali.cluster.v1.RemoveContainerRequest
+	24, // 27: skali.cluster.v1.NodeService.PullImage:input_type -> skali.cluster.v1.PullImageRequest
+	26, // 28: skali.cluster.v1.NodeService.RemoveImage:input_type -> skali.cluster.v1.RemoveImageRequest
+	3,  // 29: skali.cluster.v1.EnrollmentService.Enroll:output_type -> skali.cluster.v1.EnrollResponse
+	5,  // 30: skali.cluster.v1.NodeService.Heartbeat:output_type -> skali.cluster.v1.HeartbeatResponse
+	17, // 31: skali.cluster.v1.NodeService.CreateContainer:output_type -> skali.cluster.v1.CreateContainerResponse
+	19, // 32: skali.cluster.v1.NodeService.StartContainer:output_type -> skali.cluster.v1.StartContainerResponse
+	21, // 33: skali.cluster.v1.NodeService.StopContainer:output_type -> skali.cluster.v1.StopContainerResponse
+	23, // 34: skali.cluster.v1.NodeService.RemoveContainer:output_type -> skali.cluster.v1.RemoveContainerResponse
+	25, // 35: skali.cluster.v1.NodeService.PullImage:output_type -> skali.cluster.v1.PullImageResponse
+	27, // 36: skali.cluster.v1.NodeService.RemoveImage:output_type -> skali.cluster.v1.RemoveImageResponse
+	29, // [29:37] is the sub-list for method output_type
+	21, // [21:29] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_skali_cluster_v1_cluster_proto_init() }
@@ -2084,7 +2295,7 @@ func file_skali_cluster_v1_cluster_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skali_cluster_v1_cluster_proto_rawDesc), len(file_skali_cluster_v1_cluster_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   27,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

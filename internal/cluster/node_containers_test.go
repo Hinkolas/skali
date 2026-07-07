@@ -188,3 +188,36 @@ func TestHeartbeatInventoryReport(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, hb.GetInventory())
 }
+
+func TestNodeServiceImagePrimitives(t *testing.T) {
+	ctx := context.Background()
+	fake := enginetest.New()
+	client, _, _ := startAgentWithEngine(t, fake)
+
+	// Pull: post-op state comes back, and the heartbeat inventory already
+	// contains it — the node re-samples synchronously after the mutation.
+	pulled, err := client.PullImage(ctx, &clusterpb.PullImageRequest{Reference: "redis:7"})
+	require.NoError(t, err)
+	require.Equal(t, "sha256:fake-redis:7", pulled.GetImage().GetId())
+	require.Equal(t, []string{"redis:7"}, pulled.GetImage().GetRepoTags())
+	hb, err := client.Heartbeat(ctx, &clusterpb.HeartbeatRequest{})
+	require.NoError(t, err)
+	require.Len(t, hb.GetInventory().GetImages(), 1)
+
+	// Remove: deleted ids come back and the report is consistent again.
+	removed, err := client.RemoveImage(ctx, &clusterpb.RemoveImageRequest{Reference: "redis:7"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"sha256:fake-redis:7"}, removed.GetDeletedIds())
+	hb, err = client.Heartbeat(ctx, &clusterpb.HeartbeatRequest{})
+	require.NoError(t, err)
+	require.Empty(t, hb.GetInventory().GetImages())
+
+	// Error mapping: unknown → NotFound; in use without force → AlreadyExists.
+	_, err = client.RemoveImage(ctx, &clusterpb.RemoveImageRequest{Reference: "ghost:1"})
+	require.Equal(t, codes.NotFound, status.Code(err))
+	fake.Inv.Images = append(fake.Inv.Images, engine.Image{
+		ID: "sha256:busy", RepoTags: []string{"busy:1"}, Containers: 1,
+	})
+	_, err = client.RemoveImage(ctx, &clusterpb.RemoveImageRequest{Reference: "busy:1"})
+	require.Equal(t, codes.AlreadyExists, status.Code(err))
+}

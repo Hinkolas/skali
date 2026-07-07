@@ -87,3 +87,57 @@ func TestContainerOpsRemoteEndToEnd(t *testing.T) {
 	_, err = ops.Start(ctx, [16]byte{1}, "whatever")
 	require.ErrorIs(t, err, ErrNodeNotFound)
 }
+
+// TestImageOpsRemoteEndToEnd drives the image primitives against a real
+// fake-engine agent over mTLS: pull with immediate row write-through, remove
+// with precise row deletion, and the sentinel mapping.
+func TestImageOpsRemoteEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	st, ca, masterAddr := startMaster(t)
+
+	self, err := EnsureSelfNode(ctx, st, "")
+	require.NoError(t, err)
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	token, _, err := MintJoinToken(ctx, st, ca, []string{"worker"}, nil)
+	require.NoError(t, err)
+	opts := enrollOptions(t, masterAddr, token)
+	opts.AdvertiseAddr = lis.Addr().String()
+	identity, _, err := RunEnroll(ctx, opts)
+	require.NoError(t, err)
+
+	fake := enginetest.New()
+	_, containers := testContainerDeps(t)
+	agent := NewAgentServer(identity, warmSampler(t), fake, containers, engine.NewInventorySampler(fake))
+	go agent.Serve(lis) //nolint:errcheck
+	t.Cleanup(agent.Stop)
+
+	conns, err := NewConnPool(ca)
+	require.NoError(t, err)
+	t.Cleanup(conns.Close)
+	ops := NewContainerOps(st, conns, self.ID, enginetest.New())
+
+	// Pull: the row is written through immediately, before any heartbeat.
+	row, err := ops.PullImage(ctx, identity.NodeID, "redis:7")
+	require.NoError(t, err)
+	require.Equal(t, "sha256:fake-redis:7", row.ImageID)
+	require.Equal(t, []string{"redis:7"}, row.RepoTags)
+	require.False(t, row.Dangling)
+
+	// Remove: the node reports what it deleted; exactly those rows go.
+	require.NoError(t, ops.RemoveImage(ctx, identity.NodeID, "redis:7", false))
+	_, err = st.GetNodeImage(ctx, store.GetNodeImageParams{NodeID: identity.NodeID, ImageID: row.ImageID})
+	require.Error(t, err, "row deleted with the image")
+
+	// Sentinels: unknown ref, in-use without force, empty ref, unknown node.
+	require.ErrorIs(t, ops.RemoveImage(ctx, identity.NodeID, "ghost:1", false), ErrImageNotFound)
+	fake.Inv.Images = append(fake.Inv.Images, engine.Image{
+		ID: "sha256:busy", RepoTags: []string{"busy:1"}, Containers: 1,
+	})
+	require.ErrorIs(t, ops.RemoveImage(ctx, identity.NodeID, "busy:1", false), ErrImageInUse)
+	_, err = ops.PullImage(ctx, identity.NodeID, "")
+	require.ErrorIs(t, err, ErrInvalidRef)
+	_, err = ops.PullImage(ctx, [16]byte{1}, "redis:7")
+	require.ErrorIs(t, err, ErrNodeNotFound)
+}

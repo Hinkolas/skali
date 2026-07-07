@@ -34,6 +34,50 @@ func (q *Queries) DeleteMissingNodeImages(ctx context.Context, arg DeleteMissing
 	return result.RowsAffected(), nil
 }
 
+const deleteNodeImage = `-- name: DeleteNodeImage :execrows
+DELETE FROM node_images WHERE node_id = $1 AND image_id = $2
+`
+
+type DeleteNodeImageParams struct {
+	NodeID  uuid.UUID
+	ImageID string
+}
+
+func (q *Queries) DeleteNodeImage(ctx context.Context, arg DeleteNodeImageParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteNodeImage, arg.NodeID, arg.ImageID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getNodeImage = `-- name: GetNodeImage :one
+SELECT node_id, image_id, repo_tags, repo_digests, size_bytes, dangling, containers, image_created, first_seen, last_seen FROM node_images WHERE node_id = $1 AND image_id = $2
+`
+
+type GetNodeImageParams struct {
+	NodeID  uuid.UUID
+	ImageID string
+}
+
+func (q *Queries) GetNodeImage(ctx context.Context, arg GetNodeImageParams) (NodeImage, error) {
+	row := q.db.QueryRow(ctx, getNodeImage, arg.NodeID, arg.ImageID)
+	var i NodeImage
+	err := row.Scan(
+		&i.NodeID,
+		&i.ImageID,
+		&i.RepoTags,
+		&i.RepoDigests,
+		&i.SizeBytes,
+		&i.Dangling,
+		&i.Containers,
+		&i.ImageCreated,
+		&i.FirstSeen,
+		&i.LastSeen,
+	)
+	return i, err
+}
+
 const listImages = `-- name: ListImages :many
 SELECT node_images.node_id, node_images.image_id, node_images.repo_tags, node_images.repo_digests, node_images.size_bytes, node_images.dangling, node_images.containers, node_images.image_created, node_images.first_seen, node_images.last_seen, nodes.name AS node_name
 FROM node_images

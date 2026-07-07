@@ -217,6 +217,22 @@ func imageInfoProto(img engine.Image) *clusterpb.ImageInfo {
 	return info
 }
 
+// imageFromProto is imageInfoProto's inverse, for the remote pull's
+// post-op state.
+func imageFromProto(info *clusterpb.ImageInfo) engine.Image {
+	img := engine.Image{
+		ID:          info.GetId(),
+		RepoTags:    info.GetRepoTags(),
+		RepoDigests: info.GetRepoDigests(),
+		SizeBytes:   info.GetSizeBytes(),
+		Containers:  int(info.GetContainers()),
+	}
+	if ts := info.GetCreatedAtUnix(); ts != 0 {
+		img.CreatedAt = time.Unix(ts, 0)
+	}
+	return img
+}
+
 func volumeInfoProto(v engine.Volume) *clusterpb.VolumeInfo {
 	info := &clusterpb.VolumeInfo{
 		Name:       v.Name,

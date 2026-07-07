@@ -58,6 +58,10 @@ service NodeService {
   rpc StartContainer(StartContainerRequest) returns (StartContainerResponse);
   rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
   rpc RemoveContainer(RemoveContainerRequest) returns (RemoveContainerResponse);
+  // Image primitives: explicit master-driven pulls (pre-warming decoupled
+  // from container create) and removes (the building block later GC drives).
+  rpc PullImage(PullImageRequest) returns (PullImageResponse);
+  rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse);
 }
 
 message HeartbeatRequest {}
@@ -245,6 +249,29 @@ message RemoveContainerRequest {
 }
 
 message RemoveContainerResponse {}
+
+message PullImageRequest {
+  // Tag or digest reference (e.g. "nginx:alpine").
+  string reference = 1;
+}
+
+// Carries the post-pull state (in-use count included) so the master records
+// it immediately instead of waiting for the next inventory report.
+message PullImageResponse {
+  ImageInfo image = 1;
+}
+
+message RemoveImageRequest {
+  // Tag or sha256: id.
+  string reference = 1;
+  bool force = 2;
+}
+
+message RemoveImageResponse {
+  // Ids of images actually deleted; empty when the reference was merely
+  // untagged from a multi-tagged image (rows stay, heartbeats refresh tags).
+  repeated string deleted_ids = 1;
+}
 
 // NodeMetrics is the node's latest resource snapshot. Rates are computed on
 // the node (bytes/second over the sample interval); cpu_percent is 0-100

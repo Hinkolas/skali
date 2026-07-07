@@ -19,6 +19,12 @@ ON CONFLICT (node_id, image_id) DO UPDATE SET
 DELETE FROM node_images
 WHERE node_id = $1 AND NOT (image_id = ANY(sqlc.arg(image_ids)::text[]));
 
+-- name: GetNodeImage :one
+SELECT * FROM node_images WHERE node_id = $1 AND image_id = $2;
+
+-- name: DeleteNodeImage :execrows
+DELETE FROM node_images WHERE node_id = $1 AND image_id = $2;
+
 -- The cluster-wide admin list, largest first: the inventory exists to answer
 -- "what is eating disk". node_id narrows to one node when present.
 -- name: ListImages :many

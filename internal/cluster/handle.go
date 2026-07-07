@@ -26,12 +26,21 @@ type NodeHandle interface {
 	StartContainer(ctx context.Context, containerID string) (engine.Container, error)
 	StopContainer(ctx context.Context, containerID string, timeout time.Duration) (engine.Container, error)
 	RemoveContainer(ctx context.Context, containerID string, force bool) error
+	// PullImage pre-warms an image and returns its post-pull state.
+	PullImage(ctx context.Context, ref string) (engine.Image, error)
+	// RemoveImage removes (or untags) an image, returning the ids actually
+	// deleted — empty for an untag-only removal.
+	RemoveImage(ctx context.Context, ref string, force bool) ([]string, error)
 }
 
 // lifecycleTimeout bounds start/stop/remove round trips (stop adds its own
 // grace period on top). Creates run longer — image pulls — and carry their
 // caller's deadline instead.
 const lifecycleTimeout = 30 * time.Second
+
+// pullTimeout bounds a remote image pull end-to-end. Local pulls run under
+// the caller's (already detached) deadline, like container creates.
+const pullTimeout = 5 * time.Minute
 
 // localHandle is the master's own node: no gRPC, mirroring how the poller
 // stamps the self row locally.
@@ -68,6 +77,21 @@ func (h *localHandle) RemoveContainer(ctx context.Context, id string, force bool
 	ctx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
 	defer cancel()
 	return containerErrFromEngine(h.eng.Remove(ctx, id, force))
+}
+
+func (h *localHandle) PullImage(ctx context.Context, ref string) (engine.Image, error) {
+	if err := h.eng.Pull(ctx, ref); err != nil {
+		return engine.Image{}, imageErrFromEngine(err)
+	}
+	img, err := h.eng.InspectImage(ctx, ref)
+	return img, imageErrFromEngine(err)
+}
+
+func (h *localHandle) RemoveImage(ctx context.Context, ref string, force bool) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
+	defer cancel()
+	deleted, err := h.eng.RemoveImage(ctx, ref, force)
+	return deleted, imageErrFromEngine(err)
 }
 
 // remoteHandle drives a worker's NodeService over the shared pool.
@@ -142,6 +166,34 @@ func (h *remoteHandle) RemoveContainer(ctx context.Context, id string, force boo
 	return containerErrFromRPC(err)
 }
 
+func (h *remoteHandle) PullImage(ctx context.Context, ref string) (engine.Image, error) {
+	client, err := h.client()
+	if err != nil {
+		return engine.Image{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
+	resp, err := client.PullImage(ctx, &clusterpb.PullImageRequest{Reference: ref})
+	if err != nil {
+		return engine.Image{}, imageErrFromRPC(err)
+	}
+	return imageFromProto(resp.GetImage()), nil
+}
+
+func (h *remoteHandle) RemoveImage(ctx context.Context, ref string, force bool) ([]string, error) {
+	client, err := h.client()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
+	defer cancel()
+	resp, err := client.RemoveImage(ctx, &clusterpb.RemoveImageRequest{Reference: ref, Force: force})
+	if err != nil {
+		return nil, imageErrFromRPC(err)
+	}
+	return resp.GetDeletedIds(), nil
+}
+
 // containerErrFromEngine maps engine sentinels (the local path) onto the
 // cluster sentinels the REST layer understands.
 func containerErrFromEngine(err error) error {
@@ -156,6 +208,54 @@ func containerErrFromEngine(err error) error {
 		return fmt.Errorf("%w: %v", ErrInvalidSpec, err)
 	case errors.Is(err, engine.ErrEngineUnavailable):
 		return fmt.Errorf("%w: %v", ErrEngineUnavailable, err)
+	default:
+		return err
+	}
+}
+
+// imageErrFromEngine maps engine sentinels onto the image-specific cluster
+// sentinels (the local path).
+func imageErrFromEngine(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, engine.ErrNotFound):
+		return fmt.Errorf("%w: %v", ErrImageNotFound, err)
+	case errors.Is(err, engine.ErrConflict):
+		return fmt.Errorf("%w: %v", ErrImageInUse, err)
+	case errors.Is(err, engine.ErrInvalidReference):
+		return fmt.Errorf("%w: %v", ErrInvalidRef, err)
+	case errors.Is(err, engine.ErrEngineUnavailable):
+		return fmt.Errorf("%w: %v", ErrEngineUnavailable, err)
+	default:
+		return err
+	}
+}
+
+// imageErrFromRPC is imageErrFromEngine's remote twin: gRPC status codes
+// back to the image-specific cluster sentinels.
+func imageErrFromRPC(err error) error {
+	if err == nil {
+		return nil
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return err
+	}
+	switch st.Code() {
+	case codes.NotFound:
+		return fmt.Errorf("%w: %s", ErrImageNotFound, st.Message())
+	case codes.AlreadyExists:
+		return fmt.Errorf("%w: %s", ErrImageInUse, st.Message())
+	case codes.InvalidArgument, codes.FailedPrecondition:
+		return fmt.Errorf("%w: %s", ErrInvalidRef, st.Message())
+	case codes.Unavailable:
+		if strings.Contains(st.Message(), "engine") {
+			return fmt.Errorf("%w: %s", ErrEngineUnavailable, st.Message())
+		}
+		return fmt.Errorf("%w: %s", ErrNodeUnreachable, st.Message())
+	case codes.DeadlineExceeded:
+		return fmt.Errorf("%w: %s", ErrNodeUnreachable, st.Message())
 	default:
 		return err
 	}

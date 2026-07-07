@@ -141,6 +141,8 @@ const (
 	NodeService_StartContainer_FullMethodName  = "/skali.cluster.v1.NodeService/StartContainer"
 	NodeService_StopContainer_FullMethodName   = "/skali.cluster.v1.NodeService/StopContainer"
 	NodeService_RemoveContainer_FullMethodName = "/skali.cluster.v1.NodeService/RemoveContainer"
+	NodeService_PullImage_FullMethodName       = "/skali.cluster.v1.NodeService/PullImage"
+	NodeService_RemoveImage_FullMethodName     = "/skali.cluster.v1.NodeService/RemoveImage"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -160,6 +162,10 @@ type NodeServiceClient interface {
 	StartContainer(ctx context.Context, in *StartContainerRequest, opts ...grpc.CallOption) (*StartContainerResponse, error)
 	StopContainer(ctx context.Context, in *StopContainerRequest, opts ...grpc.CallOption) (*StopContainerResponse, error)
 	RemoveContainer(ctx context.Context, in *RemoveContainerRequest, opts ...grpc.CallOption) (*RemoveContainerResponse, error)
+	// Image primitives: explicit master-driven pulls (pre-warming decoupled
+	// from container create) and removes (the building block later GC drives).
+	PullImage(ctx context.Context, in *PullImageRequest, opts ...grpc.CallOption) (*PullImageResponse, error)
+	RemoveImage(ctx context.Context, in *RemoveImageRequest, opts ...grpc.CallOption) (*RemoveImageResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -220,6 +226,26 @@ func (c *nodeServiceClient) RemoveContainer(ctx context.Context, in *RemoveConta
 	return out, nil
 }
 
+func (c *nodeServiceClient) PullImage(ctx context.Context, in *PullImageRequest, opts ...grpc.CallOption) (*PullImageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PullImageResponse)
+	err := c.cc.Invoke(ctx, NodeService_PullImage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RemoveImage(ctx context.Context, in *RemoveImageRequest, opts ...grpc.CallOption) (*RemoveImageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveImageResponse)
+	err := c.cc.Invoke(ctx, NodeService_RemoveImage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -237,6 +263,10 @@ type NodeServiceServer interface {
 	StartContainer(context.Context, *StartContainerRequest) (*StartContainerResponse, error)
 	StopContainer(context.Context, *StopContainerRequest) (*StopContainerResponse, error)
 	RemoveContainer(context.Context, *RemoveContainerRequest) (*RemoveContainerResponse, error)
+	// Image primitives: explicit master-driven pulls (pre-warming decoupled
+	// from container create) and removes (the building block later GC drives).
+	PullImage(context.Context, *PullImageRequest) (*PullImageResponse, error)
+	RemoveImage(context.Context, *RemoveImageRequest) (*RemoveImageResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -261,6 +291,12 @@ func (UnimplementedNodeServiceServer) StopContainer(context.Context, *StopContai
 }
 func (UnimplementedNodeServiceServer) RemoveContainer(context.Context, *RemoveContainerRequest) (*RemoveContainerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveContainer not implemented")
+}
+func (UnimplementedNodeServiceServer) PullImage(context.Context, *PullImageRequest) (*PullImageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PullImage not implemented")
+}
+func (UnimplementedNodeServiceServer) RemoveImage(context.Context, *RemoveImageRequest) (*RemoveImageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveImage not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -373,6 +409,42 @@ func _NodeService_RemoveContainer_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_PullImage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PullImageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).PullImage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_PullImage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).PullImage(ctx, req.(*PullImageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_RemoveImage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveImageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RemoveImage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RemoveImage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RemoveImage(ctx, req.(*RemoveImageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -399,6 +471,14 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveContainer",
 			Handler:    _NodeService_RemoveContainer_Handler,
+		},
+		{
+			MethodName: "PullImage",
+			Handler:    _NodeService_PullImage_Handler,
+		},
+		{
+			MethodName: "RemoveImage",
+			Handler:    _NodeService_RemoveImage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -86,6 +86,37 @@ func (s *NodeServer) RemoveContainer(ctx context.Context, req *clusterpb.RemoveC
 	return &clusterpb.RemoveContainerResponse{}, nil
 }
 
+func (s *NodeServer) PullImage(ctx context.Context, req *clusterpb.PullImageRequest) (*clusterpb.PullImageResponse, error) {
+	if err := s.eng.Pull(ctx, req.GetReference()); err != nil {
+		return nil, grpcEngineErr(err)
+	}
+	img, err := s.eng.InspectImage(ctx, req.GetReference())
+	if err != nil {
+		return nil, grpcEngineErr(err)
+	}
+	s.resampleInventory(ctx)
+	slog.InfoContext(ctx, "image pulled", "reference", req.GetReference(), "id", img.ID, "size", img.SizeBytes)
+	return &clusterpb.PullImageResponse{Image: imageInfoProto(img)}, nil
+}
+
+func (s *NodeServer) RemoveImage(ctx context.Context, req *clusterpb.RemoveImageRequest) (*clusterpb.RemoveImageResponse, error) {
+	deleted, err := s.eng.RemoveImage(ctx, req.GetReference(), req.GetForce())
+	if err != nil {
+		return nil, grpcEngineErr(err)
+	}
+	s.resampleInventory(ctx)
+	slog.InfoContext(ctx, "image removed", "reference", req.GetReference(), "deleted", len(deleted))
+	return &clusterpb.RemoveImageResponse{DeletedIds: deleted}, nil
+}
+
+// resampleInventory refreshes the cached inventory after an image mutation so
+// the very next heartbeat is already consistent with what just happened.
+func (s *NodeServer) resampleInventory(ctx context.Context) {
+	if s.inventory != nil {
+		s.inventory.SampleNow(ctx)
+	}
+}
+
 // grpcEngineErr maps engine sentinels onto gRPC status codes; the master's
 // remote handle performs the inverse mapping.
 func grpcEngineErr(err error) error {
@@ -96,6 +127,8 @@ func grpcEngineErr(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, engine.ErrNotManaged), errors.Is(err, engine.ErrImageMissing):
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, engine.ErrInvalidReference):
+		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, engine.ErrEngineUnavailable):
 		return status.Error(codes.Unavailable, err.Error())
 	default:

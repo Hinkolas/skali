@@ -15,11 +15,14 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// Container sentinels, mapped by the REST layer.
+// Container and image sentinels, mapped by the REST layer.
 var (
 	ErrContainerNotFound = errors.New("cluster: container not found")
 	ErrContainerConflict = errors.New("cluster: container name already in use")
 	ErrInvalidSpec       = errors.New("cluster: invalid container spec")
+	ErrImageNotFound     = errors.New("cluster: image not found")
+	ErrImageInUse        = errors.New("cluster: image is in use")
+	ErrInvalidRef        = errors.New("cluster: invalid image reference")
 	ErrNodeUnreachable   = errors.New("cluster: node unreachable")
 	ErrEngineUnavailable = errors.New("cluster: container engine unavailable on node")
 )
@@ -152,6 +155,49 @@ func (c *ContainerOps) Remove(ctx context.Context, nodeID uuid.UUID, containerID
 		NodeID: nodeID, ContainerID: containerID,
 	})
 	return err
+}
+
+// PullImage pre-warms an image on a node and writes the observed row
+// through immediately (the heartbeat remains the reconciler of record).
+func (c *ContainerOps) PullImage(ctx context.Context, nodeID uuid.UUID, ref string) (store.NodeImage, error) {
+	node, err := c.node(ctx, nodeID)
+	if err != nil {
+		return store.NodeImage{}, err
+	}
+	if ref == "" {
+		return store.NodeImage{}, fmt.Errorf("%w: reference is required", ErrInvalidRef)
+	}
+	img, err := c.handleFor(node).PullImage(ctx, ref)
+	if err != nil {
+		return store.NodeImage{}, err
+	}
+	if err := c.st.UpsertNodeImage(ctx, upsertNodeImageParams(nodeID, imageInfoProto(img))); err != nil {
+		return store.NodeImage{}, err
+	}
+	return c.st.GetNodeImage(ctx, store.GetNodeImageParams{NodeID: nodeID, ImageID: img.ID})
+}
+
+// RemoveImage removes (or untags) an image on a node. Rows are deleted only
+// for images the node actually deleted — an untag-only removal leaves them,
+// and the next inventory report refreshes the tags.
+func (c *ContainerOps) RemoveImage(ctx context.Context, nodeID uuid.UUID, ref string, force bool) error {
+	node, err := c.node(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if ref == "" {
+		return fmt.Errorf("%w: reference is required", ErrInvalidRef)
+	}
+	deleted, err := c.handleFor(node).RemoveImage(ctx, ref, force)
+	if err != nil {
+		return err
+	}
+	for _, id := range deleted {
+		if _, err := c.st.DeleteNodeImage(ctx, store.DeleteNodeImageParams{NodeID: nodeID, ImageID: id}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *ContainerOps) node(ctx context.Context, id uuid.UUID) (store.Node, error) {
