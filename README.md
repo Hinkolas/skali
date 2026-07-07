@@ -2,14 +2,14 @@
 
 Self-hostable hosting platform: deploy an app from a Dockerfile to a live
 HTTPS URL on your own hardware, with managed Postgres and quota-enforced
-volumes declared alongside it. Design docs live in [`.plan/`](.plan/) —
-authoritative for UX/DX; the technical foundation mirrors the smbx
+volumes declared alongside it. The technical foundation mirrors the smbx
 architecture (Go + chi + Postgres, one token-based API for every client,
-SvelteKit BFF).
+SvelteKit BFF); where skali is headed is the [Roadmap](#roadmap) below.
 
-**Status:** milestone 2 — auth + API shape + node system (multi-node
-clusters: enrollment, mTLS gRPC control plane, heartbeats, Nodes UI). One API
-(`/v1`), three consumers:
+**Status:** milestone 3 — container engine (raw container primitive +
+per-node image/volume inventory, on top of milestone 2's multi-node
+clusters: enrollment, mTLS gRPC control plane, heartbeats, Nodes UI). One
+API (`/v1`), three consumers:
 
 - **`skalid`** — the daemon. On the master it serves the REST API and the
   cluster control plane; on other machines it runs as a worker (`agent`).
@@ -32,9 +32,9 @@ Requirements: Go 1.26+, Node 22+, [go-task](https://taskfile.dev), Docker
 The control-plane database is an **external Postgres by default**: skalid
 connects to whatever `DATABASE_URL` points at (managed DB, host install, or
 the machine-global shared dev container from `~/Taskfile.yml`). Later, skalid
-optionally provisions its own Postgres through its container engine
-(`--db-port` etc.) so no dependency needs managing at all — see
-`.plan/DECISIONS.md`.
+provisions its own Postgres through its container engine as the main
+deployment path, keeping the external database as the option for dev setups
+and managed services.
 
 ```sh
 # 1. Environment (DATABASE_URL, AUTH_SECRET, …)
@@ -101,11 +101,46 @@ internal/
   clusterpb/   generated gRPC bindings (buf generate; checked in)
   config/      env-driven config (godotenv + envconfig)
   crypt/       shared at-rest encryption (AES-GCM, HKDF-derived keys)
+  engine/      container engine adapter: Docker behind the Engine interface,
+               label-driven ownership, container/inventory samplers
+  hostinfo/    host resource sampler (CPU, memory, disk, network rates)
   obs/         slog + OpenTelemetry (env-only, zero egress by default)
   store/       pgx pool/tx glue + sqlc-generated queries
   testdb/      ephemeral Postgres database per test
 web/           SvelteKit BFF (adapter-node)
 ```
+
+## Roadmap
+
+A living outline, roughest at the far end. Done so far: auth + users +
+sessions (m1), the node system (m2), and the container engine — raw
+container primitive plus per-node image/volume inventory (m3).
+
+1. **Image primitives** — explicit master-driven `PullImage`/`RemoveImage`
+   RPCs through the node handles. Pre-warming an image becomes its own slow,
+   retryable step decoupled from container create (which drops back to tight
+   timeouts), and pull failures separate cleanly from container failures.
+2. **Registry + image mirror** — the container registry runs as a
+   `skali.kind=system` container. The master imports upstream images into it
+   digest-pinned; deploys reference the mirror, so every worker pulls fast
+   from the LAN and needs no public egress. The mirror prefix doubles as
+   image ownership (images can't be label-stamped the way containers are):
+   skali only ever garbage-collects mirror-prefixed images. Volume sizes via
+   a slow-cadence disk-usage sweep may join here.
+3. **Event stream** — a `WatchEvents` server-streaming RPC over the existing
+   pooled node connections, fed by the engine's event stream. Doorbell
+   semantics: an event only triggers an immediate resync of that node; the
+   heartbeat stays the level-triggered source of truth, so a lost event
+   costs latency, never correctness.
+4. **Application layer** — projects, applications, releases: desired state
+   on the master and a reconciler driving the node handles. Brings
+   needed-set image GC (the master knows exactly which images each node
+   needs; unneeded mirror-prefixed images are collected event-triggered with
+   a periodic backstop) and the self-managed control-plane Postgres boot
+   path (engine first, then its own database container, then connect).
+5. **Databases, volumes, routing** — shared/dedicated database pools with
+   logical per-project databases, quota-enforced volume provisioning, and
+   Traefik as the routed edge (per-node system components).
 
 ## Tests
 
