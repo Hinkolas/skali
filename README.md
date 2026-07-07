@@ -6,10 +6,10 @@ volumes declared alongside it. The technical foundation mirrors the smbx
 architecture (Go + chi + Postgres, one token-based API for every client,
 SvelteKit BFF); where skali is headed is the [Roadmap](#roadmap) below.
 
-**Status:** milestone 3 — container engine (raw container primitive +
-per-node image/volume inventory, on top of milestone 2's multi-node
-clusters: enrollment, mTLS gRPC control plane, heartbeats, Nodes UI). One
-API (`/v1`), three consumers:
+**Status:** milestone 4 — registry mirror + event stream (a cluster image
+registry as a skali-managed system container, digest-pinned imports,
+doorbell-driven resyncs; on top of milestone 3's container engine and
+milestone 2's multi-node clusters). One API (`/v1`), three consumers:
 
 - **`skalid`** — the daemon. On the master it serves the REST API and the
   cluster control plane; on other machines it runs as a worker (`agent`).
@@ -102,8 +102,10 @@ internal/
   config/      env-driven config (godotenv + envconfig)
   crypt/       shared at-rest encryption (AES-GCM, HKDF-derived keys)
   engine/      container engine adapter: Docker behind the Engine interface,
-               label-driven ownership, container/inventory samplers
+               label-driven ownership, container/inventory samplers, events
   hostinfo/    host resource sampler (CPU, memory, disk, network rates)
+  mirror/      cluster image mirror: registry system container, docker trust
+               distribution, digest-pinned imports + catalog
   obs/         slog + OpenTelemetry (env-only, zero egress by default)
   store/       pgx pool/tx glue + sqlc-generated queries
   testdb/      ephemeral Postgres database per test
@@ -113,31 +115,26 @@ web/           SvelteKit BFF (adapter-node)
 ## Roadmap
 
 A living outline, roughest at the far end. Done so far: auth + users +
-sessions (m1), the node system (m2), and the container engine (m3) — raw
-container primitive, per-node image/volume inventory, and explicit
-master-driven image pull/remove primitives through the node handles.
+sessions (m1), the node system (m2), the container engine (m3), and the
+registry mirror + event stream (m4) — the registry runs as a
+`skali.kind=system` container serving cluster mTLS (node certs double as
+docker client certs, installed at enrollment), the master imports upstream
+images digest-pinned so workers pull from the LAN with no public egress,
+and engine events ride a `WatchEvents` doorbell stream: a node resamples
+and rings, the master resyncs it immediately, while the heartbeat stays the
+level-triggered source of truth.
 
-1. **Registry + image mirror** — the container registry runs as a
-   `skali.kind=system` container. The master imports upstream images into it
-   digest-pinned; deploys reference the mirror, so every worker pulls fast
-   from the LAN and needs no public egress. The mirror prefix doubles as
-   image ownership (images can't be label-stamped the way containers are):
-   skali only ever garbage-collects mirror-prefixed images. Volume sizes via
-   a slow-cadence disk-usage sweep may join here.
-2. **Event stream** — a `WatchEvents` server-streaming RPC over the existing
-   pooled node connections, fed by the engine's event stream. Doorbell
-   semantics: an event only triggers an immediate resync of that node; the
-   heartbeat stays the level-triggered source of truth, so a lost event
-   costs latency, never correctness.
-3. **Application layer** — projects, applications, releases: desired state
+1. **Application layer** — projects, applications, releases: desired state
    on the master and a reconciler driving the node handles. Brings
    needed-set image GC (the master knows exactly which images each node
-   needs; unneeded mirror-prefixed images are collected event-triggered with
-   a periodic backstop) and the self-managed control-plane Postgres boot
-   path (engine first, then its own database container, then connect).
-4. **Databases, volumes, routing** — shared/dedicated database pools with
+   needs; unneeded mirror-prefixed images are collected event-triggered
+   with a periodic backstop), registry blob GC, and the self-managed
+   control-plane Postgres boot path (engine first, then its own database
+   container, then connect).
+2. **Databases, volumes, routing** — shared/dedicated database pools with
    logical per-project databases, quota-enforced volume provisioning, and
-   Traefik as the routed edge (per-node system components).
+   Traefik as the routed edge (per-node system components). Volume sizes
+   via a slow-cadence disk-usage sweep may join here.
 
 ## Tests
 
