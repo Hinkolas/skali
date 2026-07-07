@@ -113,32 +113,29 @@ web/           SvelteKit BFF (adapter-node)
 ## Roadmap
 
 A living outline, roughest at the far end. Done so far: auth + users +
-sessions (m1), the node system (m2), and the container engine — raw
-container primitive plus per-node image/volume inventory (m3).
+sessions (m1), the node system (m2), and the container engine (m3) — raw
+container primitive, per-node image/volume inventory, and explicit
+master-driven image pull/remove primitives through the node handles.
 
-1. **Image primitives** — explicit master-driven `PullImage`/`RemoveImage`
-   RPCs through the node handles. Pre-warming an image becomes its own slow,
-   retryable step decoupled from container create (which drops back to tight
-   timeouts), and pull failures separate cleanly from container failures.
-2. **Registry + image mirror** — the container registry runs as a
+1. **Registry + image mirror** — the container registry runs as a
    `skali.kind=system` container. The master imports upstream images into it
    digest-pinned; deploys reference the mirror, so every worker pulls fast
    from the LAN and needs no public egress. The mirror prefix doubles as
    image ownership (images can't be label-stamped the way containers are):
    skali only ever garbage-collects mirror-prefixed images. Volume sizes via
    a slow-cadence disk-usage sweep may join here.
-3. **Event stream** — a `WatchEvents` server-streaming RPC over the existing
+2. **Event stream** — a `WatchEvents` server-streaming RPC over the existing
    pooled node connections, fed by the engine's event stream. Doorbell
    semantics: an event only triggers an immediate resync of that node; the
    heartbeat stays the level-triggered source of truth, so a lost event
    costs latency, never correctness.
-4. **Application layer** — projects, applications, releases: desired state
+3. **Application layer** — projects, applications, releases: desired state
    on the master and a reconciler driving the node handles. Brings
    needed-set image GC (the master knows exactly which images each node
    needs; unneeded mirror-prefixed images are collected event-triggered with
    a periodic backstop) and the self-managed control-plane Postgres boot
    path (engine first, then its own database container, then connect).
-5. **Databases, volumes, routing** — shared/dedicated database pools with
+4. **Databases, volumes, routing** — shared/dedicated database pools with
    logical per-project databases, quota-enforced volume provisioning, and
    Traefik as the routed edge (per-node system components).
 
