@@ -11,6 +11,9 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 )
 
@@ -133,6 +136,48 @@ func (d *Docker) List(ctx context.Context) ([]Container, error) {
 	return out, nil
 }
 
+// Inventory lists every image and volume on the node in one pass. One
+// unfiltered container listing (any owner, any state) feeds the in-use
+// counts: an image or volume referenced by anyone's container must never
+// look unused.
+func (d *Docker) Inventory(ctx context.Context) (Inventory, error) {
+	imgRes, err := d.cli.ImageList(ctx, client.ImageListOptions{})
+	if err != nil {
+		return Inventory{}, classify(err)
+	}
+	volRes, err := d.cli.VolumeList(ctx, client.VolumeListOptions{})
+	if err != nil {
+		return Inventory{}, classify(err)
+	}
+	ctrRes, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return Inventory{}, classify(err)
+	}
+
+	imageRefs := make(map[string]int, len(ctrRes.Items))
+	volumeRefs := make(map[string]int)
+	for _, c := range ctrRes.Items {
+		imageRefs[c.ImageID]++
+		for _, m := range c.Mounts {
+			if m.Type == mount.TypeVolume && m.Name != "" {
+				volumeRefs[m.Name]++
+			}
+		}
+	}
+
+	inv := Inventory{
+		Images:  make([]Image, 0, len(imgRes.Items)),
+		Volumes: make([]Volume, 0, len(volRes.Items)),
+	}
+	for _, s := range imgRes.Items {
+		inv.Images = append(inv.Images, imageFromSummary(s, imageRefs[s.ID]))
+	}
+	for _, v := range volRes.Items {
+		inv.Volumes = append(inv.Volumes, volumeFromAPI(v, volumeRefs[v.Name]))
+	}
+	return inv, nil
+}
+
 func (d *Docker) Stats(ctx context.Context, id string) (RawStats, error) {
 	res, err := d.cli.ContainerStats(ctx, id, client.ContainerStatsOptions{})
 	if err != nil {
@@ -212,6 +257,43 @@ func containerFromSummary(s container.Summary) Container {
 		c.Health = string(s.Health.Status)
 	}
 	return c
+}
+
+func imageFromSummary(s image.Summary, refs int) Image {
+	img := Image{
+		ID:         s.ID,
+		SizeBytes:  s.Size,
+		Containers: refs,
+	}
+	if s.Created > 0 {
+		img.CreatedAt = time.Unix(s.Created, 0)
+	}
+	// "<none>" placeholders express danglingness; they are not tags.
+	for _, t := range s.RepoTags {
+		if t != "<none>:<none>" {
+			img.RepoTags = append(img.RepoTags, t)
+		}
+	}
+	for _, d := range s.RepoDigests {
+		if d != "<none>@<none>" {
+			img.RepoDigests = append(img.RepoDigests, d)
+		}
+	}
+	return img
+}
+
+func volumeFromAPI(v volume.Volume, refs int) Volume {
+	out := Volume{
+		Name:       v.Name,
+		Driver:     v.Driver,
+		Scope:      v.Scope,
+		Mountpoint: v.Mountpoint,
+		Labels:     v.Labels,
+		Containers: refs,
+	}
+	// Omitted or unparseable timestamps land on the zero value.
+	out.CreatedAt, _ = time.Parse(time.RFC3339Nano, v.CreatedAt)
+	return out
 }
 
 // rawFromStats reduces a daemon stats sample to skali's cumulative counters.

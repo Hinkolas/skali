@@ -12,7 +12,11 @@
 //     invisible: List filters on the label, and Inspect and all mutating
 //     operations refuse unlabeled containers. After a daemon or node restart
 //     "what does skali run here" is rebuilt purely from labels — nodes keep
-//     no local state.
+//     no local state. Inventory is the one deliberate exception: it reports
+//     every image and volume on the node, managed or not, because its job is
+//     whole-node disk visibility (images can't be label-stamped at pull, so
+//     future image mutations enforce ownership via the registry mirror
+//     prefix instead).
 //   - No database, no eager connection. Constructing an engine touches
 //     neither the daemon nor any other service: the master will eventually
 //     boot engine-first (start engine → ensure its own control-plane
@@ -139,6 +143,40 @@ type Stats struct {
 	NetTxRate  uint64
 }
 
+// Image is one image present on the node, managed or not. An image with no
+// repo tags is dangling ("<none>:<none>" placeholders are dropped at the
+// adapter, they are danglingness, not tags).
+type Image struct {
+	ID          string // content-addressable "sha256:…"
+	RepoTags    []string
+	RepoDigests []string
+	SizeBytes   int64
+	Containers  int       // containers referencing it, any owner or state; 0 = unused
+	CreatedAt   time.Time // zero when the daemon omits it
+}
+
+// Volume is one named volume on the node, managed or not (anonymous 64-hex
+// volumes included). Sizes are deliberately absent: only the daemon's
+// system-df walk computes them, far too expensive for a sampler.
+type Volume struct {
+	Name       string
+	Driver     string
+	Scope      string // "local" | "global"
+	Mountpoint string
+	Labels     map[string]string
+	Containers int       // containers mounting it, any owner or state; 0 = unused
+	CreatedAt  time.Time // zero when the daemon omits it
+}
+
+// Inventory is one consistent snapshot of everything on the node that
+// occupies disk. In-use counts are joined against an unfiltered container
+// listing at the adapter, so an image or volume referenced by anyone's
+// container never looks unused.
+type Inventory struct {
+	Images  []Image
+	Volumes []Volume
+}
+
 // Engine is the Executor seam's node-local surface. Implementations must
 // wrap daemon failures into the sentinel errors above.
 //
@@ -156,6 +194,10 @@ type Engine interface {
 	Remove(ctx context.Context, id string, force bool) error
 	Inspect(ctx context.Context, id string) (Container, error)
 	List(ctx context.Context) ([]Container, error)
+	// Inventory reports all images and volumes on the node — unfiltered,
+	// read-only (see the package doc for why this bypasses the label
+	// boundary).
+	Inventory(ctx context.Context) (Inventory, error)
 	Stats(ctx context.Context, id string) (RawStats, error)
 	// Logs returns the daemon's log stream (multiplexed stdout/stderr framing
 	// when the container has no TTY). tail <= 0 means the full log.

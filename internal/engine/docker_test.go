@@ -147,6 +147,55 @@ func TestDockerPullNeverFailsOnMissingImage(t *testing.T) {
 	require.ErrorIs(t, err, engine.ErrImageMissing)
 }
 
+func TestDockerInventory(t *testing.T) {
+	eng := testEngine(t)
+	cli := rawClient(t)
+	ctx := t.Context()
+
+	require.NoError(t, eng.Pull(ctx, testImage))
+
+	// A container mounting a named volume: the daemon creates the volume on
+	// the fly, and both the image and the volume must show up in-use.
+	volName := fmt.Sprintf("skali-engine-inv-vol-%d", time.Now().UnixNano())
+	id, err := eng.Create(ctx, engine.ContainerSpec{
+		Name:    fmt.Sprintf("skali-engine-inv-%d", time.Now().UnixNano()),
+		Image:   testImage,
+		Command: []string{"sleep", "300"},
+		Mounts:  []engine.Mount{{Type: "volume", Source: volName, Target: "/data"}},
+		Labels:  map[string]string{engine.LabelKind: engine.KindSystem},
+	})
+	require.NoError(t, err)
+	removeOnCleanup(t, id)
+	t.Cleanup(func() {
+		_, _ = cli.VolumeRemove(context.Background(), volName, mobyclient.VolumeRemoveOptions{Force: true})
+	})
+
+	inv, err := eng.Inventory(ctx)
+	require.NoError(t, err)
+
+	var img *engine.Image
+	for i := range inv.Images {
+		for _, tag := range inv.Images[i].RepoTags {
+			if tag == "docker.io/library/"+testImage || tag == testImage {
+				img = &inv.Images[i]
+			}
+		}
+	}
+	require.NotNil(t, img, "pulled image must be inventoried")
+	require.Positive(t, img.SizeBytes)
+	require.GreaterOrEqual(t, img.Containers, 1, "created container must count as in-use")
+
+	var vol *engine.Volume
+	for i := range inv.Volumes {
+		if inv.Volumes[i].Name == volName {
+			vol = &inv.Volumes[i]
+		}
+	}
+	require.NotNil(t, vol, "auto-created volume must be inventoried")
+	require.Equal(t, 1, vol.Containers)
+	require.NotEmpty(t, vol.Driver)
+}
+
 func containsID(cs []engine.Container, id string) bool {
 	for _, c := range cs {
 		if c.ID == id {

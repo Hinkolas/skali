@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,9 @@ type Fake struct {
 	ListErr error
 	// Pulled records every Pull, newest last.
 	Pulled []string
+	// Inv is what Inventory returns; InventoryErr is its unreachable seam.
+	Inv          engine.Inventory
+	InventoryErr error
 }
 
 func New(images ...string) *Fake {
@@ -171,6 +175,18 @@ func (f *Fake) List(_ context.Context) ([]engine.Container, error) {
 		}
 	}
 	return out, nil
+}
+
+func (f *Fake) Inventory(_ context.Context) (engine.Inventory, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.InventoryErr != nil {
+		return engine.Inventory{}, f.InventoryErr
+	}
+	return engine.Inventory{
+		Images:  slices.Clone(f.Inv.Images),
+		Volumes: slices.Clone(f.Inv.Volumes),
+	}, nil
 }
 
 func (f *Fake) Stats(_ context.Context, id string) (engine.RawStats, error) {
