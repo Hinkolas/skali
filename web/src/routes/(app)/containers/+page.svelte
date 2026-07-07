@@ -30,6 +30,10 @@
 		modalOptions as createContainerOptions,
 		type CreateContainerResult
 	} from '$lib/components/containers/CreateContainerModal.svelte';
+	import PullImageModal, {
+		modalOptions as pullImageOptions,
+		type PullImageResult
+	} from '$lib/components/containers/PullImageModal.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -42,7 +46,7 @@
 	const TAB_IDS = ['containers', 'images', 'volumes'];
 
 	const ctrGrid = 'grid-cols-[1.1fr_2.4fr_0.9fr_1.2fr_1.5fr_96px]';
-	const imgGrid = 'grid-cols-[1.1fr_2.6fr_0.8fr_1.3fr_0.9fr]';
+	const imgGrid = 'grid-cols-[1.1fr_2.6fr_0.8fr_1.3fr_0.9fr_56px]';
 	const volGrid = 'grid-cols-[1.1fr_2.6fr_0.8fr_1fr_0.9fr]';
 
 	// Live-ish state: re-run the server load every 10s while the page is open.
@@ -161,6 +165,56 @@
 		}
 	}
 
+	let pulling = $state(false);
+
+	async function pullImage() {
+		const result = await modal.open<PullImageResult>(
+			PullImageModal,
+			{
+				nodes: data.nodes.map((n) => ({ id: n.id, name: n.name })),
+				initialNodeId: nodeFilter
+			},
+			pullImageOptions
+		).result;
+		if (!result) return;
+		pulling = true;
+		try {
+			const res = await api.post<{ image: NodeImage }>(
+				`/v1/nodes/${result.nodeId}/images/pull`,
+				{ reference: result.reference }
+			);
+			toast.success(`Pulled ${result.reference} onto ${res.image.node_name}`);
+			await invalidateAll();
+		} catch (err) {
+			toast.error(err instanceof ApiError ? err.message : `Could not pull ${result.reference}`);
+		} finally {
+			pulling = false;
+		}
+	}
+
+	function removeImage(img: NodeImage) {
+		const ref = img.repo_tags[0] ?? img.id;
+		dialog.confirm({
+			title: `Remove ${imageName(img)}?`,
+			description:
+				img.containers > 0
+					? `The image is in use by ${img.containers} container${img.containers === 1 ? '' : 's'} on ${img.node_name}; removal will fail until they are gone.`
+					: `The image is removed from ${img.node_name}. It can always be pulled again.`,
+			confirmLabel: 'Remove image',
+			variant: 'danger',
+			onConfirm: async () => {
+				try {
+					await api.del(`/v1/nodes/${img.node_id}/images?ref=${encodeURIComponent(ref)}`);
+					toast.success(`Removed ${imageName(img)}`);
+					await invalidateAll();
+				} catch (err) {
+					toast.error(err instanceof ApiError ? err.message : 'Could not remove the image');
+					throw err; // keep the dialog open
+				}
+			}
+		});
+	}
+
 	async function startStop(c: NodeContainer, action: 'start' | 'stop') {
 		if (busyIds.includes(c.id)) return;
 		busyIds = [...busyIds, c.id];
@@ -211,10 +265,17 @@
 		{data.nodes.length} node{data.nodes.length === 1 ? '' : 's'}
 	{/snippet}
 	{#snippet actions()}
-		<Button variant="primary" busy={creating} onclick={addContainer}>
-			<Plus size={15} strokeWidth={2.5} />
-			Add container
-		</Button>
+		{#if tab === 'images'}
+			<Button variant="primary" busy={pulling} onclick={pullImage}>
+				<Plus size={15} strokeWidth={2.5} />
+				Pull image
+			</Button>
+		{:else}
+			<Button variant="primary" busy={creating} onclick={addContainer}>
+				<Plus size={15} strokeWidth={2.5} />
+				Add container
+			</Button>
+		{/if}
 	{/snippet}
 </PageHeader>
 
@@ -378,7 +439,7 @@
 					: 'Every image on every node shows up here — skali-managed or not — as heartbeats report them.'}
 			/>
 		{:else}
-			<Table columns={['Node', 'Image', 'Size', 'Status', 'Created']} grid={imgGrid}>
+			<Table columns={['Node', 'Image', 'Size', 'Status', 'Created', '']} grid={imgGrid}>
 				{#each images as img (img.node_id + img.id)}
 					{@const unused = img.containers === 0}
 					<div
@@ -410,6 +471,17 @@
 						</div>
 						<div class="font-mono text-text-muted text-[11px]">
 							{img.created_at ? relativeTime(img.created_at) : '—'}
+						</div>
+						<div class="flex items-center justify-end">
+							<button
+								type="button"
+								onclick={() => removeImage(img)}
+								class="text-text-ghost hover:text-status-danger cursor-pointer rounded-lg p-1.5 transition-colors hover:bg-white/5"
+								aria-label="Remove {imageName(img)}"
+								title="Remove"
+							>
+								<Trash2 size={14} />
+							</button>
 						</div>
 					</div>
 				{/each}
