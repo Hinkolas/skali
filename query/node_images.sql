@@ -19,6 +19,11 @@ ON CONFLICT (node_id, image_id) DO UPDATE SET
 DELETE FROM node_images
 WHERE node_id = $1 AND NOT (image_id = ANY(sqlc.arg(image_ids)::text[]));
 
--- Largest first: the inventory exists to answer "what is eating disk".
--- name: ListNodeImages :many
-SELECT * FROM node_images WHERE node_id = $1 ORDER BY size_bytes DESC, image_id;
+-- The cluster-wide admin list, largest first: the inventory exists to answer
+-- "what is eating disk". node_id narrows to one node when present.
+-- name: ListImages :many
+SELECT sqlc.embed(node_images), nodes.name AS node_name
+FROM node_images
+JOIN nodes ON nodes.id = node_images.node_id
+WHERE sqlc.narg(node_id)::uuid IS NULL OR node_images.node_id = sqlc.narg(node_id)
+ORDER BY node_images.size_bytes DESC, node_images.image_id, nodes.name;

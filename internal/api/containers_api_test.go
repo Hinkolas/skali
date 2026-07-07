@@ -28,7 +28,9 @@ func TestContainersRequireAdmin(t *testing.T) {
 
 	base := fmt.Sprintf("/v1/nodes/%s/containers", a.selfID)
 	for _, tc := range []struct{ method, path string }{
-		{"GET", base},
+		{"GET", "/v1/containers"},
+		{"GET", "/v1/images"},
+		{"GET", "/v1/volumes"},
 		{"POST", base},
 		{"POST", base + "/abc/start"},
 		{"POST", base + "/abc/stop"},
@@ -48,7 +50,7 @@ func TestContainersWritesGatedBySudoMode(t *testing.T) {
 	a.staleAllSessions()
 
 	// Reads stay open for a stale admin.
-	status, _ := a.do("GET", fmt.Sprintf("/v1/nodes/%s/containers", a.selfID), token, nil)
+	status, _ := a.do("GET", "/v1/containers", token, nil)
 	require.Equal(t, http.StatusOK, status)
 
 	status, body := a.do("POST", fmt.Sprintf("/v1/nodes/%s/containers", a.selfID), token, map[string]any{
@@ -67,14 +69,23 @@ func TestContainerLifecycleViaAPI(t *testing.T) {
 	require.Equal(t, "web", ctr["name"])
 	require.Equal(t, "running", ctr["state"])
 	require.Equal(t, "application", ctr["kind"])
+	require.Equal(t, a.selfID.String(), ctr["node_id"], "write responses carry node identity")
+	require.NotEmpty(t, ctr["node_name"])
 	labels := ctr["labels"].(map[string]any)
 	require.Equal(t, "true", labels["skali.managed"])
 	require.Equal(t, "application", labels["skali.kind"])
 	cid := ctr["id"].(string)
 	base := fmt.Sprintf("/v1/nodes/%s/containers", a.selfID)
 
-	// Observed state is written through immediately.
-	status, body := a.do("GET", base, token, nil)
+	// Observed state is written through immediately; the cluster-wide list
+	// carries node identity and honors the node filter.
+	status, body := a.do("GET", "/v1/containers", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, body["containers"].([]any), 1)
+	row := body["containers"].([]any)[0].(map[string]any)
+	require.Equal(t, a.selfID.String(), row["node_id"])
+	require.NotEmpty(t, row["node_name"])
+	status, body = a.do("GET", "/v1/containers?node="+a.selfID.String(), token, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Len(t, body["containers"].([]any), 1)
 
@@ -95,7 +106,7 @@ func TestContainerLifecycleViaAPI(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, status)
 	_, ok := a.eng.Get(cid)
 	require.False(t, ok, "container should be gone from the engine")
-	status, body = a.do("GET", base, token, nil)
+	status, body = a.do("GET", "/v1/containers", token, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Empty(t, body["containers"], "observed row deleted with the container")
 }

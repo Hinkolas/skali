@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/engine"
@@ -37,6 +40,8 @@ type containerStatsPayload struct {
 
 type containerPayload struct {
 	ID           string                 `json:"id"`
+	NodeID       uuid.UUID              `json:"node_id"`
+	NodeName     string                 `json:"node_name"`
 	Name         string                 `json:"name"`
 	Image        string                 `json:"image"`
 	Kind         string                 `json:"kind"`
@@ -52,9 +57,11 @@ type containerPayload struct {
 	LastSeen     time.Time              `json:"last_seen"`
 }
 
-func newContainerPayload(c *store.NodeContainer) containerPayload {
+func newContainerPayload(c *store.NodeContainer, nodeName string) containerPayload {
 	p := containerPayload{
 		ID:           c.ContainerID,
+		NodeID:       c.NodeID,
+		NodeName:     nodeName,
 		Name:         c.Name,
 		Image:        c.Image,
 		Kind:         c.Kind,
@@ -94,20 +101,40 @@ func pathContainerID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return cid, true
 }
 
-// GET /v1/nodes/{id}/containers
-func (h *containersHandlers) list(w http.ResponseWriter, r *http.Request) {
+// requireNode resolves the {id} route param to a node, 404ing when it is
+// malformed or unknown. Write handlers need the row anyway for node_name in
+// the response payload.
+func (h *containersHandlers) requireNode(w http.ResponseWriter, r *http.Request) (store.Node, bool) {
 	id, ok := pathNodeID(w, r)
+	if !ok {
+		return store.Node{}, false
+	}
+	node, err := h.st.GetNodeByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, codeNotFound, "not found")
+			return store.Node{}, false
+		}
+		writeClusterError(r.Context(), w, err)
+		return store.Node{}, false
+	}
+	return node, true
+}
+
+// GET /v1/containers?node=
+func (h *containersHandlers) list(w http.ResponseWriter, r *http.Request) {
+	filter, ok := queryNodeFilter(w, r, h.st)
 	if !ok {
 		return
 	}
-	rows, err := h.containers.List(r.Context(), id)
+	rows, err := h.st.ListContainers(r.Context(), filter)
 	if err != nil {
 		writeClusterError(r.Context(), w, err)
 		return
 	}
 	payload := make([]containerPayload, len(rows))
 	for i := range rows {
-		payload[i] = newContainerPayload(&rows[i])
+		payload[i] = newContainerPayload(&rows[i].NodeContainer, rows[i].NodeName)
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Containers []containerPayload `json:"containers"`
@@ -116,10 +143,11 @@ func (h *containersHandlers) list(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/nodes/{id}/containers
 func (h *containersHandlers) create(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathNodeID(w, r)
+	node, ok := h.requireNode(w, r)
 	if !ok {
 		return
 	}
+	id := node.ID
 	var req struct {
 		Name    string            `json:"name"`
 		Image   string            `json:"image"`
@@ -211,12 +239,12 @@ func (h *containersHandlers) create(w http.ResponseWriter, r *http.Request) {
 		"node_id", id, "container_id", row.ContainerID, "name", row.Name, "by", UserFrom(r.Context()).ID)
 	writeJSON(w, http.StatusCreated, struct {
 		Container containerPayload `json:"container"`
-	}{newContainerPayload(&row)})
+	}{newContainerPayload(&row, node.Name)})
 }
 
 // POST /v1/nodes/{id}/containers/{cid}/start
 func (h *containersHandlers) start(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathNodeID(w, r)
+	node, ok := h.requireNode(w, r)
 	if !ok {
 		return
 	}
@@ -224,19 +252,19 @@ func (h *containersHandlers) start(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	row, err := h.containers.Start(r.Context(), id, cid)
+	row, err := h.containers.Start(r.Context(), node.ID, cid)
 	if err != nil {
 		writeClusterError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Container containerPayload `json:"container"`
-	}{newContainerPayload(&row)})
+	}{newContainerPayload(&row, node.Name)})
 }
 
 // POST /v1/nodes/{id}/containers/{cid}/stop
 func (h *containersHandlers) stop(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathNodeID(w, r)
+	node, ok := h.requireNode(w, r)
 	if !ok {
 		return
 	}
@@ -255,14 +283,14 @@ func (h *containersHandlers) stop(w http.ResponseWriter, r *http.Request) {
 		}
 		timeout = time.Duration(req.TimeoutSeconds) * time.Second
 	}
-	row, err := h.containers.Stop(r.Context(), id, cid, timeout)
+	row, err := h.containers.Stop(r.Context(), node.ID, cid, timeout)
 	if err != nil {
 		writeClusterError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Container containerPayload `json:"container"`
-	}{newContainerPayload(&row)})
+	}{newContainerPayload(&row, node.Name)})
 }
 
 // DELETE /v1/nodes/{id}/containers/{cid}?force=true
@@ -283,4 +311,44 @@ func (h *containersHandlers) remove(w http.ResponseWriter, r *http.Request) {
 	slog.InfoContext(r.Context(), "api: container removed",
 		"node_id", id, "container_id", cid, "by", UserFrom(r.Context()).ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /v1/images?node=
+func (h *containersHandlers) images(w http.ResponseWriter, r *http.Request) {
+	filter, ok := queryNodeFilter(w, r, h.st)
+	if !ok {
+		return
+	}
+	rows, err := h.st.ListImages(r.Context(), filter)
+	if err != nil {
+		writeClusterError(r.Context(), w, err)
+		return
+	}
+	payload := make([]imagePayload, len(rows))
+	for i := range rows {
+		payload[i] = newImagePayload(&rows[i].NodeImage, rows[i].NodeName)
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Images []imagePayload `json:"images"`
+	}{payload})
+}
+
+// GET /v1/volumes?node=
+func (h *containersHandlers) volumes(w http.ResponseWriter, r *http.Request) {
+	filter, ok := queryNodeFilter(w, r, h.st)
+	if !ok {
+		return
+	}
+	rows, err := h.st.ListVolumes(r.Context(), filter)
+	if err != nil {
+		writeClusterError(r.Context(), w, err)
+		return
+	}
+	payload := make([]volumePayload, len(rows))
+	for i := range rows {
+		payload[i] = newVolumePayload(&rows[i].NodeVolume, rows[i].NodeName)
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Volumes []volumePayload `json:"volumes"`
+	}{payload})
 }

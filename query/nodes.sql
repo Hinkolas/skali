@@ -6,6 +6,16 @@ RETURNING *;
 -- name: ListNodes :many
 SELECT * FROM nodes ORDER BY created_at;
 
+-- The admin list view: node rows plus engine counts for the UI's at-a-glance
+-- row. Gone containers are operator breadcrumbs, not workload — excluded.
+-- name: ListNodesWithEngineCounts :many
+SELECT sqlc.embed(nodes),
+    (SELECT count(*) FROM node_containers c
+        WHERE c.node_id = nodes.id AND c.state <> 'gone')::int AS containers,
+    (SELECT count(*) FROM node_images i WHERE i.node_id = nodes.id)::int AS images,
+    (SELECT count(*) FROM node_volumes v WHERE v.node_id = nodes.id)::int AS volumes
+FROM nodes ORDER BY created_at;
+
 -- name: GetNodeByID :one
 SELECT * FROM nodes WHERE id = $1;
 

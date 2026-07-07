@@ -34,31 +34,42 @@ func (q *Queries) DeleteMissingNodeImages(ctx context.Context, arg DeleteMissing
 	return result.RowsAffected(), nil
 }
 
-const listNodeImages = `-- name: ListNodeImages :many
-SELECT node_id, image_id, repo_tags, repo_digests, size_bytes, dangling, containers, image_created, first_seen, last_seen FROM node_images WHERE node_id = $1 ORDER BY size_bytes DESC, image_id
+const listImages = `-- name: ListImages :many
+SELECT node_images.node_id, node_images.image_id, node_images.repo_tags, node_images.repo_digests, node_images.size_bytes, node_images.dangling, node_images.containers, node_images.image_created, node_images.first_seen, node_images.last_seen, nodes.name AS node_name
+FROM node_images
+JOIN nodes ON nodes.id = node_images.node_id
+WHERE $1::uuid IS NULL OR node_images.node_id = $1
+ORDER BY node_images.size_bytes DESC, node_images.image_id, nodes.name
 `
 
-// Largest first: the inventory exists to answer "what is eating disk".
-func (q *Queries) ListNodeImages(ctx context.Context, nodeID uuid.UUID) ([]NodeImage, error) {
-	rows, err := q.db.Query(ctx, listNodeImages, nodeID)
+type ListImagesRow struct {
+	NodeImage NodeImage
+	NodeName  string
+}
+
+// The cluster-wide admin list, largest first: the inventory exists to answer
+// "what is eating disk". node_id narrows to one node when present.
+func (q *Queries) ListImages(ctx context.Context, nodeID *uuid.UUID) ([]ListImagesRow, error) {
+	rows, err := q.db.Query(ctx, listImages, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []NodeImage
+	var items []ListImagesRow
 	for rows.Next() {
-		var i NodeImage
+		var i ListImagesRow
 		if err := rows.Scan(
-			&i.NodeID,
-			&i.ImageID,
-			&i.RepoTags,
-			&i.RepoDigests,
-			&i.SizeBytes,
-			&i.Dangling,
-			&i.Containers,
-			&i.ImageCreated,
-			&i.FirstSeen,
-			&i.LastSeen,
+			&i.NodeImage.NodeID,
+			&i.NodeImage.ImageID,
+			&i.NodeImage.RepoTags,
+			&i.NodeImage.RepoDigests,
+			&i.NodeImage.SizeBytes,
+			&i.NodeImage.Dangling,
+			&i.NodeImage.Containers,
+			&i.NodeImage.ImageCreated,
+			&i.NodeImage.FirstSeen,
+			&i.NodeImage.LastSeen,
+			&i.NodeName,
 		); err != nil {
 			return nil, err
 		}

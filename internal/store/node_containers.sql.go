@@ -65,39 +65,50 @@ func (q *Queries) GetNodeContainer(ctx context.Context, arg GetNodeContainerPara
 	return i, err
 }
 
-const listNodeContainers = `-- name: ListNodeContainers :many
-SELECT node_id, container_id, name, image, kind, state, health, exit_code, restart_count, labels, container_created, container_started, cpu_pct, mem_used, mem_limit, net_rx_rate, net_tx_rate, first_seen, last_seen FROM node_containers WHERE node_id = $1 ORDER BY name
+const listContainers = `-- name: ListContainers :many
+SELECT node_containers.node_id, node_containers.container_id, node_containers.name, node_containers.image, node_containers.kind, node_containers.state, node_containers.health, node_containers.exit_code, node_containers.restart_count, node_containers.labels, node_containers.container_created, node_containers.container_started, node_containers.cpu_pct, node_containers.mem_used, node_containers.mem_limit, node_containers.net_rx_rate, node_containers.net_tx_rate, node_containers.first_seen, node_containers.last_seen, nodes.name AS node_name
+FROM node_containers
+JOIN nodes ON nodes.id = node_containers.node_id
+WHERE $1::uuid IS NULL OR node_containers.node_id = $1
+ORDER BY nodes.name, node_containers.name
 `
 
-func (q *Queries) ListNodeContainers(ctx context.Context, nodeID uuid.UUID) ([]NodeContainer, error) {
-	rows, err := q.db.Query(ctx, listNodeContainers, nodeID)
+type ListContainersRow struct {
+	NodeContainer NodeContainer
+	NodeName      string
+}
+
+// The cluster-wide admin list; node_id narrows to one node when present.
+func (q *Queries) ListContainers(ctx context.Context, nodeID *uuid.UUID) ([]ListContainersRow, error) {
+	rows, err := q.db.Query(ctx, listContainers, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []NodeContainer
+	var items []ListContainersRow
 	for rows.Next() {
-		var i NodeContainer
+		var i ListContainersRow
 		if err := rows.Scan(
-			&i.NodeID,
-			&i.ContainerID,
-			&i.Name,
-			&i.Image,
-			&i.Kind,
-			&i.State,
-			&i.Health,
-			&i.ExitCode,
-			&i.RestartCount,
-			&i.Labels,
-			&i.ContainerCreated,
-			&i.ContainerStarted,
-			&i.CpuPct,
-			&i.MemUsed,
-			&i.MemLimit,
-			&i.NetRxRate,
-			&i.NetTxRate,
-			&i.FirstSeen,
-			&i.LastSeen,
+			&i.NodeContainer.NodeID,
+			&i.NodeContainer.ContainerID,
+			&i.NodeContainer.Name,
+			&i.NodeContainer.Image,
+			&i.NodeContainer.Kind,
+			&i.NodeContainer.State,
+			&i.NodeContainer.Health,
+			&i.NodeContainer.ExitCode,
+			&i.NodeContainer.RestartCount,
+			&i.NodeContainer.Labels,
+			&i.NodeContainer.ContainerCreated,
+			&i.NodeContainer.ContainerStarted,
+			&i.NodeContainer.CpuPct,
+			&i.NodeContainer.MemUsed,
+			&i.NodeContainer.MemLimit,
+			&i.NodeContainer.NetRxRate,
+			&i.NodeContainer.NetTxRate,
+			&i.NodeContainer.FirstSeen,
+			&i.NodeContainer.LastSeen,
+			&i.NodeName,
 		); err != nil {
 			return nil, err
 		}

@@ -415,6 +415,71 @@ func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
 	return items, nil
 }
 
+const listNodesWithEngineCounts = `-- name: ListNodesWithEngineCounts :many
+SELECT nodes.id, nodes.name, nodes.roles, nodes.advertise_addr, nodes.public_addr, nodes.arch, nodes.os, nodes.skalid_version, nodes.cert_serial, nodes.status, nodes.last_seen, nodes.created_at, nodes.updated_at, nodes.cpu_pct, nodes.mem_used, nodes.mem_total, nodes.disk_used, nodes.disk_total, nodes.net_rx_rate, nodes.net_tx_rate, nodes.disk_read_rate, nodes.disk_write_rate, nodes.load1,
+    (SELECT count(*) FROM node_containers c
+        WHERE c.node_id = nodes.id AND c.state <> 'gone')::int AS containers,
+    (SELECT count(*) FROM node_images i WHERE i.node_id = nodes.id)::int AS images,
+    (SELECT count(*) FROM node_volumes v WHERE v.node_id = nodes.id)::int AS volumes
+FROM nodes ORDER BY created_at
+`
+
+type ListNodesWithEngineCountsRow struct {
+	Node       Node
+	Containers int32
+	Images     int32
+	Volumes    int32
+}
+
+// The admin list view: node rows plus engine counts for the UI's at-a-glance
+// row. Gone containers are operator breadcrumbs, not workload — excluded.
+func (q *Queries) ListNodesWithEngineCounts(ctx context.Context) ([]ListNodesWithEngineCountsRow, error) {
+	rows, err := q.db.Query(ctx, listNodesWithEngineCounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNodesWithEngineCountsRow
+	for rows.Next() {
+		var i ListNodesWithEngineCountsRow
+		if err := rows.Scan(
+			&i.Node.ID,
+			&i.Node.Name,
+			&i.Node.Roles,
+			&i.Node.AdvertiseAddr,
+			&i.Node.PublicAddr,
+			&i.Node.Arch,
+			&i.Node.Os,
+			&i.Node.SkalidVersion,
+			&i.Node.CertSerial,
+			&i.Node.Status,
+			&i.Node.LastSeen,
+			&i.Node.CreatedAt,
+			&i.Node.UpdatedAt,
+			&i.Node.CpuPct,
+			&i.Node.MemUsed,
+			&i.Node.MemTotal,
+			&i.Node.DiskUsed,
+			&i.Node.DiskTotal,
+			&i.Node.NetRxRate,
+			&i.Node.NetTxRate,
+			&i.Node.DiskReadRate,
+			&i.Node.DiskWriteRate,
+			&i.Node.Load1,
+			&i.Containers,
+			&i.Images,
+			&i.Volumes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markStaleNodesOffline = `-- name: MarkStaleNodesOffline :execrows
 UPDATE nodes SET status = 'offline', updated_at = now()
 WHERE status = 'online' AND (last_seen IS NULL OR last_seen < $1)

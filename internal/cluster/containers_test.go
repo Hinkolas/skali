@@ -84,6 +84,6 @@ func TestContainerOpsRemoteEndToEnd(t *testing.T) {
 	require.Error(t, err, "observed row deleted with the container")
 
 	// Unknown node.
-	_, err = ops.List(ctx, [16]byte{1})
+	_, err = ops.Start(ctx, [16]byte{1}, "whatever")
 	require.ErrorIs(t, err, ErrNodeNotFound)
 }

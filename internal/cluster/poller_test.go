@@ -304,27 +304,27 @@ func TestPollerRecordsInventory(t *testing.T) {
 
 	// Rows land, dangling derived from empty tags.
 	require.Eventually(t, func() bool {
-		imgs, err := st.ListNodeImages(ctx, identity.NodeID)
+		imgs, err := st.ListImages(ctx, &identity.NodeID)
 		return err == nil && len(imgs) == 2
 	}, 5*time.Second, 20*time.Millisecond)
-	imgs, err := st.ListNodeImages(ctx, identity.NodeID)
+	imgs, err := st.ListImages(ctx, &identity.NodeID)
 	require.NoError(t, err)
-	require.Equal(t, "sha256:aaa", imgs[0].ImageID, "largest first")
-	require.Equal(t, []string{"nginx:alpine"}, imgs[0].RepoTags)
-	require.False(t, imgs[0].Dangling)
-	require.Equal(t, int32(1), imgs[0].Containers)
-	require.True(t, imgs[1].Dangling)
-	vols, err := st.ListNodeVolumes(ctx, identity.NodeID)
+	require.Equal(t, "sha256:aaa", imgs[0].NodeImage.ImageID, "largest first")
+	require.Equal(t, []string{"nginx:alpine"}, imgs[0].NodeImage.RepoTags)
+	require.False(t, imgs[0].NodeImage.Dangling)
+	require.Equal(t, int32(1), imgs[0].NodeImage.Containers)
+	require.True(t, imgs[1].NodeImage.Dangling)
+	vols, err := st.ListVolumes(ctx, &identity.NodeID)
 	require.NoError(t, err)
 	require.Len(t, vols, 1)
-	require.Equal(t, "data", vols[0].Name)
-	require.JSONEq(t, "{}", string(vols[0].Labels), "unlabeled volume keeps '{}'")
+	require.Equal(t, "data", vols[0].NodeVolume.Name)
+	require.JSONEq(t, "{}", string(vols[0].NodeVolume.Labels), "unlabeled volume keeps '{}'")
 
 	// Engine unreachable: the report goes absent; rows must stay put.
 	fake.InventoryErr = context.DeadlineExceeded
 	inventory.SampleNow(ctx)
 	time.Sleep(150 * time.Millisecond) // several ticks
-	imgs, err = st.ListNodeImages(ctx, identity.NodeID)
+	imgs, err = st.ListImages(ctx, &identity.NodeID)
 	require.NoError(t, err)
 	require.Len(t, imgs, 2, "unknown report must not touch rows")
 
@@ -333,7 +333,7 @@ func TestPollerRecordsInventory(t *testing.T) {
 	fake.Inv.Images = fake.Inv.Images[:1]
 	inventory.SampleNow(ctx)
 	require.Eventually(t, func() bool {
-		imgs, err := st.ListNodeImages(ctx, identity.NodeID)
-		return err == nil && len(imgs) == 1 && imgs[0].ImageID == "sha256:aaa"
+		imgs, err := st.ListImages(ctx, &identity.NodeID)
+		return err == nil && len(imgs) == 1 && imgs[0].NodeImage.ImageID == "sha256:aaa"
 	}, 5*time.Second, 20*time.Millisecond)
 }

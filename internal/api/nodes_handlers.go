@@ -36,8 +36,19 @@ type nodePayload struct {
 	Status        string              `json:"status"`
 	LastSeen      *time.Time          `json:"last_seen"`
 	Metrics       *nodeMetricsPayload `json:"metrics"`
-	CreatedAt     time.Time           `json:"created_at"`
-	UpdatedAt     time.Time           `json:"updated_at"`
+	// Engine is the at-a-glance workload/inventory count triple; the list
+	// endpoint fills it, single-node responses omit it.
+	Engine    *nodeEnginePayload `json:"engine,omitempty"`
+	CreatedAt time.Time          `json:"created_at"`
+	UpdatedAt time.Time          `json:"updated_at"`
+}
+
+// nodeEnginePayload counts what the node's engine holds (containers exclude
+// gone breadcrumbs).
+type nodeEnginePayload struct {
+	Containers int32 `json:"containers"`
+	Images     int32 `json:"images"`
+	Volumes    int32 `json:"volumes"`
 }
 
 // nodeMetricsPayload is the latest resource snapshot; rates are bytes/second,
@@ -108,16 +119,45 @@ func pathNodeID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	return id, true
 }
 
+// queryNodeFilter parses the optional ?node= query param of the cluster-wide
+// list endpoints. Absent → nil filter; malformed → 400; unknown node → 404
+// (an empty list must mean "nothing there", never "typoed id").
+func queryNodeFilter(w http.ResponseWriter, r *http.Request, st *store.Store) (*uuid.UUID, bool) {
+	raw := r.URL.Query().Get("node")
+	if raw == "" {
+		return nil, true
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "node must be a UUID")
+		return nil, false
+	}
+	if _, err := st.GetNodeByID(r.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, codeNotFound, "not found")
+			return nil, false
+		}
+		writeClusterError(r.Context(), w, err)
+		return nil, false
+	}
+	return &id, true
+}
+
 // GET /v1/nodes
 func (h *nodesHandlers) list(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.st.ListNodes(r.Context())
+	rows, err := h.st.ListNodesWithEngineCounts(r.Context())
 	if err != nil {
 		writeClusterError(r.Context(), w, err)
 		return
 	}
-	payload := make([]nodePayload, len(nodes))
-	for i := range nodes {
-		payload[i] = newNodePayload(&nodes[i])
+	payload := make([]nodePayload, len(rows))
+	for i := range rows {
+		payload[i] = newNodePayload(&rows[i].Node)
+		payload[i].Engine = &nodeEnginePayload{
+			Containers: rows[i].Containers,
+			Images:     rows[i].Images,
+			Volumes:    rows[i].Volumes,
+		}
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Nodes []nodePayload `json:"nodes"`

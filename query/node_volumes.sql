@@ -19,5 +19,10 @@ ON CONFLICT (node_id, name) DO UPDATE SET
 DELETE FROM node_volumes
 WHERE node_id = $1 AND NOT (name = ANY(sqlc.arg(names)::text[]));
 
--- name: ListNodeVolumes :many
-SELECT * FROM node_volumes WHERE node_id = $1 ORDER BY name;
+-- The cluster-wide admin list; node_id narrows to one node when present.
+-- name: ListVolumes :many
+SELECT sqlc.embed(node_volumes), nodes.name AS node_name
+FROM node_volumes
+JOIN nodes ON nodes.id = node_volumes.node_id
+WHERE sqlc.narg(node_id)::uuid IS NULL OR node_volumes.node_id = sqlc.narg(node_id)
+ORDER BY nodes.name, node_volumes.name;

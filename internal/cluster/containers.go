@@ -154,15 +154,6 @@ func (c *ContainerOps) Remove(ctx context.Context, nodeID uuid.UUID, containerID
 	return err
 }
 
-// List returns the node's observed containers from the master's records —
-// never a live call; heartbeats keep the records honest.
-func (c *ContainerOps) List(ctx context.Context, nodeID uuid.UUID) ([]store.NodeContainer, error) {
-	if _, err := c.node(ctx, nodeID); err != nil {
-		return nil, err
-	}
-	return c.st.ListNodeContainers(ctx, nodeID)
-}
-
 func (c *ContainerOps) node(ctx context.Context, id uuid.UUID) (store.Node, error) {
 	node, err := c.st.GetNodeByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {

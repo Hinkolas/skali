@@ -34,30 +34,41 @@ func (q *Queries) DeleteMissingNodeVolumes(ctx context.Context, arg DeleteMissin
 	return result.RowsAffected(), nil
 }
 
-const listNodeVolumes = `-- name: ListNodeVolumes :many
-SELECT node_id, name, driver, scope, mountpoint, labels, containers, volume_created, first_seen, last_seen FROM node_volumes WHERE node_id = $1 ORDER BY name
+const listVolumes = `-- name: ListVolumes :many
+SELECT node_volumes.node_id, node_volumes.name, node_volumes.driver, node_volumes.scope, node_volumes.mountpoint, node_volumes.labels, node_volumes.containers, node_volumes.volume_created, node_volumes.first_seen, node_volumes.last_seen, nodes.name AS node_name
+FROM node_volumes
+JOIN nodes ON nodes.id = node_volumes.node_id
+WHERE $1::uuid IS NULL OR node_volumes.node_id = $1
+ORDER BY nodes.name, node_volumes.name
 `
 
-func (q *Queries) ListNodeVolumes(ctx context.Context, nodeID uuid.UUID) ([]NodeVolume, error) {
-	rows, err := q.db.Query(ctx, listNodeVolumes, nodeID)
+type ListVolumesRow struct {
+	NodeVolume NodeVolume
+	NodeName   string
+}
+
+// The cluster-wide admin list; node_id narrows to one node when present.
+func (q *Queries) ListVolumes(ctx context.Context, nodeID *uuid.UUID) ([]ListVolumesRow, error) {
+	rows, err := q.db.Query(ctx, listVolumes, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []NodeVolume
+	var items []ListVolumesRow
 	for rows.Next() {
-		var i NodeVolume
+		var i ListVolumesRow
 		if err := rows.Scan(
-			&i.NodeID,
-			&i.Name,
-			&i.Driver,
-			&i.Scope,
-			&i.Mountpoint,
-			&i.Labels,
-			&i.Containers,
-			&i.VolumeCreated,
-			&i.FirstSeen,
-			&i.LastSeen,
+			&i.NodeVolume.NodeID,
+			&i.NodeVolume.Name,
+			&i.NodeVolume.Driver,
+			&i.NodeVolume.Scope,
+			&i.NodeVolume.Mountpoint,
+			&i.NodeVolume.Labels,
+			&i.NodeVolume.Containers,
+			&i.NodeVolume.VolumeCreated,
+			&i.NodeVolume.FirstSeen,
+			&i.NodeVolume.LastSeen,
+			&i.NodeName,
 		); err != nil {
 			return nil, err
 		}

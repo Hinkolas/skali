@@ -32,8 +32,13 @@ ON CONFLICT (node_id, container_id) DO UPDATE SET
 UPDATE node_containers SET state = 'gone'
 WHERE node_id = $1 AND state <> 'gone' AND NOT (container_id = ANY(sqlc.arg(container_ids)::text[]));
 
--- name: ListNodeContainers :many
-SELECT * FROM node_containers WHERE node_id = $1 ORDER BY name;
+-- The cluster-wide admin list; node_id narrows to one node when present.
+-- name: ListContainers :many
+SELECT sqlc.embed(node_containers), nodes.name AS node_name
+FROM node_containers
+JOIN nodes ON nodes.id = node_containers.node_id
+WHERE sqlc.narg(node_id)::uuid IS NULL OR node_containers.node_id = sqlc.narg(node_id)
+ORDER BY nodes.name, node_containers.name;
 
 -- name: GetNodeContainer :one
 SELECT * FROM node_containers WHERE node_id = $1 AND container_id = $2;

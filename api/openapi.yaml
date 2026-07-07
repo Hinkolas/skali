@@ -633,29 +633,30 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
-  /v1/nodes/{id}/containers:
+  /v1/containers:
     get:
-      operationId: listNodeContainers
-      summary: List a node's containers
+      operationId: listContainers
+      summary: List containers across the cluster
       description: |
-        Admin only. The node's skali-managed containers as last observed by
-        the master (heartbeat cadence, ~15s; mutations through this API
-        reflect immediately). Containers that disappeared from the node keep
-        a `gone` row for up to an hour, then vanish.
+        Admin only. Every skali-managed container as last observed by the
+        master (heartbeat cadence, ~15s; mutations through this API reflect
+        immediately), sorted by node then name. Containers that disappeared
+        from a node keep a `gone` row for up to an hour, then vanish.
 
         This whole surface is a low-level admin escape hatch; the typed
         resource APIs (applications, databases) are the product surface.
       tags: [containers]
       parameters:
-        - name: id
-          in: path
-          required: true
+        - name: node
+          in: query
+          required: false
           schema:
             type: string
             format: uuid
+          description: Narrow to one node. Unknown node ids are a `404`.
       responses:
         "200":
-          description: Observed containers, sorted by name.
+          description: Observed containers, sorted by node then name.
           content:
             application/json:
               schema:
@@ -665,9 +666,12 @@ paths:
                   containers:
                     type: array
                     items: { $ref: "#/components/schemas/Container" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/nodes/{id}/containers:
     post:
       operationId: createNodeContainer
       summary: Create a container on a node
@@ -826,24 +830,25 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "502": { $ref: "#/components/responses/NodeUnreachable" }
 
-  /v1/nodes/{id}/images:
+  /v1/images:
     get:
-      operationId: listNodeImages
-      summary: List a node's images
+      operationId: listImages
+      summary: List images across the cluster
       description: |
-        Admin only. Every image on the node as last observed by the master —
-        unfiltered (skali-managed or not: this is whole-node disk
+        Admin only. Every image on every node as last observed by the master
+        — unfiltered (skali-managed or not: this is whole-cluster disk
         visibility), sorted largest first. `containers` counts references
         from containers in any state; `0` means unused. Read-only: image
         mutations (pull, remove, GC) arrive in a later milestone.
       tags: [containers]
       parameters:
-        - name: id
-          in: path
-          required: true
+        - name: node
+          in: query
+          required: false
           schema:
             type: string
             format: uuid
+          description: Narrow to one node. Unknown node ids are a `404`.
       responses:
         "200":
           description: Observed images, largest first.
@@ -856,30 +861,32 @@ paths:
                   images:
                     type: array
                     items: { $ref: "#/components/schemas/NodeImage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
-  /v1/nodes/{id}/volumes:
+  /v1/volumes:
     get:
-      operationId: listNodeVolumes
-      summary: List a node's volumes
+      operationId: listVolumes
+      summary: List volumes across the cluster
       description: |
-        Admin only. Every named volume on the node as last observed by the
-        master (anonymous volumes included), sorted by name. No sizes —
-        computing them walks the volume filesystems, far too expensive to
-        sample continuously.
+        Admin only. Every named volume on every node as last observed by the
+        master (anonymous volumes included), sorted by node then name. No
+        sizes — computing them walks the volume filesystems, far too
+        expensive to sample continuously.
       tags: [containers]
       parameters:
-        - name: id
-          in: path
-          required: true
+        - name: node
+          in: query
+          required: false
           schema:
             type: string
             format: uuid
+          description: Narrow to one node. Unknown node ids are a `404`.
       responses:
         "200":
-          description: Observed volumes, sorted by name.
+          description: Observed volumes, sorted by node then name.
           content:
             application/json:
               schema:
@@ -889,6 +896,7 @@ paths:
                   volumes:
                     type: array
                     items: { $ref: "#/components/schemas/NodeVolume" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1023,6 +1031,16 @@ components:
             - { $ref: "#/components/schemas/NodeMetrics" }
             - type: "null"
           description: Latest resource snapshot; null until the node first reports.
+        engine:
+          type: object
+          description: |
+            At-a-glance engine counts (containers exclude `gone`
+            breadcrumbs). Present on the list endpoint only.
+          required: [containers, images, volumes]
+          properties:
+            containers: { type: integer }
+            images: { type: integer }
+            volumes: { type: integer }
         created_at:
           type: string
           format: date-time
@@ -1075,12 +1093,19 @@ components:
       type: object
       description: One observed skali-managed container on a node.
       required:
-        [id, name, image, kind, state, health, exit_code, restart_count,
-         labels, stats, created_at, started_at, first_seen, last_seen]
+        [id, node_id, node_name, name, image, kind, state, health, exit_code,
+         restart_count, labels, stats, created_at, started_at, first_seen,
+         last_seen]
       properties:
         id:
           type: string
           description: Engine container id.
+        node_id:
+          type: string
+          format: uuid
+          description: The node the container runs on.
+        node_name:
+          type: string
         name:
           type: string
         image:
@@ -1145,12 +1170,18 @@ components:
         One image observed on a node. Unfiltered inventory: every image on
         the machine, skali-managed or not.
       required:
-        [id, repo_tags, repo_digests, size_bytes, dangling, containers,
-         created_at, first_seen, last_seen]
+        [id, node_id, node_name, repo_tags, repo_digests, size_bytes,
+         dangling, containers, created_at, first_seen, last_seen]
       properties:
         id:
           type: string
           description: Content-addressable image id (`sha256:…`).
+        node_id:
+          type: string
+          format: uuid
+          description: The node the image sits on.
+        node_name:
+          type: string
         repo_tags:
           type: array
           items: { type: string }
@@ -1182,10 +1213,16 @@ components:
         One named volume observed on a node (anonymous volumes included).
         No size — computing it walks the volume's filesystem.
       required:
-        [name, driver, scope, mountpoint, labels, containers, created_at,
-         first_seen, last_seen]
+        [name, node_id, node_name, driver, scope, mountpoint, labels,
+         containers, created_at, first_seen, last_seen]
       properties:
         name:
+          type: string
+        node_id:
+          type: string
+          format: uuid
+          description: The node the volume lives on.
+        node_name:
           type: string
         driver:
           type: string
