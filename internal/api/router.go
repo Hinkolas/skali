@@ -87,6 +87,7 @@ func NewRouter(d Deps) http.Handler {
 			uh := &usersHandlers{st: d.Store}
 			nh := &nodesHandlers{st: d.Store, cluster: d.Cluster}
 			ch := &containersHandlers{st: d.Store, containers: d.Containers}
+			ih := &inventoryHandlers{st: d.Store}
 			r.Group(func(r chi.Router) {
 				r.Use(RequireAdmin)
 
@@ -94,6 +95,8 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/nodes", nh.list)
 				r.Get("/nodes/{id}/metrics", nh.metrics)
 				r.Get("/nodes/{id}/containers", ch.list)
+				r.Get("/nodes/{id}/images", ih.images)
+				r.Get("/nodes/{id}/volumes", ih.volumes)
 
 				// Writes additionally need sudo mode. RequireAdmin sits
 				// outside RequireFresh so non-admins get "forbidden", never a

@@ -826,6 +826,73 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "502": { $ref: "#/components/responses/NodeUnreachable" }
 
+  /v1/nodes/{id}/images:
+    get:
+      operationId: listNodeImages
+      summary: List a node's images
+      description: |
+        Admin only. Every image on the node as last observed by the master —
+        unfiltered (skali-managed or not: this is whole-node disk
+        visibility), sorted largest first. `containers` counts references
+        from containers in any state; `0` means unused. Read-only: image
+        mutations (pull, remove, GC) arrive in a later milestone.
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Observed images, largest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [images]
+                properties:
+                  images:
+                    type: array
+                    items: { $ref: "#/components/schemas/NodeImage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/nodes/{id}/volumes:
+    get:
+      operationId: listNodeVolumes
+      summary: List a node's volumes
+      description: |
+        Admin only. Every named volume on the node as last observed by the
+        master (anonymous volumes included), sorted by name. No sizes —
+        computing them walks the volume filesystems, far too expensive to
+        sample continuously.
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Observed volumes, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [volumes]
+                properties:
+                  volumes:
+                    type: array
+                    items: { $ref: "#/components/schemas/NodeVolume" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1071,6 +1138,78 @@ components:
           description: As reported by the engine; the host total when unlimited.
         net_rx_rate: { type: integer }
         net_tx_rate: { type: integer }
+
+    NodeImage:
+      type: object
+      description: |
+        One image observed on a node. Unfiltered inventory: every image on
+        the machine, skali-managed or not.
+      required:
+        [id, repo_tags, repo_digests, size_bytes, dangling, containers,
+         created_at, first_seen, last_seen]
+      properties:
+        id:
+          type: string
+          description: Content-addressable image id (`sha256:…`).
+        repo_tags:
+          type: array
+          items: { type: string }
+          description: Empty for dangling images.
+        repo_digests:
+          type: array
+          items: { type: string }
+        size_bytes:
+          type: integer
+        dangling:
+          type: boolean
+        containers:
+          type: integer
+          description: Containers referencing the image, any state; 0 = unused.
+        created_at:
+          type: [string, "null"]
+          format: date-time
+          description: The image's own build time; null when unknown.
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+
+    NodeVolume:
+      type: object
+      description: |
+        One named volume observed on a node (anonymous volumes included).
+        No size — computing it walks the volume's filesystem.
+      required:
+        [name, driver, scope, mountpoint, labels, containers, created_at,
+         first_seen, last_seen]
+      properties:
+        name:
+          type: string
+        driver:
+          type: string
+        scope:
+          type: string
+          enum: [local, global]
+        mountpoint:
+          type: string
+          description: Node-local storage path.
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        containers:
+          type: integer
+          description: Containers mounting the volume, any state; 0 = unused.
+        created_at:
+          type: [string, "null"]
+          format: date-time
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
 
     ContainerCreateRequest:
       type: object
