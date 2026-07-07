@@ -4,16 +4,39 @@
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 	import ChartLine from '@lucide/svelte/icons/chart-line';
-	import { api } from '$lib/api/client';
+	import Container from '@lucide/svelte/icons/container';
+	import Play from '@lucide/svelte/icons/play';
+	import Square from '@lucide/svelte/icons/square';
+	import Plus from '@lucide/svelte/icons/plus';
+	import { api, ApiError } from '$lib/api/client';
 	import { decimate, type ChartPoint, type ChartSeries } from '$lib/charts';
 	import { formatBytes, formatPct, formatRate, relativeTime } from '$lib/format';
-	import { NODE_ROLE_META, NODE_STATE_META } from '$lib/service-types';
-	import type { Node, NodeMetricsHistory, NodeMetricsSample } from '$lib/types/nodes';
+	import { modal } from '$lib/stores/modal.svelte';
+	import { dialog } from '$lib/stores/dialog.svelte';
+	import { toast } from '$lib/stores/toast.svelte';
+	import {
+		CONTAINER_HEALTH_META,
+		CONTAINER_KIND_META,
+		CONTAINER_STATE_META,
+		NODE_ROLE_META,
+		NODE_STATE_META
+	} from '$lib/service-types';
+	import type {
+		ContainerCreateRequest,
+		Node,
+		NodeContainer,
+		NodeContainerList,
+		NodeMetricsHistory,
+		NodeMetricsSample
+	} from '$lib/types/nodes';
 	import Button from '$lib/components/ui/Button.svelte';
 	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
 	import Tabs, { type TabDef } from '$lib/components/ui/Tabs.svelte';
 	import TimeSeriesChart from '$lib/components/ui/TimeSeriesChart.svelte';
+	import CreateContainerModal, {
+		modalOptions as createContainerOptions
+	} from '$lib/components/nodes/CreateContainerModal.svelte';
 
 	let {
 		node,
@@ -41,7 +64,8 @@
 	// Metrics while clicking through nodes is how you compare them.
 	const TABS: TabDef[] = [
 		{ id: 'overview', label: 'Overview', icon: LayoutDashboard },
-		{ id: 'metrics', label: 'Metrics', icon: ChartLine }
+		{ id: 'metrics', label: 'Metrics', icon: ChartLine },
+		{ id: 'containers', label: 'Containers', icon: Container }
 	];
 	let tab = $state('overview');
 
@@ -158,6 +182,109 @@
 	}
 	function barClass(p: number): string {
 		return p > 90 ? 'bg-status-danger' : p > 75 ? 'bg-status-warning' : 'bg-accent';
+	}
+
+	// --- containers: fetch + poll ------------------------------------------------
+	// Same shape as the history effect: keyed on the memoized node id, kept
+	// warm regardless of the active tab, stale frame on refetch errors.
+	let containers = $state<NodeContainer[] | null>(null);
+	let containersFailed = $state(false);
+
+	$effect(() => {
+		const id = nodeId; // sole tracked dependency
+		containers = null;
+		containersFailed = false;
+		let alive = true;
+		const load = async () => {
+			try {
+				const res = await api.get<NodeContainerList>(`/v1/nodes/${id}/containers`);
+				if (alive) {
+					containers = res.containers;
+					containersFailed = false;
+				}
+			} catch {
+				if (alive && containers === null) containersFailed = true;
+			}
+		};
+		load();
+		const t = setInterval(load, 10_000);
+		return () => {
+			alive = false;
+			clearInterval(t);
+		};
+	});
+
+	// --- container actions -------------------------------------------------------
+	// Mutations patch the local list from the response; the 10s poll (and the
+	// heartbeat behind it) reconciles everything else.
+	let creating = $state(false);
+	let busyIds = $state<string[]>([]);
+
+	function patchContainer(next: NodeContainer) {
+		containers = (containers ?? []).map((c) => (c.id === next.id ? next : c));
+	}
+
+	// The sudo-gated create call runs BETWEEN modal close and any toast —
+	// never while the modal is open — so the reauth modal slot stays free.
+	async function addContainer() {
+		const req = await modal.open<ContainerCreateRequest>(
+			CreateContainerModal,
+			{},
+			createContainerOptions
+		).result;
+		if (!req) return;
+		creating = true;
+		try {
+			const res = await api.post<{ container: NodeContainer }>(
+				`/v1/nodes/${nodeId}/containers`,
+				req
+			);
+			containers = [...(containers ?? []), res.container].sort((a, b) =>
+				a.name.localeCompare(b.name)
+			);
+			toast.success(`Created ${res.container.name}`);
+		} catch (err) {
+			toast.error(err instanceof ApiError ? err.message : 'Could not create the container');
+		} finally {
+			creating = false;
+		}
+	}
+
+	async function startStop(c: NodeContainer, action: 'start' | 'stop') {
+		if (busyIds.includes(c.id)) return;
+		busyIds = [...busyIds, c.id];
+		try {
+			const res = await api.post<{ container: NodeContainer }>(
+				`/v1/nodes/${nodeId}/containers/${c.id}/${action}`
+			);
+			patchContainer(res.container);
+		} catch (err) {
+			toast.error(err instanceof ApiError ? err.message : `Could not ${action} ${c.name}`);
+		} finally {
+			busyIds = busyIds.filter((id) => id !== c.id);
+		}
+	}
+
+	function removeContainer(c: NodeContainer) {
+		dialog.confirm({
+			title: `Remove ${c.name}?`,
+			description:
+				c.state === 'running'
+					? 'The container is running; it will be killed and removed from the node.'
+					: 'The container is removed from the node.',
+			confirmLabel: 'Remove container',
+			variant: 'danger',
+			onConfirm: async () => {
+				try {
+					await api.del(`/v1/nodes/${nodeId}/containers/${c.id}?force=true`);
+					containers = (containers ?? []).filter((x) => x.id !== c.id);
+					toast.success(`Removed ${c.name}`);
+				} catch (err) {
+					toast.error(err instanceof ApiError ? err.message : 'Could not remove the container');
+					throw err; // keep the dialog open
+				}
+			}
+		});
 	}
 </script>
 
@@ -316,6 +443,104 @@
 			<div class="flex flex-col gap-4">
 				{#each ['cpu', 'mem', 'net'] as key (key)}
 					<div class="h-[110px] animate-pulse rounded-lg bg-white/3"></div>
+				{/each}
+			</div>
+		{/if}
+	{:else if tab === 'containers'}
+		<div class="mt-4 mb-1.5 flex items-center justify-between">
+			<h3 class="text-text-ghost text-[10px] font-semibold tracking-[0.12em] uppercase">
+				Containers
+			</h3>
+			<Button size="sm" variant="secondary" busy={creating} onclick={addContainer}>
+				<Plus size={13} strokeWidth={2.5} />
+				Add
+			</Button>
+		</div>
+		{#if containers?.length}
+			<div class="flex flex-col gap-2">
+				{#each containers as c (c.id)}
+					{@const cState = CONTAINER_STATE_META[c.state] ?? CONTAINER_STATE_META.gone}
+					{@const kindMeta = CONTAINER_KIND_META[c.kind]}
+					{@const busy = busyIds.includes(c.id)}
+					{@const gone = c.state === 'gone'}
+					<div class="rounded-[10px] bg-white/3 px-3 py-2.5 {gone ? 'opacity-50' : ''}">
+						<div class="flex items-center justify-between gap-2">
+							<div class="flex min-w-0 items-center gap-2">
+								<span class="size-1.5 flex-none rounded-full {cState.dot}"></span>
+								<span class="text-text-primary truncate text-[12.5px] font-medium">{c.name}</span>
+								<span
+									class="font-mono flex-none rounded-full px-2 py-0.5 text-[9.5px] {kindMeta.text} {kindMeta.bg}"
+								>
+									{c.kind}
+								</span>
+							</div>
+							<div class="flex flex-none items-center gap-0.5">
+								{#if !gone && c.state !== 'running'}
+									<button
+										type="button"
+										disabled={busy}
+										onclick={() => startStop(c, 'start')}
+										class="text-text-ghost hover:text-status-success cursor-pointer rounded-md p-1 transition-colors hover:bg-white/5 disabled:opacity-40"
+										aria-label="Start {c.name}"
+										title="Start"
+									>
+										<Play size={13} />
+									</button>
+								{:else if c.state === 'running'}
+									<button
+										type="button"
+										disabled={busy}
+										onclick={() => startStop(c, 'stop')}
+										class="text-text-ghost hover:text-status-warning cursor-pointer rounded-md p-1 transition-colors hover:bg-white/5 disabled:opacity-40"
+										aria-label="Stop {c.name}"
+										title="Stop"
+									>
+										<Square size={13} />
+									</button>
+								{/if}
+								<button
+									type="button"
+									disabled={busy}
+									onclick={() => removeContainer(c)}
+									class="text-text-ghost hover:text-status-danger cursor-pointer rounded-md p-1 transition-colors hover:bg-white/5 disabled:opacity-40"
+									aria-label="Remove {c.name}"
+									title="Remove"
+								>
+									<Trash2 size={13} />
+								</button>
+							</div>
+						</div>
+						<div class="mt-1 flex items-center justify-between gap-2">
+							<span class="font-mono text-text-faint truncate text-[11px]">{c.image}</span>
+							<span class="flex flex-none items-center gap-1.5 text-[11px] {cState.text}">
+								{cState.label}{#if c.state === 'exited' && c.exit_code !== null}&nbsp;({c.exit_code}){/if}
+								{#if c.health}
+									<span class={CONTAINER_HEALTH_META[c.health]}>· {c.health}</span>
+								{/if}
+							</span>
+						</div>
+						{#if c.stats}
+							<div class="font-mono text-text-muted mt-1.5 flex gap-3 text-[11px]">
+								<span>CPU {formatPct(c.stats.cpu_pct)}</span>
+								<span>Mem {formatBytes(c.stats.mem_used)}</span>
+								<span>↓ {formatRate(c.stats.net_rx_rate)} ↑ {formatRate(c.stats.net_tx_rate)}</span>
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+			<p class="text-text-ghost mt-3 text-[11px] leading-relaxed">
+				Raw skali-managed containers on this node, as last observed. This is the low-level admin
+				surface — applications and databases will manage their own containers.
+			</p>
+		{:else if containersFailed}
+			<p class="text-text-muted text-[12px]">Could not load containers.</p>
+		{:else if containers !== null}
+			<p class="text-text-ghost text-[12px]">No skali-managed containers on this node.</p>
+		{:else}
+			<div class="flex flex-col gap-2">
+				{#each ['a', 'b', 'c'] as key (key)}
+					<div class="h-[64px] animate-pulse rounded-[10px] bg-white/3"></div>
 				{/each}
 			</div>
 		{/if}

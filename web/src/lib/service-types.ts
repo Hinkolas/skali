@@ -3,7 +3,7 @@
 // layer and survives the swap to the real API.
 
 import type { ServiceKind, ServiceStatus } from '$lib/mock/types';
-import type { NodeRole, NodeStatus } from '$lib/types/nodes';
+import type { ContainerKind, ContainerState, NodeRole, NodeStatus } from '$lib/types/nodes';
 
 export const SERVICE_KIND_META: Record<
 	ServiceKind,
@@ -43,4 +43,30 @@ export const NODE_ROLE_META: Record<NodeRole, { text: string; bg: string }> = {
 	edge: { text: 'text-service-app', bg: 'bg-service-app/12' },
 	worker: { text: 'text-text-muted', bg: 'bg-white/6' },
 	builder: { text: 'text-service-storage', bg: 'bg-service-storage/12' }
+};
+
+export const CONTAINER_STATE_META: Record<
+	ContainerState,
+	{ label: string; dot: string; text: string }
+> = {
+	created: { label: 'Created', dot: 'bg-text-ghost', text: 'text-text-muted' },
+	running: { label: 'Running', dot: 'bg-status-success', text: 'text-status-success' },
+	paused: { label: 'Paused', dot: 'bg-status-warning', text: 'text-status-warning' },
+	restarting: { label: 'Restarting', dot: 'bg-status-warning', text: 'text-status-warning' },
+	removing: { label: 'Removing', dot: 'bg-status-warning', text: 'text-status-warning' },
+	exited: { label: 'Exited', dot: 'bg-text-ghost', text: 'text-text-muted' },
+	dead: { label: 'Dead', dot: 'bg-status-danger', text: 'text-status-danger' },
+	gone: { label: 'Gone', dot: 'bg-text-ghost', text: 'text-text-faint' }
+};
+
+export const CONTAINER_KIND_META: Record<ContainerKind, { text: string; bg: string }> = {
+	application: { text: 'text-service-app', bg: 'bg-service-app/12' },
+	database: { text: 'text-service-db', bg: 'bg-service-db/12' },
+	system: { text: 'text-text-muted', bg: 'bg-white/6' }
+};
+
+export const CONTAINER_HEALTH_META: Record<'starting' | 'healthy' | 'unhealthy', string> = {
+	starting: 'text-status-warning',
+	healthy: 'text-status-success',
+	unhealthy: 'text-status-danger'
 };

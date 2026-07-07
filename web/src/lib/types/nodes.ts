@@ -56,5 +56,71 @@ export interface JoinTokenCreated {
 	enroll_command: string;
 }
 
+/**
+ * How skali manages a container: `application` instances belong to a project;
+ * a `database` container is an engine pool that may host logical databases of
+ * many projects; `system` containers are skali's own infrastructure.
+ */
+export type ContainerKind = 'application' | 'database' | 'system';
+
+/** Engine states plus `gone` (vanished from the node; kept briefly). */
+export type ContainerState =
+	| 'created'
+	| 'running'
+	| 'paused'
+	| 'restarting'
+	| 'removing'
+	| 'exited'
+	| 'dead'
+	| 'gone';
+
+/**
+ * Per-container stats. cpu_pct uses docker-stats semantics (100 = one full
+ * core, can exceed 100); rates are bytes/second; mem_limit is the host total
+ * when the container is unlimited.
+ */
+export interface NodeContainerStats {
+	cpu_pct: number;
+	mem_used: number;
+	mem_limit: number;
+	net_rx_rate: number;
+	net_tx_rate: number;
+}
+
+/** One observed skali-managed container on a node. */
+export interface NodeContainer {
+	/** Engine container id. */
+	id: string;
+	name: string;
+	image: string;
+	kind: ContainerKind;
+	state: ContainerState;
+	/** Healthcheck state; null when none is configured. */
+	health: 'starting' | 'healthy' | 'unhealthy' | null;
+	exit_code: number | null;
+	restart_count: number;
+	labels: Record<string, string>;
+	/** Latest stats; null until the node has sampled twice. */
+	stats: NodeContainerStats | null;
+	created_at: string | null;
+	started_at: string | null;
+	first_seen: string;
+	last_seen: string;
+}
+
+export interface NodeContainerList {
+	containers: NodeContainer[];
+}
+
+/** POST /v1/nodes/{id}/containers body (the modal's minimal subset). */
+export interface ContainerCreateRequest {
+	name: string;
+	image: string;
+	kind: ContainerKind;
+	ports?: { host_port?: number; container_port: number; protocol?: 'tcp' | 'udp' }[];
+	pull?: 'if-missing' | 'always' | 'never';
+	start?: boolean;
+}
+
 /** Roles an operator can grant — `master` is fixed at boot. */
 export const ASSIGNABLE_NODE_ROLES: NodeRole[] = ['worker', 'edge', 'builder'];
