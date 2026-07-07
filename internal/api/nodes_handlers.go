@@ -296,11 +296,11 @@ func writeClusterError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, codeConflict, "CLUSTER_ADDR is not configured on the master; set it to the externally reachable gRPC address")
 	case errors.Is(err, cluster.ErrInvalidRole):
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
-	case errors.Is(err, cluster.ErrContainerNotFound):
+	case errors.Is(err, cluster.ErrContainerNotFound), errors.Is(err, cluster.ErrImageNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "not found")
-	case errors.Is(err, cluster.ErrContainerConflict):
+	case errors.Is(err, cluster.ErrContainerConflict), errors.Is(err, cluster.ErrImageInUse):
 		writeError(w, http.StatusConflict, codeConflict, err.Error())
-	case errors.Is(err, cluster.ErrInvalidSpec):
+	case errors.Is(err, cluster.ErrInvalidSpec), errors.Is(err, cluster.ErrInvalidRef):
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
 	case errors.Is(err, cluster.ErrNodeUnreachable), errors.Is(err, cluster.ErrEngineUnavailable):
 		writeError(w, http.StatusBadGateway, codeNodeUnreachable, err.Error())

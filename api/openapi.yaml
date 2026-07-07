@@ -830,6 +830,93 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "502": { $ref: "#/components/responses/NodeUnreachable" }
 
+  /v1/nodes/{id}/images/pull:
+    post:
+      operationId: pullNodeImage
+      summary: Pull an image onto a node
+      description: |
+        Admin only, sudo mode. Pre-warms an image on the node so later
+        container creates start instantly — the explicit path; container
+        create keeps its own `if-missing` pull as a fallback. Pulling can
+        take minutes; the request blocks until the image is present (up to a
+        5-minute server-side ceiling). The observed image row is written
+        through immediately.
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reference]
+              properties:
+                reference:
+                  type: string
+                  description: Tag or digest reference, e.g. `nginx:alpine`.
+      responses:
+        "201":
+          description: The image as observed post-pull.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [image]
+                properties:
+                  image: { $ref: "#/components/schemas/NodeImage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/NodeUnreachable" }
+
+  /v1/nodes/{id}/images:
+    delete:
+      operationId: removeNodeImage
+      summary: Remove an image from a node
+      description: |
+        Admin only, sudo mode. Removes the referenced image (`ref` is a tag
+        or `sha256:` id, URL-encoded). Removing one tag of a multi-tagged
+        image only untags it; the master's records follow what the node
+        actually deleted. Images used by a container — any state — refuse
+        without `force` (`409`). The raw admin escape hatch, like
+        `docker rmi`; automated cleanup arrives with the image GC milestone.
+      tags: [containers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: ref
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Tag or `sha256:` id of the image to remove.
+        - name: force
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "204":
+          description: Image removed (or untagged).
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/NodeUnreachable" }
+
   /v1/images:
     get:
       operationId: listImages

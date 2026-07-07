@@ -119,6 +119,8 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/nodes/{id}/containers/{cid}/start", ch.start)
 					r.Post("/nodes/{id}/containers/{cid}/stop", ch.stop)
 					r.Delete("/nodes/{id}/containers/{cid}", ch.remove)
+					r.Post("/nodes/{id}/images/pull", ch.pullImage)
+					r.Delete("/nodes/{id}/images", ch.removeImage)
 				})
 			})
 		})

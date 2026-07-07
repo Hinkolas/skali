@@ -17,8 +17,12 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// createContainerTimeout bounds a create end-to-end, image pull included.
-const createContainerTimeout = 5 * time.Minute
+// createContainerTimeout bounds a create end-to-end, image pull included;
+// pullImageTimeout is the same ceiling for the explicit pull endpoint.
+const (
+	createContainerTimeout = 5 * time.Minute
+	pullImageTimeout       = 5 * time.Minute
+)
 
 // containersHandlers is the admin-only raw container surface — a debug/escape
 // hatch over ContainerOps, node-scoped and deliberately low-level. The
@@ -310,6 +314,58 @@ func (h *containersHandlers) remove(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.InfoContext(r.Context(), "api: container removed",
 		"node_id", id, "container_id", cid, "by", UserFrom(r.Context()).ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /v1/nodes/{id}/images/pull
+func (h *containersHandlers) pullImage(w http.ResponseWriter, r *http.Request) {
+	node, ok := h.requireNode(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reference string `json:"reference"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+		return
+	}
+
+	// Detached from the router's 30s ceiling: pulls can far outlive it (and
+	// the client's patience) — the pull finishes server-side either way and
+	// the heartbeat records whatever it produced.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), pullImageTimeout)
+	defer cancel()
+	row, err := h.containers.PullImage(ctx, node.ID, req.Reference)
+	if err != nil {
+		writeClusterError(r.Context(), w, err)
+		return
+	}
+	slog.InfoContext(r.Context(), "api: image pulled",
+		"node_id", node.ID, "image_id", row.ImageID, "reference", req.Reference, "by", UserFrom(r.Context()).ID)
+	writeJSON(w, http.StatusCreated, struct {
+		Image imagePayload `json:"image"`
+	}{newImagePayload(&row, node.Name)})
+}
+
+// DELETE /v1/nodes/{id}/images?ref=…&force=true
+func (h *containersHandlers) removeImage(w http.ResponseWriter, r *http.Request) {
+	node, ok := h.requireNode(w, r)
+	if !ok {
+		return
+	}
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "the ref query parameter is required")
+		return
+	}
+	force := r.URL.Query().Get("force") == "true"
+	if err := h.containers.RemoveImage(r.Context(), node.ID, ref, force); err != nil {
+		writeClusterError(r.Context(), w, err)
+		return
+	}
+	slog.InfoContext(r.Context(), "api: image removed",
+		"node_id", node.ID, "reference", ref, "by", UserFrom(r.Context()).ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
