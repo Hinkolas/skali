@@ -10,7 +10,9 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"net"
+	"path/filepath"
 	"runtime"
 
 	"github.com/google/uuid"
@@ -18,6 +20,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/Hinkolas/skali/internal/clusterpb"
+	"github.com/Hinkolas/skali/internal/mirror"
 	"github.com/Hinkolas/skali/internal/version"
 )
 
@@ -28,6 +31,7 @@ type EnrollOptions struct {
 	AdvertiseAddr string // empty = auto-detect (outbound interface toward the master + GRPCAddr's port)
 	GRPCAddr      string // this node's future NodeService listen address
 	DataDir       string
+	CertsDir      string // dockerd trust root; empty = /etc/docker/certs.d (the seam exists for tests)
 }
 
 // RunEnroll performs the worker side of enrollment: authenticate the master
@@ -89,15 +93,38 @@ func RunEnroll(ctx context.Context, opts EnrollOptions) (*Identity, []string, er
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	meta := Identity{NodeID: nodeID, MasterAddr: opts.MasterAddr, AdvertiseAddr: advertiseAddr}
+	meta := Identity{
+		NodeID: nodeID, MasterAddr: opts.MasterAddr,
+		AdvertiseAddr: advertiseAddr, RegistryAddr: resp.GetRegistryAddr(),
+	}
 	if err := SaveIdentity(opts.DataDir, meta, keyPEM, resp.GetCertPem(), resp.GetCaPem()); err != nil {
 		return nil, nil, err
 	}
+	installRegistryTrust(opts.CertsDir, resp.GetRegistryAddr(), resp.GetCaPem(), resp.GetCertPem(), keyPEM)
 	id, err := LoadIdentity(opts.DataDir)
 	if err != nil {
 		return nil, nil, err
 	}
 	return id, resp.GetRoles(), nil
+}
+
+// installRegistryTrust points this node's dockerd at the cluster image
+// mirror: the CA to verify it, the node identity to authenticate against it.
+// Best-effort — enrollment must not fail on an unwritable /etc/docker (the
+// node still joins; only mirror pulls need the trust), so failures print
+// what to install manually.
+func installRegistryTrust(certsDir, registryAddr string, caPEM, certPEM, keyPEM []byte) {
+	if registryAddr == "" {
+		return
+	}
+	if certsDir == "" {
+		certsDir = mirror.DefaultCertsDir
+	}
+	if err := mirror.InstallDockerCerts(certsDir, registryAddr, caPEM, certPEM, keyPEM); err != nil {
+		slog.Warn("cannot install docker trust for the cluster registry; "+
+			"copy ca.crt, node.crt (as client.cert) and node.key (as client.key) from the identity dir manually",
+			"dir", filepath.Join(certsDir, registryAddr), "err", err)
+	}
 }
 
 // pinnedTLSConfig authenticates a master the node does not yet trust: standard

@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/engine"
 	"github.com/Hinkolas/skali/internal/hostinfo"
+	"github.com/Hinkolas/skali/internal/mirror"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -116,7 +118,14 @@ func runServe() error {
 	}
 	clusterSvc := cluster.NewService(st, ca, cfg.ClusterAddr)
 
-	grpcSrv, err := cluster.NewMasterServer(st, ca, clusterCertHosts(cfg.ClusterAddr))
+	// The image mirror follows CLUSTER_ADDR: no cluster address, no registry
+	// (single-node dev keeps working with zero setup).
+	regAddr := registryAddr(cfg)
+	if regAddr == "" {
+		slog.InfoContext(ctx, "registry disabled: CLUSTER_ADDR unset")
+	}
+
+	grpcSrv, err := cluster.NewMasterServer(st, ca, clusterCertHosts(cfg.ClusterAddr), regAddr)
 	if err != nil {
 		return err
 	}
@@ -183,6 +192,19 @@ func runServe() error {
 	go notifier.Run(loopCtx)
 	go poller.Run(loopCtx)
 	go watcher.Run(loopCtx)
+	if regAddr != "" {
+		// The registry container (retried until the engine is up) and the
+		// master's own docker trust for it — the master pulls from the
+		// mirror too. Trust failure is a warning: only mirror pulls need it.
+		go mirror.EnsureLoop(loopCtx, eng, ca, mirror.Config{
+			Endpoint: regAddr, DataDir: cfg.DataDir, Image: cfg.RegistryImage, Port: cfg.RegistryPort,
+		})
+		if certPEM, keyPEM, err := ca.ClientPEM(); err != nil {
+			slog.WarnContext(ctx, "issue master registry client cert", "err", err)
+		} else if err := mirror.InstallDockerCerts(mirror.DefaultCertsDir, regAddr, ca.CAPEM(), certPEM, keyPEM); err != nil {
+			slog.WarnContext(ctx, "install docker trust for the cluster registry", "err", err)
+		}
+	}
 	go func() {
 		bell, cancel := notifier.Subscribe()
 		defer cancel()
@@ -240,6 +262,16 @@ func clusterCertHosts(clusterAddr string) []string {
 		return nil
 	}
 	return []string{host}
+}
+
+// registryAddr derives the image mirror's endpoint: CLUSTER_ADDR's host on
+// REGISTRY_PORT. Empty (registry disabled) while CLUSTER_ADDR is unset.
+func registryAddr(cfg *config.API) string {
+	hosts := clusterCertHosts(cfg.ClusterAddr)
+	if len(hosts) == 0 {
+		return ""
+	}
+	return net.JoinHostPort(hosts[0], strconv.Itoa(cfg.RegistryPort))
 }
 
 func shutdownWithin(fn func(context.Context) error, d time.Duration) {

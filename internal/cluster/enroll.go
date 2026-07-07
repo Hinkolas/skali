@@ -29,7 +29,9 @@ import (
 //     chain themselves.
 //
 // hosts are the SANs for the listener cert (CLUSTER_ADDR's host + loopback).
-func NewMasterServer(st *store.Store, ca *CA, hosts []string) (*grpc.Server, error) {
+// registryAddr is the cluster image mirror's host:port, handed to enrolling
+// nodes so they install docker trust for it ("" = no registry).
+func NewMasterServer(st *store.Store, ca *CA, hosts []string, registryAddr string) (*grpc.Server, error) {
 	serverCert, err := ca.IssueServerCert(append(hosts, "localhost", "127.0.0.1"))
 	if err != nil {
 		return nil, err
@@ -40,7 +42,7 @@ func NewMasterServer(st *store.Store, ca *CA, hosts []string) (*grpc.Server, err
 		ClientAuth:   tls.VerifyClientCertIfGiven,
 		ClientCAs:    ca.Pool(),
 	})))
-	clusterpb.RegisterEnrollmentServiceServer(srv, NewEnrollServer(st, ca))
+	clusterpb.RegisterEnrollmentServiceServer(srv, NewEnrollServer(st, ca, registryAddr))
 	return srv, nil
 }
 
@@ -49,12 +51,13 @@ func NewMasterServer(st *store.Store, ca *CA, hosts []string) (*grpc.Server, err
 // listener and is the only RPC surface that requires no client cert.
 type EnrollServer struct {
 	clusterpb.UnimplementedEnrollmentServiceServer
-	st *store.Store
-	ca *CA
+	st           *store.Store
+	ca           *CA
+	registryAddr string
 }
 
-func NewEnrollServer(st *store.Store, ca *CA) *EnrollServer {
-	return &EnrollServer{st: st, ca: ca}
+func NewEnrollServer(st *store.Store, ca *CA, registryAddr string) *EnrollServer {
+	return &EnrollServer{st: st, ca: ca, registryAddr: registryAddr}
 }
 
 func (s *EnrollServer) Enroll(ctx context.Context, req *clusterpb.EnrollRequest) (*clusterpb.EnrollResponse, error) {
@@ -128,10 +131,11 @@ func (s *EnrollServer) Enroll(ctx context.Context, req *clusterpb.EnrollRequest)
 		"advertise_addr", node.AdvertiseAddr)
 
 	return &clusterpb.EnrollResponse{
-		NodeId:  node.ID.String(),
-		CertPem: certPEM,
-		CaPem:   s.ca.CertPEM,
-		Roles:   node.Roles,
+		NodeId:       node.ID.String(),
+		CertPem:      certPEM,
+		CaPem:        s.ca.CertPEM,
+		Roles:        node.Roles,
+		RegistryAddr: s.registryAddr,
 	}, nil
 }
 

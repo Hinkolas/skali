@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"testing"
@@ -104,6 +105,44 @@ func TestIssueClientCert(t *testing.T) {
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
 	require.NoError(t, err)
+}
+
+// TestIssuePEM pins the file-based identities the mirror consumes: parseable
+// PEM pairs that chain to the CA with the right EKUs and SANs.
+func TestIssuePEM(t *testing.T) {
+	ca, err := generateCA()
+	require.NoError(t, err)
+
+	certPEM, keyPEM, err := ca.ServerPEM("skali-registry", []string{"10.0.0.1", "localhost"}, certLifetime)
+	require.NoError(t, err)
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, "skali-registry", leaf.Subject.CommonName)
+	require.Len(t, leaf.IPAddresses, 1)
+	require.Equal(t, []string{"localhost"}, leaf.DNSNames)
+	_, err = leaf.Verify(x509.VerifyOptions{
+		Roots:     ca.Pool(),
+		DNSName:   "localhost",
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	})
+	require.NoError(t, err)
+
+	certPEM, keyPEM, err = ca.ClientPEM()
+	require.NoError(t, err)
+	pair, err = tls.X509KeyPair(certPEM, keyPEM)
+	require.NoError(t, err)
+	leaf, err = x509.ParseCertificate(pair.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, masterCN, leaf.Subject.CommonName)
+	_, err = leaf.Verify(x509.VerifyOptions{
+		Roots:     ca.Pool(),
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, ca.CertPEM, ca.CAPEM())
 }
 
 func TestFingerprintStable(t *testing.T) {

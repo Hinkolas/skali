@@ -37,7 +37,7 @@ func startMaster(t *testing.T) (*store.Store, *CA, string) {
 	ca, err := EnsureCA(ctx, st, testAuthSecret)
 	require.NoError(t, err)
 
-	srv, err := NewMasterServer(st, ca, nil)
+	srv, err := NewMasterServer(st, ca, nil, "")
 	require.NoError(t, err)
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -65,6 +65,7 @@ func enrollOptions(t *testing.T, masterAddr, token string) EnrollOptions {
 		AdvertiseAddr: "127.0.0.1:7444",
 		GRPCAddr:      ":7444",
 		DataDir:       t.TempDir(),
+		CertsDir:      t.TempDir(), // never touch the real /etc/docker from tests
 	}
 }
 
@@ -115,6 +116,56 @@ func TestEnrollHappyPath(t *testing.T) {
 	// Burned token admits no second node.
 	_, _, err = RunEnroll(ctx, enrollOptions(t, addr, token))
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// TestEnrollInstallsRegistryTrust pins the mirror handshake: a master with a
+// registry hands its address to enrolling nodes, which persist it and install
+// docker trust for it (cluster CA + node identity as the client cert).
+func TestEnrollInstallsRegistryTrust(t *testing.T) {
+	ctx := context.Background()
+
+	st := store.NewStore(testdb.New(t))
+	ca, err := EnsureCA(ctx, st, testAuthSecret)
+	require.NoError(t, err)
+	const registryAddr = "10.0.0.9:5000"
+	srv, err := NewMasterServer(st, ca, nil, registryAddr)
+	require.NoError(t, err)
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go srv.Serve(lis) //nolint:errcheck
+	t.Cleanup(srv.Stop)
+
+	token, _, err := MintJoinToken(ctx, st, ca, []string{"worker"}, nil)
+	require.NoError(t, err)
+	opts := enrollOptions(t, lis.Addr().String(), token)
+	identity, _, err := RunEnroll(ctx, opts)
+	require.NoError(t, err)
+	require.Equal(t, registryAddr, identity.RegistryAddr, "registry addr persists in node.json")
+
+	dir := filepath.Join(opts.CertsDir, registryAddr)
+	caPEM, err := os.ReadFile(filepath.Join(dir, "ca.crt"))
+	require.NoError(t, err)
+	require.Equal(t, ca.CertPEM, caPEM)
+	clientCert, err := os.ReadFile(filepath.Join(dir, "client.cert"))
+	require.NoError(t, err)
+	nodeCert, err := os.ReadFile(filepath.Join(opts.DataDir, "node.crt"))
+	require.NoError(t, err)
+	require.Equal(t, nodeCert, clientCert, "the node identity doubles as the docker client cert")
+	keyInfo, err := os.Stat(filepath.Join(dir, "client.key"))
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), keyInfo.Mode().Perm())
+
+	// No registry (startMaster passes "") → nothing installed, nothing fails.
+	st2, ca2, addr2 := startMaster(t)
+	token2, _, err := MintJoinToken(ctx, st2, ca2, []string{"worker"}, nil)
+	require.NoError(t, err)
+	opts2 := enrollOptions(t, addr2, token2)
+	identity2, _, err := RunEnroll(ctx, opts2)
+	require.NoError(t, err)
+	require.Empty(t, identity2.RegistryAddr)
+	entries, err := os.ReadDir(opts2.CertsDir)
+	require.NoError(t, err)
+	require.Empty(t, entries, "no registry addr → no certs.d writes")
 }
 
 func TestEnrollRejectsWrongSecret(t *testing.T) {

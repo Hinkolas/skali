@@ -43,6 +43,10 @@ message EnrollResponse {
   bytes ca_pem = 3;
   // Roles granted by the join token.
   repeated string roles = 4;
+  // host:port of the cluster image mirror; empty when the master runs no
+  // registry. Enrollment installs docker trust for it (the CA above plus the
+  // node cert as the docker client identity) under /etc/docker/certs.d/.
+  string registry_addr = 5;
 }
 
 // NodeService is the per-worker control surface: heartbeat plus the

@@ -245,7 +245,11 @@ type EnrollResponse struct {
 	// Cluster CA cert (PEM); the worker's trust root from here on.
 	CaPem []byte `protobuf:"bytes,3,opt,name=ca_pem,json=caPem,proto3" json:"ca_pem,omitempty"`
 	// Roles granted by the join token.
-	Roles         []string `protobuf:"bytes,4,rep,name=roles,proto3" json:"roles,omitempty"`
+	Roles []string `protobuf:"bytes,4,rep,name=roles,proto3" json:"roles,omitempty"`
+	// host:port of the cluster image mirror; empty when the master runs no
+	// registry. Enrollment installs docker trust for it (the CA above plus the
+	// node cert as the docker client identity) under /etc/docker/certs.d/.
+	RegistryAddr  string `protobuf:"bytes,5,opt,name=registry_addr,json=registryAddr,proto3" json:"registry_addr,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -306,6 +310,13 @@ func (x *EnrollResponse) GetRoles() []string {
 		return x.Roles
 	}
 	return nil
+}
+
+func (x *EnrollResponse) GetRegistryAddr() string {
+	if x != nil {
+		return x.RegistryAddr
+	}
+	return ""
 }
 
 type HeartbeatRequest struct {
@@ -2092,12 +2103,13 @@ const file_skali_cluster_v1_cluster_proto_rawDesc = "" +
 	"\bhostname\x18\x04 \x01(\tR\bhostname\x12\x12\n" +
 	"\x04arch\x18\x05 \x01(\tR\x04arch\x12\x0e\n" +
 	"\x02os\x18\x06 \x01(\tR\x02os\x12%\n" +
-	"\x0eskalid_version\x18\a \x01(\tR\rskalidVersion\"q\n" +
+	"\x0eskalid_version\x18\a \x01(\tR\rskalidVersion\"\x96\x01\n" +
 	"\x0eEnrollResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x19\n" +
 	"\bcert_pem\x18\x02 \x01(\fR\acertPem\x12\x15\n" +
 	"\x06ca_pem\x18\x03 \x01(\fR\x05caPem\x12\x14\n" +
-	"\x05roles\x18\x04 \x03(\tR\x05roles\"\x12\n" +
+	"\x05roles\x18\x04 \x03(\tR\x05roles\x12#\n" +
+	"\rregistry_addr\x18\x05 \x01(\tR\fregistryAddr\"\x12\n" +
 	"\x10HeartbeatRequest\"\x14\n" +
 	"\x12WatchEventsRequest\")\n" +
 	"\x13WatchEventsResponse\x12\x12\n" +

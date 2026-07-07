@@ -192,6 +192,44 @@ func (ca *CA) IssueServerCert(hosts []string) (tls.Certificate, error) {
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
+	applyHostSANs(tmpl, hosts)
+	return ca.issue(tmpl, true)
+}
+
+// ServerPEM issues a CA-signed TLS server identity as PEM — trust material
+// for components outside this process (e.g. the registry container, which
+// mounts its cert as files). Implements the mirror package's Issuer.
+func (ca *CA) ServerPEM(cn string, hosts []string, lifetime time.Duration) (certPEM, keyPEM []byte, err error) {
+	tmpl := &x509.Certificate{
+		Subject:     pkix.Name{CommonName: cn},
+		NotBefore:   time.Now().Add(-notBeforeSkew),
+		NotAfter:    time.Now().Add(lifetime),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	applyHostSANs(tmpl, hosts)
+	return ca.issuePEM(tmpl)
+}
+
+// ClientPEM issues the master's TLS client identity as PEM, for clients that
+// read certs from disk (dockerd's certs.d) or need raw material (the mirror
+// importer's transport). Implements the mirror package's Issuer.
+func (ca *CA) ClientPEM() (certPEM, keyPEM []byte, err error) {
+	tmpl := &x509.Certificate{
+		Subject:     pkix.Name{CommonName: masterCN},
+		NotBefore:   time.Now().Add(-notBeforeSkew),
+		NotAfter:    time.Now().Add(certLifetime),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	return ca.issuePEM(tmpl)
+}
+
+// CAPEM returns the CA certificate PEM. Implements the mirror package's
+// Issuer.
+func (ca *CA) CAPEM() []byte { return ca.CertPEM }
+
+func applyHostSANs(tmpl *x509.Certificate, hosts []string) {
 	for _, h := range hosts {
 		if h == "" {
 			continue
@@ -202,7 +240,6 @@ func (ca *CA) IssueServerCert(hosts []string) (tls.Certificate, error) {
 			tmpl.DNSNames = append(tmpl.DNSNames, h)
 		}
 	}
-	return ca.issue(tmpl, true)
 }
 
 // IssueClientCert mints the master's dialing identity for worker NodeService
@@ -216,6 +253,31 @@ func (ca *CA) IssueClientCert() (tls.Certificate, error) {
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	return ca.issue(tmpl, false)
+}
+
+// issuePEM signs tmpl and returns the identity as PEM pairs, for consumers
+// outside this process's memory.
+func (ca *CA) issuePEM(tmpl *x509.Certificate) (certPEM, keyPEM []byte, err error) {
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, nil, err
+	}
+	tmpl.SerialNumber = serial
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cluster: generate key: %w", err)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.Cert, &key.PublicKey, ca.key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cluster: sign cert: %w", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cluster: marshal key: %w", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM, nil
 }
 
 func (ca *CA) issue(tmpl *x509.Certificate, includeCA bool) (tls.Certificate, error) {

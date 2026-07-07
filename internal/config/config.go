@@ -78,6 +78,20 @@ type API struct {
 	// a Podman compatibility socket) — the master is a node too and runs
 	// containers locally without gRPC.
 	EngineSocket string `env:"ENGINE_SOCKET,default=unix:///var/run/docker.sock"`
+
+	// DataDir holds master-side state: the registry's TLS material and
+	// config. Same default as the agent's identity dir — a machine that is
+	// both stores each under its own filenames.
+	DataDir string `env:"DATA_DIR,default=/var/lib/skalid"`
+
+	// RegistryPort is the host port the cluster image mirror publishes on
+	// the master. Workers reach it at <CLUSTER_ADDR host>:<REGISTRY_PORT>;
+	// like join tokens, the registry stays disabled while CLUSTER_ADDR is
+	// unset.
+	RegistryPort int `env:"REGISTRY_PORT,default=5000"`
+
+	// RegistryImage is the CNCF distribution image the mirror runs.
+	RegistryImage string `env:"REGISTRY_IMAGE,default=registry:3"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.
@@ -98,6 +112,15 @@ func (a *API) Validate() error {
 	}
 	if a.EngineSocket == "" {
 		return fmt.Errorf("ENGINE_SOCKET: must not be empty")
+	}
+	if a.DataDir == "" {
+		return fmt.Errorf("DATA_DIR: must not be empty")
+	}
+	if a.RegistryPort < 1 || a.RegistryPort > 65535 {
+		return fmt.Errorf("REGISTRY_PORT: %d is not a valid port", a.RegistryPort)
+	}
+	if a.RegistryImage == "" {
+		return fmt.Errorf("REGISTRY_IMAGE: must not be empty")
 	}
 	return nil
 }

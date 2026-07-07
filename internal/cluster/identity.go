@@ -30,6 +30,7 @@ type Identity struct {
 	NodeID        uuid.UUID
 	MasterAddr    string
 	AdvertiseAddr string
+	RegistryAddr  string // cluster image mirror ("" = none at enrollment)
 	Cert          tls.Certificate
 	CACert        *x509.Certificate
 	CAPool        *x509.CertPool
@@ -39,6 +40,7 @@ type nodeMeta struct {
 	NodeID        uuid.UUID `json:"node_id"`
 	MasterAddr    string    `json:"master_addr"`
 	AdvertiseAddr string    `json:"advertise_addr"`
+	RegistryAddr  string    `json:"registry_addr,omitempty"`
 }
 
 // SaveIdentity persists an enrollment result. It overwrites any previous
@@ -51,6 +53,7 @@ func SaveIdentity(dir string, meta Identity, keyPEM, certPEM, caPEM []byte) erro
 		NodeID:        meta.NodeID,
 		MasterAddr:    meta.MasterAddr,
 		AdvertiseAddr: meta.AdvertiseAddr,
+		RegistryAddr:  meta.RegistryAddr,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -106,6 +109,7 @@ func LoadIdentity(dir string) (*Identity, error) {
 		NodeID:        meta.NodeID,
 		MasterAddr:    meta.MasterAddr,
 		AdvertiseAddr: meta.AdvertiseAddr,
+		RegistryAddr:  meta.RegistryAddr,
 		Cert:          cert,
 		CACert:        caCert,
 		CAPool:        pool,

@@ -54,6 +54,9 @@ func runEnroll(args []string) error {
 	fmt.Printf("  roles:          %s\n", strings.Join(roles, ", "))
 	fmt.Printf("  advertise addr: %s\n", identity.AdvertiseAddr)
 	fmt.Printf("  identity dir:   %s\n", *dataDir)
+	if identity.RegistryAddr != "" {
+		fmt.Printf("  image mirror:   %s (docker trust installed)\n", identity.RegistryAddr)
+	}
 	fmt.Println("start the node with: skalid agent")
 	return nil
 }
