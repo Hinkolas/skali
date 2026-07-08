@@ -123,16 +123,6 @@ export interface NodeContainerList {
 	containers: NodeContainer[];
 }
 
-/** POST /v1/nodes/{id}/containers body (the modal's minimal subset). */
-export interface ContainerCreateRequest {
-	name: string;
-	image: string;
-	kind: ContainerKind;
-	ports?: { host_port?: number; container_port: number; protocol?: 'tcp' | 'udp' }[];
-	pull?: 'if-missing' | 'always' | 'never';
-	start?: boolean;
-}
-
 /**
  * One image observed on a node. Unfiltered inventory — every image on the
  * machine, skali-managed or not; `containers` counts references from
