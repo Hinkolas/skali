@@ -19,6 +19,7 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/engine/enginetest"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
 )
@@ -62,11 +63,17 @@ func newTestAPIWithRegistry(t *testing.T, reg RegistryOps) *testAPI {
 	t.Cleanup(conns.Close)
 	eng := enginetest.New("nginx:alpine")
 
+	// Workloads share the registry gate: a nil registry means a nil service.
+	var workloads *reconcile.Service
+	if reg != nil {
+		workloads = reconcile.NewService(st, nil)
+	}
 	srv := httptest.NewServer(NewRouter(Deps{
 		Auth: svc, Store: st, DB: pool,
 		Cluster:    cluster.NewService(st, ca, testClusterAddr),
 		Containers: cluster.NewContainerOps(st, conns, self.ID, eng),
 		Registry:   reg,
+		Workloads:  workloads,
 	}))
 	t.Cleanup(srv.Close)
 	a := &testAPI{t: t, srv: srv, st: st, svc: svc, eng: eng, selfID: self.ID}
@@ -507,5 +514,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 36, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 41, routes, "route count changed; update the OpenAPI spec and this number")
 }

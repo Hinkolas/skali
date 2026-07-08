@@ -1147,6 +1147,136 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/workloads:
+    get:
+      operationId: listWorkloads
+      summary: List workloads
+      description: |
+        Admin only. Desired state with live convergence status: every
+        workload embeds its assignments (per-replica phase, node, errors,
+        retry schedule). Reads stay available on a registry-less master.
+      tags: [workloads]
+      responses:
+        "200":
+          description: All workloads, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workloads]
+                properties:
+                  workloads:
+                    type: array
+                    items: { $ref: "#/components/schemas/Workload" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createWorkload
+      summary: Create a workload
+      description: |
+        Admin only, sudo mode. Declares desired state and returns
+        immediately — the reconciler imports the image into the mirror
+        (digest-pinned), assigns nodes within the constraints, pulls, and
+        starts the replicas in the background. Progress is read back from
+        the workload's `status` and its assignments. Requires the mirror
+        (`503 registry_disabled` without `CLUSTER_ADDR`). Replicas defaults
+        to 1.
+      tags: [workloads]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadCreateRequest" }
+      responses:
+        "201":
+          description: Declared; convergence starts in the background.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workload]
+                properties:
+                  workload: { $ref: "#/components/schemas/Workload" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/RegistryUnavailable" }
+
+  /v1/workloads/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getWorkload
+      summary: Get one workload
+      tags: [workloads]
+      responses:
+        "200":
+          description: The workload with its assignments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workload]
+                properties:
+                  workload: { $ref: "#/components/schemas/Workload" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateWorkload
+      summary: Update a workload
+      description: |
+        Admin only, sudo mode. Partial update: absent fields keep their
+        value; `spec` and `constraints` replace as whole objects. Every
+        update bumps `generation` and the reconciler replaces or adjusts
+        replicas to match. Changing `image` re-resolves the digest pin;
+        `desired_state` accepts `running` or `stopped`. A deleting workload
+        answers `409`.
+      tags: [workloads]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadUpdateRequest" }
+      responses:
+        "200":
+          description: Updated; convergence continues in the background.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workload]
+                properties:
+                  workload: { $ref: "#/components/schemas/Workload" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/RegistryUnavailable" }
+    delete:
+      operationId: deleteWorkload
+      summary: Delete a workload
+      description: |
+        Admin only, sudo mode. Marks the workload deleting and answers
+        `202`: the reconciler removes every replica, then the rows
+        disappear. An offline node blocks completion visibly on its
+        assignment; removing that node completes the teardown.
+      tags: [workloads]
+      responses:
+        "202":
+          description: Teardown started; poll the workload until it 404s.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/RegistryUnavailable" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1570,6 +1700,237 @@ components:
           type: string
           format: date-time
           description: Present once the operation leaves `running`.
+
+    Workload:
+      type: object
+      description: |
+        Desired state for one container spec running as N replicas, plus its
+        live convergence status. `image` is the upstream reference the user
+        declared; `image_repository`/`image_digest` are the mirror pin the
+        replicas actually run — owned by the workload, so a re-import that
+        moves the catalog pin never restarts containers behind your back.
+      required:
+        [id, name, kind, desired_state, replicas, constraints, image, spec,
+         generation, status, created_at, updated_at, assignments]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Also the container name stem (`<name>-<ordinal>`).
+        kind:
+          type: string
+          enum: [application, database]
+        desired_state:
+          type: string
+          enum: [running, stopped, deleting]
+        replicas:
+          type: integer
+        constraints: { $ref: "#/components/schemas/WorkloadConstraints" }
+        image:
+          type: string
+          description: Upstream tag reference, e.g. `postgres:17`.
+        spec: { $ref: "#/components/schemas/WorkloadSpec" }
+        generation:
+          type: integer
+          description: Bumps on every update; assignments report the generation they converged to.
+        status:
+          type: string
+          enum: [running, stopped, converging, importing, degraded, deleting]
+          description: |
+            Computed rollup: `deleting` > `degraded` (any error or
+            unschedulable replica) > `importing` (no digest pin yet) >
+            `converging` (work in flight or generation lag) > the desired
+            state.
+        image_repository:
+          type: string
+          description: Mirror-relative repository of the pin.
+        image_digest:
+          type: string
+          description: The digest the replicas run.
+        last_error:
+          type: string
+          description: Workload-level failure (image resolution), if any.
+        next_attempt_at:
+          type: string
+          format: date-time
+          description: When the failed step retries.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        assignments:
+          type: array
+          items: { $ref: "#/components/schemas/WorkloadAssignment" }
+
+    WorkloadAssignment:
+      type: object
+      description: |
+        One replica slot, placed and converged by the reconciler. There is
+        no error phase — an error is `last_error` (+ `next_attempt_at`) on
+        whatever phase is stuck.
+      required: [ordinal, phase, container_name, generation, retries, updated_at]
+      properties:
+        ordinal:
+          type: integer
+        node_id:
+          type: string
+          format: uuid
+          description: Reconciler-assigned; absent while unplaced.
+        node_name:
+          type: string
+        phase:
+          type: string
+          enum: [pending, unschedulable, pulling, deploying, stopping, ready, stopped, removing]
+        container_name:
+          type: string
+        container_id:
+          type: string
+        generation:
+          type: integer
+        retries:
+          type: integer
+        next_attempt_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    WorkloadConstraints:
+      type: object
+      description: |
+        Narrows where replicas may land; both filters intersect, empty means
+        any node. Placement itself is reconciler-owned — pin nodes through
+        `node_ids` if you must, the assignment stays an output.
+      properties:
+        node_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        node_roles:
+          type: array
+          items:
+            type: string
+            enum: [master, edge, worker, builder]
+
+    WorkloadSpec:
+      type: object
+      description: |
+        The container spec subset of a workload. Name, image, and placement
+        live on the workload itself; identity labels (`skali.*`) are stamped
+        by the reconciler and rejected here.
+      properties:
+        env:
+          type: object
+          additionalProperties: { type: string }
+        command:
+          type: array
+          items: { type: string }
+          description: Overrides the image CMD.
+        ports:
+          type: array
+          items:
+            type: object
+            required: [container_port]
+            properties:
+              host_ip: { type: string }
+              host_port:
+                type: integer
+                description: 0 = engine-assigned ephemeral port.
+              container_port: { type: integer }
+              protocol:
+                type: string
+                enum: [tcp, udp]
+        mounts:
+          type: array
+          items:
+            type: object
+            required: [type, source, target]
+            properties:
+              type:
+                type: string
+                enum: [bind, volume]
+              source: { type: string }
+              target: { type: string }
+              read_only: { type: boolean }
+        restart_policy:
+          type: string
+          enum: [no, always, unless-stopped, on-failure]
+          description: Defaults to `unless-stopped` — crash recovery is the node's job.
+        restart_max_retries:
+          type: integer
+          description: on-failure only.
+        cpus:
+          type: number
+          description: Cores per replica (0.5 = half a core); 0 = unlimited.
+        memory_limit:
+          type: integer
+          description: Bytes; 0 = unlimited.
+        networks:
+          type: array
+          items: { type: string }
+          description: Existing network names to attach.
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: User labels; the `skali.` prefix is reserved.
+        healthcheck:
+          type: object
+          required: [test]
+          properties:
+            test:
+              type: array
+              items: { type: string }
+              description: CMD/CMD-SHELL form, docker semantics.
+            interval_seconds: { type: integer }
+            timeout_seconds: { type: integer }
+            start_period_seconds: { type: integer }
+            retries: { type: integer }
+
+    WorkloadCreateRequest:
+      type: object
+      required: [name, kind, image]
+      properties:
+        name:
+          type: string
+          description: "`^[a-z0-9][a-z0-9-]{0,53}$`; immutable."
+        kind:
+          type: string
+          enum: [application, database]
+        image:
+          type: string
+          description: Upstream tag reference; digest references are rejected.
+        replicas:
+          type: integer
+          description: Defaults to 1; 0 is legal (converges to nothing).
+        desired_state:
+          type: string
+          enum: [running, stopped]
+        constraints: { $ref: "#/components/schemas/WorkloadConstraints" }
+        spec: { $ref: "#/components/schemas/WorkloadSpec" }
+
+    WorkloadUpdateRequest:
+      type: object
+      description: |
+        Partial: absent fields keep their value; `spec` and `constraints`
+        replace as whole objects.
+      properties:
+        image:
+          type: string
+        replicas:
+          type: integer
+        desired_state:
+          type: string
+          enum: [running, stopped]
+        constraints: { $ref: "#/components/schemas/WorkloadConstraints" }
+        spec: { $ref: "#/components/schemas/WorkloadSpec" }
 
     ContainerCreateRequest:
       type: object

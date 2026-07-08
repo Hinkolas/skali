@@ -184,6 +184,7 @@ func runServe() error {
 	// means neither runs (a nil RegistryOps keeps the routes answering 503
 	// registry_disabled).
 	var registryOps api.RegistryOps
+	var workloadSvc *reconcile.Service
 	if regAddr != "" {
 		importer, err := mirror.NewImporter(st, ca, regAddr)
 		if err != nil {
@@ -191,6 +192,7 @@ func runServe() error {
 		}
 		registryOps = importer
 		rec = reconcile.NewReconciler(st, cluster.NewNodeHandles(conns, self.ID, eng), importer, regAddr)
+		workloadSvc = reconcile.NewService(st, rec.Poke)
 	}
 
 	// Leadership: one active master per database, decided by a Postgres
@@ -201,7 +203,7 @@ func runServe() error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Containers: containerOps, Registry: registryOps, Leader: lease.IsLeader}),
+		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Containers: containerOps, Registry: registryOps, Workloads: workloadSvc, Leader: lease.IsLeader}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)

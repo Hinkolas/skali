@@ -15,6 +15,7 @@ import (
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/cluster"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -29,6 +30,10 @@ type Deps struct {
 	// Registry is nil when the master runs no image mirror (CLUSTER_ADDR
 	// unset); its routes then answer 503 registry_disabled.
 	Registry RegistryOps
+	// Workloads shares the registry gate (unified image handling needs the
+	// mirror): nil disables the write routes the same way, reads stay
+	// store-only.
+	Workloads *reconcile.Service
 	// Leader reports whether this master holds the cluster leader lease;
 	// nil (tests, single-purpose harnesses) reads as false.
 	Leader func() bool
@@ -98,6 +103,7 @@ func NewRouter(d Deps) http.Handler {
 			ch := &containersHandlers{st: d.Store, containers: d.Containers}
 			rh := &registryHandlers{registry: d.Registry, st: d.Store}
 			oh := &operationsHandlers{st: d.Store}
+			wh := &workloadsHandlers{st: d.Store, workloads: d.Workloads}
 			r.Group(func(r chi.Router) {
 				r.Use(RequireAdmin)
 
@@ -117,6 +123,10 @@ func NewRouter(d Deps) http.Handler {
 				// Task-shaped background work: poll here after a 202.
 				r.Get("/operations", oh.list)
 				r.Get("/operations/{id}", oh.get)
+
+				// Desired state: the reconciler converges what these declare.
+				r.Get("/workloads", wh.list)
+				r.Get("/workloads/{id}", wh.get)
 
 				// Writes additionally need sudo mode. RequireAdmin sits
 				// outside RequireFresh so non-admins get "forbidden", never a
@@ -142,6 +152,10 @@ func NewRouter(d Deps) http.Handler {
 
 					r.Post("/registry/images", rh.importImage)
 					r.Delete("/registry/images/{id}", rh.deleteImage)
+
+					r.Post("/workloads", wh.create)
+					r.Patch("/workloads/{id}", wh.update)
+					r.Delete("/workloads/{id}", wh.delete)
 				})
 			})
 		})
