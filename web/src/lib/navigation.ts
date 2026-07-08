@@ -8,6 +8,7 @@ import type { ServiceType } from '$lib/mock/types';
 import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import Server from '@lucide/svelte/icons/server';
+import Boxes from '@lucide/svelte/icons/boxes';
 import Container from '@lucide/svelte/icons/container';
 import Package from '@lucide/svelte/icons/package';
 import Globe from '@lucide/svelte/icons/globe';
@@ -58,8 +59,12 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 		section: 'Administration',
 		items: [
 			{ label: 'Users', slug: 'users', icon: Users, adminOnly: true },
-			// The raw engine surface: a debugging tool, deliberately away from
-			// the product pages a member ever sees.
+			// The orchestration primitive: desired state the reconciler
+			// converges. The pretty product surface arrives with the
+			// application layer; this is the admin's direct lever.
+			{ label: 'Workloads', slug: 'workloads', icon: Boxes, adminOnly: true },
+			// The raw engine surface: read-only node truth, a debugging tool
+			// deliberately away from the product pages a member ever sees.
 			{ label: 'Containers', slug: 'containers', icon: Container, adminOnly: true },
 			// The mirror catalog: what the cluster registry serves.
 			{ label: 'Registry', slug: 'registry', icon: Package, adminOnly: true },
