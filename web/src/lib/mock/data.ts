@@ -2,7 +2,7 @@
 // (Skali App.dc.html) so the implementation can be compared side-by-side.
 
 import type { Deployment, Org, Project, ProjectGraph, Service } from './types';
-import type { Node } from '$lib/types/nodes';
+import type { Node } from './types';
 
 export const ORG: Org = {
 	id: 'org_01',

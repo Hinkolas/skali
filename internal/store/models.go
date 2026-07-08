@@ -27,23 +27,6 @@ type BackupCode struct {
 	CreatedAt   time.Time
 }
 
-type ClusterCa struct {
-	ID        bool
-	CertPem   string
-	KeyCipher []byte
-	CreatedAt time.Time
-}
-
-type JoinToken struct {
-	ID        uuid.UUID
-	Hash      []byte
-	Roles     []string
-	ExpiresAt time.Time
-	UsedAt    *time.Time
-	CreatedBy *uuid.UUID
-	CreatedAt time.Time
-}
-
 type LoginChallenge struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
@@ -51,119 +34,6 @@ type LoginChallenge struct {
 	Attempts  int32
 	ExpiresAt time.Time
 	CreatedAt time.Time
-}
-
-type Node struct {
-	ID            uuid.UUID
-	Name          string
-	Roles         []string
-	AdvertiseAddr string
-	PublicAddr    *string
-	Arch          *string
-	Os            *string
-	SkalidVersion *string
-	CertSerial    *string
-	Status        string
-	LastSeen      *time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	CpuPct        *float32
-	MemUsed       *int64
-	MemTotal      *int64
-	DiskUsed      *int64
-	DiskTotal     *int64
-	NetRxRate     *int64
-	NetTxRate     *int64
-	DiskReadRate  *int64
-	DiskWriteRate *int64
-	Load1         *float32
-}
-
-type NodeContainer struct {
-	NodeID           uuid.UUID
-	ContainerID      string
-	Name             string
-	Image            string
-	Kind             string
-	State            string
-	Health           *string
-	ExitCode         *int32
-	RestartCount     int32
-	Labels           []byte
-	ContainerCreated *time.Time
-	ContainerStarted *time.Time
-	CpuPct           *float32
-	MemUsed          *int64
-	MemLimit         *int64
-	NetRxRate        *int64
-	NetTxRate        *int64
-	FirstSeen        time.Time
-	LastSeen         time.Time
-}
-
-type NodeImage struct {
-	NodeID       uuid.UUID
-	ImageID      string
-	RepoTags     []string
-	RepoDigests  []string
-	SizeBytes    int64
-	Dangling     bool
-	Containers   int32
-	ImageCreated *time.Time
-	FirstSeen    time.Time
-	LastSeen     time.Time
-}
-
-type NodeMetric struct {
-	NodeID        uuid.UUID
-	SampledAt     time.Time
-	CpuPct        float32
-	MemUsed       int64
-	MemTotal      int64
-	DiskUsed      int64
-	DiskTotal     int64
-	NetRxRate     int64
-	NetTxRate     int64
-	DiskReadRate  int64
-	DiskWriteRate int64
-	Load1         float32
-}
-
-type NodeVolume struct {
-	NodeID        uuid.UUID
-	Name          string
-	Driver        string
-	Scope         string
-	Mountpoint    string
-	Labels        []byte
-	Containers    int32
-	VolumeCreated *time.Time
-	FirstSeen     time.Time
-	LastSeen      time.Time
-}
-
-type Operation struct {
-	ID         uuid.UUID
-	Kind       string
-	Status     string
-	Subject    string
-	Result     []byte
-	Error      *string
-	CreatedBy  *uuid.UUID
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	FinishedAt *time.Time
-}
-
-type RegistryImage struct {
-	ID         uuid.UUID
-	Repository string
-	Tag        string
-	Digest     string
-	SizeBytes  int64
-	ImportedAt time.Time
-	UpdatedAt  time.Time
 }
 
 type Session struct {
@@ -196,38 +66,4 @@ type User struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	Role             string
-}
-
-type Workload struct {
-	ID                 uuid.UUID
-	Name               string
-	Kind               string
-	DesiredState       string
-	Replicas           int32
-	Constraints        []byte
-	Image              string
-	Spec               []byte
-	Generation         int64
-	ResolvedRepository *string
-	ResolvedDigest     *string
-	LastError          *string
-	Retries            int32
-	NextAttemptAt      *time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-}
-
-type WorkloadAssignment struct {
-	WorkloadID    uuid.UUID
-	Ordinal       int32
-	NodeID        *uuid.UUID
-	Phase         string
-	ContainerName string
-	ContainerID   *string
-	Generation    int64
-	Retries       int32
-	NextAttemptAt *time.Time
-	LastError     *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
 }

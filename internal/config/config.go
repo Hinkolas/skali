@@ -6,7 +6,7 @@ package config
 import (
 	"context"
 	"fmt"
-	"net"
+	"slices"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -34,9 +34,8 @@ func (l *Logging) Validate() error {
 	return oneOf("LOG_OUTPUT", l.LogOutput, "stdout", "file", "both")
 }
 
-// Base is configuration shared by every binary that talks to the control-plane
-// database (serve, migrate, user). The worker-side agent/enroll commands use
-// Agent instead — they have no database.
+// Base is configuration shared by every command that talks to the control-plane
+// database (serve, migrate, user).
 type Base struct {
 	// Core infrastructure.
 	DatabaseURL string `env:"DATABASE_URL,required"`
@@ -62,36 +61,6 @@ type API struct {
 	// ReauthWindow is how long a session stays "fresh" for sudo-gated
 	// endpoints after login or an explicit reauthentication.
 	ReauthWindow time.Duration `env:"REAUTH_WINDOW,default=15m"`
-
-	// GRPCAddr is the master's cluster-plane listener (TLS gRPC). It serves
-	// node enrollment; workers' NodeService servers use the same default on
-	// their side (see Agent).
-	GRPCAddr string `env:"GRPC_ADDR,default=:7443"`
-
-	// ClusterAddr is the externally reachable host:port of GRPCAddr — the
-	// address baked into rendered `skalid enroll` commands. Optional at boot
-	// so existing single-node deploys keep working; minting a join token
-	// fails while it is unset.
-	ClusterAddr string `env:"CLUSTER_ADDR"`
-
-	// EngineSocket is the master's own container engine endpoint (Docker or
-	// a Podman compatibility socket) — the master is a node too and runs
-	// containers locally without gRPC.
-	EngineSocket string `env:"ENGINE_SOCKET,default=unix:///var/run/docker.sock"`
-
-	// DataDir holds master-side state: the registry's TLS material and
-	// config. Same default as the agent's identity dir — a machine that is
-	// both stores each under its own filenames.
-	DataDir string `env:"DATA_DIR,default=/var/lib/skalid"`
-
-	// RegistryPort is the host port the cluster image mirror publishes on
-	// the master. Workers reach it at <CLUSTER_ADDR host>:<REGISTRY_PORT>;
-	// like join tokens, the registry stays disabled while CLUSTER_ADDR is
-	// unset.
-	RegistryPort int `env:"REGISTRY_PORT,default=5000"`
-
-	// RegistryImage is the CNCF distribution image the mirror runs.
-	RegistryImage string `env:"REGISTRY_IMAGE,default=registry:3"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.
@@ -104,55 +73,6 @@ func (a *API) Validate() error {
 	}
 	if a.ReauthWindow <= 0 {
 		return fmt.Errorf("REAUTH_WINDOW: must be positive")
-	}
-	if a.ClusterAddr != "" {
-		if _, _, err := net.SplitHostPort(a.ClusterAddr); err != nil {
-			return fmt.Errorf("CLUSTER_ADDR: must be host:port (e.g. 10.0.0.1:7443): %w", err)
-		}
-	}
-	if a.EngineSocket == "" {
-		return fmt.Errorf("ENGINE_SOCKET: must not be empty")
-	}
-	if a.DataDir == "" {
-		return fmt.Errorf("DATA_DIR: must not be empty")
-	}
-	if a.RegistryPort < 1 || a.RegistryPort > 65535 {
-		return fmt.Errorf("REGISTRY_PORT: %d is not a valid port", a.RegistryPort)
-	}
-	if a.RegistryImage == "" {
-		return fmt.Errorf("REGISTRY_IMAGE: must not be empty")
-	}
-	return nil
-}
-
-// Agent is the configuration for worker-side commands (`skalid enroll`,
-// `skalid agent`). Workers are stateless: no database, no auth secret — their
-// only persistent state is the node identity under DataDir.
-type Agent struct {
-	Logging
-
-	// DataDir holds the node identity written by `skalid enroll`
-	// (CA cert, node cert+key, node metadata).
-	DataDir string `env:"DATA_DIR,default=/var/lib/skalid"`
-
-	// GRPCAddr is the worker's NodeService listener the master dials.
-	GRPCAddr string `env:"GRPC_ADDR,default=:7443"`
-
-	// EngineSocket is the node's container engine endpoint (Docker or a
-	// Podman compatibility socket).
-	EngineSocket string `env:"ENGINE_SOCKET,default=unix:///var/run/docker.sock"`
-}
-
-// Validate shadows Logging.Validate, so it must chain to it explicitly.
-func (a *Agent) Validate() error {
-	if err := a.Logging.Validate(); err != nil {
-		return err
-	}
-	if a.DataDir == "" {
-		return fmt.Errorf("DATA_DIR: must not be empty")
-	}
-	if a.EngineSocket == "" {
-		return fmt.Errorf("ENGINE_SOCKET: must not be empty")
 	}
 	return nil
 }
@@ -178,10 +98,8 @@ func Load[T any](ctx context.Context) (*T, error) {
 }
 
 func oneOf(name, val string, allowed ...string) error {
-	for _, a := range allowed {
-		if val == a {
-			return nil
-		}
+	if slices.Contains(allowed, val) {
+		return nil
 	}
 	return fmt.Errorf("%s: %q must be one of %v", name, val, allowed)
 }

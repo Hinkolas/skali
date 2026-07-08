@@ -3,8 +3,7 @@
 // bodies do.
 
 import { GRAPHS, NODES, ORG, PROJECTS, SERVICES } from './data';
-import type { Org, Project, ProjectGraph, Service } from './types';
-import type { Node } from '$lib/types/nodes';
+import type { Node, Org, Project, ProjectGraph, Service } from './types';
 
 export type * from './types';
 

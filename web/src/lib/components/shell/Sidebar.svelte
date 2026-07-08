@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import type { Org, Project, Service } from '$lib/mock/types';
-	import type { Node } from '$lib/types/nodes';
+	import type { Node, Org, Project, Service } from '$lib/mock/types';
 	import { toast } from '$lib/stores/toast.svelte';
 	import SidebarOrgNav from './SidebarOrgNav.svelte';
 	import SidebarProjectNav from './SidebarProjectNav.svelte';

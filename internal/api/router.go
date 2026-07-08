@@ -14,26 +14,13 @@ import (
 
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
-	"github.com/Hinkolas/skali/internal/cluster"
-	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
 type Deps struct {
-	Auth    *auth.Service
-	Store   *store.Store
-	DB      *pgxpool.Pool
-	Cluster *cluster.Service
-	// Registry is nil when the master runs no image mirror (CLUSTER_ADDR
-	// unset); its routes then answer 503 registry_disabled.
-	Registry RegistryOps
-	// Workloads shares the registry gate (unified image handling needs the
-	// mirror): nil disables the write routes the same way, reads stay
-	// store-only.
-	Workloads *reconcile.Service
-	// Leader reports whether this master holds the cluster leader lease;
-	// nil (tests, single-purpose harnesses) reads as false.
-	Leader func() bool
+	Auth  *auth.Service
+	Store *store.Store
+	DB    *pgxpool.Pool
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -52,10 +39,7 @@ func NewRouter(d Deps) http.Handler {
 			writeError(w, http.StatusServiceUnavailable, codeInternal, "database unreachable")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "ok",
-			"leader": d.Leader != nil && d.Leader(),
-		})
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
 	r.Get("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
@@ -96,34 +80,10 @@ func NewRouter(d Deps) http.Handler {
 
 			// Instance management, admins only.
 			uh := &usersHandlers{st: d.Store}
-			nh := &nodesHandlers{st: d.Store, cluster: d.Cluster}
-			ch := &containersHandlers{st: d.Store}
-			rh := &registryHandlers{registry: d.Registry, st: d.Store}
-			oh := &operationsHandlers{st: d.Store}
-			wh := &workloadsHandlers{st: d.Store, workloads: d.Workloads}
 			r.Group(func(r chi.Router) {
 				r.Use(RequireAdmin)
 
 				r.Get("/users", uh.list)
-				r.Get("/nodes", nh.list)
-				r.Get("/nodes/{id}/metrics", nh.metrics)
-
-				// The cluster-wide engine surface: reads are cross-node with
-				// an optional ?node= filter; writes stay node-scoped below.
-				r.Get("/containers", ch.list)
-				r.Get("/images", ch.images)
-				r.Get("/volumes", ch.volumes)
-
-				// The mirror catalog: what the cluster registry serves.
-				r.Get("/registry/images", rh.list)
-
-				// Task-shaped background work: poll here after a 202.
-				r.Get("/operations", oh.list)
-				r.Get("/operations/{id}", oh.get)
-
-				// Desired state: the reconciler converges what these declare.
-				r.Get("/workloads", wh.list)
-				r.Get("/workloads/{id}", wh.get)
 
 				// Writes additionally need sudo mode. RequireAdmin sits
 				// outside RequireFresh so non-admins get "forbidden", never a
@@ -135,17 +95,6 @@ func NewRouter(d Deps) http.Handler {
 					r.Patch("/users/{id}", uh.update)
 					r.Delete("/users/{id}", uh.delete)
 					r.Post("/users/{id}/password", uh.resetPassword)
-
-					r.Post("/nodes/tokens", nh.createToken)
-					r.Patch("/nodes/{id}", nh.update)
-					r.Delete("/nodes/{id}", nh.delete)
-
-					r.Post("/registry/images", rh.importImage)
-					r.Delete("/registry/images/{id}", rh.deleteImage)
-
-					r.Post("/workloads", wh.create)
-					r.Patch("/workloads/{id}", wh.update)
-					r.Delete("/workloads/{id}", wh.delete)
 				})
 			})
 		})

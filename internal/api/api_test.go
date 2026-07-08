@@ -11,65 +11,31 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
-	"github.com/Hinkolas/skali/internal/cluster"
-	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
 )
 
-// testClusterAddr is the CLUSTER_ADDR the test master pretends to have; it
-// appears in rendered enroll commands.
-const testClusterAddr = "10.0.0.1:7443"
-
 type testAPI struct {
-	t      *testing.T
-	srv    *httptest.Server
-	st     *store.Store
-	svc    *auth.Service
-	reg    *stubRegistryOps
-	selfID uuid.UUID
+	t   *testing.T
+	srv *httptest.Server
+	st  *store.Store
+	svc *auth.Service
 }
 
 func newTestAPI(t *testing.T) *testAPI {
-	a := newTestAPIWithRegistry(t, &stubRegistryOps{})
-	return a
-}
-
-// newTestAPIWithRegistry parameterizes the registry surface: pass nil (the
-// untyped literal) for a registry-less master.
-func newTestAPIWithRegistry(t *testing.T, reg RegistryOps) *testAPI {
 	t.Helper()
 	pool := testdb.New(t)
 	st := store.NewStore(pool)
 	svc, err := auth.New(st, auth.Config{Secret: strings.Repeat("s", 32)})
 	require.NoError(t, err)
-	ca, err := cluster.EnsureCA(t.Context(), st, strings.Repeat("s", 32))
-	require.NoError(t, err)
-
-	self, err := cluster.EnsureSelfNode(t.Context(), st, testClusterAddr)
-	require.NoError(t, err)
-
-	// Workloads share the registry gate: a nil registry means a nil service.
-	var workloads *reconcile.Service
-	if reg != nil {
-		workloads = reconcile.NewService(st, nil)
-	}
-	srv := httptest.NewServer(NewRouter(Deps{
-		Auth: svc, Store: st, DB: pool,
-		Cluster:   cluster.NewService(st, ca, testClusterAddr),
-		Registry:  reg,
-		Workloads: workloads,
-	}))
+	srv := httptest.NewServer(NewRouter(Deps{Auth: svc, Store: st, DB: pool}))
 	t.Cleanup(srv.Close)
-	a := &testAPI{t: t, srv: srv, st: st, svc: svc, selfID: self.ID}
-	a.reg, _ = reg.(*stubRegistryOps)
-	return a
+	return &testAPI{t: t, srv: srv, st: st, svc: svc}
 }
 
 func (a *testAPI) createUser(email, password string) {
@@ -123,20 +89,6 @@ func (a *testAPI) login(email, password string) string {
 	sess, ok := body["session"].(map[string]any)
 	require.True(a.t, ok, "expected session in %v", body)
 	return sess["token"].(string)
-}
-
-// waitOperation polls an operation until it leaves running and returns the
-// final payload — the read side of every 202.
-func (a *testAPI) waitOperation(token, id string) map[string]any {
-	a.t.Helper()
-	var op map[string]any
-	require.Eventually(a.t, func() bool {
-		status, body := a.do("GET", "/v1/operations/"+id, token, nil)
-		require.Equal(a.t, http.StatusOK, status, "body: %v", body)
-		op = body["operation"].(map[string]any)
-		return op["status"] != "running"
-	}, 5*time.Second, 10*time.Millisecond)
-	return op
 }
 
 // staleAllSessions pushes every session's last reauthentication past the
@@ -473,7 +425,6 @@ func TestHealthzAndOpenAPI(t *testing.T) {
 	status, body := a.do("GET", "/healthz", "", nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "ok", body["status"])
-	require.Equal(t, false, body["leader"], "nil Deps.Leader reads as standby")
 
 	res, err := a.srv.Client().Get(a.srv.URL + "/openapi.yaml")
 	require.NoError(t, err)
@@ -505,5 +456,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 35, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 17, routes, "route count changed; update the OpenAPI spec and this number")
 }

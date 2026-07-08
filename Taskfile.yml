@@ -1,8 +1,7 @@
 # Project tasks. Dev dependencies come from the machine-global setup
 # (~/Taskfile.yml): one shared dev-postgres container, one database per
-# project — `task db` provisions skali's. Later, skalid manages its own
-# control-plane Postgres through its container engine and this goes away
-# entirely (see .plan/DECISIONS.md).
+# project — `task db` provisions skali's. The dev Kubernetes substrate is a
+# k3d cluster (see .plan/02-architecture.md).
 
 version: "3"
 
@@ -26,13 +25,9 @@ tasks:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
 
   generate:
-    desc: Regenerate the sqlc store (migrations/ + query/) and gRPC bindings (proto/)
+    desc: Regenerate the sqlc store (migrations/ + query/)
     cmds:
       - sqlc generate
-      # buf + protoc-gen-go + protoc-gen-go-grpc come from the machine-global
-      # dev setup (go install ...@latest), same as sqlc.
-      - buf lint
-      - buf generate
 
   test:
     desc: Run the Go test suite (DB tests need TEST_DATABASE_URL, see .env.example)
@@ -60,33 +55,3 @@ tasks:
     dir: web
     cmds:
       - npm run dev
-
-  cluster:up:
-    desc: Build and start the 3-node DinD dev cluster (master + 2 workers)
-    dir: deploy/dev-cluster
-    env:
-      CLUSTER_VERSION: "{{.VERSION}}"
-    cmds:
-      # Frees :7070/:7443 first — a bare-process skalid from an earlier
-      # session would collide with the master's published ports.
-      - lsof -ti :7070 -ti :7443 | xargs kill 2>/dev/null || true
-      - docker compose up -d --build --wait
-      - 'echo "cluster up — API http://localhost:7070, login dev@skali.local / skali-dev-password (task dev:web for the UI)"'
-
-  cluster:down:
-    desc: Tear the dev cluster down (removes DB and node identities)
-    dir: deploy/dev-cluster
-    cmds:
-      - docker compose down -v --remove-orphans
-
-  cluster:logs:
-    desc: Follow dev-cluster logs
-    dir: deploy/dev-cluster
-    cmds:
-      - docker compose logs -f --tail 100
-
-  cluster:ps:
-    desc: Show dev-cluster status
-    dir: deploy/dev-cluster
-    cmds:
-      - docker compose ps

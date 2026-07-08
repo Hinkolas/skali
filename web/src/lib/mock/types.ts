@@ -180,3 +180,35 @@ export interface ProjectGraph {
 	segments: GraphSegment[];
 	labels: GraphLabel[];
 }
+
+// --- Nodes (mock design shapes; the real kube-backed node API arrives in M1) ---
+
+export type NodeRole = 'master' | 'edge' | 'worker' | 'builder';
+
+export type NodeStatus = 'online' | 'offline';
+
+export interface Node {
+	id: string;
+	name: string;
+	roles: NodeRole[];
+	advertise_addr: string;
+	public_addr: string | null;
+	arch: string | null;
+	os: string | null;
+	skalid_version: string | null;
+	status: NodeStatus;
+	last_seen: string | null;
+	/** Latest resource snapshot; null until the node first reports. */
+	metrics: NodeMetrics | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** A node resource snapshot. Rates are bytes/second; cpu_pct is 0-100. */
+export interface NodeMetrics {
+	cpu_pct: number;
+	mem_used: number;
+	mem_total: number;
+	disk_used: number;
+	disk_total: number;
+}

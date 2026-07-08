@@ -1,15 +1,13 @@
-// Command skalid is the skali daemon. On the master it serves the
-// client-facing REST API (web BFF, skali CLI, future native clients) plus the
-// cluster control plane; on every other node it runs as a worker agent.
+// Command skalid is the skali control plane: the client-facing REST API (web
+// BFF, skali CLI, future native clients) plus the controller that compiles
+// services into Kubernetes objects and reads status back.
 //
 // Besides serving (the default), the binary carries the operator commands —
 // one artifact to deploy and exec into:
 //
-//	skalid [serve]                          run the master (REST API + cluster control plane)
+//	skalid [serve]                          run the control plane (REST API + controller)
 //	skalid user create|list|set-role|delete manage app users (there is no signup endpoint)
 //	skalid migrate up|status                apply / inspect database migrations
-//	skalid enroll --master --token          join this machine to a cluster (one-time)
-//	skalid agent                            run as a worker node (after enroll)
 package main
 
 import (
@@ -17,26 +15,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/Hinkolas/skali/internal/api"
 	"github.com/Hinkolas/skali/internal/auth"
-	"github.com/Hinkolas/skali/internal/cluster"
 	"github.com/Hinkolas/skali/internal/config"
-	"github.com/Hinkolas/skali/internal/engine"
-	"github.com/Hinkolas/skali/internal/hostinfo"
-	"github.com/Hinkolas/skali/internal/leader"
-	"github.com/Hinkolas/skali/internal/mirror"
 	"github.com/Hinkolas/skali/internal/obs"
-	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -59,12 +47,8 @@ func run() error {
 		return runUser(args[1:])
 	case "migrate":
 		return runMigrate(args[1:])
-	case "enroll":
-		return runEnroll(args[1:])
-	case "agent":
-		return runAgent()
 	default:
-		return fmt.Errorf("unknown command %q (available: serve, user, migrate, enroll, agent)", args[0])
+		return fmt.Errorf("unknown command %q (available: serve, user, migrate)", args[0])
 	}
 }
 
@@ -88,16 +72,6 @@ func runServe() error {
 	}
 	defer shutdownWithin(shutdownObs, 5*time.Second)
 
-	// Container engine before the database: construction is offline (a
-	// missing daemon fails per-operation, not here), and a future milestone
-	// boots the master's own control-plane Postgres through this engine
-	// before the connection below can exist.
-	eng, err := engine.NewDocker(cfg.EngineSocket)
-	if err != nil {
-		return err
-	}
-	defer eng.Close()
-
 	pool, err := store.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -110,98 +84,9 @@ func runServe() error {
 		return err
 	}
 
-	// Cluster plane: CA, the master's own node row, the enrollment gRPC
-	// listener, and the worker heartbeat poller.
-	ca, err := cluster.EnsureCA(ctx, st, cfg.AuthSecret)
-	if err != nil {
-		return err
-	}
-	self, err := cluster.EnsureSelfNode(ctx, st, cfg.ClusterAddr)
-	if err != nil {
-		return err
-	}
-	clusterSvc := cluster.NewService(st, ca, cfg.ClusterAddr)
-
-	// The image mirror follows CLUSTER_ADDR: no cluster address, no registry
-	// (single-node dev keeps working with zero setup).
-	regAddr := registryAddr(cfg)
-	if regAddr == "" {
-		slog.InfoContext(ctx, "registry disabled: CLUSTER_ADDR unset")
-	}
-
-	grpcSrv, err := cluster.NewMasterServer(st, ca, clusterCertHosts(cfg.ClusterAddr), regAddr)
-	if err != nil {
-		return err
-	}
-	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
-	if err != nil {
-		return err
-	}
-	defer grpcSrv.GracefulStop()
-
-	// The master's own resource sampler ("/" until a data dir exists) feeds
-	// its node row via the poller's self-stamp, and the OTel gauges. The
-	// container sampler does the same for the master's own containers.
-	sampler := hostinfo.New("/")
-	if err := hostinfo.RegisterGauges(sampler); err != nil {
-		return err
-	}
-	containers := engine.NewSampler(eng)
-	inventory := engine.NewInventorySampler(eng)
-	// Engine events resample immediately, so observed state doesn't wait for
-	// a sampler tick.
-	notifier := engine.NewNotifier(eng, containers, inventory)
-
-	// One connection per node, shared by the poller and container lifecycle
-	// calls.
-	conns, err := cluster.NewConnPool(ca)
-	if err != nil {
-		return err
-	}
-	defer conns.Close()
-
-	poller, err := cluster.NewPoller(st, conns, self.ID, sampler, containers, inventory, 0, 0)
-	if err != nil {
-		return err
-	}
-	// Doorbells: one WatchEvents stream per worker, plus the master's own
-	// notifier consumed locally. Every ring fans out — an immediate resync
-	// of the node AND a reconciler pass, so observation and convergence
-	// accelerate together. rec is set below, before any loop starts.
-	var rec *reconcile.Reconciler
-	poke := func(id uuid.UUID) {
-		poller.Poke(id)
-		if rec != nil {
-			rec.Poke()
-		}
-	}
-	watcher := cluster.NewWatcher(st, conns, self.ID, poke)
-
-	// The mirror importer and the workload reconciler share the registry
-	// gate: unified image handling needs the mirror, so no CLUSTER_ADDR
-	// means neither runs (a nil RegistryOps keeps the routes answering 503
-	// registry_disabled).
-	var registryOps api.RegistryOps
-	var workloadSvc *reconcile.Service
-	if regAddr != "" {
-		importer, err := mirror.NewImporter(st, ca, regAddr)
-		if err != nil {
-			return err
-		}
-		registryOps = importer
-		rec = reconcile.NewReconciler(st, cluster.NewNodeHandles(conns, self.ID, eng), importer, regAddr)
-		workloadSvc = reconcile.NewService(st, rec.Poke)
-	}
-
-	// Leadership: one active master per database, decided by a Postgres
-	// advisory lock. Everything that writes cluster-wide state starts under
-	// the lease below; a standby skalid against the same database stays
-	// passive until the active one's session dies.
-	lease := leader.New(cfg.DatabaseURL)
-
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Registry: registryOps, Workloads: workloadSvc, Leader: lease.IsLeader}),
+		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)
@@ -210,46 +95,12 @@ func runServe() error {
 			serveErr <- err
 		}
 	}()
-	go func() {
-		if err := grpcSrv.Serve(grpcLis); err != nil {
-			serveErr <- err
-		}
-	}()
 
 	loopCtx, cancelLoops := context.WithCancel(ctx)
 	defer cancelLoops()
-	// Node-local observation is always on — a standby master keeps sampling
-	// itself so it is warm at takeover.
 	go sweepLoop(loopCtx, authSvc)
-	go sampler.Run(loopCtx)
-	go containers.Run(loopCtx)
-	go inventory.Run(loopCtx)
-	go notifier.Run(loopCtx)
-	// Cluster-writing loops run only while this process holds the leader
-	// lease. That includes the poller's self-stamp: active and standby share
-	// one master node row (EnsureSelfNode resolves by role), so gating it
-	// prevents two writers — nodes.status thereby means "participates in the
-	// active control plane". leaderCtx derives from loopCtx, so shutdown
-	// still cancels every loop before the ConnPool closes (see Watcher.Run).
-	go lease.Run(loopCtx, func(leaderCtx context.Context) {
-		go poller.Run(leaderCtx)
-		go watcher.Run(leaderCtx)
-		if regAddr != "" {
-			// The registry container (retried until the engine is up) and
-			// the master's own docker trust for it — the master pulls from
-			// the mirror too. Trust failure is a warning: only mirror pulls
-			// need it.
-			go mirror.EnsureLoop(leaderCtx, eng, ca, mirror.Config{
-				Endpoint: regAddr, DataDir: cfg.DataDir, Image: cfg.RegistryImage, Port: cfg.RegistryPort,
-			})
-			installMirrorTrust(leaderCtx, ca, regAddr)
-			go rec.Run(leaderCtx)
-		}
-		go selfPokeLoop(leaderCtx, notifier, func() { poke(self.ID) })
-	})
 
-	slog.InfoContext(ctx, "starting", "service", serviceName,
-		"http_addr", cfg.HTTPAddr, "grpc_addr", cfg.GRPCAddr, "node_id", self.ID)
+	slog.InfoContext(ctx, "starting", "service", serviceName, "http_addr", cfg.HTTPAddr)
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -263,33 +114,6 @@ func runServe() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
-}
-
-// selfPokeLoop forwards the master's own engine doorbell to the poller — the
-// local equivalent of a worker's WatchEvents stream. Leased with the other
-// cluster writers: a standby's local events must not stamp the shared master
-// row.
-func selfPokeLoop(ctx context.Context, notifier *engine.Notifier, poke func()) {
-	bell, cancel := notifier.Subscribe()
-	defer cancel()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-bell:
-			poke()
-		}
-	}
-}
-
-// installMirrorTrust writes the master's own docker client certs for the
-// mirror. Failure is a warning: only mirror pulls need the trust.
-func installMirrorTrust(ctx context.Context, ca *cluster.CA, regAddr string) {
-	if certPEM, keyPEM, err := ca.ClientPEM(); err != nil {
-		slog.WarnContext(ctx, "issue master registry client cert", "err", err)
-	} else if err := mirror.InstallDockerCerts(mirror.DefaultCertsDir, regAddr, ca.CAPEM(), certPEM, keyPEM); err != nil {
-		slog.WarnContext(ctx, "install docker trust for the cluster registry", "err", err)
-	}
 }
 
 // sweepLoop hourly clears expired sessions and login challenges.
@@ -306,29 +130,6 @@ func sweepLoop(ctx context.Context, svc *auth.Service) {
 			}
 		}
 	}
-}
-
-// clusterCertHosts derives the SANs for the master's gRPC listener cert from
-// CLUSTER_ADDR (loopback is always appended by NewMasterServer).
-func clusterCertHosts(clusterAddr string) []string {
-	if clusterAddr == "" {
-		return nil
-	}
-	host, _, err := net.SplitHostPort(clusterAddr)
-	if err != nil {
-		return nil
-	}
-	return []string{host}
-}
-
-// registryAddr derives the image mirror's endpoint: CLUSTER_ADDR's host on
-// REGISTRY_PORT. Empty (registry disabled) while CLUSTER_ADDR is unset.
-func registryAddr(cfg *config.API) string {
-	hosts := clusterCertHosts(cfg.ClusterAddr)
-	if len(hosts) == 0 {
-		return ""
-	}
-	return net.JoinHostPort(hosts[0], strconv.Itoa(cfg.RegistryPort))
 }
 
 func shutdownWithin(fn func(context.Context) error, d time.Duration) {

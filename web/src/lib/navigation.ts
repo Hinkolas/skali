@@ -8,9 +8,6 @@ import type { ServiceType } from '$lib/mock/types';
 import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import Server from '@lucide/svelte/icons/server';
-import Boxes from '@lucide/svelte/icons/boxes';
-import Container from '@lucide/svelte/icons/container';
-import Package from '@lucide/svelte/icons/package';
 import Globe from '@lucide/svelte/icons/globe';
 import Bell from '@lucide/svelte/icons/bell';
 import Archive from '@lucide/svelte/icons/archive';
@@ -44,7 +41,9 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 		items: [
 			{ label: 'Dashboard', slug: 'dashboard', icon: LayoutDashboard, stub: true },
 			{ label: 'Projects', slug: 'projects', icon: FolderKanban },
-			{ label: 'Nodes', slug: 'nodes', icon: Server, adminOnly: true },
+			// The kube-backed read-only nodes page returns in M1
+			// (see .plan/07-roadmap.md); stubbed during the rearchitecture.
+			{ label: 'Nodes', slug: 'nodes', icon: Server, stub: true, adminOnly: true },
 			{ label: 'Domains', slug: 'domains', icon: Globe, stub: true }
 		]
 	},
@@ -59,15 +58,6 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 		section: 'Administration',
 		items: [
 			{ label: 'Users', slug: 'users', icon: Users, adminOnly: true },
-			// The orchestration primitive: desired state the reconciler
-			// converges. The pretty product surface arrives with the
-			// application layer; this is the admin's direct lever.
-			{ label: 'Workloads', slug: 'workloads', icon: Boxes, adminOnly: true },
-			// The raw engine surface: read-only node truth, a debugging tool
-			// deliberately away from the product pages a member ever sees.
-			{ label: 'Containers', slug: 'containers', icon: Container, adminOnly: true },
-			// The mirror catalog: what the cluster registry serves.
-			{ label: 'Registry', slug: 'registry', icon: Package, adminOnly: true },
 			{ label: 'System', slug: 'system', icon: Settings2, stub: true, adminOnly: true }
 		]
 	}
