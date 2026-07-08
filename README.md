@@ -6,10 +6,11 @@ volumes declared alongside it. The technical foundation mirrors the smbx
 architecture (Go + chi + Postgres, one token-based API for every client,
 SvelteKit BFF); where skali is headed is the [Roadmap](#roadmap) below.
 
-**Status:** milestone 4 — registry mirror + event stream (a cluster image
-registry as a skali-managed system container, digest-pinned imports,
-doorbell-driven resyncs; on top of milestone 3's container engine and
-milestone 2's multi-node clusters). One API (`/v1`), three consumers:
+**Status:** milestone 5 — workloads + leader lease (desired-state container
+orchestration: declare replicas + constraints, a master-side reconciler
+converges the nodes; every image pull goes through the cluster mirror; a
+Postgres advisory-lock lease gates the control loops so a standby master can
+take over). One API (`/v1`), three consumers:
 
 - **`skalid`** — the daemon. On the master it serves the REST API and the
   cluster control plane; on other machines it runs as a worker (`agent`).
@@ -104,9 +105,14 @@ internal/
   engine/      container engine adapter: Docker behind the Engine interface,
                label-driven ownership, container/inventory samplers, events
   hostinfo/    host resource sampler (CPU, memory, disk, network rates)
+  leader/      cluster leader lease (Postgres advisory lock); gates the
+               cluster-writing loops so standby masters stay passive
   mirror/      cluster image mirror: registry system container, docker trust
                distribution, digest-pinned imports + catalog
   obs/         slog + OpenTelemetry (env-only, zero egress by default)
+  operations/  task-shaped background work with pollable outcomes (the 202s)
+  reconcile/   workload orchestration: desired state + assignments converged
+               onto nodes through the handles, level-triggered
   store/       pgx pool/tx glue + sqlc-generated queries
   testdb/      ephemeral Postgres database per test
 web/           SvelteKit BFF (adapter-node)
@@ -115,22 +121,28 @@ web/           SvelteKit BFF (adapter-node)
 ## Roadmap
 
 A living outline, roughest at the far end. Done so far: auth + users +
-sessions (m1), the node system (m2), the container engine (m3), and the
-registry mirror + event stream (m4) — the registry runs as a
-`skali.kind=system` container serving cluster mTLS (node certs double as
-docker client certs, installed at enrollment), the master imports upstream
-images digest-pinned so workers pull from the LAN with no public egress,
-and engine events ride a `WatchEvents` doorbell stream: a node resamples
-and rings, the master resyncs it immediately, while the heartbeat stays the
-level-triggered source of truth.
+sessions (m1), the node system (m2), the container engine (m3), the registry
+mirror + event stream (m4), and workloads + leader lease (m5) — the
+orchestration layer the application layer compiles down to. A workload is
+one container spec with replicas + constraints; placement is
+reconciler-owned output, never user input. The reconciler is level-triggered
+like everything else: it imports the image into the mirror digest-pinned
+(every engine pull goes through the registry), places replicas on distinct
+nodes, and converges observed state per slot with persisted phases, retries,
+and backoff — a killed container comes back, a drifted spec is replaced, an
+offline node is surfaced and healed on return, and a master crash resumes
+from the rows. Long user-initiated tasks (registry imports) run as
+operations behind a `202`; the cluster-writing loops run only on the master
+holding the Postgres advisory-lock leader lease, so a standby takes over the
+moment the active session dies. The raw engine surface is read-only
+observability now — workloads and the registry are the only levers.
 
-1. **Application layer** — projects, applications, releases: desired state
-   on the master and a reconciler driving the node handles. Brings
-   needed-set image GC (the master knows exactly which images each node
-   needs; unneeded mirror-prefixed images are collected event-triggered
-   with a periodic backstop), registry blob GC, and the self-managed
-   control-plane Postgres boot path (engine first, then its own database
-   container, then connect).
+1. **Application layer** — projects, applications, releases compiled down
+   to workloads. Brings needed-set image GC (the master knows exactly which
+   images each node needs; unneeded mirror-prefixed images are collected
+   event-triggered with a periodic backstop), registry blob GC, and the
+   self-managed control-plane Postgres boot path (engine first, then its
+   own database container, then connect).
 2. **Databases, volumes, routing** — shared/dedicated database pools with
    logical per-project databases, quota-enforced volume provisioning, and
    Traefik as the routed edge (per-node system components). Volume sizes
