@@ -177,8 +177,6 @@ func runServe() error {
 	}
 	watcher := cluster.NewWatcher(st, conns, self.ID, poke)
 
-	containerOps := cluster.NewContainerOps(st, conns, self.ID, eng)
-
 	// The mirror importer and the workload reconciler share the registry
 	// gate: unified image handling needs the mirror, so no CLUSTER_ADDR
 	// means neither runs (a nil RegistryOps keeps the routes answering 503
@@ -203,7 +201,7 @@ func runServe() error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Containers: containerOps, Registry: registryOps, Workloads: workloadSvc, Leader: lease.IsLeader}),
+		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Registry: registryOps, Workloads: workloadSvc, Leader: lease.IsLeader}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)

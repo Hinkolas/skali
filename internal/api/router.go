@@ -24,9 +24,6 @@ type Deps struct {
 	Store   *store.Store
 	DB      *pgxpool.Pool
 	Cluster *cluster.Service
-	// Containers may be nil at construction (partial test harnesses);
-	// handlers dereference it only at request time.
-	Containers *cluster.ContainerOps
 	// Registry is nil when the master runs no image mirror (CLUSTER_ADDR
 	// unset); its routes then answer 503 registry_disabled.
 	Registry RegistryOps
@@ -100,7 +97,7 @@ func NewRouter(d Deps) http.Handler {
 			// Instance management, admins only.
 			uh := &usersHandlers{st: d.Store}
 			nh := &nodesHandlers{st: d.Store, cluster: d.Cluster}
-			ch := &containersHandlers{st: d.Store, containers: d.Containers}
+			ch := &containersHandlers{st: d.Store}
 			rh := &registryHandlers{registry: d.Registry, st: d.Store}
 			oh := &operationsHandlers{st: d.Store}
 			wh := &workloadsHandlers{st: d.Store, workloads: d.Workloads}
@@ -142,13 +139,6 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/nodes/tokens", nh.createToken)
 					r.Patch("/nodes/{id}", nh.update)
 					r.Delete("/nodes/{id}", nh.delete)
-
-					r.Post("/nodes/{id}/containers", ch.create)
-					r.Post("/nodes/{id}/containers/{cid}/start", ch.start)
-					r.Post("/nodes/{id}/containers/{cid}/stop", ch.stop)
-					r.Delete("/nodes/{id}/containers/{cid}", ch.remove)
-					r.Post("/nodes/{id}/images/pull", ch.pullImage)
-					r.Delete("/nodes/{id}/images", ch.removeImage)
 
 					r.Post("/registry/images", rh.importImage)
 					r.Delete("/registry/images/{id}", rh.deleteImage)

@@ -18,7 +18,6 @@ import (
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/cluster"
-	"github.com/Hinkolas/skali/internal/engine/enginetest"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
@@ -33,7 +32,6 @@ type testAPI struct {
 	srv    *httptest.Server
 	st     *store.Store
 	svc    *auth.Service
-	eng    *enginetest.Fake
 	reg    *stubRegistryOps
 	selfID uuid.UUID
 }
@@ -54,14 +52,8 @@ func newTestAPIWithRegistry(t *testing.T, reg RegistryOps) *testAPI {
 	ca, err := cluster.EnsureCA(t.Context(), st, strings.Repeat("s", 32))
 	require.NoError(t, err)
 
-	// The container surface runs over a fake engine on the master's own node
-	// (the local-handle path) and a real conn pool for everything else.
 	self, err := cluster.EnsureSelfNode(t.Context(), st, testClusterAddr)
 	require.NoError(t, err)
-	conns, err := cluster.NewConnPool(ca)
-	require.NoError(t, err)
-	t.Cleanup(conns.Close)
-	eng := enginetest.New("nginx:alpine")
 
 	// Workloads share the registry gate: a nil registry means a nil service.
 	var workloads *reconcile.Service
@@ -70,13 +62,12 @@ func newTestAPIWithRegistry(t *testing.T, reg RegistryOps) *testAPI {
 	}
 	srv := httptest.NewServer(NewRouter(Deps{
 		Auth: svc, Store: st, DB: pool,
-		Cluster:    cluster.NewService(st, ca, testClusterAddr),
-		Containers: cluster.NewContainerOps(st, conns, self.ID, eng),
-		Registry:   reg,
-		Workloads:  workloads,
+		Cluster:   cluster.NewService(st, ca, testClusterAddr),
+		Registry:  reg,
+		Workloads: workloads,
 	}))
 	t.Cleanup(srv.Close)
-	a := &testAPI{t: t, srv: srv, st: st, svc: svc, eng: eng, selfID: self.ID}
+	a := &testAPI{t: t, srv: srv, st: st, svc: svc, selfID: self.ID}
 	a.reg, _ = reg.(*stubRegistryOps)
 	return a
 }
@@ -514,5 +505,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 41, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 35, routes, "route count changed; update the OpenAPI spec and this number")
 }
