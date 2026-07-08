@@ -28,6 +28,22 @@ const (
 	KindSystem      = "system"
 )
 
+// Orchestration labels: how the reconciler recognizes its containers from
+// observed state alone (adopt, match, GC) — nothing about ownership lives
+// only in memory, so a master failover loses nothing.
+const (
+	// LabelWorkload is the owning workload's UUID.
+	LabelWorkload = "skali.workload"
+
+	// LabelInstance is the replica ordinal within its workload.
+	LabelInstance = "skali.instance"
+
+	// LabelConfigHash fingerprints everything the running container was
+	// created from; a mismatch against the freshly materialized spec means
+	// "replace".
+	LabelConfigHash = "skali.config-hash"
+)
+
 // Reserved identity labels. Documented now so the taxonomy is complete;
 // their semantics arrive with the layers that own them.
 const (
@@ -35,7 +51,6 @@ const (
 	LabelProject     = "skali.project"
 	LabelEnvironment = "skali.environment"
 	LabelRelease     = "skali.release"
-	LabelInstance    = "skali.instance"
 
 	// Database pools (database layer):
 	LabelPool = "skali.pool"

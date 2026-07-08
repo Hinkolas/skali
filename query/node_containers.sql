@@ -49,3 +49,11 @@ DELETE FROM node_containers WHERE node_id = $1 AND container_id = $2;
 -- Gone rows are operator breadcrumbs, not history; swept by the poller.
 -- name: PruneGoneNodeContainers :execrows
 DELETE FROM node_containers WHERE state = 'gone' AND last_seen < now() - interval '1 hour';
+
+-- Observed containers claiming workload ownership, cluster-wide: what the
+-- reconciler converges against and GCs from. Gone breadcrumbs excluded —
+-- gone means "not on the node anymore", i.e. absent.
+-- name: ListWorkloadObservedContainers :many
+SELECT * FROM node_containers
+WHERE labels->>'skali.workload' IS NOT NULL AND state <> 'gone'
+ORDER BY node_id, name;

@@ -198,6 +198,18 @@ func (i *Importer) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// MirrorRepository resolves an upstream tag reference to its catalog key —
+// the mirror-relative repository plus the tag. This is how callers ask "is
+// this reference already imported?" against registry_images without
+// importing anything.
+func MirrorRepository(reference string) (repository, tag string, err error) {
+	t, err := ParseImportReference(reference)
+	if err != nil {
+		return "", "", err
+	}
+	return mirrorRepository(t), t.TagStr(), nil
+}
+
 // mirrorRepository namespaces an upstream repository inside the mirror:
 // mirror/<upstream-host>/<path>. The prefix is the ownership boundary later
 // GC relies on, and keeping the upstream host avoids collisions between

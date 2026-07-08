@@ -120,6 +120,55 @@ func (q *Queries) ListContainers(ctx context.Context, nodeID *uuid.UUID) ([]List
 	return items, nil
 }
 
+const listWorkloadObservedContainers = `-- name: ListWorkloadObservedContainers :many
+SELECT node_id, container_id, name, image, kind, state, health, exit_code, restart_count, labels, container_created, container_started, cpu_pct, mem_used, mem_limit, net_rx_rate, net_tx_rate, first_seen, last_seen FROM node_containers
+WHERE labels->>'skali.workload' IS NOT NULL AND state <> 'gone'
+ORDER BY node_id, name
+`
+
+// Observed containers claiming workload ownership, cluster-wide: what the
+// reconciler converges against and GCs from. Gone breadcrumbs excluded —
+// gone means "not on the node anymore", i.e. absent.
+func (q *Queries) ListWorkloadObservedContainers(ctx context.Context) ([]NodeContainer, error) {
+	rows, err := q.db.Query(ctx, listWorkloadObservedContainers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NodeContainer
+	for rows.Next() {
+		var i NodeContainer
+		if err := rows.Scan(
+			&i.NodeID,
+			&i.ContainerID,
+			&i.Name,
+			&i.Image,
+			&i.Kind,
+			&i.State,
+			&i.Health,
+			&i.ExitCode,
+			&i.RestartCount,
+			&i.Labels,
+			&i.ContainerCreated,
+			&i.ContainerStarted,
+			&i.CpuPct,
+			&i.MemUsed,
+			&i.MemLimit,
+			&i.NetRxRate,
+			&i.NetTxRate,
+			&i.FirstSeen,
+			&i.LastSeen,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markMissingNodeContainersGone = `-- name: MarkMissingNodeContainersGone :execrows
 UPDATE node_containers SET state = 'gone'
 WHERE node_id = $1 AND state <> 'gone' AND NOT (container_id = ANY($2::text[]))

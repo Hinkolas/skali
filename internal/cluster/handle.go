@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -31,6 +32,37 @@ type NodeHandle interface {
 	// RemoveImage removes (or untags) an image, returning the ids actually
 	// deleted — empty for an untag-only removal.
 	RemoveImage(ctx context.Context, ref string, force bool) ([]string, error)
+}
+
+// NewNodeHandles returns the handle factory the higher layers drive. The
+// master's own node short-circuits to its local engine (no gRPC, mirroring
+// how the poller stamps the self row locally); every other node goes over
+// the pooled mTLS connection.
+func NewNodeHandles(conns *ConnPool, selfID uuid.UUID, eng engine.Engine) func(store.Node) NodeHandle {
+	return func(n store.Node) NodeHandle {
+		if n.ID == selfID {
+			return &localHandle{eng: eng}
+		}
+		return &remoteHandle{conns: conns, node: n}
+	}
+}
+
+// LocalNodeHandle wraps a bare engine in the NodeHandle surface — the same
+// error mapping remote handles produce, without a node row or a connection
+// pool. Tests hand the reconciler per-node fake engines through this.
+func LocalNodeHandle(eng engine.Engine) NodeHandle {
+	return &localHandle{eng: eng}
+}
+
+// RecordObservedContainer writes a mutation's post-op state through to the
+// observed node_containers row, so actions reflect instantly while the
+// heartbeat remains the reconciler of record.
+func RecordObservedContainer(ctx context.Context, st *store.Store, nodeID uuid.UUID, ctr engine.Container) error {
+	params, err := upsertNodeContainerParams(nodeID, containerInfoProto(ctr, nil))
+	if err != nil {
+		return err
+	}
+	return st.UpsertNodeContainer(ctx, params)
 }
 
 // lifecycleTimeout bounds start/stop/remove round trips (stop adds its own

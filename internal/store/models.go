@@ -197,3 +197,37 @@ type User struct {
 	UpdatedAt        time.Time
 	Role             string
 }
+
+type Workload struct {
+	ID                 uuid.UUID
+	Name               string
+	Kind               string
+	DesiredState       string
+	Replicas           int32
+	Constraints        []byte
+	Image              string
+	Spec               []byte
+	Generation         int64
+	ResolvedRepository *string
+	ResolvedDigest     *string
+	LastError          *string
+	Retries            int32
+	NextAttemptAt      *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type WorkloadAssignment struct {
+	WorkloadID    uuid.UUID
+	Ordinal       int32
+	NodeID        *uuid.UUID
+	Phase         string
+	ContainerName string
+	ContainerID   *string
+	Generation    int64
+	Retries       int32
+	NextAttemptAt *time.Time
+	LastError     *string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}

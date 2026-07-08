@@ -25,6 +25,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/Hinkolas/skali/internal/api"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/cluster"
@@ -34,6 +36,7 @@ import (
 	"github.com/Hinkolas/skali/internal/leader"
 	"github.com/Hinkolas/skali/internal/mirror"
 	"github.com/Hinkolas/skali/internal/obs"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -162,13 +165,24 @@ func runServe() error {
 		return err
 	}
 	// Doorbells: one WatchEvents stream per worker, plus the master's own
-	// notifier consumed locally — every ring becomes an immediate resync.
-	watcher := cluster.NewWatcher(st, conns, self.ID, poller.Poke)
+	// notifier consumed locally. Every ring fans out — an immediate resync
+	// of the node AND a reconciler pass, so observation and convergence
+	// accelerate together. rec is set below, before any loop starts.
+	var rec *reconcile.Reconciler
+	poke := func(id uuid.UUID) {
+		poller.Poke(id)
+		if rec != nil {
+			rec.Poke()
+		}
+	}
+	watcher := cluster.NewWatcher(st, conns, self.ID, poke)
 
 	containerOps := cluster.NewContainerOps(st, conns, self.ID, eng)
 
-	// The mirror importer shares the registry gate; a nil RegistryOps keeps
-	// the routes answering 503 registry_disabled.
+	// The mirror importer and the workload reconciler share the registry
+	// gate: unified image handling needs the mirror, so no CLUSTER_ADDR
+	// means neither runs (a nil RegistryOps keeps the routes answering 503
+	// registry_disabled).
 	var registryOps api.RegistryOps
 	if regAddr != "" {
 		importer, err := mirror.NewImporter(st, ca, regAddr)
@@ -176,6 +190,7 @@ func runServe() error {
 			return err
 		}
 		registryOps = importer
+		rec = reconcile.NewReconciler(st, cluster.NewNodeHandles(conns, self.ID, eng), importer, regAddr)
 	}
 
 	// Leadership: one active master per database, decided by a Postgres
@@ -228,8 +243,9 @@ func runServe() error {
 				Endpoint: regAddr, DataDir: cfg.DataDir, Image: cfg.RegistryImage, Port: cfg.RegistryPort,
 			})
 			installMirrorTrust(leaderCtx, ca, regAddr)
+			go rec.Run(leaderCtx)
 		}
-		go selfPokeLoop(leaderCtx, notifier, func() { poller.Poke(self.ID) })
+		go selfPokeLoop(leaderCtx, notifier, func() { poke(self.ID) })
 	})
 
 	slog.InfoContext(ctx, "starting", "service", serviceName,

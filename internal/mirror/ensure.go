@@ -26,10 +26,6 @@ const (
 	dataVolume    = "skali-registry-data"
 	serverCN      = "skali-registry"
 
-	// labelConfigHash fingerprints everything the running container was
-	// created from; a mismatch means "recreate".
-	labelConfigHash = "skali.config-hash"
-
 	certLifetime = 365 * 24 * time.Hour
 	// reissueWindow: a cert this close to expiry is reissued at ensure time.
 	// Boot-time reissue IS the rotation story for now — a master that never
@@ -112,7 +108,7 @@ func ensure(ctx context.Context, eng engine.Engine, iss Issuer, cfg Config) erro
 		return err
 	}
 	switch {
-	case existing != nil && existing.Labels[labelConfigHash] == hash:
+	case existing != nil && existing.Labels[engine.LabelConfigHash] == hash:
 		if existing.State == "running" {
 			return nil
 		}
@@ -154,9 +150,9 @@ func containerSpec(cfg Config, hash string) engine.ContainerSpec {
 		Ports:   []engine.PortBinding{{HostPort: uint16(cfg.Port), ContainerPort: 5000}},
 		Restart: engine.RestartAlways,
 		Labels: map[string]string{
-			engine.LabelKind:      engine.KindSystem,
-			engine.LabelComponent: Component,
-			labelConfigHash:       hash,
+			engine.LabelKind:       engine.KindSystem,
+			engine.LabelComponent:  Component,
+			engine.LabelConfigHash: hash,
 		},
 	}
 }

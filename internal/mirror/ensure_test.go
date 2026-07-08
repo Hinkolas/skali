@@ -98,7 +98,7 @@ func TestEnsureCreatesRegistry(t *testing.T) {
 	require.Equal(t, cfg.Image, c.Image)
 	require.Equal(t, engine.KindSystem, c.Labels[engine.LabelKind])
 	require.Equal(t, "true", c.Labels[engine.LabelManaged])
-	require.NotEmpty(t, c.Labels[labelConfigHash])
+	require.NotEmpty(t, c.Labels[engine.LabelConfigHash])
 	require.Equal(t, []string{cfg.Image}, fake.Pulled)
 
 	// Material landed with the right shapes.

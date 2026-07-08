@@ -42,6 +42,32 @@ func (q *Queries) GetRegistryImageByID(ctx context.Context, id uuid.UUID) (Regis
 	return i, err
 }
 
+const getRegistryImageByRepoTag = `-- name: GetRegistryImageByRepoTag :one
+SELECT id, repository, tag, digest, size_bytes, imported_at, updated_at FROM registry_images WHERE repository = $1 AND tag = $2
+`
+
+type GetRegistryImageByRepoTagParams struct {
+	Repository string
+	Tag        string
+}
+
+// The catalog key lookup: does the mirror serve this (repository, tag), and
+// at which digest?
+func (q *Queries) GetRegistryImageByRepoTag(ctx context.Context, arg GetRegistryImageByRepoTagParams) (RegistryImage, error) {
+	row := q.db.QueryRow(ctx, getRegistryImageByRepoTag, arg.Repository, arg.Tag)
+	var i RegistryImage
+	err := row.Scan(
+		&i.ID,
+		&i.Repository,
+		&i.Tag,
+		&i.Digest,
+		&i.SizeBytes,
+		&i.ImportedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listRegistryImages = `-- name: ListRegistryImages :many
 SELECT id, repository, tag, digest, size_bytes, imported_at, updated_at FROM registry_images ORDER BY repository, tag
 `

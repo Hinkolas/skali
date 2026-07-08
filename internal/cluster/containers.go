@@ -47,15 +47,7 @@ type ContainerOps struct {
 // NewContainerOps wires the ops service. eng is the master's own engine
 // (the local handle); every other node is driven over conns.
 func NewContainerOps(st *store.Store, conns *ConnPool, selfID uuid.UUID, eng engine.Engine) *ContainerOps {
-	return &ContainerOps{
-		st: st,
-		handleFor: func(n store.Node) NodeHandle {
-			if n.ID == selfID {
-				return &localHandle{eng: eng}
-			}
-			return &remoteHandle{conns: conns, node: n}
-		},
-	}
+	return &ContainerOps{st: st, handleFor: NewNodeHandles(conns, selfID, eng)}
 }
 
 // CreateContainerInput is the admin create surface. Kind is explicit and
