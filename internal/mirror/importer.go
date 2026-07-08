@@ -86,17 +86,28 @@ func (i *Importer) List(ctx context.Context) ([]store.RegistryImage, error) {
 	return i.st.ListRegistryImages(ctx)
 }
 
-// Import copies one upstream tag into the mirror and records the pin. Tag
-// references only: the catalog pins (repository, tag) → digest, so a digest
-// reference has no row to land in. Re-importing moves the pin.
-func (i *Importer) Import(ctx context.Context, reference string) (store.RegistryImage, error) {
+// ParseImportReference validates an upstream reference the way Import will:
+// it must parse, and it must be a tag (the catalog pins (repository, tag) →
+// digest, so a digest reference has no row to land in). Exposed so callers
+// that run Import asynchronously can reject bad input synchronously.
+func ParseImportReference(reference string) (name.Tag, error) {
 	ref, err := name.ParseReference(reference)
 	if err != nil {
-		return store.RegistryImage{}, fmt.Errorf("%w: %v", ErrInvalidReference, err)
+		return name.Tag{}, fmt.Errorf("%w: %v", ErrInvalidReference, err)
 	}
 	tag, ok := ref.(name.Tag)
 	if !ok {
-		return store.RegistryImage{}, fmt.Errorf("%w: digest references are not supported; import a tag", ErrInvalidReference)
+		return name.Tag{}, fmt.Errorf("%w: digest references are not supported; import a tag", ErrInvalidReference)
+	}
+	return tag, nil
+}
+
+// Import copies one upstream tag into the mirror and records the pin. Tag
+// references only (see ParseImportReference). Re-importing moves the pin.
+func (i *Importer) Import(ctx context.Context, reference string) (store.RegistryImage, error) {
+	tag, err := ParseImportReference(reference)
+	if err != nil {
+		return store.RegistryImage{}, err
 	}
 
 	desc, err := remote.Get(tag, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain))

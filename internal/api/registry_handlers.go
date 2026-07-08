@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/mirror"
+	"github.com/Hinkolas/skali/internal/operations"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -33,6 +35,7 @@ type RegistryOps interface {
 // registry serves, imports into it, deletes from it.
 type registryHandlers struct {
 	registry RegistryOps // nil = registry disabled
+	st       *store.Store
 }
 
 type registryImagePayload struct {
@@ -101,21 +104,35 @@ func (h *registryHandlers) importImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeBadRequest, "reference is required")
 		return
 	}
-
-	// Detached from the router's 30s ceiling like container pulls: the copy
-	// finishes server-side even when the client gives up waiting.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), importImageTimeout)
-	defer cancel()
-	row, err := h.registry.Import(ctx, req.Reference)
-	if err != nil {
+	// Bad input fails synchronously (400); only real work goes async.
+	if _, err := mirror.ParseImportReference(req.Reference); err != nil {
 		writeRegistryError(r.Context(), w, err)
 		return
 	}
-	slog.InfoContext(r.Context(), "api: image imported",
-		"reference", req.Reference, "digest", row.Digest, "by", UserFrom(r.Context()).ID)
-	writeJSON(w, http.StatusCreated, struct {
-		Image registryImagePayload `json:"image"`
-	}{newRegistryImagePayload(&row)})
+
+	// The copy crosses the WAN for minutes on a large multi-arch image — no
+	// client holds a connection open for that. 202 with a pollable
+	// operation; the catalog row lands in its result.
+	op, err := operations.Start(r.Context(), h.st, operations.KindRegistryImport, req.Reference,
+		UserFrom(r.Context()).ID, importImageTimeout,
+		func(ctx context.Context) (json.RawMessage, error) {
+			row, err := h.registry.Import(ctx, req.Reference)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(struct {
+				Image registryImagePayload `json:"image"`
+			}{newRegistryImagePayload(&row)})
+		})
+	if err != nil {
+		writeInternalError(r.Context(), w, "start import operation", err)
+		return
+	}
+	slog.InfoContext(r.Context(), "api: image import started",
+		"reference", req.Reference, "operation", op.ID, "by", UserFrom(r.Context()).ID)
+	writeJSON(w, http.StatusAccepted, struct {
+		Operation operationPayload `json:"operation"`
+	}{newOperationPayload(&op)})
 }
 
 func (h *registryHandlers) deleteImage(w http.ResponseWriter, r *http.Request) {

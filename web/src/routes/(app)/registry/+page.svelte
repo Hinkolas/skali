@@ -3,6 +3,8 @@
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import Copy from '@lucide/svelte/icons/copy';
 	import Search from '@lucide/svelte/icons/search';
+	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import { invalidateAll } from '$app/navigation';
 	import { api, ApiError } from '$lib/api/client';
 	import { modal } from '$lib/stores/modal.svelte';
@@ -10,6 +12,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { formatBytes, relativeTime } from '$lib/format';
 	import type { RegistryImage } from '$lib/types/registry';
+	import type { Operation } from '$lib/types/operations';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
@@ -24,10 +27,28 @@
 
 	const grid = 'grid-cols-[2.6fr_0.7fr_1.5fr_0.8fr_0.9fr_56px]';
 
+	// Imports run as background operations (202): running ones render as
+	// in-flight rows, failures stick around with their error until a newer
+	// import of the same reference succeeds (or the server prunes them).
+	const runningImports = $derived(data.operations.filter((o) => o.status === 'running'));
+	const failedImports = $derived(
+		data.operations
+			.filter(
+				(o) =>
+					o.status === 'failed' &&
+					!data.operations.some(
+						(s) =>
+							s.subject === o.subject && s.status === 'succeeded' && s.created_at > o.created_at
+					)
+			)
+			.slice(0, 3)
+	);
+
 	// Live-ish state: re-run the server load every 10s while the page is open
-	// (an import from another session shows up without a reload).
+	// (an import from another session shows up without a reload); tighten to
+	// 3s while an import is in flight so the finished row appears promptly.
 	$effect(() => {
-		const t = setInterval(() => invalidateAll(), 10_000);
+		const t = setInterval(() => invalidateAll(), runningImports.length > 0 ? 3_000 : 10_000);
 		return () => clearInterval(t);
 	});
 
@@ -70,10 +91,10 @@
 		if (!result) return;
 		importing = true;
 		try {
-			const res = await api.post<{ image: RegistryImage }>('/v1/registry/images', {
+			await api.post<{ operation: Operation }>('/v1/registry/images', {
 				reference: result.reference
 			});
-			toast.success(`Imported ${result.reference} as ${res.image.digest.slice(0, 19)}…`);
+			toast.success(`Import of ${result.reference} started`);
 			await invalidateAll();
 		} catch (err) {
 			toast.error(err instanceof ApiError ? err.message : `Could not import ${result.reference}`);
@@ -144,6 +165,42 @@
 			</label>
 		</div>
 	</div>
+
+	{#if runningImports.length > 0 || failedImports.length > 0}
+		<div class="flex flex-col gap-1.5 pb-4">
+			{#each runningImports as op (op.id)}
+				<div
+					class="border-border-subtle bg-surface-raised flex items-center gap-2.5 rounded-[10px] border px-4 py-2.5"
+				>
+					<LoaderCircle size={14} class="text-accent animate-spin" />
+					<span class="text-text-primary text-[12.5px]">
+						Importing <span class="font-mono font-medium">{op.subject}</span>…
+					</span>
+					<span class="text-text-ghost ml-auto font-mono text-[11px]" title={op.created_at}>
+						started {relativeTime(op.created_at)}
+					</span>
+				</div>
+			{/each}
+			{#each failedImports as op (op.id)}
+				<div
+					class="border-status-danger/25 bg-status-danger/5 flex items-center gap-2.5 rounded-[10px] border px-4 py-2.5"
+				>
+					<CircleAlert size={14} class="text-status-danger shrink-0" />
+					<span class="text-text-primary min-w-0 truncate text-[12.5px]">
+						Import of <span class="font-mono font-medium">{op.subject}</span> failed{op.error
+							? `: ${op.error}`
+							: ''}
+					</span>
+					<span
+						class="text-text-ghost ml-auto shrink-0 font-mono text-[11px]"
+						title={op.finished_at}
+					>
+						{relativeTime(op.finished_at ?? op.updated_at)}
+					</span>
+				</div>
+			{/each}
+		</div>
+	{/if}
 
 	{#if images.length === 0}
 		<EmptyState

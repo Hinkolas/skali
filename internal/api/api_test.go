@@ -127,6 +127,20 @@ func (a *testAPI) login(email, password string) string {
 	return sess["token"].(string)
 }
 
+// waitOperation polls an operation until it leaves running and returns the
+// final payload — the read side of every 202.
+func (a *testAPI) waitOperation(token, id string) map[string]any {
+	a.t.Helper()
+	var op map[string]any
+	require.Eventually(a.t, func() bool {
+		status, body := a.do("GET", "/v1/operations/"+id, token, nil)
+		require.Equal(a.t, http.StatusOK, status, "body: %v", body)
+		op = body["operation"].(map[string]any)
+		return op["status"] != "running"
+	}, 5*time.Second, 10*time.Millisecond)
+	return op
+}
+
 // staleAllSessions pushes every session's last reauthentication past the
 // default 15m window. The service's clock seam is unexported, so tests age the
 // rows instead of advancing time.
@@ -493,5 +507,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 34, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 36, routes, "route count changed; update the OpenAPI spec and this number")
 }

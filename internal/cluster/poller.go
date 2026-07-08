@@ -174,6 +174,16 @@ func (p *Poller) tick(ctx context.Context) {
 	if _, err := p.st.PruneGoneNodeContainers(ctx); err != nil {
 		slog.WarnContext(ctx, "prune gone containers", "err", err)
 	}
+	// Operations run in-process on the leader; one still running past its
+	// deadline belongs to a dead or wedged master.
+	if n, err := p.st.FailExpiredOperations(ctx); err != nil {
+		slog.WarnContext(ctx, "fail expired operations", "err", err)
+	} else if n > 0 {
+		slog.InfoContext(ctx, "operations expired", "count", n)
+	}
+	if _, err := p.st.PruneFinishedOperations(ctx); err != nil {
+		slog.WarnContext(ctx, "prune finished operations", "err", err)
+	}
 }
 
 // recordHeartbeat stamps a node row (facts + latest metrics), appends a

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -21,6 +22,14 @@ type stubRegistryOps struct {
 	rows []store.RegistryImage
 	// Err, when set, fails every call with it (sentinel-mapping seam).
 	Err error
+}
+
+// SetErr flips the error seam under the lock — imports now run in a
+// background goroutine, so the direct field write would race.
+func (s *stubRegistryOps) SetErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Err = err
 }
 
 func (s *stubRegistryOps) List(context.Context) ([]store.RegistryImage, error) {
@@ -72,6 +81,8 @@ func TestRegistryRequiresAdmin(t *testing.T) {
 		{"GET", "/v1/registry/images"},
 		{"POST", "/v1/registry/images"},
 		{"DELETE", "/v1/registry/images/" + uuid.NewString()},
+		{"GET", "/v1/operations"},
+		{"GET", "/v1/operations/" + uuid.NewString()},
 	} {
 		status, body := a.do(tc.method, tc.path, token, map[string]any{})
 		require.Equal(t, http.StatusForbidden, status, "%s %s", tc.method, tc.path)
@@ -100,16 +111,24 @@ func TestRegistryImageLifecycleViaAPI(t *testing.T) {
 	a.createAdmin("admin@example.com", "hunter2hunter2")
 	token := a.login("admin@example.com", "hunter2hunter2")
 
+	// Imports are async: 202 with a pollable operation, catalog row in its
+	// result.
 	status, body := a.do("POST", "/v1/registry/images", token, map[string]any{"reference": "postgres"})
-	require.Equal(t, http.StatusCreated, status, "body: %v", body)
-	img := body["image"].(map[string]any)
+	require.Equal(t, http.StatusAccepted, status, "body: %v", body)
+	op := body["operation"].(map[string]any)
+	require.Equal(t, "registry_import", op["kind"])
+	require.Equal(t, "postgres", op["subject"])
+
+	op = a.waitOperation(token, op["id"].(string))
+	require.Equal(t, "succeeded", op["status"])
+	img := op["result"].(map[string]any)["image"].(map[string]any)
 	require.Equal(t, "mirror/docker.io/library/postgres", img["repository"])
 	require.Equal(t, "sha256:stub-postgres", img["digest"])
-	id := img["id"].(string)
 
 	status, body = a.do("GET", "/v1/registry/images", token, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Len(t, body["images"].([]any), 1)
+	id := body["images"].([]any)[0].(map[string]any)["id"].(string)
 
 	status, _ = a.do("DELETE", "/v1/registry/images/"+id, token, nil)
 	require.Equal(t, http.StatusNoContent, status)
@@ -117,10 +136,14 @@ func TestRegistryImageLifecycleViaAPI(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Empty(t, body["images"])
 
-	// Validation and sentinel mapping.
+	// Bad input fails synchronously, before anything goes async.
 	status, body = a.do("POST", "/v1/registry/images", token, map[string]any{})
 	require.Equal(t, http.StatusBadRequest, status)
 	require.Equal(t, "bad_request", errorCode(t, body))
+	status, body = a.do("POST", "/v1/registry/images", token,
+		map[string]any{"reference": "postgres@sha256:" + strings.Repeat("a", 64)})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "bad_request", errorCode(t, body), "digest refs rejected synchronously")
 
 	status, body = a.do("DELETE", "/v1/registry/images/"+uuid.NewString(), token, nil)
 	require.Equal(t, http.StatusNotFound, status)
@@ -129,20 +152,56 @@ func TestRegistryImageLifecycleViaAPI(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 	require.Equal(t, "not_found", errorCode(t, body), "malformed id")
 
-	for _, tc := range []struct {
-		err    error
-		status int
-		code   string
-	}{
-		{mirror.ErrInvalidReference, http.StatusBadRequest, "bad_request"},
-		{mirror.ErrUpstreamNotFound, http.StatusNotFound, "not_found"},
-		{mirror.ErrRegistryUnavailable, http.StatusServiceUnavailable, "registry_unavailable"},
-	} {
-		a.reg.Err = tc.err
-		status, body = a.do("POST", "/v1/registry/images", token, map[string]any{"reference": "x:1"})
-		require.Equal(t, tc.status, status, "%v", tc.err)
-		require.Equal(t, tc.code, errorCode(t, body), "%v", tc.err)
-	}
+	// Upstream and mirror failures happen after the 202: they land on the
+	// operation, not the HTTP response.
+	a.reg.SetErr(mirror.ErrUpstreamNotFound)
+	status, body = a.do("POST", "/v1/registry/images", token, map[string]any{"reference": "missing:1"})
+	require.Equal(t, http.StatusAccepted, status)
+	op = a.waitOperation(token, body["operation"].(map[string]any)["id"].(string))
+	require.Equal(t, "failed", op["status"])
+	require.Contains(t, op["error"], "not found")
+}
+
+func TestOperationsListAndFilters(t *testing.T) {
+	a := newTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	token := a.login("admin@example.com", "hunter2hunter2")
+
+	// One import that succeeds, one that fails.
+	status, body := a.do("POST", "/v1/registry/images", token, map[string]any{"reference": "alpine:3"})
+	require.Equal(t, http.StatusAccepted, status)
+	a.waitOperation(token, body["operation"].(map[string]any)["id"].(string))
+
+	a.reg.SetErr(mirror.ErrRegistryUnavailable)
+	status, body = a.do("POST", "/v1/registry/images", token, map[string]any{"reference": "bad:1"})
+	require.Equal(t, http.StatusAccepted, status)
+	a.waitOperation(token, body["operation"].(map[string]any)["id"].(string))
+
+	status, body = a.do("GET", "/v1/operations", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, body["operations"].([]any), 2)
+	// Newest first.
+	first := body["operations"].([]any)[0].(map[string]any)
+	require.Equal(t, "bad:1", first["subject"])
+
+	status, body = a.do("GET", "/v1/operations?status=failed", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, body["operations"].([]any), 1)
+
+	status, body = a.do("GET", "/v1/operations?kind=registry_import&status=succeeded", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, body["operations"].([]any), 1)
+
+	status, body = a.do("GET", "/v1/operations?status=bogus", token, nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "bad_request", errorCode(t, body))
+
+	status, body = a.do("GET", "/v1/operations/"+uuid.NewString(), token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errorCode(t, body))
+	status, body = a.do("GET", "/v1/operations/not-a-uuid", token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errorCode(t, body))
 }
 
 func TestRegistryDisabledWithoutClusterAddr(t *testing.T) {

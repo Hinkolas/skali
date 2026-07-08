@@ -96,7 +96,8 @@ func NewRouter(d Deps) http.Handler {
 			uh := &usersHandlers{st: d.Store}
 			nh := &nodesHandlers{st: d.Store, cluster: d.Cluster}
 			ch := &containersHandlers{st: d.Store, containers: d.Containers}
-			rh := &registryHandlers{registry: d.Registry}
+			rh := &registryHandlers{registry: d.Registry, st: d.Store}
+			oh := &operationsHandlers{st: d.Store}
 			r.Group(func(r chi.Router) {
 				r.Use(RequireAdmin)
 
@@ -112,6 +113,10 @@ func NewRouter(d Deps) http.Handler {
 
 				// The mirror catalog: what the cluster registry serves.
 				r.Get("/registry/images", rh.list)
+
+				// Task-shaped background work: poll here after a 202.
+				r.Get("/operations", oh.list)
+				r.Get("/operations/{id}", oh.get)
 
 				// Writes additionally need sudo mode. RequireAdmin sits
 				// outside RequireFresh so non-admins get "forbidden", never a

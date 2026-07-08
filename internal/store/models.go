@@ -142,6 +142,20 @@ type NodeVolume struct {
 	LastSeen      time.Time
 }
 
+type Operation struct {
+	ID         uuid.UUID
+	Kind       string
+	Status     string
+	Subject    string
+	Result     []byte
+	Error      *string
+	CreatedBy  *uuid.UUID
+	ExpiresAt  time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	FinishedAt *time.Time
+}
+
 type RegistryImage struct {
 	ID         uuid.UUID
 	Repository string

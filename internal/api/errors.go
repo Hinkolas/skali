@@ -37,6 +37,12 @@ const (
 	codeInternal            = "internal"
 )
 
+// writeInternalError logs the real error and reports an opaque 500.
+func writeInternalError(ctx context.Context, w http.ResponseWriter, what string, err error) {
+	slog.ErrorContext(ctx, "api: "+what, "err", err)
+	writeError(w, http.StatusInternalServerError, codeInternal, "internal error")
+}
+
 // writeAuthError maps auth sentinel errors onto the envelope; anything
 // unrecognized is logged and reported as an opaque 500.
 func writeAuthError(ctx context.Context, w http.ResponseWriter, err error) {

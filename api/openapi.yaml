@@ -1024,8 +1024,11 @@ paths:
         `(repository, tag)` to a digest; re-importing a tag moves the pin.
         The mirrored repository is `mirror/<upstream-host>/<path>`, so
         `postgres:17` lands at
-        `<registry>/mirror/docker.io/library/postgres:17`. Imports can take
-        minutes (up to a 15-minute server-side ceiling).
+        `<registry>/mirror/docker.io/library/postgres:17`. The copy can take
+        minutes, so it runs as a background operation: bad references fail
+        here with a 400, everything else answers `202` with an operation to
+        poll — on success its `result` carries the catalog entry under
+        `image`.
       tags: [registry]
       requestBody:
         required: true
@@ -1039,19 +1042,18 @@ paths:
                   type: string
                   description: Upstream tag reference, e.g. `postgres:17`.
       responses:
-        "201":
-          description: The catalog entry, digest-pinned.
+        "202":
+          description: Import started; poll the operation.
           content:
             application/json:
               schema:
                 type: object
-                required: [image]
+                required: [operation]
                 properties:
-                  image: { $ref: "#/components/schemas/RegistryImage" }
+                  operation: { $ref: "#/components/schemas/Operation" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/RegistryUnavailable" }
 
   /v1/registry/images/{id}:
@@ -1079,6 +1081,71 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/RegistryUnavailable" }
+
+  /v1/operations:
+    get:
+      operationId: listOperations
+      summary: List recent operations
+      description: |
+        Admin only. Task-shaped background work kicked off by user requests
+        (registry imports today): the read side of every `202`. Newest
+        first, capped at 100; finished operations are pruned after a day.
+      tags: [operations]
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by kind, e.g. `registry_import`.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [running, succeeded, failed]
+      responses:
+        "200":
+          description: Recent operations, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operations]
+                properties:
+                  operations:
+                    type: array
+                    items: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/operations/{id}:
+    get:
+      operationId: getOperation
+      summary: Get one operation
+      description: Admin only. Poll here after a `202` until `status` leaves `running`.
+      tags: [operations]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The operation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operation]
+                properties:
+                  operation: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
 components:
   securitySchemes:
@@ -1466,6 +1533,43 @@ components:
           type: string
           format: date-time
           description: Advances when a re-import moves the pin.
+
+    Operation:
+      type: object
+      description: |
+        One task-shaped background job. Runs in-process on the master under
+        a deadline; a master restart mid-flight surfaces as `failed` once
+        the deadline passes.
+      required: [id, kind, status, subject, result, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          description: What the operation does, e.g. `registry_import`.
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        subject:
+          type: string
+          description: Kind-specific, e.g. the upstream reference imported.
+        result:
+          type: object
+          description: Kind-specific success payload; `{}` until then.
+        error:
+          type: string
+          description: Present when failed.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          description: Present once the operation leaves `running`.
 
     ContainerCreateRequest:
       type: object
