@@ -31,6 +31,7 @@ import (
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/engine"
 	"github.com/Hinkolas/skali/internal/hostinfo"
+	"github.com/Hinkolas/skali/internal/leader"
 	"github.com/Hinkolas/skali/internal/mirror"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/store"
@@ -177,9 +178,15 @@ func runServe() error {
 		registryOps = importer
 	}
 
+	// Leadership: one active master per database, decided by a Postgres
+	// advisory lock. Everything that writes cluster-wide state starts under
+	// the lease below; a standby skalid against the same database stays
+	// passive until the active one's session dies.
+	lease := leader.New(cfg.DatabaseURL)
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Containers: containerOps, Registry: registryOps}),
+		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool, Cluster: clusterSvc, Containers: containerOps, Registry: registryOps, Leader: lease.IsLeader}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)
@@ -196,38 +203,34 @@ func runServe() error {
 
 	loopCtx, cancelLoops := context.WithCancel(ctx)
 	defer cancelLoops()
+	// Node-local observation is always on — a standby master keeps sampling
+	// itself so it is warm at takeover.
 	go sweepLoop(loopCtx, authSvc)
 	go sampler.Run(loopCtx)
 	go containers.Run(loopCtx)
 	go inventory.Run(loopCtx)
 	go notifier.Run(loopCtx)
-	go poller.Run(loopCtx)
-	go watcher.Run(loopCtx)
-	if regAddr != "" {
-		// The registry container (retried until the engine is up) and the
-		// master's own docker trust for it — the master pulls from the
-		// mirror too. Trust failure is a warning: only mirror pulls need it.
-		go mirror.EnsureLoop(loopCtx, eng, ca, mirror.Config{
-			Endpoint: regAddr, DataDir: cfg.DataDir, Image: cfg.RegistryImage, Port: cfg.RegistryPort,
-		})
-		if certPEM, keyPEM, err := ca.ClientPEM(); err != nil {
-			slog.WarnContext(ctx, "issue master registry client cert", "err", err)
-		} else if err := mirror.InstallDockerCerts(mirror.DefaultCertsDir, regAddr, ca.CAPEM(), certPEM, keyPEM); err != nil {
-			slog.WarnContext(ctx, "install docker trust for the cluster registry", "err", err)
+	// Cluster-writing loops run only while this process holds the leader
+	// lease. That includes the poller's self-stamp: active and standby share
+	// one master node row (EnsureSelfNode resolves by role), so gating it
+	// prevents two writers — nodes.status thereby means "participates in the
+	// active control plane". leaderCtx derives from loopCtx, so shutdown
+	// still cancels every loop before the ConnPool closes (see Watcher.Run).
+	go lease.Run(loopCtx, func(leaderCtx context.Context) {
+		go poller.Run(leaderCtx)
+		go watcher.Run(leaderCtx)
+		if regAddr != "" {
+			// The registry container (retried until the engine is up) and
+			// the master's own docker trust for it — the master pulls from
+			// the mirror too. Trust failure is a warning: only mirror pulls
+			// need it.
+			go mirror.EnsureLoop(leaderCtx, eng, ca, mirror.Config{
+				Endpoint: regAddr, DataDir: cfg.DataDir, Image: cfg.RegistryImage, Port: cfg.RegistryPort,
+			})
+			installMirrorTrust(leaderCtx, ca, regAddr)
 		}
-	}
-	go func() {
-		bell, cancel := notifier.Subscribe()
-		defer cancel()
-		for {
-			select {
-			case <-loopCtx.Done():
-				return
-			case <-bell:
-				poller.Poke(self.ID)
-			}
-		}
-	}()
+		go selfPokeLoop(leaderCtx, notifier, func() { poller.Poke(self.ID) })
+	})
 
 	slog.InfoContext(ctx, "starting", "service", serviceName,
 		"http_addr", cfg.HTTPAddr, "grpc_addr", cfg.GRPCAddr, "node_id", self.ID)
@@ -244,6 +247,33 @@ func runServe() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// selfPokeLoop forwards the master's own engine doorbell to the poller — the
+// local equivalent of a worker's WatchEvents stream. Leased with the other
+// cluster writers: a standby's local events must not stamp the shared master
+// row.
+func selfPokeLoop(ctx context.Context, notifier *engine.Notifier, poke func()) {
+	bell, cancel := notifier.Subscribe()
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-bell:
+			poke()
+		}
+	}
+}
+
+// installMirrorTrust writes the master's own docker client certs for the
+// mirror. Failure is a warning: only mirror pulls need the trust.
+func installMirrorTrust(ctx context.Context, ca *cluster.CA, regAddr string) {
+	if certPEM, keyPEM, err := ca.ClientPEM(); err != nil {
+		slog.WarnContext(ctx, "issue master registry client cert", "err", err)
+	} else if err := mirror.InstallDockerCerts(mirror.DefaultCertsDir, regAddr, ca.CAPEM(), certPEM, keyPEM); err != nil {
+		slog.WarnContext(ctx, "install docker trust for the cluster registry", "err", err)
+	}
 }
 
 // sweepLoop hourly clears expired sessions and login challenges.

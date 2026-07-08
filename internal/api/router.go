@@ -29,6 +29,9 @@ type Deps struct {
 	// Registry is nil when the master runs no image mirror (CLUSTER_ADDR
 	// unset); its routes then answer 503 registry_disabled.
 	Registry RegistryOps
+	// Leader reports whether this master holds the cluster leader lease;
+	// nil (tests, single-purpose harnesses) reads as false.
+	Leader func() bool
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -47,7 +50,10 @@ func NewRouter(d Deps) http.Handler {
 			writeError(w, http.StatusServiceUnavailable, codeInternal, "database unreachable")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"leader": d.Leader != nil && d.Leader(),
+		})
 	})
 
 	r.Get("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {

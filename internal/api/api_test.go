@@ -461,6 +461,7 @@ func TestHealthzAndOpenAPI(t *testing.T) {
 	status, body := a.do("GET", "/healthz", "", nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "ok", body["status"])
+	require.Equal(t, false, body["leader"], "nil Deps.Leader reads as standby")
 
 	res, err := a.srv.Client().Get(a.srv.URL + "/openapi.yaml")
 	require.NoError(t, err)
