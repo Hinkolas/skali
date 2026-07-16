@@ -1,0 +1,39 @@
+version: "1"
+
+name: hello-world
+description: Minimal image-based HTTP application
+
+applications:
+  api:
+    # Existing images are imported into Skali's managed registry and pinned by
+    # digest so that a deployment revision always resolves to the same image.
+    image: ghcr.io/hinkolas/hello-world/api:1.0.0
+
+    ports:
+      http:
+        port: 8080
+        protocol: http
+
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        path: /
+        port: http
+        tls: automatic
+
+    health:
+      readiness:
+        http:
+          port: http
+          path: /health/ready
+        interval: 10s
+        timeout: 2s
+      liveness:
+        http:
+          port: http
+          path: /health/live
+        interval: 30s
+        timeout: 2s
+
+    # Resource and scaling settings are optional. Skali supplies conservative
+    # defaults when they are omitted, keeping the minimal case small.

@@ -1,0 +1,151 @@
+version: "1"
+
+name: file-sharing
+description: Full-stack file-sharing application with PostgreSQL and S3 storage
+
+# ${NAME} values come from the project environment. A missing value without a
+# default fails validation before deployment; ${NAME:-default} uses a fallback.
+applications:
+  web:
+    # The context is relative to the project root; the Dockerfile is relative
+    # to that context. Local and cloud builders consume the same definition.
+    build:
+      context: ./web
+      dockerfile: deploy/Dockerfile
+      target: runtime
+
+    command: ["/app/file-sharing", "serve"]
+
+    environment:
+      NODE_ENV: production
+      SESSION_SECRET: "${SESSION_SECRET}"
+
+      # Double-brace expressions reference values produced by managed Skali
+      # services. The left side remains the variable name expected by the app.
+      POSTGRES_HOST: "{{databases.data.host}}"
+      POSTGRES_PORT: "{{databases.data.port}}"
+      POSTGRES_DATABASE: "{{databases.data.name}}"
+      POSTGRES_USER: "{{databases.data.username}}"
+      POSTGRES_PASSWORD: "{{databases.data.password}}"
+
+      S3_ENDPOINT: "{{buckets.files.endpoint}}"
+      S3_BUCKET: "{{buckets.files.name}}"
+      S3_REGION: "{{buckets.files.region}}"
+      S3_ACCESS_KEY: "{{buckets.files.access_key}}"
+      S3_SECRET_KEY: "{{buckets.files.secret_key}}"
+
+    ports:
+      http:
+        port: 8080
+        protocol: http
+
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        # Path defaults to `/` when omitted. Another application can use the
+        # same domain with a more specific path such as `/api`.
+        path: /
+        port: http
+        tls: automatic
+
+    health:
+      startup:
+        http:
+          port: http
+          path: /health/startup
+        interval: 2s
+        timeout: 2s
+        failureThreshold: 30
+      readiness:
+        http:
+          port: http
+          path: /health/ready
+        interval: 10s
+        timeout: 2s
+        failureThreshold: 3
+      liveness:
+        http:
+          port: http
+          path: /health/live
+        interval: 30s
+        timeout: 2s
+        failureThreshold: 3
+
+    # Requests reserve schedulable capacity; limits bound a single replica.
+    # Skali accepts decimal units such as MB/GB and binary units such as
+    # MiB/GiB, then converts them for the selected orchestration backend.
+    resources:
+      requests:
+        cpu: 0.2
+        memory: 256MB
+        temporaryStorage: 256MB
+      limits:
+        cpu: 1
+        memory: 1GB
+        temporaryStorage: 2GB
+
+    scaling:
+      replicas:
+        min: 2
+        max: 5
+      autoscaling:
+        cpu:
+          targetUtilization: 70
+
+    # Prefer spreading replicas across two nodes while still allowing the same
+    # manifest to run on a single-node local development cluster.
+    placement:
+      spread:
+        across: nodes
+        minimum: 2
+        enforcement: preferred
+
+    deployment:
+      # Release commands run once with the new image and its service references
+      # resolved before the application replicas roll forward.
+      releaseCommand:
+        command: ["/app/file-sharing", "migrate", "up"]
+        timeout: 5m
+      rollout:
+        strategy: rolling
+        maxUnavailable: 0
+        maxSurge: 1
+        timeout: 10m
+
+    shutdown:
+      gracePeriod: 30s
+
+databases:
+  data:
+    engine: postgres
+    version: 17
+
+    # Project isolation gives this environment its own physical database while
+    # leaving placement and relocation under Skali's control.
+    isolation: project
+    availability: single
+
+    storage:
+      size: 20GB
+
+    extensions:
+      - pg_trgm
+
+    backups:
+      schedule: "0 3 * * *"
+      retention: 7d
+
+buckets:
+  files:
+    visibility: private
+
+    quotas:
+      storage: 20GB
+      objects: 10000
+      maxObjectSize: 100MB
+
+    versioning: enabled
+
+    lifecycle:
+      abortIncompleteUploadsAfter: 7d
+      expireNoncurrentVersionsAfter: 30d
