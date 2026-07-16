@@ -1,0 +1,1886 @@
+# Skali v2 rework plan
+
+Status: architecture proposal and implementation plan
+
+Date: 2026-07-16
+
+Recommended starting point: `c4eb838` (post-demolition, before the current Kubernetes rework)
+
+## 1. Executive decision
+
+Skali v2 should rebuild the product and reconciliation core from the clean
+post-demolition commit, while preserving the independent foundation that was
+already sound: authentication, users, session security, the API/store plumbing,
+CLI contexts, the SvelteKit shell, and reusable UI components.
+
+The current `rework` branch remains a reference implementation and behavioral
+test catalog. Feature commits from it should not be merged wholesale. Useful
+behavior, tests, and UI components should be ported deliberately after the new
+model exists.
+
+Development is headless-first. The definition engine, public API, CLI,
+reconciliation kernel, observed-state projections, and execution journal must
+form a complete usable product before the web UI is rebuilt. The CLI is the
+first rich client. The later web UI is a visual definition editor and status/run
+viewer over exactly the same contracts, not a second way to manage services.
+
+The v2 foundation has four connected parts:
+
+1. A portable project definition in `.skali/manifest.yml`.
+2. An immutable, resolved revision made from that definition and an
+   environment's values.
+3. A continuously maintained observed-state store representing the cluster and
+   external systems.
+4. A persistent execution journal showing deployments as runs containing
+   steps, attempts, progress, and detailed logs.
+
+Only the first three are authoritative state. The execution journal explains
+what the controller is doing; it must never be required to recover or decide
+what should exist.
+
+Between definition and revision sits a first-class artifact pipeline. An
+application may reference an existing image or a build directory. A build may
+run on the developer's machine or on a Skali-managed builder, but every path
+produces the same content-addressed artifact in the installation's managed OCI
+registry. External images are imported into that registry as a durable cache
+before a revision targets them.
+
+Local development is a separate local Skali installation managed by the CLI,
+not a secondary cluster registered with a production Skali instance. It uses
+the same `skalid`, schema, revision builder, service modules, Kubernetes
+drivers, observation system, and reconciliation engine as a production
+installation.
+
+## 2. Product vision
+
+Skali is an opinionated product control plane over Kubernetes. A developer
+declares a project in product-level terms such as applications, databases,
+object storage, connections, routes, and runtime requirements. Skali resolves
+that declaration for an environment, continuously reconciles it onto a cluster,
+maintains a fresh model of the resulting runtime, and explains every operation
+in product language.
+
+Kubernetes remains the execution substrate. Skali does not recreate scheduling,
+container lifecycle management, networking, service discovery, or operator
+behavior. Its product value is:
+
+- A portable project model above raw Kubernetes objects.
+- Reproducible, environment-aware deployments.
+- Managed application, database, and object-storage systems.
+- Immediate product-level knowledge of cluster state and health.
+- Clear execution traces instead of opaque controller activity.
+- The same workflow and runtime model on a laptop and a real cluster.
+- A CLI that owns developer workflows rather than merely mirroring REST routes.
+- A managed artifact path for local builds, cloud builds, and imported images.
+- A headless engine that remains fully useful without the web application.
+
+## 3. Current product baseline
+
+This is the high-level behavior present on the current `rework` branch. It is an
+inventory of product knowledge to preserve or consciously redesign, not a list
+of implementation that should be copied.
+
+### 3.1 Foundation and security
+
+Implemented:
+
+- Go control-plane daemon (`skalid`) with REST API and controller in one binary.
+- SvelteKit BFF: browser session cookie remains server-side and bearer tokens do
+  not reach browser JavaScript.
+- Email/password login with argon2id.
+- Opaque, revocable, sliding-expiry sessions.
+- Optional TOTP two-factor authentication and backup codes.
+- Reauthentication/sudo window for sensitive actions.
+- Admin/member roles and operator-created users; no public signup.
+- Login rate limiting, structured logging, OpenTelemetry hooks, configuration,
+  migrations, sqlc, pgx, and isolated database tests.
+- CLI authentication and kubectl-style named contexts.
+
+V2 disposition: retain this foundation. Review and port the small security fixes
+made after `c4eb838`, but do not redesign authentication as part of the core
+rewrite.
+
+### 3.2 Projects, environments, and configuration
+
+Implemented:
+
+- Projects as the top-level product grouping.
+- Multiple independent environments per project.
+- Environment duplication that copies configuration but not state.
+- Environment-scoped service names and Kubernetes namespaces.
+- High/low environment priority policy.
+- Staged service creation, edits, and deletion.
+- Application-to-database and application-to-bucket connections.
+
+Current limitation: the editable project model is spread across normalized
+rows, while an environment deployment stores a second JSON document. A future
+manifest file was planned as a third consumer rather than being the original
+source model.
+
+V2 disposition: keep projects and environments as product concepts. Replace the
+current draft representation with one typed project-definition document plus
+separate typed environment values.
+
+### 3.3 Deployments
+
+Implemented:
+
+- Environment-wide deployments rather than per-service releases.
+- Diff/confirmation before deployment.
+- Immutable deployment snapshots.
+- Container image tag resolution and digest pinning.
+- One in-flight rollout per environment.
+- Pending, deploying, active, superseded, failed, and cancelled states.
+- Failed or cancelled deployment fallback to the prior active deployment.
+- Deployment history and basic timelines.
+- Staged deletion that becomes destructive only when deployed.
+
+Current limitation: deployment behavior, service-specific preparation,
+database placement, state transitions, event narration, and rollback behavior
+are interleaved. The timeline consists of broad events rather than a detailed
+execution trace.
+
+V2 disposition: preserve the product behavior but rebuild it around immutable
+revisions, an explicit target pointer, and persistent runs/steps/attempts.
+
+### 3.4 Application services
+
+Implemented:
+
+- Container-image applications.
+- Fixed replicas and CPU-based autoscaling ranges.
+- CPU, memory, and ephemeral-storage policy.
+- Environment variables.
+- One main listening port plus per-route target ports.
+- HTTP health paths compiled into readiness/liveness probes.
+- Domains and paths through Traefik.
+- Automatic TLS through cert-manager.
+- Persistent local-path volumes with the honest single-replica constraint.
+- Start, stop, restart, staged removal, and restore-removal actions.
+- Pod-level status, rollout diagnostics, live metrics, and sampled metrics
+  history.
+- Connections that inject database or S3 values and secret references.
+
+Missing or incomplete:
+
+- Application log aggregation/streaming is a stub.
+- Git/local source builds are not implemented.
+- Sidecars, workers, cron jobs, secret-typed variables, and multi-port process
+  models are deferred.
+- RWX storage and multi-replica stateful applications are deferred.
+
+V2 disposition: application is one of the three initial service systems. Image
+deployment remains supported, but a local build source must be part of the
+manifest model early enough for `skali dev` to be a real workflow.
+
+### 3.5 Database services
+
+Implemented:
+
+- PostgreSQL through CloudNativePG.
+- Logical databases and roles on shared physical clusters.
+- Shared, project, and dedicated isolation policies.
+- Single, asynchronous, and synchronous availability policies for owned
+  clusters.
+- Engine/major-version catalog and extension validation.
+- Generated database identities and Kubernetes-held credentials.
+- Shared-pool defaults and admin resizing.
+- CNPG status, primary/replica topology, and database connection injection.
+- Pool placement and some pool lifecycle rules.
+- A separate system database pool for SeaweedFS metadata.
+
+Missing or incomplete:
+
+- User-visible backup, restore, point-in-time recovery, and relocation flows.
+- Capacity spill and safe rebalancing.
+- External database access.
+- Additional engines.
+
+Current limitation: user databases and system databases use related concepts,
+but system consumers are special controller paths. Pooling, physical database
+clusters, logical tenants, credentials, placement, and product services are not
+cleanly separated.
+
+V2 disposition: create a lower-level database subsystem used equally by
+project database services and internal platform claims such as the object-store
+metadata database.
+
+### 3.6 Object-storage services
+
+Implemented:
+
+- SeaweedFS as the blessed object-storage engine.
+- Platform masters, filer, S3 gateway, and volume servers.
+- A CNPG-backed filer metadata database.
+- User bucket services with hard quotas.
+- Generated S3 access keys stored in Kubernetes Secrets.
+- Application-to-bucket connection injection.
+- External S3 endpoint configuration and TLS ingress.
+- Subsystem status, volume placement, bucket usage, and basic replication
+  modeling.
+- Node capability gates for object-storage roles.
+
+Missing or incomplete:
+
+- Erasure-coding workflows, evacuation, and richer bucket policies.
+- Bucket history, public-read policy, lifecycle rules, and user-facing backup
+  or replication controls.
+
+Current limitation: SeaweedFS bootstrap, its system database, bucket
+reconciliation, settings, and health were added through several special paths.
+
+V2 disposition: object storage is the third initial service system. Separate
+the physical object-store subsystem from logical bucket claims. Its metadata
+database must be an ordinary internal consumer of the shared database
+subsystem.
+
+### 3.7 Cluster and platform management
+
+Implemented or designed:
+
+- k3s as the single Kubernetes distribution.
+- Server-side apply and owned-object pruning.
+- Some informer-driven wakeups plus periodic reconciliation.
+- CloudNativePG, cert-manager, Traefik, SeaweedFS, metrics-server, and kube-vip
+  as pinned platform components.
+- Node capability labels for application, database, object-storage, master,
+  and edge placement.
+- Cluster/node/pod topology, capacity, metrics, subsystem health, database
+  pools, and object-storage pages.
+- External control plane: `skalid` and its Postgres state survive a broken
+  tenant cluster.
+- Single-server production topology with a future three-server HA design.
+
+V2 disposition: retain the Kubernetes and external-control-plane decisions,
+but rebuild cluster observation before implementing product services. Node
+capabilities and placement policies should be policies consumed by service
+modules, not assumptions embedded throughout the controller.
+
+### 3.8 Observability and clients
+
+Implemented:
+
+- Cached service statuses and severity rollups.
+- Durable activity events.
+- SSE doorbells that trigger UI refetches.
+- Deployment timeline pages.
+- Pod and service metrics plus limited history.
+- Web pages for projects, environments, services, deployments, activity,
+  system health, cluster topology, database pools, object storage, settings,
+  users, and account security.
+- CLI auth/context commands.
+
+Missing or incomplete:
+
+- Detailed deployment steps and logs.
+- Application log streaming or retention.
+- `skali deploy`, manifest workflows, local build workflows, and `skali dev`.
+- An integrated managed registry and a shared local/cloud build artifact path.
+- A packaged production installer.
+
+V2 disposition: separate current state, state transitions, operation traces,
+runtime logs, and UI invalidation into distinct systems. Treat the CLI as the
+first complete client and add the visual UI after the headless deployment flow
+works end to end.
+
+## 4. Why a core rewrite is justified
+
+The current implementation is functional and well tested, but its extension
+cost is growing in the wrong direction:
+
+- A new service kind must be threaded through API handlers, draft tables,
+  environment duplication, definition serialization, diffing, deployment,
+  controller switches, teardown, capability checks, status mapping, and UI
+  unions.
+- Mutable rows and immutable deployment definitions overlap without one
+  canonical project schema.
+- Some environment-specific values are described as outside deployment
+  definitions while the current application snapshot includes them.
+- Cluster state is partly queried on demand, partly watched, partly polled, and
+  partly cached in database status columns.
+- User services and platform subsystems use similar infrastructure through
+  different lifecycle paths.
+- Activity events narrate outcomes but cannot explain a deployment at the
+  granularity users expect.
+- The manifest and local runtime were postponed, even though both constrain
+  the core definition and deployment architecture.
+- Build execution, artifact upload, image caching, environment-file import, and
+  deployment do not yet form one coherent workflow.
+
+Continuing to add these as adapters around the present model would preserve the
+behavior but not solve the underlying lack of a single extensible lifecycle.
+
+## 5. Architectural principles
+
+### 5.1 Three authoritative planes
+
+1. **Definition plane:** portable user intent and typed environment values.
+2. **Revision plane:** immutable, validated, resolved target state.
+3. **Observation plane:** the freshest known state of Kubernetes and external
+   systems, with explicit source and freshness.
+
+No field may silently belong to more than one plane. Cached projections may be
+stored for performance, but must identify their source and must never become
+competing intent.
+
+### 5.2 Reconciliation is level-triggered
+
+The controller compares a target revision with current observation and performs
+idempotent work. Nothing required for recovery lives only in a goroutine, queue,
+or event stream. A restart performs an initial observation sync and continues
+toward the same target.
+
+### 5.3 Watches make the system responsive; resync makes it safe
+
+Normal cluster knowledge comes from Kubernetes LIST/WATCH caches, not request-
+time lookups or full polling passes. Watch changes update the observed-state
+store and enqueue only affected owners. Periodic full resynchronization remains
+the correctness backstop.
+
+### 5.4 Product services own their complete lifecycle
+
+Application, database, and object-storage modules own their schema,
+validation, preparation, dependency declaration, desired resources, health
+evaluation, and removal behavior. The generic environment reconciler knows
+service keys and lifecycle results, not service-specific fields.
+
+### 5.5 Infrastructure claims are below product services
+
+A product database service is not a physical database cluster. It creates a
+database claim. A product bucket service is not SeaweedFS. It creates a bucket
+claim. Internal platform features may create the same claims without pretending
+to be user-facing services.
+
+### 5.6 Explanations do not drive behavior
+
+Runs, steps, logs, activity entries, and UI notifications explain or distribute
+state changes. The reconciler never consumes them as its source of truth.
+Operations may produce durable domain outputs such as an Artifact or Backup,
+but consumers use those verified output records, never parse execution logs or
+infer correctness from display status text.
+
+### 5.7 Local and remote are runtime profiles, not separate backends
+
+Both use Kubernetes, the same operators, the same revision builder, and the
+same service modules. Differences such as ingress hostnames, storage class,
+architecture, and capacity are explicit environment values or target
+capabilities.
+
+### 5.8 Secrets never enter portable or observable data
+
+Definitions contain secret declarations/references. Revisions contain opaque
+secret references and versions, never plaintext. Observations, events, run
+logs, metrics, and API list payloads must be safe to persist and display.
+
+### 5.9 Headless behavior is the product contract
+
+Every project lifecycle must work through the public API and CLI without the
+web UI. The server owns parsing semantics, validation, planning, revision
+preparation, deployment state, observation, and operations. The CLI owns the
+filesystem, local build executor, local platform lifecycle, and terminal UX,
+but it cannot invent alternate deployment semantics.
+
+The web UI later manipulates the same typed definition and calls the same plan,
+deploy, operation, and query APIs. A UI-only create/update path is not allowed.
+
+## 6. Core domain model
+
+### 6.1 Project definition
+
+The canonical portable source lives at:
+
+```text
+.skali/manifest.yml
+```
+
+YAML is the primary human format. JSON may be accepted because both parse into
+the same schema. Internally the system operates on a typed, normalized
+`ProjectDefinition`; it does not pass unstructured YAML maps through the core.
+
+The pipeline is:
+
+```text
+source bytes
+  -> parse
+  -> schema-version check
+  -> normalize
+  -> semantic validation
+  -> typed ProjectDefinition
+  -> canonical encoding
+  -> content hash
+```
+
+Map order, whitespace, YAML aliases, and the original notation must not affect
+the canonical hash. The original source may be retained for display or download,
+but behavior is defined by the normalized typed form.
+
+A project has one current draft document. Its source mode may be:
+
+- `managed`: edited through the web/API as patches to the same document.
+- `file`: replaced by CLI/Git submissions of `.skali/manifest.yml`.
+
+Both modes feed the same draft type. Mutations use optimistic versions/ETags so
+a file push cannot silently overwrite web changes and the web cannot silently
+overwrite a newer file submission. Switching source mode is explicit.
+
+A complete source project normally has this shape:
+
+```text
+project/
+  .skali/
+    manifest.yml
+    env/
+      development.env
+      production.env       # commonly gitignored or omitted
+  Dockerfile               # when an application uses a build source
+  src/
+  ... project source
+```
+
+Environment files are optional deployment inputs, not part of the portable
+definition. They may live anywhere and be selected explicitly with
+`--env-file`; `.skali/env/` is only the discoverable convention.
+
+### 6.2 Stable service identity
+
+Every service has a stable key inside the project definition. The key, not a
+generated database UUID, is the portable identity. A display name may change
+without changing the key. Changing or removing a key is a destructive change
+for stateful services and must be shown clearly by `plan`.
+
+Generated cluster names, database identities, bucket names, and Secret names are
+runtime allocations derived from `(installation, project, environment, service
+key)` or stored as durable outputs. They do not travel between installations in
+the portable definition.
+
+### 6.3 Definition structure
+
+The exact alpha syntax needs fixtures before implementation, but the semantic
+shape is fixed:
+
+```yaml
+apiVersion: skali.dev/v1alpha1
+kind: Project
+
+metadata:
+  name: example
+
+inputs:
+  app_domain:
+    type: hostname
+  api_key:
+    type: string
+    secret: true
+
+services:
+  web:
+    type: application
+    source:
+      build:
+        context: .
+        dockerfile: Dockerfile
+    runtime:
+      port: 8080
+      replicas: 2
+    routes:
+      - host:
+          valueFrom: app_domain
+    variables:
+      DATABASE_URL:
+        valueFrom:
+          service: postgres
+          output: connection_url
+      API_KEY:
+        valueFrom: api_key
+
+  worker:
+    type: application
+    source:
+      image: ghcr.io/example/worker:1.4
+    runtime:
+      port: 9000
+
+  postgres:
+    type: database
+    engine: postgres
+    version: 17
+    isolation: project
+    availability: single
+
+  assets:
+    type: object_storage
+    quota: 20Gi
+```
+
+This is illustrative, not a frozen field spelling. The design rules are frozen:
+
+- Service keys are stable identities.
+- Dependencies and connections are explicit references, not inferred strings.
+- Values use typed references rather than unrestricted text templating.
+- Secret references are a distinct value type.
+- An application source chooses exactly one of `image` or `build`.
+- Build paths are relative to the project root and cannot escape it without an
+  explicit opt-in.
+- Product concepts are represented; raw Kubernetes YAML is not embedded.
+- Unknown fields are rejected for the active schema version.
+- The definition has an explicit API/schema version from its first release.
+
+### 6.4 Environment values
+
+Portable structure and environment-specific input are separate:
+
+```text
+ProjectDefinition + EnvironmentValues + Artifacts + TargetCapabilities -> Revision
+```
+
+Environment values include:
+
+- Domains and public endpoints.
+- Plain environment-specific configuration.
+- Secret bindings.
+- Optional scale/resource overrides explicitly allowed by the schema.
+- Local development substitutions.
+
+Arbitrary merge patches are not allowed. Every overrideable field is declared
+by the definition schema. This is what keeps a project portable instead of
+turning each environment into a divergent copy.
+
+The CLI accepts dotenv-style files as the initial ergonomic input format:
+
+```text
+.skali/env/development.env
+```
+
+Each key must match a declared definition input or an explicitly declared
+application variable mapping. Unknown keys are rejected or require an explicit
+ignore flag; missing required keys fail planning. The definition decides which
+keys are secrets. The file format does not decide secrecy.
+
+An environment file may contain both plain and secret values. When uploaded,
+`skalid` separates them: plain typed values enter `EnvironmentValues`; secret
+values enter the installation's secret store and are represented elsewhere only
+by opaque references and versions. The original file is never persisted as a
+blob and values are redacted from plans and run logs.
+
+Remote environments can use either values already stored in Skali or values
+selected from a local file for the current deployment. Interactive CLI use may
+offer to upload a discovered env file. Non-interactive/CI use must choose
+explicitly, so a deployment never uploads local secrets accidentally.
+
+Environment files should normally be ignored by Git when they contain
+machine-local or secret values. A checked-in `.env.example` or non-secret values
+file may document required inputs.
+
+### 6.5 Revision
+
+A deployment prepares an immutable revision containing:
+
+- Canonical project definition and schema version.
+- Definition content hash.
+- Environment-values hash and non-secret resolved values.
+- Opaque secret references/versions.
+- Build-context/source hashes and artifact provenance.
+- Managed-registry image names and digests.
+- Original upstream image references where applicable.
+- Compiler and service-module versions.
+- Required target capabilities.
+- Prepared, typed service specs.
+- Dependency graph.
+- A revision checksum.
+
+Operator versions and blessed runtime bundle versions are recorded in the
+revision or installation profile so reproducibility is explainable. The same
+definition and values should generate the same revision checksum when resolved
+against the same artifact and runtime versions.
+
+### 6.6 Environment target
+
+Each environment has one target revision pointer and, separately, its last
+active revision pointer. Deploying changes the target. Reconciliation makes the
+cluster approach it. Activation occurs only after the revision's required
+health conditions pass.
+
+- Rollback sets the target to a previous immutable revision.
+- Cancellation marks the run cancelled and returns the target to the prior
+  active revision if the new revision has not activated.
+- A daemon restart does not alter either pointer.
+- Background drift repair continues toward the active target without creating a
+  new revision.
+
+### 6.7 Common service envelope, type-specific models
+
+V2 should not force every service into one database table or one giant union.
+The common product envelope contains only universally meaningful fields:
+
+- Stable service key.
+- Type identifier.
+- Display metadata.
+- Dependency references.
+- Lifecycle ownership.
+
+The application, database, and object-storage modules keep typed specs and typed
+prepared forms. Internally they may use separate tables and packages. The common
+contract is lifecycle behavior, not identical storage.
+
+Each service module supplies the equivalent of:
+
+```text
+decode + normalize + validate
+prepare external artifacts
+declare dependencies and outputs
+produce desired resources or infrastructure claims
+evaluate health from observed state
+describe removal and data-loss consequences
+contribute execution steps and diagnostics
+```
+
+The architecture is accepted only if adding a fourth service kind does not
+require modifying the generic deployment state machine or environment
+reconciler.
+
+## 7. Observed-state system
+
+### 7.1 Goal
+
+Skali should answer normal state and topology questions from its maintained
+model, not by asking Kubernetes during each API request. For an application
+with three replicas, it should already know:
+
+- Which three pods belong to the application and revision.
+- Which nodes host them.
+- Each pod's phase, readiness, conditions, restarts, and container state.
+- Deployment generation and rollout state.
+- Relevant Kubernetes warning events.
+- Whether the observation source is current, reconnecting, or stale.
+
+### 7.2 Observed store
+
+Introduce an `ObservedStore` abstraction with typed indexes for:
+
+- Kubernetes objects by GVK/namespace/name/UID.
+- Ownership labels and owner references.
+- Project/environment/service/revision identity.
+- Node placement.
+- Conditions and timestamps.
+- Provider-specific observations such as CNPG topology and SeaweedFS state.
+- Platform-subsystem observations such as registry capacity/health and builder
+  availability.
+- Source health, last successful sync, and resource version/cursor.
+
+The production implementation is an in-memory materialized view fed by
+watchers and provider observers. It is rebuilt on startup. Current pod objects
+are not persisted as authoritative database rows.
+
+Durable history, metrics, and transitions are stored separately. This prevents
+stale persisted pod rows from being mistaken for current truth.
+
+### 7.3 Kubernetes observation
+
+- Initial LIST for every required kind.
+- Wait for cache synchronization before declaring the cluster view ready.
+- WATCH from the returned resource versions.
+- Watch core kinds needed for topology and health: Nodes, Namespaces, Pods,
+  Deployments, StatefulSets where used, Services, Ingresses, PVCs, Jobs, and
+  Kubernetes Events.
+- Dynamic watches for blessed operator CRDs such as CNPG resources.
+- Index every managed object back to its installation, environment, service,
+  and revision using a stable label contract.
+- Convert each cache change into an affected-owner queue entry.
+- Periodic resync and a slower full reconciliation audit as backstops.
+
+### 7.4 External-system observation
+
+Systems without a useful watch API, initially SeaweedFS and the managed registry,
+use provider observers that update the same `ObservedStore` contract with an
+explicit freshness timestamp. Their poll frequency may differ, but consumers
+see one consistent fresh/stale/unknown model.
+
+Request-time provider reads are limited to explicit sensitive or streaming
+operations such as credential reveal, exec, or raw log attachment. Product
+status pages never depend on request-time cluster calls.
+
+### 7.5 Health projections
+
+Health evaluation is pure over prepared intent plus observation:
+
+```text
+Evaluate(prepared service, observed resources) -> Health + Diagnostics
+```
+
+Diagnostics are structured, for example:
+
+- `replicas_ready: 2/3`
+- `pod: web-abc`, `reason: ReadinessProbeFailed`
+- `node: worker-2`, `reason: NotReady`
+- `observation_stale_since: ...`
+
+The UI can render product-level health while still allowing a user to inspect
+the underlying members.
+
+The responsiveness objective should be measurable: in a healthy local cluster,
+a pod readiness or deletion event should normally be reflected in the Skali API
+and subscribed UI within two seconds. This is a target for tests and profiling,
+not a promise that distributed systems have zero latency.
+
+## 8. Reconciliation kernel
+
+### 8.1 Work loop
+
+```text
+definition/value change
+  -> validate candidate and plan
+  -> build/import/verify artifacts
+  -> prepare immutable revision
+  -> set environment target
+  -> enqueue environment
+
+cluster/provider watch change
+  -> update ObservedStore
+  -> resolve affected owners
+  -> enqueue environment/service/subsystem
+
+worker
+  -> load target revision
+  -> evaluate dependencies
+  -> plan desired resources/claims
+  -> apply idempotently
+  -> evaluate observation
+  -> update projections and run steps
+  -> requeue only when additional work or observation is required
+```
+
+There is still a periodic audit, but there is no global short-interval scan as
+the primary responsiveness mechanism.
+
+### 8.2 Desired-resource planning
+
+Service modules should produce typed desired resources or claims. Kubernetes
+rendering is deterministic and side-effect free. Application modules produce
+Kubernetes objects. Database and object-storage services primarily produce
+lower-level claims, whose subsystem drivers produce Kubernetes/operator objects
+and external ensure actions.
+
+Apply and prune remain generic:
+
+- Server-side apply with a stable field manager.
+- Stable ownership labels.
+- Prune only objects owned by the exact logical resource and absent from its
+  desired set.
+- Stateful data deletion requires an explicit destructive target transition;
+  absence caused by a compiler error never prunes data.
+
+### 8.3 Dependencies
+
+Dependencies form a directed graph in the prepared revision. Examples:
+
+- Application waits for database connection outputs.
+- Application waits for bucket connection outputs.
+- SeaweedFS filer waits for its system database claim.
+- A database tenant waits for a healthy physical database cluster.
+
+The reconciler may work independent branches concurrently. A dependency that is
+not ready produces a visible waiting step rather than an opaque retry.
+
+### 8.4 Status and failure
+
+- Provider transport failure: observation becomes stale/unknown and retry is
+  scheduled.
+- Invalid definition: revision preparation fails before target mutation.
+- Apply failure: run step records the diagnostic; target remains and retries
+  according to policy unless terminal.
+- Rollout health failure: deployment run fails and policy determines whether to
+  retain the failed target for inspection or return to the previous active
+  target. The initial product policy remains automatic fallback.
+- Out-of-band deletion: watch update enqueues the owner and reconciliation heals
+  it.
+- Deletion: explicit desired absence, with a persisted destructive decision and
+  service-specific teardown steps.
+
+## 9. Execution journal and observability
+
+### 9.1 Separate signal types
+
+V2 uses separate systems for:
+
+1. **Observed state:** current truth projection.
+2. **Health transitions/activity:** durable facts such as became degraded,
+   recovered, user changed settings, or credentials rotated.
+3. **Execution runs:** detailed progress and diagnostics for deployments,
+   restores, destructive removals, platform bootstrap, and other operations.
+4. **Runtime logs:** application/container stdout and stderr.
+5. **Client invalidation:** lightweight notification that a query projection
+   changed.
+
+These may share transport or storage utilities, but they are different domain
+models.
+
+### 9.2 Run model
+
+```text
+Run
+  id, kind, target, actor, status, timestamps
+  Step[]
+    id, parent_id, key, title, status, progress, timestamps
+    Attempt[]
+      id, number, status, timestamps
+      LogEntry[]
+        timestamp, level, message, structured fields
+```
+
+Step keys are deterministic so a restarted controller can reattach to or
+reconstruct the same logical step. Log entries are append-only, bounded, and
+redacted.
+
+A deployment should read approximately like:
+
+```text
+Deploy project example to production
+  Validate project definition
+  Prepare environment values
+    Import production.env: 5 plain, 3 secret values
+  Prepare artifacts
+    web
+      Build locally
+      Push registry.example/skali/example/web
+      Verify sha256:...
+    worker
+      Import ghcr.io/example/worker:1.4
+      Cache and verify sha256:...
+  Create immutable revision 01...
+  Prepare environment
+  Provision dependencies
+    postgres
+      Select database cluster
+      Create logical database and role
+      Publish connection output
+    assets
+      Ensure bucket
+      Publish S3 connection output
+  Apply applications
+    web
+      Apply Deployment, Service, and Ingress
+      Wait for rollout: 2/3 ready
+      web-abc: readiness probe failed with HTTP 503
+  Verify revision health
+  Activate revision
+```
+
+The run is an explanation over reconciliation. Deleting all run rows must not
+change the target or stop the controller from recovering.
+
+### 9.3 Runtime logs
+
+Initial application logs should provide:
+
+- Live follow by service, pod, and container.
+- Previous-container logs after restarts when Kubernetes retains them.
+- A merged service stream with member labels.
+- CLI and web streaming through the public Skali API.
+
+Retention/aggregation beyond Kubernetes' local logs is a separate policy and
+can begin with live streaming only. Deployment-step logs and application logs
+must never be combined.
+
+### 9.4 Activity feed
+
+Retain a durable product activity feed for meaningful transitions and user
+actions. It should link to runs where relevant, but it should not duplicate
+every run log line or every Kubernetes event.
+
+## 10. Service systems
+
+### 10.1 Application module
+
+Initial definition capabilities:
+
+- Image source by reference and digest resolution.
+- Build source with project-relative context, Dockerfile/build configuration,
+  target platform, and safe build inputs.
+- Main process/port, with a schema that can later expand to multiple processes.
+- Fixed replica count and optional autoscaling range.
+- CPU, memory, and ephemeral-storage policy.
+- Readiness/liveness health checks.
+- Plain values, typed service outputs, and secret references.
+- Routes/domains and TLS policy.
+- Persistent-volume claims with explicit portability/replica constraints.
+- Database and object-storage bindings.
+
+Initial runtime capabilities:
+
+- Deployment/Service/Ingress/PVC planning.
+- Managed-registry, digest-pinned pods regardless of whether the source was an
+  imported image, local build, or cloud build.
+- Member-level health and node placement from `ObservedStore`.
+- Start/stop/restart expressed as explicit runtime intent or operations, not
+  hidden changes outside the model.
+- Live logs and metrics.
+- Clear rollout steps and diagnostics.
+
+Later module extensions:
+
+- Multiple processes, workers, sidecars, cron jobs.
+- Git/remote builders and buildpacks.
+- RWX volumes and advanced storage classes.
+- Network/egress policies and custom health commands.
+
+### 10.2 Database substrate
+
+The database subsystem is below project services and platform subsystems. Its
+core concepts are:
+
+#### DatabaseClaim
+
+Requested database capability:
+
+- Owner reference: a project service or a system component.
+- Engine and major version.
+- Isolation policy: shared, owner/project, or dedicated.
+- Availability/durability policy.
+- Capacity and storage policy.
+- Extensions/features.
+- Backup policy.
+- Stable logical claim key.
+
+#### DatabaseCluster
+
+A physical database runtime, initially a CNPG `Cluster`:
+
+- Engine/version.
+- Instance count and replication configuration.
+- Compute and storage envelope.
+- Placement/capability requirements.
+- Accepted claim classes and capacity state.
+- Health, primary/replica topology, backup status, and upgrade state.
+
+#### DatabaseTenant
+
+A logical database inside a cluster:
+
+- Claim and cluster identity.
+- Generated database/role identity.
+- Extension state.
+- Credential Secret reference.
+- Connection outputs.
+- Tenant health and provisioning status.
+
+#### DatabasePlacement
+
+System-owned assignment from claim to cluster. It is not part of the portable
+project definition or immutable revision because the platform may relocate a
+tenant without changing user intent.
+
+#### Database engine driver
+
+An engine driver owns physical-cluster planning, tenant/role planning, engine-
+specific observation, connection-output construction, backups, and safe
+upgrade/relocation procedures. PostgreSQL/CNPG is the only initial driver.
+
+### 10.3 User and system database consumers
+
+A user-facing database service prepares a `DatabaseClaim` owned by:
+
+```text
+project/<project>/environment/<environment>/service/<key>
+```
+
+The SeaweedFS metadata dependency prepares a claim owned by:
+
+```text
+system/object-storage/metadata
+```
+
+Both claims travel through the same placement, CNPG cluster, logical tenant,
+credential, observation, backup, and diagnostic code. Differences are policy:
+
+- System claims may require dedicated placement and stricter durability.
+- System claims cannot be deleted through project operations.
+- System connection outputs are consumed by another subsystem instead of an
+  application.
+- System health rolls up on the platform page rather than a project page.
+
+There must not be a separate `ensureObjectMetaPool` provisioning path in v2.
+The object-storage subsystem simply owns a database claim and depends on its
+outputs.
+
+### 10.4 Database service product surface
+
+The initial user-facing database service retains:
+
+- PostgreSQL engine/version selection.
+- Shared/project/dedicated isolation intent.
+- Single/async/sync availability intent where supported.
+- Extensions.
+- Managed credentials and application connection output.
+- Instance/topology view.
+- Metrics and health.
+
+Before the v2 stable release it should also have:
+
+- Scheduled backups to external object storage.
+- Manual backup and restore run types.
+- A tested restore path, not merely successful backup creation.
+- Safe credential rotation.
+
+External connectivity, more engines, and automated relocation may follow after
+the core claim/placement model proves stable.
+
+### 10.5 Object-storage substrate and service
+
+Separate the physical object-storage system from logical bucket services:
+
+- `ObjectStoreCluster`: SeaweedFS masters, filer, gateways, volume servers,
+  topology, replication, and capability requirements.
+- `BucketClaim`: owner, quota, policy, and stable key.
+- `BucketAllocation`: generated bucket identity and credential Secret.
+- `BucketOutput`: internal/external endpoint, bucket, region, and secret refs.
+- `ObjectStoreDriver`: physical planning, external ensures, observation, and
+  teardown.
+
+The physical SeaweedFS system owns the system database claim described above.
+The dependency graph becomes:
+
+```text
+database substrate healthy
+  -> object-storage metadata tenant ready
+  -> SeaweedFS filer ready
+  -> S3 gateway ready
+  -> bucket claims ready
+  -> connected applications ready
+```
+
+The initial bucket product surface retains quotas, credentials, internal
+connections, an optional external endpoint, usage, member health, and safe
+deletion. Erasure coding, lifecycle rules, public access, and evacuation remain
+later policies built on the same substrate.
+
+### 10.6 Build, artifact, and managed-registry subsystem
+
+Build execution and artifact storage are platform systems below application
+services. An application chooses one source form:
+
+- `image`: an existing OCI image reference.
+- `build`: a project-relative build context and build configuration.
+
+Both forms must resolve to the same prepared output before revision creation:
+
+```text
+Artifact
+  managed registry reference
+  manifest/index digest
+  platform(s)
+  provenance
+  source or upstream digest
+  build-context hash when built
+```
+
+#### Build execution
+
+A build source may select an executor at deploy time:
+
+- `local`: the CLI invokes the supported local builder, streams progress, and
+  pushes the result directly to the target Skali registry.
+- `cloud`: the CLI uploads an allowed build context or references a source
+  snapshot; a Skali-managed builder runs BuildKit-compatible work and pushes to
+  the same registry.
+
+The manifest describes how to build. The deploy command chooses where to build
+unless installation/project policy fixes it. Executor choice must not change the
+resulting application or reconciliation model.
+
+Build arguments are divided into ordinary and secret values. Secret build
+inputs use a secret mount mechanism, never Dockerfile `ARG` persistence, and are
+redacted from context metadata, cache keys where necessary, and logs.
+
+Build-context collection honors an explicit ignore file and applies hard safety
+exclusions for VCS internals, selected env files, and `.skali/env/` unless a
+future narrowly scoped feature says otherwise. Environment values enter the
+runtime/secret-input pipeline; they are not accidentally uploaded as ordinary
+source files to a cloud builder.
+
+Each build is an operation with detailed steps and logs. On success it creates
+a durable Artifact record. Revision preparation consumes that record; it never
+infers an image digest by reading build logs or run status text.
+
+#### Managed OCI registry
+
+Every Skali installation manages an OCI registry as an installation subsystem.
+It serves three roles:
+
+1. Upload destination for locally built images.
+2. Upload destination for cloud-built images.
+3. Installation-local cache/import store for externally referenced images.
+
+For an external image, preparation resolves the upstream reference and imports
+the content into a deterministic cache namespace in the managed registry. The
+revision records both the original reference/provenance and the managed digest.
+Cluster workloads pull the managed reference, so a later upstream outage or tag
+movement cannot affect an existing revision.
+
+The registry is a standard OCI distribution service managed by Skali, not a new
+registry protocol implemented by `skalid`. Authentication, scoped push/pull
+credentials, health, capacity, garbage collection, and retention are surfaced
+through Skali.
+
+Artifact classes have different durability policy:
+
+- Imported upstream content is a reconstructable cache and may be evicted when
+  no retained revision references it.
+- Locally/cloud-built release artifacts may be the only deployable copy and are
+  retained while referenced by a revision plus a configured safety window.
+- The local-development registry is disposable after local revisions and source
+  can be rebuilt, unless the user explicitly retains it.
+
+Production registry storage belongs outside the tenant cluster's disposable
+state boundary, alongside the control-plane installation or on an independent
+external object store. It must not depend on the in-cluster object-storage
+system it may be required to bootstrap. The exact standard registry and storage
+driver are an R0 decision fixture, not a reason to invent a custom registry.
+
+The registry itself is observed like every platform subsystem. Capacity,
+availability, import/build failures, and artifact retention appear in platform
+health and operation runs.
+
+## 11. Local development and CLI
+
+### 11.1 Decision: local instance, shared core
+
+The local development cluster is a distinct local Skali installation. It is not
+registered as another cluster inside a production control plane and does not
+require production credentials or network access.
+
+It nevertheless uses the same architecture:
+
+- The same `skalid` binary and migrations.
+- The same Postgres persistence model.
+- The same project-definition parser and revision builder.
+- The same Kubernetes and operator bundle.
+- The same service modules and database/object-storage subsystems.
+- The same observed-state watchers.
+- The same reconciliation and run-journal code.
+
+Only the runtime profile and environment values differ.
+
+This gives offline use, safe resets, reproducible behavior, and high parity
+without making production responsible for a developer's laptop.
+
+### 11.2 Local topology
+
+The v1 local implementation is CLI-managed:
+
+```text
+host OS
+  skali CLI
+  local skalid process (loopback API)
+  local Postgres container/instance (control-plane state)
+  local OCI registry
+  k3d cluster using a pinned k3s version
+    blessed operators and runtime components
+    project workloads
+```
+
+Keeping `skalid` and Postgres outside the local tenant cluster mirrors the
+production recovery boundary. Deleting/recreating the k3d cluster can therefore
+exercise full reconciliation from retained intent.
+
+Docker/k3d is the first runtime because the repository already uses it. A future
+Lima-backed provider may implement the same CLI-owned local-runtime contract for
+machines that should not depend on Docker Desktop. That is a provider for local
+machine lifecycle, not a second Skali deployment backend.
+
+### 11.3 Headless deployment workflow
+
+A complete custom project consists of three independently meaningful inputs:
+
+1. `.skali/manifest.yml`: portable services and build/runtime structure.
+2. A selected environment file or values already stored on the target
+   installation.
+3. Project source directories for services using `build`; projects using only
+   existing images need no source tree beyond the manifest.
+
+The primary remote workflow is project-wide:
+
+```sh
+# Build on this machine, upload selected values, push artifacts, and deploy.
+skali deploy --environment production --build=local \
+  --env-file .skali/env/production.env
+
+# Send build work to a managed builder, but keep the same manifest and deploy.
+skali deploy --environment production --build=cloud \
+  --env-file .skali/env/production.env
+
+# Deploy using values already stored for the remote environment.
+skali deploy --environment production --build=auto --use-remote-env
+```
+
+`--build=auto` follows project/installation policy and may choose a configured
+cloud builder or local fallback. The executor applies only to `build` sources;
+`image` sources are imported into the managed registry.
+
+Interactive use may discover likely env files and ask whether to upload one.
+The prompt must show the path, target installation, project, and environment,
+without printing values. Non-interactive use must pass either `--env-file` or
+`--use-remote-env`; it never guesses or uploads secrets.
+
+The deploy workflow is:
+
+1. Discover and parse the manifest locally for immediate feedback.
+2. Connect to the selected Skali context and submit the candidate definition.
+3. Select remote environment values or parse and securely upload the chosen env
+   file as candidate values.
+4. Have `skalid` independently validate the definition/values and return a
+   preliminary semantic and destructive plan.
+5. Confirm the plan in interactive use, or require an explicit CI approval flag.
+6. Start one user-visible deployment-preparation run.
+7. For each application, import its image or execute its build locally/cloud.
+8. Push/verify every result in the target installation's managed registry and
+   create Artifact records.
+9. Prepare the immutable revision from the candidate definition, candidate
+   values, target capabilities, and Artifact digests.
+10. Atomically promote the submitted definition/value versions as appropriate,
+    set the environment target, and begin reconciliation.
+11. Attach the terminal to the run tree through activation, failure, or detach.
+
+Candidate plain/secret values may be staged during preparation, but a build or
+import failure must not change the environment's deployed values or target.
+Unused staged secret versions are garbage-collected without ever appearing in
+logs.
+
+Local builds and cloud builds appear as child steps of the same deployment run.
+For a local executor, the authenticated CLI streams structured progress to the
+run while it builds and pushes. The server verifies the resulting registry
+manifest and digest before creating the Artifact; client-reported success is
+not trusted as deployment state.
+
+### 11.4 `skali dev` experience
+
+Running this inside or below a directory containing `.skali/manifest.yml`:
+
+```sh
+skali dev
+```
+
+should:
+
+1. Find the project root and manifest.
+2. Discover `.skali/env/development.env` or use the explicitly selected env
+   file; confirm before importing it on first use.
+3. Validate the manifest and local values.
+4. Ensure the local Postgres, registry, k3d cluster, blessed operators, and
+   local `skalid` are running.
+5. Build build-sourced applications locally with the required target
+   architecture and import image-sourced applications.
+6. Push/verify all artifacts in the local managed registry.
+7. Submit the definition and dev values to the local Skali instance.
+8. Prepare and target a local revision.
+9. Attach the terminal to the deployment run.
+10. Print routes and connection information once ready.
+11. Continue showing health changes and concise runtime logs until detached.
+
+Bare `skali dev` is the paved path. Supporting lifecycle commands should include
+approximately:
+
+```text
+skali dev                 ensure, build, deploy, and attach current project
+skali dev --env-file PATH deploy with an explicitly selected local env file
+skali dev up              ensure the local platform only
+skali dev status          show platform and current-project state
+skali dev logs [service]  stream runtime logs
+skali dev exec <service>  execute in a selected application member
+skali dev open [service]  open a local route
+skali dev stop            stop local services but retain state
+skali dev reset           destructively recreate local state and cluster
+```
+
+Exact spelling can change during CLI UX prototyping, but the workflow ownership
+is decided.
+
+### 11.5 File watching
+
+The first release may require rerunning `skali dev` after source changes, but the
+architecture should support an attached watch mode:
+
+- Manifest/value change: revalidate, show plan, prepare a revision.
+- Source change for a build service: rebuild only the affected image, prepare a
+  new local revision, and reconcile it.
+- No change: do not create meaningless revisions.
+
+Hot module reload is framework-specific and remains an application concern.
+Skali's generic behavior is build-and-redeploy.
+
+### 11.6 CLI responsibilities
+
+The CLI is not an endpoint mirror. It owns workflows requiring filesystem,
+terminal, build-engine, or local-machine access:
+
+- Discover and validate project definitions.
+- Discover, validate, and securely import selected environment files.
+- Explain plans and destructive changes.
+- Select local or cloud build execution, build/import images, and push artifacts
+  to the target installation's registry.
+- Manage the local development installation.
+- Attach to run steps and logs.
+- Stream application logs and execute into application members.
+- Manage remote contexts and authentication.
+- Submit definitions/revisions through the public Skali API.
+
+Remote administration remains available through the API and web UI. The CLI
+does not become a kubectl wrapper and does not access Skali's Postgres directly.
+
+Likely remote workflows are:
+
+```text
+skali plan --environment <name> [--env-file <path> | --use-remote-env]
+skali deploy --environment <name> --build=<local|cloud|auto>
+             [--env-file <path> | --use-remote-env]
+skali status --environment <name>
+skali runs
+skali run show <run>
+skali logs <service>
+```
+
+They should be designed around user tasks, not generated from the OpenAPI route
+list.
+
+### 11.7 Local parity boundaries
+
+Local and production cannot be physically identical. Differences must be
+explicit:
+
+- Laptop CPU architecture may differ from production.
+- Local ingress and DNS use `.localhost`/port mappings rather than public DNS.
+- Storage classes and failure domains differ.
+- A single-node local database cannot demonstrate real failover.
+- Local capacity is smaller.
+
+`skali dev` should show unsupported guarantees clearly. It must still use the
+same project definition, revision format, Kubernetes objects, operators, health
+evaluation, and connection-output model.
+
+## 12. API and web responsibilities
+
+### 12.1 API
+
+The API exposes commands and projections rather than leaking storage tables:
+
+- Submit/patch/fetch a project draft with optimistic versioning.
+- Submit candidate environment values as typed plain values plus write-only
+  secret values.
+- Validate and plan a definition/value candidate against an environment.
+- Create build/import requests, issue scoped registry upload credentials, and
+  verify resulting artifacts.
+- Select local/cloud build policy without exposing private builder APIs.
+- Prepare/deploy/cancel/rollback revisions.
+- Read environments, targets, active revisions, health, topology, outputs, and
+  run trees.
+- Stream run logs, application logs, and projection invalidations.
+- Perform explicit operations such as credential rotation, backup, restore, and
+  destructive deletion.
+
+Normal read endpoints consume database projections and `ObservedStore`; they do
+not perform live Kubernetes queries.
+
+### 12.2 Web UI
+
+The web UI is deliberately implemented after the headless application slice is
+usable through API and CLI. Retain the existing product shape and reusable
+components, but bind them to the new model:
+
+- Project definition editor/forms manipulate one typed draft.
+- Environment pages show source/version, pending definition/value changes,
+  target revision, active revision, and health.
+- Deployment pages are run viewers with nested steps, attempts, progress, and
+  logs.
+- Service pages show typed configuration plus live observed members.
+- System pages are projections over platform claims and observed resources.
+- Activity is meaningful transition history, not the deployment debug log.
+
+The UI may provide forms rather than exposing YAML directly, but both must edit
+or submit the same semantic definition. UI forms may create document patches;
+they may not call a parallel create-application/create-database business path
+with different defaults or validation.
+
+## 13. Persistence outline
+
+Exact SQL follows domain fixtures, but the model likely needs these durable
+categories:
+
+- Auth/user/session tables retained from migrations `00001-00003`.
+- Projects and environments.
+- Definition sources/drafts with schema and optimistic version.
+- Environment values and secret bindings.
+- Candidate deployment inputs whose promotion is atomic with target creation.
+- Builds, artifacts, provenance, managed-registry references, and retention
+  leases from revisions.
+- Immutable revisions and prepared service documents.
+- Environment target/active revision pointers.
+- Runs, steps, attempts, and bounded log entries.
+- Durable activity transitions.
+- Runtime allocations/outputs for stable database, bucket, and secret identity.
+- Database claims, physical clusters, tenants, placements, and backup records.
+- Object-store systems, bucket claims, and allocations.
+- Metrics/history where retention is desired.
+
+Do not create authoritative pod/deployment/node mirror tables. Live cluster
+objects belong to `ObservedStore`. Persisted health summaries, if used for
+startup UX, must be marked stale until the initial watch sync completes.
+
+## 14. Production topology
+
+V2 initially keeps one Skali installation responsible for one Kubernetes
+cluster:
+
+- `skalid` and Skali Postgres run outside the tenant cluster.
+- A standard Skali-managed OCI registry runs in the installation's durable
+  boundary, outside the tenant cluster or on an independent storage backend.
+- `skalid` connects through kubeconfig and rebuilds observation on startup.
+- The public management route may pass through cluster ingress, with a direct
+  break-glass endpoint retained.
+- Kubernetes and blessed operators own runtime orchestration.
+
+The registry is reachable by cluster nodes and authenticated build clients. A
+scoped credential/token flow permits a local CLI or cloud builder to push only
+the artifacts assigned to its build. Registry contents are addressed and
+verified by digest before revision creation.
+
+The local installation follows the same boundary. Multi-cluster control planes
+and HA `skalid` are later extensions and must not complicate the initial domain
+model.
+
+## 15. Rewrite strategy
+
+### 15.1 Headless delivery order
+
+The implementation sequence is contract-first and headless:
+
+1. Typed definition, env-file import, values, plan, and revision contracts.
+2. Headless public API and CLI commands with fixture-backed output.
+3. Build/Artifact/registry pipeline.
+4. Observed-state and reconciliation kernel.
+5. Complete application deployment through CLI, including local development,
+   run steps, status, and logs.
+6. Shared database and object-storage subsystems through the same headless
+   contracts.
+7. Remote installer and operational hardening.
+8. Web status surfaces and visual definition editor.
+
+A temporary developer-only HTML page may aid debugging, but product UI business
+logic does not begin until the CLI can complete the application slice. This
+keeps definition and API semantics independent of whichever forms and screens
+are later chosen.
+
+### 15.2 Git strategy
+
+1. Keep the current `rework` branch and remote branch intact.
+2. Create the v2 branch from `c4eb838`.
+3. Bring this plan onto that branch first.
+4. Retain auth migrations `00001-00003`.
+5. Start the new product schema at `00004` or create a clearly named v2
+   baseline before any public release.
+6. Port current UI primitives and independent security fixes deliberately.
+7. Use current tests, golden manifests, API behavior, and screenshots as a
+   catalog; rewrite tests against the new contracts.
+8. Do not preserve internal APIs merely to reduce diff size.
+
+### 15.3 Migration policy
+
+If no external production installation depends on the current rework schema,
+do not build an automatic data migration. The v2 rewrite is a new development
+baseline.
+
+If real installations exist before cutover, add an explicit one-time importer
+from current projects/environments/services into v2 definitions and values. Do
+not make the v2 core permanently understand both schemas.
+
+## 16. Milestones and exit criteria
+
+### R0 - Architecture contract
+
+Deliver:
+
+- Final terminology and invariants.
+- Manifest and environment-values alpha schema.
+- At least three complete example projects: application-only, application plus
+  database, and application plus database plus bucket.
+- Application fixtures covering both an existing image and a local build
+  context.
+- Expected plans, revisions, dependency graphs, and destructive diffs for those
+  fixtures.
+- Database-claim and run/step state machines.
+- Build/Artifact state model, registry namespace/retention model, and a registry
+  bootstrap/storage decision that avoids an object-storage dependency cycle.
+- Label/ownership contract.
+- Local-runtime topology decision and complete CLI transcripts for local build,
+  cloud build, env-file upload, remote-value reuse, failure, and detach/reattach.
+
+Exit criteria:
+
+- Every core feature can be described as definition -> revision -> observation.
+- No unresolved dual source of truth.
+- SeaweedFS metadata and a user PostgreSQL service demonstrably fit the same
+  database-claim model on paper.
+- The local workflow uses the same revision and reconciliation contracts.
+- Local build, cloud build, and external image import all terminate in the same
+  Artifact contract and managed-registry digest.
+- Non-interactive env-file behavior is explicit and cannot upload a discovered
+  file accidentally.
+
+No product-controller implementation begins before R0 is accepted.
+
+### R1 - Domain and persistence kernel
+
+Deliver:
+
+- Typed definition parser, normalizer, validator, and canonical hasher.
+- Environment-values/env-file validator, secret separation, candidate staging,
+  and typed reference resolution.
+- Immutable revision builder with pluggable artifact resolvers.
+- Build, Artifact, provenance, registry-reference, and revision-retention lease
+  models.
+- Project/environment/target persistence.
+- Run/step/attempt/log persistence and APIs.
+- Service-module registry with an application test module.
+- Pure dependency-graph and health-evaluation contracts.
+
+Exit criteria:
+
+- YAML and equivalent JSON generate identical canonical hashes.
+- Reordering maps does not change a revision.
+- Invalid/unknown fields fail before target mutation.
+- Secrets cannot appear in revision fixtures or run logs.
+- A failed candidate preparation does not promote draft/value versions or move
+  the environment target.
+- Restart tests preserve target and resumable run identity.
+
+### R2 - Observation and reconciliation kernel
+
+Deliver:
+
+- `ObservedStore` and fake implementation.
+- Kubernetes LIST/WATCH implementation and cache-readiness state.
+- Ownership indexes and affected-owner queue.
+- Generic apply/prune engine.
+- Periodic audit/resync.
+- Projection invalidation stream.
+- Structured health diagnostics.
+
+Exit criteria:
+
+- Pod create/readiness/delete changes propagate without waiting for the audit
+  interval.
+- Watch disconnect is visible as stale/unknown and recovers cleanly.
+- Deleting a managed stateless object out of band causes healing.
+- API topology reads perform no direct Kubernetes request.
+- Restart rebuilds the cache before reporting fresh health.
+
+### R3 - CLI-managed local platform and application slice
+
+Deliver:
+
+- Headless `skali validate`, `skali plan`, and local-target `skali deploy`.
+- `skali dev up`, bare `skali dev`, status, logs, stop, and reset workflows.
+- CLI-managed Postgres, local registry, and pinned k3d cluster.
+- Local `skalid` discovery and loopback authentication.
+- Blessed base components.
+- Dotenv discovery/import with declared secret separation.
+- Local build executor, external image import, Artifact creation, and registry
+  digest verification.
+- Application module: build/image, Deployment, Service, routing, health,
+  scaling, resources, and logs.
+- Detailed deployment run rendered completely in the CLI. No web UI is required
+  for this milestone.
+
+Exit criteria:
+
+- From a fresh machine with declared prerequisites, bare `skali dev` in an
+  example project reaches a healthy route without manual kubectl commands.
+- Both a build-sourced application and an image-sourced application run from
+  local managed-registry digests.
+- Repeating an unchanged deployment reuses the artifact and does not create a
+  meaningless revision.
+- Killing one of three application pods changes health to 2/3 promptly, shows
+  its reason, heals, and returns to 3/3.
+- Restarting local `skalid` during rollout resumes toward the same revision.
+- Resetting only the k3d cluster and retaining control-plane state reconstructs
+  the application.
+
+### R4 - Remote artifact and cloud-build pipeline
+
+Deliver:
+
+- Production managed-registry installation, scoped authentication, health, and
+  capacity observation.
+- Remote `skali plan` and `skali deploy` through the headless API.
+- `--env-file` upload and `--use-remote-env` behavior for remote environments.
+- Local build-and-push to a remote Skali registry.
+- Managed cloud builder using the same build schema and Artifact contract.
+- External image import/cache and retention leases from revisions.
+- Unified deployment run tree across local executor steps, cloud executor
+  steps, artifact verification, revision preparation, and rollout.
+
+Exit criteria:
+
+- The same manifest can be deployed using local build and cloud build without
+  changing its service definition.
+- Both executors produce verified artifacts that enter revisions through the
+  same code path.
+- An upstream image remains deployable from the managed cache after the
+  upstream is made unavailable.
+- A build, upload, or import failure leaves remote values, target revision, and
+  active revision unchanged.
+- Registry credentials are scoped, short-lived, and cannot push outside their
+  assigned namespace.
+- Referenced release artifacts survive garbage collection; unreferenced cache
+  content follows policy.
+
+### R5 - Shared database substrate
+
+Deliver:
+
+- PostgreSQL/CNPG engine driver.
+- DatabaseClaim, DatabaseCluster, DatabaseTenant, placement, output, and
+  observation models.
+- Shared, owner/project, and dedicated policies.
+- Availability policies and topology observation.
+- User database service module.
+- Application connection outputs and secret mirroring/injection.
+- System database-claim API for internal consumers.
+- Backup/restore run skeleton, even if production policy lands during
+  hardening.
+
+Exit criteria:
+
+- A user database and a synthetic system database use exactly the same claim,
+  placement, cluster, tenant, credential, and observation paths.
+- Application waits visibly for database output and then starts.
+- CNPG primary/replica changes update observed topology without request-time
+  reads.
+- Credential values never enter definitions, revisions, activity, or run logs.
+- Database deletion requires an explicit destructive plan.
+
+### R6 - Object-storage substrate and service
+
+Deliver:
+
+- SeaweedFS physical-system module and observer.
+- Metadata database expressed only as a system DatabaseClaim.
+- BucketClaim, allocation, quota, credential, output, and teardown paths.
+- User object-storage service module.
+- Application bucket bindings.
+- Internal and optional external endpoints.
+- Platform and bucket health projections.
+
+Exit criteria:
+
+- Fresh bootstrap visibly waits on the ordinary database claim and then brings
+  up the filer/gateway.
+- There is no object-storage-specific database provisioner.
+- A bucket created from the definition is usable by the connected application.
+- Quota, credential rotation, failure, and deletion have structured run steps.
+- A SeaweedFS observation failure becomes stale/degraded without blocking
+  unrelated application observation.
+
+### R7 - Product UI and remote platform completion
+
+Deliver:
+
+- Production bootstrap/installer path.
+- Project/environment/service/deployment/system web surfaces on v2 APIs.
+- TLS, edge routing, node capabilities, and platform settings expressed as
+  platform policies/modules.
+- Cancel and rollback UX.
+- Activity, metrics, and runtime-log surfaces.
+
+Exit criteria:
+
+- The same example definition deploys locally and remotely with only declared
+  environment values/capabilities changing.
+- The revision view explains artifact/runtime-version differences.
+- Web and CLI display the same target, active revision, health diagnostics, and
+  run tree.
+- Editing an application in the web UI produces the same definition diff and
+  plan as editing `.skali/manifest.yml`; there is no UI-only service mutation
+  path.
+- Cluster outage leaves the management API/UI able to report stale/down state.
+
+### R8 - Durability and release hardening
+
+Deliver:
+
+- Tested database backup and restore.
+- Off-cluster backup policy for Skali state and system metadata.
+- Registry artifact durability/backup policy and tested retention/garbage
+  collection.
+- Upgrade/version compatibility tests.
+- Failure injection and long-running reconciliation tests.
+- Retention policies for runs, activity, metrics, and logs.
+- Security/redaction audit.
+- Documentation and example-project suite.
+
+Exit criteria:
+
+- Restore tests prove backups rather than only creating them.
+- Failure matrix covers pod, node, API watch, operator, SeaweedFS, Postgres,
+  registry, builder, `skalid`, and network interruptions.
+- No test requires events or run logs to restore desired state.
+- The public v2 schema and compatibility rules are documented.
+
+## 17. Verification strategy
+
+### 17.1 Definition and revision tests
+
+- Golden parser/normalizer fixtures.
+- YAML/JSON semantic-equivalence tests.
+- Unknown-field and version tests.
+- Typed-value and secret-reference tests.
+- Image/build mutual-exclusion, build-context path, and context-hash tests.
+- Dotenv parsing, declared-secret separation, missing/unknown key, and redaction
+  tests.
+- Stable-key rename/removal and destructive-plan tests.
+- Deterministic dependency graph and revision checksum tests.
+
+### 17.2 Service module tests
+
+- Pure desired-resource golden tests.
+- Health evaluation from observed fixtures.
+- Dependency/output tests.
+- Removal/data-loss classification.
+- No generic-core changes required when registering a test service kind.
+
+### 17.3 Live k3d tests
+
+- Deploy, observe, break, heal, cancel, rollback, and delete.
+- Kill pods and nodes; corrupt readiness; remove managed objects.
+- Restart `skalid` during artifact preparation and rollout.
+- Disconnect/restart the Kubernetes API and watches.
+- CNPG failover and unavailable operator.
+- SeaweedFS master/filer/gateway failure.
+- Destroy/recreate tenant cluster while retaining Skali state.
+- Disable an upstream registry after import and prove a retained revision still
+  pulls from the managed registry.
+- Interrupt local/cloud builds and registry uploads, then verify target/value
+  atomicity and safe retry.
+
+### 17.4 CLI tests
+
+- Project-root discovery.
+- Missing prerequisite and repair messages.
+- First-run local bootstrap.
+- Idempotent repeated `skali dev`.
+- Local/cloud executor selection, build-cache, changed-source, and external
+  image-import behavior.
+- Interactive env-file confirmation and non-interactive explicitness.
+- Remote-value reuse without reading or overwriting secret values.
+- Terminal interruption and reattachment to a run.
+- Safe reset confirmation.
+
+### 17.5 Security tests
+
+- Secret values absent from canonical definition, revisions, logs, activity,
+  error messages, metrics, and list APIs.
+- Local API loopback/access-token boundaries.
+- Remote role and reauthentication gates.
+- Credential reveal and rotation audit entries.
+- Malicious manifest paths/build contexts cannot escape the project root without
+  explicit permission.
+- Scoped registry credentials cannot read or write unauthorized project
+  namespaces.
+- Build secrets do not persist in image history, build cache metadata, or logs.
+- Selected env files and `.skali/env/` do not enter cloud build contexts.
+
+## 18. Scope boundaries
+
+Required for the v2 core:
+
+- Project definition and environment values.
+- Headless validate/plan/deploy/status/run/log workflows.
+- Local and cloud builds through one Build/Artifact contract.
+- Integrated managed OCI registry for build uploads and external image caching.
+- Immutable revisions, target/active pointers, plan, deploy, cancel, rollback.
+- Observed-state store and responsive health.
+- Execution runs with detailed steps and logs.
+- Application, PostgreSQL database, and object-storage services.
+- Shared database substrate for user and system claims.
+- CLI-managed local development runtime.
+- Live application logs and basic metrics.
+- Remote deployment through the same model.
+
+Important but layered after the core proves itself:
+
+- Environment priority and advanced placement policies.
+- Database relocation/capacity spill.
+- Erasure coding and object lifecycle policies.
+- Git-triggered builds, buildpacks, and horizontally scalable remote builder
+  pools beyond the initial managed cloud builder.
+- Templates/marketplace and Compose import.
+- More database engines.
+- Multiple application processes, sidecars, and cron jobs.
+- Management-plane HA and multi-cluster control planes.
+- Multi-edge traffic distribution.
+- Per-project membership and CI tokens.
+
+These later features must be expressible as new service-module behavior,
+infrastructure policy, operation type, or client workflow. None should require a
+new authoritative state plane.
+
+## 19. Decisions fixed before implementation
+
+The following decisions are part of this plan:
+
+- Restart the product core from `c4eb838`; do not start an empty repository.
+- Keep the current `rework` branch as reference.
+- `.skali/manifest.yml` is the portable project definition.
+- YAML/JSON are syntax over one typed, versioned semantic model.
+- The headless API and CLI form a complete product before the visual UI is
+  rebuilt.
+- The web UI edits and observes the same definition/plan/deploy contracts; it
+  has no parallel service-management semantics.
+- Environment values are separate and typed; dotenv files are a CLI import
+  format, secrecy is declared by the manifest, and there are no arbitrary
+  overlay patches.
+- Non-interactive deploys explicitly choose `--env-file` or remote stored
+  values; Skali never guesses which secrets to upload.
+- Application sources support either an existing OCI image or a project-relative
+  build definition.
+- Build executor selection (`local`, `cloud`, or policy-driven `auto`) is a
+  deployment choice and does not change application semantics.
+- Every build/import produces a verified Artifact in the target installation's
+  managed OCI registry before revision creation.
+- The managed registry is also the installation-local cache for external
+  images, and retained revisions lease their artifacts against garbage
+  collection.
+- Deployment produces an immutable, resolved revision.
+- Environments have explicit target and last-active revision pointers.
+- Cluster knowledge comes from a fresh/stale-aware observed-state store fed by
+  watches, with resync as a backstop.
+- Generic reconciliation does not switch on application/database/bucket fields.
+- User and system databases share one lower-level database claim subsystem.
+- Object storage depends on that subsystem for metadata rather than provisioning
+  a special pool.
+- Runs/steps/logs explain reconciliation but never drive it.
+- Local development is a distinct local Skali installation using the same core.
+- The CLI owns local machine, filesystem, build, and terminal workflows and is
+  not an API mirror.
+- `skalid` remains outside the tenant cluster in both local and production
+  topologies.
+
+## 20. R0 questions that still require concrete fixtures
+
+These are intentionally narrow design details, not unresolved architecture:
+
+- Exact manifest field names and typed value-reference syntax.
+- Whether the managed web editor preserves YAML comments or only semantic form.
+- Docker-only local prerequisite for the first release versus shipping a Lima
+  provider immediately.
+- Exact local hostname and port exposure convention.
+- Default env-file discovery/confirmation rules and exact dotenv compatibility.
+- Exact local builder implementation, cloud build-context upload protocol, and
+  reproducibility/provenance metadata.
+- Standard OCI registry distribution, durable storage driver, authentication,
+  and bootstrap configuration.
+- Run-log retention limits and whether step logs use SSE or another streaming
+  transport.
+- Initial backup destination configuration.
+- Exact application build schema and supported Dockerfile/BuildKit features.
+
+They must be resolved through example manifests, CLI transcripts, and expected
+run trees during R0, before the implementation kernel begins.
