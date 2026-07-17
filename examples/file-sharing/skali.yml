@@ -1,3 +1,5 @@
+# yaml-language-server: $schema=../../schemas/skali.schema.json
+
 version: "1"
 
 name: file-sharing
@@ -131,10 +133,6 @@ databases:
     extensions:
       - pg_trgm
 
-    backups:
-      schedule: "0 3 * * *"
-      retention: 7d
-
 buckets:
   files:
     visibility: private
@@ -149,3 +147,15 @@ buckets:
     lifecycle:
       abortIncompleteUploadsAfter: 7d
       expireNoncurrentVersionsAfter: 30d
+
+# Project backups coordinate service-specific backup mechanisms into one
+# recovery point. Bucket versioning remains enabled as a separate first line of
+# defense against accidental overwrites and deletions.
+backups:
+  daily:
+    schedule: "0 3 * * *"
+    retention: 7d
+    include:
+      databases: all
+      buckets: all
+      volumes: all

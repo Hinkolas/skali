@@ -1,0 +1,13 @@
+version: "1"
+name: invalid-output
+
+applications:
+  api:
+    image: example.invalid/api:1
+    environment:
+      DATABASE_HOST: "{{databases.data.hostname}}"
+
+databases:
+  data:
+    engine: postgres
+    version: 17

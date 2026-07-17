@@ -6,8 +6,8 @@ primitives instead of raw containers. skali is a **product control plane on
 Kubernetes (k3s)**: user intent lives in Postgres, a controller compiles it
 into k8s objects (server-side apply) and reads status back; k3s and a small
 set of blessed operators (CloudNativePG, Traefik, cert-manager) do all
-generic orchestration. The full architecture and rationale live in
-[`.plan/`](.plan/README.md).
+generic orchestration. The v2 architecture and rationale live in
+[`REWORK_V2.md`](REWORK_V2.md).
 
 **Status:** rearchitecture M0 — the hand-rolled substrate (custom node
 system, Docker engine adapter, registry mirror, workload reconciler, gRPC
@@ -20,7 +20,9 @@ One API (`/v1`), three consumers:
 - **`skalid`** — the control plane: REST API + (soon) the controller. One
   instance, in-cluster in production; nodes run only k3s. Also carries the
   operator commands (`user`, `migrate`).
-- **`skali`** — the CLI. A pure REST client with kubectl-style contexts.
+- **`skali`** — the workflow-oriented CLI. It owns local manifest, build,
+  terminal, and development-runtime workflows and uses the public API for
+  remote state changes.
 - **`web/`** — SvelteKit BFF (adapter-node). Owns the browser session cookie
   and proxies `/api/v1/*` to the daemon; the bearer token never reaches
   browser JavaScript.
@@ -64,21 +66,47 @@ substrate half of M0 — see [`.plan/02-architecture.md`](.plan/02-architecture.
 The OpenAPI contract is served at `GET /openapi.yaml` and lives in
 [`api/openapi.yaml`](api/openapi.yaml); a router-walk test keeps it honest.
 
+## Manifest compiler preview
+
+Skali discovers `skali.yml` or `skali.yaml` in the current directory or a
+parent. An alternative complete definition can be selected explicitly with
+`--manifest`.
+
+```sh
+go run ./cmd/skali validate --manifest examples/hello-world/skali.yml
+
+# Inspect the canonical, target-independent compiler IR.
+go run ./cmd/skali compile --manifest examples/hello-world/skali.yml
+
+# Preview the deterministic Kubernetes objects without touching a cluster.
+go run ./cmd/skali compile \
+  --manifest examples/hello-world/skali.yml \
+  --target kubernetes \
+  --env-file examples/hello-world/.env.example
+```
+
+The generated editor schema is checked in at
+[`schemas/skali.schema.json`](schemas/skali.schema.json). Run
+`go generate ./internal/manifest` after changing the manifest wire types.
+
 ## Layout
 
 ```
 api/           OpenAPI 3.1 contract (embedded, served by the daemon)
 cmd/skalid     control plane: serve (default) | user | migrate
-cmd/skali      client CLI: auth, context
+cmd/skali      workflow CLI: auth, context, validate, compile
 migrations/    goose migrations (embedded; also sqlc's schema source)
 query/         sqlc query sources → generated into internal/store
 internal/
   api/         HTTP layer: router, middleware, error envelope, handlers
   auth/        auth service: argon2id, opaque sessions, TOTP 2FA, rate limits
   client/      typed REST client used by cmd/skali
+  compiler/    normalized project IR, references, units, dependency graph
   cliconfig/   ~/.config/skali/config.yaml contexts
   config/      env-driven config (godotenv + envconfig)
   crypt/       shared at-rest encryption (AES-GCM, HKDF-derived keys)
+  kubernetes/  pure compiler IR → Kubernetes API object rendering
+  manifest/    strict skali.yml parser, diagnostics, and schema generation
   obs/         slog + OpenTelemetry (env-only, zero egress by default)
   store/       pgx pool/tx glue + sqlc-generated queries
   testdb/      ephemeral Postgres database per test

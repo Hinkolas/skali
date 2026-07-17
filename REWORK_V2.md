@@ -26,7 +26,8 @@ viewer over exactly the same contracts, not a second way to manage services.
 
 The v2 foundation has four connected parts:
 
-1. A portable project definition in `.skali/manifest.yml`.
+1. A portable project definition selected explicitly or discovered as
+   `skali.yml`/`skali.yaml`.
 2. An immutable, resolved revision made from that definition and an
    environment's values.
 3. A continuously maintained observed-state store representing the cluster and
@@ -359,12 +360,13 @@ Operations may produce durable domain outputs such as an Artifact or Backup,
 but consumers use those verified output records, never parse execution logs or
 infer correctness from display status text.
 
-### 5.7 Local and remote are runtime profiles, not separate backends
+### 5.7 Local development and remote deployments share the compiler
 
-Both use Kubernetes, the same operators, the same revision builder, and the
-same service modules. Differences such as ingress hostnames, storage class,
-architecture, and capacity are explicit environment values or target
-capabilities.
+`skali dev` is a local toolbox workflow, not a remote environment named
+development. It uses Kubernetes, the same operators, compiler, revision
+builder, service modules, and rendering contracts as remote deployment. Local
+runtime differences such as ingress hostnames, storage class, architecture,
+and capacity are explicit local target capabilities.
 
 ### 5.8 Secrets never enter portable or observable data
 
@@ -387,25 +389,31 @@ deploy, operation, and query APIs. A UI-only create/update path is not allowed.
 
 ### 6.1 Project definition
 
-The canonical portable source lives at:
+The default canonical portable source is:
 
 ```text
-.skali/manifest.yml
+skali.yml
 ```
 
-YAML is the primary human format. JSON may be accepted because both parse into
-the same schema. Internally the system operates on a typed, normalized
-`ProjectDefinition`; it does not pass unstructured YAML maps through the core.
+`skali.yaml` is accepted as an alternative. If both default names exist, the
+CLI reports ambiguity rather than choosing silently. Every manifest-aware
+command accepts `--manifest PATH`, which selects one complete definition and is
+independent of the target environment. Skali does not implicitly load
+`skali.<environment>.yml`; alternative definitions are explicit inputs.
+
+YAML is the primary human format. JSON is accepted because both parse into the
+same schema. Internally the system operates on separate authoring and compiler
+types; it does not pass unstructured YAML maps or the wire DTOs into the core.
 
 The pipeline is:
 
 ```text
 source bytes
   -> parse
-  -> schema-version check
-  -> normalize
-  -> semantic validation
-  -> typed ProjectDefinition
+  -> strict structural validation
+  -> normalize units/defaults/references
+  -> semantic and dependency validation
+  -> typed, target-independent ProjectDefinition
   -> canonical encoding
   -> content hash
 ```
@@ -417,7 +425,7 @@ but behavior is defined by the normalized typed form.
 A project has one current draft document. Its source mode may be:
 
 - `managed`: edited through the web/API as patches to the same document.
-- `file`: replaced by CLI/Git submissions of `.skali/manifest.yml`.
+- `file`: replaced by CLI/Git submissions of a selected manifest.
 
 Both modes feed the same draft type. Mutations use optimistic versions/ETags so
 a file push cannot silently overwrite web changes and the web cannot silently
@@ -427,19 +435,18 @@ A complete source project normally has this shape:
 
 ```text
 project/
-  .skali/
-    manifest.yml
-    env/
-      development.env
-      production.env       # commonly gitignored or omitted
+  skali.yml
+  .env.example
+  .env                     # optional local values; normally gitignored
   Dockerfile               # when an application uses a build source
   src/
   ... project source
 ```
 
-Environment files are optional deployment inputs, not part of the portable
-definition. They may live anywhere and be selected explicitly with
-`--env-file`; `.skali/env/` is only the discoverable convention.
+Environment files are optional CLI inputs, not part of the portable definition.
+They may live anywhere and are selected explicitly with `--env-file`. Remote
+environments normally use their independently stored value space. `.skali/` is
+reserved for disposable local tool state rather than the canonical manifest.
 
 ### 6.2 Stable service identity
 
@@ -459,71 +466,72 @@ The exact alpha syntax needs fixtures before implementation, but the semantic
 shape is fixed:
 
 ```yaml
-apiVersion: skali.dev/v1alpha1
-kind: Project
+version: "1"
+name: example
 
-metadata:
-  name: example
-
-inputs:
-  app_domain:
-    type: hostname
-  api_key:
-    type: string
-    secret: true
-
-services:
+applications:
   web:
-    type: application
-    source:
-      build:
-        context: .
-        dockerfile: Dockerfile
-    runtime:
-      port: 8080
-      replicas: 2
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      http:
+        port: 8080
+        protocol: http
     routes:
-      - host:
-          valueFrom: app_domain
-    variables:
-      DATABASE_URL:
-        valueFrom:
-          service: postgres
-          output: connection_url
-      API_KEY:
-        valueFrom: api_key
+      public:
+        domain: "${APP_DOMAIN}"
+        path: /
+        port: http
+        tls: automatic
+    environment:
+      DATABASE_HOST: "{{databases.data.host}}"
+      DATABASE_PASSWORD: "{{databases.data.password}}"
+      API_KEY: "${API_KEY}"
 
-  worker:
-    type: application
-    source:
-      image: ghcr.io/example/worker:1.4
-    runtime:
-      port: 9000
-
-  postgres:
-    type: database
+databases:
+  data:
     engine: postgres
     version: 17
     isolation: project
     availability: single
 
+buckets:
   assets:
-    type: object_storage
-    quota: 20Gi
+    visibility: private
+    quotas:
+      storage: 20GB
+
+backups:
+  daily:
+    schedule: "0 3 * * *"
+    retention: 7d
+    include:
+      databases: all
+      buckets: all
+      volumes: all
 ```
 
 This is illustrative, not a frozen field spelling. The design rules are frozen:
 
-- Service keys are stable identities.
-- Dependencies and connections are explicit references, not inferred strings.
-- Values use typed references rather than unrestricted text templating.
-- Secret references are a distinct value type.
-- An application source chooses exactly one of `image` or `build`.
+- Application, database, and bucket keys are stable identities in separate
+  top-level authoring collections. The compiler normalizes them into typed
+  resource identities internally.
+- `${NAME}` and `${NAME:-default}` reference the selected environment's project
+  value space. The compiler derives requirements from their use.
+- `{{databases.<key>.<output>}}` and `{{buckets.<key>.<output>}}` are parsed into
+  typed output references and dependencies; they are not runtime string
+  templates.
+- The environment value store distinguishes secret and non-secret values.
+  Revisions contain secret handles and versions, never plaintext.
+- An application chooses exactly one of `image` or `build`.
 - Build paths are relative to the project root and cannot escape it without an
   explicit opt-in.
 - Product concepts are represented; raw Kubernetes YAML is not embedded.
 - Unknown fields are rejected for the active schema version.
-- The definition has an explicit API/schema version from its first release.
+- The definition has a simple explicit schema `version` from its first release.
+- Skali accepts public units such as `GB`, `GiB`, and decimal CPU cores, then
+  converts them into exact internal quantities before backend rendering.
 
 ### 6.4 Environment values
 
@@ -533,28 +541,35 @@ Portable structure and environment-specific input are separate:
 ProjectDefinition + EnvironmentValues + Artifacts + TargetCapabilities -> Revision
 ```
 
+An environment is a remote copy of a project inside one Skali installation. In
+the initial single-cluster product, environments share the installation's
+cluster while retaining independent namespaces, values/secrets, target and
+active revisions, runtime allocations, release history, and backups.
+
 Environment values include:
 
 - Domains and public endpoints.
 - Plain environment-specific configuration.
 - Secret bindings.
-- Optional scale/resource overrides explicitly allowed by the schema.
-- Local development substitutions.
+- Plain and secret application configuration referenced through `${...}`.
 
-Arbitrary merge patches are not allowed. Every overrideable field is declared
-by the definition schema. This is what keeps a project portable instead of
-turning each environment into a divergent copy.
+Environment selection never selects a manifest automatically. A deployment
+uses the explicitly selected definition (or `skali.yml` by default) and the
+selected remote environment's value space. Different definitions may be
+selected with `--manifest`, but they are complete alternative inputs rather
+than implicit environment merge patches.
 
 The CLI accepts dotenv-style files as the initial ergonomic input format:
 
 ```text
-.skali/env/development.env
+.env
 ```
 
-Each key must match a declared definition input or an explicitly declared
-application variable mapping. Unknown keys are rejected or require an explicit
-ignore flag; missing required keys fail planning. The definition decides which
-keys are secrets. The file format does not decide secrecy.
+Required keys and defaults are derived from `${NAME}` and
+`${NAME:-default}` expressions in the compiled definition. Missing required
+keys fail planning. Unknown keys are rejected or require an explicit ignore
+flag. The remote environment store records whether a key is secret; the dotenv
+format itself does not decide secrecy.
 
 An environment file may contain both plain and secret values. When uploaded,
 `skalid` separates them: plain typed values enter `EnvironmentValues`; secret
@@ -563,9 +578,10 @@ by opaque references and versions. The original file is never persisted as a
 blob and values are redacted from plans and run logs.
 
 Remote environments can use either values already stored in Skali or values
-selected from a local file for the current deployment. Interactive CLI use may
-offer to upload a discovered env file. Non-interactive/CI use must choose
-explicitly, so a deployment never uploads local secrets accidentally.
+selected from a local file for the current deployment. Non-interactive/CI use
+must choose explicitly, so a deployment never uploads local secrets
+accidentally. `skali dev` may use an explicitly selected local env file, but it
+does not create or select a remote development environment.
 
 Environment files should normally be ignored by Git when they contain
 machine-local or secret values. A checked-in `.env.example` or non-secret values
@@ -1092,7 +1108,7 @@ inputs use a secret mount mechanism, never Dockerfile `ARG` persistence, and are
 redacted from context metadata, cache keys where necessary, and logs.
 
 Build-context collection honors an explicit ignore file and applies hard safety
-exclusions for VCS internals, selected env files, and `.skali/env/` unless a
+exclusions for VCS internals, selected env files, and common `.env` files unless a
 future narrowly scoped feature says otherwise. Environment values enter the
 runtime/secret-input pipeline; they are not accidentally uploaded as ordinary
 source files to a cloud builder.
@@ -1158,7 +1174,8 @@ It nevertheless uses the same architecture:
 - The same observed-state watchers.
 - The same reconciliation and run-journal code.
 
-Only the runtime profile and environment values differ.
+Only the local target profile and locally selected values differ. This local
+state is not represented as a remote project environment.
 
 This gives offline use, safe resets, reproducible behavior, and high parity
 without making production responsible for a developer's laptop.
@@ -1191,7 +1208,8 @@ machine lifecycle, not a second Skali deployment backend.
 
 A complete custom project consists of three independently meaningful inputs:
 
-1. `.skali/manifest.yml`: portable services and build/runtime structure.
+1. `skali.yml`/`skali.yaml`, or `--manifest PATH`: portable services and
+   build/runtime structure.
 2. A selected environment file or values already stored on the target
    installation.
 3. Project source directories for services using `build`; projects using only
@@ -1202,11 +1220,11 @@ The primary remote workflow is project-wide:
 ```sh
 # Build on this machine, upload selected values, push artifacts, and deploy.
 skali deploy --environment production --build=local \
-  --env-file .skali/env/production.env
+  --env-file ./production.env
 
 # Send build work to a managed builder, but keep the same manifest and deploy.
 skali deploy --environment production --build=cloud \
-  --env-file .skali/env/production.env
+  --env-file ./production.env
 
 # Deploy using values already stored for the remote environment.
 skali deploy --environment production --build=auto --use-remote-env
@@ -1253,7 +1271,8 @@ not trusted as deployment state.
 
 ### 11.4 `skali dev` experience
 
-Running this inside or below a directory containing `.skali/manifest.yml`:
+Running this inside or below a directory containing `skali.yml` or
+`skali.yaml`:
 
 ```sh
 skali dev
@@ -1262,8 +1281,8 @@ skali dev
 should:
 
 1. Find the project root and manifest.
-2. Discover `.skali/env/development.env` or use the explicitly selected env
-   file; confirm before importing it on first use.
+2. Use a locally selected env file when requested; local development does not
+   require or create a remote environment.
 3. Validate the manifest and local values.
 4. Ensure the local Postgres, registry, k3d cluster, blessed operators, and
    local `skalid` are running.
@@ -1499,12 +1518,16 @@ Deliver:
 
 - Final terminology and invariants.
 - Manifest and environment-values alpha schema.
-- At least three complete example projects: application-only, application plus
-  database, and application plus database plus bucket.
+- A checked-in JSON Schema generated from the manifest wire types for editor
+  completion; semantic validation remains compiler-owned.
+- Complete application-only and application/database/bucket examples plus
+  focused valid and invalid compiler fixtures.
 - Application fixtures covering both an existing image and a local build
   context.
 - Expected plans, revisions, dependency graphs, and destructive diffs for those
   fixtures.
+- Canonical IR and Kubernetes-rendering golden fixtures for the first
+  application slice.
 - Database-claim and run/step state machines.
 - Build/Artifact state model, registry namespace/retention model, and a registry
   bootstrap/storage decision that avoids an object-storage dependency cycle.
@@ -1698,7 +1721,7 @@ Exit criteria:
 - Web and CLI display the same target, active revision, health diagnostics, and
   run tree.
 - Editing an application in the web UI produces the same definition diff and
-  plan as editing `.skali/manifest.yml`; there is no UI-only service mutation
+  plan as editing `skali.yml`; there is no UI-only service mutation
   path.
 - Cluster outage leaves the management API/UI able to report stale/down state.
 
@@ -1785,7 +1808,7 @@ Exit criteria:
 - Scoped registry credentials cannot read or write unauthorized project
   namespaces.
 - Build secrets do not persist in image history, build cache metadata, or logs.
-- Selected env files and `.skali/env/` do not enter cloud build contexts.
+- Selected env files and common `.env` files do not enter cloud build contexts.
 
 ## 18. Scope boundaries
 
@@ -1828,7 +1851,8 @@ The following decisions are part of this plan:
 
 - Restart the product core from `c4eb838`; do not start an empty repository.
 - Keep the current `rework` branch as reference.
-- `.skali/manifest.yml` is the portable project definition.
+- `skali.yml`/`skali.yaml` or an explicitly selected alternative is the
+  portable project definition.
 - YAML/JSON are syntax over one typed, versioned semantic model.
 - The headless API and CLI form a complete product before the visual UI is
   rebuilt.

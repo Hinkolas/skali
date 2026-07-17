@@ -1,6 +1,6 @@
-// Command skali is the client CLI of the skali platform. It is a thin,
-// pure REST client of a master's API — the same one-shape API the web BFF
-// consumes — and never talks to databases or Docker directly.
+// Command skali is the workflow-oriented client of the Skali platform. It
+// owns local manifest, build, terminal, and development-runtime workflows while
+// remote state changes continue to go through the public skalid API.
 //
 // Configuration lives in ~/.config/skali/config.yaml as kubectl-style named
 // contexts (master URL + session token); see `skali context --help`.
@@ -27,7 +27,7 @@ func main() {
 		SilenceErrors: true,
 	}
 
-	root.AddCommand(newAuthCmd(), newContextCmd())
+	root.AddCommand(newAuthCmd(), newContextCmd(), newValidateCmd(), newCompileCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

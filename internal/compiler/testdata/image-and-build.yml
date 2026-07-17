@@ -1,0 +1,8 @@
+version: "1"
+name: invalid-source
+
+applications:
+  api:
+    image: example.invalid/api:1
+    build:
+      context: .

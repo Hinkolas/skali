@@ -1,0 +1,890 @@
+{
+  "type": "object",
+  "$id": "https://skali.dev/schemas/v1/skali.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Skali project manifest",
+  "description": "Portable, declarative project definition consumed by the Skali compiler.",
+  "required": [
+    "version",
+    "name"
+  ],
+  "properties": {
+    "applications": {
+      "type": "object",
+      "description": "Container applications keyed by stable service name.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "build": {
+            "type": "object",
+            "description": "Project source build. Mutually exclusive with image.",
+            "required": [
+              "context"
+            ],
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "description": "Non-secret build arguments.",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              },
+              "context": {
+                "type": "string",
+                "description": "Build context relative to the project root.",
+                "minLength": 1
+              },
+              "dockerfile": {
+                "type": "string",
+                "description": "Dockerfile path relative to the build context."
+              },
+              "target": {
+                "type": "string",
+                "description": "Optional multi-stage build target."
+              }
+            },
+            "additionalProperties": false
+          },
+          "command": {
+            "type": "array",
+            "description": "Container command and arguments.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deployment": {
+            "type": "object",
+            "description": "Release and rollout behavior.",
+            "properties": {
+              "releaseCommand": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "examples": [
+                      "30s",
+                      "5m",
+                      "7d"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "rollout": {
+                "type": "object",
+                "properties": {
+                  "maxSurge": {
+                    "type": "integer"
+                  },
+                  "maxUnavailable": {
+                    "type": "integer"
+                  },
+                  "strategy": {
+                    "type": "string",
+                    "enum": [
+                      "rolling",
+                      "recreate"
+                    ]
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "examples": [
+                      "30s",
+                      "5m",
+                      "7d"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "environment": {
+            "type": "object",
+            "description": "Environment variables exposed to the application.",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          },
+          "health": {
+            "type": "object",
+            "description": "Startup, readiness, and liveness health checks.",
+            "properties": {
+              "liveness": {
+                "type": "object",
+                "properties": {
+                  "failureThreshold": {
+                    "type": "integer"
+                  },
+                  "http": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "port": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "interval": {
+                    "type": "string",
+                    "examples": [
+                      "30s",
+                      "5m",
+                      "7d"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "examples": [
+                      "30s",
+                      "5m",
+                      "7d"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "readiness": {
+                "type": "object",
+                "properties": {
+                  "failureThreshold": {
+                    "type": "integer"
+                  },
+                  "http": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "port": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "interval": {
+                    "type": "string",
+                    "examples": [
+                      "30s",
+                      "5m",
+                      "7d"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "examples": [
+                      "30s",
+                      "5m",
+                      "7d"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "startup": {
+                "type": "object",
+                "properties": {
+                  "failureThreshold": {
+                    "type": "integer"
+                  },
+                  "http": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "port": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "interval": {
+                    "type": "string",
+                    "examples": [
+                      "30s",
+                      "5m",
+                      "7d"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "examples": [
+                      "30s",
+                      "5m",
+                      "7d"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "image": {
+            "type": "string",
+            "description": "Existing OCI image reference. Mutually exclusive with build."
+          },
+          "placement": {
+            "type": "object",
+            "description": "Replica placement preferences.",
+            "properties": {
+              "spread": {
+                "type": "object",
+                "properties": {
+                  "across": {
+                    "type": "string",
+                    "enum": [
+                      "nodes",
+                      "zones"
+                    ]
+                  },
+                  "enforcement": {
+                    "type": "string",
+                    "enum": [
+                      "preferred",
+                      "required"
+                    ]
+                  },
+                  "minimum": {
+                    "type": "integer"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "ports": {
+            "type": "object",
+            "description": "Named application ports.",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "port"
+              ],
+              "properties": {
+                "port": {
+                  "type": "integer",
+                  "description": "Container port number.",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "protocol": {
+                  "type": "string",
+                  "description": "Application protocol: http, https, tcp, or udp.",
+                  "enum": [
+                    "http",
+                    "https",
+                    "tcp",
+                    "udp"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+            }
+          },
+          "resources": {
+            "type": "object",
+            "description": "Per-replica resource reservations and limits.",
+            "properties": {
+              "limits": {
+                "type": "object",
+                "properties": {
+                  "cpu": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+                      }
+                    ]
+                  },
+                  "memory": {
+                    "type": "string",
+                    "examples": [
+                      "256MB",
+                      "1GB",
+                      "512MiB",
+                      "2GiB"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+                  },
+                  "temporaryStorage": {
+                    "type": "string",
+                    "examples": [
+                      "256MB",
+                      "1GB",
+                      "512MiB",
+                      "2GiB"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "requests": {
+                "type": "object",
+                "properties": {
+                  "cpu": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+                      }
+                    ]
+                  },
+                  "memory": {
+                    "type": "string",
+                    "examples": [
+                      "256MB",
+                      "1GB",
+                      "512MiB",
+                      "2GiB"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+                  },
+                  "temporaryStorage": {
+                    "type": "string",
+                    "examples": [
+                      "256MB",
+                      "1GB",
+                      "512MiB",
+                      "2GiB"
+                    ],
+                    "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "routes": {
+            "type": "object",
+            "description": "Public HTTP routes.",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "domain",
+                "port"
+              ],
+              "properties": {
+                "domain": {
+                  "type": "string",
+                  "description": "Public hostname. Project variable expressions are allowed.",
+                  "minLength": 1
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Segment-aware path prefix. Defaults to /.",
+                  "pattern": "^/"
+                },
+                "port": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                    }
+                  ]
+                },
+                "tls": {
+                  "type": "string",
+                  "description": "TLS policy: automatic or disabled.",
+                  "enum": [
+                    "automatic",
+                    "disabled"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+            }
+          },
+          "scaling": {
+            "type": "object",
+            "description": "Replica and autoscaling policy.",
+            "properties": {
+              "autoscaling": {
+                "type": "object",
+                "properties": {
+                  "cpu": {
+                    "type": "object",
+                    "properties": {
+                      "targetUtilization": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "replicas": {
+                "type": "object",
+                "properties": {
+                  "max": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "min": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "shutdown": {
+            "type": "object",
+            "description": "Graceful shutdown behavior.",
+            "properties": {
+              "gracePeriod": {
+                "type": "string",
+                "examples": [
+                  "30s",
+                  "5m",
+                  "7d"
+                ],
+                "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "volumes": {
+            "type": "object",
+            "description": "Persistent volumes mounted by the application.",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "mountPath",
+                "size"
+              ],
+              "properties": {
+                "mountPath": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "string",
+                  "examples": [
+                    "256MB",
+                    "1GB",
+                    "512MiB",
+                    "2GiB"
+                  ],
+                  "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+                }
+              },
+              "additionalProperties": false
+            },
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "required": [
+                  "image"
+                ],
+                "not": {
+                  "required": [
+                    "build"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "build"
+                ],
+                "not": {
+                  "required": [
+                    "image"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+      }
+    },
+    "backups": {
+      "type": "object",
+      "description": "Project-wide coordinated backup policies.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "schedule",
+          "retention",
+          "include"
+        ],
+        "properties": {
+          "include": {
+            "type": "object",
+            "properties": {
+              "buckets": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "const": "all"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                    },
+                    "uniqueItems": true
+                  }
+                ]
+              },
+              "databases": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "const": "all"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                    },
+                    "uniqueItems": true
+                  }
+                ]
+              },
+              "volumes": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "const": "all"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                    },
+                    "uniqueItems": true
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "retention": {
+            "type": "string",
+            "examples": [
+              "30s",
+              "5m",
+              "7d"
+            ],
+            "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+          },
+          "schedule": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+      }
+    },
+    "buckets": {
+      "type": "object",
+      "description": "Managed object-storage buckets keyed by stable service name.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "lifecycle": {
+            "type": "object",
+            "properties": {
+              "abortIncompleteUploadsAfter": {
+                "type": "string",
+                "examples": [
+                  "30s",
+                  "5m",
+                  "7d"
+                ],
+                "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+              },
+              "expireNoncurrentVersionsAfter": {
+                "type": "string",
+                "examples": [
+                  "30s",
+                  "5m",
+                  "7d"
+                ],
+                "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "quotas": {
+            "type": "object",
+            "properties": {
+              "maxObjectSize": {
+                "type": "string",
+                "examples": [
+                  "256MB",
+                  "1GB",
+                  "512MiB",
+                  "2GiB"
+                ],
+                "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+              },
+              "objects": {
+                "type": "integer"
+              },
+              "storage": {
+                "type": "string",
+                "examples": [
+                  "256MB",
+                  "1GB",
+                  "512MiB",
+                  "2GiB"
+                ],
+                "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "versioning": {
+            "type": "string",
+            "enum": [
+              "enabled",
+              "disabled"
+            ]
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "private",
+              "public-read"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+      }
+    },
+    "databases": {
+      "type": "object",
+      "description": "Managed databases keyed by stable service name.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "engine",
+          "version"
+        ],
+        "properties": {
+          "availability": {
+            "type": "string",
+            "enum": [
+              "single",
+              "asynchronous",
+              "synchronous"
+            ]
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "postgres"
+            ]
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "isolation": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "project",
+              "dedicated"
+            ]
+          },
+          "recovery": {
+            "type": "object",
+            "properties": {
+              "pointInTime": {
+                "type": "string",
+                "examples": [
+                  "30s",
+                  "5m",
+                  "7d"
+                ],
+                "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d|w)$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "storage": {
+            "type": "object",
+            "properties": {
+              "size": {
+                "type": "string",
+                "examples": [
+                  "256MB",
+                  "1GB",
+                  "512MiB",
+                  "2GiB"
+                ],
+                "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*$"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+      }
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable project description."
+    },
+    "name": {
+      "type": "string",
+      "description": "Stable project name.",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Manifest schema version. Currently 1.",
+      "const": "1"
+    }
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "applications"
+      ]
+    },
+    {
+      "required": [
+        "databases"
+      ]
+    },
+    {
+      "required": [
+        "buckets"
+      ]
+    }
+  ]
+}

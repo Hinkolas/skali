@@ -1,0 +1,24 @@
+version: "1"
+name: route-conflict
+
+applications:
+  web:
+    image: example.invalid/web:1
+    ports:
+      http:
+        port: 3000
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        port: http
+
+  api:
+    image: example.invalid/api:1
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        path: /
+        port: http

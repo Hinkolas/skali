@@ -1,0 +1,9 @@
+version: "1"
+name: invalid-unit
+
+applications:
+  api:
+    image: example.invalid/api:1
+    resources:
+      limits:
+        memory: 1G
