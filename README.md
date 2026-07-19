@@ -9,12 +9,13 @@ set of blessed operators (CloudNativePG, Traefik, cert-manager) do all
 generic orchestration. The v2 architecture and rationale live in
 [`REWORK_V2.md`](REWORK_V2.md).
 
-**Status:** V2 rearchitecture. The hand-rolled substrate has been removed;
-the strict manifest parser, editor schema, normalized compiler IR, dependency
-graph, deterministic Kubernetes renderer, the installer cluster-layout
-schema, the run/claim lifecycle contracts, and the typed environment-values
-model with secret separation are in place. The current architecture and
-roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
+**Status:** V2 rearchitecture. The hand-rolled substrate has been removed.
+In place so far: the strict manifest parser and editor schema, normalized
+compiler IR with dependency graph, deterministic Kubernetes renderer, typed
+environment-values model with secret separation, installer cluster-layout
+schema, run/claim lifecycle contracts, and immutable revision and plan
+contracts with golden fixtures. The current architecture and roadmap are in
+[`REWORK_V2.md`](REWORK_V2.md).
 
 Distinct product and operational roles:
 

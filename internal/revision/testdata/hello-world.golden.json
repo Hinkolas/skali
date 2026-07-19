@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "1",
+  "project": "hello-world",
+  "environment": "production",
+  "compilerVersion": "test",
+  "definitionHash": "56be11c4f7ffe8cae159a074a3324f20f3e305d992dabbae053f8252cf43f4c2",
+  "definition": {
+    "version": "1",
+    "name": "hello-world",
+    "description": "Minimal image-based HTTP application",
+    "applications": {
+      "api": {
+        "source": {
+          "kind": "image",
+          "image": "ghcr.io/hinkolas/hello-world/api:1.0.0"
+        },
+        "ports": {
+          "http": {
+            "port": 8080,
+            "protocol": "http"
+          }
+        },
+        "routes": {
+          "public": {
+            "domain": {
+              "parts": [
+                {
+                  "kind": "project_variable",
+                  "name": "APP_DOMAIN"
+                }
+              ]
+            },
+            "path": "/",
+            "port": {
+              "name": "http"
+            },
+            "tls": "automatic"
+          }
+        },
+        "health": {
+          "readiness": {
+            "http": {
+              "port": {
+                "name": "http"
+              },
+              "path": "/health/ready"
+            },
+            "intervalMillis": 10000,
+            "timeoutMillis": 2000,
+            "failureThreshold": 3
+          },
+          "liveness": {
+            "http": {
+              "port": {
+                "name": "http"
+              },
+              "path": "/health/live"
+            },
+            "intervalMillis": 30000,
+            "timeoutMillis": 2000,
+            "failureThreshold": 3
+          }
+        },
+        "scaling": {
+          "minReplicas": 1,
+          "maxReplicas": 1
+        },
+        "deployment": {
+          "rollout": {
+            "strategy": "rolling",
+            "maxSurge": 1
+          }
+        },
+        "shutdown": {
+          "gracePeriodMillis": 30000
+        }
+      }
+    },
+    "requiredVariables": [
+      {
+        "name": "APP_DOMAIN",
+        "required": true
+      }
+    ]
+  },
+  "valuesHash": "0f2653b428522ff0f936fa5a5b6debeb42699043c9abe02bae450637fec18e4b",
+  "values": {
+    "APP_DOMAIN": "hello.example.com"
+  },
+  "artifacts": {
+    "api": {
+      "reference": "registry.skali.internal/skali/hello-world/api",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "kind": "import",
+      "upstream": "ghcr.io/hinkolas/hello-world/api:1.0.0"
+    }
+  },
+  "capabilities": [
+    "application",
+    "edge"
+  ],
+  "checksum": "6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2"
+}

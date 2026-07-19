@@ -1,0 +1,325 @@
+{
+  "schemaVersion": "1",
+  "project": "file-sharing",
+  "environment": "production",
+  "compilerVersion": "test",
+  "definitionHash": "575e21c1be204369d7d803a9a8c58ad66db2561f9747d110c7989d706657286d",
+  "definition": {
+    "version": "1",
+    "name": "file-sharing",
+    "description": "Full-stack file-sharing application with PostgreSQL and S3 storage",
+    "applications": {
+      "web": {
+        "source": {
+          "kind": "build",
+          "build": {
+            "context": "web",
+            "dockerfile": "deploy/Dockerfile",
+            "target": "runtime"
+          }
+        },
+        "command": [
+          "/app/file-sharing",
+          "serve"
+        ],
+        "environment": {
+          "NODE_ENV": {
+            "parts": [
+              {
+                "kind": "literal",
+                "value": "production"
+              }
+            ]
+          },
+          "POSTGRES_DATABASE": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "databases",
+                "service": "data",
+                "output": "name"
+              }
+            ]
+          },
+          "POSTGRES_HOST": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "databases",
+                "service": "data",
+                "output": "host"
+              }
+            ]
+          },
+          "POSTGRES_PASSWORD": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "databases",
+                "service": "data",
+                "output": "password",
+                "sensitive": true
+              }
+            ]
+          },
+          "POSTGRES_PORT": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "databases",
+                "service": "data",
+                "output": "port"
+              }
+            ]
+          },
+          "POSTGRES_USER": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "databases",
+                "service": "data",
+                "output": "username",
+                "sensitive": true
+              }
+            ]
+          },
+          "S3_ACCESS_KEY": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "buckets",
+                "service": "files",
+                "output": "access_key",
+                "sensitive": true
+              }
+            ]
+          },
+          "S3_BUCKET": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "buckets",
+                "service": "files",
+                "output": "name"
+              }
+            ]
+          },
+          "S3_ENDPOINT": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "buckets",
+                "service": "files",
+                "output": "endpoint"
+              }
+            ]
+          },
+          "S3_REGION": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "buckets",
+                "service": "files",
+                "output": "region"
+              }
+            ]
+          },
+          "S3_SECRET_KEY": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "buckets",
+                "service": "files",
+                "output": "secret_key",
+                "sensitive": true
+              }
+            ]
+          },
+          "SESSION_SECRET": {
+            "parts": [
+              {
+                "kind": "project_variable",
+                "name": "SESSION_SECRET"
+              }
+            ]
+          }
+        },
+        "ports": {
+          "http": {
+            "port": 8080,
+            "protocol": "http"
+          }
+        },
+        "routes": {
+          "public": {
+            "domain": {
+              "parts": [
+                {
+                  "kind": "project_variable",
+                  "name": "APP_DOMAIN"
+                }
+              ]
+            },
+            "path": "/",
+            "port": {
+              "name": "http"
+            },
+            "tls": "automatic"
+          }
+        },
+        "health": {
+          "startup": {
+            "http": {
+              "port": {
+                "name": "http"
+              },
+              "path": "/health/startup"
+            },
+            "intervalMillis": 2000,
+            "timeoutMillis": 2000,
+            "failureThreshold": 30
+          },
+          "readiness": {
+            "http": {
+              "port": {
+                "name": "http"
+              },
+              "path": "/health/ready"
+            },
+            "intervalMillis": 10000,
+            "timeoutMillis": 2000,
+            "failureThreshold": 3
+          },
+          "liveness": {
+            "http": {
+              "port": {
+                "name": "http"
+              },
+              "path": "/health/live"
+            },
+            "intervalMillis": 30000,
+            "timeoutMillis": 2000,
+            "failureThreshold": 3
+          }
+        },
+        "resources": {
+          "requests": {
+            "milliCpu": 200,
+            "memoryBytes": 256000000,
+            "temporaryStorageBytes": 256000000
+          },
+          "limits": {
+            "milliCpu": 1000,
+            "memoryBytes": 1000000000,
+            "temporaryStorageBytes": 2000000000
+          }
+        },
+        "scaling": {
+          "minReplicas": 2,
+          "maxReplicas": 5,
+          "cpuTargetUtilization": 70
+        },
+        "placement": {
+          "spreadAcross": "nodes",
+          "minimum": 2,
+          "enforcement": "preferred"
+        },
+        "deployment": {
+          "releaseCommand": {
+            "command": [
+              "/app/file-sharing",
+              "migrate",
+              "up"
+            ],
+            "timeoutMillis": 300000
+          },
+          "rollout": {
+            "strategy": "rolling",
+            "maxSurge": 1,
+            "timeoutMillis": 600000
+          }
+        },
+        "shutdown": {
+          "gracePeriodMillis": 30000
+        }
+      }
+    },
+    "databases": {
+      "data": {
+        "engine": "postgres",
+        "version": "17",
+        "isolation": "project",
+        "availability": "single",
+        "storageBytes": 20000000000,
+        "extensions": [
+          "pg_trgm"
+        ]
+      }
+    },
+    "buckets": {
+      "files": {
+        "visibility": "private",
+        "storageQuotaBytes": 20000000000,
+        "objectQuota": 10000,
+        "maxObjectSizeBytes": 100000000,
+        "versioning": "enabled",
+        "abortIncompleteUploadsAfterSeconds": 604800,
+        "expireNoncurrentVersionsAfterSeconds": 2592000
+      }
+    },
+    "backups": {
+      "daily": {
+        "schedule": "0 3 * * *",
+        "retentionSeconds": 604800,
+        "include": {
+          "allDatabases": true,
+          "allBuckets": true,
+          "allVolumes": true
+        }
+      }
+    },
+    "requiredVariables": [
+      {
+        "name": "APP_DOMAIN",
+        "required": true,
+        "description": "Public domain serving the web application."
+      },
+      {
+        "name": "SESSION_SECRET",
+        "required": true,
+        "secret": true,
+        "description": "Secret used to sign browser sessions."
+      }
+    ],
+    "dependencies": {
+      "applications.web": [
+        "buckets.files",
+        "databases.data"
+      ]
+    }
+  },
+  "valuesHash": "91ae2fb4737285a67b051a7770f8780c6cfc1c80719cb082933289fe00e8a371",
+  "values": {
+    "APP_DOMAIN": "files.example.com"
+  },
+  "secrets": {
+    "SESSION_SECRET": {
+      "version": 1
+    }
+  },
+  "artifacts": {
+    "web": {
+      "reference": "registry.skali.internal/skali/file-sharing/web",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "kind": "build-local",
+      "contextHash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  },
+  "capabilities": [
+    "application",
+    "database",
+    "object-storage",
+    "edge"
+  ],
+  "checksum": "2a91a76be9e54c04a85c2c115e72066b63a07f917fbb633a562305ab3315f035"
+}

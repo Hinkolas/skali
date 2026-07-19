@@ -649,6 +649,11 @@ revision or installation profile so reproducibility is explainable. The same
 definition and values should generate the same revision checksum when resolved
 against the same artifact and runtime versions.
 
+Required target capabilities are derived from the definition: applications
+require `application` nodes, databases require `database` nodes, buckets
+require `object-storage` nodes, and routes require `edge` nodes. A revision is
+checkable against an installation's recorded layout before deployment begins.
+
 ### 6.6 Environment target
 
 Each environment has one target revision pointer and, separately, its last
