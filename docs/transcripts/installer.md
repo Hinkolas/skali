@@ -1,0 +1,280 @@
+# Installer transcripts
+
+`skali-installer` is the privileged installation and recovery tool. It owns
+host-level K3s lifecycle and the installer-owned Skali system bundle. It
+never depends on the Skali API or product database, and the developer CLI can
+never perform any action shown here.
+
+The root-owned installation record lives at
+`/var/lib/skali/installation.yaml`; `init` also writes an in-cluster copy
+that `skalid` imports on first boot. The handoff transfers observation and
+bookkeeping only; mutation authority over bootstrap resources stays here.
+
+## 1. Interactive fresh single node
+
+```console
+$ sudo skali-installer
+skali-installer 2.0.0 (k3s v1.33.3+k3s1 pinned)
+
+host cp-1: fresh
+  os      Ubuntu 24.04 (linux/amd64)
+  k3s     not installed
+  record  none
+
+This host is not part of a Skali installation. Install one?
+
+  role                  [1] server  [2] agent          : 1
+  first server          creates cluster "production"   : yes
+  capabilities          application, database, object-storage,
+                        registry, edge                 : all
+  api/ui domain                                        : skali.example.com
+  registry domain                                      : registry.example.com
+  tls issuer email                                     : ops@example.com
+
+  ok  Install k3s v1.33.3+k3s1 (server)
+  ok  Stamp capability labels on node cp-1
+  ok  Write /var/lib/skali/installation.yaml
+
+This is the only node so far. Initialize Skali now? [Y/n] y
+
+cluster layout
+  NODE   ROLE    CAPABILITIES
+  cp-1   server  application, database, object-storage, registry, edge
+
+derived topology
+  database availability tier  single (1 database node)
+  registry placement          cp-1 (installer-owned volume)
+
+  ok  Apply blessed operators (CNPG, Traefik, cert-manager)
+  ok  Apply bootstrap database (CNPG, 1 instance, tier single)
+  ok  Apply managed registry (single instance on cp-1)
+  ok  Enable embedded registry mirror
+  ok  Apply skalid (wired to bootstrap credentials)
+  ok  Write in-cluster installation record
+  ok  Wait for skalid ready
+
+  admin email     : nicholas@example.com
+  admin password  : (prompted, not echoed)
+  ok  Create admin account
+
+Skali is ready:
+  https://skali.example.com        api/ui
+  https://registry.example.com     managed registry
+
+Install logs: /var/lib/skali/logs/init-01J9X2.log
+```
+
+`init` runs before `skalid` or its database exist, so its steps are logged
+locally, not in the product run journal.
+
+## 2. Non-interactive configuration
+
+Per-host install configuration (cloud-init, CI):
+
+```yaml
+# node.yaml (agent joining an existing cluster)
+role: agent
+capabilities: [database]
+join:
+  server: https://cp-1.internal:6443
+  tokenFile: /root/skali-join-token
+```
+
+```console
+$ sudo skali-installer install --config node.yaml
+$ echo $?
+0
+```
+
+Cluster initialization configuration:
+
+```yaml
+# init.yaml
+endpoints:
+  api: skali.example.com
+  registry: registry.example.com
+tls:
+  issuerEmail: ops@example.com
+admin:
+  email: nicholas@example.com
+  passwordFile: /root/skali-admin-password
+```
+
+```console
+$ sudo skali-installer init --config init.yaml
+```
+
+Non-interactive runs take every decision from the configuration and fail
+rather than prompt. An optional cluster-layout document
+(`schemas/skali-layout.schema.json`) can be passed with `--layout` to assert
+the expected membership; `init` refuses to proceed if the joined nodes do not
+match it.
+
+## 3. Multi-node join and initialization
+
+On the first server:
+
+```console
+$ sudo skali-installer token
+join command for cluster "production" (token expires in 24h):
+  sudo skali-installer join --server https://cp-1.internal:6443 \
+    --token-file <file> --role agent --capabilities <list>
+```
+
+On each additional host (joining is initiated per host; the installer never
+stores SSH credentials or reaches into other machines):
+
+```console
+$ sudo skali-installer join --server https://cp-1.internal:6443 \
+    --token-file /root/token --role agent --capabilities database
+  ok  Install k3s v1.33.3+k3s1 (agent)
+  ok  Join cluster "production"
+  ok  Stamp capability labels on node db-1
+  ok  Write /var/lib/skali/installation.yaml
+```
+
+After all planned nodes have joined, once on a server:
+
+```console
+$ sudo skali-installer init --config init.yaml
+cluster layout (from node labels)
+  NODE    ROLE    CAPABILITIES
+  cp-1    server  edge, registry
+  cp-2    server  edge
+  cp-3    server  edge
+  app-1   agent   application, object-storage
+  app-2   agent   application, object-storage
+  db-1    agent   database
+  db-2    agent   database
+
+derived topology
+  database availability tier  asynchronous (2 database nodes)
+  registry placement          cp-1 (installer-owned volume)
+
+  ok  Apply blessed operators
+  ok  Apply bootstrap database (CNPG, 2 instances, asynchronous)
+  ...
+```
+
+## 4. Availability-tier upgrade after adding a database node
+
+After `join --role agent --capabilities database` on a new host db-3,
+re-running the installer on a server detects the drift between layout and
+deployed topology:
+
+```console
+$ sudo skali-installer
+host cp-1: healthy Skali server (cluster "production")
+
+  database nodes    3 (db-1, db-2, db-3)
+  deployed tier     asynchronous
+  available tier    synchronous
+
+  [1] status        show installation health
+  [2] apply tier    upgrade system databases to synchronous
+  [3] upgrade       k3s / bundle versions
+  [4] repair        diagnose and repair
+  [5] uninstall     scoped removal
+  : 2
+
+Upgrade the bootstrap database from asynchronous to synchronous quorum
+replication. This adds a replica and briefly reconfigures replication; no
+data is deleted. Continue? [y/N] y
+
+  ok  Scale bootstrap database to 3 instances (quorum any 1 of 2)
+  ok  Verify replication state
+
+bootstrap database tier: synchronous
+
+Shared platform pools are skalid-owned. Upgrade them through Skali
+(System page or the admin CLI); skalid now reports the higher tier as
+available for its pools.
+```
+
+Tier changes never happen as a side effect of a node joining, and each owner
+scales its own databases: the installer scales only the bootstrap database,
+`skalid` scales its platform pools through an explicit product operation.
+
+## 5. Repeat execution performs no mutation
+
+```console
+$ sudo skali-installer
+host cp-1: healthy Skali server (cluster "production")
+  k3s        v1.33.3+k3s1 (current)
+  bundle     2.0.0 (current)
+  nodes      7 joined, 7 expected
+  bootstrap  database healthy (synchronous), registry healthy, skalid healthy
+
+nothing to do
+  [1] status  [2] apply tier  [3] upgrade  [4] repair  [5] uninstall  [q] quit
+  : q
+```
+
+Detection is read-only. No maintenance action runs without being selected.
+
+## 6. Diagnosis while Skali is down
+
+The bootstrap database is unavailable; the API and UI are down. The
+installer diagnoses from host state and the Kubernetes API alone:
+
+```console
+$ sudo skali-installer diagnose
+host cp-1: Skali server (cluster "production")
+  ok    k3s service active
+  ok    kubernetes api reachable
+  ok    nodes 7/7 ready
+  fail  bootstrap database: 1/3 instances ready
+          pod skali-system/skali-db-2: Pending
+            0/3 nodes available: insufficient storage on db-2
+  ok    managed registry healthy
+  fail  skalid: CrashLoopBackOff (cannot reach its database)
+
+suggested action
+  free or expand storage on node db-2, then: skali-installer repair
+```
+
+No step above used the Skali API, the product database, or the registry.
+Already-running project workloads are unaffected while the control plane is
+down.
+
+## 7. Existing Kubernetes cluster
+
+```console
+$ skali-installer install --mode existing-cluster \
+    --kubeconfig ~/.kube/config --config init.yaml
+mode: existing cluster (unmanaged hosts)
+  This mode installs and maintains only the Skali system bundle. Node
+  lifecycle, k3s, and Kubernetes upgrades remain yours.
+  ok  Verify cluster version and storage prerequisites
+  ok  Apply blessed operators
+  ...
+```
+
+In this mode `join`, node removal, and Kubernetes upgrades are refused.
+
+## 8. Scoped uninstall
+
+```console
+$ sudo skali-installer uninstall
+scope of removal on host db-2 (cluster "production"):
+
+  [1] this node       drain and remove db-2 from the cluster; project data
+                      placed only on this node is relocated first or the
+                      removal is refused
+  [2] skali bundle    remove Skali and all project workloads and data from
+                      the cluster; keep bare k3s running
+  [3] entire cluster  not available from one host: destroying a cluster is
+                      per-host, run uninstall on every member
+  : 1
+
+Removing node db-2 relocates 2 database instances. The database tier drops
+from synchronous to asynchronous. Type the node name to continue: db-2
+  ok  Drain and relocate database instances
+  ok  Remove node from cluster
+  ok  Uninstall k3s and remove /var/lib/skali
+```
+
+Removing the Skali bundle (`[2]`) requires typing the cluster name and lists
+what is destroyed: every project namespace, database, bucket, and the
+registry contents. Destroying a whole cluster is per-host by design; there is
+no single command that reaches into other machines.

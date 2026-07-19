@@ -13,9 +13,10 @@ generic orchestration. The v2 architecture and rationale live in
 In place so far: the strict manifest parser and editor schema, normalized
 compiler IR with dependency graph, deterministic Kubernetes renderer, typed
 environment-values model with secret separation, installer cluster-layout
-schema, run/claim lifecycle contracts, and immutable revision and plan
-contracts with golden fixtures. The current architecture and roadmap are in
-[`REWORK_V2.md`](REWORK_V2.md).
+schema, run/claim/artifact lifecycle contracts, and immutable revision and
+plan contracts with golden fixtures. R0 of the roadmap is accepted. The R0 workflow transcripts (deploy, local
+development, installer) live in [`docs/transcripts/`](docs/transcripts/). The
+current architecture and roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
 
 Distinct product and operational roles:
 

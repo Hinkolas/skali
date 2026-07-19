@@ -609,7 +609,8 @@ Required keys and defaults are derived from `${NAME}` and
 keys fail planning. Unknown keys are rejected or require an explicit ignore
 flag. Secrecy comes from the manifest's `values` declarations and is recorded
 by the remote environment store; the dotenv format itself never decides
-secrecy.
+secrecy. The accepted dotenv dialect is the godotenv-compatible subset the
+CLI already implements.
 
 An environment file may contain both plain and secret values. When uploaded,
 `skalid` separates them: plain typed values enter `EnvironmentValues`; secret
@@ -1268,12 +1269,66 @@ Production registry storage belongs to the installer-owned system boundary. The
 registry service may run inside the cluster, but its durable data uses a
 bootstrap-owned volume or an independent external object store and off-cluster
 backup policy. It must not depend on the ordinary project object-storage system
-that it may be required to bootstrap. The exact standard registry and storage
-driver are an R0 decision fixture, not a reason to invent a custom registry.
+that it may be required to bootstrap.
 
 The registry itself is observed like every platform subsystem. Capacity,
 availability, import/build failures, and artifact retention appear in platform
 health and operation runs.
+
+#### Registry decision
+
+The managed registry is CNCF Distribution (the OCI reference registry),
+deployed by the installer as a single instance on a registry-capable node:
+
+- Storage uses the filesystem driver on an installer-owned volume by default;
+  a supported installation may configure the S3 driver against an external
+  object store instead. Neither changes the artifact contract.
+- Authentication uses the registry token protocol. The installer generates
+  the token-signing keypair at initialization: the registry trusts the
+  certificate, `skalid` holds the signing key. Token verification is offline,
+  so the registry never calls `skalid` while serving a request.
+- Push credentials are short-lived JWTs minted by `skalid`, scoped to exactly
+  one repository for one build or import. Pull access uses a longer-lived
+  read-only token that `skalid` refreshes and the installer places into
+  containerd registry configuration; pulls therefore keep working through
+  control-plane downtime until that token expires, and the embedded registry
+  mirror covers already-pulled images regardless.
+- Repositories are laid out deterministically: release artifacts under
+  `skali/<project>/<application>`, imported upstream content under
+  `cache/<host>/<path>`. A push token authorizes one such repository.
+- Retention is `skalid`-owned: revisions lease their artifacts, `skalid`
+  deletes unreferenced manifests through the registry API, and blob space is
+  reclaimed in scheduled read-only garbage-collection windows. Read-only mode
+  still serves pulls; only pushes pause, so a GC window affects deploys and
+  nothing else.
+- Any transparent pull-through or mirroring feature stays disabled: external
+  content enters only through explicit imports that create verified Artifact
+  records with provenance.
+
+#### Artifact lifecycle
+
+An artifact record moves through durable phases; the build or import run
+carries progress and failure detail:
+
+```text
+pending -> verified | abandoned
+verified -> evicted
+```
+
+- `pending`: the expected content of one build or import; a scoped push
+  credential may exist for it.
+- `verified`: the manifest and digest are confirmed present in the managed
+  registry. Only verified artifacts can enter a revision.
+- `abandoned`: the build or import ended without verified content, and
+  partial uploads are cleaned up. There is no failed phase on the artifact;
+  the run failed, the record is abandoned.
+- `evicted`: previously verified content was reclaimed by retention policy.
+  The record and its provenance remain for history; re-importing the same
+  upstream creates a new artifact record.
+
+An artifact referenced by a retained revision cannot be evicted, and release
+artifacts additionally hold a configured safety window. Cache artifacts are
+evictable whenever unreferenced.
 
 ## 11. Local development and CLI
 
@@ -1322,6 +1377,14 @@ profile. It discovers the in-cluster API through an explicit loopback route or
 port-forward. Stopping and starting the local cluster retains its volumes;
 `skali dev reset` intentionally destroys the complete local installation unless
 the user first exports it.
+
+The local exposure convention is fixed: the local edge publishes HTTP on host
+port 8080 and HTTPS on host port 8443, routes use `*.localhost` names, which
+resolve to loopback without configuration, and the local Skali API/UI is
+served through the same edge at `skali.localhost`. The local managed registry
+is published on a dedicated loopback port for host-side pushes and under its
+stable in-cluster name for pulls. `skali dev` prints the exact URLs it
+provisions.
 
 Docker/k3d is the first runtime because the repository already uses it. A future
 Lima-backed provider may implement the same CLI-owned local-runtime contract for
@@ -1405,8 +1468,9 @@ skali dev
 should:
 
 1. Find the project root and manifest.
-2. Use a locally selected env file when requested; local development does not
-   require or create a remote environment.
+2. Use `--env-file` when given; otherwise use `./.env` automatically when
+   present, announcing the selection. Local values never leave the machine,
+   and local development does not require or create a remote environment.
 3. Validate the manifest and local values.
 4. Ensure the k3d cluster and its in-cluster `skali-system` profile (`skalid`,
    Postgres, registry, and blessed operators) are running.
@@ -1679,7 +1743,9 @@ replication, and three or more run synchronous quorum replication. The same
 derivation applies to the bootstrap database and to the default shared pool.
 Tier changes are explicit maintenance actions, never automatic side effects of
 a node joining or leaving. `skalid` may surface that a tier upgrade is
-available; the operator applies it deliberately through the installer.
+available; the operator applies it deliberately, and each owner scales its
+own databases: the installer scales the bootstrap database, while `skalid`
+scales its platform pools through an explicit product operation.
 
 The handoff from installer to `skalid` transfers bookkeeping and observation,
 never mutation authority. `init` leaves behind the root-owned installation
@@ -1709,10 +1775,9 @@ the database-node availability tiers that protect the rest of the system. The
 k3s single-server SQLite precedent points the same way: k3s itself requires a
 real datastore for HA.
 
-The managed registry follows the same ownership rule. It is a standard OCI
-distribution service deployed as a single instance pinned to a
-registry-capable node, with durable data on an installer-owned volume by
-default; a supported external S3 endpoint may replace that storage without
+The managed registry follows the same ownership rule. It is CNCF Distribution
+deployed as a single instance pinned to a registry-capable node, with durable
+data on an installer-owned volume by default; a supported external S3 endpoint may replace that storage without
 changing the model. It is never backed by the in-cluster project object
 store, which it may be required to bootstrap. The K3s embedded registry
 mirror (Spegel) is enabled so images already pulled anywhere in the cluster
@@ -1793,6 +1858,14 @@ not make the v2 core permanently understand both schemas.
 
 ### R0 - Architecture contract
 
+Status: accepted 2026-07-19. Every deliverable exists in the repository as a
+schema, fixture, transcript, or lifecycle contract. One scope note: the alpha
+manifest schema deliberately includes fields ahead of the first runtime slice
+(bucket lifecycle and versioning, project backups, release commands, and
+placement spread). They compile into the canonical definition and claims
+today; their runtimes land in later milestones, and plan/deploy must say
+clearly when a target does not yet implement a compiled feature.
+
 Deliver:
 
 - Final terminology and invariants.
@@ -1808,11 +1881,10 @@ Deliver:
 - Canonical IR and Kubernetes-rendering golden fixtures for the first
   application slice.
 - Database-claim and run/step state machines.
-- Build/Artifact state model and registry namespace/retention model. The
-  registry bootstrap/storage decision is made: a standard OCI distribution,
-  single instance on a registry-capable node, installer-owned durable storage,
-  and the embedded K3s registry mirror; the exact distribution implementation
-  and token configuration remain R0 fixtures.
+- Build/Artifact state model, registry namespace/retention model, and the
+  registry decision: CNCF Distribution as a single instance on a
+  registry-capable node with installer-owned durable storage, offline-verified
+  token authentication, and the embedded K3s registry mirror.
 - Installation topology plus distinct installer/bootstrap, `skalid` platform,
   and `skalid` project ownership, field-manager, RBAC, and prune contracts.
 - Cluster-layout and capability schema with valid and invalid fixtures plus
@@ -2263,28 +2335,35 @@ The following decisions are part of this plan:
   already-pulled images available during registry downtime.
 - The installer handoff transfers observation and bookkeeping to `skalid`;
   mutation authority over bootstrap resources stays with the installer.
+- The managed registry implementation is CNCF Distribution with registry
+  token authentication: the installer provisions the signing keypair,
+  `skalid` mints scoped short-lived push tokens and refreshed pull tokens,
+  and token verification never calls `skalid`.
+- Release artifacts live under `skali/<project>/<application>` and imported
+  content under `cache/<host>/<path>`; transparent registry mirroring stays
+  disabled so all external content enters through verified imports.
 
-## 20. R0 questions that still require concrete fixtures
+## 20. R0 questions and their resolutions
 
-These are intentionally narrow design details, not unresolved architecture:
+Every question this section originally tracked is resolved or explicitly
+re-homed to the milestone that implements it:
 
-- Exact manifest field names and typed value-reference syntax.
-- Whether the managed web editor preserves YAML comments or only semantic form.
-- Docker-only local prerequisite for the first release versus shipping a Lima
-  provider immediately.
-- Exact local hostname and port exposure convention.
-- Default env-file discovery/confirmation rules and exact dotenv compatibility.
-- Exact local builder implementation, cloud build-context upload protocol, and
-  reproducibility/provenance metadata.
-- Installer state-file details beyond the cluster-layout schema, K3s
-  version/channel policy, and multi-node upgrade sequencing UX.
-- Exact registry distribution implementation, authentication/token
-  configuration, and bootstrap wiring for the decided single-instance,
-  installer-owned storage model.
-- Run-log retention limits and whether step logs use SSE or another streaming
-  transport.
-- Initial backup destination configuration.
-- Exact application build schema and supported Dockerfile/BuildKit features.
-
-They must be resolved through example manifests, CLI transcripts, and expected
-run trees during R0, before the implementation kernel begins.
+- Manifest field names and typed value-reference syntax: resolved by the
+  manifest schema, the compiler fixtures, and the example projects.
+- Web editor form: the managed source mode edits the semantic document only;
+  YAML comments survive only in `file` mode. R7 implements it.
+- Local prerequisite: the first release requires Docker. A Lima provider is a
+  later local-runtime provider, not a v2 blocker.
+- Local builder: BuildKit through the Docker daemon. The cloud build-context
+  upload protocol and provenance metadata are fixed in R4 alongside the
+  builder service.
+- Installer state file and layout: resolved by the cluster-layout schema and
+  the installer transcripts. Each installer release pins one k3s version;
+  multi-node upgrade sequencing UX lands in R4.
+- Registry: resolved; see the registry decision in section 10.6.
+- Step-log streaming uses SSE, matching the existing web transport. Exact
+  run-log retention caps are set with the R1 journal persistence.
+- Backup destination: an external S3 endpoint configured at initialization;
+  wiring and restore tests land in R8.
+- Build schema: resolved at the alpha level (context, dockerfile, target,
+  arguments). The supported BuildKit feature matrix is documented in R3.
