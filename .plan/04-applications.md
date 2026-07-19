@@ -1,5 +1,10 @@
 # 04 — Application services
 
+> [!WARNING]
+> Historical first-rework document, superseded by
+> [`REWORK_V2.md`](../REWORK_V2.md). Retained for context; this application
+> schema and delivery sequence are not the current V2 contract.
+
 An application = a container image the user brings, run with replicas, env,
 resources, optional persistent volumes, and optional domains. Git-based builds are
 explicitly **later**; v1 is image-based (this is also what keeps the registry story

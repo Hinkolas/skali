@@ -1,5 +1,11 @@
 # skali rearchitecture — plan
 
+> [!WARNING]
+> **Historical plan, superseded by [`REWORK_V2.md`](../REWORK_V2.md).** This
+> directory records the first Kubernetes rearchitecture and remains only as
+> design history. Its schemas, milestones, and implementation order are not the
+> current V2 contract.
+
 skali pivots from a hand-rolled orchestrator to a **product control plane on top of
 Kubernetes (k3s)**. skali keeps everything that is product — the Sevalla-style services
 concept, the web UI, the CLI, auth, the UX — and delegates everything that is substrate

@@ -1,5 +1,10 @@
 # 02 — Architecture
 
+> [!WARNING]
+> Historical first-rework document, superseded by
+> [`REWORK_V2.md`](../REWORK_V2.md). Retained for context; this topology and
+> package plan are not the current V2 contract.
+
 ## Components
 
 ```

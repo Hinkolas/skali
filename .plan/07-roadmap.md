@@ -1,5 +1,10 @@
 # 07 — Roadmap & demolition
 
+> [!WARNING]
+> **Superseded roadmap.** The current V2 milestones and exit criteria live in
+> [`REWORK_V2.md`](../REWORK_V2.md). This M0–M4 roadmap is retained only as
+> history of the first Kubernetes rearchitecture.
+
 Milestones are vertical slices: each ends with something visible in the UI. App
 before database on purpose — a stateless deploy exercises the whole new pipeline
 (compile → SSA → status → ingress → UI) before stateful complexity joins.

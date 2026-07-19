@@ -1,5 +1,10 @@
 # 05 — Database services
 
+> [!WARNING]
+> Historical first-rework document, superseded by
+> [`REWORK_V2.md`](../REWORK_V2.md). Retained for context; this database model
+> and delivery sequence are not the current V2 contract.
+
 The flagship primitive. A user declares "PostgreSQL 17, roughly this much storage" —
 skali decides where it runs and what hosts it. Engine v1: **PostgreSQL via
 CloudNativePG (CNPG)**. MySQL/MariaDB/Redis/Valkey appear in the picker as coming

@@ -1,5 +1,10 @@
 # 01 — Substrate decision: k3s
 
+> [!WARNING]
+> Historical first-rework document, superseded by
+> [`REWORK_V2.md`](../REWORK_V2.md). Retained as rationale for the Kubernetes
+> substrate decision; later architecture and roadmap details are not current.
+
 ## The decision
 
 skali runs on **k3s** (single-binary Kubernetes). skali itself becomes a product

@@ -9,11 +9,10 @@ set of blessed operators (CloudNativePG, Traefik, cert-manager) do all
 generic orchestration. The v2 architecture and rationale live in
 [`REWORK_V2.md`](REWORK_V2.md).
 
-**Status:** rearchitecture M0 — the hand-rolled substrate (custom node
-system, Docker engine adapter, registry mirror, workload reconciler, gRPC
-fabric) has been torn down; auth, the API framework, the web UI, and the CLI
-remain. The service model (projects → applications/databases) is built next
-on the k3s substrate. Roadmap: [`.plan/07-roadmap.md`](.plan/07-roadmap.md).
+**Status:** V2 rearchitecture — the hand-rolled substrate has been removed and
+the strict manifest parser, editor schema, normalized compiler IR, dependency
+graph, and deterministic Kubernetes renderer are in place. The current
+architecture and roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
 
 Distinct product and operational roles:
 
@@ -63,8 +62,8 @@ cd web && cp .env.example .env && npm install
 task dev:web
 ```
 
-The dev Kubernetes substrate (k3d) and its task targets arrive with the
-substrate half of M0 — see [`.plan/02-architecture.md`](.plan/02-architecture.md).
+The planned local Kubernetes workflow and parity boundaries are defined in the
+[V2 local-development section](REWORK_V2.md#11-local-development-and-cli).
 
 The OpenAPI contract is served at `GET /openapi.yaml` and lives in
 [`api/openapi.yaml`](api/openapi.yaml); a router-walk test keeps it honest.
@@ -115,38 +114,37 @@ internal/
   testdb/      ephemeral Postgres database per test
 web/           SvelteKit BFF (adapter-node); lib/mock is the services design
                spec being promoted to the real API milestone by milestone
-.plan/         the rearchitecture plan: substrate decision, architecture,
-               service model, applications, databases, web/CLI, roadmap
+.plan/         superseded first Kubernetes rework plan; historical context only
 ```
 
-Planned packages (see `.plan/02-architecture.md`): `internal/kube` (client,
-SSA apply, informers), `internal/compile` (service → manifests),
-`internal/services` (domain), `internal/controller` (reconcile loop).
+Current package boundaries and planned subsystems are defined in
+[`REWORK_V2.md`](REWORK_V2.md); `.plan/` must not be used as the V2
+implementation contract.
 
 ## Roadmap
 
-The full plan is [`.plan/07-roadmap.md`](.plan/07-roadmap.md); the short form:
+The authoritative milestones and exit criteria are in
+[`REWORK_V2.md`](REWORK_V2.md). The short form is:
 
-- **M0 — demolition & substrate**: strip the custom orchestrator (done);
-  k3d dev cluster, `internal/kube` plumbing, pinned bootstrap manifests.
-- **M1 — projects & service core**: projects as namespaces, the typed
-  services model, the controller loop, kube-backed read-only nodes page.
-- **M2 — applications end to end**: image deploys as digest-pinned releases,
-  Deployment/Service/Ingress compilation, rollbacks, logs, domains via
-  Traefik.
-- **M3 — databases on CloudNativePG**: shared pools + dedicated instances,
-  logical database provisioning, credentials as k8s Secrets, app↔db
-  connections with injected env.
-- **M4 — polish**: TLS via cert-manager, analytics, CLI v1 (`skali deploy`),
-  pool backups to S3.
-- **Later**: user-facing backups, external DB access, compose import,
-  templates, cache/object-storage/static-site types, environments with
-  clone-from-prod, git builds.
+- **R0 — architecture contract:** schemas, fixtures, ownership, artifacts, and
+  installer/local-runtime contracts.
+- **R1 — domain and persistence:** immutable revisions, environment values,
+  artifacts, run journals, and service-module contracts.
+- **R2 — observation and reconciliation:** LIST/WATCH state, health, generic
+  apply/prune, resync, and healing.
+- **R3 — local application slice:** in-cluster local Skali, `skali dev`, builds,
+  deploys, logs, and application health.
+- **R4 — installer and remote delivery:** K3s/bootstrap maintenance, production
+  registry, remote deployment, and cloud builds.
+- **R5/R6 — managed data services:** shared database substrate followed by
+  object storage and bucket services.
+- **R7/R8 — product completion:** web UI, durability, recovery, compatibility,
+  and release hardening.
 
-History note: the pre-pivot custom orchestrator (m1–m5: node system, engine
-adapter, registry mirror, workload reconciler, leader lease) was removed in
-the M0 demolition; its history lives in git. The reasoning for the pivot is
-recorded in [`.plan/01-decision-substrate.md`](.plan/01-decision-substrate.md).
+History note: `.plan/` records the first Kubernetes rearchitecture that preceded
+V2. It is retained for historical rationale—especially the substrate decision—
+but its schemas and M0–M4 roadmap are superseded. The older custom orchestrator
+also remains available through git history.
 
 ## Tests
 

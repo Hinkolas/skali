@@ -1,5 +1,10 @@
 # 03 — Service model
 
+> [!WARNING]
+> Historical first-rework document, superseded by
+> [`REWORK_V2.md`](../REWORK_V2.md). Retained for context; this service schema
+> and data model are not the current V2 contract.
+
 ## Concepts
 
 - **Project** — the scope services live in. Maps to a k8s namespace (`prj-<slug>`).

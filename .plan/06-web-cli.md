@@ -1,5 +1,10 @@
 # 06 — Web UI & CLI
 
+> [!WARNING]
+> Historical first-rework document, superseded by
+> [`REWORK_V2.md`](../REWORK_V2.md). Retained for context; this client scope and
+> delivery sequence are not the current V2 contract.
+
 ## The web survives whole — the mock gets promoted
 
 The mock services prototype (`web/src/lib/mock/`) was the design spec all along; the
