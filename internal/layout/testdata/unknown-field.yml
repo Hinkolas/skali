@@ -1,0 +1,6 @@
+version: "1"
+name: demo
+nodes:
+  atlas:
+    role: server
+    capabilites: [database]

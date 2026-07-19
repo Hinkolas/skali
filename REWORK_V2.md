@@ -920,8 +920,10 @@ Initial application logs should provide:
 - CLI and web streaming through the public Skali API.
 
 Retention/aggregation beyond Kubernetes' local logs is a separate policy and
-can begin with live streaming only. Deployment-step logs and application logs
-must never be combined.
+can begin with live streaming only. If durable retention lands later, it is
+its own platform subsystem with its own storage; runtime logs never enter the
+system database. Deployment-step logs and application logs must never be
+combined.
 
 ### 9.4 Activity feed
 
@@ -1046,6 +1048,14 @@ credential, observation, backup, and diagnostic code. Differences are policy:
 There must not be a separate `ensureObjectMetaPool` provisioning path in v2.
 The object-storage subsystem simply owns a database claim and depends on its
 outputs.
+
+System claims are placed on `skalid`-owned database clusters in the platform
+scope, normally the shared pool created during installation initialization.
+They are never placed in the bootstrap control-plane database: `skalid` state
+is not a claim, the bootstrap cluster accepts no tenants, and the claim
+substrate cannot select it. Everything whose size or load grows with user
+activity lives in clusters `skalid` fully manages, while the installer-owned
+bootstrap surface stays small and quiet.
 
 ### 10.4 Database service product surface
 
@@ -1526,7 +1536,7 @@ Linux hosts
   K3s/Kubernetes
     skali-system                         installer-owned
       skalid Deployment
-      Skali Postgres
+      bootstrap Skali Postgres (CNPG, skalid state only)
       managed OCI registry
       builder services and blessed operators
     skali-platform                       skalid-owned, explicitly delegated
@@ -1553,7 +1563,87 @@ scoped credential/token flow permits a local CLI or cloud builder to push only
 the artifacts assigned to its build. Registry contents are addressed and
 verified by digest before revision creation.
 
-### 14.3 Ownership, failure, and recovery
+### 14.3 Node capabilities, cluster layout, and initialization
+
+Placement policy is expressed through designated node capabilities. Installing
+a node assigns its capabilities explicitly, and placement decisions consume
+them as policy:
+
+- `application`: runs project application workloads.
+- `database`: hosts CNPG database clusters, including the bootstrap database.
+- `object-storage`: hosts SeaweedFS volume servers and related components.
+- `registry`: eligible to host the managed OCI registry and its storage.
+- `edge`: terminates ingress for routes, the API/UI, and the registry
+  endpoint.
+
+Capabilities are stamped as node labels at install/join time and recorded in
+the root-owned installation record. They are orthogonal to the K3s role: a
+host joins as a server or an agent, and the server count (one, or three for a
+highly available Kubernetes control plane) is a separate decision from any
+capability. A single-node installation carries every capability; a dedicated
+fleet assigns them narrowly.
+
+Setup is per-node installation followed by one explicit initialization:
+
+1. Run `skali-installer` on each host, choosing its K3s role and capabilities.
+2. After the intended nodes have joined, run `skali-installer init` once on a
+   server node.
+3. `init` reads the cluster layout from node labels and installation records,
+   derives the data-service topology from it, and applies the system bundle in
+   dependency order: blessed operators, the bootstrap database sized to the
+   derived availability tier, the managed registry, and finally `skalid` wired
+   to its generated credentials.
+
+Database availability tiers derive from the number of database-capable nodes:
+one node runs a single instance without HA, two nodes run asynchronous
+replication, and three or more run synchronous quorum replication. The same
+derivation applies to the bootstrap database and to the default shared pool.
+Tier changes are explicit maintenance actions, never automatic side effects of
+a node joining or leaving. `skalid` may surface that a tier upgrade is
+available; the operator applies it deliberately through the installer.
+
+The handoff from installer to `skalid` transfers bookkeeping and observation,
+never mutation authority. `init` leaves behind the root-owned installation
+record and an in-cluster copy. On first boot `skalid` imports it, learns the
+layout and the identities of the bootstrap systems, and begins observing them
+as platform subsystems.
+
+### 14.4 Bootstrap database and registry ownership
+
+`skalid` state lives in a dedicated CNPG cluster in `skali-system` that serves
+no other consumer. The installer renders it with the same shared packages and
+availability tiers as `skalid`-owned pools, so behavior stays uniform, but
+ownership does not: the installer creates and mutates it, and `skalid` only
+observes it. It is modeled as a platform subsystem, not as a substrate
+`DatabaseCluster`, so the claim substrate needs no protected special case and
+can never place a tenant in it or plan changes against it. The boundary is
+mechanical: `skalid`'s service account has read-only access to `skali-system`.
+Tier changes, storage growth, version upgrades, and backup configuration for
+the bootstrap database are installer operations.
+
+`skalid` state uses PostgreSQL through CNPG. There is no SQLite or embedded
+storage mode and no dual-engine abstraction. CNPG ships with every
+installation because managed databases are a core product feature, so the
+bootstrap database adds one small cluster to an operator that is already
+present, while file-backed state on a single volume could not participate in
+the database-node availability tiers that protect the rest of the system. The
+k3s single-server SQLite precedent points the same way: k3s itself requires a
+real datastore for HA.
+
+The managed registry follows the same ownership rule. It is a standard OCI
+distribution service deployed as a single instance pinned to a
+registry-capable node, with durable data on an installer-owned volume by
+default; a supported external S3 endpoint may replace that storage without
+changing the model. It is never backed by the in-cluster project object
+store, which it may be required to bootstrap. The K3s embedded registry
+mirror (Spegel) is enabled so images already pulled anywhere in the cluster
+remain available for pod rescheduling while the registry is down. A highly
+available registry would require shared blob storage and is deliberately
+deferred; it would not change registry ownership. Registry mutations are
+installer operations; `skalid` observes health, capacity, and retention and
+manages artifact contents through the normal build and import APIs.
+
+### 14.5 Ownership, failure, and recovery
 
 `skali-installer` and `skalid` use disjoint ownership labels, field managers,
 RBAC, and prune scopes. `skalid` may reconcile explicitly delegated shared
@@ -1639,17 +1729,23 @@ Deliver:
 - Canonical IR and Kubernetes-rendering golden fixtures for the first
   application slice.
 - Database-claim and run/step state machines.
-- Build/Artifact state model, registry namespace/retention model, and a registry
-  bootstrap/storage decision that avoids an object-storage dependency cycle.
+- Build/Artifact state model and registry namespace/retention model. The
+  registry bootstrap/storage decision is made: a standard OCI distribution,
+  single instance on a registry-capable node, installer-owned durable storage,
+  and the embedded K3s registry mirror; the exact distribution implementation
+  and token configuration remain R0 fixtures.
 - Installation topology plus distinct installer/bootstrap, `skalid` platform,
   and `skalid` project ownership, field-manager, RBAC, and prune contracts.
+- Cluster-layout and capability schema with valid and invalid fixtures plus
+  the derived availability-tier rules.
 - Installer state detection and action model for fresh installation, K3s
-  server/agent join, existing Kubernetes, upgrade, diagnosis, repair, restore,
-  and uninstall.
+  server/agent join with capability assignment, cluster initialization,
+  existing Kubernetes, upgrade, diagnosis, repair, restore, and uninstall.
 - Local-runtime topology decision and complete CLI transcripts for local build,
   cloud build, env-file upload, remote-value reuse, failure, and detach/reattach.
 - Interactive and non-interactive installer transcripts for single-node K3s,
-  node join, existing Kubernetes, repeat execution, degraded state, and
+  node join, cluster initialization, an availability-tier upgrade after adding
+  a database node, existing Kubernetes, repeat execution, degraded state, and
   destructive confirmation.
 
 Exit criteria:
@@ -1665,6 +1761,8 @@ Exit criteria:
   file accidentally.
 - The product reconciler cannot apply or prune installer-owned bootstrap
   resources.
+- The claim substrate cannot place tenants in or plan changes against the
+  bootstrap database.
 - The installer can diagnose host/K3s state without a working `skalid` or Skali
   Postgres connection.
 
@@ -2068,6 +2166,24 @@ The following decisions are part of this plan:
   registry providers do not change the reconciliation model.
 - Installer-owned bootstrap resources and `skalid`-owned platform/project
   resources have disjoint ownership and prune boundaries.
+- Node capabilities (`application`, `database`, `object-storage`, `registry`,
+  `edge`) are assigned at node installation, stamped as labels, and recorded;
+  `skali-installer init` applies the system bundle from that recorded layout.
+- Database availability tiers derive from database-capable node count: one
+  node is single-instance, two asynchronous, three or more synchronous. Tier
+  changes are explicit installer operations, never side effects of node
+  membership changes.
+- `skalid` state is PostgreSQL on a dedicated, installer-owned CNPG bootstrap
+  cluster; there is no SQLite mode and no dual-engine abstraction.
+- The bootstrap database is observed as a platform subsystem; it is never a
+  substrate `DatabaseCluster` and never accepts claims.
+- System database claims, including object-storage metadata, place onto
+  `skalid`-owned platform pools, never the bootstrap cluster.
+- The managed registry runs as a single instance on registry-capable nodes
+  with installer-owned durable storage; the K3s embedded registry mirror keeps
+  already-pulled images available during registry downtime.
+- The installer handoff transfers observation and bookkeeping to `skalid`;
+  mutation authority over bootstrap resources stays with the installer.
 
 ## 20. R0 questions that still require concrete fixtures
 
@@ -2081,10 +2197,11 @@ These are intentionally narrow design details, not unresolved architecture:
 - Default env-file discovery/confirmation rules and exact dotenv compatibility.
 - Exact local builder implementation, cloud build-context upload protocol, and
   reproducibility/provenance metadata.
-- Exact installer state-file schema, non-interactive configuration format,
-  K3s version/channel policy, and multi-node upgrade sequencing UX.
-- Standard OCI registry distribution, durable storage driver, authentication,
-  and bootstrap configuration.
+- Installer state-file details beyond the cluster-layout schema, K3s
+  version/channel policy, and multi-node upgrade sequencing UX.
+- Exact registry distribution implementation, authentication/token
+  configuration, and bootstrap wiring for the decided single-instance,
+  installer-owned storage model.
 - Run-log retention limits and whether step logs use SSE or another streaming
   transport.
 - Initial backup destination configuration.

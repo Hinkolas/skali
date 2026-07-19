@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=../../../schemas/skali-layout.schema.json
+
+version: "1"
+
+name: production
+
+# Three servers form an HA Kubernetes control plane and terminate ingress.
+# Two database nodes derive the asynchronous availability tier; a third would
+# enable synchronous quorum replication.
+nodes:
+  cp-1:
+    role: server
+    capabilities: [edge, registry]
+  cp-2:
+    role: server
+    capabilities: [edge]
+  cp-3:
+    role: server
+    capabilities: [edge]
+  app-1:
+    role: agent
+    capabilities: [application, object-storage]
+  app-2:
+    role: agent
+    capabilities: [application, object-storage]
+  db-1:
+    role: agent
+    capabilities: [database]
+  db-2:
+    role: agent
+    capabilities: [database]

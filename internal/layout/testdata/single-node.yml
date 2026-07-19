@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../../schemas/skali-layout.schema.json
+
+version: "1"
+
+name: homelab
+
+# A single-node installation carries every capability. The derived database
+# tier is single: one instance, no HA.
+nodes:
+  atlas:
+    role: server
+    capabilities: [application, database, object-storage, registry, edge]

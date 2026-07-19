@@ -25,15 +25,20 @@ tasks:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
 
   generate:
-    desc: Regenerate the manifest schema and sqlc store
+    desc: Regenerate the JSON schemas and sqlc store
     cmds:
-      - go generate ./internal/manifest
+      - go generate ./internal/manifest ./internal/layout
       - sqlc generate
 
   generate:manifest:
     desc: Regenerate schemas/skali.schema.json from the manifest wire types
     cmds:
       - go generate ./internal/manifest
+
+  generate:layout:
+    desc: Regenerate schemas/skali-layout.schema.json from the layout wire types
+    cmds:
+      - go generate ./internal/layout
 
   test:
     desc: Run the Go test suite (DB tests need TEST_DATABASE_URL, see .env.example)

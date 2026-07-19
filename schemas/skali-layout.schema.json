@@ -1,0 +1,65 @@
+{
+  "type": "object",
+  "$id": "https://skali.dev/schemas/v1/skali-layout.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Skali cluster layout",
+  "description": "Installation layout consumed by skali-installer: hosts, K3s roles, and designated node capabilities.",
+  "required": [
+    "version",
+    "name",
+    "nodes"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Stable installation name.",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "nodes": {
+      "type": "object",
+      "description": "Cluster hosts keyed by stable node name.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "description": "Designated workload capabilities for this node.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "application",
+                "database",
+                "object-storage",
+                "registry",
+                "edge"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "role": {
+            "type": "string",
+            "description": "K3s role: server or agent.",
+            "enum": [
+              "server",
+              "agent"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+      }
+    },
+    "version": {
+      "type": "string",
+      "description": "Layout schema version. Currently 1.",
+      "const": "1"
+    }
+  },
+  "additionalProperties": false
+}
