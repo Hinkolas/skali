@@ -2,7 +2,7 @@
 
 Status: architecture proposal and implementation plan
 
-Date: 2026-07-16
+Date: 2026-07-19
 
 Recommended starting point: `c4eb838` (post-demolition, before the current Kubernetes rework)
 
@@ -51,6 +51,13 @@ not a secondary cluster registered with a production Skali instance. It uses
 the same `skalid`, schema, revision builder, service modules, Kubernetes
 drivers, observation system, and reconciliation engine as a production
 installation.
+
+The product has three deliberately separate operational roles. `skali` is the
+developer CLI and rich API client. `skali-installer` is the privileged,
+recoverable installation and cluster-maintenance tool. `skalid` is the
+continuously running product control plane inside Kubernetes. The installer,
+not `skalid` or the developer CLI, owns host-level K3s creation, node joining,
+Kubernetes upgrades, diagnosis, repair, and removal.
 
 ## 2. Product vision
 
@@ -248,14 +255,16 @@ Implemented or designed:
   and edge placement.
 - Cluster/node/pod topology, capacity, metrics, subsystem health, database
   pools, and object-storage pages.
-- External control plane: `skalid` and its Postgres state survive a broken
-  tenant cluster.
+- External control plane: `skalid` and its Postgres state were designed to
+  survive a broken tenant cluster.
 - Single-server production topology with a future three-server HA design.
 
-V2 disposition: retain the Kubernetes and external-control-plane decisions,
-but rebuild cluster observation before implementing product services. Node
-capabilities and placement policies should be policies consumed by service
-modules, not assumptions embedded throughout the controller.
+V2 disposition: retain Kubernetes as the substrate, but replace the external
+control-plane topology. `skalid` runs inside the Kubernetes cluster by default;
+a separate privileged installer owns K3s and installation lifecycle outside the
+normal reconciler. Rebuild cluster observation before implementing product
+services. Node capabilities and placement policies should be policies consumed
+by service modules, not assumptions embedded throughout the controller.
 
 ### 3.8 Observability and clients
 
@@ -379,11 +388,28 @@ logs, metrics, and API list payloads must be safe to persist and display.
 Every project lifecycle must work through the public API and CLI without the
 web UI. The server owns parsing semantics, validation, planning, revision
 preparation, deployment state, observation, and operations. The CLI owns the
-filesystem, local build executor, local platform lifecycle, and terminal UX,
-but it cannot invent alternate deployment semantics.
+filesystem, local build executor, disposable development-runtime lifecycle, and
+terminal UX, but it cannot invent alternate deployment semantics or administer
+production Kubernetes installations.
 
 The web UI later manipulates the same typed definition and calls the same plan,
 deploy, operation, and query APIs. A UI-only create/update path is not allowed.
+
+### 5.10 Installation and reconciliation have separate owners
+
+The privileged installer owns host-level K3s state and the bootstrap resources
+that make a Skali installation exist. The `skalid` reconciler owns project
+resources and explicitly delegated product-platform resources, such as shared
+database pools or an object-storage subsystem, but never its own bootstrap
+dependencies. Installer-owned bootstrap, `skalid`-owned platform, and
+`skalid`-owned project resources use distinct labels, field managers, service
+accounts, and prune scopes. A project deploy, environment deletion, or generic
+reconciliation audit can never update or delete the Skali control plane that
+performs it.
+
+The installer must remain useful when `skalid`, Skali Postgres, the registry,
+or the Kubernetes API is degraded. Its diagnosis and host-repair paths cannot
+depend on the Skali public API or product database.
 
 ## 6. Core domain model
 
@@ -1146,10 +1172,11 @@ Artifact classes have different durability policy:
 - The local-development registry is disposable after local revisions and source
   can be rebuilt, unless the user explicitly retains it.
 
-Production registry storage belongs outside the tenant cluster's disposable
-state boundary, alongside the control-plane installation or on an independent
-external object store. It must not depend on the in-cluster object-storage
-system it may be required to bootstrap. The exact standard registry and storage
+Production registry storage belongs to the installer-owned system boundary. The
+registry service may run inside the cluster, but its durable data uses a
+bootstrap-owned volume or an independent external object store and off-cluster
+backup policy. It must not depend on the ordinary project object-storage system
+that it may be required to bootstrap. The exact standard registry and storage
 driver are an R0 decision fixture, not a reason to invent a custom registry.
 
 The registry itself is observed like every platform subsystem. Capacity,
@@ -1187,17 +1214,22 @@ The v1 local implementation is CLI-managed:
 ```text
 host OS
   skali CLI
-  local skalid process (loopback API)
-  local Postgres container/instance (control-plane state)
-  local OCI registry
-  k3d cluster using a pinned k3s version
-    blessed operators and runtime components
-    project workloads
+  disposable container/VM runtime
+    k3d cluster using a pinned k3s version
+      skali-system
+        skalid
+        Skali Postgres
+        local OCI registry
+        blessed operators and runtime components
+      project workloads
 ```
 
-Keeping `skalid` and Postgres outside the local tenant cluster mirrors the
-production recovery boundary. Deleting/recreating the k3d cluster can therefore
-exercise full reconciliation from retained intent.
+The CLI owns the disposable development-cluster lifecycle and applies the same
+installer-owned system bundle used in production with a lightweight local
+profile. It discovers the in-cluster API through an explicit loopback route or
+port-forward. Stopping and starting the local cluster retains its volumes;
+`skali dev reset` intentionally destroys the complete local installation unless
+the user first exports it.
 
 Docker/k3d is the first runtime because the repository already uses it. A future
 Lima-backed provider may implement the same CLI-owned local-runtime contract for
@@ -1284,8 +1316,8 @@ should:
 2. Use a locally selected env file when requested; local development does not
    require or create a remote environment.
 3. Validate the manifest and local values.
-4. Ensure the local Postgres, registry, k3d cluster, blessed operators, and
-   local `skalid` are running.
+4. Ensure the k3d cluster and its in-cluster `skali-system` profile (`skalid`,
+   Postgres, registry, and blessed operators) are running.
 5. Build build-sourced applications locally with the required target
    architecture and import image-sourced applications.
 6. Push/verify all artifacts in the local managed registry.
@@ -1342,8 +1374,11 @@ terminal, build-engine, or local-machine access:
 - Manage remote contexts and authentication.
 - Submit definitions/revisions through the public Skali API.
 
-Remote administration remains available through the API and web UI. The CLI
-does not become a kubectl wrapper and does not access Skali's Postgres directly.
+Production K3s creation, node lifecycle, Kubernetes upgrades, diagnosis,
+repair, and uninstall belong exclusively to `skali-installer`. The developer
+CLI does not become a kubectl wrapper, follow kubeconfig for infrastructure
+mutation, or access Skali's Postgres directly. Its local lifecycle authority is
+limited to disposable, user-owned development installations.
 
 Likely remote workflows are:
 
@@ -1443,27 +1478,97 @@ Do not create authoritative pod/deployment/node mirror tables. Live cluster
 objects belong to `ObservedStore`. Persisted health summaries, if used for
 startup UX, must be marked stale until the initial watch sync completes.
 
-## 14. Production topology
+## 14. Installation and production topology
+
+### 14.1 Operational roles
+
+V2 separates developer workflow, privileged installation, and continuous
+reconciliation:
+
+- `skali` is the developer CLI. It owns project files, local builds, terminal
+  UX, remote Skali contexts, and disposable `skali dev` installations.
+- `skali-installer` is the administrator and recovery tool. It owns host-level
+  K3s installation, joining a host as a server or agent, Kubernetes upgrades,
+  diagnostics, repair, uninstall, and the installer-owned Skali system bundle.
+- `skalid` is the in-cluster control plane. It owns the public API, product
+  state, observation, revision targeting, and project reconciliation.
+
+The installer is interactive by default and detects whether the current host
+is fresh, a Skali-managed K3s server/agent, an unmanaged K3s host, or a damaged
+installation. Re-running it offers operations appropriate to that state, such
+as upgrade, diagnosis, repair, configuration change, restore, or uninstall.
+The same engine must also accept an explicit, non-interactive configuration for
+cloud-init, configuration management, and CI.
+
+A root-owned installation record identifies provider, cluster, installation,
+node role, ownership mode, and installed versions. Local repair uses this
+record and host state, not an arbitrary active kubeconfig. Joining a multi-node
+K3s cluster is initiated independently on each host; the first version does not
+store SSH credentials or require a permanent privileged host agent.
+
+For an existing Kubernetes cluster whose hosts are not administered by Skali,
+the installer may run from an administrator workstation with an explicit
+kubeconfig, or the equivalent system bundle may be installed through Helm. In
+that mode it owns only the Skali installation and must not claim node or
+Kubernetes-version lifecycle.
+
+### 14.2 Default installation topology
 
 V2 initially keeps one Skali installation responsible for one Kubernetes
-cluster:
+cluster. K3s is the first distribution provisioned by the installer; the
+`skalid` Kubernetes client and service renderers remain distribution-neutral:
 
-- `skalid` and Skali Postgres run outside the tenant cluster.
-- A standard Skali-managed OCI registry runs in the installation's durable
-  boundary, outside the tenant cluster or on an independent storage backend.
-- `skalid` connects through kubeconfig and rebuilds observation on startup.
-- The public management route may pass through cluster ingress, with a direct
-  break-glass endpoint retained.
-- Kubernetes and blessed operators own runtime orchestration.
+```text
+Linux hosts
+  K3s/Kubernetes
+    skali-system                         installer-owned
+      skalid Deployment
+      Skali Postgres
+      managed OCI registry
+      builder services and blessed operators
+    skali-platform                       skalid-owned, explicitly delegated
+      shared database/object-storage systems and build jobs
+    project/environment namespaces       skalid-owned
+      applications, databases, buckets, volumes, and routes
+```
+
+- `skalid` runs as a Deployment and accesses the Kubernetes API through a
+  scoped in-cluster service account.
+- Skali Postgres and the OCI registry are separate stateful workloads by
+  default; supported installations may instead provide external services.
+- Registry data uses installer-owned durable storage or an independent object
+  store. It never depends on an ordinary project bucket.
+- Bootstrap images for `skalid`, Postgres, the registry, and required operators
+  come from an upstream/bootstrap source or offline bundle; the managed registry
+  cannot be required to start itself.
+- The public API/UI and registry push endpoints are exposed through explicit
+  installer-owned routing and TLS configuration.
+- Kubernetes and blessed operators own generic runtime orchestration.
 
 The registry is reachable by cluster nodes and authenticated build clients. A
 scoped credential/token flow permits a local CLI or cloud builder to push only
 the artifacts assigned to its build. Registry contents are addressed and
 verified by digest before revision creation.
 
-The local installation follows the same boundary. Multi-cluster control planes
-and HA `skalid` are later extensions and must not complicate the initial domain
-model.
+### 14.3 Ownership, failure, and recovery
+
+`skali-installer` and `skalid` use disjoint ownership labels, field managers,
+RBAC, and prune scopes. `skalid` may reconcile explicitly delegated shared
+platform services and report bootstrap health, but it cannot reconcile or
+delete the resources required to run itself. Bootstrap upgrades and repairs
+are installer operations, not project deployments.
+
+If `skalid` or Skali Postgres is unavailable, already-created Kubernetes
+workloads continue running while product mutations pause. If the Kubernetes API
+or K3s service is unavailable, the in-cluster API/UI may also be unavailable;
+the administrator runs the installer on the affected host for diagnosis and
+repair. Cluster-loss recovery comes from reproducible installer inputs plus
+off-cluster backups of Skali state and irreplaceable registry artifacts.
+
+The local development installation uses the same in-cluster component boundary
+with a disposable profile. A future external management plane may coordinate
+multiple clusters, but multi-cluster control and management-plane HA must not
+complicate the initial domain model.
 
 ## 15. Rewrite strategy
 
@@ -1471,16 +1576,18 @@ model.
 
 The implementation sequence is contract-first and headless:
 
-1. Typed definition, env-file import, values, plan, and revision contracts.
+1. Typed definition, values, plan, revision, installation-ownership, and
+   recovery contracts.
 2. Headless public API and CLI commands with fixture-backed output.
-3. Build/Artifact/registry pipeline.
-4. Observed-state and reconciliation kernel.
-5. Complete application deployment through CLI, including local development,
+3. Reusable installer-owned system bundle and disposable local target profile.
+4. Build/Artifact/registry pipeline.
+5. Observed-state and reconciliation kernel.
+6. Complete application deployment through CLI, including local development,
    run steps, status, and logs.
-6. Shared database and object-storage subsystems through the same headless
+7. Production installer plus remote deployment and cloud-build workflows.
+8. Shared database and object-storage subsystems through the same headless
    contracts.
-7. Remote installer and operational hardening.
-8. Web status surfaces and visual definition editor.
+9. Web status surfaces, visual definition editor, and operational hardening.
 
 A temporary developer-only HTML page may aid debugging, but product UI business
 logic does not begin until the CLI can complete the application slice. This
@@ -1531,9 +1638,16 @@ Deliver:
 - Database-claim and run/step state machines.
 - Build/Artifact state model, registry namespace/retention model, and a registry
   bootstrap/storage decision that avoids an object-storage dependency cycle.
-- Label/ownership contract.
+- Installation topology plus distinct installer/bootstrap, `skalid` platform,
+  and `skalid` project ownership, field-manager, RBAC, and prune contracts.
+- Installer state detection and action model for fresh installation, K3s
+  server/agent join, existing Kubernetes, upgrade, diagnosis, repair, restore,
+  and uninstall.
 - Local-runtime topology decision and complete CLI transcripts for local build,
   cloud build, env-file upload, remote-value reuse, failure, and detach/reattach.
+- Interactive and non-interactive installer transcripts for single-node K3s,
+  node join, existing Kubernetes, repeat execution, degraded state, and
+  destructive confirmation.
 
 Exit criteria:
 
@@ -1546,6 +1660,10 @@ Exit criteria:
   Artifact contract and managed-registry digest.
 - Non-interactive env-file behavior is explicit and cannot upload a discovered
   file accidentally.
+- The product reconciler cannot apply or prune installer-owned bootstrap
+  resources.
+- The installer can diagnose host/K3s state without a working `skalid` or Skali
+  Postgres connection.
 
 No product-controller implementation begins before R0 is accepted.
 
@@ -1595,14 +1713,17 @@ Exit criteria:
 - API topology reads perform no direct Kubernetes request.
 - Restart rebuilds the cache before reporting fresh health.
 
-### R3 - CLI-managed local platform and application slice
+### R3 - CLI-managed local installation and application slice
 
 Deliver:
 
 - Headless `skali validate`, `skali plan`, and local-target `skali deploy`.
 - `skali dev up`, bare `skali dev`, status, logs, stop, and reset workflows.
-- CLI-managed Postgres, local registry, and pinned k3d cluster.
-- Local `skalid` discovery and loopback authentication.
+- CLI-managed disposable k3d cluster using a pinned k3s version.
+- Installer-owned local system bundle containing in-cluster `skalid`, Postgres,
+  registry, and blessed components.
+- In-cluster `skalid` discovery through an explicit loopback route or
+  port-forward and local authentication.
 - Blessed base components.
 - Dotenv discovery/import with declared secret separation.
 - Local build executor, external image import, Artifact creation, and registry
@@ -1622,14 +1743,25 @@ Exit criteria:
   meaningless revision.
 - Killing one of three application pods changes health to 2/3 promptly, shows
   its reason, heals, and returns to 3/3.
-- Restarting local `skalid` during rollout resumes toward the same revision.
-- Resetting only the k3d cluster and retaining control-plane state reconstructs
-  the application.
+- Restarting the local `skalid` Pod during rollout resumes toward the same
+  revision.
+- Stopping and restarting the local cluster retains control-plane state and
+  reconstructs observation before reporting fresh health.
+- `skali dev reset` clearly confirms and removes the complete local
+  installation; a subsequent `skali dev` creates a clean installation.
 
-### R4 - Remote artifact and cloud-build pipeline
+### R4 - Production installer, remote artifact, and cloud-build pipeline
 
 Deliver:
 
+- Privileged installer core with interactive state detection and an explicit
+  non-interactive configuration format.
+- Fresh single-node K3s creation, K3s server/agent join, and Skali installation
+  into an explicitly selected existing Kubernetes cluster.
+- Repeat-run status, versioned upgrade, diagnosis, repair, restore entry point,
+  and scoped uninstall operations.
+- Root-owned installation identity and strict separation between installer-
+  owned bootstrap resources and `skalid`-owned product resources.
 - Production managed-registry installation, scoped authentication, health, and
   capacity observation.
 - Remote `skali plan` and `skali deploy` through the headless API.
@@ -1642,6 +1774,16 @@ Deliver:
 
 Exit criteria:
 
+- From a supported fresh Linux host, the installer reaches a healthy
+  single-node K3s and in-cluster Skali installation without manual `kubectl`.
+- Re-running the installer detects the installation and performs no mutation
+  until an explicit maintenance action is selected.
+- A second host can join as a K3s agent through an explicit enrollment flow.
+- Existing-Kubernetes mode installs Skali without claiming node or Kubernetes-
+  version lifecycle.
+- Installer diagnostics remain available when `skalid` or Skali Postgres is
+  unavailable, and uninstall scopes distinguish Skali, the current node, and
+  the whole cluster.
 - The same manifest can be deployed using local build and cloud build without
   changing its service definition.
 - Both executors produce verified artifacts that enter revisions through the
@@ -1702,11 +1844,10 @@ Exit criteria:
 - A SeaweedFS observation failure becomes stale/degraded without blocking
   unrelated application observation.
 
-### R7 - Product UI and remote platform completion
+### R7 - Product UI and platform completion
 
 Deliver:
 
-- Production bootstrap/installer path.
 - Project/environment/service/deployment/system web surfaces on v2 APIs.
 - TLS, edge routing, node capabilities, and platform settings expressed as
   platform policies/modules.
@@ -1723,7 +1864,11 @@ Exit criteria:
 - Editing an application in the web UI produces the same definition diff and
   plan as editing `skali.yml`; there is no UI-only service mutation
   path.
-- Cluster outage leaves the management API/UI able to report stale/down state.
+- Restarting the in-cluster API/UI does not change target state, and it reports
+  fresh observations only after watch synchronization.
+- During a cluster-control-plane outage, the installer provides the independent
+  diagnosis path; the API/UI does not claim to be an out-of-cluster recovery
+  surface.
 
 ### R8 - Durability and release hardening
 
@@ -1733,7 +1878,8 @@ Deliver:
 - Off-cluster backup policy for Skali state and system metadata.
 - Registry artifact durability/backup policy and tested retention/garbage
   collection.
-- Upgrade/version compatibility tests.
+- Installer, K3s, Kubernetes API, operator, and Skali upgrade/version
+  compatibility tests.
 - Failure injection and long-running reconciliation tests.
 - Retention policies for runs, activity, metrics, and logs.
 - Security/redaction audit.
@@ -1777,7 +1923,10 @@ Exit criteria:
 - Disconnect/restart the Kubernetes API and watches.
 - CNPG failover and unavailable operator.
 - SeaweedFS master/filer/gateway failure.
-- Destroy/recreate tenant cluster while retaining Skali state.
+- Stop/restart the local cluster while retaining its persistent state, then
+  prove observation and reconciliation recover.
+- Destroy the local installation, restore from an exported/off-cluster backup,
+  and prove target state can be reconciled when restore support lands.
 - Disable an upstream registry after import and prove a retained revision still
   pulls from the managed registry.
 - Interrupt local/cloud builds and registry uploads, then verify target/value
@@ -1786,7 +1935,7 @@ Exit criteria:
 ### 17.4 CLI tests
 
 - Project-root discovery.
-- Missing prerequisite and repair messages.
+- Missing local-development prerequisite messages.
 - First-run local bootstrap.
 - Idempotent repeated `skali dev`.
 - Local/cloud executor selection, build-cache, changed-source, and external
@@ -1796,7 +1945,21 @@ Exit criteria:
 - Terminal interruption and reattachment to a run.
 - Safe reset confirmation.
 
-### 17.5 Security tests
+### 17.5 Installer tests
+
+- Fresh-host, existing-installation, joined-node, degraded, and unsupported-host
+  state detection.
+- Idempotent repeat execution and explicit non-interactive configuration.
+- Single-server creation and server/agent enrollment flows.
+- Existing-Kubernetes mode never performs host or Kubernetes-version lifecycle
+  operations.
+- Ordered upgrade planning, interrupted upgrade diagnosis, and scoped repair.
+- Separate confirmation and ownership checks for removing Skali, removing the
+  current node, and destroying a complete cluster.
+- Diagnostics that work while `skalid`, Skali Postgres, or the registry is
+  unavailable.
+
+### 17.6 Security tests
 
 - Secret values absent from canonical definition, revisions, logs, activity,
   error messages, metrics, and list APIs.
@@ -1824,6 +1987,8 @@ Required for the v2 core:
 - Application, PostgreSQL database, and object-storage services.
 - Shared database substrate for user and system claims.
 - CLI-managed local development runtime.
+- Privileged interactive/non-interactive installer for K3s and Skali bootstrap,
+  node join, upgrade, diagnosis, repair, restore, and scoped uninstall.
 - Live application logs and basic metrics.
 - Remote deployment through the same model.
 
@@ -1882,10 +2047,17 @@ The following decisions are part of this plan:
   a special pool.
 - Runs/steps/logs explain reconciliation but never drive it.
 - Local development is a distinct local Skali installation using the same core.
-- The CLI owns local machine, filesystem, build, and terminal workflows and is
-  not an API mirror.
-- `skalid` remains outside the tenant cluster in both local and production
-  topologies.
+- The developer CLI owns project files, builds, terminal workflows, remote
+  Skali contexts, and disposable local development; it is not an API mirror and
+  does not administer production Kubernetes.
+- The privileged installer owns host-level K3s and installer-owned Skali system
+  lifecycle, remains independent of the Skali API/database, and supports both
+  interactive and explicit non-interactive operation.
+- `skalid`, Skali Postgres, and the managed registry run inside Kubernetes by
+  default as separately scalable workloads; supported external Postgres and
+  registry providers do not change the reconciliation model.
+- Installer-owned bootstrap resources and `skalid`-owned platform/project
+  resources have disjoint ownership and prune boundaries.
 
 ## 20. R0 questions that still require concrete fixtures
 
@@ -1899,6 +2071,8 @@ These are intentionally narrow design details, not unresolved architecture:
 - Default env-file discovery/confirmation rules and exact dotenv compatibility.
 - Exact local builder implementation, cloud build-context upload protocol, and
   reproducibility/provenance metadata.
+- Exact installer state-file schema, non-interactive configuration format,
+  K3s version/channel policy, and multi-node upgrade sequencing UX.
 - Standard OCI registry distribution, durable storage driver, authentication,
   and bootstrap configuration.
 - Run-log retention limits and whether step logs use SSE or another streaming

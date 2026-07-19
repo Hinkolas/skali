@@ -15,14 +15,17 @@ fabric) has been torn down; auth, the API framework, the web UI, and the CLI
 remain. The service model (projects → applications/databases) is built next
 on the k3s substrate. Roadmap: [`.plan/07-roadmap.md`](.plan/07-roadmap.md).
 
-One API (`/v1`), three consumers:
+Distinct product and operational roles:
 
-- **`skalid`** — the control plane: REST API + (soon) the controller. One
-  instance, in-cluster in production; nodes run only k3s. Also carries the
-  operator commands (`user`, `migrate`).
+- **`skalid`** — the control plane: REST API + (soon) the controller. It runs
+  inside Kubernetes in production and also carries the operator commands
+  (`user`, `migrate`).
 - **`skali`** — the workflow-oriented CLI. It owns local manifest, build,
   terminal, and development-runtime workflows and uses the public API for
-  remote state changes.
+  remote state changes; it does not administer production Kubernetes.
+- **`skali-installer`** *(planned)* — the privileged, repeatable installation
+  and recovery tool for host-level k3s lifecycle and installer-owned Skali
+  system resources. It is not a continuously running host daemon.
 - **`web/`** — SvelteKit BFF (adapter-node). Owns the browser session cookie
   and proxies `/api/v1/*` to the daemon; the bearer token never reaches
   browser JavaScript.
