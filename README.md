@@ -11,9 +11,9 @@ generic orchestration. The v2 architecture and rationale live in
 
 **Status:** V2 rearchitecture. The hand-rolled substrate has been removed;
 the strict manifest parser, editor schema, normalized compiler IR, dependency
-graph, deterministic Kubernetes renderer, and the installer cluster-layout
-schema are in place. The current architecture and roadmap are in
-[`REWORK_V2.md`](REWORK_V2.md).
+graph, deterministic Kubernetes renderer, the installer cluster-layout
+schema, and the run/claim lifecycle contracts are in place. The current
+architecture and roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
 
 Distinct product and operational roles:
 

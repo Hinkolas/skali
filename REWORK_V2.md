@@ -873,6 +873,36 @@ Step keys are deterministic so a restarted controller can reattach to or
 reconstruct the same logical step. Log entries are append-only, bounded, and
 redacted.
 
+Statuses form small closed machines:
+
+```text
+Run     pending -> running | cancelled
+        running -> succeeded | failed | cancelled
+
+Step    pending -> waiting | running | skipped | cancelled
+        waiting -> running | skipped | failed | cancelled
+        running -> waiting | succeeded | failed | cancelled
+
+Attempt running -> succeeded | failed | cancelled
+```
+
+- `waiting` is the visible dependency state from the reconciliation kernel: a
+  step that cannot proceed names what it is waiting for instead of retrying
+  opaquely, and a policy timeout fails it.
+- Retries stay inside one step. An attempt exists only once it has started, a
+  new attempt starts only after the previous one is terminal, and the step
+  stays `running` across attempts until it succeeds or retry policy declares
+  it failed.
+- Parent steps aggregate children: succeeded when every child succeeded or was
+  skipped, failed or cancelled when a child is.
+- A run reaching a terminal status forces every non-terminal step and attempt
+  terminal: running work is cancelled or failed, unstarted work is skipped.
+- A second operation queued behind an environment's single in-flight rollout
+  is a `pending` run.
+- On controller restart, an attempt whose executor no longer exists is failed
+  with a restart diagnostic; the deterministic step key lets the controller
+  reattach and continue the same run toward the unchanged target.
+
 A deployment should read approximately like:
 
 ```text
@@ -1015,6 +1045,36 @@ A logical database inside a cluster:
 System-owned assignment from claim to cluster. It is not part of the portable
 project definition or immutable revision because the platform may relocate a
 tenant without changing user intent.
+
+#### Claim lifecycle
+
+A claim moves through durable phases. Transient progress and failure detail
+belong to runs and health diagnostics, never to the phase:
+
+```text
+pending -> bound | released
+bound -> provisioned | pending | releasing
+provisioned -> releasing
+releasing -> released
+```
+
+- `pending`: recorded, no placement. An unsatisfiable claim stays pending with
+  a visible waiting condition; there is no failed phase because
+  level-triggered reconciliation keeps working toward the phase's goal.
+- `bound`: a placement assigns the claim to a cluster; tenant provisioning and
+  repair happen here. Revoking a placement before provisioning returns the
+  claim to pending.
+- `provisioned`: tenant identity, credential reference, and connection outputs
+  are durably recorded, and consumers may bind. Relocation supersedes the
+  placement without changing the phase.
+- `releasing`: a persisted destructive decision started teardown. The
+  transition is one-way because data may already be destroyed.
+- `released`: teardown finished; identity is retained for history.
+
+A claim deleted before it was ever placed releases directly
+(`pending -> released`). Bucket claims are expected to reuse the same phase
+machine. The bootstrap control-plane database has no claim and no phase; the
+substrate cannot select it.
 
 #### Database engine driver
 
