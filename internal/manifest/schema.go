@@ -52,6 +52,10 @@ func Schema() (*jsonschema.Schema, error) {
 	for _, collection := range []string{"applications", "databases", "buckets", "backups"} {
 		schema.Properties[collection].PropertyNames = stableKeySchema()
 	}
+	schema.Properties["values"].PropertyNames = &jsonschema.Schema{
+		Type:    "string",
+		Pattern: valueNamePattern.String(),
+	}
 
 	application := schema.Properties["applications"].AdditionalProperties
 	application.AllOf = append(application.AllOf, &jsonschema.Schema{OneOf: []*jsonschema.Schema{

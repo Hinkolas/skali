@@ -9,6 +9,8 @@ import (
 
 var stableKeyPattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,62}$")
 
+var valueNamePattern = regexp.MustCompile("^[A-Z_][A-Z0-9_]*$")
+
 func Validate(document *Document) Diagnostics {
 	project := document.Project
 	var diagnostics Diagnostics
@@ -24,6 +26,12 @@ func Validate(document *Document) Diagnostics {
 	}
 	if len(project.Applications)+len(project.Databases)+len(project.Buckets) == 0 {
 		add("", "must declare at least one application, database, or bucket")
+	}
+
+	for _, key := range sortedKeys(project.Values) {
+		if !valueNamePattern.MatchString(key) {
+			add("values."+key, "value names must be uppercase environment-variable names such as APP_DOMAIN")
+		}
 	}
 
 	for _, key := range sortedKeys(project.Applications) {

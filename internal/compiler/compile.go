@@ -62,6 +62,11 @@ func Compile(document *manifest.Document) (*Result, error) {
 		definition.Backups[key] = b.compileBackup(key, source.Backups[key])
 	}
 
+	for _, name := range mapKeys(source.Values) {
+		if _, used := b.variables[name]; !used {
+			b.add("values."+name, "is declared but never referenced")
+		}
+	}
 	for _, name := range mapKeys(b.variables) {
 		definition.RequiredVariables = append(definition.RequiredVariables, b.variables[name])
 	}
@@ -117,7 +122,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 				b.add(path, "%s", err)
 				continue
 			}
-			b.collectVariables(path, expression)
+			b.collectVariables(path, expression, false)
 			arguments[name] = expression
 		}
 		result.Source = ApplicationSource{Kind: "build", Build: Build{
@@ -144,7 +149,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path, "a project variable or service output must occupy the entire environment value")
 			continue
 		}
-		b.collectVariables(path, expression)
+		b.collectVariables(path, expression, true)
 		for _, part := range expression.Parts {
 			if part.Kind == "service_output" {
 				b.dependencies[owner][part.Collection+"."+part.Service] = struct{}{}
@@ -173,7 +178,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path+".domain", "%s", err)
 			continue
 		}
-		b.collectVariables(path+".domain", domain)
+		b.collectVariables(path+".domain", domain, false)
 		routePath := route.Path
 		if routePath == "" {
 			routePath = "/"
@@ -456,10 +461,19 @@ func (b *builder) compileBackup(key string, source manifest.Backup) Backup {
 	}
 }
 
-func (b *builder) collectVariables(path string, expression Expression) {
+func (b *builder) collectVariables(path string, expression Expression, secretAllowed bool) {
 	for _, part := range expression.Parts {
 		if part.Kind != "project_variable" {
 			continue
+		}
+		declaration, declared := b.document.Project.Values[part.Name]
+		if declared && declaration.Secret {
+			if part.HasDefault {
+				b.add(path, "secret project value %s cannot carry an inline default", part.Name)
+			}
+			if !secretAllowed {
+				b.add(path, "secret project value %s may only be used in application environment variables", part.Name)
+			}
 		}
 		requirement, exists := b.variables[part.Name]
 		if !exists {
@@ -468,6 +482,10 @@ func (b *builder) collectVariables(path string, expression Expression) {
 				Required:   !part.HasDefault,
 				Default:    part.Default,
 				HasDefault: part.HasDefault,
+			}
+			if declared {
+				requirement.Secret = declaration.Secret
+				requirement.Description = declaration.Description
 			}
 			b.variables[part.Name] = requirement
 			b.variablePath[part.Name] = path

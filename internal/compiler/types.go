@@ -20,10 +20,12 @@ type ProjectDefinition struct {
 }
 
 type VariableRequirement struct {
-	Name       string "json:\"name\""
-	Required   bool   "json:\"required\""
-	Default    string "json:\"default,omitempty\""
-	HasDefault bool   "json:\"hasDefault,omitempty\""
+	Name        string "json:\"name\""
+	Required    bool   "json:\"required\""
+	Default     string "json:\"default,omitempty\""
+	HasDefault  bool   "json:\"hasDefault,omitempty\""
+	Secret      bool   "json:\"secret,omitempty\""
+	Description string "json:\"description,omitempty\""
 }
 
 type Expression struct {

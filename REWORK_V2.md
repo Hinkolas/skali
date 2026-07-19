@@ -495,6 +495,12 @@ shape is fixed:
 version: "1"
 name: example
 
+values:
+  APP_DOMAIN:
+    description: Public domain for the web application.
+  API_KEY:
+    secret: true
+
 applications:
   web:
     build:
@@ -545,6 +551,13 @@ This is illustrative, not a frozen field spelling. The design rules are frozen:
   resource identities internally.
 - `${NAME}` and `${NAME:-default}` reference the selected environment's project
   value space. The compiler derives requirements from their use.
+- The optional top-level `values` collection declares metadata for project
+  values: `secret` and `description`. Existence, required-ness, and defaults
+  still derive from use; secrecy comes only from this declaration. A declared
+  value that is never referenced is an error.
+- A secret value cannot carry an inline default and may only be referenced
+  where the rendered position is secret-capable; initially that is application
+  environment variables.
 - `{{databases.<key>.<output>}}` and `{{buckets.<key>.<output>}}` are parsed into
   typed output references and dependencies; they are not runtime string
   templates.
@@ -594,8 +607,9 @@ The CLI accepts dotenv-style files as the initial ergonomic input format:
 Required keys and defaults are derived from `${NAME}` and
 `${NAME:-default}` expressions in the compiled definition. Missing required
 keys fail planning. Unknown keys are rejected or require an explicit ignore
-flag. The remote environment store records whether a key is secret; the dotenv
-format itself does not decide secrecy.
+flag. Secrecy comes from the manifest's `values` declarations and is recorded
+by the remote environment store; the dotenv format itself never decides
+secrecy.
 
 An environment file may contain both plain and secret values. When uploaded,
 `skalid` separates them: plain typed values enter `EnvironmentValues`; secret

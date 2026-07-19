@@ -865,6 +865,28 @@
       "description": "Stable project name.",
       "pattern": "^[a-z][a-z0-9-]{0,62}$"
     },
+    "values": {
+      "type": "object",
+      "description": "Project value declarations keyed by environment value name.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Human-readable purpose of the value."
+          },
+          "secret": {
+            "type": "boolean",
+            "description": "Marks the value as secret: it enters the secret store, is redacted everywhere, and is usable only in secret-capable positions."
+          }
+        },
+        "additionalProperties": false
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Z_][A-Z0-9_]*$"
+      }
+    },
     "version": {
       "type": "string",
       "description": "Manifest schema version. Currently 1.",

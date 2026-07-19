@@ -19,6 +19,13 @@ func TestCompileExamples(t *testing.T) {
 
 	files := compileFixture(t, filepath.Join("..", "..", "examples", "file-sharing", "skali.yml"))
 	require.Equal(t, []string{"buckets.files", "databases.data"}, files.Definition.Dependencies["applications.web"])
+	variables := make(map[string]VariableRequirement, len(files.Definition.RequiredVariables))
+	for _, requirement := range files.Definition.RequiredVariables {
+		variables[requirement.Name] = requirement
+	}
+	require.True(t, variables["SESSION_SECRET"].Secret)
+	require.NotEmpty(t, variables["SESSION_SECRET"].Description)
+	require.False(t, variables["APP_DOMAIN"].Secret)
 	require.EqualValues(t, 200, files.Definition.Applications["web"].Resources.Requests.MilliCPU)
 	require.EqualValues(t, 256_000_000, files.Definition.Applications["web"].Resources.Requests.MemoryBytes)
 	require.EqualValues(t, 20_000_000_000, files.Definition.Databases["data"].StorageBytes)
@@ -89,6 +96,77 @@ func TestValidateEnvironment(t *testing.T) {
 		"APP_DOMAIN": "hello.localhost",
 		"UNUSED":     "value",
 	}), "unknown project variables: UNUSED")
+}
+
+func TestSecretValueRejectedOutsideApplicationEnvironment(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: secret-route
+values:
+  APP_DOMAIN:
+    secret: true
+applications:
+  api:
+    image: example.invalid/api:1
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        port: http
+`)
+	require.ErrorContains(t, err, "secret project value APP_DOMAIN may only be used in application environment variables")
+}
+
+func TestSecretValueRejectsInlineDefault(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: secret-default
+values:
+  API_KEY:
+    secret: true
+applications:
+  api:
+    image: example.invalid/api:1
+    environment:
+      API_KEY: "${API_KEY:-fallback}"
+`)
+	require.ErrorContains(t, err, "secret project value API_KEY cannot carry an inline default")
+}
+
+func TestDeclaredValueMustBeReferenced(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: unused-value
+values:
+  UNUSED:
+    description: never referenced
+applications:
+  api:
+    image: example.invalid/api:1
+`)
+	require.ErrorContains(t, err, "values.UNUSED: is declared but never referenced")
+}
+
+func TestValueNamesMustBeEnvironmentStyle(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: bad-value-name
+values:
+  lowercase:
+    description: wrong shape
+applications:
+  api:
+    image: example.invalid/api:1
+    environment:
+      X: "${lowercase}"
+`)
+	require.ErrorContains(t, err, "value names must be uppercase environment-variable names")
 }
 
 func TestRollingUpdateDefaultsSurgeWhenUnavailableIsSpecified(t *testing.T) {

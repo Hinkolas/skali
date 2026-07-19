@@ -4,22 +4,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/values"
 )
 
 func newValidateCmd() *cobra.Command {
-	var manifestPath string
+	var (
+		manifestPath  string
+		envFile       string
+		ignoreUnknown bool
+	)
 	command := &cobra.Command{
 		Use:   "validate",
-		Short: "Validate a Skali project manifest",
+		Short: "Validate a Skali project manifest and optionally an environment file",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			result, document, err := loadAndCompile(manifestPath)
@@ -37,20 +40,31 @@ func newValidateCmd() *cobra.Command {
 				len(result.Definition.RequiredVariables),
 				result.Hash,
 			)
+			if envFile != "" {
+				resolved, path, err := resolveValues(result, envFile, ignoreUnknown)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(command.OutOrStdout(), "  values %s: %d plain, %d secret\n",
+					path, len(resolved.Plain), len(resolved.Secret))
+			}
 			return nil
 		},
 	}
 	command.Flags().StringVar(&manifestPath, "manifest", "", "manifest path; defaults to skali.yml or skali.yaml")
+	command.Flags().StringVar(&envFile, "env-file", "", "dotenv file validated against the manifest's value requirements")
+	command.Flags().BoolVar(&ignoreUnknown, "ignore-unknown-values", false, "drop environment-file keys the manifest does not require")
 	return command
 }
 
 func newCompileCmd() *cobra.Command {
 	var (
-		manifestPath string
-		target       string
-		envFile      string
-		namespace    string
-		images       []string
+		manifestPath  string
+		target        string
+		envFile       string
+		ignoreUnknown bool
+		namespace     string
+		images        []string
 	)
 	command := &cobra.Command{
 		Use:   "compile",
@@ -70,7 +84,7 @@ func newCompileCmd() *cobra.Command {
 				_, err = fmt.Fprintln(command.OutOrStdout(), string(data))
 				return err
 			case "kubernetes":
-				values, err := readValues(envFile)
+				resolved, _, err := resolveValues(result, envFile, ignoreUnknown)
 				if err != nil {
 					return err
 				}
@@ -83,7 +97,7 @@ func newCompileCmd() *cobra.Command {
 				}
 				objects, err := kubernetes.Render(result, kubernetes.Options{
 					Namespace:   namespace,
-					Variables:   values,
+					Variables:   resolved.Merged(),
 					BuildImages: buildImages,
 				})
 				if err != nil {
@@ -103,6 +117,7 @@ func newCompileCmd() *cobra.Command {
 	command.Flags().StringVar(&manifestPath, "manifest", "", "manifest path; defaults to skali.yml or skali.yaml")
 	command.Flags().StringVar(&target, "target", "definition", "compile target: definition or kubernetes")
 	command.Flags().StringVar(&envFile, "env-file", "", "dotenv file used to resolve project variables for Kubernetes rendering")
+	command.Flags().BoolVar(&ignoreUnknown, "ignore-unknown-values", false, "drop environment-file keys the manifest does not require")
 	command.Flags().StringVar(&namespace, "namespace", "", "Kubernetes namespace used for rendering")
 	command.Flags().StringArrayVar(&images, "image", nil, "prepared image for a build application, as service=reference")
 	return command
@@ -128,19 +143,23 @@ func loadAndCompile(explicit string) (*compiler.Result, *manifest.Document, erro
 	return result, document, nil
 }
 
-func readValues(path string) (map[string]string, error) {
-	if path == "" {
-		return map[string]string{}, nil
+// resolveValues imports and validates the selected environment file against
+// the compiled definition. Without a file it resolves an empty value set, so
+// definitions whose values all carry defaults still render.
+func resolveValues(result *compiler.Result, envFile string, ignoreUnknown bool) (values.Resolved, string, error) {
+	file := &values.File{Path: "(none)", Values: map[string]string{}}
+	if envFile != "" {
+		parsed, err := values.ParseFile(envFile)
+		if err != nil {
+			return values.Resolved{}, "", err
+		}
+		file = parsed
 	}
-	absolute, err := filepath.Abs(path)
+	resolved, err := values.Resolve(result.Definition.RequiredVariables, file, values.Options{IgnoreUnknown: ignoreUnknown})
 	if err != nil {
-		return nil, fmt.Errorf("resolve --env-file: %w", err)
+		return values.Resolved{}, "", fmt.Errorf("%s: %w", file.Path, err)
 	}
-	values, err := godotenv.Read(absolute)
-	if err != nil {
-		return nil, fmt.Errorf("read environment file %s: %w", absolute, err)
-	}
-	return values, nil
+	return resolved, file.Path, nil
 }
 
 func parseImages(values []string) (map[string]string, error) {
