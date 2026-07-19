@@ -20,8 +20,8 @@ $RECYCLE.BIN/
 !.env.example
 *.pem
 *.key
-secrets.*
-credentials.*
+.secrets.*
+.credentials.*
 
 # --- Editor / IDE ---
 .vscode/

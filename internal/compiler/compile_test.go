@@ -91,6 +91,116 @@ func TestValidateEnvironment(t *testing.T) {
 	}), "unknown project variables: UNUSED")
 }
 
+func TestRollingUpdateDefaultsSurgeWhenUnavailableIsSpecified(t *testing.T) {
+	t.Parallel()
+	result, err := compileManifest(t, `
+version: "1"
+name: rollout-defaults
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        maxUnavailable: 0
+`)
+	require.NoError(t, err)
+	require.Equal(t, Rollout{
+		Strategy:       "rolling",
+		MaxUnavailable: 0,
+		MaxSurge:       1,
+	}, result.Definition.Applications["api"].Deployment.Rollout)
+}
+
+func TestRollingUpdateRejectsZeroUnavailableAndSurge(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: invalid-rollout
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        maxUnavailable: 0
+        maxSurge: 0
+`)
+	require.ErrorContains(t, err, "maxUnavailable and maxSurge cannot both be zero")
+}
+
+func TestRollingUpdateRejectsNegativeValues(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: invalid-rollout
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        maxUnavailable: -1
+`)
+	require.ErrorContains(t, err, "maxUnavailable: must not be negative")
+}
+
+func TestVolumeBackedApplicationDefaultsToRecreate(t *testing.T) {
+	t.Parallel()
+	result, err := compileManifest(t, `
+version: "1"
+name: volume-rollout
+applications:
+  api:
+    image: example.invalid/api:1
+    volumes:
+      data:
+        mountPath: /data
+        size: 1GB
+`)
+	require.NoError(t, err)
+	require.Equal(t, "recreate", result.Definition.Applications["api"].Deployment.Rollout.Strategy)
+}
+
+func TestVolumeBackedApplicationRejectsRollingStrategy(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: invalid-volume-rollout
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        strategy: rolling
+    volumes:
+      data:
+        mountPath: /data
+        size: 1GB
+`)
+	require.ErrorContains(t, err, "persistent volumes currently require recreate rollout strategy")
+}
+
+func TestRecreateRejectsRollingUpdateControls(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: invalid-recreate
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        strategy: recreate
+        maxSurge: 1
+`)
+	require.ErrorContains(t, err, "maxSurge: is only valid when strategy is rolling")
+}
+
+func compileManifest(t *testing.T, source string) (*Result, error) {
+	t.Helper()
+	document, err := manifest.Parse([]byte(source), "skali.yml")
+	require.NoError(t, err)
+	return Compile(document)
+}
+
 func compileFixture(t *testing.T, path string) *Result {
 	t.Helper()
 	document, err := manifest.ParseFile(path)

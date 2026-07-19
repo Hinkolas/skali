@@ -952,6 +952,9 @@ Initial runtime capabilities:
 - Deployment/Service/Ingress/PVC planning.
 - Managed-registry, digest-pinned pods regardless of whether the source was an
   imported image, local build, or cloud build.
+- Volume-backed applications initially use one replica and `Recreate` rollout;
+  rolling replacement remains unavailable until the selected storage
+  capability safely supports concurrent members.
 - Member-level health and node placement from `ObservedStore`.
 - Start/stop/restart expressed as explicit runtime intent or operations, not
   hidden changes outside the model.
@@ -1699,7 +1702,12 @@ Deliver:
 - `ObservedStore` and fake implementation.
 - Kubernetes LIST/WATCH implementation and cache-readiness state.
 - Ownership indexes and affected-owner queue.
-- Generic apply/prune engine.
+- Generic apply/prune engine with an explicit server-side-apply field-ownership
+  contract, including fields controlled by Kubernetes subresources and other
+  controllers.
+- Safe fixed-to-HPA and HPA-to-fixed transitions. While an HPA is active,
+  `skalid` omits and does not own `Deployment.spec.replicas`; transition ordering
+  prevents a transient reset to Kubernetes' default replica count.
 - Periodic audit/resync.
 - Projection invalidation stream.
 - Structured health diagnostics.
@@ -1710,6 +1718,8 @@ Exit criteria:
   interval.
 - Watch disconnect is visible as stale/unknown and recovers cleanly.
 - Deleting a managed stateless object out of band causes healing.
+- Reapplying an autoscaled application neither conflicts with the HPA nor resets
+  its current replica count.
 - API topology reads perform no direct Kubernetes request.
 - Restart rebuilds the cache before reporting fresh health.
 

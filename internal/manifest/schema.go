@@ -92,7 +92,10 @@ func Schema() (*jsonschema.Schema, error) {
 
 	application.Properties["placement"].Properties["spread"].Properties["across"].Enum = enum("nodes", "zones")
 	application.Properties["placement"].Properties["spread"].Properties["enforcement"].Enum = enum("preferred", "required")
-	application.Properties["deployment"].Properties["rollout"].Properties["strategy"].Enum = enum("rolling", "recreate")
+	rollout := application.Properties["deployment"].Properties["rollout"]
+	rollout.Properties["strategy"].Enum = enum("rolling", "recreate")
+	rollout.Properties["maxUnavailable"].Minimum = floatPointer(0)
+	rollout.Properties["maxSurge"].Minimum = floatPointer(0)
 	setDuration(application.Properties["deployment"].Properties["releaseCommand"], "timeout")
 	setDuration(application.Properties["deployment"].Properties["rollout"], "timeout")
 	setDuration(application.Properties["shutdown"], "gracePeriod")

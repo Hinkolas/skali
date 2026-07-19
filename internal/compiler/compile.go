@@ -249,17 +249,47 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 	strategy := rollout.Strategy
 	if strategy == "" {
 		strategy = "rolling"
+		if len(source.Volumes) > 0 {
+			strategy = "recreate"
+		}
 	}
 	if !oneOf(strategy, "rolling", "recreate") {
 		b.add(base+".deployment.rollout.strategy", "must be rolling or recreate")
 	}
+	maxUnavailablePath := base + ".deployment.rollout.maxUnavailable"
+	maxSurgePath := base + ".deployment.rollout.maxSurge"
+	hasMaxUnavailable := b.document.Has(maxUnavailablePath)
+	hasMaxSurge := b.document.Has(maxSurgePath)
+	maxUnavailable := rollout.MaxUnavailable
 	maxSurge := rollout.MaxSurge
-	if !b.document.Has(base+".deployment.rollout.maxSurge") && !b.document.Has(base+".deployment.rollout.maxUnavailable") {
+	if maxUnavailable < 0 {
+		b.add(maxUnavailablePath, "must not be negative")
+	}
+	if maxSurge < 0 {
+		b.add(maxSurgePath, "must not be negative")
+	}
+	if strategy == "rolling" && !hasMaxSurge {
 		maxSurge = 1
+	}
+	if strategy == "rolling" && maxUnavailable == 0 && maxSurge == 0 {
+		b.add(base+".deployment.rollout", "maxUnavailable and maxSurge cannot both be zero")
+	}
+	if strategy == "recreate" {
+		if hasMaxUnavailable {
+			b.add(maxUnavailablePath, "is only valid when strategy is rolling")
+		}
+		if hasMaxSurge {
+			b.add(maxSurgePath, "is only valid when strategy is rolling")
+		}
+		maxUnavailable = 0
+		maxSurge = 0
+	}
+	if len(source.Volumes) > 0 && strategy == "rolling" {
+		b.add(base+".deployment.rollout.strategy", "persistent volumes currently require recreate rollout strategy")
 	}
 	result.Deployment.Rollout = Rollout{
 		Strategy:       strategy,
-		MaxUnavailable: rollout.MaxUnavailable,
+		MaxUnavailable: maxUnavailable,
 		MaxSurge:       maxSurge,
 		TimeoutMillis:  b.duration(base+".deployment.rollout.timeout", rollout.Timeout),
 	}

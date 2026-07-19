@@ -118,7 +118,11 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		})
 	}
 
-	replicas := int32(application.Scaling.MinReplicas)
+	autoscalingEnabled := application.Scaling.MaxReplicas > application.Scaling.MinReplicas
+	var replicas *int32
+	if !autoscalingEnabled {
+		replicas = int32Pointer(int32(application.Scaling.MinReplicas))
+	}
 	graceSeconds := int64(time.Duration(application.Shutdown.GracePeriodMillis) * time.Millisecond / time.Second)
 	deployment := &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
@@ -128,7 +132,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			Labels:    cloneMap(labels),
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
+			Replicas: replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: cloneMap(labels)},
 			Strategy: renderStrategy(application.Deployment.Rollout),
 			Template: corev1.PodTemplateSpec{
@@ -210,7 +214,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		objects = append(objects, ingress)
 	}
 
-	if application.Scaling.MaxReplicas > application.Scaling.MinReplicas {
+	if autoscalingEnabled {
 		target := int32(application.Scaling.CPUTargetUtilization)
 		objects = append(objects, &autoscalingv2.HorizontalPodAutoscaler{
 			TypeMeta: metav1.TypeMeta{APIVersion: "autoscaling/v2", Kind: "HorizontalPodAutoscaler"},

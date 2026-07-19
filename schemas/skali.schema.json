@@ -91,10 +91,12 @@
                 "type": "object",
                 "properties": {
                   "maxSurge": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 0
                   },
                   "maxUnavailable": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 0
                   },
                   "strategy": {
                     "type": "string",

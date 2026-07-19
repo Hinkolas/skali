@@ -73,6 +73,7 @@ func TestRenderBuildApplicationWithManagedOutputs(t *testing.T) {
 	require.Len(t, objects, 4)
 	deployment, ok := objects[0].(*appsv1.Deployment)
 	require.True(t, ok)
+	require.Nil(t, deployment.Spec.Replicas, "the HPA must exclusively own Deployment.spec.replicas")
 	require.Len(t, deployment.Spec.Template.Spec.TopologySpreadConstraints, 1)
 	require.Nil(t, deployment.Spec.Template.Spec.TopologySpreadConstraints[0].MinDomains,
 		"preferred spreading must not emit Kubernetes' DoNotSchedule-only minDomains")
@@ -80,6 +81,33 @@ func TestRenderBuildApplicationWithManagedOutputs(t *testing.T) {
 	environment := deployment.Spec.Template.Spec.Containers[0].Env
 	require.Contains(t, environment, environmentVariableFromSecret("POSTGRES_HOST", "skali-output-databases-data", "host"))
 	require.Contains(t, environment, environmentVariableFromSecret("S3_ENDPOINT", "skali-output-buckets-files", "endpoint"))
+}
+
+func TestRenderVolumeBackedApplicationUsesRecreate(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+version: "1"
+name: volume-rollout
+applications:
+  api:
+    image: example.invalid/api:1
+    volumes:
+      data:
+        mountPath: /data
+        size: 1GB
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	objects, err := Render(result, Options{Namespace: "skali-volume-rollout"})
+	require.NoError(t, err)
+	require.Len(t, objects, 2)
+
+	deployment, ok := objects[1].(*appsv1.Deployment)
+	require.True(t, ok)
+	require.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
+	require.Nil(t, deployment.Spec.Strategy.RollingUpdate)
 }
 
 func environmentVariableFromSecret(variable, secret, key string) corev1.EnvVar {
