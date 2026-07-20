@@ -275,10 +275,10 @@ func TestDevEndToEnd(t *testing.T) {
 	})
 
 	t.Run("ResetConfirmsAndRemoves", func(t *testing.T) {
-		// Refused without the typed confirmation.
-		h.run(true, "no\n", "dev", "reset")
+		// Refused unless explicitly confirmed; No is the default.
+		h.run(true, "\n", "dev", "reset")
 
-		out := h.run(false, "destroy\n", "dev", "reset")
+		out := h.run(false, "y\n", "dev", "reset")
 		require.Contains(t, out, "Delete cluster "+e2eCluster)
 		require.Contains(t, out, "Remove local installation record")
 

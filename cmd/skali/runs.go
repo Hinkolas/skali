@@ -93,9 +93,11 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			for _, line := range clirender.Lines(tree, nil) {
-				fmt.Fprintln(command.OutOrStdout(), line)
-			}
+			out := command.OutOrStdout()
+			// A one-shot renderer: styled glyphs on a terminal, the plain
+			// transcript through a pipe; no rewriting either way.
+			renderer := &clirender.Renderer{Out: out, Style: clirender.StyleFor(out)}
+			renderer.Render(tree)
 			return nil
 		},
 	}

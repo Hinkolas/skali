@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -344,12 +345,16 @@ func ImportImage(ctx context.Context, image string) error {
 }
 
 // BuildSkalidImage builds the control-plane image from the working tree;
-// the developer path until published bootstrap images exist.
-func BuildSkalidImage(ctx context.Context, repoRoot, tag string) error {
+// the developer path until published bootstrap images exist. Build output
+// streams to output; nil falls back to stderr.
+func BuildSkalidImage(ctx context.Context, repoRoot, tag string, output io.Writer) error {
+	if output == nil {
+		output = os.Stderr
+	}
 	args := []string{"build", "-t", tag, "-f", filepath.Join(repoRoot, "build", "skalid.Dockerfile"), repoRoot}
 	command := exec.CommandContext(ctx, "docker", args...)
-	command.Stdout = os.Stderr
-	command.Stderr = os.Stderr
+	command.Stdout = output
+	command.Stderr = output
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("localdev: docker build skalid image: %w", err)
 	}

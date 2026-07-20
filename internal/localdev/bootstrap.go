@@ -18,25 +18,40 @@ type EnsureOptions struct {
 	// SkalidImage overrides the control-plane image; empty keeps the
 	// recorded one.
 	SkalidImage string
-	// Log narrates progress lines ("  ok  Create k3d cluster skali-dev").
-	Log func(format string, args ...any)
+	// Progress narrates the ensure stages.
+	Progress Progress
 }
+
+// Progress receives the ensure stages as they happen: Start begins a
+// stage, Done concludes the running one with optional detail. A stage
+// that errors is never Done; Ensure's caller settles it from the
+// returned error. A nil Progress is silent.
+type Progress interface {
+	Start(title string)
+	Done(detail string)
+}
+
+type silentProgress struct{}
+
+func (silentProgress) Start(string) {}
+func (silentProgress) Done(string)  {}
 
 // Ensure brings the local platform up, idempotently: prerequisites, the
 // k3d cluster (created or restarted with state retained), the skali-system
 // bundle stages in order, and the bootstrap operator user. It returns the
 // installation state for login.
 func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
-	log := opts.Log
-	if log == nil {
-		log = func(string, ...any) {}
+	progress := opts.Progress
+	if progress == nil {
+		progress = silentProgress{}
 	}
 
+	progress.Start("Check prerequisites")
 	docker, k3dVersion, err := CheckPrerequisites(ctx)
 	if err != nil {
 		return nil, err
 	}
-	log("  ok  Check prerequisites: docker %s, k3d %s", docker, k3dVersion)
+	progress.Done(fmt.Sprintf("docker %s, k3d %s", docker, k3dVersion))
 
 	freshInstall := false
 	state, err := LoadState()
@@ -67,25 +82,28 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	}
 	switch status {
 	case ClusterAbsent:
+		progress.Start("Create k3d cluster " + ClusterName())
 		if err := Create(ctx); err != nil {
 			return nil, err
 		}
-		log("  ok  Create k3d cluster %s (%s, pinned)", ClusterName(), K3sImage)
+		progress.Done(K3sImage + ", pinned")
 	case ClusterStopped:
+		progress.Start("Start k3d cluster " + ClusterName())
 		if err := Start(ctx); err != nil {
 			return nil, err
 		}
-		log("  ok  Start k3d cluster %s (state retained)", ClusterName())
+		progress.Done("state retained")
 	case ClusterRunning:
 		if err := WriteKubeconfig(ctx); err != nil {
 			return nil, err
 		}
 	}
 
+	progress.Start("Import " + state.SkalidImage)
 	if err := ImportImage(ctx, state.SkalidImage); err != nil {
 		return nil, err
 	}
-	log("  ok  Import %s", state.SkalidImage)
+	progress.Done("")
 
 	kubeconfig, err := KubeconfigPath()
 	if err != nil {
@@ -95,7 +113,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := applyBundle(ctx, client, state, log); err != nil {
+	if err := applyBundle(ctx, client, state, progress); err != nil {
 		return nil, err
 	}
 	if err := SaveState(state); err != nil {
@@ -104,13 +122,14 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	if err := waitEdgeHealthy(ctx); err != nil {
 		return nil, err
 	}
-	log("  ok  skalid (%s)", MasterURL())
+	progress.Done(MasterURL())
 	return state, nil
 }
 
 // applyBundle drives the ordered stages; every pass is a full converge, so
-// a healthy installation flies through with no-op applies.
-func applyBundle(ctx context.Context, client *kube.Client, state *State, log func(string, ...any)) error {
+// a healthy installation flies through with no-op applies. The final
+// skalid stage stays open for Ensure's edge health check.
+func applyBundle(ctx context.Context, client *kube.Client, state *State, progress Progress) error {
 	applier := &bundle.Applier{Client: client}
 	objects, err := bundle.Render(bundle.Profile{
 		SkalidImage:   state.SkalidImage,
@@ -123,6 +142,7 @@ func applyBundle(ctx context.Context, client *kube.Client, state *State, log fun
 		return err
 	}
 
+	progress.Start("Install blessed operators")
 	if err := applier.ApplyObjects(ctx, objects.Namespace); err != nil {
 		return err
 	}
@@ -132,26 +152,29 @@ func applyBundle(ctx context.Context, client *kube.Client, state *State, log fun
 	if err := applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"); err != nil {
 		return err
 	}
-	log("        ok  Blessed operators: CNPG %s, Traefik (k3s)", bundle.CNPGVersion)
+	progress.Done("CNPG " + bundle.CNPGVersion + ", Traefik (k3s)")
 
 	// Webhook-validated objects race their operator's serving certs; the
 	// retry absorbs the warm-up window.
+	progress.Start("Bootstrap database")
 	if err := applyWithRetry(ctx, applier, objects.Database); err != nil {
 		return err
 	}
 	if err := applier.WaitClusterReady(ctx, bundle.Namespace, "skali-db"); err != nil {
 		return err
 	}
-	log("        ok  Bootstrap database (tier: single)")
+	progress.Done("tier: single")
 
+	progress.Start("Start managed registry")
 	if err := applier.ApplyObjects(ctx, objects.Registry); err != nil {
 		return err
 	}
 	if err := applier.WaitDeploymentReady(ctx, bundle.Namespace, "skali-registry"); err != nil {
 		return err
 	}
-	log("        ok  Managed registry (%s for pushes)", RegistryHost())
+	progress.Done(RegistryHost() + " for pushes")
 
+	progress.Start("Start skalid")
 	if err := applier.ApplyObjects(ctx, objects.Skalid); err != nil {
 		return err
 	}
@@ -213,16 +236,4 @@ func waitEdgeHealthy(ctx context.Context) error {
 		case <-time.After(2 * time.Second):
 		}
 	}
-}
-
-// Reset destroys the complete local installation: cluster, volumes, and
-// the state record.
-func Reset(ctx context.Context) error {
-	status, err := Status(ctx)
-	if err == nil && status != ClusterAbsent {
-		if err := Delete(ctx); err != nil {
-			return err
-		}
-	}
-	return RemoveState()
 }

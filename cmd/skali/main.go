@@ -14,6 +14,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/clirender"
 )
 
 const version = "0.1.0-dev"
@@ -32,7 +33,8 @@ func main() {
 		newRunsCommand(), newRunCommand(), newLogsCommand())
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		style := clirender.StyleFor(os.Stderr)
+		fmt.Fprintln(os.Stderr, style.BoldRed("error:"), err)
 		os.Exit(1)
 	}
 }

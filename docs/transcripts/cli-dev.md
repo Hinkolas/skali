@@ -110,15 +110,16 @@ This destroys the complete local installation:
   local Skali state, and all locally deployed project data.
 Nothing outside this machine is affected.
 
-Type "destroy" to continue: destroy
-  ok  Delete cluster skali-dev and volumes
-  ok  Remove local registry storage
-  ok  Remove local installation record
+Destroy the local installation? [y/N] y
+  ok    Delete cluster skali-dev and volumes
+  ok    Remove local registry storage
+  ok    Remove local installation record
 
 $ skali dev
 Local platform is not running. Creating it now.
 ...
 ```
 
-Reset is the only destructive local command, it always confirms, and the next
-`skali dev` builds a clean installation from scratch.
+Reset is the only destructive local command, it always confirms (No is the
+default; `--yes` skips the prompt for scripts), and the next `skali dev`
+builds a clean installation from scratch.

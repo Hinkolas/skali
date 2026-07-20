@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -245,6 +246,7 @@ func resolveBuildArguments(application string, arguments map[string]compiler.Exp
 }
 
 func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.ArtifactAction, activeChecksum string) {
+	style := clirender.StyleFor(out)
 	if activeChecksum != "" {
 		fmt.Fprintf(out, "\nplan against active revision %s\n", shortChecksum(activeChecksum))
 	} else {
@@ -257,7 +259,7 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 	for _, change := range plan.Changes {
 		detail := change.Detail
 		if change.Destructive {
-			detail = "DESTRUCTIVE: " + detail
+			detail = style.BoldRed("DESTRUCTIVE:") + " " + detail
 		}
 		if action, ok := rebuilt[strings.TrimPrefix(change.Service, "applications.")]; ok && change.Action != "remove" {
 			switch action {
@@ -267,20 +269,37 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 				detail = strings.TrimSuffix(detail+"; image will be imported", "; ")
 			}
 		}
-		fmt.Fprintf(out, "  %-7s %-24s %s\n", change.Action, change.Service, detail)
+		fmt.Fprintf(out, "  %s %-24s %s\n", actionColor(style, change.Action), change.Service, detail)
 	}
 	for _, value := range plan.Values {
 		kind := ""
 		if value.Secret {
-			kind = " (secret)"
+			kind = " " + style.Dim("(secret)")
 		}
-		fmt.Fprintf(out, "  %-7s %-24s %s%s\n", "value", value.Name, value.Action, kind)
+		fmt.Fprintf(out, "  %s %-24s %s%s\n", actionColor(style, "value"), value.Name, value.Action, kind)
 	}
 	if plan.Empty() {
-		fmt.Fprintln(out, "  no changes")
+		fmt.Fprintln(out, "  "+style.Dim("no changes"))
 	} else if !plan.Destructive() {
-		fmt.Fprintln(out, "\nno destructive changes")
+		fmt.Fprintln(out, "\n"+style.Dim("no destructive changes"))
 	}
+}
+
+// actionColor paints a plan action word in its own column: additions
+// green, removals red, everything else neutral.
+func actionColor(style *clirender.Style, action string) string {
+	padded := fmt.Sprintf("%-7s", action)
+	switch action {
+	case "create":
+		return style.Green(padded)
+	case "remove", "delete", "destroy":
+		return style.Red(padded)
+	case "update", "replace":
+		return style.Yellow(padded)
+	case "value":
+		return style.Dim(padded)
+	}
+	return padded
 }
 
 func confirm(out io.Writer, prompt string) bool {
@@ -293,33 +312,58 @@ func confirm(out io.Writer, prompt string) bool {
 
 // confirmDestructive requires the environment name typed back.
 func confirmDestructive(out io.Writer, environment string) bool {
-	fmt.Fprintf(out, "\nThis plan is destructive. Type the environment name to continue: ")
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "\n%s Type the environment name to continue: ",
+		style.BoldRed("This plan is destructive."))
 	var answer string
 	_, _ = fmt.Scanln(&answer)
 	return strings.TrimSpace(answer) == environment
 }
 
-// stepLogSink batches engine progress into the journal's client surface.
+// stepLogSink batches engine progress into the journal's client surface;
+// the lock serializes the build engine's stdout and stderr streams.
 type stepLogSink struct {
 	ctx    context.Context
 	api    *client.Client
 	stepID string
+
+	mu     sync.Mutex
 	buffer []client.LogLine
 }
 
 func (s *stepLogSink) Line(level, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.buffer = append(s.buffer, client.LogLine{Level: level, Message: message})
 	if len(s.buffer) >= 25 {
-		s.Flush()
+		s.flushLocked()
 	}
 }
 
 func (s *stepLogSink) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flushLocked()
+}
+
+func (s *stepLogSink) flushLocked() {
 	if len(s.buffer) == 0 {
 		return
 	}
 	_ = s.api.AppendStepLogs(s.ctx, s.stepID, s.buffer)
 	s.buffer = nil
+}
+
+// teeSink forwards journal lines to the server and mirrors them into the
+// live task display, so builds and pulls show their progress locally.
+type teeSink struct {
+	inner *stepLogSink
+	task  *clirender.Task
+}
+
+func (t *teeSink) Line(level, message string) {
+	t.inner.Line(level, message)
+	t.task.Note(message)
 }
 
 // executeActions performs the client side of the artifact window: builds
@@ -329,11 +373,13 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 	variables map[string]string) error {
 
 	engine := &build.Docker{}
+	tasks := clirender.NewTasks(out)
 	runID := opened.Deployment.RunID
 	for _, action := range opened.Actions {
 		switch action.Action {
 		case "reuse":
-			fmt.Fprintf(out, "artifact for %s is current (%s)\n", action.Application, shortChecksum(action.Digest))
+			tasks.Start("artifact for " + action.Application).
+				Skip("current, " + shortChecksum(action.Digest))
 			continue
 		case "build":
 			if _, err := api.EnsureStep(ctx, runID, action.StepKey, action.Application, "artifacts"); err != nil {
@@ -355,6 +401,7 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				return err
 			}
 			stopHeartbeat := startHeartbeat(ctx, api, action.BuildID)
+			task := tasks.Start(fmt.Sprintf("Build %s (%s)", action.Application, action.Platform))
 			sink := &stepLogSink{ctx: ctx, api: api, stepID: buildStep.ID}
 			result, err := engine.Build(ctx, build.BuildRequest{
 				ContextDir: contexts[action.Application].Dir,
@@ -363,13 +410,15 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				Arguments:  arguments,
 				Platform:   action.Platform,
 				PushRef:    action.PushRef,
-			}, sink)
+			}, &teeSink{inner: sink, task: task})
 			sink.Flush()
 			stopHeartbeat()
 			if err != nil {
+				task.Fail()
 				_ = api.SetStepStatus(ctx, buildStep.ID, "failed")
 				return failDeployment(ctx, api, opened, fmt.Errorf("build for %s failed: %w", action.Application, err))
 			}
+			task.Done(shortChecksum(result.Digest))
 			if err := api.SetStepStatus(ctx, buildStep.ID, "succeeded"); err != nil {
 				return err
 			}
@@ -388,13 +437,16 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 			if err := api.SetStepStatus(ctx, importStep.ID, "running"); err != nil {
 				return err
 			}
+			task := tasks.Start("Import " + action.Upstream)
 			sink := &stepLogSink{ctx: ctx, api: api, stepID: importStep.ID}
-			result, err := build.Import(ctx, action.Upstream, action.PushRef, false, sink)
+			result, err := build.Import(ctx, action.Upstream, action.PushRef, false, &teeSink{inner: sink, task: task})
 			sink.Flush()
 			if err != nil {
+				task.Fail()
 				_ = api.SetStepStatus(ctx, importStep.ID, "failed")
 				return failDeployment(ctx, api, opened, fmt.Errorf("import for %s failed: %w", action.Application, err))
 			}
+			task.Done(shortChecksum(result.Digest))
 			if err := api.SetStepStatus(ctx, importStep.ID, "succeeded"); err != nil {
 				return err
 			}
@@ -459,9 +511,11 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID str
 	attachCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 
+	tty := term.IsTerminal(int(os.Stdout.Fd()))
 	renderer := &clirender.Renderer{
-		Out: out,
-		TTY: term.IsTerminal(int(os.Stdout.Fd())),
+		Out:   out,
+		TTY:   tty,
+		Style: clirender.StyleFor(out),
 		Logs: func(stepID string) []string {
 			logs, _, err := api.StepLogs(ctx, stepID, "", 0)
 			if err != nil || len(logs) == 0 {
@@ -479,8 +533,16 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID str
 		},
 	}
 
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+	poll := time.NewTicker(500 * time.Millisecond)
+	defer poll.Stop()
+	// The spinner ticks faster than the server poll so the display stays
+	// visibly alive between snapshots; without a TTY nothing animates.
+	spin := time.NewTicker(150 * time.Millisecond)
+	defer spin.Stop()
+	if !tty {
+		spin.Stop()
+	}
+
 	for {
 		tree, err := api.GetRun(ctx, runID)
 		if err != nil {
@@ -491,13 +553,18 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID str
 		case "succeeded", "failed", "cancelled":
 			return tree.Run.Status, nil
 		}
-		select {
-		case <-attachCtx.Done():
-			renderer.Detach()
-			fmt.Fprintf(out, "\ndetached from run %s; the deployment continues on the server\n", runID)
-			fmt.Fprintf(out, "  reattach  skali run attach %s\n", runID)
-			return "detached", nil
-		case <-ticker.C:
+		for waiting := true; waiting; {
+			select {
+			case <-attachCtx.Done():
+				renderer.Detach()
+				fmt.Fprintf(out, "\ndetached from run %s; the deployment continues on the server\n", runID)
+				fmt.Fprintf(out, "  reattach  skali run attach %s\n", runID)
+				return "detached", nil
+			case <-spin.C:
+				renderer.Tick()
+			case <-poll.C:
+				waiting = false
+			}
 		}
 	}
 }
@@ -525,9 +592,12 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	if err != nil {
 		return "", err
 	}
+	style := clirender.StyleFor(out)
 	master := cfg.Contexts[contextName].Master
-	fmt.Fprintf(out, "project      %s (%s)\n", project.Result.Definition.Name, filepath.Base(project.Path))
-	fmt.Fprintf(out, "environment  %s (%s)\n", opts.Environment, master)
+	fmt.Fprintf(out, "%s      %s %s\n", style.Dim("project"),
+		project.Result.Definition.Name, style.Dim("("+filepath.Base(project.Path)+")"))
+	fmt.Fprintf(out, "%s  %s %s\n", style.Dim("environment"),
+		opts.Environment, style.Dim("("+master+")"))
 
 	projectID, environmentID, err := resolveEnvironmentIDs(ctx, api,
 		project.Result.Definition.Name, opts.Environment, opts.CreateMissing)
@@ -568,10 +638,12 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 				return "", err
 			}
 			candidateID = staged.CandidateID
-			fmt.Fprintf(out, "values       %s (%d plain, %d secret)\n", file.Path, len(staged.Plain), len(staged.Secret))
+			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("values"), file.Path,
+				style.Dim(fmt.Sprintf("(%d plain, %d secret)", len(staged.Plain), len(staged.Secret))))
 		} else {
 			plain, secret := countBySecrecy(project.Result, file)
-			fmt.Fprintf(out, "values       %s (%d plain, %d secret; validated, not uploaded)\n", file.Path, plain, secret)
+			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("values"), file.Path,
+				style.Dim(fmt.Sprintf("(%d plain, %d secret; validated, not uploaded)", plain, secret)))
 		}
 		excludeFiles = append(excludeFiles, file.Path)
 	}
@@ -634,12 +706,13 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		fmt.Fprintln(out, "\nnothing to deploy")
 		return deployOutcomeUpToDate, nil
 	}
-	fmt.Fprintf(out, "\nrun %s  deploy %s to %s\n", opened.Deployment.RunID,
-		project.Result.Definition.Name, opts.Environment)
+	fmt.Fprintf(out, "\n%s %s  deploy %s to %s\n", style.Dim("run"),
+		style.Bold(opened.Deployment.RunID), project.Result.Definition.Name, opts.Environment)
 
 	if err := executeActions(ctx, out, api, opened, project, contexts, localValues); err != nil {
-		fmt.Fprintf(out, "\nrun %s failed: %v\n", opened.Deployment.RunID, err)
-		fmt.Fprintln(out, "\nThe environment is unchanged: staged values discarded, target and active revision untouched.")
+		fmt.Fprintf(out, "\n%srun %s %s: %v\n", style.Cross(),
+			opened.Deployment.RunID, style.Red("failed"), err)
+		fmt.Fprintln(out, "\n"+style.Dim("The environment is unchanged: staged values discarded, target and active revision untouched."))
 		return "", errors.New("deployment failed")
 	}
 	if _, err := api.CompleteDeployment(ctx, opened.Deployment.ID); err != nil {
@@ -655,7 +728,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	}
 	switch status {
 	case "succeeded":
-		fmt.Fprintln(out, "\nready")
+		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
 		return deployOutcomeReady, nil
 	case "failed":
 		return "", fmt.Errorf("run %s failed", opened.Deployment.RunID)

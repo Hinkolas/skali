@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliconfig"
+	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/localdev"
 )
 
@@ -140,17 +140,23 @@ func newDevCommand() *cobra.Command {
 			if err := localdev.Stop(command.Context()); err != nil {
 				return err
 			}
-			fmt.Fprintln(command.OutOrStdout(), "stopped local platform; state is retained")
+			out := command.OutOrStdout()
+			fmt.Fprintf(out, "%sstopped local platform; state is retained\n",
+				clirender.StyleFor(out).Check())
 			return nil
 		},
 	}
 
+	var resetYes bool
 	reset := &cobra.Command{
 		Use:   "reset",
 		Short: "Destroy the complete local installation",
 		Args:  cobra.NoArgs,
-		RunE:  runDevReset,
+		RunE: func(command *cobra.Command, args []string) error {
+			return runDevReset(command, resetYes)
+		},
 	}
+	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
 	command.AddCommand(up, status, logs, down, ls, stop, reset)
 	return command
@@ -162,6 +168,7 @@ func newDevCommand() *cobra.Command {
 func runDevDown(command *cobra.Command, purge, yes bool) error {
 	ctx := command.Context()
 	out := command.OutOrStdout()
+	style := clirender.StyleFor(out)
 	project, err := loadLocalProject("")
 	if err != nil {
 		return err
@@ -173,7 +180,7 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 	}
 
 	if purge && !yes {
-		fmt.Fprintf(out, "This destroys the local environment of %s completely:\n", name)
+		fmt.Fprintln(out, style.BoldRed(fmt.Sprintf("This destroys the local environment of %s completely:", name)))
 		fmt.Fprintln(out, "  its namespace including all volumes, and its values, secrets,")
 		fmt.Fprintln(out, "  revisions, and history on the local platform.")
 		fmt.Fprintln(out, "Nothing outside this machine is affected.")
@@ -200,7 +207,7 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 	if purge {
 		verb = "purge"
 	}
-	fmt.Fprintf(out, "run %s  %s %s\n", runID, verb, name)
+	fmt.Fprintf(out, "%s %s  %s %s\n", style.Dim("run"), style.Bold(runID), verb, name)
 	status, err := attachRun(ctx, out, api, runID)
 	if err != nil {
 		// The purge epilogue deletes the environment row and every run
@@ -222,11 +229,12 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 		if err := waitEnvironmentGone(ctx, api, environmentID); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "\n%s is purged from the local platform; nothing of it remains\n", name)
+		fmt.Fprintf(out, "\n%s%s is purged from the local platform; nothing of it remains\n",
+			style.Check(), name)
 		return nil
 	}
-	fmt.Fprintf(out, "\n%s is down; its data is retained\n", name)
-	fmt.Fprintln(out, "  bring it back  skali dev")
+	fmt.Fprintf(out, "\n%s%s is down; its data is retained\n", style.Check(), name)
+	fmt.Fprintf(out, "  %s  skali dev\n", style.Dim("bring it back"))
 	return nil
 }
 
@@ -295,7 +303,8 @@ func runDevLs(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "%-24s  %-13s  %-10s  %s\n", "PROJECT", "ENVIRONMENT", "STATE", "ACTIVE")
+	style := clirender.StyleFor(out)
+	fmt.Fprintln(out, style.Dim(fmt.Sprintf("%-24s  %-13s  %-10s  %s", "PROJECT", "ENVIRONMENT", "STATE", "ACTIVE")))
 	for _, project := range projects {
 		environments, err := api.ListEnvironments(ctx, project.ID)
 		if err != nil {
@@ -309,10 +318,41 @@ func runDevLs(command *cobra.Command, args []string) error {
 					active = shortChecksum(status.ActiveRevision.Checksum)
 				}
 			}
-			fmt.Fprintf(out, "%-24s  %-13s  %-10s  %s\n", project.Name, environment.Name, state, active)
+			fmt.Fprintf(out, "%-24s  %-13s  %s  %s\n", project.Name, environment.Name,
+				stateColor(style, fmt.Sprintf("%-10s", state)), active)
 		}
 	}
 	return nil
+}
+
+// taskProgress renders localdev ensure stages through the live task
+// printer; an unconcluded stage on error settles as failed via Abort.
+type taskProgress struct {
+	tasks   *clirender.Tasks
+	current *clirender.Task
+}
+
+func (p *taskProgress) Start(title string) {
+	if p.current != nil {
+		p.current.Done("")
+	}
+	p.current = p.tasks.Start(title)
+}
+
+func (p *taskProgress) Done(detail string) {
+	if p.current == nil {
+		return
+	}
+	p.current.Done(detail)
+	p.current = nil
+}
+
+func (p *taskProgress) Abort() {
+	if p.current == nil {
+		return
+	}
+	p.current.Fail()
+	p.current = nil
 }
 
 // ensureLocalPlatform brings the platform up and logs the CLI into it,
@@ -324,16 +364,17 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string) (*localdev.
 	if status, err := localdev.Status(ctx); err == nil && status != localdev.ClusterRunning {
 		fmt.Fprintln(out, "Local platform is not running. Creating it now.")
 	}
+	tasks := clirender.NewTasks(out)
 	if skalidImage == "" {
-		skalidImage = defaultSkalidImage(ctx, out)
+		skalidImage = defaultSkalidImage(ctx, tasks)
 	}
+	progress := &taskProgress{tasks: tasks}
 	state, err := localdev.Ensure(ctx, localdev.EnsureOptions{
 		SkalidImage: skalidImage,
-		Log: func(format string, args ...any) {
-			fmt.Fprintf(out, format+"\n", args...)
-		},
+		Progress:    progress,
 	})
 	if err != nil {
+		progress.Abort()
 		return nil, err
 	}
 	if err := loginLocalContext(ctx, state); err != nil {
@@ -345,15 +386,17 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string) (*localdev.
 // defaultSkalidImage prefers the recorded image, then a working-tree build
 // when the CLI runs inside the repository (the developer path until
 // published bootstrap images exist).
-func defaultSkalidImage(ctx context.Context, out io.Writer) string {
+func defaultSkalidImage(ctx context.Context, tasks *clirender.Tasks) string {
 	if state, err := localdev.LoadState(); err == nil && state.SkalidImage != "" {
 		return state.SkalidImage
 	}
 	if root := findRepoRoot(); root != "" {
-		fmt.Fprintln(out, "building skalid:dev from the working tree")
-		if err := localdev.BuildSkalidImage(ctx, root, "skalid:dev"); err == nil {
+		task := tasks.Start("Build skalid:dev from the working tree")
+		if err := localdev.BuildSkalidImage(ctx, root, "skalid:dev", task.NoteWriter()); err == nil {
+			task.Done("")
 			return "skalid:dev"
 		}
+		task.Fail()
 	}
 	return ""
 }
@@ -439,11 +482,13 @@ func localProjectEnvironment(command *cobra.Command) (*client.Client, string, er
 func runDevStatus(command *cobra.Command, args []string) error {
 	ctx := command.Context()
 	out := command.OutOrStdout()
+	style := clirender.StyleFor(out)
 	clusterStatus, err := localdev.Status(ctx)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "platform   %s (cluster %s, %s)\n", clusterStatus, localdev.ClusterName(), localdev.K3sImage)
+	fmt.Fprintf(out, "platform   %s (cluster %s, %s)\n",
+		stateColor(style, string(clusterStatus)), localdev.ClusterName(), localdev.K3sImage)
 	if clusterStatus != localdev.ClusterRunning {
 		return nil
 	}
@@ -458,10 +503,11 @@ func runDevStatus(command *cobra.Command, args []string) error {
 	}
 	switch status.State {
 	case "down":
-		fmt.Fprintln(out, "project    down (workloads removed; data retained; skali dev brings it back)")
+		fmt.Fprintf(out, "project    %s (workloads removed; data retained; skali dev brings it back)\n",
+			stateColor(style, "down"))
 		return nil
 	case "releasing":
-		fmt.Fprintln(out, "project    releasing (purge in progress)")
+		fmt.Fprintf(out, "project    %s (purge in progress)\n", stateColor(style, "releasing"))
 		return nil
 	}
 	active := "none"
@@ -476,33 +522,84 @@ func runDevStatus(command *cobra.Command, args []string) error {
 				ready++
 			}
 		}
-		fmt.Fprintf(out, "  %-24s %-11s %d/%d ready\n",
-			service.Type+"."+service.Key, service.Health, ready, len(service.Pods))
+		fmt.Fprintf(out, "  %-24s %s %s%d/%d ready\n",
+			service.Type+"."+service.Key,
+			stateColor(style, fmt.Sprintf("%-11s", service.Health)),
+			replicaDots(style, ready, len(service.Pods)), ready, len(service.Pods))
 		for _, diagnostic := range service.Diagnostics {
-			fmt.Fprintf(out, "    %s: %s\n", diagnostic.Severity, diagnostic.Message)
+			fmt.Fprintf(out, "    %s %s\n",
+				severityColor(style, diagnostic.Severity+":"), diagnostic.Message)
 		}
 	}
 	return nil
 }
 
-func runDevReset(command *cobra.Command, args []string) error {
+// stateColor paints a lifecycle word by its meaning; padding around the
+// word survives because the switch trims before matching.
+func stateColor(style *clirender.Style, state string) string {
+	switch strings.TrimSpace(state) {
+	case "running", "healthy", "active", "succeeded", "ready":
+		return style.Green(state)
+	case "stopped", "down", "releasing", "progressing", "degraded", "waiting", "pending":
+		return style.Yellow(state)
+	case "failed", "unhealthy", "error", "cancelled":
+		return style.Red(state)
+	}
+	return state
+}
+
+func severityColor(style *clirender.Style, severity string) string {
+	switch strings.TrimSuffix(severity, ":") {
+	case "error", "fatal":
+		return style.Red(severity)
+	case "warning":
+		return style.Yellow(severity)
+	}
+	return style.Dim(severity)
+}
+
+// replicaDots draws one dot per replica, green when ready; plain output
+// keeps the bare counts.
+func replicaDots(style *clirender.Style, ready, total int) string {
+	if !style.Enabled || total == 0 {
+		return ""
+	}
+	dots := style.Green(strings.Repeat("●", ready))
+	if total > ready {
+		dots += style.Dim(strings.Repeat("○", total-ready))
+	}
+	return dots + " "
+}
+
+func runDevReset(command *cobra.Command, yes bool) error {
 	ctx := command.Context()
 	out := command.OutOrStdout()
-	fmt.Fprintln(out, "This destroys the complete local installation:")
-	fmt.Fprintf(out, "  cluster %s, its volumes, the local registry and its artifacts,\n", localdev.ClusterName())
-	fmt.Fprintln(out, "  local Skali state, and all locally deployed project data.")
-	fmt.Fprintln(out, "Nothing outside this machine is affected.")
-	fmt.Fprint(out, "\nType \"destroy\" to continue: ")
-	var answer string
-	_, _ = fmt.Scanln(&answer)
-	if strings.TrimSpace(answer) != "destroy" {
-		return errors.New("aborted")
+	style := clirender.StyleFor(out)
+	if !yes {
+		fmt.Fprintln(out, style.BoldRed("This destroys the complete local installation:"))
+		fmt.Fprintf(out, "  cluster %s, its volumes, the local registry and its artifacts,\n", localdev.ClusterName())
+		fmt.Fprintln(out, "  local Skali state, and all locally deployed project data.")
+		fmt.Fprintln(out, "Nothing outside this machine is affected.")
+		if !confirm(out, "\nDestroy the local installation? [y/N] ") {
+			return errors.New("aborted")
+		}
 	}
-	if err := localdev.Reset(ctx); err != nil {
+
+	tasks := clirender.NewTasks(out)
+	if status, err := localdev.Status(ctx); err == nil && status != localdev.ClusterAbsent {
+		task := tasks.Start("Delete cluster " + localdev.ClusterName() + " and volumes")
+		if err := localdev.Delete(ctx); err != nil {
+			task.Fail()
+			return err
+		}
+		task.Done("")
+	}
+	task := tasks.Start("Remove local installation record")
+	if err := localdev.RemoveState(); err != nil {
+		task.Fail()
 		return err
 	}
-	fmt.Fprintf(out, "  ok  Delete cluster %s and volumes\n", localdev.ClusterName())
-	fmt.Fprintln(out, "  ok  Remove local installation record")
+	task.Done("")
 
 	// Drop the stored local context; its token died with the cluster.
 	if cfg, err := cliconfig.Load(); err == nil {
@@ -517,7 +614,9 @@ func runDevReset(command *cobra.Command, args []string) error {
 
 func printDevReady(command *cobra.Command) error {
 	out := command.OutOrStdout()
-	fmt.Fprintf(out, "  dashboard  %s\n", localdev.MasterURL())
-	fmt.Fprintf(out, "  routes     http://<domain>:%d for your manifest's *.localhost domains\n", localdev.HTTPPort())
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "  %s  %s\n", style.Dim("dashboard"), style.Cyan(localdev.MasterURL()))
+	fmt.Fprintf(out, "  %s     http://<domain>:%d for your manifest's *.localhost domains\n",
+		style.Dim("routes"), localdev.HTTPPort())
 	return nil
 }
