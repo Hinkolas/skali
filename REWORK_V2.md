@@ -1379,10 +1379,14 @@ port-forward. Stopping and starting the local cluster retains its volumes;
 the user first exports it.
 
 The local exposure convention is fixed: the local edge publishes HTTP on host
-port 8080 and HTTPS on host port 8443, routes use `*.localhost` names, which
-resolve to loopback without configuration, and the local Skali API/UI is
-served through the same edge at `skali.localhost`. The local managed registry
-is published on a dedicated loopback port for host-side pushes and under its
+port 8080, routes use `*.localhost` names, which resolve to loopback without
+configuration, and the local Skali API/UI is served through the same edge at
+`skali.localhost`. The local platform is HTTP-only by decision (2026-07-20):
+a self-signed local HTTPS endpoint tests nothing a client would trust, so
+TLS issuance and cert-manager are production-bundle concerns, `tls:
+automatic` in a manifest is inert locally, and the parity difference is
+stated instead of simulated (section 11.7). The local managed registry is
+published on a dedicated loopback port for host-side pushes and under its
 stable in-cluster name for pulls. `skali dev` prints the exact URLs it
 provisions.
 
@@ -2071,15 +2075,16 @@ Implementation notes (decided 2026-07-20, R3 landing):
   docs/build-matrix.md). The local registry is anonymous and
   loopback-only; the token protocol arrives with the production registry
   in R4.
-- The local platform (cluster `skali-dev`, edge 8080/8443, registry
-  localhost:5510 via NodePort 30500 and a containerd mirror) applies the
-  shared skali-system bundle under the `skali-installer` field manager:
-  CNPG operator and `Cluster` for skalid state, cert-manager with a
-  self-signed `skali` ClusterIssuer, CNCF Distribution, in-cluster skalid
-  (in-cluster credentials, migrate initContainer), and a bootstrap
-  operator-user Job. The CLI logs in through the edge and stores the
-  `local` context; a `skali-dev` cluster without an installation record is
-  never adopted or destroyed.
+- The local platform (cluster `skali-dev`, HTTP-only edge on 8080,
+  registry localhost:5510 via NodePort 30500 and a containerd mirror)
+  applies the shared skali-system bundle under the `skali-installer` field
+  manager: CNPG operator and `Cluster` for skalid state, CNCF
+  Distribution, in-cluster skalid (in-cluster credentials, migrate
+  initContainer), and a bootstrap operator-user Job. cert-manager and TLS
+  issuance are production-bundle concerns (R4); the rendered
+  cluster-issuer annotation is inert locally. The CLI logs in through the
+  edge and stores the `local` context; a `skali-dev` cluster without an
+  installation record is never adopted or destroyed.
 - Runtime logs stream through the API as a deliberate cluster pass-through
   (kubelet follow per member, previous-container tail after restarts);
   they never enter the system database and are never mixed with

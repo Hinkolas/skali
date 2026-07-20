@@ -1,6 +1,6 @@
 // Package bundle defines the installer-owned skali-system bundle: the
-// blessed operators (CNPG, cert-manager; Traefik ships with k3s itself),
-// the bootstrap Postgres cluster, the managed registry, and skalid, plus
+// blessed operators (CNPG; Traefik ships with k3s itself), the bootstrap
+// Postgres cluster, the managed registry, and skalid, plus
 // the ordered apply engine over server-side apply under the installer
 // field manager. The local `skali dev` installation and the R4 production
 // installer share these definitions; only the profile differs. skalid
@@ -18,12 +18,14 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// Pinned component versions of this bundle release.
+// Pinned component versions of this bundle release. cert-manager is
+// deliberately absent: the local edge is HTTP-only, and TLS issuance
+// (`tls: automatic`) is a production-bundle concern that arrives with the
+// R4 installer.
 const (
-	Namespace          = "skali-system"
-	CNPGVersion        = "1.25.1"
-	CertManagerVersion = "1.16.3"
-	RegistryImage      = "registry:2.8.3"
+	Namespace     = "skali-system"
+	CNPGVersion   = "1.25.1"
+	RegistryImage = "registry:2.8.3"
 	// RegistryNodePort is the stable node port the host maps its loopback
 	// registry port onto.
 	RegistryNodePort = 30500
@@ -32,14 +34,8 @@ const (
 //go:embed assets/cnpg-1.25.1.yaml
 var cnpgManifest []byte
 
-//go:embed assets/cert-manager-1.16.3.yaml
-var certManagerManifest []byte
-
 // CNPGManifest is the pinned operator install manifest.
 func CNPGManifest() []byte { return cnpgManifest }
-
-// CertManagerManifest is the pinned operator install manifest.
-func CertManagerManifest() []byte { return certManagerManifest }
 
 // Profile parameterizes one installation of the bundle.
 type Profile struct {
@@ -67,9 +63,6 @@ type Objects struct {
 	Database []unstructured.Unstructured
 	// Registry is the managed OCI registry.
 	Registry []unstructured.Unstructured
-	// Issuer is the self-signed ClusterIssuer named skali (requires
-	// cert-manager) that keeps `tls: automatic` routes valid locally.
-	Issuer []unstructured.Unstructured
 	// Skalid is the control plane with its RBAC, service, and edge route.
 	Skalid []unstructured.Unstructured
 	// BootstrapUser creates the first operator user.
@@ -86,7 +79,6 @@ func Render(profile Profile) (*Objects, error) {
 		{&objects.Namespace, namespaceYAML()},
 		{&objects.Database, databaseYAML()},
 		{&objects.Registry, registryYAML()},
-		{&objects.Issuer, issuerYAML()},
 		{&objects.Skalid, skalidYAML(profile)},
 		{&objects.BootstrapUser, bootstrapYAML(profile)},
 	}
@@ -225,16 +217,6 @@ spec:
       targetPort: 5000
       nodePort: %[3]d
 `, Namespace, RegistryImage, RegistryNodePort)
-}
-
-func issuerYAML() string {
-	return `apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: skali
-spec:
-  selfSigned: {}
-`
 }
 
 func skalidYAML(profile Profile) string {

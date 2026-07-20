@@ -32,10 +32,10 @@ const (
 
 func ClusterName() string { return envOr("SKALI_DEV_CLUSTER", "skali-dev") }
 
-// HTTPPort() and HTTPSPort() publish the traefik edge; RegistryPort() publishes
-// the managed registry for host-side pushes.
+// HTTPPort() publishes the traefik edge; the local platform is HTTP-only
+// by decision (TLS issuance is a production concern). RegistryPort()
+// publishes the managed registry for host-side pushes.
 func HTTPPort() int     { return envPortOr("SKALI_DEV_HTTP_PORT", 8080) }
-func HTTPSPort() int    { return envPortOr("SKALI_DEV_HTTPS_PORT", 8443) }
 func RegistryPort() int { return envPortOr("SKALI_DEV_REGISTRY_PORT", 5510) }
 
 // RegistryHost() names the registry in artifact references; valid from the
@@ -286,7 +286,6 @@ func Create(ctx context.Context) error {
 		"--kubeconfig-switch-context=false",
 		"--registry-config", registries,
 		"-p", fmt.Sprintf("127.0.0.1:%d:80@loadbalancer", HTTPPort()),
-		"-p", fmt.Sprintf("127.0.0.1:%d:443@loadbalancer", HTTPSPort()),
 		"-p", fmt.Sprintf("127.0.0.1:%d:30500@server:0", RegistryPort()),
 		"--wait",
 	}

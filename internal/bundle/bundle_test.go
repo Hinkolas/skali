@@ -23,7 +23,6 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Len(t, objects.Database, 1)
 	require.Equal(t, "Cluster", objects.Database[0].GetKind())
 	require.Len(t, objects.Registry, 4)
-	require.Len(t, objects.Issuer, 1)
 	require.Len(t, objects.Skalid, 7)
 	require.Len(t, objects.BootstrapUser, 2)
 
@@ -41,11 +40,8 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Contains(t, string(raw), "skalid:dev")
 	require.Contains(t, string(raw), "skali-registry.skali-system.svc:5000")
 
-	// The vendored operator manifests parse.
+	// The vendored operator manifest parses.
 	cnpg, err := ParseManifest(CNPGManifest())
 	require.NoError(t, err)
 	require.NotEmpty(t, cnpg)
-	certManager, err := ParseManifest(CertManagerManifest())
-	require.NoError(t, err)
-	require.NotEmpty(t, certManager)
 }

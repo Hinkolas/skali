@@ -129,23 +129,13 @@ func applyBundle(ctx context.Context, client *kube.Client, state *State, log fun
 	if err := applier.ApplyManifest(ctx, bundle.CNPGManifest()); err != nil {
 		return err
 	}
-	if err := applier.ApplyManifest(ctx, bundle.CertManagerManifest()); err != nil {
-		return err
-	}
 	if err := applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"); err != nil {
 		return err
 	}
-	if err := applier.WaitDeploymentReady(ctx, "cert-manager", "cert-manager-webhook"); err != nil {
-		return err
-	}
-	log("        ok  Blessed operators: CNPG %s, cert-manager %s, Traefik (k3s)",
-		bundle.CNPGVersion, bundle.CertManagerVersion)
+	log("        ok  Blessed operators: CNPG %s, Traefik (k3s)", bundle.CNPGVersion)
 
-	// Webhook-validated objects race their operators' serving certs; the
+	// Webhook-validated objects race their operator's serving certs; the
 	// retry absorbs the warm-up window.
-	if err := applyWithRetry(ctx, applier, objects.Issuer); err != nil {
-		return err
-	}
 	if err := applyWithRetry(ctx, applier, objects.Database); err != nil {
 		return err
 	}

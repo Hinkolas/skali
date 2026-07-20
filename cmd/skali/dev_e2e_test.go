@@ -24,7 +24,6 @@ import (
 const (
 	e2eCluster      = "skali-dev-e2e"
 	e2eHTTPPort     = 8082
-	e2eHTTPSPort    = 8445
 	e2eRegistryPort = 5512
 )
 
@@ -73,7 +72,6 @@ func newE2EHarness(t *testing.T) *e2eHarness {
 		env: append(os.Environ(),
 			"SKALI_DEV_CLUSTER="+e2eCluster,
 			fmt.Sprintf("SKALI_DEV_HTTP_PORT=%d", e2eHTTPPort),
-			fmt.Sprintf("SKALI_DEV_HTTPS_PORT=%d", e2eHTTPSPort),
 			fmt.Sprintf("SKALI_DEV_REGISTRY_PORT=%d", e2eRegistryPort),
 			"XDG_STATE_HOME="+stateHome,
 			"XDG_CONFIG_HOME="+configHome,

@@ -16,7 +16,7 @@ Local platform is not running. Creating it now.
   ok  Check prerequisites: docker 27.4
   ok  Create k3d cluster skali-dev (k3s v1.33.3+k3s1, pinned)
   ok  Install system bundle (local profile)
-        ok  Blessed operators: CNPG, Traefik, cert-manager
+        ok  Blessed operators: CNPG, Traefik
         ok  Bootstrap database (tier: single)
         ok  Managed registry (localhost:5510 for pushes)
         ok  skalid (http://skali.localhost:8080)
@@ -51,8 +51,9 @@ Pinned by this transcript:
   attach. No kubectl, no manual steps.
 - `./.env` is used automatically when present and announced; `--env-file`
   overrides it.
-- The local edge publishes HTTP on host port 8080 and HTTPS on 8443; routes
-  use `*.localhost` names. Unsupported production guarantees (real failover,
+- The local edge publishes HTTP on host port 8080; routes use `*.localhost`
+  names. The local platform is HTTP-only: TLS issuance is a production
+  concern, and unsupported production guarantees (TLS, real failover,
   multi-node placement) are simply absent, not simulated.
 
 ## 2. Repeat run without changes

@@ -17,8 +17,8 @@ values, LIST/WATCH observation with explicit freshness, server-side apply
 with field-ownership discipline, health-gated activation), skali is now
 usable end to end on one machine: bare `skali dev` creates a disposable
 k3d cluster, installs the in-cluster skali-system bundle (skalid, CNPG
-Postgres, CNCF Distribution registry, cert-manager; Traefik ships with
-k3s), builds build-sourced applications locally through BuildKit and
+Postgres, CNCF Distribution registry; Traefik ships with k3s), builds
+build-sourced applications locally through BuildKit and
 imports image sources digest-preservingly, verifies every digest against
 the managed registry server-side, deploys through the public deployment
 API (plan, destructive gate, artifact window, atomic promotion, journaled
@@ -63,10 +63,11 @@ skali dev
 
 Bare `skali dev` is the complete paved path: it creates the disposable
 `skali-dev` k3d cluster, installs the in-cluster skali-system bundle
-(skalid, CNPG Postgres, managed registry, cert-manager), builds and
-imports the project's artifacts, deploys through the public API, and
-attaches to the rollout. Routes serve on `http://<domain>:8080` for
-`*.localhost` domains; the local API lives at `http://skali.localhost:8080`.
+(skalid, CNPG Postgres, managed registry), builds and imports the
+project's artifacts, deploys through the public API, and attaches to the
+rollout. The local edge is HTTP-only: routes serve on
+`http://<domain>:8080` for `*.localhost` domains, and the local API lives
+at `http://skali.localhost:8080` (TLS is a production concern).
 `skali dev status | logs | stop | reset` manage the installation; reset is
 the only destructive command and always confirms. Working from this
 repository, `skali dev` builds the `skalid:dev` image from the working
