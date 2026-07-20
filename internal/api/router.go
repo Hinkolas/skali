@@ -14,13 +14,21 @@ import (
 
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 type Deps struct {
-	Auth  *auth.Service
-	Store *store.Store
-	DB    *pgxpool.Pool
+	Auth     *auth.Service
+	Store    *store.Store
+	DB       *pgxpool.Pool
+	Projects *project.Service
+	Values   *valuestore.Service
+	Deploy   *deploy.Service
+	Journal  *journal.Service
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -32,7 +40,8 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(realIP)
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	// The request timeout is applied per group below, not globally: SSE
+	// streams must outlive it.
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := d.DB.Ping(r.Context()); err != nil {
@@ -48,53 +57,102 @@ func NewRouter(d Deps) http.Handler {
 	})
 
 	h := &authHandlers{auth: d.Auth}
+	jh := &runsHandlers{journal: d.Journal}
 	r.Route("/v1", func(r chi.Router) {
-		// Public: everything a client can reach without a session.
-		r.Post("/auth/login", h.login)
-		r.Post("/auth/2fa/verify", h.verifyTwoFactor)
-
-		// Bearer-protected. RequireAuth stays on this group only.
+		// Streaming: authenticated but deliberately outside the request
+		// timeout, which would cut every SSE connection at 30 seconds.
 		r.Group(func(r chi.Router) {
 			r.Use(RequireAuth(d.Auth))
 
-			// Never behind the reauth gate: logout and session revocation are
-			// defensive, /auth/reauth is the gate's escape hatch, and
-			// 2fa/confirm carries its own proof (a code from the pending
-			// enrollment).
-			r.Post("/auth/logout", h.logout)
-			r.Post("/auth/reauth", h.reauthenticate)
-			r.Get("/auth/session", h.currentSession)
-			r.Get("/auth/sessions", h.listSessions)
-			r.Delete("/auth/sessions/{id}", h.revokeSession)
-			r.Post("/auth/2fa/confirm", h.confirmTwoFactor)
+			r.Get("/steps/{id}/logs/stream", jh.streamLogs)
+		})
 
-			// Sensitive self-service: sudo mode.
+		// Everything else runs under the request timeout.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(30 * time.Second))
+
+			// Public: everything a client can reach without a session.
+			r.Post("/auth/login", h.login)
+			r.Post("/auth/2fa/verify", h.verifyTwoFactor)
+
+			// Bearer-protected. RequireAuth stays on this group only.
 			r.Group(func(r chi.Router) {
-				r.Use(RequireFresh(d.Auth))
+				r.Use(RequireAuth(d.Auth))
 
-				r.Post("/auth/password", h.changePassword)
-				r.Post("/auth/2fa/enable", h.enableTwoFactor)
-				r.Post("/auth/2fa/disable", h.disableTwoFactor)
-				r.Post("/auth/2fa/backup-codes", h.regenerateBackupCodes)
-			})
+				// Never behind the reauth gate: logout and session revocation are
+				// defensive, /auth/reauth is the gate's escape hatch, and
+				// 2fa/confirm carries its own proof (a code from the pending
+				// enrollment).
+				r.Post("/auth/logout", h.logout)
+				r.Post("/auth/reauth", h.reauthenticate)
+				r.Get("/auth/session", h.currentSession)
+				r.Get("/auth/sessions", h.listSessions)
+				r.Delete("/auth/sessions/{id}", h.revokeSession)
+				r.Post("/auth/2fa/confirm", h.confirmTwoFactor)
 
-			// Instance management, admins only.
-			uh := &usersHandlers{st: d.Store}
-			r.Group(func(r chi.Router) {
-				r.Use(RequireAdmin)
-
-				r.Get("/users", uh.list)
-
-				// Writes additionally need sudo mode. RequireAdmin sits
-				// outside RequireFresh so non-admins get "forbidden", never a
-				// reauth prompt that would not help them.
+				// Sensitive self-service: sudo mode.
 				r.Group(func(r chi.Router) {
 					r.Use(RequireFresh(d.Auth))
 
-					r.Post("/users", uh.create)
-					r.Patch("/users/{id}", uh.update)
-					r.Delete("/users/{id}", uh.delete)
-					r.Post("/users/{id}/password", uh.resetPassword)
+					r.Post("/auth/password", h.changePassword)
+					r.Post("/auth/2fa/enable", h.enableTwoFactor)
+					r.Post("/auth/2fa/disable", h.disableTwoFactor)
+					r.Post("/auth/2fa/backup-codes", h.regenerateBackupCodes)
+				})
+
+				// Product surface: projects, environments, drafts. Members have
+				// full access; only destructive deletes need sudo mode.
+				ph := &projectsHandlers{projects: d.Projects}
+				eh := &environmentsHandlers{projects: d.Projects}
+				r.Post("/projects", ph.create)
+				r.Get("/projects", ph.list)
+				r.Get("/projects/{id}", ph.get)
+				r.Patch("/projects/{id}", ph.update)
+				r.Get("/projects/{id}/draft", ph.getDraft)
+				r.Put("/projects/{id}/draft", ph.putDraft)
+				r.Post("/projects/{id}/environments", eh.create)
+				r.Get("/projects/{id}/environments", eh.list)
+				r.Get("/environments/{id}", eh.get)
+
+				vh := &valuesHandlers{projects: d.Projects, values: d.Values}
+				r.Get("/environments/{id}/values", vh.get)
+				r.Put("/environments/{id}/values", vh.put)
+
+				rh := &revisionsHandlers{deploy: d.Deploy}
+				r.Get("/environments/{id}/revisions", rh.list)
+				r.Get("/revisions/{id}", rh.get)
+				r.Get("/environments/{id}/target", rh.getTarget)
+				r.Put("/environments/{id}/target", rh.putTarget)
+
+				// Run journal reads; the SSE stream lives outside this group.
+				r.Get("/environments/{id}/runs", jh.list)
+				r.Get("/runs/{id}", jh.get)
+				r.Get("/steps/{id}/logs", jh.stepLogs)
+				r.Group(func(r chi.Router) {
+					r.Use(RequireFresh(d.Auth))
+
+					r.Delete("/projects/{id}", ph.delete)
+					r.Delete("/environments/{id}", eh.delete)
+				})
+
+				// Instance management, admins only.
+				uh := &usersHandlers{st: d.Store}
+				r.Group(func(r chi.Router) {
+					r.Use(RequireAdmin)
+
+					r.Get("/users", uh.list)
+
+					// Writes additionally need sudo mode. RequireAdmin sits
+					// outside RequireFresh so non-admins get "forbidden", never a
+					// reauth prompt that would not help them.
+					r.Group(func(r chi.Router) {
+						r.Use(RequireFresh(d.Auth))
+
+						r.Post("/users", uh.create)
+						r.Patch("/users/{id}", uh.update)
+						r.Delete("/users/{id}", uh.delete)
+						r.Post("/users/{id}/password", uh.resetPassword)
+					})
 				})
 			})
 		})

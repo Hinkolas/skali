@@ -469,6 +469,596 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/projects:
+    post:
+      operationId: createProject
+      summary: Create a project
+      tags: [projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  pattern: "^[a-z][a-z0-9-]{0,62}$"
+                display_name:
+                  type: string
+      responses:
+        "201":
+          description: Project created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      operationId: listProjects
+      summary: List projects
+      tags: [projects]
+      responses:
+        "200":
+          description: All projects, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items: { $ref: "#/components/schemas/Project" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/projects/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getProject
+      summary: Get a project
+      tags: [projects]
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateProject
+      summary: Update a project
+      description: |
+        Updates the display name and/or the draft source mode. Switching
+        the source mode is an explicit action with product consequences:
+        `managed` documents are edited through the web/API, `file`
+        documents are replaced by CLI/Git submissions.
+      tags: [projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                source_mode:
+                  type: string
+                  enum: [managed, file]
+      responses:
+        "200":
+          description: Updated project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteProject
+      summary: Delete a project
+      description: |
+        Destructive: removes the project with every environment, draft,
+        and revision. Requires recent authentication (sudo mode).
+      tags: [projects]
+      responses:
+        "204":
+          description: Project deleted.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/projects/{id}/draft:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getProjectDraft
+      summary: Get the current draft document
+      tags: [projects]
+      responses:
+        "200":
+          description: The draft with its compiled definition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DraftResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: submitProjectDraft
+      summary: Submit a draft document
+      description: |
+        Replaces the whole draft. The manifest is parsed, validated, and
+        compiled before anything is stored; diagnostics are returned with
+        source positions. `expected_version` is the optimistic concurrency
+        token: it must match the stored draft version, and 0 is accepted
+        only for the first submission.
+      tags: [projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  type: string
+                  description: The manifest document text.
+                format:
+                  type: string
+                  enum: [yaml, json]
+                  default: yaml
+                expected_version:
+                  type: integer
+                  format: int64
+      responses:
+        "200":
+          description: Draft accepted and advanced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DraftResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Stale `expected_version` (`error.code = version_conflict`):
+            fetch the draft and retry with its current version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/InvalidManifest" }
+
+  /v1/projects/{id}/environments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: createEnvironment
+      summary: Create an environment
+      tags: [environments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  pattern: "^[a-z][a-z0-9-]{0,62}$"
+      responses:
+        "201":
+          description: Environment created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      operationId: listEnvironments
+      summary: List environments of a project
+      tags: [environments]
+      responses:
+        "200":
+          description: The project's environments, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [environments]
+                properties:
+                  environments:
+                    type: array
+                    items: { $ref: "#/components/schemas/Environment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/values:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listEnvironmentValues
+      summary: List the current environment values
+      description: |
+        Names, secrecy, and versions of every current value. Plain values
+        include their content; secret values are write-only and never
+        return content.
+      tags: [values]
+      responses:
+        "200":
+          description: Current values, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [values]
+                properties:
+                  values:
+                    type: array
+                    items: { $ref: "#/components/schemas/ValueEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: submitEnvironmentValues
+      summary: Stage candidate environment values
+      description: |
+        Submits one flat name-to-value map. Secrecy is declared by the
+        manifest values block alone: the server separates plain from
+        secret against the project's current draft definition and rejects
+        undeclared names. Empty values follow the dotenv rule (empty =
+        unset) and are dropped. The staged candidate changes nothing
+        until a deployment promotes it; unpromoted candidates are
+        garbage-collected.
+      tags: [values]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [values]
+              properties:
+                values:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        "201":
+          description: Candidate staged; secret values are not echoed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [candidate_id, plain, secret]
+                properties:
+                  candidate_id:
+                    type: string
+                    format: uuid
+                  plain:
+                    type: array
+                    items: { type: string }
+                  secret:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/environments/{id}/revisions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listRevisions
+      summary: List the revisions of an environment
+      tags: [revisions]
+      responses:
+        "200":
+          description: Revision summaries, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revisions]
+                properties:
+                  revisions:
+                    type: array
+                    items: { $ref: "#/components/schemas/RevisionSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/revisions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getRevision
+      summary: Get a revision document
+      description: |
+        The complete immutable revision: canonical definition, resolved
+        plain values, opaque secret references and versions, digest-pinned
+        artifacts, and required capabilities. Secret plaintext never
+        appears in a revision.
+      tags: [revisions]
+      responses:
+        "200":
+          description: The revision document.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision]
+                properties:
+                  revision:
+                    type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/target:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getEnvironmentTarget
+      summary: Get the environment's revision pointers
+      description: |
+        `target_revision_id` is where reconciliation is heading;
+        `active_revision_id` is the last revision that passed its health
+        conditions. A daemon restart never changes either pointer.
+      tags: [revisions]
+      responses:
+        "200":
+          description: The pointer pair.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TargetResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setEnvironmentTarget
+      summary: Roll back to an existing revision
+      description: |
+        Points the target at a previous revision of this environment.
+        Rollback re-deploys the stored revision exactly; it never creates
+        a new revision.
+      tags: [revisions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision_id]
+              properties:
+                revision_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Target moved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TargetResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/environments/{id}/runs:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listRuns
+      summary: List the runs of an environment
+      description: |
+        Runs explain reconciliation but never drive it: this journal is
+        read-only, bounded by retention caps, and deleting it would not
+        change targets or recovery.
+      tags: [runs]
+      responses:
+        "200":
+          description: Runs, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs]
+                properties:
+                  runs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Run" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getRun
+      summary: Get a run tree
+      description: |
+        The run with its steps nested by parent and their attempts. Log
+        bodies are fetched per step.
+      tags: [runs]
+      responses:
+        "200":
+          description: The run tree.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, steps]
+                properties:
+                  run: { $ref: "#/components/schemas/Run" }
+                  steps:
+                    type: array
+                    items: { $ref: "#/components/schemas/Step" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/steps/{id}/logs:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Composite cursor `attempt:seq`; entries after it are returned.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+    get:
+      operationId: listStepLogs
+      summary: Read step logs
+      description: |
+        One page of a step's log entries across attempts, ordered by
+        (attempt, seq). `next` is the cursor of the last entry returned.
+        Entries are redacted and bounded at write time.
+      tags: [runs]
+      responses:
+        "200":
+          description: Log entries after the cursor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logs]
+                properties:
+                  logs:
+                    type: array
+                    items: { $ref: "#/components/schemas/LogEntry" }
+                  next:
+                    type: string
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/steps/{id}/logs/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Initial cursor when no Last-Event-ID header is sent.
+    get:
+      operationId: streamStepLogs
+      summary: Stream step logs (SSE)
+      description: |
+        Server-sent events of `LogEntry` objects as they are committed.
+        Each event's id is the composite cursor `attempt:seq`; reconnects
+        resume via the standard `Last-Event-ID` header. A comment ping is
+        sent every 15 seconds. This route is exempt from the request
+        timeout.
+      tags: [runs]
+      responses:
+        "200":
+          description: An event stream (`text/event-stream`).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getEnvironment
+      summary: Get an environment
+      tags: [environments]
+      responses:
+        "200":
+          description: The environment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteEnvironment
+      summary: Delete an environment
+      description: |
+        Destructive: removes the environment with its values, revisions,
+        and history. Requires recent authentication (sudo mode).
+      tags: [environments]
+      responses:
+        "204":
+          description: Environment deleted.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -518,6 +1108,21 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    InvalidManifest:
+      description: |
+        The manifest failed validation or compilation
+        (`error.code = invalid_manifest`). `diagnostics` lists every
+        problem with its source position.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, diagnostics]
+            properties:
+              error: { $ref: "#/components/schemas/ErrorDetail" }
+              diagnostics:
+                type: array
+                items: { $ref: "#/components/schemas/Diagnostic" }
   schemas:
     Role:
       type: string
@@ -618,29 +1223,304 @@ components:
           items: { type: string }
           description: Single-use recovery codes; shown only once.
 
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - bad_request
+            - invalid_credentials
+            - invalid_token
+            - invalid_code
+            - forbidden
+            - reauth_required
+            - not_found
+            - conflict
+            - version_conflict
+            - invalid_manifest
+            - rate_limited
+            - node_unreachable
+            - registry_disabled
+            - registry_unavailable
+            - internal
+        message:
+          type: string
+
     Error:
       type: object
       required: [error]
       properties:
-        error:
+        error: { $ref: "#/components/schemas/ErrorDetail" }
+
+    Project:
+      type: object
+      required: [id, name, display_name, source_mode, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Stable identity; must match the manifest `name`.
+        display_name:
+          type: string
+        source_mode:
+          type: string
+          enum: [managed, file]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectResponse:
+      type: object
+      required: [project]
+      properties:
+        project: { $ref: "#/components/schemas/Project" }
+
+    Environment:
+      type: object
+      required: [id, project_id, name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    EnvironmentResponse:
+      type: object
+      required: [environment]
+      properties:
+        environment: { $ref: "#/components/schemas/Environment" }
+
+    Draft:
+      type: object
+      description: |
+        The current editable definition document of a project together
+        with its compiled, canonical form. `version` is the optimistic
+        concurrency token for submissions.
+      required: [version, format, source, hash, definition]
+      properties:
+        version:
+          type: integer
+          format: int64
+        format:
+          type: string
+          enum: [yaml, json]
+        source:
+          type: string
+          description: The manifest document text as last submitted.
+        hash:
+          type: string
+          description: Content hash of the compiled canonical definition.
+        definition:
           type: object
-          required: [code, message]
+          description: The compiled, target-independent project definition.
+
+    DraftResponse:
+      type: object
+      required: [draft]
+      properties:
+        draft: { $ref: "#/components/schemas/Draft" }
+
+    Run:
+      type: object
+      required: [id, kind, project_id, environment_id, actor, status,
+                 created_at, started_at, finished_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        project_id:
+          type: [string, "null"]
+          format: uuid
+        environment_id:
+          type: [string, "null"]
+          format: uuid
+        actor:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, cancelled]
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+
+    Step:
+      type: object
+      required: [id, key, title, status, created_at, started_at,
+                 finished_at, attempts]
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+          description: Deterministic step identity within the run.
+        title:
+          type: string
+        status:
+          type: string
+          enum: [pending, waiting, running, succeeded, failed, skipped, cancelled]
+        progress_current:
+          type: integer
+          format: int64
+        progress_total:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        attempts:
+          type: array
+          items: { $ref: "#/components/schemas/Attempt" }
+        children:
+          type: array
+          items: { $ref: "#/components/schemas/Step" }
+
+    Attempt:
+      type: object
+      required: [id, number, status, started_at, finished_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [running, succeeded, failed, cancelled]
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+
+    LogEntry:
+      type: object
+      description: One redacted, bounded step-log entry.
+      required: [attempt, seq, ts, level, message, fields]
+      properties:
+        attempt:
+          type: integer
+          format: int64
+        seq:
+          type: integer
+          format: int64
+        ts:
+          type: string
+          format: date-time
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+        message:
+          type: string
+        fields:
+          type: object
+
+    RevisionSummary:
+      type: object
+      required: [id, project_id, environment_id, schema_version, checksum,
+                 definition_hash, values_hash, compiler_version, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        environment_id:
+          type: string
+          format: uuid
+        schema_version:
+          type: string
+        checksum:
+          type: string
+        definition_hash:
+          type: string
+        values_hash:
+          type: string
+        compiler_version:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    TargetResponse:
+      type: object
+      required: [target]
+      properties:
+        target:
+          type: object
+          required: [target_revision_id, active_revision_id, updated_at]
           properties:
-            code:
+            target_revision_id:
+              type: [string, "null"]
+              format: uuid
+            active_revision_id:
+              type: [string, "null"]
+              format: uuid
+            updated_at:
               type: string
-              enum:
-                - bad_request
-                - invalid_credentials
-                - invalid_token
-                - invalid_code
-                - forbidden
-                - reauth_required
-                - not_found
-                - conflict
-                - rate_limited
-                - node_unreachable
-                - registry_disabled
-                - registry_unavailable
-                - internal
-            message:
-              type: string
+              format: date-time
+
+    ValueEntry:
+      type: object
+      description: |
+        One current environment value. `value` is present for plain
+        entries only; secret entries carry name and version alone.
+      required: [name, secret, version]
+      properties:
+        name:
+          type: string
+        secret:
+          type: boolean
+        version:
+          type: integer
+          format: int64
+        value:
+          type: string
+
+    Diagnostic:
+      type: object
+      description: One manifest problem with its source position.
+      required: [file, path, line, column, message]
+      properties:
+        file:
+          type: string
+        path:
+          type: string
+          description: Dotted document path, e.g. `applications.api.image`.
+        line:
+          type: integer
+        column:
+          type: integer
+        message:
+          type: string

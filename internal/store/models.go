@@ -19,12 +19,93 @@ type Account struct {
 	UpdatedAt  time.Time
 }
 
+type Artifact struct {
+	ID          uuid.UUID
+	ProjectID   *uuid.UUID
+	Application string
+	Kind        string
+	Phase       string
+	Reference   string
+	Digest      *string
+	Upstream    string
+	ContextHash string
+	Provenance  []byte
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	VerifiedAt  *time.Time
+}
+
+type ArtifactLease struct {
+	RevisionID uuid.UUID
+	ArtifactID uuid.UUID
+	CreatedAt  time.Time
+}
+
+type Attempt struct {
+	ID         uuid.UUID
+	StepID     uuid.UUID
+	Number     int64
+	Status     string
+	ExecutorID string
+	StartedAt  time.Time
+	FinishedAt *time.Time
+}
+
 type BackupCode struct {
 	ID          uuid.UUID
 	TwoFactorID uuid.UUID
 	CodeHash    string
 	UsedAt      *time.Time
 	CreatedAt   time.Time
+}
+
+type DefinitionVersion struct {
+	ID              uuid.UUID
+	ProjectID       uuid.UUID
+	SchemaVersion   string
+	DefinitionHash  string
+	Definition      []byte
+	Source          []byte
+	Format          string
+	CompilerVersion string
+	CreatedAt       time.Time
+}
+
+type Environment struct {
+	ID        uuid.UUID
+	ProjectID uuid.UUID
+	Name      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type EnvironmentSecret struct {
+	ID            uuid.UUID
+	EnvironmentID uuid.UUID
+	Name          string
+	Version       int64
+	Ciphertext    []byte
+	State         string
+	CandidateID   *uuid.UUID
+	CreatedAt     time.Time
+}
+
+type EnvironmentTarget struct {
+	EnvironmentID    uuid.UUID
+	TargetRevisionID *uuid.UUID
+	ActiveRevisionID *uuid.UUID
+	UpdatedAt        time.Time
+}
+
+type EnvironmentValue struct {
+	ID            uuid.UUID
+	EnvironmentID uuid.UUID
+	Name          string
+	Version       int64
+	Value         string
+	State         string
+	CandidateID   *uuid.UUID
+	CreatedAt     time.Time
 }
 
 type LoginChallenge struct {
@@ -34,6 +115,58 @@ type LoginChallenge struct {
 	Attempts  int32
 	ExpiresAt time.Time
 	CreatedAt time.Time
+}
+
+type Project struct {
+	ID          uuid.UUID
+	Name        string
+	DisplayName string
+	SourceMode  string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type ProjectDraft struct {
+	ProjectID           uuid.UUID
+	Version             int64
+	DefinitionVersionID uuid.UUID
+	UpdatedAt           time.Time
+}
+
+type Revision struct {
+	ID                  uuid.UUID
+	ProjectID           uuid.UUID
+	EnvironmentID       uuid.UUID
+	DefinitionVersionID uuid.UUID
+	SchemaVersion       string
+	Checksum            string
+	DefinitionHash      string
+	ValuesHash          string
+	CompilerVersion     string
+	Document            []byte
+	CreatedAt           time.Time
+}
+
+type Run struct {
+	ID            uuid.UUID
+	Kind          string
+	ProjectID     *uuid.UUID
+	EnvironmentID *uuid.UUID
+	Actor         string
+	Status        string
+	CreatedAt     time.Time
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
+}
+
+type RunLog struct {
+	ID        uuid.UUID
+	AttemptID uuid.UUID
+	Seq       int64
+	Ts        time.Time
+	Level     string
+	Message   string
+	Fields    []byte
 }
 
 type Session struct {
@@ -46,6 +179,20 @@ type Session struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	ReauthenticatedAt time.Time
+}
+
+type Step struct {
+	ID              uuid.UUID
+	RunID           uuid.UUID
+	ParentID        *uuid.UUID
+	Key             string
+	Title           string
+	Status          string
+	ProgressCurrent *int64
+	ProgressTotal   *int64
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
 }
 
 type TwoFactor struct {

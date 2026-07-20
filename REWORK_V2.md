@@ -2361,8 +2361,13 @@ re-homed to the milestone that implements it:
   the installer transcripts. Each installer release pins one k3s version;
   multi-node upgrade sequencing UX lands in R4.
 - Registry: resolved; see the registry decision in section 10.6.
-- Step-log streaming uses SSE, matching the existing web transport. Exact
-  run-log retention caps are set with the R1 journal persistence.
+- Step-log streaming uses SSE, matching the existing web transport. The
+  run-log retention caps were fixed with the R1 journal persistence
+  (constants in `internal/journal`): 2000 entries per attempt with the final
+  slot holding a single truncation marker, 8 KiB per message with a
+  truncation suffix, the newest 50 terminal runs kept per environment, and
+  terminal runs deleted after 90 days. Promotion to configuration is
+  deferred until a deployment needs different limits.
 - Backup destination: an external S3 endpoint configured at initialization;
   wiring and restore tests land in R8.
 - Build schema: resolved at the alpha level (context, dockerfile, target,

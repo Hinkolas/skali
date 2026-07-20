@@ -30,6 +30,8 @@ const (
 	codeReauthRequired      = "reauth_required"
 	codeNotFound            = "not_found"
 	codeConflict            = "conflict"
+	codeVersionConflict     = "version_conflict"
+	codeInvalidManifest     = "invalid_manifest"
 	codeRateLimited         = "rate_limited"
 	codeNodeUnreachable     = "node_unreachable"
 	codeRegistryDisabled    = "registry_disabled"

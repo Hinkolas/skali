@@ -9,12 +9,16 @@ set of blessed operators (CloudNativePG, Traefik, cert-manager) do all
 generic orchestration. The v2 architecture and rationale live in
 [`REWORK_V2.md`](REWORK_V2.md).
 
-**Status:** V2 rearchitecture. The hand-rolled substrate has been removed.
-In place so far: the strict manifest parser and editor schema, normalized
-compiler IR with dependency graph, deterministic Kubernetes renderer, typed
-environment-values model with secret separation, installer cluster-layout
-schema, run/claim/artifact lifecycle contracts, and immutable revision and
-plan contracts with golden fixtures. R0 of the roadmap is accepted. The R0 workflow transcripts (deploy, local
+**Status:** V2 rearchitecture. R0 (architecture contract) is accepted; R1
+(domain and persistence kernel) is implemented: projects, environments, and
+optimistically versioned drafts persist in Postgres; environment values are
+typed and versioned with secrets encrypted at rest; deployments produce
+immutable revisions with artifact records and retention leases behind a
+pluggable resolver (fake in R1, real builds/imports in R3/R4); environment
+target pointers move only inside the atomic promotion transaction; and the
+machine-guarded run journal records runs/steps/attempts with redacted,
+bounded logs served over REST and SSE. No cluster access yet: observation
+and reconciliation are R2. The R0 workflow transcripts (deploy, local
 development, installer) live in [`docs/transcripts/`](docs/transcripts/). The
 current architecture and roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
 
@@ -104,18 +108,32 @@ cmd/skali      workflow CLI: auth, context, validate, compile
 migrations/    goose migrations (embedded; also sqlc's schema source)
 query/         sqlc query sources → generated into internal/store
 internal/
-  api/         HTTP layer: router, middleware, error envelope, handlers
-  auth/        auth service: argon2id, opaque sessions, TOTP 2FA, rate limits
-  client/      typed REST client used by cmd/skali
-  compiler/    normalized project IR, references, units, dependency graph
-  cliconfig/   ~/.config/skali/config.yaml contexts
-  config/      env-driven config (godotenv + envconfig)
-  crypt/       shared at-rest encryption (AES-GCM, HKDF-derived keys)
-  kubernetes/  pure compiler IR → Kubernetes API object rendering
-  manifest/    strict skali.yml parser, diagnostics, and schema generation
-  obs/         slog + OpenTelemetry (env-only, zero egress by default)
-  store/       pgx pool/tx glue + sqlc-generated queries
-  testdb/      ephemeral Postgres database per test
+  api/           HTTP layer: router, middleware, error envelope, handlers, SSE
+  artifact/      artifact lifecycle machine (pending/verified/abandoned/evicted)
+  artifactstore/ artifact records, retention leases, fake R1 resolver
+  auth/          auth service: argon2id, opaque sessions, TOTP 2FA, rate limits
+  claim/         claim lifecycle machine (R5 implements the substrate)
+  client/        typed REST client used by cmd/skali
+  compiler/      normalized project IR, references, units, dependency graph
+  cliconfig/     ~/.config/skali/config.yaml contexts
+  config/        env-driven config (godotenv + envconfig)
+  crypt/         shared at-rest encryption (AES-GCM, HKDF-derived keys)
+  deploy/        candidate preparation, atomic promotion, targets, rollback
+  journal/       run/step/attempt machines + persistence, logs, SSE fan-out
+  kubernetes/    pure compiler IR → Kubernetes API object rendering
+  layout/        installer cluster-layout schema and topology derivation
+  lifecycle/     generic declarative state-machine engine
+  manifest/      strict skali.yml parser, diagnostics, and schema generation
+  module/        service-module contract, registry, pure health/graph (+apptest)
+  obs/           slog + OpenTelemetry (env-only, zero egress by default)
+  plan/          revision diffing with destructive-change classification
+  project/       projects, environments, optimistically versioned drafts
+  redact/        secret-plaintext redaction for run logs
+  revision/      immutable revision builder and document contract
+  store/         pgx pool/tx glue + sqlc-generated queries
+  testdb/        ephemeral Postgres database per test
+  values/        dotenv import and typed value resolution
+  valuestore/    versioned environment values, encrypted secrets, staging
 web/           SvelteKit BFF (adapter-node); lib/mock is the services design
                spec being promoted to the real API milestone by milestone
 .plan/         superseded first Kubernetes rework plan; historical context only

@@ -11,20 +11,27 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 
 	apispec "github.com/Hinkolas/skali/api"
+	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
+	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 type testAPI struct {
-	t   *testing.T
-	srv *httptest.Server
-	st  *store.Store
-	svc *auth.Service
+	t       *testing.T
+	srv     *httptest.Server
+	st      *store.Store
+	svc     *auth.Service
+	journal *journal.Service
 }
 
 func newTestAPI(t *testing.T) *testAPI {
@@ -33,9 +40,21 @@ func newTestAPI(t *testing.T) *testAPI {
 	st := store.NewStore(pool)
 	svc, err := auth.New(st, auth.Config{Secret: strings.Repeat("s", 32)})
 	require.NoError(t, err)
-	srv := httptest.NewServer(NewRouter(Deps{Auth: svc, Store: st, DB: pool}))
+	values, err := valuestore.New(st, strings.Repeat("s", 32))
+	require.NoError(t, err)
+	deploySvc := deploy.New(st, values, artifactstore.New(st), "test")
+	journalSvc := journal.NewService(st, uuid.NewString())
+	srv := httptest.NewServer(NewRouter(Deps{
+		Auth:     svc,
+		Store:    st,
+		DB:       pool,
+		Projects: project.New(st),
+		Values:   values,
+		Deploy:   deploySvc,
+		Journal:  journalSvc,
+	}))
 	t.Cleanup(srv.Close)
-	return &testAPI{t: t, srv: srv, st: st, svc: svc}
+	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc}
 }
 
 func (a *testAPI) createUser(email, password string) {
@@ -443,10 +462,20 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	a := newTestAPI(t)
 
 	spec := string(apispec.OpenAPI)
-	router := NewRouter(Deps{Auth: a.svc, Store: a.st, DB: a.st.Pool}).(chi.Routes)
+	values, err := valuestore.New(a.st, strings.Repeat("s", 32))
+	require.NoError(t, err)
+	router := NewRouter(Deps{
+		Auth:     a.svc,
+		Store:    a.st,
+		DB:       a.st.Pool,
+		Projects: project.New(a.st),
+		Values:   values,
+		Deploy:   deploy.New(a.st, values, artifactstore.New(a.st), "test"),
+		Journal:  journal.NewService(a.st, uuid.NewString()),
+	}).(chi.Routes)
 
 	routes := 0
-	err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+	err = chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		if !strings.HasPrefix(route, "/v1/") {
 			return nil
 		}
@@ -456,5 +485,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 17, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 38, routes, "route count changed; update the OpenAPI spec and this number")
 }

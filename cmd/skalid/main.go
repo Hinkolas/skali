@@ -21,11 +21,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/Hinkolas/skali/internal/api"
+	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/config"
+	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/obs"
+	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/valuestore"
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 const serviceName = "skalid"
@@ -83,10 +91,38 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+	projectSvc := project.New(st)
+	valueSvc, err := valuestore.New(st, cfg.AuthSecret)
+	if err != nil {
+		return err
+	}
+	artifactSvc := artifactstore.New(st)
+	deploySvc := deploy.New(st, valueSvc, artifactSvc, versionpkg.Version)
+
+	// A fresh executor identity per boot: recovery fails attempts owned by
+	// executors that no longer exist.
+	executorID, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("generate executor id: %w", err)
+	}
+	journalSvc := journal.NewService(st, executorID.String())
+	if failed, err := journalSvc.RecoverOnBoot(ctx); err != nil {
+		return fmt.Errorf("recover journal: %w", err)
+	} else if failed > 0 {
+		slog.InfoContext(ctx, "recovered orphaned attempts", "failed", failed)
+	}
 
 	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewRouter(api.Deps{Auth: authSvc, Store: st, DB: pool}),
+		Addr: cfg.HTTPAddr,
+		Handler: api.NewRouter(api.Deps{
+			Auth:     authSvc,
+			Store:    st,
+			DB:       pool,
+			Projects: projectSvc,
+			Values:   valueSvc,
+			Deploy:   deploySvc,
+			Journal:  journalSvc,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)
@@ -99,6 +135,17 @@ func runServe() error {
 	loopCtx, cancelLoops := context.WithCancel(ctx)
 	defer cancelLoops()
 	go sweepLoop(loopCtx, authSvc)
+
+	// Staged values and pending artifact records are normally closed
+	// explicitly; the sweeps are the safety net for abandoned candidates
+	// and dead executors. Run at boot and hourly.
+	if _, err := valueSvc.SweepStaged(ctx, 24*time.Hour); err != nil {
+		slog.WarnContext(ctx, "sweep staged values", "err", err)
+	}
+	if _, err := artifactSvc.SweepPending(ctx, 24*time.Hour); err != nil {
+		slog.WarnContext(ctx, "sweep pending artifacts", "err", err)
+	}
+	go productSweepLoop(loopCtx, valueSvc, artifactSvc)
 
 	slog.InfoContext(ctx, "starting", "service", serviceName, "http_addr", cfg.HTTPAddr)
 
@@ -127,6 +174,24 @@ func sweepLoop(ctx context.Context, svc *auth.Service) {
 		case <-ticker.C:
 			if err := svc.SweepExpired(ctx); err != nil {
 				slog.WarnContext(ctx, "sweep expired auth rows", "err", err)
+			}
+		}
+	}
+}
+
+func productSweepLoop(ctx context.Context, valueSvc *valuestore.Service, artifactSvc *artifactstore.Service) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := valueSvc.SweepStaged(ctx, 24*time.Hour); err != nil {
+				slog.WarnContext(ctx, "sweep staged values", "err", err)
+			}
+			if _, err := artifactSvc.SweepPending(ctx, 24*time.Hour); err != nil {
+				slog.WarnContext(ctx, "sweep pending artifacts", "err", err)
 			}
 		}
 	}
