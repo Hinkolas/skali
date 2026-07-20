@@ -27,3 +27,8 @@ WHERE status = 'running' AND step_id IN (SELECT id FROM steps WHERE run_id = $1)
 -- Recovery: every running attempt owned by a dead executor.
 -- name: ListForeignRunningAttempts :many
 SELECT * FROM attempts WHERE status = 'running' AND executor_id <> $1;
+
+-- The client log surface appends into a step's running attempt (the
+-- partial unique index admits at most one).
+-- name: GetRunningAttemptByStep :one
+SELECT * FROM attempts WHERE step_id = $1 AND status = 'running';

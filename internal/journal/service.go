@@ -206,6 +206,16 @@ func (s *Service) FinishAttempt(ctx context.Context, attemptID uuid.UUID, to Att
 	})
 }
 
+// Run reads one run row; cancellation and run-scoped authorization need
+// the kind, environment, actor, and status without the full tree.
+func (s *Service) Run(ctx context.Context, id uuid.UUID) (*store.Run, error) {
+	row, err := s.st.GetRunByID(ctx, id)
+	if err != nil {
+		return nil, notFoundOr(err, "get run")
+	}
+	return &row, nil
+}
+
 func (s *Service) ListRuns(ctx context.Context, environmentID uuid.UUID) ([]store.Run, error) {
 	runs, err := s.st.ListRunsByEnvironment(ctx, &environmentID)
 	if err != nil {

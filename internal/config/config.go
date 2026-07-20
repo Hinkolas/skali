@@ -85,6 +85,30 @@ type API struct {
 	// StaleThreshold is how long observation may go without a successful watch
 	// re-establishment before sources report stale.
 	StaleThreshold time.Duration `env:"OBSERVE_STALE_THRESHOLD,default=30s"`
+
+	// RegistryHost names the managed registry in artifact references (what
+	// nodes pull and build clients push, for example localhost:5510). Empty
+	// disables the build and import surfaces.
+	RegistryHost string `env:"SKALI_REGISTRY_HOST,default="`
+
+	// RegistryEndpoint is the address skalid itself dials for digest
+	// verification (the in-cluster service in bundle installations); empty
+	// falls back to RegistryHost.
+	RegistryEndpoint string `env:"SKALI_REGISTRY_ENDPOINT,default="`
+
+	// RegistryInsecure permits plain HTTP toward the registry; the
+	// anonymous loopback-only local registry needs it.
+	RegistryInsecure bool `env:"SKALI_REGISTRY_INSECURE,default=false"`
+
+	// Capabilities lists what this installation can run, separated by
+	// semicolons; deployments whose revisions require more are rejected
+	// with a clear error instead of stalling. R3 installations serve
+	// applications and edge routes.
+	Capabilities []string `env:"SKALI_CAPABILITIES,delimiter=;,default=application;edge"`
+
+	// BuildStaleTimeout bounds how long a local build may go without a
+	// heartbeat before the sweeper fails it and its deployment.
+	BuildStaleTimeout time.Duration `env:"BUILD_STALE_TIMEOUT,default=30m"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.
@@ -109,6 +133,12 @@ func (a *API) Validate() error {
 	}
 	if a.StaleThreshold < 5*time.Second {
 		return fmt.Errorf("OBSERVE_STALE_THRESHOLD: must be at least 5s")
+	}
+	if a.BuildStaleTimeout <= 0 {
+		return fmt.Errorf("BUILD_STALE_TIMEOUT: must be positive")
+	}
+	if len(a.Capabilities) == 0 {
+		return fmt.Errorf("SKALI_CAPABILITIES: must name at least one capability")
 	}
 	return nil
 }

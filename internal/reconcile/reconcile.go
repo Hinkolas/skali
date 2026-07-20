@@ -174,14 +174,28 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	}
 	if attachment.adopted() && attachment.run.Kind == "deployment" {
 		if time.Since(target.UpdatedAt) > k.cfg.RolloutDeadline {
-			// Past the deadline the run fails with diagnostics and the
-			// target stays: reconciliation remains level-triggered and a
-			// late recovery still activates. Automatic fallback to the
-			// previous active revision is the section 8.4 product policy
-			// and lands in R3 with the cancel and rollback API.
+			// Section 8.4 product policy: past the deadline the run fails
+			// with diagnostics and the target returns to the last active
+			// revision when one exists. The guarded compare-and-swap makes
+			// a concurrent newer promotion win; the first deployment of an
+			// environment has nothing to fall back to and keeps its
+			// target, where level-triggered reconciliation continues and a
+			// late recovery still activates.
 			attachment.completeStep(ctx, "verify", "Verify health", journal.StepFailed,
 				healthSummary(statuses))
 			attachment.finish(ctx, journal.RunFailed)
+			rows, err := k.deps.Store.FallbackEnvironmentTarget(ctx, store.FallbackEnvironmentTargetParams{
+				EnvironmentID:    environmentID,
+				TargetRevisionID: target.TargetRevisionID,
+			})
+			if err != nil {
+				return 0, fmt.Errorf("reconcile: fall back target: %w", err)
+			}
+			if rows > 0 {
+				slog.WarnContext(ctx, "rollout deadline exceeded; target returned to the active revision",
+					"environment_id", environmentID)
+				k.Enqueue(environmentID)
+			}
 			return 0, nil
 		}
 		attachment.waitStep(ctx, "verify", "Verify health",

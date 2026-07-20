@@ -1985,9 +1985,12 @@ Implementation notes (decided 2026-07-20, R2 landing):
   run of kind `reconcile` only when material work happened; a pass that
   changes nothing writes no journal rows.
 - Past the rollout deadline (`RECONCILE_ROLLOUT_DEADLINE`, default 10m) the
-  run fails with diagnostics and the target stays; reconciliation remains
-  level triggered and a late recovery still activates. The section 8.4
-  automatic-fallback product policy lands with the R3 cancel/rollback API.
+  run fails with diagnostics. R2 kept the target unconditionally; since the
+  R3 landing the section 8.4 automatic-fallback policy applies: the target
+  returns to the last active revision through a guarded compare-and-swap
+  (a newer promotion always wins), and only the first deployment of an
+  environment, having nothing to fall back to, keeps its target with
+  level-triggered reconciliation continuing toward it.
 - Watch-source freshness counts a successful LIST or the first delivered
   non-error watch event as contact. A bare successful Watch call is not
   contact (the rest client masks connection errors as an empty watcher), and
@@ -2036,6 +2039,55 @@ Exit criteria:
   reconstructs observation before reporting fresh health.
 - `skali dev reset` clearly confirms and removes the complete local
   installation; a subsequent `skali dev` creates a clean installation.
+
+Implementation notes (decided 2026-07-20, R3 landing):
+
+- The deployment API is a multi-request artifact window driven by a
+  `deployments` coordination row (`preparing -> promoted | failed |
+  cancelled`, one preparing per environment): open re-runs the plan and
+  destructive gate server-side, materializes pending artifacts and running
+  build records, and journals the opening steps; the client builds,
+  imports, and streams progress through a scoped step-write surface
+  confined to the run's `artifacts` subtree; completion re-reads the
+  recorded per-application decisions (never client-supplied artifact ids),
+  creates the revision, and promotes atomically. The journal never drives
+  any of it.
+- Artifact dedup keys on a client-computed input hash: sha256 of the
+  deterministic context tree hash (ignore rules and hard `.env`/VCS
+  exclusions applied), the build configuration hash (Dockerfile content,
+  target, resolved plain arguments), and the platform. An unchanged input
+  reuses the verified artifact; imports reuse by exact upstream reference,
+  so a moved upstream tag never changes an existing revision.
+- Builds live in a `builds` table that drives them (origin `local` |
+  `worker`): local builds are records created already running by the CLI,
+  kept alive by heartbeats and swept with their deployment when the client
+  goes quiet; the queued/claimed states and lease columns are the dormant
+  R4 worker protocol. Build logs live only in the journal.
+- Local builds run BuildKit through `docker buildx` with attestations
+  disabled so the pushed digest is the plain manifest digest; imports copy
+  manifests registry-to-registry (go-containerregistry) preserving digests
+  exactly; the server verifies every digest against the managed registry
+  before an artifact verifies (the supported feature set is documented in
+  docs/build-matrix.md). The local registry is anonymous and
+  loopback-only; the token protocol arrives with the production registry
+  in R4.
+- The local platform (cluster `skali-dev`, edge 8080/8443, registry
+  localhost:5510 via NodePort 30500 and a containerd mirror) applies the
+  shared skali-system bundle under the `skali-installer` field manager:
+  CNPG operator and `Cluster` for skalid state, cert-manager with a
+  self-signed `skali` ClusterIssuer, CNCF Distribution, in-cluster skalid
+  (in-cluster credentials, migrate initContainer), and a bootstrap
+  operator-user Job. The CLI logs in through the edge and stores the
+  `local` context; a `skali-dev` cluster without an installation record is
+  never adopted or destroyed.
+- Runtime logs stream through the API as a deliberate cluster pass-through
+  (kubelet follow per member, previous-container tail after restarts);
+  they never enter the system database and are never mixed with
+  deployment-step logs.
+- Installations declare capabilities (`SKALI_CAPABILITIES`, default
+  `application;edge`); deployment open rejects revisions needing more with
+  the missing capabilities named, so a databases-using manifest fails fast
+  in R3 instead of stalling unhealthy.
 
 ### R4 - Production installer, remote artifact, and cloud-build pipeline
 

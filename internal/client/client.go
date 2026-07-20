@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -21,15 +22,51 @@ type Client struct {
 	token     string
 	userAgent string
 	http      *http.Client
+	// streaming has no client timeout: SSE subscriptions outlive any
+	// sensible request deadline.
+	streaming *http.Client
 }
 
 func New(master, token, userAgent string) *Client {
+	transport := localhostTransport()
 	return &Client{
 		base:      strings.TrimRight(master, "/"),
 		token:     token,
 		userAgent: userAgent,
-		http:      &http.Client{Timeout: 15 * time.Second},
+		http:      &http.Client{Timeout: 15 * time.Second, Transport: transport},
+		streaming: &http.Client{Transport: transport},
 	}
+}
+
+// localhostTransport pins *.localhost hosts to the loopback address: RFC
+// 6761 reserves the TLD for loopback, but stub resolvers on some systems
+// refuse to resolve subdomains of localhost, and the local installation
+// serves skali.localhost and every app route through the loopback edge.
+func localhostTransport() *http.Transport {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err == nil && (host == "localhost" || strings.HasSuffix(host, ".localhost")) {
+			address = net.JoinHostPort("127.0.0.1", port)
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+	return transport
+}
+
+// decodeErrorEnvelope turns a non-2xx body into an *APIError.
+func decodeErrorEnvelope(status int, raw []byte) error {
+	var envelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Error.Code == "" {
+		return &APIError{Status: status, Code: "internal", Message: strings.TrimSpace(string(raw))}
+	}
+	return &APIError{Status: status, Code: envelope.Error.Code, Message: envelope.Error.Message}
 }
 
 // APIError is a decoded error envelope. Callers branch on Code.

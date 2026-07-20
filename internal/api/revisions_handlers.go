@@ -1,8 +1,6 @@
 package api
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"time"
 
@@ -15,8 +13,7 @@ import (
 
 // revisionsHandlers is the read surface over immutable revisions and the
 // environment target pointer, plus rollback (pointing the target at an
-// existing revision). Deployments that create revisions arrive with the R3
-// build and import pipelines.
+// existing revision).
 type revisionsHandlers struct {
 	deploy *deploy.Service
 }
@@ -64,17 +61,6 @@ func newTargetPayload(t *store.EnvironmentTarget) targetPayload {
 		payload.ActiveRevisionID = &id
 	}
 	return payload
-}
-
-func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, deploy.ErrEnvironmentNotFound), errors.Is(err, deploy.ErrRevisionNotFound):
-		writeError(w, http.StatusNotFound, codeNotFound, "not found")
-	case errors.Is(err, deploy.ErrRevisionMismatch):
-		writeError(w, http.StatusConflict, codeConflict, "the revision belongs to another environment")
-	default:
-		writeInternalError(ctx, w, "deploy error", err)
-	}
 }
 
 // GET /v1/environments/{id}/revisions

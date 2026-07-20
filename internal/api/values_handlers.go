@@ -2,13 +2,18 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	"github.com/Hinkolas/skali/internal/values"
 )
@@ -16,10 +21,12 @@ import (
 // valuesHandlers is the environment-values surface. Secrecy is declared by
 // the manifest values block alone: the client submits one flat map and the
 // server separates plain from secret against the project's current draft
-// definition. Secret values are write-only.
+// definition (or an explicitly named candidate definition version). Secret
+// values are write-only.
 type valuesHandlers struct {
 	projects *project.Service
 	values   *valuestore.Service
+	st       *store.Store
 }
 
 type valueEntryPayload struct {
@@ -62,6 +69,10 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Values map[string]string `json:"values"`
+		// DefinitionVersionID resolves secrecy against a submitted
+		// candidate definition instead of the project draft, so a deploy
+		// can stage values for the exact manifest it is about to promote.
+		DefinitionVersionID string `json:"definition_version_id"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -77,18 +88,12 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(r.Context(), w, err)
 		return
 	}
-	draft, err := h.projects.GetDraft(r.Context(), env.ProjectID)
-	if err != nil {
-		if errors.Is(err, project.ErrDraftNotFound) {
-			writeError(w, http.StatusConflict, codeConflict,
-				"the project has no draft yet: submit a manifest first so value secrecy is known")
-			return
-		}
-		writeProjectError(r.Context(), w, err)
+	requirements, ok := h.requirements(w, r, env.ProjectID, req.DefinitionVersionID)
+	if !ok {
 		return
 	}
 
-	resolved, unknown := splitBySecrecy(draft.Definition.RequiredVariables, req.Values)
+	resolved, unknown := splitBySecrecy(requirements, req.Values)
 	if len(unknown) > 0 {
 		writeError(w, http.StatusBadRequest, codeBadRequest,
 			"values not declared by the project definition: "+strings.Join(unknown, ", "))
@@ -109,6 +114,51 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 		Plain:       nonNil(candidate.Plain),
 		Secret:      nonNil(candidate.Secret),
 	})
+}
+
+// requirements resolves the variable requirements the submitted values are
+// classified against: an explicitly named candidate definition version, or
+// the project draft.
+func (h *valuesHandlers) requirements(w http.ResponseWriter, r *http.Request, projectID uuid.UUID, definitionVersion string) ([]compiler.VariableRequirement, bool) {
+	if definitionVersion != "" {
+		versionID, err := uuid.Parse(definitionVersion)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, codeBadRequest, "definition_version_id must be a UUID")
+			return nil, false
+		}
+		row, err := h.st.GetDefinitionVersionByID(r.Context(), versionID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, codeNotFound, "the definition version does not exist")
+				return nil, false
+			}
+			writeInternalError(r.Context(), w, "get definition version", err)
+			return nil, false
+		}
+		if row.ProjectID != projectID {
+			writeError(w, http.StatusUnprocessableEntity, codeBadRequest,
+				"the definition version belongs to another project")
+			return nil, false
+		}
+		var definition compiler.ProjectDefinition
+		if err := json.Unmarshal(row.Definition, &definition); err != nil {
+			writeInternalError(r.Context(), w, "decode definition", err)
+			return nil, false
+		}
+		return definition.RequiredVariables, true
+	}
+
+	draft, err := h.projects.GetDraft(r.Context(), projectID)
+	if err != nil {
+		if errors.Is(err, project.ErrDraftNotFound) {
+			writeError(w, http.StatusConflict, codeConflict,
+				"the project has no draft yet: submit a manifest first so value secrecy is known")
+			return nil, false
+		}
+		writeProjectError(r.Context(), w, err)
+		return nil, false
+	}
+	return draft.Definition.RequiredVariables, true
 }
 
 // splitBySecrecy classifies a flat name -> value map against the compiled

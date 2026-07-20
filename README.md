@@ -9,22 +9,26 @@ set of blessed operators (CloudNativePG, Traefik, cert-manager) do all
 generic orchestration. The v2 architecture and rationale live in
 [`REWORK_V2.md`](REWORK_V2.md).
 
-**Status:** V2 rearchitecture. R0 (architecture contract) is accepted, R1
-(domain and persistence kernel) and R2 (observation and reconciliation
-kernel) are implemented. On top of the R1 kernel (projects, drafts, typed
-values with encrypted secrets, immutable revisions, atomic target promotion,
-machine-guarded run journal), skalid now observes a cluster through
-LIST/WATCH caches with explicit freshness (fresh/stale/unknown), applies and
-prunes managed objects via server-side apply under a strict field-ownership
-contract (including safe fixed/autoscaled replica transitions), heals
-out-of-band drift, and activates a revision only after its health conditions
-pass, while API topology reads never touch Kubernetes at request time.
-Deployment execution still has no API endpoint and the production
-application module ships with R3, so end-to-end rollouts are exercised by
-the live k3d test suite (`task k3d:up && task test:live`). The R0 workflow
-transcripts (deploy, local development, installer) live in
-[`docs/transcripts/`](docs/transcripts/). The current architecture and
-roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
+**Status:** V2 rearchitecture. R0 (architecture contract) is accepted; R1
+(domain and persistence kernel), R2 (observation and reconciliation
+kernel), and R3 (CLI-managed local installation and application slice) are
+implemented. On top of the R1/R2 kernels (immutable revisions, encrypted
+values, LIST/WATCH observation with explicit freshness, server-side apply
+with field-ownership discipline, health-gated activation), skali is now
+usable end to end on one machine: bare `skali dev` creates a disposable
+k3d cluster, installs the in-cluster skali-system bundle (skalid, CNPG
+Postgres, CNCF Distribution registry, cert-manager; Traefik ships with
+k3s), builds build-sourced applications locally through BuildKit and
+imports image sources digest-preservingly, verifies every digest against
+the managed registry server-side, deploys through the public deployment
+API (plan, destructive gate, artifact window, atomic promotion, journaled
+rollout), and renders the full run tree live in the terminal, with runtime
+log streaming and explicit cancel/automatic-fallback semantics. Cloud
+builds, the production installer, and the registry token protocol are R4.
+The R0 workflow transcripts (deploy, local development, installer) live in
+[`docs/transcripts/`](docs/transcripts/); the supported build features are
+in [`docs/build-matrix.md`](docs/build-matrix.md). The current
+architecture and roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
 
 Distinct product and operational roles:
 
@@ -46,7 +50,29 @@ sessions are opaque bearer tokens (sha256-hashed at rest, 30-day sliding
 expiry, instant revocation). There is no signup endpoint — users are created
 by the operator.
 
-## Quickstart (dev)
+## Quickstart: run a project locally
+
+Requirements: Docker (with buildx) and [k3d](https://k3d.io). From a
+project directory with a `skali.yml` (for example
+[`examples/hello-build`](examples/hello-build)):
+
+```sh
+cd examples/hello-build && cp .env.example .env
+skali dev
+```
+
+Bare `skali dev` is the complete paved path: it creates the disposable
+`skali-dev` k3d cluster, installs the in-cluster skali-system bundle
+(skalid, CNPG Postgres, managed registry, cert-manager), builds and
+imports the project's artifacts, deploys through the public API, and
+attaches to the rollout. Routes serve on `http://<domain>:8080` for
+`*.localhost` domains; the local API lives at `http://skali.localhost:8080`.
+`skali dev status | logs | stop | reset` manage the installation; reset is
+the only destructive command and always confirms. Working from this
+repository, `skali dev` builds the `skalid:dev` image from the working
+tree automatically (`task dev:image` refreshes it explicitly).
+
+## Quickstart (contributing to skali itself)
 
 Requirements: Go 1.26+, Node 22+, [go-task](https://taskfile.dev), Docker
 (shared dev Postgres; k3d dev cluster), sqlc (only when changing queries).
@@ -114,30 +140,37 @@ query/         sqlc query sources → generated into internal/store
 internal/
   api/           HTTP layer: router, middleware, error envelope, handlers, SSE
   artifact/      artifact lifecycle machine (pending/verified/abandoned/evicted)
-  artifactstore/ artifact records, retention leases, fake R1 resolver
+  artifactstore/ artifact records, retention leases, record + fake resolvers
   auth/          auth service: argon2id, opaque sessions, TOTP 2FA, rate limits
+  build/         pure build engine: context hashing, buildx, digest imports
+  buildstore/    build records and lifecycle (local now, R4 worker queue)
+  bundle/        installer-owned skali-system bundle: render, SSA apply, waits
   claim/         claim lifecycle machine (R5 implements the substrate)
-  client/        typed REST client used by cmd/skali
+  client/        typed REST client used by cmd/skali (JSON + SSE)
+  clirender/     terminal run-tree renderer (transcript glyph shape)
   compiler/      normalized project IR, references, units, dependency graph
   cliconfig/     ~/.config/skali/config.yaml contexts
   config/        env-driven config (godotenv + envconfig)
   crypt/         shared at-rest encryption (AES-GCM, HKDF-derived keys)
-  deploy/        candidate preparation, atomic promotion, targets, rollback
+  deploy/        deployment coordination: plan, artifact window, promotion
   journal/       run/step/attempt machines + persistence, logs, SSE fan-out
   kube/          cluster client, server-side apply/delete, field ownership
   kubernetes/    pure compiler IR → Kubernetes API object rendering
   kubetest/      live-cluster test gating (TEST_KUBECONFIG), severable proxy
   layout/        installer cluster-layout schema and topology derivation
   lifecycle/     generic declarative state-machine engine
+  localdev/      disposable local platform: k3d lifecycle, state, bootstrap
   manifest/      strict skali.yml parser, diagnostics, and schema generation
-  module/        service-module contract, registry, pure health/graph (+apptest)
+  module/        service-module contract, registry, health (+app, +apptest)
   obs/           slog + OpenTelemetry (env-only, zero egress by default)
   observe/       in-memory ObservedStore fed by LIST/WATCH, freshness, fake
   plan/          revision diffing with destructive-change classification
   project/       projects, environments, optimistically versioned drafts
   reconcile/     level-triggered kernel: queue, apply/prune, health, activation
   redact/        secret-plaintext redaction for run logs
+  registry/      managed-registry client: digest verification, repo layout
   revision/      immutable revision builder and document contract
+  runtimelogs/   live application log streaming (cluster pass-through)
   store/         pgx pool/tx glue + sqlc-generated queries
   testdb/        ephemeral Postgres database per test
   values/        dotenv import and typed value resolution
@@ -189,4 +222,11 @@ cd web && npm run check
 task k3d:up
 task test:live
 task k3d:down
+
+# Build-engine tests exec docker (buildx + a throwaway registry container):
+task test:docker
+
+# The skali dev end-to-end suite drives the real paved path on its own
+# throwaway installation (cluster skali-dev-e2e); it takes minutes:
+task test:dev
 ```

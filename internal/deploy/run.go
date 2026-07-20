@@ -54,26 +54,34 @@ func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult,
 		}
 		return nil, err
 	}
-	result := &ExecuteResult{RunID: run.ID}
+	return s.runStages(ctx, run.ID, in)
+}
+
+// runStages journals revision creation and promotion into an already
+// running run, then hands rollout to the kernel (or, without one, finishes
+// the run). Execute and the R3 deployment completion flow share it; the
+// deterministic step keys are "revision" and "promote".
+func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInput) (*ExecuteResult, error) {
+	result := &ExecuteResult{RunID: runID}
 
 	// The redactor covers the environment's current secrets plus the
 	// candidate's staged ones; every log line passes through it.
 	redactor, err := s.values.Redactor(ctx, in.EnvironmentID, in.CandidateID)
 	if err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 
-	// Step 1: prepare the revision.
-	prepareStep, err := in.Journal.EnsureStep(ctx, run.ID, nil, "prepare", "Prepare revision")
+	// Step 1: create the immutable revision.
+	prepareStep, err := in.Journal.EnsureStep(ctx, runID, nil, "revision", "Create revision")
 	if err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepRunning); err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	attempt, err := in.Journal.StartAttempt(ctx, prepareStep.ID)
 	if err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	writer := in.Journal.Writer(attempt.ID, redactor)
 
@@ -88,42 +96,42 @@ func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult,
 		_ = writer.Error(ctx, "preparation failed: "+err.Error())
 		_ = in.Journal.FinishAttempt(ctx, attempt.ID, journal.AttemptFailed)
 		_ = in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepFailed)
-		return result, s.fail(ctx, in, run.ID, writer, err)
+		return result, s.fail(ctx, in, runID, writer, err)
 	}
 	result.RevisionID = prepared.RevisionID
 	_ = writer.Info(ctx, "revision "+prepared.Revision.Checksum+" stored")
 	if err := in.Journal.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded); err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepSucceeded); err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 
 	// Step 2: promote atomically.
-	promoteStep, err := in.Journal.EnsureStep(ctx, run.ID, nil, "promote", "Promote revision")
+	promoteStep, err := in.Journal.EnsureStep(ctx, runID, nil, "promote", "Promote revision")
 	if err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepRunning); err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	promoteAttempt, err := in.Journal.StartAttempt(ctx, promoteStep.ID)
 	if err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	promoteWriter := in.Journal.Writer(promoteAttempt.ID, redactor)
 	if err := s.Promote(ctx, prepared); err != nil {
 		_ = promoteWriter.Error(ctx, "promotion failed: "+err.Error())
 		_ = in.Journal.FinishAttempt(ctx, promoteAttempt.ID, journal.AttemptFailed)
 		_ = in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepFailed)
-		return result, s.fail(ctx, in, run.ID, promoteWriter, err)
+		return result, s.fail(ctx, in, runID, promoteWriter, err)
 	}
 	_ = promoteWriter.Info(ctx, "target set to revision "+prepared.Revision.Checksum)
 	if err := in.Journal.FinishAttempt(ctx, promoteAttempt.ID, journal.AttemptSucceeded); err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepSucceeded); err != nil {
-		return result, s.fail(ctx, in, run.ID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
 
 	// With a kernel wired, the run stays running: the reconcile worker owns
@@ -131,13 +139,13 @@ func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult,
 	// deterministic step keys, and finishes it. Without one (R1 behavior,
 	// kept for tests), promotion concludes the run.
 	if s.enqueuer != nil {
-		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); err != nil {
-			return result, s.fail(ctx, in, run.ID, nil, err)
+		if _, err := in.Journal.EnsureStep(ctx, runID, nil, "rollout", "Roll out revision"); err != nil {
+			return result, s.fail(ctx, in, runID, nil, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)
 		return result, nil
 	}
-	if err := in.Journal.FinishRun(ctx, run.ID, journal.RunSucceeded); err != nil {
+	if err := in.Journal.FinishRun(ctx, runID, journal.RunSucceeded); err != nil {
 		return result, err
 	}
 	return result, nil

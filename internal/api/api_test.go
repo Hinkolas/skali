@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/module"
@@ -25,6 +28,8 @@ import (
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
+	"github.com/Hinkolas/skali/internal/registry"
+	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
 	"github.com/Hinkolas/skali/internal/valuestore"
@@ -37,6 +42,9 @@ type testAPI struct {
 	svc      *auth.Service
 	journal  *journal.Service
 	observed *observe.Fake
+	// held tracks "repository@digest" content the fake managed registry
+	// answers for; registryHolds seeds it.
+	held *sync.Map
 }
 
 func newTestAPI(t *testing.T) *testAPI {
@@ -47,31 +55,71 @@ func newTestAPI(t *testing.T) *testAPI {
 	require.NoError(t, err)
 	values, err := valuestore.New(st, strings.Repeat("s", 32))
 	require.NoError(t, err)
-	deploySvc := deploy.New(st, values, artifactstore.New(st), "test")
+	artifactSvc := artifactstore.New(st)
+	deploySvc := deploy.New(st, values, artifactSvc, "test")
 	journalSvc := journal.NewService(st, uuid.NewString())
-	registry := module.NewRegistry()
-	require.NoError(t, registry.Register(apptest.Module{}))
+	registryModules := module.NewRegistry()
+	require.NoError(t, registryModules.Register(apptest.Module{}))
 	observed := observe.NewFake()
 	kernel := reconcile.New(reconcile.Deps{
 		Store:    st,
 		Deploy:   deploySvc,
 		Values:   values,
 		Journal:  journalSvc,
-		Registry: registry,
+		Registry: registryModules,
 		Observed: observed.Store,
 	}, reconcile.Config{})
+	// Mirror production wiring: completion hands the run to the kernel and
+	// leaves it running. The kernel loop is not started in API tests, so
+	// tests finish runs explicitly where the worker would.
+	deploySvc.SetEnqueuer(kernel)
+
+	// A fake managed registry: the verify surface HEADs it for digests the
+	// test seeded through registryHolds.
+	held := &sync.Map{}
+	fakeRegistry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		repo, digest, found := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/"), "/manifests/")
+		if found {
+			if _, holds := held.Load(repo + "@" + digest); holds {
+				w.Header().Set("Docker-Content-Digest", digest)
+				w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+				w.Header().Set("Content-Length", "2")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(fakeRegistry.Close)
+	registryURL, err := url.Parse(fakeRegistry.URL)
+	require.NoError(t, err)
+
 	srv := httptest.NewServer(NewRouter(Deps{
-		Auth:      svc,
-		Store:     st,
-		DB:        pool,
-		Projects:  project.New(st),
-		Values:    values,
-		Deploy:    deploySvc,
-		Journal:   journalSvc,
-		Reconcile: kernel,
+		Auth:         svc,
+		Store:        st,
+		DB:           pool,
+		Projects:     project.New(st),
+		Values:       values,
+		Deploy:       deploySvc,
+		Artifacts:    artifactSvc,
+		Builds:       buildstore.New(st),
+		Journal:      journalSvc,
+		Reconcile:    kernel,
+		Registry:     &registry.Client{Host: registryURL.Host},
+		RuntimeLogs:  &runtimelogs.Streamer{Observed: observed.Store, Store: st},
+		Capabilities: []string{"application", "edge"},
 	}))
 	t.Cleanup(srv.Close)
-	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc, observed: observed}
+	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc, observed: observed, held: held}
+}
+
+// registryHolds seeds fake managed-registry content.
+func (a *testAPI) registryHolds(repository, digest string) {
+	a.held.Store(repository+"@"+digest, true)
 }
 
 func (a *testAPI) createUser(email, password string) {
@@ -484,17 +532,20 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	deploySvc := deploy.New(a.st, values, artifactstore.New(a.st), "test")
 	journalSvc := journal.NewService(a.st, uuid.NewString())
 	router := NewRouter(Deps{
-		Auth:     a.svc,
-		Store:    a.st,
-		DB:       a.st.Pool,
-		Projects: project.New(a.st),
-		Values:   values,
-		Deploy:   deploySvc,
-		Journal:  journalSvc,
+		Auth:      a.svc,
+		Store:     a.st,
+		DB:        a.st.Pool,
+		Projects:  project.New(a.st),
+		Values:    values,
+		Deploy:    deploySvc,
+		Artifacts: artifactstore.New(a.st),
+		Builds:    buildstore.New(a.st),
+		Journal:   journalSvc,
 		Reconcile: reconcile.New(reconcile.Deps{
 			Store: a.st, Deploy: deploySvc, Values: values, Journal: journalSvc,
 			Registry: module.NewRegistry(), Observed: observe.NewFake().Store,
 		}, reconcile.Config{}),
+		Registry: &registry.Client{},
 	}).(chi.Routes)
 
 	routes := 0
@@ -508,5 +559,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 41, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 54, routes, "route count changed; update the OpenAPI spec and this number")
 }

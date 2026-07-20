@@ -120,6 +120,32 @@ applications:
 	require.ErrorContains(t, err, "secret project value APP_DOMAIN may only be used in application environment variables")
 }
 
+// Build arguments persist in image history, so a secret value can never
+// legally reach one; the build engine's secret mounts stay the only path
+// for secret build inputs.
+func TestSecretValueRejectedInBuildArguments(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: secret-build-arg
+values:
+  NPM_TOKEN:
+    secret: true
+applications:
+  api:
+    build:
+      context: .
+      arguments:
+        NPM_TOKEN: "${NPM_TOKEN}"
+    ports:
+      http:
+        port: 8080
+    environment:
+      NPM_TOKEN: "${NPM_TOKEN}"
+`)
+	require.ErrorContains(t, err, "secret project value NPM_TOKEN may only be used in application environment variables")
+}
+
 func TestSecretValueRejectsInlineDefault(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `

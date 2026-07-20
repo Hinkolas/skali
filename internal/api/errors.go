@@ -37,6 +37,13 @@ const (
 	codeRegistryDisabled    = "registry_disabled"
 	codeRegistryUnavailable = "registry_unavailable"
 	codeInternal            = "internal"
+
+	// Deployment coordination (R3).
+	codeDeploymentInFlight      = "deployment_in_flight"
+	codeDestructiveChange       = "destructive_change"
+	codeDigestMismatch          = "digest_mismatch"
+	codeArtifactsIncomplete     = "artifacts_incomplete"
+	codeUnsupportedCapabilities = "unsupported_capabilities"
 )
 
 // writeInternalError logs the real error and reports an opaque 500.

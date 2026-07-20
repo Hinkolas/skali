@@ -43,6 +43,9 @@ const (
 	// FieldManagerPlatform is reserved for skalid-owned platform resources
 	// (shared database and storage substrates); unused until R5.
 	FieldManagerPlatform = "skalid-platform"
+	// FieldManagerInstaller owns the installer-managed system bundle
+	// (skali-system); skalid never reconciles or prunes under it.
+	FieldManagerInstaller = "skali-installer"
 )
 
 // ErrNoCluster: no explicit kubeconfig was given and in-cluster
@@ -127,6 +130,12 @@ type ApplyResult struct {
 
 // Apply server-side-applies one rendered object under FieldManagerProject.
 func (c *Client) Apply(ctx context.Context, obj runtime.Object, force bool) (ApplyResult, error) {
+	return c.ApplyAs(ctx, obj, FieldManagerProject, force)
+}
+
+// ApplyAs server-side-applies one rendered object under an explicit field
+// manager; the installer bundle applies under FieldManagerInstaller.
+func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string, force bool) (ApplyResult, error) {
 	applied, resource, err := c.prepare(obj)
 	if err != nil {
 		return ApplyResult{}, err
@@ -144,7 +153,7 @@ func (c *Client) Apply(ctx context.Context, obj runtime.Object, force bool) (App
 		return ApplyResult{}, fmt.Errorf("kube: encode %s: %w", applied.GetName(), err)
 	}
 	result, err := resource.Patch(ctx, applied.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
-		FieldManager: FieldManagerProject,
+		FieldManager: manager,
 		Force:        &force,
 	})
 	if err != nil {

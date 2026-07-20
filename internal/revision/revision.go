@@ -204,6 +204,13 @@ func checkArtifacts(definition compiler.ProjectDefinition, provided map[string]A
 	return artifacts, nil
 }
 
+// RequiredCapabilities exposes the capability derivation for pre-revision
+// gating: deployment open checks the installation's declared capabilities
+// before any artifact work starts.
+func RequiredCapabilities(definition compiler.ProjectDefinition) []string {
+	return requiredCapabilities(definition)
+}
+
 // requiredCapabilities derives the node capabilities a revision needs from
 // the definition, in the layout package's display order.
 func requiredCapabilities(definition compiler.ProjectDefinition) []string {

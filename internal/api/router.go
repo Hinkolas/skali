@@ -13,11 +13,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	apispec "github.com/Hinkolas/skali/api"
+	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
+	"github.com/Hinkolas/skali/internal/registry"
+	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
@@ -29,8 +33,19 @@ type Deps struct {
 	Projects  *project.Service
 	Values    *valuestore.Service
 	Deploy    *deploy.Service
+	Artifacts *artifactstore.Service
+	Builds    *buildstore.Service
 	Journal   *journal.Service
 	Reconcile *reconcile.Kernel
+	// Registry is the managed-registry client; a zero-host client means
+	// the build and import surfaces answer registry_disabled.
+	Registry *registry.Client
+	// RuntimeLogs streams live application logs; nil-clientset streams
+	// answer node_unreachable.
+	RuntimeLogs *runtimelogs.Streamer
+	// Capabilities is the installation's declared capability set for the
+	// deployment gate.
+	Capabilities []string
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -61,6 +76,13 @@ func NewRouter(d Deps) http.Handler {
 	h := &authHandlers{auth: d.Auth}
 	jh := &runsHandlers{journal: d.Journal}
 	sh := &statusHandlers{reconcile: d.Reconcile}
+	lh := &logsHandlers{logs: d.RuntimeLogs}
+	dh := &deploymentsHandlers{
+		st: d.Store, deploy: d.Deploy, artifacts: d.Artifacts, builds: d.Builds,
+		journal: d.Journal, registry: d.Registry, reconcile: d.Reconcile,
+		capabilities: d.Capabilities,
+	}
+	ch := &clientStepsHandlers{st: d.Store, journal: d.Journal, values: d.Values}
 	r.Route("/v1", func(r chi.Router) {
 		// Streaming: authenticated but deliberately outside the request
 		// timeout, which would cut every SSE connection at 30 seconds.
@@ -69,6 +91,7 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Get("/steps/{id}/logs/stream", jh.streamLogs)
 			r.Get("/environments/{id}/status/stream", sh.stream)
+			r.Get("/environments/{id}/logs/stream", lh.stream)
 		})
 
 		// Everything else runs under the request timeout.
@@ -118,7 +141,9 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/projects/{id}/environments", eh.list)
 				r.Get("/environments/{id}", eh.get)
 
-				vh := &valuesHandlers{projects: d.Projects, values: d.Values}
+				r.Post("/projects/{id}/definitions", ph.submitDefinition)
+
+				vh := &valuesHandlers{projects: d.Projects, values: d.Values, st: d.Store}
 				r.Get("/environments/{id}/values", vh.get)
 				r.Put("/environments/{id}/values", vh.put)
 
@@ -127,6 +152,22 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/revisions/{id}", rh.get)
 				r.Get("/environments/{id}/target", rh.getTarget)
 				r.Put("/environments/{id}/target", rh.putTarget)
+
+				// The deployment coordination surface: plan, the artifact
+				// window, verification, and cancellation.
+				r.Post("/environments/{id}/plan", dh.plan)
+				r.Post("/environments/{id}/deployments", dh.open)
+				r.Get("/deployments/{id}", dh.get)
+				r.Post("/deployments/{id}/complete", dh.complete)
+				r.Post("/deployments/{id}/fail", dh.fail)
+				r.Post("/artifacts/{id}/verify", dh.verifyArtifact)
+				r.Post("/builds/{id}/heartbeat", dh.heartbeatBuild)
+				r.Post("/runs/{id}/cancel", dh.cancelRun)
+
+				// Scoped client step writes (artifacts subtree only).
+				r.Post("/runs/{id}/steps", ch.ensureStep)
+				r.Patch("/steps/{id}", ch.setStepStatus)
+				r.Post("/steps/{id}/logs", ch.appendLogs)
 
 				// Observation projections: served from the observed store and
 				// database pointers, never a request-time cluster call.

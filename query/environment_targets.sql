@@ -28,3 +28,14 @@ SELECT * FROM environment_targets;
 -- name: ListEnvironmentsOutOfSync :many
 SELECT * FROM environment_targets
 WHERE target_revision_id IS DISTINCT FROM active_revision_id;
+
+-- Automatic fallback and cancellation: return the target to the last active
+-- revision. The compare-and-swap on the expected target means a newer
+-- deployment's promotion is never clobbered, and without an active revision
+-- (first deployment) there is nothing to fall back to (0 rows = no-op).
+-- name: FallbackEnvironmentTarget :execrows
+UPDATE environment_targets
+SET target_revision_id = active_revision_id, updated_at = now()
+WHERE environment_id = $1 AND target_revision_id = $2
+  AND active_revision_id IS NOT NULL
+  AND target_revision_id IS DISTINCT FROM active_revision_id;

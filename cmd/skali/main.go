@@ -27,7 +27,9 @@ func main() {
 		SilenceErrors: true,
 	}
 
-	root.AddCommand(newAuthCmd(), newContextCmd(), newValidateCmd(), newCompileCmd())
+	root.AddCommand(newAuthCmd(), newContextCmd(), newValidateCmd(), newCompileCmd(),
+		newPlanCommand(), newDeployCommand(), newDevCommand(),
+		newRunsCommand(), newRunCommand(), newLogsCommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

@@ -46,7 +46,7 @@ func TestExecuteEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "succeeded", tree.Run.Status)
 	require.Len(t, tree.Steps, 2)
-	require.Equal(t, "prepare", tree.Steps[0].Step.Key)
+	require.Equal(t, "revision", tree.Steps[0].Step.Key)
 	require.Equal(t, "succeeded", tree.Steps[0].Step.Status)
 	require.Equal(t, "promote", tree.Steps[1].Step.Key)
 	require.Equal(t, "succeeded", tree.Steps[1].Step.Status)

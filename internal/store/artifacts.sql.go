@@ -117,6 +117,81 @@ func (q *Queries) GetArtifactForUpdate(ctx context.Context, id uuid.UUID) (Artif
 	return i, err
 }
 
+const getReusableArtifact = `-- name: GetReusableArtifact :one
+SELECT id, project_id, application, kind, phase, reference, digest, upstream, context_hash, provenance, created_at, updated_at, verified_at FROM artifacts
+WHERE project_id = $1 AND application = $2 AND kind = $3
+  AND context_hash = $4 AND phase = 'verified'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetReusableArtifactParams struct {
+	ProjectID   *uuid.UUID
+	Application string
+	Kind        string
+	ContextHash string
+}
+
+// Newest verified build artifact whose inputs match exactly; deployment
+// preparation reuses it instead of building again. context_hash carries the
+// combined input hash (tree + build configuration + platform).
+func (q *Queries) GetReusableArtifact(ctx context.Context, arg GetReusableArtifactParams) (Artifact, error) {
+	row := q.db.QueryRow(ctx, getReusableArtifact,
+		arg.ProjectID,
+		arg.Application,
+		arg.Kind,
+		arg.ContextHash,
+	)
+	var i Artifact
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Application,
+		&i.Kind,
+		&i.Phase,
+		&i.Reference,
+		&i.Digest,
+		&i.Upstream,
+		&i.ContextHash,
+		&i.Provenance,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const getVerifiedArtifactByUpstream = `-- name: GetVerifiedArtifactByUpstream :one
+SELECT id, project_id, application, kind, phase, reference, digest, upstream, context_hash, provenance, created_at, updated_at, verified_at FROM artifacts
+WHERE kind = 'import' AND upstream = $1 AND phase = 'verified'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// Newest verified import of the exact upstream reference; re-importing the
+// same reference reuses the managed copy (tag movement upstream cannot
+// change an existing revision by contract).
+func (q *Queries) GetVerifiedArtifactByUpstream(ctx context.Context, upstream string) (Artifact, error) {
+	row := q.db.QueryRow(ctx, getVerifiedArtifactByUpstream, upstream)
+	var i Artifact
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Application,
+		&i.Kind,
+		&i.Phase,
+		&i.Reference,
+		&i.Digest,
+		&i.Upstream,
+		&i.ContextHash,
+		&i.Provenance,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
 const setArtifactPhase = `-- name: SetArtifactPhase :exec
 UPDATE artifacts SET phase = $2, updated_at = now() WHERE id = $1
 `

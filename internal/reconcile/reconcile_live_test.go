@@ -19,7 +19,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubetest"
 	"github.com/Hinkolas/skali/internal/module"
-	"github.com/Hinkolas/skali/internal/module/apptest"
+	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
@@ -81,8 +81,10 @@ func newLiveFixture(t *testing.T, cfg Config, config *rest.Config) *liveFixture 
 	artifactSvc := artifactstore.New(st)
 	deploySvc := deploy.New(st, valueSvc, artifactSvc, "test")
 	journalSvc := journal.NewService(st, "live-boot-"+uuid.NewString()[:8])
+	// Live tests run the production application module; apptest keeps
+	// serving the pure kernel tests over the observe fake.
 	registry := module.NewRegistry()
-	require.NoError(t, registry.Register(apptest.Module{}))
+	require.NoError(t, registry.Register(app.Module{}))
 
 	staleThreshold := cfg.StaleThreshold
 	if staleThreshold <= 0 {

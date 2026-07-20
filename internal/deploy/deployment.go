@@ -1,0 +1,149 @@
+package deploy
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/Hinkolas/skali/internal/lifecycle"
+	"github.com/Hinkolas/skali/internal/store"
+)
+
+// ErrDeploymentNotFound: no deployment row with that id.
+var ErrDeploymentNotFound = errors.New("deploy: deployment not found")
+
+// DeploymentStatus is the authoritative state of one multi-request
+// deployment. The row drives the flow (the journal run only explains it):
+// preparing spans the artifact window between opening the deployment and
+// completing it, promoted means the revision was created and the target
+// moved, and failed or cancelled close the window with values, target, and
+// active revision untouched.
+type DeploymentStatus string
+
+const (
+	DeploymentPreparing DeploymentStatus = "preparing"
+	DeploymentPromoted  DeploymentStatus = "promoted"
+	DeploymentFailed    DeploymentStatus = "failed"
+	DeploymentCancelled DeploymentStatus = "cancelled"
+)
+
+// DeploymentStatuses is the deployment lifecycle machine.
+var DeploymentStatuses = lifecycle.Machine[DeploymentStatus]{
+	States: []DeploymentStatus{
+		DeploymentPreparing, DeploymentPromoted,
+		DeploymentFailed, DeploymentCancelled,
+	},
+	Transitions: map[DeploymentStatus][]DeploymentStatus{
+		DeploymentPreparing: {DeploymentPromoted, DeploymentFailed, DeploymentCancelled},
+	},
+}
+
+// ErrInvalidDeploymentTransition: the requested status change is not
+// permitted by the deployment lifecycle machine.
+var ErrInvalidDeploymentTransition = errors.New("deploy: invalid deployment status transition")
+
+// NewDeployment describes one deployment row to create.
+type NewDeployment struct {
+	ProjectID           uuid.UUID
+	EnvironmentID       uuid.UUID
+	DefinitionVersionID uuid.UUID
+	CandidateID         uuid.UUID // uuid.Nil deploys current values
+	RunID               uuid.UUID
+	Actor               string
+	BuildExecutor       string
+	Actions             json.RawMessage
+}
+
+// CreateDeployment inserts the coordination row in preparing. The partial
+// unique index turns a concurrent second deployment for the same
+// environment into ErrDeploymentInFlight.
+func (s *Service) CreateDeployment(ctx context.Context, in NewDeployment) (*store.Deployment, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("deploy: generate id: %w", err)
+	}
+	executor := in.BuildExecutor
+	if executor == "" {
+		executor = "local"
+	}
+	actions := in.Actions
+	if len(actions) == 0 {
+		actions = json.RawMessage("[]")
+	}
+	row, err := s.st.CreateDeployment(ctx, store.CreateDeploymentParams{
+		ID:                  id,
+		ProjectID:           in.ProjectID,
+		EnvironmentID:       in.EnvironmentID,
+		DefinitionVersionID: in.DefinitionVersionID,
+		CandidateID:         nilWhenZero(in.CandidateID),
+		RunID:               nilWhenZero(in.RunID),
+		Actor:               in.Actor,
+		BuildExecutor:       executor,
+		Actions:             actions,
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrDeploymentInFlight
+		}
+		return nil, fmt.Errorf("deploy: create deployment: %w", err)
+	}
+	return &row, nil
+}
+
+func (s *Service) GetDeployment(ctx context.Context, id uuid.UUID) (*store.Deployment, error) {
+	row, err := s.st.GetDeploymentByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrDeploymentNotFound
+		}
+		return nil, fmt.Errorf("deploy: get deployment: %w", err)
+	}
+	return &row, nil
+}
+
+// setDeploymentStatus applies one guarded status change under a row lock,
+// optionally recording the revision the deployment produced.
+func (s *Service) setDeploymentStatus(ctx context.Context, id uuid.UUID, to DeploymentStatus, revisionID uuid.UUID) error {
+	return s.st.WithTx(ctx, func(q *store.Queries) error {
+		row, err := q.GetDeploymentForUpdate(ctx, id)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrDeploymentNotFound
+			}
+			return fmt.Errorf("deploy: lock deployment: %w", err)
+		}
+		if !DeploymentStatuses.Can(DeploymentStatus(row.Status), to) {
+			return fmt.Errorf("%w: %s -> %s", ErrInvalidDeploymentTransition, row.Status, to)
+		}
+		if revisionID != uuid.Nil {
+			if err := q.SetDeploymentRevision(ctx, store.SetDeploymentRevisionParams{
+				ID: id, RevisionID: &revisionID,
+			}); err != nil {
+				return fmt.Errorf("deploy: set deployment revision: %w", err)
+			}
+		}
+		if err := q.SetDeploymentStatus(ctx, store.SetDeploymentStatusParams{
+			ID: id, Status: string(to),
+		}); err != nil {
+			return fmt.Errorf("deploy: set deployment status: %w", err)
+		}
+		return nil
+	})
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func nilWhenZero(id uuid.UUID) *uuid.UUID {
+	if id == uuid.Nil {
+		return nil
+	}
+	return &id
+}

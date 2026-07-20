@@ -247,6 +247,40 @@ func (h *projectsHandlers) getDraft(w http.ResponseWriter, r *http.Request) {
 	}{newDraftPayload(draft)})
 }
 
+// POST /v1/projects/{id}/definitions: submit a candidate definition
+// version WITHOUT moving the draft. Deployment preparation consumes the
+// returned version id; only promotion advances the draft.
+func (h *projectsHandlers) submitDefinition(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Source string `json:"source"`
+		Format string `json:"format"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+		return
+	}
+	if req.Source == "" {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "source is required")
+		return
+	}
+	if req.Format == "" {
+		req.Format = "yaml"
+	}
+	versionID, hash, err := h.projects.SubmitCandidate(r.Context(), id, []byte(req.Source), req.Format)
+	if err != nil {
+		writeProjectError(r.Context(), w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		DefinitionVersionID string `json:"definition_version_id"`
+		DefinitionHash      string `json:"definition_hash"`
+	}{versionID.String(), hash})
+}
+
 // PUT /v1/projects/{id}/draft
 func (h *projectsHandlers) putDraft(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)

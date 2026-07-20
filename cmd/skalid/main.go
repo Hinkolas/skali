@@ -26,15 +26,19 @@ import (
 	"github.com/Hinkolas/skali/internal/api"
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
+	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
+	"github.com/Hinkolas/skali/internal/registry"
+	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
@@ -101,7 +105,16 @@ func runServe() error {
 		return err
 	}
 	artifactSvc := artifactstore.New(st)
+	buildSvc := buildstore.New(st)
 	deploySvc := deploy.New(st, valueSvc, artifactSvc, versionpkg.Version)
+
+	// The managed-registry client; an empty SKALI_REGISTRY_HOST disables
+	// the build and import surfaces (API-only or values-only development).
+	registryClient := &registry.Client{
+		Host:     cfg.RegistryHost,
+		Endpoint: cfg.RegistryEndpoint,
+		Insecure: cfg.RegistryInsecure,
+	}
 
 	// A fresh executor identity per boot: recovery fails attempts owned by
 	// executors that no longer exist.
@@ -127,10 +140,12 @@ func runServe() error {
 		slog.InfoContext(ctx, "no cluster configuration resolved; running API-only")
 	}
 
-	// The module registry stays empty in R2: the real application module is
-	// R3. Health projections report unknown with a module-unavailable
-	// diagnostic until then.
+	// The production service modules. R3 registers applications; database
+	// and object-storage modules follow with their substrates (R5/R6).
 	registry := module.NewRegistry()
+	if err := registry.Register(app.Module{}); err != nil {
+		return fmt.Errorf("register application module: %w", err)
+	}
 
 	observed := observe.NewStore(nil)
 	var kernel *reconcile.Kernel
@@ -162,17 +177,26 @@ func runServe() error {
 	})
 	deploySvc.SetEnqueuer(kernel)
 
+	runtimeLogs := &runtimelogs.Streamer{Observed: observed, Store: st}
+	if kubeClient != nil {
+		runtimeLogs.Clientset = kubeClient.Clientset
+	}
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewRouter(api.Deps{
-			Auth:      authSvc,
-			Store:     st,
-			DB:        pool,
-			Projects:  projectSvc,
-			Values:    valueSvc,
-			Deploy:    deploySvc,
-			Journal:   journalSvc,
-			Reconcile: kernel,
+			Auth:         authSvc,
+			Store:        st,
+			DB:           pool,
+			Projects:     projectSvc,
+			Values:       valueSvc,
+			Deploy:       deploySvc,
+			Artifacts:    artifactSvc,
+			Builds:       buildSvc,
+			Journal:      journalSvc,
+			Reconcile:    kernel,
+			Registry:     registryClient,
+			RuntimeLogs:  runtimeLogs,
+			Capabilities: cfg.Capabilities,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -204,7 +228,7 @@ func runServe() error {
 	if _, err := artifactSvc.SweepPending(ctx, 24*time.Hour); err != nil {
 		slog.WarnContext(ctx, "sweep pending artifacts", "err", err)
 	}
-	go productSweepLoop(loopCtx, valueSvc, artifactSvc)
+	go productSweepLoop(loopCtx, valueSvc, artifactSvc, deploySvc, journalSvc, cfg.BuildStaleTimeout)
 
 	slog.InfoContext(ctx, "starting", "service", serviceName, "http_addr", cfg.HTTPAddr)
 
@@ -238,7 +262,8 @@ func sweepLoop(ctx context.Context, svc *auth.Service) {
 	}
 }
 
-func productSweepLoop(ctx context.Context, valueSvc *valuestore.Service, artifactSvc *artifactstore.Service) {
+func productSweepLoop(ctx context.Context, valueSvc *valuestore.Service, artifactSvc *artifactstore.Service,
+	deploySvc *deploy.Service, journalSvc *journal.Service, buildStaleTimeout time.Duration) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
@@ -251,6 +276,13 @@ func productSweepLoop(ctx context.Context, valueSvc *valuestore.Service, artifac
 			}
 			if _, err := artifactSvc.SweepPending(ctx, 24*time.Hour); err != nil {
 				slog.WarnContext(ctx, "sweep pending artifacts", "err", err)
+			}
+			// Abandoned artifact windows: the client stopped building or
+			// verifying; fail the deployment and free the environment.
+			if swept, err := deploySvc.SweepStaleDeployments(ctx, journalSvc, buildStaleTimeout); err != nil {
+				slog.WarnContext(ctx, "sweep stale deployments", "err", err)
+			} else if swept > 0 {
+				slog.InfoContext(ctx, "swept stale deployments", "count", swept)
 			}
 		}
 	}

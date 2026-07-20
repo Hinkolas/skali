@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/artifactstore"
+	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
@@ -51,12 +52,16 @@ type Service struct {
 	st        *store.Store
 	values    *valuestore.Service
 	artifacts *artifactstore.Service
+	builds    *buildstore.Service
 	version   string
 	enqueuer  Enqueuer
 }
 
 func New(st *store.Store, valueSvc *valuestore.Service, artifactSvc *artifactstore.Service, compilerVersion string) *Service {
-	return &Service{st: st, values: valueSvc, artifacts: artifactSvc, version: compilerVersion}
+	return &Service{
+		st: st, values: valueSvc, artifacts: artifactSvc,
+		builds: buildstore.New(st), version: compilerVersion,
+	}
 }
 
 // SetEnqueuer wires the reconciliation kernel after construction (the kernel

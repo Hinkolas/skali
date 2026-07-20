@@ -96,6 +96,27 @@ func (q *Queries) GetAttemptForUpdate(ctx context.Context, id uuid.UUID) (Attemp
 	return i, err
 }
 
+const getRunningAttemptByStep = `-- name: GetRunningAttemptByStep :one
+SELECT id, step_id, number, status, executor_id, started_at, finished_at FROM attempts WHERE step_id = $1 AND status = 'running'
+`
+
+// The client log surface appends into a step's running attempt (the
+// partial unique index admits at most one).
+func (q *Queries) GetRunningAttemptByStep(ctx context.Context, stepID uuid.UUID) (Attempt, error) {
+	row := q.db.QueryRow(ctx, getRunningAttemptByStep, stepID)
+	var i Attempt
+	err := row.Scan(
+		&i.ID,
+		&i.StepID,
+		&i.Number,
+		&i.Status,
+		&i.ExecutorID,
+		&i.StartedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const listAttemptsByRun = `-- name: ListAttemptsByRun :many
 SELECT attempts.id, attempts.step_id, attempts.number, attempts.status, attempts.executor_id, attempts.started_at, attempts.finished_at FROM attempts
 JOIN steps ON steps.id = attempts.step_id

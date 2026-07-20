@@ -990,6 +990,44 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: appendStepLogs
+      summary: Append client step logs
+      description: |
+        The scoped client log surface: the actor of a running deployment
+        run appends its local build and import progress into steps of the
+        artifacts subtree. Lines pass the same redaction and bounds as
+        server-side writers. Writes outside the artifacts subtree, by
+        another actor, or into a settled run are refused.
+      tags: [deployments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                lines:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [message]
+                    properties:
+                      level:
+                        type: string
+                        enum: [debug, info, warn, error]
+                      message:
+                        type: string
+      responses:
+        "200":
+          description: The lines were appended.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /v1/steps/{id}/logs/stream:
     parameters:
@@ -1130,6 +1168,501 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ReauthRequired" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/projects/{id}/definitions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: submitDefinition
+      summary: Submit a candidate definition version
+      description: |
+        Compiles and stores a definition version without moving the project
+        draft. Deployment preparation consumes the returned id; only
+        promotion advances the draft. Identical content reuses the stored
+        version.
+      tags: [deployments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  type: string
+                format:
+                  type: string
+                  enum: [yaml, json]
+      responses:
+        "200":
+          description: The stored definition version.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [definition_version_id, definition_hash]
+                properties:
+                  definition_version_id:
+                    type: string
+                    format: uuid
+                  definition_hash:
+                    type: string
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: The manifest failed validation (`invalid_manifest`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/environments/{id}/plan:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: planEnvironment
+      summary: Compute the deployment plan
+      description: |
+        Validates the candidate server-side and returns the semantic and
+        destructive plan plus the per-application artifact actions (reuse,
+        build, or import). Planning never mutates: no values are stored and
+        no target moves. Build-sourced applications must submit their
+        client-computed input hashes so reuse can be decided.
+      tags: [deployments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanRequest" }
+      responses:
+        "200":
+          description: The computed plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/deployments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: openDeployment
+      summary: Open a deployment
+      description: |
+        Re-runs the plan gate and opens the artifact window: one
+        coordination row, one journaled run, pending artifact records, and
+        running build records for the client's work list. A destructive
+        plan requires `allow_destructive`; an up-to-date environment
+        returns `up_to_date` with nothing created. One deployment prepares
+        per environment at a time (`deployment_in_flight`).
+      tags: [deployments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenDeploymentRequest" }
+      responses:
+        "200":
+          description: Nothing to deploy; the environment is up to date.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [up_to_date]
+                properties:
+                  up_to_date:
+                    type: boolean
+                  plan: { $ref: "#/components/schemas/PlanDocument" }
+        "201":
+          description: The opened deployment with its work list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OpenDeploymentResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            `deployment_in_flight` or `destructive_change`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: |
+            `unsupported_capabilities`: the definition needs more than this
+            installation declares.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: "`registry_disabled`: artifact work needs a managed registry."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/deployments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getDeployment
+      summary: Get a deployment
+      tags: [deployments]
+      responses:
+        "200":
+          description: The deployment with its artifact actions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deployment, actions]
+                properties:
+                  deployment: { $ref: "#/components/schemas/Deployment" }
+                  actions:
+                    type: array
+                    items: { $ref: "#/components/schemas/ArtifactAction" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/deployments/{id}/complete:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: completeDeployment
+      summary: Complete a deployment
+      description: |
+        Closes the artifact window: every recorded action must reference a
+        verified artifact, then the immutable revision is created, values
+        and target promote atomically, and the reconciliation kernel takes
+        over the rollout under the same run. Failure leaves values, target,
+        and active revision untouched.
+      tags: [deployments]
+      responses:
+        "200":
+          description: The revision was created and promoted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, revision_id]
+                properties:
+                  run_id:
+                    type: string
+                    format: uuid
+                  revision_id:
+                    type: string
+                    format: uuid
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            `artifacts_incomplete` (not every artifact verified) or the
+            deployment is not preparing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/deployments/{id}/fail:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: failDeployment
+      summary: Fail a deployment
+      description: |
+        Closes an open artifact window as failed: pending artifacts are
+        abandoned, running builds fail, the staged candidate is discarded,
+        and the run finishes failed. The environment's values, target, and
+        active revision are untouched. The client calls this when a local
+        build or import fails.
+      tags: [deployments]
+      responses:
+        "200":
+          description: The deployment was failed.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/artifacts/{id}/verify:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: verifyArtifact
+      summary: Verify a pushed artifact
+      description: |
+        The server confirms the claimed digest against the managed registry
+        itself (client-reported success is never trusted), then marks the
+        pending artifact verified. Only verified artifacts can enter a
+        revision. The producing build record, when one exists, is closed
+        succeeded.
+      tags: [deployments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deployment_id, digest]
+              properties:
+                deployment_id:
+                  type: string
+                  format: uuid
+                digest:
+                  type: string
+      responses:
+        "200":
+          description: The verified artifact.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, phase, reference, digest]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  phase:
+                    type: string
+                  reference:
+                    type: string
+                  digest:
+                    type: string
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`digest_mismatch`: the registry does not hold the digest."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: "`registry_unavailable` or `registry_disabled`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/builds/{id}/heartbeat:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: heartbeatBuild
+      summary: Report build liveness
+      description: |
+        Keeps a running build and its deployment window alive; the sweeper
+        fails deployments whose builds go quiet. `alive: false` tells the
+        executor its build was settled elsewhere and it should stop.
+      tags: [deployments]
+      responses:
+        "200":
+          description: Liveness verdict.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [alive]
+                properties:
+                  alive:
+                    type: boolean
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/runs/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: cancelRun
+      summary: Cancel a run
+      description: |
+        Cancellation is explicit; detaching a terminal never cancels. For a
+        deployment run the product policy applies: before promotion the
+        artifact window closes (values, target, and active revision remain
+        untouched); after promotion but before activation the target
+        returns to the prior active revision and reconciliation converges
+        back; after activation cancellation is refused.
+      tags: [runs]
+      responses:
+        "200":
+          description: The run was cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, fallback]
+                properties:
+                  status:
+                    type: string
+                  fallback:
+                    type: boolean
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/runs/{id}/steps:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: ensureClientStep
+      summary: Ensure a client step
+      description: |
+        Idempotently creates a step in the artifacts subtree of a running
+        deployment run owned by the same actor. Server-owned steps are out
+        of reach; `parent_key` must be `artifacts` or one of its children.
+      tags: [deployments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, title, parent_key]
+              properties:
+                key:
+                  type: string
+                title:
+                  type: string
+                parent_key:
+                  type: string
+      responses:
+        "200":
+          description: The step.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StepIdentity" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/steps/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      operationId: setClientStepStatus
+      summary: Set a client step's status
+      description: |
+        Moves a client-owned step (artifacts subtree, same actor, running
+        run) to running, succeeded, or failed. A terminal verdict settles
+        the step's running attempt first.
+      tags: [deployments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [running, succeeded, failed]
+      responses:
+        "200":
+          description: The updated step.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StepIdentity" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/environments/{id}/logs/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: service
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Follow one service key; empty follows every member.
+    get:
+      operationId: streamRuntimeLogs
+      summary: Stream runtime logs (SSE)
+      description: |
+        Live application logs merged across members with pod labels, plus a
+        best-effort previous-container tail after restarts. Runtime logs
+        are a pass-through read of the cluster and never enter the system
+        database; deployment-step logs are a separate surface. New members
+        attach automatically. A comment ping is sent every 15 seconds; the
+        route is exempt from the request timeout. Without a connected
+        cluster the stream answers `node_unreachable`.
+      tags: [logs]
+      responses:
+        "200":
+          description: An event stream (`text/event-stream`) of RuntimeLogEvent objects.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: "`node_unreachable`: no cluster is connected."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
 components:
   securitySchemes:
@@ -1722,3 +2255,212 @@ components:
           type: integer
         message:
           type: string
+
+    BuildInput:
+      type: object
+      description: |
+        Client-computed hashes of one build-sourced application. The input
+        hash is the artifact dedup key (tree + build configuration +
+        platform); an unchanged input reuses the verified artifact.
+      required: [input_hash]
+      properties:
+        input_hash:
+          type: string
+        config_hash:
+          type: string
+        platform:
+          type: string
+
+    ArtifactAction:
+      type: object
+      description: One per-application artifact decision taken at open.
+      required: [application, action, kind]
+      properties:
+        application:
+          type: string
+        action:
+          type: string
+          enum: [reuse, build, import]
+        kind:
+          type: string
+          enum: [import, build-local, build-cloud]
+        artifact_id:
+          type: string
+          format: uuid
+        build_id:
+          type: string
+          format: uuid
+        upstream:
+          type: string
+        platform:
+          type: string
+        reference:
+          type: string
+        digest:
+          type: string
+        push_ref:
+          type: string
+          description: Where a build or import client pushes.
+        step_key:
+          type: string
+          description: Root of the client-owned journal steps for this application.
+
+    PlanDocument:
+      type: object
+      description: |
+        The semantic and destructive plan between the active revision and a
+        candidate. Values appear as names and change kinds only, never
+        plaintext.
+      required: [project]
+      properties:
+        project:
+          type: string
+        changes:
+          type: array
+          items:
+            type: object
+            required: [service, action]
+            properties:
+              service:
+                type: string
+              action:
+                type: string
+                enum: [create, update, remove]
+              destructive:
+                type: boolean
+              detail:
+                type: string
+        values:
+          type: array
+          items:
+            type: object
+            required: [name, action]
+            properties:
+              name:
+                type: string
+              action:
+                type: string
+                enum: [create, update, remove]
+              secret:
+                type: boolean
+
+    PlanRequest:
+      type: object
+      required: [definition_version_id]
+      properties:
+        definition_version_id:
+          type: string
+          format: uuid
+        candidate_id:
+          type: string
+          format: uuid
+          description: Staged values batch; omitted plans against current values.
+        builds:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/BuildInput" }
+
+    PlanResponse:
+      type: object
+      required: [plan, actions, up_to_date]
+      properties:
+        plan: { $ref: "#/components/schemas/PlanDocument" }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/ArtifactAction" }
+        up_to_date:
+          type: boolean
+
+    OpenDeploymentRequest:
+      type: object
+      required: [definition_version_id]
+      properties:
+        definition_version_id:
+          type: string
+          format: uuid
+        candidate_id:
+          type: string
+          format: uuid
+        build_executor:
+          type: string
+          enum: [local]
+        allow_destructive:
+          type: boolean
+        builds:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/BuildInput" }
+
+    Deployment:
+      type: object
+      description: |
+        One deployment coordination row. The status machine is preparing to
+        promoted, failed, or cancelled; one deployment prepares per
+        environment at a time.
+      required: [id, project_id, environment_id, definition_version_id, status, build_executor]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        environment_id:
+          type: string
+          format: uuid
+        definition_version_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [preparing, promoted, failed, cancelled]
+        revision_id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        build_executor:
+          type: string
+
+    OpenDeploymentResponse:
+      type: object
+      required: [deployment, plan, actions, up_to_date]
+      properties:
+        deployment: { $ref: "#/components/schemas/Deployment" }
+        plan: { $ref: "#/components/schemas/PlanDocument" }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/ArtifactAction" }
+        up_to_date:
+          type: boolean
+
+    StepIdentity:
+      type: object
+      required: [id, key, title, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+
+    RuntimeLogEvent:
+      type: object
+      description: One member log line of the runtime log stream.
+      required: [service, pod, line]
+      properties:
+        service:
+          type: string
+        pod:
+          type: string
+        line:
+          type: string
+        time:
+          type: string
+          format: date-time
+        previous:
+          type: boolean
+          description: The line comes from the previous container after a restart.

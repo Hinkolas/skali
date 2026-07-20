@@ -21,6 +21,31 @@ func (q *Queries) CreateEnvironmentTarget(ctx context.Context, environmentID uui
 	return err
 }
 
+const fallbackEnvironmentTarget = `-- name: FallbackEnvironmentTarget :execrows
+UPDATE environment_targets
+SET target_revision_id = active_revision_id, updated_at = now()
+WHERE environment_id = $1 AND target_revision_id = $2
+  AND active_revision_id IS NOT NULL
+  AND target_revision_id IS DISTINCT FROM active_revision_id
+`
+
+type FallbackEnvironmentTargetParams struct {
+	EnvironmentID    uuid.UUID
+	TargetRevisionID *uuid.UUID
+}
+
+// Automatic fallback and cancellation: return the target to the last active
+// revision. The compare-and-swap on the expected target means a newer
+// deployment's promotion is never clobbered, and without an active revision
+// (first deployment) there is nothing to fall back to (0 rows = no-op).
+func (q *Queries) FallbackEnvironmentTarget(ctx context.Context, arg FallbackEnvironmentTargetParams) (int64, error) {
+	result, err := q.db.Exec(ctx, fallbackEnvironmentTarget, arg.EnvironmentID, arg.TargetRevisionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getEnvironmentTarget = `-- name: GetEnvironmentTarget :one
 SELECT environment_id, target_revision_id, active_revision_id, updated_at FROM environment_targets WHERE environment_id = $1
 `

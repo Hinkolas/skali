@@ -59,6 +59,29 @@ type BackupCode struct {
 	CreatedAt   time.Time
 }
 
+type Build struct {
+	ID             uuid.UUID
+	ProjectID      *uuid.UUID
+	DeploymentID   *uuid.UUID
+	Application    string
+	Origin         string
+	Status         string
+	Platform       string
+	ContextHash    string
+	ConfigHash     string
+	ArtifactID     *uuid.UUID
+	RunID          *uuid.UUID
+	StepKey        string
+	ClaimedBy      string
+	ClaimedAt      *time.Time
+	LeaseExpiresAt *time.Time
+	HeartbeatAt    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	StartedAt      *time.Time
+	FinishedAt     *time.Time
+}
+
 type DefinitionVersion struct {
 	ID              uuid.UUID
 	ProjectID       uuid.UUID
@@ -69,6 +92,22 @@ type DefinitionVersion struct {
 	Format          string
 	CompilerVersion string
 	CreatedAt       time.Time
+}
+
+type Deployment struct {
+	ID                  uuid.UUID
+	ProjectID           uuid.UUID
+	EnvironmentID       uuid.UUID
+	DefinitionVersionID uuid.UUID
+	CandidateID         *uuid.UUID
+	Status              string
+	RevisionID          *uuid.UUID
+	RunID               *uuid.UUID
+	Actor               string
+	BuildExecutor       string
+	Actions             []byte
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type Environment struct {
