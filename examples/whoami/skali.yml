@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=../../schemas/skali.schema.json
+
+version: "1"
+
+name: whoami
+description: Minimal image-based HTTP application
+
+applications:
+  whoami:
+    # Existing images are imported into Skali's managed registry and pinned
+    # by digest so that a deployment revision always resolves to the same
+    # image.
+    image: traefik/whoami:v1.10.2
+
+    ports:
+      http:
+        port: 80
+        protocol: http
+
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        path: /
+        port: http
+        tls: automatic
+
+    health:
+      readiness:
+        http:
+          port: http
+          path: /health
+        interval: 10s
+        timeout: 2s
+      liveness:
+        http:
+          port: http
+          path: /health
+        interval: 30s
+        timeout: 2s
+
+    # Resource and scaling settings are optional. Skali supplies
+    # conservative defaults when they are omitted, keeping the minimal case
+    # small.

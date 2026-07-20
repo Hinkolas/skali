@@ -14,8 +14,13 @@ func TestCompileExamples(t *testing.T) {
 
 	hello := compileFixture(t, filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
 	require.Len(t, hello.Definition.Applications, 1)
-	require.Empty(t, hello.Definition.Dependencies["applications.api"])
+	require.Equal(t, "build", hello.Definition.Applications["web"].Source.Kind)
+	require.Empty(t, hello.Definition.Dependencies["applications.web"])
 	require.Equal(t, []VariableRequirement{{Name: "APP_DOMAIN", Required: true}}, hello.Definition.RequiredVariables)
+
+	whoami := compileFixture(t, filepath.Join("..", "..", "examples", "whoami", "skali.yml"))
+	require.Len(t, whoami.Definition.Applications, 1)
+	require.Equal(t, "image", whoami.Definition.Applications["whoami"].Source.Kind)
 
 	files := compileFixture(t, filepath.Join("..", "..", "examples", "file-sharing", "skali.yml"))
 	require.Equal(t, []string{"buckets.files", "databases.data"}, files.Definition.Dependencies["applications.web"])

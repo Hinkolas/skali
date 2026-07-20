@@ -59,11 +59,11 @@ func newE2EHarness(t *testing.T) *e2eHarness {
 	require.NoError(t, err, "build skalid image: %s", out)
 
 	// The example project in a scratch copy so source edits are safe.
-	projectDir := filepath.Join(t.TempDir(), "hello-build")
+	projectDir := filepath.Join(t.TempDir(), "hello-world")
 	require.NoError(t, exec.Command("cp", "-R",
-		filepath.Join(repoRoot, "examples", "hello-build"), projectDir).Run())
+		filepath.Join(repoRoot, "examples", "hello-world"), projectDir).Run())
 	require.NoError(t, os.WriteFile(filepath.Join(projectDir, ".env"),
-		[]byte("APP_DOMAIN=build.localhost\n"), 0o644))
+		[]byte("APP_DOMAIN=hello-world.localhost\n"), 0o644))
 
 	harness := &e2eHarness{
 		t:          t,
@@ -108,7 +108,7 @@ func (h *e2eHarness) route(path string) (int, string) {
 	request, err := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("http://127.0.0.1:%d%s", e2eHTTPPort, path), nil)
 	require.NoError(h.t, err)
-	request.Host = "build.localhost"
+	request.Host = "hello-world.localhost"
 	client := &http.Client{Timeout: 5 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {

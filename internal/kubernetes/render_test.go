@@ -23,6 +23,11 @@ func TestRenderHelloWorldGolden(t *testing.T) {
 	objects, err := Render(result, Options{
 		Namespace: "skali-hello-world",
 		Variables: map[string]string{"APP_DOMAIN": "hello.localhost"},
+		// The example is build-sourced; rendering always receives the
+		// prepared digest-pinned image.
+		BuildImages: map[string]string{
+			"web": "localhost:5510/skali/hello-world/web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		},
 	})
 	require.NoError(t, err)
 	require.Len(t, objects, 3)
@@ -101,8 +106,11 @@ func TestRenderSelectorStableAcrossRevisions(t *testing.T) {
 
 	render := func(checksum string) *appsv1.Deployment {
 		objects, err := Render(result, Options{
-			Namespace:        "skali-hello-world",
-			Variables:        map[string]string{"APP_DOMAIN": "hello.localhost"},
+			Namespace: "skali-hello-world",
+			Variables: map[string]string{"APP_DOMAIN": "hello.localhost"},
+			BuildImages: map[string]string{
+				"web": "localhost:5510/skali/hello-world/web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			},
 			EnvironmentID:    "0198f2f4-0000-7000-8000-000000000001",
 			RevisionChecksum: checksum,
 		})

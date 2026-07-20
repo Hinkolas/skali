@@ -54,10 +54,11 @@ by the operator.
 
 Requirements: Docker (with buildx) and [k3d](https://k3d.io). From a
 project directory with a `skali.yml` (for example
-[`examples/hello-build`](examples/hello-build)):
+[`examples/hello-world`](examples/hello-world), a build-sourced app, or
+[`examples/whoami`](examples/whoami), an imported image):
 
 ```sh
-cd examples/hello-build && cp .env.example .env
+cd examples/hello-world && cp .env.example .env
 skali dev
 ```
 
@@ -120,10 +121,13 @@ go run ./cmd/skali validate --manifest examples/hello-world/skali.yml
 go run ./cmd/skali compile --manifest examples/hello-world/skali.yml
 
 # Preview the deterministic Kubernetes objects without touching a cluster.
+# Image-sourced apps render as-is; build-sourced apps additionally need
+# their prepared digest-pinned image via --image (skali dev supplies it
+# automatically during real deployments).
 go run ./cmd/skali compile \
-  --manifest examples/hello-world/skali.yml \
+  --manifest examples/whoami/skali.yml \
   --target kubernetes \
-  --env-file examples/hello-world/.env.example
+  --env-file examples/whoami/.env.example
 ```
 
 The generated editor schema is checked in at

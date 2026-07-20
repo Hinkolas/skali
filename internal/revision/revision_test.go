@@ -37,10 +37,11 @@ func helloWorldInput(t *testing.T) Input {
 			Secret: map[string]string{},
 		},
 		Artifacts: map[string]Artifact{
-			"api": {
-				Reference: "registry.skali.internal/skali/hello-world/api",
-				Digest:    digest("1"),
-				Kind:      KindImport,
+			"web": {
+				Reference:   "registry.skali.internal/skali/hello-world/web",
+				Digest:      digest("1"),
+				Kind:        KindBuildLocal,
+				ContextHash: digest("4"),
 			},
 		},
 		CompilerVersion: "test",

@@ -3,16 +3,19 @@
   "project": "hello-world",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "56be11c4f7ffe8cae159a074a3324f20f3e305d992dabbae053f8252cf43f4c2",
+  "definitionHash": "9bbe35e68acd9a8ebc71f6b4f5f2fb2e65cf9b9c0fc1651e38b43b6d4c0f9ddc",
   "definition": {
     "version": "1",
     "name": "hello-world",
-    "description": "Minimal image-based HTTP application",
+    "description": "Minimal build-sourced HTTP application (the local-build flagship)",
     "applications": {
-      "api": {
+      "web": {
         "source": {
-          "kind": "image",
-          "image": "ghcr.io/hinkolas/hello-world/api:1.0.0"
+          "kind": "build",
+          "build": {
+            "context": ".",
+            "dockerfile": "Dockerfile"
+          }
         },
         "ports": {
           "http": {
@@ -43,9 +46,9 @@
               "port": {
                 "name": "http"
               },
-              "path": "/health/ready"
+              "path": "/healthz"
             },
-            "intervalMillis": 10000,
+            "intervalMillis": 5000,
             "timeoutMillis": 2000,
             "failureThreshold": 3
           },
@@ -54,7 +57,7 @@
               "port": {
                 "name": "http"
               },
-              "path": "/health/live"
+              "path": "/healthz"
             },
             "intervalMillis": 30000,
             "timeoutMillis": 2000,
@@ -62,8 +65,8 @@
           }
         },
         "scaling": {
-          "minReplicas": 1,
-          "maxReplicas": 1
+          "minReplicas": 3,
+          "maxReplicas": 3
         },
         "deployment": {
           "rollout": {
@@ -88,16 +91,16 @@
     "APP_DOMAIN": "hello.example.com"
   },
   "artifacts": {
-    "api": {
-      "reference": "registry.skali.internal/skali/hello-world/api",
+    "web": {
+      "reference": "registry.skali.internal/skali/hello-world/web",
       "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "kind": "import",
-      "upstream": "ghcr.io/hinkolas/hello-world/api:1.0.0"
+      "kind": "build-local",
+      "contextHash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
     }
   },
   "capabilities": [
     "application",
     "edge"
   ],
-  "checksum": "6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2"
+  "checksum": "2fff35fe2c8564214dab269c84553ceda847cc9d55aa3a8f3b60f322d97b9d29"
 }
