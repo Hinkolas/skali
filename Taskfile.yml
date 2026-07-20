@@ -51,6 +51,23 @@ tasks:
     cmds:
       - task -g db:start DB_NAME={{.DB_NAME}}
 
+  k3d:up:
+    desc: Create the pinned k3d test cluster and write .k3d/kubeconfig
+    cmds:
+      - k3d cluster create skali-test --image rancher/k3s:v1.33.3-k3s1 --kubeconfig-update-default=false --wait || true
+      - mkdir -p .k3d
+      - k3d kubeconfig get skali-test > .k3d/kubeconfig
+
+  k3d:down:
+    desc: Delete the k3d test cluster
+    cmds:
+      - k3d cluster delete skali-test
+
+  test:live:
+    desc: Run the live cluster tests against the k3d test cluster
+    cmds:
+      - TEST_KUBECONFIG=$(pwd)/.k3d/kubeconfig go test -timeout 20m -run 'TestLive' ./internal/kube/... ./internal/observe/... ./internal/reconcile/...
+
   dev:
     desc: Run the daemon against the shared dev Postgres (takes over :7070)
     deps: [db]

@@ -190,3 +190,37 @@ func TestStageUnknownEnvironment(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrEnvironmentNotFound)
 }
+
+// Revisions pin exact secret versions; superseded rows must keep resolving
+// so old revisions stay applicable after later promotions.
+func TestSecretPlaintextsResolvesPinnedVersions(t *testing.T) {
+	t.Parallel()
+	svc, st, envID := newTestEnvironment(t)
+	ctx := context.Background()
+
+	stagePromote := func(value string) {
+		candidate, err := svc.Stage(ctx, envID, values.Resolved{
+			Secret: map[string]string{"SESSION_SECRET": value},
+		})
+		require.NoError(t, err)
+		require.NoError(t, st.WithTx(ctx, func(q *store.Queries) error {
+			return svc.PromoteTx(ctx, q, envID, candidate.ID)
+		}))
+	}
+	stagePromote("first-plant-value")
+	stagePromote("second-plant-value")
+
+	// The superseded version 1 and the current version 2 both resolve.
+	plaintexts, err := svc.SecretPlaintexts(ctx, envID, map[string]int{"SESSION_SECRET": 1})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"SESSION_SECRET": "first-plant-value"}, plaintexts)
+	plaintexts, err = svc.SecretPlaintexts(ctx, envID, map[string]int{"SESSION_SECRET": 2})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"SESSION_SECRET": "second-plant-value"}, plaintexts)
+
+	// Unknown pins fail without echoing any plaintext.
+	_, err = svc.SecretPlaintexts(ctx, envID, map[string]int{"SESSION_SECRET": 9})
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "plant-value")
+	require.ErrorContains(t, err, "version 9")
+}

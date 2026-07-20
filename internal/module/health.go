@@ -1,5 +1,7 @@
 package module
 
+import "time"
+
 // Health is the projected condition of one service, derived purely from
 // prepared intent plus observed state (REWORK_V2 section 7.5).
 type Health string
@@ -26,11 +28,104 @@ type Evaluation struct {
 	Diagnostics []Diagnostic
 }
 
-// ObservedResource is the R1 stand-in for the R2 ObservedStore projection:
-// just enough typed shape for pure health evaluation. R2 replaces the
-// Fields map with typed projections without changing Evaluate's contract.
+// ObservedResource kinds. The vocabulary is skali's, not Kubernetes': the
+// ObservedStore translates cluster objects into these projections so module
+// evaluation stays free of Kubernetes types.
+const (
+	KindSource     = "source"
+	KindWorkload   = "workload"
+	KindPod        = "pod"
+	KindAutoscaler = "autoscaler"
+	KindService    = "service"
+	KindIngress    = "ingress"
+	KindVolume     = "volume"
+)
+
+// Observation source states. Anything but fresh means the projection may lag
+// the cluster and modules must report unknown rather than guess.
+const (
+	SourceFresh   = "fresh"
+	SourceStale   = "stale"
+	SourceUnknown = "unknown"
+)
+
+// ObservedResource is one typed projection out of the R2 ObservedStore.
+// Exactly one of the typed members matching Kind is set. Every snapshot
+// handed to Evaluate begins with the KindSource pseudo-resource describing
+// observation freshness; when its state is not fresh, modules return
+// HealthUnknown with an observation_stale_since diagnostic instead of
+// evaluating stale counts as truth.
 type ObservedResource struct {
-	Kind   string
-	Name   string
-	Fields map[string]int64
+	Kind     string
+	Name     string
+	Revision string // skali.dev/revision label value, empty when absent
+
+	Source     *SourceStatus
+	Workload   *WorkloadStatus
+	Pod        *PodStatus
+	Autoscaler *AutoscalerStatus
+}
+
+// SourceStatus describes the freshness of the observation source itself.
+type SourceStatus struct {
+	State      string    // SourceFresh | SourceStale | SourceUnknown
+	StaleSince time.Time // zero while fresh
+	LastSync   time.Time // zero before the first successful sync
+}
+
+// WorkloadStatus projects a Deployment-shaped workload. Desired is -1 when
+// the field is autoscaler-owned and therefore absent from skali's intent.
+type WorkloadStatus struct {
+	Desired            int32
+	Ready              int32
+	Updated            int32
+	Available          int32
+	Generation         int64
+	ObservedGeneration int64
+	Conditions         []Condition
+}
+
+// PodStatus projects one pod: enough for topology and diagnostics without
+// persisting pods anywhere.
+type PodStatus struct {
+	Phase    string
+	Ready    bool
+	Node     string
+	Restarts int32
+	Reason   string // e.g. CrashLoopBackOff, ImagePullBackOff, Unschedulable
+	Message  string
+	Started  time.Time
+}
+
+// AutoscalerStatus projects a HorizontalPodAutoscaler.
+type AutoscalerStatus struct {
+	Min             int32
+	Max             int32
+	Current         int32
+	DesiredReplicas int32
+}
+
+// Condition is one status condition, provider-agnostic.
+type Condition struct {
+	Type    string
+	Status  string
+	Reason  string
+	Message string
+}
+
+// StaleSource returns the leading source pseudo-resource when it reports
+// anything but fresh, so modules share one guard: evaluate nothing on a
+// stale view.
+func StaleSource(observed []ObservedResource) *SourceStatus {
+	for _, resource := range observed {
+		if resource.Kind != KindSource || resource.Source == nil {
+			continue
+		}
+		if resource.Source.State != SourceFresh {
+			return resource.Source
+		}
+		return nil
+	}
+	// No source resource at all: the snapshot's provenance is unknown.
+	return &SourceStatus{State: SourceUnknown}
 }

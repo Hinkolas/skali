@@ -40,6 +40,9 @@ temp/
 *.tmp
 *.bak
 
+# --- Local test cluster ---
+.k3d/
+
 # --- Go build output ---
 /bin/
 *.exe

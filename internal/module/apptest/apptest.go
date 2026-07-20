@@ -9,6 +9,7 @@ package apptest
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/module"
@@ -70,17 +71,32 @@ func (s *service) Removal() module.Removal {
 	}
 }
 
-// Evaluate projects health from a fake "workload" resource carrying
-// replicas/readyReplicas counters.
+// Evaluate projects health from the typed workload projection. A stale or
+// unknown observation source short-circuits to unknown: stale counts are
+// never evaluated as truth.
 func (s *service) Evaluate(observed []module.ObservedResource) module.Evaluation {
+	if source := module.StaleSource(observed); source != nil {
+		message := "observation source state is " + source.State
+		if !source.StaleSince.IsZero() {
+			message = "observation is stale since " + source.StaleSince.UTC().Format(time.RFC3339)
+		}
+		return module.Evaluation{Health: module.HealthUnknown, Diagnostics: []module.Diagnostic{{
+			Severity: "warning", Code: "observation_stale_since", Message: message,
+		}}}
+	}
 	for _, resource := range observed {
-		if resource.Kind != "workload" || resource.Name != s.key {
+		if resource.Kind != module.KindWorkload || resource.Name != s.key || resource.Workload == nil {
 			continue
 		}
-		desired := resource.Fields["replicas"]
-		ready := resource.Fields["readyReplicas"]
+		desired := resource.Workload.Desired
+		if desired < 0 {
+			// The autoscaler owns the replica count; adopt its desire when
+			// observed, otherwise the count stays unknowable.
+			desired = autoscalerDesire(observed, s.key)
+		}
+		ready := resource.Workload.Ready
 		switch {
-		case desired == 0:
+		case desired <= 0:
 			return module.Evaluation{Health: module.HealthUnknown, Diagnostics: []module.Diagnostic{{
 				Severity: "warning", Code: "no-replicas",
 				Message: "the workload requests zero replicas", Resource: resource.Name,
@@ -103,4 +119,13 @@ func (s *service) Evaluate(observed []module.ObservedResource) module.Evaluation
 		Severity: "error", Code: "missing-resource",
 		Message: "no workload observed for " + s.key,
 	}}}
+}
+
+func autoscalerDesire(observed []module.ObservedResource, key string) int32 {
+	for _, resource := range observed {
+		if resource.Kind == module.KindAutoscaler && resource.Name == key && resource.Autoscaler != nil {
+			return resource.Autoscaler.DesiredReplicas
+		}
+	}
+	return 0
 }

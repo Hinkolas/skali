@@ -125,6 +125,18 @@ func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult,
 	if err := in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepSucceeded); err != nil {
 		return result, s.fail(ctx, in, run.ID, nil, err)
 	}
+
+	// With a kernel wired, the run stays running: the reconcile worker owns
+	// apply, verify, and activation, journaling into this same run through
+	// deterministic step keys, and finishes it. Without one (R1 behavior,
+	// kept for tests), promotion concludes the run.
+	if s.enqueuer != nil {
+		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); err != nil {
+			return result, s.fail(ctx, in, run.ID, nil, err)
+		}
+		s.enqueuer.Enqueue(in.EnvironmentID)
+		return result, nil
+	}
 	if err := in.Journal.FinishRun(ctx, run.ID, journal.RunSucceeded); err != nil {
 		return result, err
 	}

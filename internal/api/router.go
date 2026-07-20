@@ -17,18 +17,20 @@ import (
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 type Deps struct {
-	Auth     *auth.Service
-	Store    *store.Store
-	DB       *pgxpool.Pool
-	Projects *project.Service
-	Values   *valuestore.Service
-	Deploy   *deploy.Service
-	Journal  *journal.Service
+	Auth      *auth.Service
+	Store     *store.Store
+	DB        *pgxpool.Pool
+	Projects  *project.Service
+	Values    *valuestore.Service
+	Deploy    *deploy.Service
+	Journal   *journal.Service
+	Reconcile *reconcile.Kernel
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -58,6 +60,7 @@ func NewRouter(d Deps) http.Handler {
 
 	h := &authHandlers{auth: d.Auth}
 	jh := &runsHandlers{journal: d.Journal}
+	sh := &statusHandlers{reconcile: d.Reconcile}
 	r.Route("/v1", func(r chi.Router) {
 		// Streaming: authenticated but deliberately outside the request
 		// timeout, which would cut every SSE connection at 30 seconds.
@@ -65,6 +68,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(RequireAuth(d.Auth))
 
 			r.Get("/steps/{id}/logs/stream", jh.streamLogs)
+			r.Get("/environments/{id}/status/stream", sh.stream)
 		})
 
 		// Everything else runs under the request timeout.
@@ -123,6 +127,11 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/revisions/{id}", rh.get)
 				r.Get("/environments/{id}/target", rh.getTarget)
 				r.Put("/environments/{id}/target", rh.putTarget)
+
+				// Observation projections: served from the observed store and
+				// database pointers, never a request-time cluster call.
+				r.Get("/environments/{id}/status", sh.get)
+				r.Get("/system/observation", sh.system)
 
 				// Run journal reads; the SSE stream lives outside this group.
 				r.Get("/environments/{id}/runs", jh.list)

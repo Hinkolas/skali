@@ -29,8 +29,12 @@ import (
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/obs"
+	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
@@ -112,16 +116,63 @@ func runServe() error {
 		slog.InfoContext(ctx, "recovered orphaned attempts", "failed", failed)
 	}
 
+	// Cluster access is optional in development: without SKALI_KUBECONFIG or
+	// in-cluster credentials skalid runs API-only, observation reports
+	// unknown, and the reconcile workers idle.
+	kubeClient, err := kube.New(cfg.KubeconfigPath)
+	if err != nil {
+		if !errors.Is(err, kube.ErrNoCluster) {
+			return err
+		}
+		slog.InfoContext(ctx, "no cluster configuration resolved; running API-only")
+	}
+
+	// The module registry stays empty in R2: the real application module is
+	// R3. Health projections report unknown with a module-unavailable
+	// diagnostic until then.
+	registry := module.NewRegistry()
+
+	observed := observe.NewStore(nil)
+	var kernel *reconcile.Kernel
+	var source *observe.KubeSource
+	if kubeClient != nil {
+		source = observe.NewKubeSource(kubeClient, observed, observe.SourceOptions{
+			Resync:         cfg.ReconcileResync,
+			StaleThreshold: cfg.StaleThreshold,
+			Enqueue:        func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+		})
+	}
+	kernelDeps := reconcile.Deps{
+		Store:    st,
+		Deploy:   deploySvc,
+		Values:   valueSvc,
+		Journal:  journalSvc,
+		Registry: registry,
+		Observed: observed,
+		Source:   source,
+	}
+	if kubeClient != nil {
+		kernelDeps.Cluster = kubeClient
+	}
+	kernel = reconcile.New(kernelDeps, reconcile.Config{
+		Resync:          cfg.ReconcileResync,
+		Audit:           cfg.ReconcileAudit,
+		RolloutDeadline: cfg.RolloutDeadline,
+		StaleThreshold:  cfg.StaleThreshold,
+	})
+	deploySvc.SetEnqueuer(kernel)
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewRouter(api.Deps{
-			Auth:     authSvc,
-			Store:    st,
-			DB:       pool,
-			Projects: projectSvc,
-			Values:   valueSvc,
-			Deploy:   deploySvc,
-			Journal:  journalSvc,
+			Auth:      authSvc,
+			Store:     st,
+			DB:        pool,
+			Projects:  projectSvc,
+			Values:    valueSvc,
+			Deploy:    deploySvc,
+			Journal:   journalSvc,
+			Reconcile: kernel,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -135,6 +186,14 @@ func runServe() error {
 	loopCtx, cancelLoops := context.WithCancel(ctx)
 	defer cancelLoops()
 	go sweepLoop(loopCtx, authSvc)
+
+	// The reconciliation kernel: observation sync, workers, and audits. In
+	// API-only mode it parks until shutdown.
+	go func() {
+		if err := kernel.Run(loopCtx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("reconcile kernel stopped", "err", err)
+		}
+	}()
 
 	// Staged values and pending artifact records are normally closed
 	// explicitly; the sweeps are the safety net for abandoned candidates

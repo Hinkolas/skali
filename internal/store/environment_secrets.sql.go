@@ -31,6 +31,26 @@ func (q *Queries) DiscardStagedEnvironmentSecrets(ctx context.Context, arg Disca
 	return result.RowsAffected(), nil
 }
 
+const getEnvironmentSecretCiphertext = `-- name: GetEnvironmentSecretCiphertext :one
+SELECT ciphertext FROM environment_secrets
+WHERE environment_id = $1 AND name = $2 AND version = $3
+`
+
+type GetEnvironmentSecretCiphertextParams struct {
+	EnvironmentID uuid.UUID
+	Name          string
+	Version       int64
+}
+
+// Resolution path only: decrypting the exact version a revision pinned.
+// Superseded rows are retained precisely so this keeps resolving.
+func (q *Queries) GetEnvironmentSecretCiphertext(ctx context.Context, arg GetEnvironmentSecretCiphertextParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getEnvironmentSecretCiphertext, arg.EnvironmentID, arg.Name, arg.Version)
+	var ciphertext []byte
+	err := row.Scan(&ciphertext)
+	return ciphertext, err
+}
+
 const listCurrentEnvironmentSecretCiphertexts = `-- name: ListCurrentEnvironmentSecretCiphertexts :many
 SELECT name, ciphertext FROM environment_secrets
 WHERE environment_id = $1 AND state = 'current'

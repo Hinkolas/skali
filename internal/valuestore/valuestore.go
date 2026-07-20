@@ -247,6 +247,33 @@ func (s *Service) Redactor(ctx context.Context, environmentID, candidateID uuid.
 	return redact.New(byPlaintext), nil
 }
 
+// SecretPlaintexts decrypts the exact secret versions a revision pinned.
+// Superseded rows are retained by the state model precisely so old pinned
+// versions keep resolving. Results live only in memory and in the applied
+// cluster Secret; callers must never log or persist them.
+func (s *Service) SecretPlaintexts(ctx context.Context, environmentID uuid.UUID, refs map[string]int) (map[string]string, error) {
+	plaintexts := make(map[string]string, len(refs))
+	for _, name := range sortedRefKeys(refs) {
+		ciphertext, err := s.st.GetEnvironmentSecretCiphertext(ctx, store.GetEnvironmentSecretCiphertextParams{
+			EnvironmentID: environmentID,
+			Name:          name,
+			Version:       int64(refs[name]),
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("valuestore: secret %s version %d not found", name, refs[name])
+			}
+			return nil, fmt.Errorf("valuestore: get secret %s: %w", name, err)
+		}
+		plaintext, err := crypt.Decrypt(s.key, ciphertext)
+		if err != nil {
+			return nil, fmt.Errorf("valuestore: decrypt %s: %w", name, err)
+		}
+		plaintexts[name] = string(plaintext)
+	}
+	return plaintexts, nil
+}
+
 // DiscardCandidate deletes the staged rows of one batch. The queries never
 // select the value or ciphertext columns.
 func (s *Service) DiscardCandidate(ctx context.Context, environmentID, candidateID uuid.UUID) error {
@@ -345,6 +372,15 @@ func stagingError(err error) error {
 }
 
 func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedRefKeys(m map[string]int) []string {
 	keys := make([]string, 0, len(m))
 	for key := range m {
 		keys = append(keys, key)

@@ -1025,6 +1025,78 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/environments/{id}/status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getEnvironmentStatus
+      summary: Get an environment's topology and health projection
+      description: |
+        The per-service health, diagnostics, and pod topology of an
+        environment, assembled from the maintained observed-state store and
+        the database pointers. No request-time Kubernetes call is made;
+        `observation.state` reports how fresh the underlying view is, and
+        health is `unknown` until the observation cache has synchronized.
+      tags: [status]
+      responses:
+        "200":
+          description: The environment status projection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/status/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: streamEnvironmentStatus
+      summary: Stream an environment's status projection (SSE)
+      description: |
+        Server-sent events carrying the full `EnvironmentStatus` document,
+        re-sent (coalesced) whenever observation invalidates the
+        environment's projection. A comment ping is sent every 15 seconds.
+        The stream closes when the subscriber falls behind; clients simply
+        reconnect. This route is exempt from the request timeout.
+      tags: [status]
+      responses:
+        "200":
+          description: An event stream (`text/event-stream`).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/system/observation:
+    get:
+      operationId: getSystemObservation
+      summary: Get the observation plane's structural health
+      description: |
+        Diagnostics of the observation machinery itself: connected or
+        API-only mode, cache readiness, per-kind watch synchronization,
+        source freshness, and reconcile queue depth.
+      tags: [status]
+      responses:
+        "200":
+          description: Observation plane diagnostics.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemObservation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /v1/environments/{id}:
     parameters:
       - name: id
@@ -1490,6 +1562,132 @@ components:
             updated_at:
               type: string
               format: date-time
+
+    Observation:
+      type: object
+      description: |
+        The freshness of the observed-state source feeding a projection.
+        Anything but `fresh` means health is reported as `unknown` rather
+        than guessed from a stale view.
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [fresh, stale, unknown]
+        stale_since:
+          type: [string, "null"]
+          format: date-time
+        last_sync:
+          type: [string, "null"]
+          format: date-time
+
+    HealthDiagnostic:
+      type: object
+      description: One structured health observation.
+      required: [severity, code, message]
+      properties:
+        severity:
+          type: string
+          enum: [info, warning, error]
+        code:
+          type: string
+        message:
+          type: string
+        resource:
+          type: string
+
+    PodStatus:
+      type: object
+      required: [name, node, phase, ready, restarts]
+      properties:
+        name:
+          type: string
+        node:
+          type: string
+        phase:
+          type: string
+        ready:
+          type: boolean
+        restarts:
+          type: integer
+        reason:
+          type: string
+        started_at:
+          type: [string, "null"]
+          format: date-time
+
+    ServiceStatus:
+      type: object
+      required: [key, type, health, diagnostics, pods]
+      properties:
+        key:
+          type: string
+        type:
+          type: string
+        health:
+          type: string
+          enum: [unknown, progressing, healthy, degraded, unhealthy]
+        diagnostics:
+          type: array
+          items: { $ref: "#/components/schemas/HealthDiagnostic" }
+        pods:
+          type: array
+          items: { $ref: "#/components/schemas/PodStatus" }
+
+    EnvironmentStatus:
+      type: object
+      required: [environment_id, target_revision, active_revision, observation, services]
+      properties:
+        environment_id:
+          type: string
+          format: uuid
+        target_revision:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/RevisionRef"
+        active_revision:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/RevisionRef"
+        observation: { $ref: "#/components/schemas/Observation" }
+        services:
+          type: array
+          items: { $ref: "#/components/schemas/ServiceStatus" }
+
+    RevisionRef:
+      type: object
+      required: [id, checksum]
+      properties:
+        id:
+          type: string
+          format: uuid
+        checksum:
+          type: string
+
+    SystemObservation:
+      type: object
+      required: [mode, ready, observation, kinds, queue_depth, workers]
+      properties:
+        mode:
+          type: string
+          enum: [connected, api-only]
+        ready:
+          type: boolean
+        observation: { $ref: "#/components/schemas/Observation" }
+        kinds:
+          type: array
+          items:
+            type: object
+            required: [kind, synced]
+            properties:
+              kind:
+                type: string
+              synced:
+                type: boolean
+        queue_depth:
+          type: integer
+        workers:
+          type: integer
 
     ValueEntry:
       type: object

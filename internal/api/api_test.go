@@ -20,18 +20,23 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/module"
+	"github.com/Hinkolas/skali/internal/module/apptest"
+	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 type testAPI struct {
-	t       *testing.T
-	srv     *httptest.Server
-	st      *store.Store
-	svc     *auth.Service
-	journal *journal.Service
+	t        *testing.T
+	srv      *httptest.Server
+	st       *store.Store
+	svc      *auth.Service
+	journal  *journal.Service
+	observed *observe.Fake
 }
 
 func newTestAPI(t *testing.T) *testAPI {
@@ -44,17 +49,29 @@ func newTestAPI(t *testing.T) *testAPI {
 	require.NoError(t, err)
 	deploySvc := deploy.New(st, values, artifactstore.New(st), "test")
 	journalSvc := journal.NewService(st, uuid.NewString())
-	srv := httptest.NewServer(NewRouter(Deps{
-		Auth:     svc,
+	registry := module.NewRegistry()
+	require.NoError(t, registry.Register(apptest.Module{}))
+	observed := observe.NewFake()
+	kernel := reconcile.New(reconcile.Deps{
 		Store:    st,
-		DB:       pool,
-		Projects: project.New(st),
-		Values:   values,
 		Deploy:   deploySvc,
+		Values:   values,
 		Journal:  journalSvc,
+		Registry: registry,
+		Observed: observed.Store,
+	}, reconcile.Config{})
+	srv := httptest.NewServer(NewRouter(Deps{
+		Auth:      svc,
+		Store:     st,
+		DB:        pool,
+		Projects:  project.New(st),
+		Values:    values,
+		Deploy:    deploySvc,
+		Journal:   journalSvc,
+		Reconcile: kernel,
 	}))
 	t.Cleanup(srv.Close)
-	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc}
+	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc, observed: observed}
 }
 
 func (a *testAPI) createUser(email, password string) {
@@ -464,14 +481,20 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	spec := string(apispec.OpenAPI)
 	values, err := valuestore.New(a.st, strings.Repeat("s", 32))
 	require.NoError(t, err)
+	deploySvc := deploy.New(a.st, values, artifactstore.New(a.st), "test")
+	journalSvc := journal.NewService(a.st, uuid.NewString())
 	router := NewRouter(Deps{
 		Auth:     a.svc,
 		Store:    a.st,
 		DB:       a.st.Pool,
 		Projects: project.New(a.st),
 		Values:   values,
-		Deploy:   deploy.New(a.st, values, artifactstore.New(a.st), "test"),
-		Journal:  journal.NewService(a.st, uuid.NewString()),
+		Deploy:   deploySvc,
+		Journal:  journalSvc,
+		Reconcile: reconcile.New(reconcile.Deps{
+			Store: a.st, Deploy: deploySvc, Values: values, Journal: journalSvc,
+			Registry: module.NewRegistry(), Observed: observe.NewFake().Store,
+		}, reconcile.Config{}),
 	}).(chi.Routes)
 
 	routes := 0
@@ -485,5 +508,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 38, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 41, routes, "route count changed; update the OpenAPI spec and this number")
 }

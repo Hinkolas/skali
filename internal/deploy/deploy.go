@@ -40,16 +40,28 @@ type ArtifactResolver interface {
 	Resolve(ctx context.Context, application string, source compiler.ApplicationSource) (artifactstore.Resolved, error)
 }
 
+// Enqueuer hands a promoted environment to the reconciliation kernel. It is
+// an interface so deploy never imports the kernel; nil means no kernel is
+// wired (R1 tests) and Execute finishes its run at promote.
+type Enqueuer interface {
+	Enqueue(environmentID uuid.UUID)
+}
+
 type Service struct {
 	st        *store.Store
 	values    *valuestore.Service
 	artifacts *artifactstore.Service
 	version   string
+	enqueuer  Enqueuer
 }
 
 func New(st *store.Store, valueSvc *valuestore.Service, artifactSvc *artifactstore.Service, compilerVersion string) *Service {
 	return &Service{st: st, values: valueSvc, artifacts: artifactSvc, version: compilerVersion}
 }
+
+// SetEnqueuer wires the reconciliation kernel after construction (the kernel
+// depends on this service, so the cycle is broken here).
+func (s *Service) SetEnqueuer(e Enqueuer) { s.enqueuer = e }
 
 type PrepareInput struct {
 	EnvironmentID       uuid.UUID

@@ -1972,6 +1972,34 @@ Exit criteria:
 - API topology reads perform no direct Kubernetes request.
 - Restart rebuilds the cache before reporting fresh health.
 
+Implementation notes (decided 2026-07-20, R2 landing):
+
+- Cluster credentials come exclusively from `SKALI_KUBECONFIG` (set: must
+  load; unset: in-cluster is attempted). The ambient `KUBECONFIG` variable is
+  never consulted so a server daemon cannot silently attach to whatever
+  cluster a developer shell points at. Without credentials `skalid` runs
+  API-only: observation reports unknown and the reconcile workers idle.
+- One deployment run spans prepare, promote, apply, verify, and activation:
+  `deploy.Execute` leaves the run running after promote and the reconcile
+  worker finishes it through deterministic step keys. Drift healing creates a
+  run of kind `reconcile` only when material work happened; a pass that
+  changes nothing writes no journal rows.
+- Past the rollout deadline (`RECONCILE_ROLLOUT_DEADLINE`, default 10m) the
+  run fails with diagnostics and the target stays; reconciliation remains
+  level triggered and a late recovery still activates. The section 8.4
+  automatic-fallback product policy lands with the R3 cancel/rollback API.
+- Watch-source freshness counts a successful LIST or the first delivered
+  non-error watch event as contact. A bare successful Watch call is not
+  contact (the rest client masks connection errors as an empty watcher), and
+  error events are not contact either (a booting API server answers watches
+  with error statuses long before it can serve a fresh view).
+- Secrets are rendered and applied but not observed in R2: the one rendered
+  Secret per environment is always in the desired set, so Secret pruning is
+  moot and no plaintext-bearing objects enter the observed store.
+- Namespaces and PersistentVolumeClaims are never pruned; environment
+  deletion stays database-only in R2 and the audit reports orphaned managed
+  namespaces without touching them.
+
 ### R3 - CLI-managed local installation and application slice
 
 Deliver:

@@ -19,6 +19,12 @@ UPDATE runs SET status = $2, finished_at = now() WHERE id = $1;
 -- name: ListRunsByEnvironment :many
 SELECT * FROM runs WHERE environment_id = $1 ORDER BY created_at DESC;
 
+-- Journal attachment for the reconcile worker: adopt the environment's
+-- running deployment run when one exists. Explanatory only; reconciliation
+-- decisions never read this.
+-- name: GetRunningRunByEnvironment :one
+SELECT * FROM runs WHERE environment_id = $1 AND status = 'running';
+
 -- Retention: drop terminal runs beyond the newest keep-count of one
 -- environment, and terminal runs older than the age cutoff anywhere.
 -- name: DeleteExcessTerminalRuns :execrows

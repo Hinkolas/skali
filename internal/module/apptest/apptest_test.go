@@ -2,6 +2,7 @@ package apptest
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -80,22 +81,43 @@ func TestEvaluateMatrix(t *testing.T) {
 	svc, err := Module{}.Decode(definition, "api")
 	require.NoError(t, err)
 
-	workload := func(ready, desired int64) []module.ObservedResource {
-		return []module.ObservedResource{{
-			Kind: "workload", Name: "api",
-			Fields: map[string]int64{"readyReplicas": ready, "replicas": desired},
+	fresh := module.ObservedResource{
+		Kind: module.KindSource, Name: "kubernetes",
+		Source: &module.SourceStatus{State: module.SourceFresh, LastSync: time.Unix(1700000000, 0)},
+	}
+	workload := func(ready, desired int32) []module.ObservedResource {
+		return []module.ObservedResource{fresh, {
+			Kind: module.KindWorkload, Name: "api",
+			Workload: &module.WorkloadStatus{Desired: desired, Ready: ready},
 		}}
 	}
+	stale := []module.ObservedResource{{
+		Kind: module.KindSource, Name: "kubernetes",
+		Source: &module.SourceStatus{State: module.SourceStale, StaleSince: time.Unix(1700000100, 0)},
+	}, {
+		Kind: module.KindWorkload, Name: "api",
+		Workload: &module.WorkloadStatus{Desired: 3, Ready: 3},
+	}}
+	autoscaled := []module.ObservedResource{fresh, {
+		Kind: module.KindWorkload, Name: "api",
+		Workload: &module.WorkloadStatus{Desired: -1, Ready: 4},
+	}, {
+		Kind: module.KindAutoscaler, Name: "api",
+		Autoscaler: &module.AutoscalerStatus{Min: 1, Max: 5, Current: 4, DesiredReplicas: 4},
+	}}
 	testCases := []struct {
 		name     string
 		observed []module.ObservedResource
 		health   module.Health
 	}{
-		{"missing resource", nil, module.HealthUnknown},
+		{"missing source", nil, module.HealthUnknown},
+		{"stale source outranks healthy counts", stale, module.HealthUnknown},
+		{"missing resource", []module.ObservedResource{fresh}, module.HealthUnknown},
 		{"zero desired", workload(0, 0), module.HealthUnknown},
 		{"all ready", workload(3, 3), module.HealthHealthy},
 		{"none ready", workload(0, 3), module.HealthUnhealthy},
 		{"partially ready", workload(2, 3), module.HealthDegraded},
+		{"autoscaler owns the count", autoscaled, module.HealthHealthy},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {

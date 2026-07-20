@@ -6,6 +6,7 @@ metadata:
     skali.dev/application: api
     skali.dev/managed: "true"
     skali.dev/project: hello-world
+    skali.dev/service: api
   name: hello-world-api
   namespace: skali-hello-world
 spec:
@@ -28,6 +29,7 @@ spec:
         skali.dev/application: api
         skali.dev/managed: "true"
         skali.dev/project: hello-world
+        skali.dev/service: api
     spec:
       containers:
       - image: ghcr.io/hinkolas/hello-world/api:1.0.0
@@ -62,6 +64,7 @@ metadata:
     skali.dev/application: api
     skali.dev/managed: "true"
     skali.dev/project: hello-world
+    skali.dev/service: api
   name: hello-world-api
   namespace: skali-hello-world
 spec:
@@ -87,6 +90,7 @@ metadata:
     skali.dev/application: api
     skali.dev/managed: "true"
     skali.dev/project: hello-world
+    skali.dev/service: api
   name: hello-world-api-public
   namespace: skali-hello-world
 spec:

@@ -32,7 +32,12 @@ func TestRenderHelloWorldGolden(t *testing.T) {
 
 	actual, err := MarshalYAML(objects)
 	require.NoError(t, err)
-	expected, err := os.ReadFile(filepath.Join("testdata", "hello-world.golden.yaml"))
+	golden := filepath.Join("testdata", "hello-world.golden.yaml")
+	// Refresh deliberately with UPDATE_GOLDEN=1 go test ./internal/kubernetes.
+	if os.Getenv("UPDATE_GOLDEN") != "" {
+		require.NoError(t, os.WriteFile(golden, actual, 0o644))
+	}
+	expected, err := os.ReadFile(golden)
 	require.NoError(t, err)
 	require.Equal(t, string(expected), string(actual))
 }
@@ -81,6 +86,48 @@ func TestRenderBuildApplicationWithManagedOutputs(t *testing.T) {
 	environment := deployment.Spec.Template.Spec.Containers[0].Env
 	require.Contains(t, environment, environmentVariableFromSecret("POSTGRES_HOST", "skali-output-databases-data", "host"))
 	require.Contains(t, environment, environmentVariableFromSecret("S3_ENDPOINT", "skali-output-buckets-files", "endpoint"))
+}
+
+// Selector labels are baked into immutable Kubernetes selectors, so two
+// revisions of the same application must produce byte-identical selectors
+// while their object labels carry the changing revision identity. Breaking
+// this makes every second deploy fail on selector immutability.
+func TestRenderSelectorStableAcrossRevisions(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	render := func(checksum string) *appsv1.Deployment {
+		objects, err := Render(result, Options{
+			Namespace:        "skali-hello-world",
+			Variables:        map[string]string{"APP_DOMAIN": "hello.localhost"},
+			EnvironmentID:    "0198f2f4-0000-7000-8000-000000000001",
+			RevisionChecksum: checksum,
+		})
+		require.NoError(t, err)
+		deployment, ok := objects[0].(*appsv1.Deployment)
+		require.True(t, ok)
+		return deployment
+	}
+
+	first := render("6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2")
+	second := render("2a91a76be9e54c04a85c2c115e72066b63a07f917fbb633a562305ab3315f035")
+
+	require.Equal(t, first.Spec.Selector, second.Spec.Selector)
+	for _, label := range []string{LabelEnvironment, LabelRevision, LabelService} {
+		require.NotContains(t, first.Spec.Selector.MatchLabels, label)
+	}
+	require.Equal(t, "6ee3b68d021fb92e", first.Labels[LabelRevision])
+	require.Equal(t, "2a91a76be9e54c04", second.Labels[LabelRevision])
+
+	// Pod template labels must satisfy the selector and carry the identity.
+	for name, value := range first.Spec.Selector.MatchLabels {
+		require.Equal(t, value, first.Spec.Template.Labels[name])
+	}
+	require.Equal(t, first.Labels[LabelRevision], first.Spec.Template.Labels[LabelRevision])
+	require.Equal(t, first.Labels[LabelEnvironment], first.Spec.Template.Labels[LabelEnvironment])
 }
 
 func TestRenderVolumeBackedApplicationUsesRecreate(t *testing.T) {

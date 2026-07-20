@@ -28,6 +28,12 @@ SELECT name, ciphertext FROM environment_secrets
 WHERE environment_id = $1 AND candidate_id = $2 AND state = 'staged'
 ORDER BY name;
 
+-- Resolution path only: decrypting the exact version a revision pinned.
+-- Superseded rows are retained precisely so this keeps resolving.
+-- name: GetEnvironmentSecretCiphertext :one
+SELECT ciphertext FROM environment_secrets
+WHERE environment_id = $1 AND name = $2 AND version = $3;
+
 -- name: SupersedeCurrentEnvironmentSecrets :exec
 UPDATE environment_secrets AS live SET state = 'superseded'
 WHERE live.environment_id = $1 AND live.state = 'current' AND live.name IN (

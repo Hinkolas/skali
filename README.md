@@ -9,18 +9,22 @@ set of blessed operators (CloudNativePG, Traefik, cert-manager) do all
 generic orchestration. The v2 architecture and rationale live in
 [`REWORK_V2.md`](REWORK_V2.md).
 
-**Status:** V2 rearchitecture. R0 (architecture contract) is accepted; R1
-(domain and persistence kernel) is implemented: projects, environments, and
-optimistically versioned drafts persist in Postgres; environment values are
-typed and versioned with secrets encrypted at rest; deployments produce
-immutable revisions with artifact records and retention leases behind a
-pluggable resolver (fake in R1, real builds/imports in R3/R4); environment
-target pointers move only inside the atomic promotion transaction; and the
-machine-guarded run journal records runs/steps/attempts with redacted,
-bounded logs served over REST and SSE. No cluster access yet: observation
-and reconciliation are R2. The R0 workflow transcripts (deploy, local
-development, installer) live in [`docs/transcripts/`](docs/transcripts/). The
-current architecture and roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
+**Status:** V2 rearchitecture. R0 (architecture contract) is accepted, R1
+(domain and persistence kernel) and R2 (observation and reconciliation
+kernel) are implemented. On top of the R1 kernel (projects, drafts, typed
+values with encrypted secrets, immutable revisions, atomic target promotion,
+machine-guarded run journal), skalid now observes a cluster through
+LIST/WATCH caches with explicit freshness (fresh/stale/unknown), applies and
+prunes managed objects via server-side apply under a strict field-ownership
+contract (including safe fixed/autoscaled replica transitions), heals
+out-of-band drift, and activates a revision only after its health conditions
+pass, while API topology reads never touch Kubernetes at request time.
+Deployment execution still has no API endpoint and the production
+application module ships with R3, so end-to-end rollouts are exercised by
+the live k3d test suite (`task k3d:up && task test:live`). The R0 workflow
+transcripts (deploy, local development, installer) live in
+[`docs/transcripts/`](docs/transcripts/). The current architecture and
+roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
 
 Distinct product and operational roles:
 
@@ -120,14 +124,18 @@ internal/
   crypt/         shared at-rest encryption (AES-GCM, HKDF-derived keys)
   deploy/        candidate preparation, atomic promotion, targets, rollback
   journal/       run/step/attempt machines + persistence, logs, SSE fan-out
+  kube/          cluster client, server-side apply/delete, field ownership
   kubernetes/    pure compiler IR → Kubernetes API object rendering
+  kubetest/      live-cluster test gating (TEST_KUBECONFIG), severable proxy
   layout/        installer cluster-layout schema and topology derivation
   lifecycle/     generic declarative state-machine engine
   manifest/      strict skali.yml parser, diagnostics, and schema generation
   module/        service-module contract, registry, pure health/graph (+apptest)
   obs/           slog + OpenTelemetry (env-only, zero egress by default)
+  observe/       in-memory ObservedStore fed by LIST/WATCH, freshness, fake
   plan/          revision diffing with destructive-change classification
   project/       projects, environments, optimistically versioned drafts
+  reconcile/     level-triggered kernel: queue, apply/prune, health, activation
   redact/        secret-plaintext redaction for run logs
   revision/      immutable revision builder and document contract
   store/         pgx pool/tx glue + sqlc-generated queries
@@ -175,4 +183,10 @@ also remains available through git history.
 export TEST_DATABASE_URL=postgres://dev:dev@localhost:5432/dev?sslmode=disable
 task test
 cd web && npm run check
+
+# Live cluster tests (observation, apply/prune, healing, HPA transitions)
+# run against a disposable pinned k3d cluster:
+task k3d:up
+task test:live
+task k3d:down
 ```

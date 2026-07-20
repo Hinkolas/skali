@@ -130,6 +130,30 @@ func (q *Queries) GetRunForUpdate(ctx context.Context, id uuid.UUID) (Run, error
 	return i, err
 }
 
+const getRunningRunByEnvironment = `-- name: GetRunningRunByEnvironment :one
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at FROM runs WHERE environment_id = $1 AND status = 'running'
+`
+
+// Journal attachment for the reconcile worker: adopt the environment's
+// running deployment run when one exists. Explanatory only; reconciliation
+// decisions never read this.
+func (q *Queries) GetRunningRunByEnvironment(ctx context.Context, environmentID *uuid.UUID) (Run, error) {
+	row := q.db.QueryRow(ctx, getRunningRunByEnvironment, environmentID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Actor,
+		&i.Status,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const listRunsByEnvironment = `-- name: ListRunsByEnvironment :many
 SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
 `

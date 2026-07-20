@@ -37,6 +37,89 @@ func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.U
 	return i, err
 }
 
+const listEnvironmentTargets = `-- name: ListEnvironmentTargets :many
+SELECT environment_id, target_revision_id, active_revision_id, updated_at FROM environment_targets
+`
+
+func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarget, error) {
+	rows, err := q.db.Query(ctx, listEnvironmentTargets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EnvironmentTarget
+	for rows.Next() {
+		var i EnvironmentTarget
+		if err := rows.Scan(
+			&i.EnvironmentID,
+			&i.TargetRevisionID,
+			&i.ActiveRevisionID,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentsOutOfSync = `-- name: ListEnvironmentsOutOfSync :many
+SELECT environment_id, target_revision_id, active_revision_id, updated_at FROM environment_targets
+WHERE target_revision_id IS DISTINCT FROM active_revision_id
+`
+
+// Environments whose cluster state has not yet reached the promoted target;
+// the reconcile boot audit and periodic audit enqueue these.
+func (q *Queries) ListEnvironmentsOutOfSync(ctx context.Context) ([]EnvironmentTarget, error) {
+	rows, err := q.db.Query(ctx, listEnvironmentsOutOfSync)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EnvironmentTarget
+	for rows.Next() {
+		var i EnvironmentTarget
+		if err := rows.Scan(
+			&i.EnvironmentID,
+			&i.TargetRevisionID,
+			&i.ActiveRevisionID,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setEnvironmentActiveRevision = `-- name: SetEnvironmentActiveRevision :execrows
+UPDATE environment_targets
+SET active_revision_id = $2, updated_at = now()
+WHERE environment_id = $1 AND target_revision_id = $2
+`
+
+type SetEnvironmentActiveRevisionParams struct {
+	EnvironmentID    uuid.UUID
+	ActiveRevisionID *uuid.UUID
+}
+
+// The single writer of the active pointer; only reconciliation calls it, and
+// only after the revision's required health conditions pass. The target guard
+// makes a late activation of a superseded revision a no-op (0 rows).
+func (q *Queries) SetEnvironmentActiveRevision(ctx context.Context, arg SetEnvironmentActiveRevisionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setEnvironmentActiveRevision, arg.EnvironmentID, arg.ActiveRevisionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setEnvironmentTarget = `-- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
 SET target_revision_id = $2, updated_at = now()

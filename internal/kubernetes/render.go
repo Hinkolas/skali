@@ -23,17 +23,17 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 )
 
-const (
-	LabelManaged     = "skali.dev/managed"
-	LabelProject     = "skali.dev/project"
-	LabelApplication = "skali.dev/application"
-)
-
 type Options struct {
 	Namespace             string
 	EnvironmentSecretName string
 	Variables             map[string]string
 	BuildImages           map[string]string
+
+	// EnvironmentID and RevisionChecksum stamp the identity labels used by
+	// observation and pruning. Both are optional so offline rendering (the
+	// CLI compile preview) stays possible without an environment.
+	EnvironmentID    string
+	RevisionChecksum string
 }
 
 func Render(result *compiler.Result, options Options) ([]runtime.Object, error) {
@@ -41,7 +41,7 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 		return nil, fmt.Errorf("kubernetes namespace is required")
 	}
 	if options.EnvironmentSecretName == "" {
-		options.EnvironmentSecretName = "skali-environment"
+		options.EnvironmentSecretName = EnvironmentSecretName
 	}
 	if err := compiler.ValidateEnvironment(result, options.Variables); err != nil {
 		return nil, err
@@ -60,11 +60,22 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 func renderApplication(project compiler.ProjectDefinition, key string, options Options) ([]runtime.Object, error) {
 	application := project.Applications[key]
 	name := objectName(project.Name, key)
-	labels := map[string]string{
+	// Selector labels are baked into immutable Deployment and Service
+	// selectors: stable across revisions by contract. Object labels add the
+	// environment/service/revision identity for observation and pruning.
+	selectorLabels := map[string]string{
 		"app.kubernetes.io/name": name,
 		LabelManaged:             "true",
 		LabelProject:             project.Name,
 		LabelApplication:         key,
+	}
+	labels := cloneMap(selectorLabels)
+	labels[LabelService] = key
+	if options.EnvironmentID != "" {
+		labels[LabelEnvironment] = options.EnvironmentID
+	}
+	if options.RevisionChecksum != "" {
+		labels[LabelRevision] = RevisionLabelValue(options.RevisionChecksum)
 	}
 	image := application.Source.Image
 	if application.Source.Kind == "build" {
@@ -133,7 +144,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: cloneMap(labels)},
+			Selector: &metav1.LabelSelector{MatchLabels: cloneMap(selectorLabels)},
 			Strategy: renderStrategy(application.Deployment.Rollout),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: cloneMap(labels)},
@@ -152,7 +163,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			}},
 		})
 	}
-	if constraint := renderSpread(labels, application.Placement); constraint != nil {
+	if constraint := renderSpread(selectorLabels, application.Placement); constraint != nil {
 		deployment.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{*constraint}
 	}
 	objects = append(objects, deployment)
@@ -167,7 +178,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				Labels:    cloneMap(labels),
 			},
 			Spec: corev1.ServiceSpec{
-				Selector: cloneMap(labels),
+				Selector: cloneMap(selectorLabels),
 				Ports:    servicePorts,
 			},
 		})

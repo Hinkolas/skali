@@ -61,6 +61,30 @@ type API struct {
 	// ReauthWindow is how long a session stays "fresh" for sudo-gated
 	// endpoints after login or an explicit reauthentication.
 	ReauthWindow time.Duration `env:"REAUTH_WINDOW,default=15m"`
+
+	// KubeconfigPath selects the cluster skalid reconciles. Set: the file must
+	// load or startup fails. Unset: in-cluster config is attempted; when that
+	// also fails skalid runs API-only with observation unknown. The ambient
+	// KUBECONFIG variable is deliberately ignored so a server daemon can never
+	// silently attach to whatever cluster the developer's shell points at.
+	KubeconfigPath string `env:"SKALI_KUBECONFIG,default="`
+
+	// ReconcileResync re-fires informer updates for every cached object as the
+	// correctness backstop against missed watch edits.
+	ReconcileResync time.Duration `env:"RECONCILE_RESYNC_INTERVAL,default=5m"`
+
+	// ReconcileAudit lists all environment targets from the database and
+	// enqueues them, catching divergence with no cluster object to fire on.
+	ReconcileAudit time.Duration `env:"RECONCILE_AUDIT_INTERVAL,default=30m"`
+
+	// RolloutDeadline bounds how long a promoted revision may stay unhealthy
+	// before its run is failed. The target is kept either way; reconciliation
+	// stays level-triggered and a late recovery still activates.
+	RolloutDeadline time.Duration `env:"RECONCILE_ROLLOUT_DEADLINE,default=10m"`
+
+	// StaleThreshold is how long observation may go without a successful watch
+	// re-establishment before sources report stale.
+	StaleThreshold time.Duration `env:"OBSERVE_STALE_THRESHOLD,default=30s"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.
@@ -73,6 +97,18 @@ func (a *API) Validate() error {
 	}
 	if a.ReauthWindow <= 0 {
 		return fmt.Errorf("REAUTH_WINDOW: must be positive")
+	}
+	if a.ReconcileResync <= 0 {
+		return fmt.Errorf("RECONCILE_RESYNC_INTERVAL: must be positive")
+	}
+	if a.ReconcileAudit <= 0 {
+		return fmt.Errorf("RECONCILE_AUDIT_INTERVAL: must be positive")
+	}
+	if a.RolloutDeadline <= 0 {
+		return fmt.Errorf("RECONCILE_ROLLOUT_DEADLINE: must be positive")
+	}
+	if a.StaleThreshold < 5*time.Second {
+		return fmt.Errorf("OBSERVE_STALE_THRESHOLD: must be at least 5s")
 	}
 	return nil
 }
