@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
@@ -41,6 +42,11 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			return 0, nil // environment deleted; the audit reports orphans
 		}
 		return 0, fmt.Errorf("reconcile: get target: %w", err)
+	}
+	if target.State != deploy.EnvironmentStateActive {
+		// A persisted destructive decision replaces convergence entirely:
+		// desired state is absence.
+		return k.teardownEnvironment(ctx, environmentID, target)
 	}
 	if target.TargetRevisionID == nil {
 		return 0, nil

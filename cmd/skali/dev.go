@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -21,13 +22,17 @@ const localEnvironmentName = "local"
 
 func newDevCommand() *cobra.Command {
 	var envFile, skalidImage string
+	var detach bool
 	command := &cobra.Command{
 		Use:   "dev",
 		Short: "Run the project on the local skali platform",
 		Long: "Bare skali dev is the complete paved path: it ensures the disposable\n" +
 			"local platform (k3d cluster with in-cluster skalid, Postgres, and\n" +
-			"registry), builds and deploys the current project, and attaches to\n" +
-			"the rollout. Local values never leave this machine.",
+			"registry), builds and deploys the current project, attaches to the\n" +
+			"rollout, and follows the runtime logs; Ctrl-C detaches and leaves\n" +
+			"the project running. Use -d to skip the log follow, skali dev down\n" +
+			"to remove the project again, and skali dev ls to see everything on\n" +
+			"the local platform. Local values never leave this machine.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if _, err := ensureLocalPlatform(command, skalidImage); err != nil {
@@ -40,15 +45,32 @@ func newDevCommand() *cobra.Command {
 				Yes:           true,
 				CreateMissing: true,
 			}
-			if err := runDeployFlow(command, opts, false); err != nil {
+			outcome, err := runDeployFlow(command, opts, false)
+			if err != nil {
 				return err
 			}
-			return printDevReady(command)
+			if err := printDevReady(command); err != nil {
+				return err
+			}
+			// A user who already detached from the rollout with Ctrl-C is
+			// not asking for more output.
+			if detach || outcome == deployOutcomeDetached {
+				return nil
+			}
+			api, environmentID, err := localProjectEnvironment(command)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(command.OutOrStdout(),
+				"\nfollowing logs; Ctrl-C detaches and leaves the project running")
+			return followRuntimeLogs(command, api, environmentID, "")
 		},
 	}
 	command.PersistentFlags().StringVar(&skalidImage, "skalid-image", "",
 		"control-plane image for the local platform (defaults to the recorded or task dev:image build)")
 	command.Flags().StringVar(&envFile, "env-file", "", "explicit local env file (defaults to ./.env when present)")
+	command.Flags().BoolVarP(&detach, "detach", "d", false,
+		"exit once the rollout settles instead of following runtime logs")
 
 	up := &cobra.Command{
 		Use:   "up",
@@ -84,6 +106,32 @@ func newDevCommand() *cobra.Command {
 		},
 	}
 
+	var purge, yes bool
+	down := &cobra.Command{
+		Use:   "down",
+		Short: "Remove the project from the local platform; data is retained",
+		Long: "Removes the current project's running workloads from the local\n" +
+			"platform, like docker compose down: the cluster and every other\n" +
+			"project keep running, and this project's volumes, values, and\n" +
+			"revision history are retained, so the next skali dev brings it\n" +
+			"back with its data. With --purge the project's local environment\n" +
+			"is destroyed completely, including volumes and all values,\n" +
+			"secrets, revisions, and history; that decision is one-way.",
+		Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, args []string) error {
+			return runDevDown(command, purge, yes)
+		},
+	}
+	down.Flags().BoolVar(&purge, "purge", false, "destroy the environment completely, including volumes and all data")
+	down.Flags().BoolVar(&yes, "yes", false, "skip the typed confirmation for --purge")
+
+	ls := &cobra.Command{
+		Use:   "ls",
+		Short: "List projects on the local platform",
+		Args:  cobra.NoArgs,
+		RunE:  runDevLs,
+	}
+
 	stop := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the local platform; state is retained",
@@ -104,8 +152,167 @@ func newDevCommand() *cobra.Command {
 		RunE:  runDevReset,
 	}
 
-	command.AddCommand(up, status, logs, stop, reset)
+	command.AddCommand(up, status, logs, down, ls, stop, reset)
 	return command
+}
+
+// runDevDown tears the current project down on the local platform. Plain
+// down is reversible (data is retained) and needs no confirmation; purge
+// demands the typed project name unless --yes.
+func runDevDown(command *cobra.Command, purge, yes bool) error {
+	ctx := command.Context()
+	out := command.OutOrStdout()
+	project, err := loadLocalProject("")
+	if err != nil {
+		return err
+	}
+	name := project.Result.Definition.Name
+	api, environmentID, err := localProjectEnvironment(command)
+	if err != nil {
+		return fmt.Errorf("%s is not on the local platform: %w", name, err)
+	}
+
+	if purge && !yes {
+		fmt.Fprintf(out, "This destroys the local environment of %s completely:\n", name)
+		fmt.Fprintln(out, "  its namespace including all volumes, and its values, secrets,")
+		fmt.Fprintln(out, "  revisions, and history on the local platform.")
+		fmt.Fprintln(out, "Nothing outside this machine is affected.")
+		fmt.Fprintf(out, "\nType the project name %q to continue: ", name)
+		var answer string
+		_, _ = fmt.Scanln(&answer)
+		if strings.TrimSpace(answer) != name {
+			return errors.New("aborted")
+		}
+	}
+
+	runID, err := api.TeardownEnvironment(ctx, environmentID, purge)
+	if isReauthRequired(err) {
+		if err := reauthLocal(ctx, api); err != nil {
+			return err
+		}
+		runID, err = api.TeardownEnvironment(ctx, environmentID, purge)
+	}
+	if err != nil {
+		return err
+	}
+
+	verb := "take down"
+	if purge {
+		verb = "purge"
+	}
+	fmt.Fprintf(out, "run %s  %s %s\n", runID, verb, name)
+	status, err := attachRun(ctx, out, api, runID)
+	if err != nil {
+		// The purge epilogue deletes the environment row and every run
+		// with it; losing the run mid-poll means the purge finished.
+		if !purge || !isNotFound(err) {
+			return err
+		}
+		status = "succeeded"
+	}
+	switch status {
+	case "succeeded":
+	case "detached":
+		return nil
+	default:
+		return fmt.Errorf("run %s %s", runID, status)
+	}
+
+	if purge {
+		if err := waitEnvironmentGone(ctx, api, environmentID); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "\n%s is purged from the local platform; nothing of it remains\n", name)
+		return nil
+	}
+	fmt.Fprintf(out, "\n%s is down; its data is retained\n", name)
+	fmt.Fprintln(out, "  bring it back  skali dev")
+	return nil
+}
+
+// waitEnvironmentGone polls until the purged environment's row is deleted;
+// the 404 is the authoritative completion signal.
+func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID string) error {
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		_, err := api.GetEnvironment(ctx, environmentID)
+		if isNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return errors.New("the purge is still finishing on the server; check skali dev ls")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// reauthLocal refreshes the sudo window with the recorded bootstrap
+// credentials: the local platform's admin password already lives on this
+// machine, so prompting would be theater.
+func reauthLocal(ctx context.Context, api *client.Client) error {
+	state, err := localdev.LoadState()
+	if err != nil || state.AdminPassword == "" {
+		return errors.New("recent authentication required; run skali login")
+	}
+	if err := api.Reauthenticate(ctx, state.AdminPassword); err != nil {
+		return fmt.Errorf("reauthenticate against the local platform: %w", err)
+	}
+	return nil
+}
+
+func isReauthRequired(err error) bool {
+	var apiErr *client.APIError
+	return errors.As(err, &apiErr) && apiErr.Code == "reauth_required"
+}
+
+func isNotFound(err error) bool {
+	var apiErr *client.APIError
+	return errors.As(err, &apiErr) && apiErr.Status == 404
+}
+
+// runDevLs lists every project on the local platform with the state of its
+// environments, the docker compose ls of the local cluster.
+func runDevLs(command *cobra.Command, args []string) error {
+	ctx := command.Context()
+	out := command.OutOrStdout()
+	cfg, err := cliconfig.Load()
+	if err != nil {
+		return err
+	}
+	localContext := cfg.Contexts[localContextName]
+	if localContext == nil {
+		return errors.New("the local platform is not set up; run skali dev up first")
+	}
+	api := client.New(localContext.Master, localContext.Token, userAgent())
+	projects, err := api.ListProjects(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%-24s  %-13s  %-10s  %s\n", "PROJECT", "ENVIRONMENT", "STATE", "ACTIVE")
+	for _, project := range projects {
+		environments, err := api.ListEnvironments(ctx, project.ID)
+		if err != nil {
+			return err
+		}
+		for _, environment := range environments {
+			state, active := "unknown", "-"
+			if status, err := api.EnvironmentStatus(ctx, environment.ID); err == nil {
+				state = status.State
+				if status.ActiveRevision != nil {
+					active = shortChecksum(status.ActiveRevision.Checksum)
+				}
+			}
+			fmt.Fprintf(out, "%-24s  %-13s  %-10s  %s\n", project.Name, environment.Name, state, active)
+		}
+	}
+	return nil
 }
 
 // ensureLocalPlatform brings the platform up and logs the CLI into it,
@@ -248,6 +455,14 @@ func runDevStatus(command *cobra.Command, args []string) error {
 	status, err := api.EnvironmentStatus(ctx, environmentID)
 	if err != nil {
 		return err
+	}
+	switch status.State {
+	case "down":
+		fmt.Fprintln(out, "project    down (workloads removed; data retained; skali dev brings it back)")
+		return nil
+	case "releasing":
+		fmt.Fprintln(out, "project    releasing (purge in progress)")
+		return nil
 	}
 	active := "none"
 	if status.ActiveRevision != nil {

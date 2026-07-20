@@ -1169,6 +1169,48 @@ paths:
         "403": { $ref: "#/components/responses/ReauthRequired" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/environments/{id}/teardown:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: teardownEnvironment
+      summary: Tear an environment down
+      description: |
+        Destructive: persists the teardown decision and lets reconciliation
+        execute it as a journaled run. Without purge the runtime workloads
+        are removed but the namespace, volumes, values, and history remain,
+        and the next deployment resurrects the environment. With purge the
+        namespace including its volumes and the environment itself with all
+        values, revisions, and history are destroyed; this is one-way.
+        Requires recent authentication (sudo mode).
+      tags: [environments]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                purge: { type: boolean, default: false }
+      responses:
+        "202":
+          description: Teardown accepted; attach to the returned run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, purge]
+                properties:
+                  run_id: { type: string, format: uuid }
+                  purge: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /v1/projects/{id}/definitions:
     parameters:
       - name: id
@@ -2169,11 +2211,17 @@ components:
 
     EnvironmentStatus:
       type: object
-      required: [environment_id, target_revision, active_revision, observation, services]
+      required: [environment_id, state, target_revision, active_revision, observation, services]
       properties:
         environment_id:
           type: string
           format: uuid
+        state:
+          type: string
+          enum: [active, down, releasing]
+          description: >
+            Desired presence: active converges toward the target revision,
+            down and releasing are teardown decisions being executed.
         target_revision:
           oneOf:
             - type: "null"

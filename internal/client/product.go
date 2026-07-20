@@ -215,6 +215,36 @@ func (c *Client) ListEnvironments(ctx context.Context, projectID string) ([]Envi
 	return res.Environments, nil
 }
 
+func (c *Client) GetEnvironment(ctx context.Context, environmentID string) (*Environment, error) {
+	var res struct {
+		Environment Environment `json:"environment"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/environments/"+environmentID, nil, &res); err != nil {
+		return nil, err
+	}
+	return &res.Environment, nil
+}
+
+// TeardownEnvironment persists the destructive teardown decision on the
+// server and returns the run to attach to. Requires a fresh session.
+func (c *Client) TeardownEnvironment(ctx context.Context, environmentID string, purge bool) (runID string, err error) {
+	var res struct {
+		RunID string `json:"run_id"`
+	}
+	err = c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/teardown",
+		map[string]bool{"purge": purge}, &res)
+	if err != nil {
+		return "", err
+	}
+	return res.RunID, nil
+}
+
+// Reauthenticate refreshes the session's recent-authentication window with
+// the account password, unlocking the destructive endpoints.
+func (c *Client) Reauthenticate(ctx context.Context, password string) error {
+	return c.do(ctx, http.MethodPost, "/v1/auth/reauth", map[string]string{"password": password}, nil)
+}
+
 // --- deployment flow ---
 
 func (c *Client) SubmitDefinition(ctx context.Context, projectID, source, format string) (*DefinitionVersion, error) {
@@ -392,6 +422,7 @@ func (c *Client) Target(ctx context.Context, environmentID string) (*Target, err
 // it in dev status and after rollouts.
 type EnvironmentStatus struct {
 	EnvironmentID  string `json:"environment_id"`
+	State          string `json:"state"`
 	TargetRevision *struct {
 		ID       string `json:"id"`
 		Checksum string `json:"checksum"`

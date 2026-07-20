@@ -130,7 +130,7 @@ func NewRouter(d Deps) http.Handler {
 				// Product surface: projects, environments, drafts. Members have
 				// full access; only destructive deletes need sudo mode.
 				ph := &projectsHandlers{projects: d.Projects}
-				eh := &environmentsHandlers{projects: d.Projects}
+				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal}
 				r.Post("/projects", ph.create)
 				r.Get("/projects", ph.list)
 				r.Get("/projects/{id}", ph.get)
@@ -183,6 +183,7 @@ func NewRouter(d Deps) http.Handler {
 
 					r.Delete("/projects/{id}", ph.delete)
 					r.Delete("/environments/{id}", eh.delete)
+					r.Post("/environments/{id}/teardown", eh.teardown)
 				})
 
 				// Instance management, admins only.

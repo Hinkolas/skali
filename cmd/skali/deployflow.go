@@ -504,16 +504,26 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID str
 
 // runDeployFlow is the transcript loop shared by skali plan, deploy, and
 // dev. planOnly stops after printing the server-computed plan.
-func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) error {
+// Deploy flow outcomes: what actually happened, so callers like bare
+// skali dev can decide whether following runtime logs is welcome (a user
+// who already detached with Ctrl-C is not asking for more output).
+const (
+	deployOutcomePlanned  = "planned"
+	deployOutcomeUpToDate = "up-to-date"
+	deployOutcomeReady    = "ready"
+	deployOutcomeDetached = "detached"
+)
+
+func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (string, error) {
 	ctx := command.Context()
 	out := command.OutOrStdout()
 	project, err := loadLocalProject(opts.Manifest)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cfg, contextName, api, err := currentClient()
 	if err != nil {
-		return err
+		return "", err
 	}
 	master := cfg.Contexts[contextName].Master
 	fmt.Fprintf(out, "project      %s (%s)\n", project.Result.Definition.Name, filepath.Base(project.Path))
@@ -522,11 +532,11 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) e
 	projectID, environmentID, err := resolveEnvironmentIDs(ctx, api,
 		project.Result.Definition.Name, opts.Environment, opts.CreateMissing)
 	if err != nil {
-		return err
+		return "", err
 	}
 	definitionVersion, err := api.SubmitDefinition(ctx, projectID, string(project.Source), "yaml")
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Values: an explicit or discovered local file stages a candidate;
@@ -534,7 +544,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) e
 	// double as the variable space for build-argument resolution.
 	file, err := selectValues(out, project, opts)
 	if err != nil {
-		return err
+		return "", err
 	}
 	localValues := map[string]string{}
 	if entries, err := api.EnvironmentValues(ctx, environmentID); err == nil {
@@ -549,13 +559,13 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) e
 	if file != nil {
 		resolved, err := values.Resolve(project.Result.Definition.RequiredVariables, file, values.Options{})
 		if err != nil {
-			return fmt.Errorf("%s: %w", file.Path, err)
+			return "", fmt.Errorf("%s: %w", file.Path, err)
 		}
 		maps.Copy(localValues, resolved.Merged())
 		if !planOnly {
 			staged, err := api.StageValues(ctx, environmentID, file.Values, definitionVersion.DefinitionVersionID)
 			if err != nil {
-				return err
+				return "", err
 			}
 			candidateID = staged.CandidateID
 			fmt.Fprintf(out, "values       %s (%d plain, %d secret)\n", file.Path, len(staged.Plain), len(staged.Secret))
@@ -568,7 +578,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) e
 
 	inputs, contexts, err := buildInputs(project, localValues, excludeFiles)
 	if err != nil {
-		return err
+		return "", err
 	}
 	request := client.DeployRequest{
 		DefinitionVersionID: definitionVersion.DefinitionVersionID,
@@ -583,15 +593,15 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) e
 	}
 	planned, err := api.Plan(ctx, environmentID, request)
 	if err != nil {
-		return err
+		return "", err
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
 	if planOnly {
-		return nil
+		return deployOutcomePlanned, nil
 	}
 	if planned.UpToDate {
 		fmt.Fprintln(out, "\nnothing to deploy")
-		return nil
+		return deployOutcomeUpToDate, nil
 	}
 
 	// Confirmation: destructive plans demand the typed environment name or
@@ -599,30 +609,30 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) e
 	if planned.Plan.Destructive() && !opts.AllowDestructive {
 		if interactive() && !opts.Yes {
 			if !confirmDestructive(out, opts.Environment) {
-				return errors.New("aborted")
+				return "", errors.New("aborted")
 			}
 			request.AllowDestructive = true
 		} else {
-			return errors.New("plan is destructive; review it and re-run with --allow-destructive")
+			return "", errors.New("plan is destructive; review it and re-run with --allow-destructive")
 		}
 	} else if planned.Plan.Destructive() {
 		request.AllowDestructive = true
 	} else if !opts.Yes {
 		if !interactive() {
-			return errors.New("non-interactive use requires --yes")
+			return "", errors.New("non-interactive use requires --yes")
 		}
 		if !confirm(out, "\nContinue? [y/N] ") {
-			return errors.New("aborted")
+			return "", errors.New("aborted")
 		}
 	}
 
 	opened, err := api.OpenDeployment(ctx, environmentID, request)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if opened.UpToDate {
 		fmt.Fprintln(out, "\nnothing to deploy")
-		return nil
+		return deployOutcomeUpToDate, nil
 	}
 	fmt.Fprintf(out, "\nrun %s  deploy %s to %s\n", opened.Deployment.RunID,
 		project.Result.Definition.Name, opts.Environment)
@@ -630,29 +640,29 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) e
 	if err := executeActions(ctx, out, api, opened, project, contexts, localValues); err != nil {
 		fmt.Fprintf(out, "\nrun %s failed: %v\n", opened.Deployment.RunID, err)
 		fmt.Fprintln(out, "\nThe environment is unchanged: staged values discarded, target and active revision untouched.")
-		return errors.New("deployment failed")
+		return "", errors.New("deployment failed")
 	}
 	if _, err := api.CompleteDeployment(ctx, opened.Deployment.ID); err != nil {
-		return err
+		return "", err
 	}
 	if opts.Detach {
 		fmt.Fprintf(out, "deployment continues on the server; attach with: skali run attach %s\n", opened.Deployment.RunID)
-		return nil
+		return deployOutcomeDetached, nil
 	}
 	status, err := attachRun(ctx, out, api, opened.Deployment.RunID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	switch status {
 	case "succeeded":
 		fmt.Fprintln(out, "\nready")
-		return nil
+		return deployOutcomeReady, nil
 	case "failed":
-		return fmt.Errorf("run %s failed", opened.Deployment.RunID)
+		return "", fmt.Errorf("run %s failed", opened.Deployment.RunID)
 	case "cancelled":
-		return fmt.Errorf("run %s was cancelled", opened.Deployment.RunID)
+		return "", fmt.Errorf("run %s was cancelled", opened.Deployment.RunID)
 	default:
-		return nil
+		return deployOutcomeDetached, nil
 	}
 }
 

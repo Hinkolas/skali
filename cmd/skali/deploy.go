@@ -16,7 +16,8 @@ func newPlanCommand() *cobra.Command {
 			if opts.Environment == "" {
 				return errors.New("--environment is required")
 			}
-			return runDeployFlow(command, opts, true)
+			_, err := runDeployFlow(command, opts, true)
+			return err
 		},
 	}
 	addDeployFlags(command, opts)
@@ -39,7 +40,8 @@ func newDeployCommand() *cobra.Command {
 			if opts.BuildMode != "" && opts.BuildMode != "local" && opts.BuildMode != "auto" {
 				return errors.New("--build must be local or auto (cloud builders arrive with R4)")
 			}
-			return runDeployFlow(command, opts, false)
+			_, err := runDeployFlow(command, opts, false)
+			return err
 		},
 	}
 	addDeployFlags(command, opts)

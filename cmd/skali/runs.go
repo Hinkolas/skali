@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -209,35 +212,85 @@ func newLogsCommand() *cobra.Command {
 
 // streamRuntimeLogs follows the runtime log stream until interrupted.
 func streamRuntimeLogs(command *cobra.Command, api *client.Client, environmentID, service string) error {
-	path := "/v1/environments/" + environmentID + "/logs/stream"
-	if service != "" {
-		path += "?service=" + service
-	}
-	events, err := api.Stream(command.Context(), path, "")
+	events, err := api.Stream(command.Context(), runtimeLogsPath(environmentID, service), "")
 	if err != nil {
 		return err
 	}
 	out := command.OutOrStdout()
 	for event := range events {
-		if event.Event != "log" {
-			continue
-		}
-		var entry struct {
-			Service  string `json:"service"`
-			Pod      string `json:"pod"`
-			Line     string `json:"line"`
-			Previous bool   `json:"previous"`
-		}
-		if err := json.Unmarshal([]byte(event.Data), &entry); err != nil {
-			continue
-		}
-		marker := ""
-		if entry.Previous {
-			marker = " (previous)"
-		}
-		fmt.Fprintf(out, "%s%s  %s\n", entry.Pod, marker, entry.Line)
+		printLogEvent(out, event, nil)
 	}
 	return nil
+}
+
+// followRuntimeLogs is the compose-like attach: it tails the runtime log
+// stream and Ctrl-C only detaches, leaving the project running. The server
+// closes the stream on overflow and replays a bounded tail per fresh
+// subscription, so the follow reconnects and suppresses replayed lines by
+// their kubelet timestamps.
+func followRuntimeLogs(command *cobra.Command, api *client.Client, environmentID, service string) error {
+	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt)
+	defer stop()
+	out := command.OutOrStdout()
+	lastSeen := map[string]time.Time{}
+	for ctx.Err() == nil {
+		events, err := api.Stream(ctx, runtimeLogsPath(environmentID, service), "")
+		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			return err
+		}
+		for event := range events {
+			printLogEvent(out, event, lastSeen)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
+	fmt.Fprintln(out, "\ndetached; the project keeps running")
+	fmt.Fprintln(out, "  follow logs  skali dev logs")
+	fmt.Fprintln(out, "  take down    skali dev down")
+	return nil
+}
+
+func runtimeLogsPath(environmentID, service string) string {
+	path := "/v1/environments/" + environmentID + "/logs/stream"
+	if service != "" {
+		path += "?service=" + service
+	}
+	return path
+}
+
+// printLogEvent renders one runtime log SSE event. A non-nil lastSeen map
+// drops lines at or before the newest timestamp already printed per pod,
+// which silences the replayed tail after a reconnect.
+func printLogEvent(out io.Writer, event client.SSEEvent, lastSeen map[string]time.Time) {
+	if event.Event != "log" {
+		return
+	}
+	var entry struct {
+		Service  string    `json:"service"`
+		Pod      string    `json:"pod"`
+		Line     string    `json:"line"`
+		Previous bool      `json:"previous"`
+		Time     time.Time `json:"time"`
+	}
+	if err := json.Unmarshal([]byte(event.Data), &entry); err != nil {
+		return
+	}
+	if lastSeen != nil && !entry.Time.IsZero() {
+		if !entry.Time.After(lastSeen[entry.Pod]) {
+			return
+		}
+		lastSeen[entry.Pod] = entry.Time
+	}
+	marker := ""
+	if entry.Previous {
+		marker = " (previous)"
+	}
+	fmt.Fprintf(out, "%s%s  %s\n", entry.Pod, marker, entry.Line)
 }
 
 func findStep(steps []client.Step, key string) *client.Step {

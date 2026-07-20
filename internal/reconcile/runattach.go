@@ -36,9 +36,10 @@ type runAttachment struct {
 	environmentID uuid.UUID
 	projectID     uuid.UUID
 
-	run     *store.Run
-	created bool
-	parent  *uuid.UUID // rollout parent step of an adopted deployment run
+	run        *store.Run
+	created    bool
+	parent     *uuid.UUID // rollout parent step of an adopted deployment run
+	ensureKind string     // kind of a lazily created run; "reconcile" if empty
 }
 
 // attachRun adopts the environment's running run when one exists.
@@ -76,13 +77,19 @@ func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UU
 func (a *runAttachment) active() bool  { return a.run != nil }
 func (a *runAttachment) adopted() bool { return a.run != nil && !a.created }
 
-// ensure creates the reconcile-kind run on first material work.
+// ensure creates the reconcile-kind run on first material work. A teardown
+// pass overrides ensureKind so drift healing after the adopted run finished
+// still journals under the truthful kind.
 func (a *runAttachment) ensure(ctx context.Context) {
 	if a.run != nil {
 		return
 	}
+	kind := a.ensureKind
+	if kind == "" {
+		kind = "reconcile"
+	}
 	run, err := a.journal.CreateRun(ctx, journal.RunInput{
-		Kind:          "reconcile",
+		Kind:          kind,
 		ProjectID:     a.projectID,
 		EnvironmentID: a.environmentID,
 		Actor:         actorReconcile,

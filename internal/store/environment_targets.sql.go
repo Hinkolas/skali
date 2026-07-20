@@ -47,7 +47,7 @@ func (q *Queries) FallbackEnvironmentTarget(ctx context.Context, arg FallbackEnv
 }
 
 const getEnvironmentTarget = `-- name: GetEnvironmentTarget :one
-SELECT environment_id, target_revision_id, active_revision_id, updated_at FROM environment_targets WHERE environment_id = $1
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state FROM environment_targets WHERE environment_id = $1
 `
 
 func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.UUID) (EnvironmentTarget, error) {
@@ -58,12 +58,13 @@ func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.U
 		&i.TargetRevisionID,
 		&i.ActiveRevisionID,
 		&i.UpdatedAt,
+		&i.State,
 	)
 	return i, err
 }
 
 const listEnvironmentTargets = `-- name: ListEnvironmentTargets :many
-SELECT environment_id, target_revision_id, active_revision_id, updated_at FROM environment_targets
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state FROM environment_targets
 `
 
 func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarget, error) {
@@ -80,6 +81,7 @@ func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarg
 			&i.TargetRevisionID,
 			&i.ActiveRevisionID,
 			&i.UpdatedAt,
+			&i.State,
 		); err != nil {
 			return nil, err
 		}
@@ -92,7 +94,7 @@ func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarg
 }
 
 const listEnvironmentsOutOfSync = `-- name: ListEnvironmentsOutOfSync :many
-SELECT environment_id, target_revision_id, active_revision_id, updated_at FROM environment_targets
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state FROM environment_targets
 WHERE target_revision_id IS DISTINCT FROM active_revision_id
 `
 
@@ -112,6 +114,7 @@ func (q *Queries) ListEnvironmentsOutOfSync(ctx context.Context) ([]EnvironmentT
 			&i.TargetRevisionID,
 			&i.ActiveRevisionID,
 			&i.UpdatedAt,
+			&i.State,
 		); err != nil {
 			return nil, err
 		}
@@ -121,6 +124,41 @@ func (q *Queries) ListEnvironmentsOutOfSync(ctx context.Context) ([]EnvironmentT
 		return nil, err
 	}
 	return items, nil
+}
+
+const markEnvironmentDown = `-- name: MarkEnvironmentDown :execrows
+UPDATE environment_targets
+SET state = 'down', target_revision_id = NULL, active_revision_id = NULL,
+    updated_at = now()
+WHERE environment_id = $1 AND state <> 'releasing'
+`
+
+// The persisted destructive decisions behind skali dev down. Down removes
+// the runtime workloads but keeps data; both pointers are cleared so the
+// next deployment is never "nothing to deploy" and re-promotes into the
+// surviving namespace. Releasing is one-way: once set, nothing revives the
+// environment and reconciliation ends by deleting the row itself.
+func (q *Queries) MarkEnvironmentDown(ctx context.Context, environmentID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markEnvironmentDown, environmentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markEnvironmentReleasing = `-- name: MarkEnvironmentReleasing :execrows
+UPDATE environment_targets
+SET state = 'releasing', target_revision_id = NULL, active_revision_id = NULL,
+    updated_at = now()
+WHERE environment_id = $1
+`
+
+func (q *Queries) MarkEnvironmentReleasing(ctx context.Context, environmentID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markEnvironmentReleasing, environmentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setEnvironmentActiveRevision = `-- name: SetEnvironmentActiveRevision :execrows
@@ -147,8 +185,8 @@ func (q *Queries) SetEnvironmentActiveRevision(ctx context.Context, arg SetEnvir
 
 const setEnvironmentTarget = `-- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
-SET target_revision_id = $2, updated_at = now()
-WHERE environment_id = $1
+SET target_revision_id = $2, state = 'active', updated_at = now()
+WHERE environment_id = $1 AND state <> 'releasing'
 `
 
 type SetEnvironmentTargetParams struct {
@@ -157,7 +195,9 @@ type SetEnvironmentTargetParams struct {
 }
 
 // The single writer of the target pointer; runs only inside the deploy
-// promotion or rollback transaction.
+// promotion or rollback transaction. Promoting resurrects an environment
+// that was taken down, but never one that is releasing: purge is one-way,
+// so a promote racing a purge fails on the 0-row result.
 func (q *Queries) SetEnvironmentTarget(ctx context.Context, arg SetEnvironmentTargetParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setEnvironmentTarget, arg.EnvironmentID, arg.TargetRevisionID)
 	if err != nil {

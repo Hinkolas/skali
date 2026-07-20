@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -102,6 +104,45 @@ func (h *e2eHarness) run(wantErr bool, stdin string, args ...string) string {
 	return string(out)
 }
 
+// syncBuffer guards concurrent writes from the child's pipe copiers against
+// the test's polling reads.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// runInterrupt starts the CLI, waits until its output contains marker, sends
+// SIGINT, and requires a clean exit: the compose-like detach contract.
+func (h *e2eHarness) runInterrupt(marker string, wait time.Duration, args ...string) string {
+	h.t.Helper()
+	command := exec.Command(h.binary, args...)
+	command.Dir = h.projectDir
+	command.Env = h.env
+	output := &syncBuffer{}
+	command.Stdout = output
+	command.Stderr = output
+	require.NoError(h.t, command.Start())
+	require.Eventually(h.t, func() bool {
+		return strings.Contains(output.String(), marker)
+	}, wait, 200*time.Millisecond, "output never contained the marker")
+	require.NoError(h.t, command.Process.Signal(os.Interrupt))
+	err := command.Wait()
+	require.NoError(h.t, err, "skali %s after interrupt:\n%s", strings.Join(args, " "), output.String())
+	return output.String()
+}
+
 // route fetches the deployed application through the local edge.
 func (h *e2eHarness) route(path string) (int, string) {
 	h.t.Helper()
@@ -137,7 +178,7 @@ func TestDevEndToEnd(t *testing.T) {
 	h := newE2EHarness(t)
 
 	t.Run("FirstRunReachesHealthyRoute", func(t *testing.T) {
-		out := h.run(false, "", "dev", "--skalid-image", "skalid:dev")
+		out := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
 		require.Contains(t, out, "Create k3d cluster "+e2eCluster)
 		require.Contains(t, out, "run ")
 		require.Contains(t, out, "ready")
@@ -145,7 +186,7 @@ func TestDevEndToEnd(t *testing.T) {
 	})
 
 	t.Run("RepeatUnchangedReusesArtifact", func(t *testing.T) {
-		out := h.run(false, "", "dev")
+		out := h.run(false, "", "dev", "-d")
 		require.Contains(t, out, "nothing to deploy")
 		require.NotContains(t, out, "Build locally")
 	})
@@ -155,6 +196,38 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "running")
 		require.Contains(t, out, "application.web")
 		require.Contains(t, out, "healthy")
+	})
+
+	t.Run("FollowLogsAndDetach", func(t *testing.T) {
+		// Bare dev on an up-to-date project attaches to the runtime logs;
+		// Ctrl-C detaches cleanly and the project keeps serving.
+		out := h.runInterrupt("following logs", 2*time.Minute, "dev")
+		require.Contains(t, out, "detached; the project keeps running")
+		status, _ := h.route("/")
+		require.Equal(t, http.StatusOK, status, "detaching must not stop the project")
+	})
+
+	t.Run("DownKeepsData", func(t *testing.T) {
+		out := h.run(false, "", "dev", "down")
+		require.Contains(t, out, "is down; its data is retained")
+
+		require.Eventually(t, func() bool {
+			status, _ := h.route("/")
+			return status != http.StatusOK
+		}, 2*time.Minute, 2*time.Second, "the route must stop serving after down")
+
+		// The namespace with its data survives, and ls reports the state.
+		kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+		require.NoError(t, exec.Command("kubectl", "--kubeconfig", kubeconfig,
+			"get", "namespace", "skali-hello-world-local").Run())
+		out = h.run(false, "", "dev", "ls")
+		require.Contains(t, out, "hello-world")
+		require.Contains(t, out, "down")
+
+		// The next dev resurrects the project into the kept namespace.
+		out = h.run(false, "", "dev", "-d")
+		require.Contains(t, out, "ready")
+		h.waitRoute("hello from skali", 2*time.Minute)
 	})
 
 	t.Run("SkalidRestartDuringRolloutResumes", func(t *testing.T) {
@@ -184,6 +257,21 @@ func TestDevEndToEnd(t *testing.T) {
 		out = h.run(false, "", "dev", "up")
 		require.Contains(t, out, "state retained")
 		h.waitRoute("hello again from skali", 3*time.Minute)
+	})
+
+	t.Run("PurgeRemovesEverything", func(t *testing.T) {
+		// Refused without the typed project name.
+		h.run(true, "no\n", "dev", "down", "--purge")
+
+		out := h.run(false, "hello-world\n", "dev", "down", "--purge")
+		require.Contains(t, out, "is purged from the local platform")
+
+		kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+		require.Error(t, exec.Command("kubectl", "--kubeconfig", kubeconfig,
+			"get", "namespace", "skali-hello-world-local").Run(),
+			"the purge must delete the namespace")
+		out = h.run(false, "", "dev", "ls")
+		require.NotContains(t, out, "local", "the purged environment must not be listed")
 	})
 
 	t.Run("ResetConfirmsAndRemoves", func(t *testing.T) {

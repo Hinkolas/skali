@@ -21,6 +21,7 @@ import (
 // request-time Kubernetes call.
 type Status struct {
 	EnvironmentID uuid.UUID
+	State         string // environment_targets.state: active, down, or releasing
 	Target        *RevisionRef
 	Active        *RevisionRef
 	Observation   module.SourceStatus
@@ -62,6 +63,7 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 	}
 	status := &Status{
 		EnvironmentID: environmentID,
+		State:         target.State,
 		Observation:   k.deps.Observed.Source(),
 	}
 	var targetRevision *revision.Revision

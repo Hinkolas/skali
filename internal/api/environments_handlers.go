@@ -1,9 +1,12 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -12,6 +15,8 @@ import (
 // project for creation and listing, and are addressed directly otherwise.
 type environmentsHandlers struct {
 	projects *project.Service
+	deploy   *deploy.Service
+	journal  *journal.Service
 }
 
 type environmentPayload struct {
@@ -93,7 +98,45 @@ func (h *environmentsHandlers) get(w http.ResponseWriter, r *http.Request) {
 	}{newEnvironmentPayload(env)})
 }
 
-// DELETE /v1/environments/{id}
+// POST /v1/environments/{id}/teardown
+func (h *environmentsHandlers) teardown(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Purge bool `json:"purge"`
+	}
+	if r.ContentLength != 0 {
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+			return
+		}
+	}
+	user := UserFrom(r.Context())
+	run, err := h.deploy.Teardown(r.Context(), id, req.Purge, h.journal, user.ID.String())
+	if err != nil {
+		switch {
+		case errors.Is(err, deploy.ErrEnvironmentNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "environment not found")
+		case errors.Is(err, deploy.ErrEnvironmentReleasing):
+			writeError(w, http.StatusConflict, codeConflict, "environment is already releasing")
+		case errors.Is(err, deploy.ErrDeploymentInFlight):
+			writeError(w, http.StatusConflict, codeDeploymentInFlight,
+				"a deployment is in flight; cancel its run or wait for it to finish")
+		default:
+			writeInternalError(r.Context(), w, "teardown environment", err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusAccepted, struct {
+		RunID string `json:"run_id"`
+		Purge bool   `json:"purge"`
+	}{run.ID.String(), req.Purge})
+}
+
+// DELETE /v1/environments/{id}. The raw delete removes rows only and leaves
+// any cluster state orphaned; POST {id}/teardown is the paved path.
 func (h *environmentsHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

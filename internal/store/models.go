@@ -134,6 +134,7 @@ type EnvironmentTarget struct {
 	TargetRevisionID *uuid.UUID
 	ActiveRevisionID *uuid.UUID
 	UpdatedAt        time.Time
+	State            string
 }
 
 type EnvironmentValue struct {
