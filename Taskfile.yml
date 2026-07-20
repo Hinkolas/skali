@@ -79,10 +79,9 @@ tasks:
       - TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run 'TestDev' ./cmd/skali/...
 
   dev:image:
-    desc: Build the skalid image from the working tree and import it into the skali-dev cluster
+    desc: Build the skalid image from the working tree; skali dev up imports and rolls it
     cmds:
       - docker build -t skalid:dev -f build/skalid.Dockerfile .
-      - k3d image import -c skali-dev skalid:dev || true
 
   dev:
     desc: Run the daemon against the shared dev Postgres (takes over :7070)

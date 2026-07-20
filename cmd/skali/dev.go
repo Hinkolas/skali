@@ -347,6 +347,14 @@ func (p *taskProgress) Done(detail string) {
 	p.current = nil
 }
 
+func (p *taskProgress) Skip(detail string) {
+	if p.current == nil {
+		return
+	}
+	p.current.Skip(detail)
+	p.current = nil
+}
+
 func (p *taskProgress) Abort() {
 	if p.current == nil {
 		return

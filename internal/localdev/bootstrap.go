@@ -23,18 +23,21 @@ type EnsureOptions struct {
 }
 
 // Progress receives the ensure stages as they happen: Start begins a
-// stage, Done concludes the running one with optional detail. A stage
-// that errors is never Done; Ensure's caller settles it from the
-// returned error. A nil Progress is silent.
+// stage, Done concludes the running one with optional detail, Skip
+// concludes it as not needed with the reason. A stage that errors is
+// never concluded; Ensure's caller settles it from the returned error.
+// A nil Progress is silent.
 type Progress interface {
 	Start(title string)
 	Done(detail string)
+	Skip(detail string)
 }
 
 type silentProgress struct{}
 
 func (silentProgress) Start(string) {}
 func (silentProgress) Done(string)  {}
+func (silentProgress) Skip(string)  {}
 
 // Ensure brings the local platform up, idempotently: prerequisites, the
 // k3d cluster (created or restarted with state retained), the skali-system
@@ -62,6 +65,9 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The recorded tag pairs with ImportedImageID: containerd holds the
+	// imported bits under exactly this name.
+	importedTag := state.SkalidImage
 	if opts.SkalidImage != "" {
 		state.SkalidImage = opts.SkalidImage
 	}
@@ -99,11 +105,26 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		}
 	}
 
-	progress.Start("Import " + state.SkalidImage)
-	if err := ImportImage(ctx, state.SkalidImage); err != nil {
+	// The docker image ID is the content identity behind the mutable dev
+	// tag; a matching record means the cluster already holds these exact
+	// bits under this exact name (containerd resolves by tag, so a mere
+	// re-tag of identical content still needs the import). A just-created
+	// cluster starts with empty containerd, so the record cannot be
+	// trusted there.
+	imageID, err := ImageID(ctx, state.SkalidImage)
+	if err != nil {
 		return nil, err
 	}
-	progress.Done("")
+	progress.Start("Import " + state.SkalidImage)
+	if status == ClusterAbsent || state.SkalidImage != importedTag || imageID != state.ImportedImageID {
+		if err := ImportImage(ctx, state.SkalidImage); err != nil {
+			return nil, err
+		}
+		state.ImportedImageID = imageID
+		progress.Done("")
+	} else {
+		progress.Skip("unchanged since last import")
+	}
 
 	kubeconfig, err := KubeconfigPath()
 	if err != nil {
@@ -133,6 +154,7 @@ func applyBundle(ctx context.Context, client *kube.Client, state *State, progres
 	applier := &bundle.Applier{Client: client}
 	objects, err := bundle.Render(bundle.Profile{
 		SkalidImage:   state.SkalidImage,
+		SkalidImageID: state.ImportedImageID,
 		AuthSecret:    state.AuthSecret,
 		AdminEmail:    state.AdminEmail,
 		AdminPassword: state.AdminPassword,

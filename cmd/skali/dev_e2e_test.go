@@ -189,6 +189,9 @@ func TestDevEndToEnd(t *testing.T) {
 		out := h.run(false, "", "dev", "-d")
 		require.Contains(t, out, "nothing to deploy")
 		require.NotContains(t, out, "Build locally")
+		// The control-plane image is unchanged, so the repeat run must not
+		// pay for a k3d import again.
+		require.Contains(t, out, "unchanged since last import")
 	})
 
 	t.Run("DevStatusShowsHealth", func(t *testing.T) {
@@ -256,6 +259,9 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "state is retained")
 		out = h.run(false, "", "dev", "up")
 		require.Contains(t, out, "state retained")
+		// Stop/start keeps the node volumes, so containerd still holds the
+		// imported image and the skip survives the restart.
+		require.Contains(t, out, "unchanged since last import")
 		h.waitRoute("hello again from skali", 3*time.Minute)
 	})
 

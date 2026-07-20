@@ -43,6 +43,11 @@ type Profile struct {
 	// a working-tree build, production installs published bootstrap
 	// images.
 	SkalidImage string
+	// SkalidImageID is the content identity behind SkalidImage, stamped
+	// as a pod-template annotation so a rebuilt image rolls the skalid
+	// deployment even under an unchanged mutable tag. Empty omits the
+	// annotation (immutable production tags roll by reference alone).
+	SkalidImageID string
 	// AuthSecret keys skalid's at-rest encryption.
 	AuthSecret string
 	// AdminEmail and AdminPassword bootstrap the first operator user.
@@ -220,6 +225,10 @@ spec:
 }
 
 func skalidYAML(profile Profile) string {
+	imageIDAnnotation := ""
+	if profile.SkalidImageID != "" {
+		imageIDAnnotation = "\n      annotations:\n        skali.dev/image-id: " + profile.SkalidImageID
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -279,7 +288,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: skalid
+        app.kubernetes.io/name: skalid%[5]s
     spec:
       serviceAccountName: skalid
       initContainers:
@@ -353,7 +362,8 @@ spec:
                 name: skalid
                 port:
                   number: 80
-`, Namespace, profile.SkalidImage, base64.StdEncoding.EncodeToString([]byte(profile.AuthSecret)), profile.RegistryHost)
+`, Namespace, profile.SkalidImage, base64.StdEncoding.EncodeToString([]byte(profile.AuthSecret)), profile.RegistryHost,
+		imageIDAnnotation)
 }
 
 func bootstrapYAML(profile Profile) string {

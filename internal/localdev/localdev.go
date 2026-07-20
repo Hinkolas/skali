@@ -75,6 +75,10 @@ type State struct {
 	AdminPassword string    `json:"admin_password"`
 	AuthSecret    string    `json:"auth_secret"`
 	CreatedAt     time.Time `json:"created_at"`
+	// ImportedImageID is the docker image ID last imported into the
+	// cluster: the content identity behind the mutable SkalidImage tag.
+	// While it matches the daemon's current ID the import is skipped.
+	ImportedImageID string `json:"imported_image_id,omitempty"`
 }
 
 // StateDir is $XDG_STATE_HOME/skali, defaulting to ~/.local/state/skali on
@@ -334,6 +338,17 @@ func Delete(ctx context.Context) error {
 		return fmt.Errorf("localdev: k3d cluster delete: %w\n%s", err, out)
 	}
 	return nil
+}
+
+// ImageID resolves the docker image ID of a local image: its content
+// identity, which changes exactly when the image was rebuilt.
+func ImageID(ctx context.Context, image string) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image).Output()
+	if err != nil {
+		return "", fmt.Errorf("localdev: image %s is not in the local docker daemon: "+
+			"run task dev:image or pass --skalid-image", image)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // ImportImage loads a local docker image into the cluster's containerd.

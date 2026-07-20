@@ -5,12 +5,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestRenderBundleObjects(t *testing.T) {
 	t.Parallel()
 	objects, err := Render(Profile{
 		SkalidImage:   "skalid:dev",
+		SkalidImageID: "sha256:0123456789abcdef",
 		AuthSecret:    strings.Repeat("a", 32),
 		AdminEmail:    "dev@skali.localhost",
 		AdminPassword: "generated-password",
@@ -39,6 +41,27 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "skalid:dev")
 	require.Contains(t, string(raw), "skali-registry.skali-system.svc:5000")
+
+	// The image ID rides the pod template as an annotation, so a rebuilt
+	// image rolls the deployment even under the unchanged skalid:dev tag.
+	annotations, _, err := unstructured.NestedStringMap(deployment.Object,
+		"spec", "template", "metadata", "annotations")
+	require.NoError(t, err)
+	require.Equal(t, "sha256:0123456789abcdef", annotations["skali.dev/image-id"])
+
+	// An empty image ID (published, immutable tags) omits the annotation.
+	plain, err := Render(Profile{
+		SkalidImage:   "ghcr.io/hinkolas/skalid:v1.0.0",
+		AuthSecret:    strings.Repeat("a", 32),
+		AdminEmail:    "dev@skali.localhost",
+		AdminPassword: "generated-password",
+		RegistryHost:  "localhost:5510",
+	})
+	require.NoError(t, err)
+	_, found, err := unstructured.NestedStringMap(plain.Skalid[4].Object,
+		"spec", "template", "metadata", "annotations")
+	require.NoError(t, err)
+	require.False(t, found, "no annotations block expected without an image ID")
 
 	// The vendored operator manifest parses.
 	cnpg, err := ParseManifest(CNPGManifest())

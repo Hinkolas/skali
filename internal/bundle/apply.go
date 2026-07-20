@@ -73,8 +73,10 @@ func (a *Applier) ResetMapper() {
 	}
 }
 
-// WaitDeploymentReady blocks until the deployment has at least one ready
-// replica.
+// WaitDeploymentReady blocks until the deployment's rollout is complete:
+// the controller observed the applied generation and every replica is
+// updated and available. Anything weaker passes on the old pod while a
+// rolling update is still replacing it.
 func (a *Applier) WaitDeploymentReady(ctx context.Context, namespace, name string) error {
 	return a.wait(ctx, "deployment "+name, func(ctx context.Context) (bool, error) {
 		deployment, err := a.Client.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -84,7 +86,15 @@ func (a *Applier) WaitDeploymentReady(ctx context.Context, namespace, name strin
 			}
 			return false, err
 		}
-		return deployment.Status.ReadyReplicas > 0, nil
+		desired := int32(1)
+		if deployment.Spec.Replicas != nil {
+			desired = *deployment.Spec.Replicas
+		}
+		status := deployment.Status
+		return status.ObservedGeneration >= deployment.Generation &&
+			status.UpdatedReplicas == desired &&
+			status.Replicas == desired &&
+			status.AvailableReplicas == desired, nil
 	})
 }
 
