@@ -2118,6 +2118,12 @@ Deliver:
 - macOS host mode: the installer manages one headless Linux VM per Mac via
   Lima (bridged networking by default, login LaunchAgent autostart) and
   installs the node inside it; Linux hosts stay native.
+- Local/LAN mode: an explicit HTTP-only installation profile for non-public
+  domains (LAN hostnames such as `skali.<host>.localdomain` or
+  sslip.io-style names). Init accepts the domains without a TLS issuer
+  email, installs neither cert-manager nor the ACME issuer, and renders the
+  api/ui and registry edges without TLS blocks, so a LAN installation never
+  runs a doomed certificate loop.
 
 Exit criteria:
 
@@ -2146,6 +2152,10 @@ Exit criteria:
 - From a supported macOS host, the installer reaches the same healthy
   single-node state inside a Lima-managed VM without sudo on the Mac, and
   node-scope uninstall removes the VM entirely.
+- A LAN-only installation initializes without an issuer email, serves the UI
+  and registry over plain HTTP on the chosen hostnames with no cert-manager
+  components installed, and a later re-init with a public domain and issuer
+  email upgrades it to TLS in place.
 
 ### R5 - Shared database substrate
 
