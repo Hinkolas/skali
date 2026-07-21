@@ -15,15 +15,14 @@ import (
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/clirender"
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
-
-const version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{
 		Use:           "skali",
 		Short:         "Deploy and manage apps on a skali cluster",
-		Version:       version,
+		Version:       versionpkg.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -39,13 +38,13 @@ func main() {
 	}
 }
 
-// userAgent identifies this device in session lists ("skali/0.1.0-dev (host)").
+// userAgent identifies this device in session lists ("skali/<version> (host)").
 func userAgent() string {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		host = "unknown-host"
 	}
-	return fmt.Sprintf("skali/%s (%s)", version, host)
+	return fmt.Sprintf("skali/%s (%s)", versionpkg.Version, host)
 }
 
 // currentClient builds a client for the active context; token may be empty.

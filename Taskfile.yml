@@ -24,6 +24,14 @@ tasks:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skalid ./cmd/skalid
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
 
+  cli:install:
+    desc: Build the skali CLI and install it to ~/.local/bin
+    cmds:
+      # Same destination the future installer will use: on PATH, no sudo.
+      - mkdir -p "$HOME/.local/bin"
+      - go build -ldflags "{{.LDFLAGS}}" -o "$HOME/.local/bin/skali" ./cmd/skali
+      - echo "installed $("$HOME/.local/bin/skali" --version) to ~/.local/bin/skali"
+
   generate:
     desc: Regenerate the JSON schemas and sqlc store
     cmds:
