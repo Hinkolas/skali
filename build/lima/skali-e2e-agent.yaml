@@ -1,0 +1,27 @@
+# Second Lima VM for the skali-installer end-to-end suite: the host that
+# joins the skali-e2e server as a k3s agent. Smaller than the server VM;
+# an agent runs no control plane and no system bundle.
+# Create with `task lima:up`, run with `task test:installer`.
+minimumLimaVersion: "1.0.0"
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+
+vmType: "vz"
+cpus: 2
+memory: "3GiB"
+disk: "15GiB"
+
+# A fresh production host exposes nothing of the developer machine.
+mounts: []
+
+# Same shared network as the server template; see the note there.
+networks:
+  - lima: user-v2
+
+containerd:
+  system: false
+  user: false

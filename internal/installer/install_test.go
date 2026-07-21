@@ -65,6 +65,93 @@ func TestInstallFreshServer(t *testing.T) {
 	require.Contains(t, string(fake.FS[K3sRegistriesPath]), "registry.skali.internal")
 }
 
+func TestInstallAgentJoin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fake := linuxHost()
+	fake.FS["/root/token"] = []byte("K10abc::node:secret\n")
+	joined := false
+	fake.Handlers["sh"] = func(host.Command) (host.Result, error) {
+		joined = true
+		fake.FS[k3sAgentKubeletKubeconfig] = []byte("kubeconfig")
+		return host.Result{}, nil
+	}
+	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
+		if joined && len(cmd.Args) == 2 && cmd.Args[0] == "is-active" && cmd.Args[1] == "k3s-agent.service" {
+			return host.Result{Stdout: "active\n"}, nil
+		}
+		return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
+	}
+
+	record, err := Install(ctx, fake, InstallOptions{
+		Cluster:      "e2e",
+		Role:         layout.RoleAgent,
+		Capabilities: []string{layout.CapabilityDatabase},
+		Join:         &JoinOptions{Server: "https://cp-1.internal:6443", TokenFile: "/root/token"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, layout.RoleAgent, record.Node.Role)
+	require.Equal(t, "e2e", record.Cluster)
+	require.Equal(t, []string{layout.CapabilityDatabase}, record.Node.Capabilities)
+	require.NotNil(t, record.Join)
+	require.Equal(t, "https://cp-1.internal:6443", record.Join.Server)
+	require.Nil(t, record.Endpoints, "agents never gather endpoints")
+
+	require.Equal(t, []byte("K10abc::node:secret\n"), fake.FS[K3sTokenPath])
+	require.Contains(t, string(fake.FS[K3sConfigPath]), "server: https://cp-1.internal:6443")
+
+	loaded, err := LoadRecord(ctx, fake)
+	require.NoError(t, err)
+	require.Equal(t, record.InstallationID, loaded.InstallationID)
+	require.Equal(t, layout.RoleAgent, loaded.Node.Role)
+}
+
+func TestInstallAgentRequiresJoin(t *testing.T) {
+	t.Parallel()
+	fake := linuxHost()
+	_, err := Install(context.Background(), fake, InstallOptions{
+		Role:         layout.RoleAgent,
+		Capabilities: []string{layout.CapabilityDatabase},
+	})
+	require.ErrorContains(t, err, "role agent requires join options")
+	require.Empty(t, fake.Writes)
+}
+
+func TestInstallServerRefusesJoin(t *testing.T) {
+	t.Parallel()
+	fake := linuxHost()
+	_, err := Install(context.Background(), fake, InstallOptions{
+		Role:         layout.RoleServer,
+		Capabilities: []string{layout.CapabilityApplication},
+		Join:         &JoinOptions{Server: "https://cp-1.internal:6443", TokenFile: "/root/token"},
+	})
+	require.ErrorContains(t, err, "joining as an additional server is not implemented in this slice")
+	require.Empty(t, fake.Writes)
+}
+
+func TestInstallAgentEmptyTokenFile(t *testing.T) {
+	t.Parallel()
+	fake := linuxHost()
+	fake.FS["/root/token"] = []byte("  \n")
+	_, err := Install(context.Background(), fake, InstallOptions{
+		Role:         layout.RoleAgent,
+		Capabilities: []string{layout.CapabilityDatabase},
+		Join:         &JoinOptions{Server: "https://cp-1.internal:6443", TokenFile: "/root/token"},
+	})
+	require.ErrorContains(t, err, "join token file /root/token is empty")
+	require.Empty(t, fake.Writes, "token resolution must fail before any mutation")
+}
+
+func TestInstallRefusesUnknownCapability(t *testing.T) {
+	t.Parallel()
+	fake := linuxHost()
+	_, err := Install(context.Background(), fake, InstallOptions{
+		Capabilities: []string{"warp-drive"},
+	})
+	require.ErrorContains(t, err, `unknown capability "warp-drive"`)
+	require.Empty(t, fake.Writes)
+}
+
 func TestInstallRefusesUnmanagedHost(t *testing.T) {
 	t.Parallel()
 	fake := withK3s(linuxHost(), "k3s.service", true)

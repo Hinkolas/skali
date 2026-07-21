@@ -50,11 +50,20 @@ func newInstallCmd() *cobra.Command {
 			}
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
-			_, err = installer.Install(ctx, runner(), installer.InstallOptions{
+			opts := installer.InstallOptions{
 				Cluster:      config.Cluster,
+				Role:         config.Role,
 				Capabilities: config.Capabilities,
+				NodeIP:       config.NodeIP,
 				Progress:     progress,
-			})
+			}
+			if config.Join != nil {
+				opts.Join = &installer.JoinOptions{
+					Server:    config.Join.Server,
+					TokenFile: config.Join.TokenFile,
+				}
+			}
+			_, err = installer.Install(ctx, runner(), opts)
 			if err != nil {
 				progress.Abort()
 				return err

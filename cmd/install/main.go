@@ -31,7 +31,8 @@ func main() {
 		},
 	}
 
-	root.AddCommand(newInstallCmd(), newInitCmd(), newStatusCmd(), newUninstallCmd())
+	root.AddCommand(newInstallCmd(), newInitCmd(), newStatusCmd(), newUninstallCmd(),
+		newTokenCmd(), newJoinCmd())
 	root.AddCommand(stubCommands()...)
 
 	if err := root.Execute(); err != nil {

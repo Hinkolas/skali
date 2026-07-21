@@ -110,6 +110,9 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if err != nil {
 		return fail(fmt.Errorf("list nodes: %w", err))
 	}
+	if err := assertClusterMembership(nodeList.Items, record.Cluster); err != nil {
+		return fail(err)
+	}
 	live := LayoutFromNodes(nodeList.Items, record.Cluster)
 	printLayout(out, live)
 	log.line("cluster layout: " + compactLayout(live))
@@ -219,6 +222,29 @@ func LayoutFromNodes(nodes []corev1.Node, cluster string) layout.Layout {
 		}
 	}
 	return rebuilt
+}
+
+// assertClusterMembership refuses nodes that were not stamped for this
+// cluster, catching token or cluster-name typos before any converge.
+func assertClusterMembership(nodes []corev1.Node, cluster string) error {
+	var violations []string
+	for _, node := range nodes {
+		labeled, ok := node.Labels[layout.ClusterLabel]
+		switch {
+		case !ok:
+			violations = append(violations,
+				fmt.Sprintf("node %s has no %s label; it did not join through skali-installer",
+					node.Name, layout.ClusterLabel))
+		case labeled != cluster:
+			violations = append(violations,
+				fmt.Sprintf("node %s carries cluster label %q, expected %q; it joined a different installation",
+					node.Name, labeled, cluster))
+		}
+	}
+	if len(violations) > 0 {
+		return errors.New("cluster membership check failed:\n  " + strings.Join(violations, "\n  "))
+	}
+	return nil
 }
 
 // assertLayout compares expected membership against the live layout and

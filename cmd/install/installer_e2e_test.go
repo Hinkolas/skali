@@ -12,22 +12,25 @@ import (
 )
 
 // The end-to-end suite drives the built skali-installer binary inside the
-// skali-e2e Lima VM (a faithful fresh Ubuntu host with real systemd)
-// through the full cycle: install, init, status, repeat-run no-op, scoped
-// uninstall. Gated: it installs k3s and pulls operator images inside the
-// VM and takes many minutes on the first run.
+// skali-e2e Lima VMs (faithful fresh Ubuntu hosts with real systemd)
+// through the full cycle: install, init, status, agent token/join, repeat-run
+// no-op, scoped uninstall. Gated: it installs k3s and pulls operator images
+// inside the VMs and takes many minutes on the first run.
 //
 //	task lima:up
 //	task test:installer
 //
-// The VM's lifecycle belongs to the lima:up/lima:down tasks; the suite
-// leaves the host fresh again through the node uninstall it exercises.
-const e2eVM = "skali-e2e"
+// The VM lifecycle belongs to the lima:up/lima:down tasks; the suite
+// leaves both hosts fresh again through the node uninstalls it exercises.
+const (
+	e2eVM      = "skali-e2e"
+	e2eAgentVM = "skali-e2e-agent"
+)
 
 type installerHarness struct {
 	t        *testing.T
 	repoRoot string
-	// binary and fixtures live under /tmp inside the VM.
+	// binary and fixtures live under /tmp inside the VMs.
 }
 
 func newInstallerHarness(t *testing.T) *installerHarness {
@@ -38,19 +41,25 @@ func newInstallerHarness(t *testing.T) *installerHarness {
 	repoRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
 	harness := &installerHarness{t: t, repoRoot: repoRoot}
-
-	// The VM must exist (task lima:up); start it if it is only stopped.
-	out, code := harness.hostCommand("limactl", "list", "--format", "{{.Name}} {{.Status}}")
-	require.Equal(t, 0, code, "limactl list: %s", out)
-	switch {
-	case strings.Contains(out, e2eVM+" Running"):
-	case strings.Contains(out, e2eVM+" Stopped"):
-		out, code = harness.hostCommand("limactl", "start", e2eVM)
-		require.Equal(t, 0, code, "limactl start: %s", out)
-	default:
-		t.Fatalf("the %s VM does not exist; create it with `task lima:up` first", e2eVM)
-	}
+	harness.ensureVM(e2eVM)
+	harness.ensureVM(e2eAgentVM)
 	return harness
+}
+
+// ensureVM requires the named VM to exist (task lima:up) and starts it if
+// it is only stopped.
+func (h *installerHarness) ensureVM(name string) {
+	h.t.Helper()
+	out, code := h.hostCommand("limactl", "list", "--format", "{{.Name}} {{.Status}}")
+	require.Equal(h.t, 0, code, "limactl list: %s", out)
+	switch {
+	case strings.Contains(out, name+" Running"):
+	case strings.Contains(out, name+" Stopped"):
+		out, code = h.hostCommand("limactl", "start", name)
+		require.Equal(h.t, 0, code, "limactl start: %s", out)
+	default:
+		h.t.Fatalf("the %s VM does not exist; create it with `task lima:up` first", name)
+	}
 }
 
 // hostCommand runs a command on the developer machine.
@@ -66,33 +75,68 @@ func (h *installerHarness) hostCommand(name string, args ...string) (string, int
 	return string(out), 0
 }
 
-// vm runs a command inside the VM.
-func (h *installerHarness) vm(args ...string) (string, int) {
+// vmOn runs a command inside the named VM.
+func (h *installerHarness) vmOn(name string, args ...string) (string, int) {
 	h.t.Helper()
-	return h.hostCommand("limactl", append([]string{"shell", e2eVM, "--"}, args...)...)
+	return h.hostCommand("limactl", append([]string{"shell", name, "--"}, args...)...)
 }
 
-// vmOK runs a command inside the VM and requires success.
-func (h *installerHarness) vmOK(args ...string) string {
+// vmOKOn runs a command inside the named VM and requires success.
+func (h *installerHarness) vmOKOn(name string, args ...string) string {
 	h.t.Helper()
-	out, code := h.vm(args...)
+	out, code := h.vmOn(name, args...)
 	require.Equal(h.t, 0, code, "%s: %s", strings.Join(args, " "), out)
 	return out
 }
 
+func (h *installerHarness) copyInTo(name, local, remote string) {
+	h.t.Helper()
+	out, code := h.hostCommand("limactl", "cp", local, name+":"+remote)
+	require.Equal(h.t, 0, code, "limactl cp %s: %s", local, out)
+}
+
+func (h *installerHarness) writeFixtureOn(name, fname, content string) string {
+	h.t.Helper()
+	local := filepath.Join(h.t.TempDir(), fname)
+	require.NoError(h.t, os.WriteFile(local, []byte(content), 0o644))
+	remote := "/tmp/" + fname
+	h.copyInTo(name, local, remote)
+	return remote
+}
+
+// vmIP reads the address of the shared network. The user-v2 network
+// replaces the default NIC, so eth0 carries the address the VMs can reach
+// each other on.
+func (h *installerHarness) vmIP(name string) string {
+	h.t.Helper()
+	out := h.vmOKOn(name, "sh", "-c",
+		"ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f1")
+	ip := strings.TrimSpace(out)
+	require.Regexp(h.t, `^\d+\.\d+\.\d+\.\d+$`, ip,
+		"no IPv4 address on eth0 in %s; the VM predates the shared-network "+
+			"template and must be recreated (task lima:down && task lima:up)", name)
+	return ip
+}
+
+// Server-VM shorthands keep the single-node phases readable.
+func (h *installerHarness) vm(args ...string) (string, int) {
+	h.t.Helper()
+	return h.vmOn(e2eVM, args...)
+}
+
+func (h *installerHarness) vmOK(args ...string) string {
+	h.t.Helper()
+	return h.vmOKOn(e2eVM, args...)
+}
+
 func (h *installerHarness) copyIn(local, remote string) {
 	h.t.Helper()
-	out, code := h.hostCommand("limactl", "cp", local, e2eVM+":"+remote)
-	require.Equal(h.t, 0, code, "limactl cp %s: %s", local, out)
+	h.copyInTo(e2eVM, local, remote)
 }
 
 func (h *installerHarness) writeFixture(name, content string) string {
 	h.t.Helper()
-	local := filepath.Join(h.t.TempDir(), name)
-	require.NoError(h.t, os.WriteFile(local, []byte(content), 0o644))
-	remote := "/tmp/" + name
-	h.copyIn(local, remote)
-	return remote
+	return h.writeFixtureOn(e2eVM, name, content)
 }
 
 func TestInstallerEndToEnd(t *testing.T) {
@@ -115,8 +159,12 @@ func TestInstallerEndToEnd(t *testing.T) {
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "fresh")
 
-	// Install: pinned k3s server with every capability.
-	nodeConfig := h.writeFixture("node.yaml", "cluster: e2e\nrole: server\ncapabilities: [application, database, object-storage, registry, edge]\n")
+	// Install: pinned k3s server with every capability. The advertised
+	// address is pinned to the shared vmnet interface so the agent VM can
+	// reach the server (and so its address lands in the serving cert).
+	serverIP := h.vmIP(e2eVM)
+	nodeConfig := h.writeFixture("node.yaml", fmt.Sprintf(
+		"cluster: e2e\nrole: server\ncapabilities: [application, database, object-storage, registry, edge]\nnodeIP: %s\n", serverIP))
 	installOut, code := h.vm("sudo", "/tmp/skali-installer", "install", "--config", nodeConfig)
 	require.Equal(t, 0, code, installOut)
 
@@ -175,6 +223,99 @@ skalid:
 	require.Contains(t, statusOut, "Skali server")
 	require.Contains(t, statusOut, "database healthy")
 	require.Contains(t, statusOut, "skalid healthy")
+
+	// Join phase: the agent VM enrolls through the explicit token/join
+	// flow, is asserted from the server side, then leaves again so the
+	// remaining single-node phases run unchanged.
+	agentArch := strings.TrimSpace(h.vmOKOn(e2eAgentVM, "uname", "-m"))
+	require.Equal(t, arch, agentArch, "both VMs must share one architecture for one binary")
+	h.copyInTo(e2eAgentVM, binary, "/tmp/skali-installer")
+	agentIP := h.vmIP(e2eAgentVM)
+
+	// Reachability preflight: a failure here is vzNAT inter-VM traffic
+	// being blocked (see build/lima/skali-e2e.yaml), not an installer bug.
+	preflight, code := h.vmOn(e2eAgentVM, "curl", "-ksS", "-o", "/dev/null", "--max-time", "15",
+		"https://"+serverIP+":6443/ping")
+	require.Equal(t, 0, code,
+		"agent VM cannot reach the server on the shared vmnet (%s:6443): %s; "+
+			"vzNAT inter-VM traffic may be blocked on this host", serverIP, preflight)
+
+	agentStatus, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali-installer", "status")
+	require.Equal(t, 0, code, agentStatus)
+	require.Contains(t, agentStatus, "fresh")
+
+	// Mint the join token on the server; the token is the last non-blank
+	// output line by contract.
+	tokenOut, code := h.vm("sudo", "/tmp/skali-installer", "token")
+	require.Equal(t, 0, code, tokenOut)
+	require.Contains(t, tokenOut, `join command for cluster "e2e"`)
+	require.Contains(t, tokenOut, "--role agent")
+	var joinToken string
+	for line := range strings.SplitSeq(tokenOut, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			joinToken = trimmed
+		}
+	}
+	require.NotEmpty(t, joinToken)
+	require.NotContains(t, joinToken, " ", "the token line must be the bare credential")
+
+	tokenFile := h.writeFixtureOn(e2eAgentVM, "join-token", joinToken+"\n")
+	h.vmOKOn(e2eAgentVM, "chmod", "600", tokenFile)
+
+	joinOut, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali-installer", "join",
+		"--server", "https://"+serverIP+":6443", "--token-file", tokenFile,
+		"--role", "agent", "--capabilities", "database", "--cluster", "e2e",
+		"--node-ip", agentIP)
+	require.Equal(t, 0, code, joinOut)
+	require.Contains(t, joinOut, "(agent)")
+
+	agentRecord := h.vmOKOn(e2eAgentVM, "sudo", "cat", "/var/lib/skali/installation.yaml")
+	require.Contains(t, agentRecord, "role: agent")
+	require.Contains(t, agentRecord, "cluster: e2e")
+	require.Contains(t, agentRecord, "server: https://"+serverIP+":6443")
+
+	// Cluster-side truth from the server: the node is Ready and carries
+	// exactly the labels the join stamped.
+	agentName := strings.TrimSpace(h.vmOKOn(e2eAgentVM, "hostname"))
+	h.vmOK("sudo", "k3s", "kubectl", "wait", "--for=condition=Ready",
+		"node/"+agentName, "--timeout=180s")
+	agentLabels := h.vmOK("sudo", "k3s", "kubectl", "get", "node", agentName,
+		"-o", "jsonpath={.metadata.labels}")
+	require.Contains(t, agentLabels, "skali.dev/capability-database")
+	require.Contains(t, agentLabels, `"skali.dev/cluster":"e2e"`)
+	require.NotContains(t, agentLabels, "node-role.kubernetes.io/control-plane")
+
+	statusOut, code = h.vm("sudo", "/tmp/skali-installer", "status")
+	require.Equal(t, 0, code, statusOut)
+	require.Contains(t, statusOut, "2 joined")
+
+	// A repeat join refuses: the agent host is no longer fresh.
+	repeatJoin, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali-installer", "join",
+		"--server", "https://"+serverIP+":6443", "--token-file", tokenFile,
+		"--role", "agent", "--capabilities", "database", "--cluster", "e2e")
+	require.NotEqual(t, 0, code, repeatJoin)
+
+	// The agent host reports itself without the kube API by design.
+	agentStatus, code = h.vmOn(e2eAgentVM, "sudo", "/tmp/skali-installer", "status")
+	require.Equal(t, 0, code, agentStatus)
+	require.Contains(t, agentStatus, "Skali agent")
+
+	// Leave again: the agent removes its own host state (the API is not
+	// reachable from there, so the single-node guard sees one node), then
+	// the lingering node object is deleted from the server.
+	agentUninstall, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali-installer",
+		"uninstall", "--scope", "node", "--confirm", "e2e")
+	require.Equal(t, 0, code, agentUninstall)
+	_, code = h.vmOn(e2eAgentVM, "test", "-e", "/usr/local/bin/k3s")
+	require.NotEqual(t, 0, code, "k3s must be gone from the agent VM")
+	agentStatus, code = h.vmOn(e2eAgentVM, "sudo", "/tmp/skali-installer", "status")
+	require.Equal(t, 0, code, agentStatus)
+	require.Contains(t, agentStatus, "fresh")
+
+	h.vmOK("sudo", "k3s", "kubectl", "delete", "node", agentName)
+	nodeCount := strings.TrimSpace(h.vmOK("sh", "-c",
+		"sudo k3s kubectl get nodes --no-headers | wc -l"))
+	require.Equal(t, "1", nodeCount)
 
 	// Repeat bare execution with closed stdin performs no mutation.
 	before := h.vmOK("sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",

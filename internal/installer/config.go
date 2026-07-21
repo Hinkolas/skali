@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"slices"
 	"strings"
 
@@ -24,8 +25,11 @@ type NodeConfig struct {
 	Role string `yaml:"role" json:"role" jsonschema:"K3s role: server or agent."`
 	// Capabilities designates what this node runs.
 	Capabilities []string `yaml:"capabilities" json:"capabilities" jsonschema:"Designated workload capabilities for this node."`
-	// Join enrolls this host into an existing cluster. Parsed and
-	// schema-visible now; refused until the multi-node slice lands.
+	// NodeIP pins the address this node advertises inside the cluster.
+	// Needed on multi-homed hosts where the default-route interface is not
+	// the one other nodes can reach.
+	NodeIP string `yaml:"nodeIP,omitempty" json:"nodeIP,omitempty" jsonschema:"Optional IP address this node advertises inside the cluster; set it on multi-homed hosts."`
+	// Join enrolls this host into an existing cluster as an agent.
 	Join *JoinConfig `yaml:"join,omitempty" json:"join,omitempty" jsonschema:"Join an existing cluster instead of creating one."`
 }
 
@@ -93,8 +97,25 @@ func ParseNodeConfig(data []byte) (*NodeConfig, error) {
 				capability, strings.Join(layout.Capabilities, ", "))
 		}
 	}
-	if config.Join != nil {
-		return nil, errors.New("node config: join is not implemented in this slice; multi-node enrollment arrives with a later milestone")
+	if config.NodeIP != "" && net.ParseIP(config.NodeIP) == nil {
+		return nil, fmt.Errorf("node config: nodeIP %q is not a valid IP address", config.NodeIP)
+	}
+	if config.Role == layout.RoleServer && config.Join != nil {
+		return nil, errors.New("node config: joining as an additional server is not implemented in this slice; it arrives with a later milestone")
+	}
+	if config.Role == layout.RoleAgent {
+		if config.Join == nil {
+			return nil, errors.New("node config: role agent requires a join block pointing at an existing server")
+		}
+		if config.Join.Server == "" {
+			return nil, errors.New("node config: join.server is required")
+		}
+		if !strings.HasPrefix(config.Join.Server, "https://") {
+			return nil, fmt.Errorf("node config: join.server must be an https:// URL, got %q", config.Join.Server)
+		}
+		if config.Join.TokenFile == "" {
+			return nil, errors.New("node config: join.tokenFile is required")
+		}
 	}
 	return &config, nil
 }

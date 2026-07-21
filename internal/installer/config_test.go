@@ -7,7 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The transcript's node.yaml, minus the join block this slice refuses.
+// The transcript's node.yaml shapes: the fresh server and the joining
+// agent (section 2 verbatim).
 func TestParseNodeConfig(t *testing.T) {
 	t.Parallel()
 	config, err := ParseNodeConfig([]byte(`role: server
@@ -21,6 +22,22 @@ capabilities: [application, database, object-storage, registry, edge]
 	named, err := ParseNodeConfig([]byte("cluster: e2e\nrole: server\ncapabilities: [application]\n"))
 	require.NoError(t, err)
 	require.Equal(t, "e2e", named.Cluster)
+
+	agent, err := ParseNodeConfig([]byte(`role: agent
+capabilities: [database]
+join:
+  server: https://cp-1.internal:6443
+  tokenFile: /root/skali-join-token
+`))
+	require.NoError(t, err)
+	require.Equal(t, DefaultCluster, agent.Cluster)
+	require.NotNil(t, agent.Join)
+	require.Equal(t, "https://cp-1.internal:6443", agent.Join.Server)
+	require.Equal(t, "/root/skali-join-token", agent.Join.TokenFile)
+
+	pinned, err := ParseNodeConfig([]byte("role: server\ncapabilities: [edge]\nnodeIP: 192.168.64.5\n"))
+	require.NoError(t, err)
+	require.Equal(t, "192.168.64.5", pinned.NodeIP)
 }
 
 func TestParseNodeConfigRejections(t *testing.T) {
@@ -33,8 +50,18 @@ func TestParseNodeConfigRejections(t *testing.T) {
 		"bad role":           {"role: primary\ncapabilities: [edge]\n", "role must be server or agent"},
 		"no capabilities":    {"role: server\ncapabilities: []\n", "at least one capability"},
 		"unknown capability": {"role: server\ncapabilities: [gpu]\n", "unknown capability"},
-		"join refused": {"role: agent\ncapabilities: [database]\njoin:\n  server: https://cp-1.internal:6443\n  tokenFile: /root/token\n",
-			"join is not implemented in this slice"},
+		"agent without join": {"role: agent\ncapabilities: [database]\n",
+			"role agent requires a join block"},
+		"server with join": {"role: server\ncapabilities: [edge]\njoin:\n  server: https://cp-1.internal:6443\n  tokenFile: /root/token\n",
+			"joining as an additional server is not implemented in this slice"},
+		"join without server": {"role: agent\ncapabilities: [database]\njoin:\n  tokenFile: /root/token\n",
+			"join.server is required"},
+		"join server not https": {"role: agent\ncapabilities: [database]\njoin:\n  server: http://cp-1.internal:6443\n  tokenFile: /root/token\n",
+			"join.server must be an https:// URL"},
+		"join without token file": {"role: agent\ncapabilities: [database]\njoin:\n  server: https://cp-1.internal:6443\n",
+			"join.tokenFile is required"},
+		"bad node ip": {"role: server\ncapabilities: [edge]\nnodeIP: not-an-ip\n",
+			"nodeIP \"not-an-ip\" is not a valid IP address"},
 		"multiple documents": {"role: server\ncapabilities: [edge]\n---\nrole: agent\ncapabilities: [edge]\n", "multiple YAML documents"},
 	}
 	for name, testCase := range cases {

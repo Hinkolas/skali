@@ -31,6 +31,9 @@ type Record struct {
 	Cluster        string     `yaml:"cluster"`
 	Ownership      string     `yaml:"ownership"`
 	Node           NodeRecord `yaml:"node"`
+	// Join keeps which server this agent enrolled against; servers leave
+	// it nil.
+	Join *JoinRecord `yaml:"join,omitempty"`
 	// Endpoints and TLS are gathered at install or init time; both stay
 	// empty until known.
 	Endpoints *Endpoints `yaml:"endpoints,omitempty"`
@@ -38,6 +41,11 @@ type Record struct {
 	Versions  Versions   `yaml:"versions"`
 	CreatedAt time.Time  `yaml:"createdAt"`
 	UpdatedAt time.Time  `yaml:"updatedAt"`
+}
+
+// JoinRecord is the enrollment bookkeeping of an agent node.
+type JoinRecord struct {
+	Server string `yaml:"server"`
 }
 
 // NodeRecord identifies this host within the installation.
@@ -125,15 +133,16 @@ func RemoveRecord(ctx context.Context, runner host.Runner) error {
 // them the stamped hash.
 func (r *Record) CanonicalYAML() (string, error) {
 	type canonicalRecord struct {
-		Version        string     `yaml:"version"`
-		InstallationID string     `yaml:"installationId"`
-		Provider       string     `yaml:"provider"`
-		Cluster        string     `yaml:"cluster"`
-		Ownership      string     `yaml:"ownership"`
-		Node           NodeRecord `yaml:"node"`
-		Endpoints      *Endpoints `yaml:"endpoints,omitempty"`
-		TLS            *TLSConfig `yaml:"tls,omitempty"`
-		Versions       Versions   `yaml:"versions"`
+		Version        string      `yaml:"version"`
+		InstallationID string      `yaml:"installationId"`
+		Provider       string      `yaml:"provider"`
+		Cluster        string      `yaml:"cluster"`
+		Ownership      string      `yaml:"ownership"`
+		Node           NodeRecord  `yaml:"node"`
+		Join           *JoinRecord `yaml:"join,omitempty"`
+		Endpoints      *Endpoints  `yaml:"endpoints,omitempty"`
+		TLS            *TLSConfig  `yaml:"tls,omitempty"`
+		Versions       Versions    `yaml:"versions"`
 	}
 	data, err := yaml.Marshal(canonicalRecord{
 		Version:        r.Version,
@@ -142,6 +151,7 @@ func (r *Record) CanonicalYAML() (string, error) {
 		Cluster:        r.Cluster,
 		Ownership:      r.Ownership,
 		Node:           r.Node,
+		Join:           r.Join,
 		Endpoints:      r.Endpoints,
 		TLS:            r.TLS,
 		Versions:       r.Versions,

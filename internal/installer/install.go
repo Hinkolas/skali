@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -14,10 +15,19 @@ import (
 
 // InstallOptions parameterize one fresh-node install.
 type InstallOptions struct {
-	// Cluster names the installation this first server creates.
+	// Cluster names the installation; the first server creates it, agents
+	// record which cluster they enrolled into.
 	Cluster string
+	// Role is the K3s role: layout.RoleServer (the default when empty) or
+	// layout.RoleAgent.
+	Role string
 	// Capabilities designates what this node runs.
 	Capabilities []string
+	// Join enrolls this host into an existing cluster; required for
+	// agents, refused for servers in this slice.
+	Join *JoinOptions
+	// NodeIP pins the advertised address on multi-homed hosts.
+	NodeIP string
 	// Endpoints and TLS are recorded when gathered interactively so a
 	// following init can default from the record; nil when unknown.
 	Endpoints *Endpoints
@@ -26,7 +36,17 @@ type InstallOptions struct {
 	Progress Progress
 }
 
-// Install provisions a fresh single-node k3s server and writes the
+// JoinOptions point a joining host at an existing server. Token wins over
+// TokenFile; interactive paste supplies Token, config files supply
+// TokenFile.
+type JoinOptions struct {
+	Server    string
+	Token     string
+	TokenFile string
+}
+
+// Install provisions a fresh node, either the single k3s server creating
+// the cluster or an agent joining an existing one, and writes the
 // root-owned installation record. The caller has already confirmed the
 // host state is fresh; Install re-checks the guard rather than trusting
 // it.
@@ -52,6 +72,29 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 			"re-run skali-installer without arguments for maintenance options", detected.State)
 	}
 
+	role := opts.Role
+	if role == "" {
+		role = layout.RoleServer
+	}
+	if role != layout.RoleServer && role != layout.RoleAgent {
+		return nil, fmt.Errorf("role must be server or agent, got %q", role)
+	}
+	if role == layout.RoleServer && opts.Join != nil {
+		return nil, fmt.Errorf("joining as an additional server is not implemented in this slice; " +
+			"it arrives with a later milestone")
+	}
+	if role == layout.RoleAgent {
+		if opts.Join == nil {
+			return nil, fmt.Errorf("role agent requires join options pointing at an existing server")
+		}
+		if !strings.HasPrefix(opts.Join.Server, "https://") {
+			return nil, fmt.Errorf("join server must be an https:// URL, got %q", opts.Join.Server)
+		}
+		if opts.Join.Token == "" && opts.Join.TokenFile == "" {
+			return nil, fmt.Errorf("joining requires a token or a token file")
+		}
+	}
+
 	cluster := opts.Cluster
 	if cluster == "" {
 		cluster = DefaultCluster
@@ -59,17 +102,52 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 	if len(opts.Capabilities) == 0 {
 		return nil, fmt.Errorf("at least one capability is required")
 	}
+	for _, capability := range opts.Capabilities {
+		if !slices.Contains(layout.Capabilities, capability) {
+			return nil, fmt.Errorf("unknown capability %q; expected one of %s",
+				capability, strings.Join(layout.Capabilities, ", "))
+		}
+	}
 
 	nodeName := detected.Hostname
 	if nodeName == "" {
 		return nil, fmt.Errorf("could not determine the hostname for node naming")
 	}
 
-	if err := installK3s(ctx, runner, nodeName, cluster, opts.Capabilities, progress); err != nil {
+	node := k3sNode{
+		Name:         nodeName,
+		Cluster:      cluster,
+		Capabilities: opts.Capabilities,
+		NodeIP:       opts.NodeIP,
+	}
+	if role == layout.RoleAgent {
+		// Resolve the token before any mutation so a bad path fails with
+		// the host untouched.
+		node.ServerURL = opts.Join.Server
+		node.Token = opts.Join.Token
+		if node.Token == "" {
+			data, err := runner.ReadFile(ctx, opts.Join.TokenFile)
+			if err != nil {
+				return nil, fmt.Errorf("read join token file %s: %w", opts.Join.TokenFile, err)
+			}
+			node.Token = strings.TrimSpace(string(data))
+			if node.Token == "" {
+				return nil, fmt.Errorf("join token file %s is empty", opts.Join.TokenFile)
+			}
+		}
+	}
+
+	if err := installK3s(ctx, runner, node, progress); err != nil {
 		return nil, err
 	}
-	if err := waitNodeReady(ctx, runner, opts.Capabilities, progress); err != nil {
-		return nil, err
+	if role == layout.RoleAgent {
+		if err := waitAgentJoined(ctx, runner, cluster, nodeName, progress); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := waitNodeReady(ctx, runner, opts.Capabilities, progress); err != nil {
+			return nil, err
+		}
 	}
 
 	progress.Start("Write " + RecordPath)
@@ -81,7 +159,7 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 		Ownership:      OwnershipManaged,
 		Node: NodeRecord{
 			Name:         nodeName,
-			Role:         layout.RoleServer,
+			Role:         role,
 			Capabilities: opts.Capabilities,
 		},
 		Endpoints: opts.Endpoints,
@@ -90,6 +168,9 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 			Installer: version.Version,
 			K3s:       K3sVersion,
 		},
+	}
+	if role == layout.RoleAgent {
+		record.Join = &JoinRecord{Server: opts.Join.Server}
 	}
 	if err := SaveRecord(ctx, runner, record); err != nil {
 		return nil, err

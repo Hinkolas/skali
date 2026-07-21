@@ -2,6 +2,7 @@ package installer
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,7 @@ import (
 
 func TestK3sConfigYAML(t *testing.T) {
 	t.Parallel()
-	rendered := k3sConfigYAML("cp-1", "production", layout.Capabilities)
+	rendered := k3sConfigYAML(k3sNode{Name: "cp-1", Cluster: "production", Capabilities: layout.Capabilities})
 	require.Equal(t, `node-name: cp-1
 embedded-registry: true
 node-label:
@@ -22,6 +23,61 @@ node-label:
   - skali.dev/capability-object-storage=true
   - skali.dev/capability-registry=true
   - skali.dev/cluster=production
+`, rendered)
+}
+
+func TestK3sConfigYAMLServerNodeIP(t *testing.T) {
+	t.Parallel()
+	rendered := k3sConfigYAML(k3sNode{
+		Name: "cp-1", Cluster: "production",
+		Capabilities: []string{layout.CapabilityEdge},
+		NodeIP:       "192.168.64.5",
+	})
+	require.Equal(t, `node-name: cp-1
+node-ip: 192.168.64.5
+embedded-registry: true
+node-label:
+  - skali.dev/capability-edge=true
+  - skali.dev/cluster=production
+`, rendered)
+}
+
+func TestK3sConfigYAMLAgent(t *testing.T) {
+	t.Parallel()
+	rendered := k3sConfigYAML(k3sNode{
+		Name: "db-1", Cluster: "production",
+		Capabilities: []string{layout.CapabilityDatabase},
+		ServerURL:    "https://192.168.64.5:6443",
+		Token:        "secret",
+	})
+	require.Equal(t, `node-name: db-1
+server: https://192.168.64.5:6443
+token-file: /etc/rancher/k3s/token
+node-label:
+  - skali.dev/capability-database=true
+  - skali.dev/cluster=production
+`, rendered)
+	require.NotContains(t, rendered, "embedded-registry",
+		"embedded-registry is a server-only flag and fatal on agents")
+	require.NotContains(t, rendered, "secret", "the token itself never lands in config.yaml")
+}
+
+func TestK3sConfigYAMLAgentNodeIP(t *testing.T) {
+	t.Parallel()
+	rendered := k3sConfigYAML(k3sNode{
+		Name: "db-1", Cluster: "e2e",
+		Capabilities: []string{layout.CapabilityDatabase},
+		NodeIP:       "192.168.64.6",
+		ServerURL:    "https://192.168.64.5:6443",
+		Token:        "secret",
+	})
+	require.Equal(t, `node-name: db-1
+node-ip: 192.168.64.6
+server: https://192.168.64.5:6443
+token-file: /etc/rancher/k3s/token
+node-label:
+  - skali.dev/capability-database=true
+  - skali.dev/cluster=e2e
 `, rendered)
 }
 
@@ -40,8 +96,10 @@ func TestInstallK3sInvocation(t *testing.T) {
 	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
 		"sh": func(host.Command) (host.Result, error) { return host.Result{}, nil },
 	}}
-	err := installK3s(context.Background(), fake, "cp-1", "production",
-		[]string{layout.CapabilityApplication}, silentProgress{})
+	err := installK3s(context.Background(), fake, k3sNode{
+		Name: "cp-1", Cluster: "production",
+		Capabilities: []string{layout.CapabilityApplication},
+	}, silentProgress{})
 	require.NoError(t, err)
 
 	// Configs are written before the script runs.
@@ -57,6 +115,37 @@ func TestInstallK3sInvocation(t *testing.T) {
 	require.NotEmpty(t, fake.FS[k3sInstallScriptPath])
 }
 
+func TestInstallK3sAgentInvocation(t *testing.T) {
+	t.Parallel()
+	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
+		"sh": func(host.Command) (host.Result, error) { return host.Result{}, nil },
+	}}
+	err := installK3s(context.Background(), fake, k3sNode{
+		Name: "db-1", Cluster: "production",
+		Capabilities: []string{layout.CapabilityDatabase},
+		ServerURL:    "https://cp-1.internal:6443",
+		Token:        "K10abc::node:secret",
+	}, silentProgress{})
+	require.NoError(t, err)
+
+	// The token file lands 0600 before the script runs.
+	require.Equal(t, []byte("K10abc::node:secret\n"), fake.FS[K3sTokenPath])
+	require.Less(t, indexOf(fake.Writes, "write "+K3sTokenPath),
+		indexOf(fake.Writes, "write "+k3sInstallScriptPath))
+
+	require.Len(t, fake.Commands, 1)
+	command := fake.Commands[0]
+	require.Equal(t, "sh", command.Name)
+	require.Equal(t, []string{k3sInstallScriptPath, "agent"}, command.Args,
+		"the explicit agent argument selects the role; env selection would persist the token")
+	require.Contains(t, command.Env, "INSTALL_K3S_VERSION="+K3sVersion)
+	for _, env := range command.Env {
+		require.False(t, strings.HasPrefix(env, "K3S_"),
+			"the install script copies every K3S_* variable into the systemd env file, got %s", env)
+	}
+	require.NotContains(t, string(fake.FS[K3sConfigPath]), "embedded-registry")
+}
+
 func TestInstallK3sScriptFailure(t *testing.T) {
 	t.Parallel()
 	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
@@ -64,8 +153,10 @@ func TestInstallK3sScriptFailure(t *testing.T) {
 			return host.Result{ExitCode: 1, Stderr: "curl: (6) could not resolve host\n"}, nil
 		},
 	}}
-	err := installK3s(context.Background(), fake, "cp-1", "production",
-		[]string{layout.CapabilityApplication}, silentProgress{})
+	err := installK3s(context.Background(), fake, k3sNode{
+		Name: "cp-1", Cluster: "production",
+		Capabilities: []string{layout.CapabilityApplication},
+	}, silentProgress{})
 	require.ErrorContains(t, err, "exit code 1")
 	require.ErrorContains(t, err, "could not resolve host")
 }

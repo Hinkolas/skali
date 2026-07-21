@@ -50,6 +50,10 @@
       },
       "additionalProperties": false
     },
+    "nodeIP": {
+      "type": "string",
+      "description": "Optional IP address this node advertises inside the cluster; set it on multi-homed hosts."
+    },
     "role": {
       "type": "string",
       "description": "K3s role: server or agent.",

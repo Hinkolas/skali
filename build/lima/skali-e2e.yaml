@@ -10,12 +10,25 @@ images:
   - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
     arch: "x86_64"
 
+vmType: "vz"
 cpus: 4
 memory: "6GiB"
 disk: "30GiB"
 
 # A fresh production host exposes nothing of the developer machine.
 mounts: []
+
+# The user-v2 network replaces the default NIC with one on a shared
+# subnet (eth0, 192.168.104.0/24) so the agent VM can reach the server on
+# 6443. The default user-mode network gives all VMs the same unroutable
+# address, and vzNAT does not work either: macOS adds vz NAT bridge
+# members with the PRIVATE flag, so VMs reach the host but never each
+# other. user-v2 needs no root setup; `lima: shared` (socket_vmnet, root
+# install) is the faster alternative. Network config applies at instance
+# creation: an existing VM must be recreated once
+# (task lima:down && task lima:up).
+networks:
+  - lima: user-v2
 
 containerd:
   system: false

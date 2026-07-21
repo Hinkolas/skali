@@ -12,8 +12,6 @@ func stubCommands() []*cobra.Command {
 	stubs := []struct {
 		use, short, what string
 	}{
-		{"token", "Print the join command for this cluster", "multi-node enrollment"},
-		{"join", "Join this host to an existing cluster", "multi-node enrollment"},
 		{"diagnose", "Diagnose the installation from host state alone", "diagnosis"},
 		{"repair", "Repair a damaged installation", "repair"},
 		{"upgrade", "Upgrade k3s or the Skali bundle", "upgrades"},

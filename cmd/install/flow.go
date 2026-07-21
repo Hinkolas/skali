@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -28,8 +27,7 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 		return err
 	}
 	if role == 1 {
-		return errors.New("joining an existing cluster is not implemented in this slice; " +
-			"multi-node enrollment arrives with a later milestone")
+		return runInteractiveJoinFlow(ctx, out, reader)
 	}
 
 	cluster, err := cliprompt.LineDefault(reader,
@@ -79,6 +77,58 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 	}
 	fmt.Fprintln(out)
 	return runInteractiveInit(ctx, out, reader, record, nil)
+}
+
+// runInteractiveJoinFlow enrolls this host into an existing cluster as an
+// agent: the server URL and token come from `skali-installer token` run on
+// a server. The token can be pasted directly so no file has to be staged
+// for an interactive join.
+func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Reader) error {
+	cluster, err := cliprompt.LineDefault(reader,
+		"  cluster name ["+installer.DefaultCluster+"]: ", installer.DefaultCluster)
+	if err != nil {
+		return err
+	}
+	capabilities, err := promptCapabilities(reader)
+	if err != nil {
+		return err
+	}
+	server, err := cliprompt.Line(reader, "  server url (https://<first-server>:6443): ")
+	if err != nil {
+		return err
+	}
+	join := &installer.JoinOptions{Server: server}
+	join.TokenFile, err = cliprompt.Line(reader, "  join token file path (empty to paste the token): ")
+	if err != nil {
+		return err
+	}
+	if join.TokenFile == "" {
+		join.Token, err = cliprompt.Secret(reader, "  join token: ")
+		if err != nil {
+			return err
+		}
+	}
+	fmt.Fprintln(out)
+
+	tasks := clirender.NewTasks(out)
+	progress := newTaskProgress(tasks)
+	_, err = installer.Install(ctx, runner(), installer.InstallOptions{
+		Cluster:      cluster,
+		Role:         layout.RoleAgent,
+		Capabilities: capabilities,
+		Join:         join,
+		Progress:     progress,
+	})
+	if err != nil {
+		progress.Abort()
+		return err
+	}
+	progress.Done("")
+
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "This node has joined cluster %q. Run skali-installer init on a server "+
+		"once every planned node has joined.\n", cluster)
+	return nil
 }
 
 // promptCapabilities asks for a capability list, defaulting to all.

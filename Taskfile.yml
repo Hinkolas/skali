@@ -88,7 +88,7 @@ tasks:
       - TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run 'TestDev' ./cmd/skali/...
 
   lima:up:
-    desc: Create and start the installer e2e VM (Ubuntu, real systemd)
+    desc: Create and start the installer e2e VMs (server + agent, Ubuntu, real systemd)
     cmds:
       # Existence check first: a bare `limactl start <name>` would silently
       # create a default VM instead of using the template.
@@ -98,11 +98,18 @@ tasks:
         else
           limactl start --name skali-e2e --tty=false build/lima/skali-e2e.yaml
         fi
+      - |
+        if limactl list --format '{{"{{"}}.Name{{"}}"}}' 2>/dev/null | grep -qx skali-e2e-agent; then
+          limactl start skali-e2e-agent
+        else
+          limactl start --name skali-e2e-agent --tty=false build/lima/skali-e2e-agent.yaml
+        fi
 
   lima:down:
-    desc: Delete the installer e2e VM
+    desc: Delete the installer e2e VMs
     cmds:
       - limactl delete -f skali-e2e || true
+      - limactl delete -f skali-e2e-agent || true
 
   test:installer:
     desc: Run the installer end-to-end suite in the Lima VM (task lima:up first)

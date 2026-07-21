@@ -13,6 +13,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
+	"github.com/Hinkolas/skali/internal/layout"
 )
 
 func newUninstallCmd() *cobra.Command {
@@ -122,9 +123,15 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 	}
 
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "Removing this node destroys the cluster %q completely:\n", record.Cluster)
-	fmt.Fprintln(out, "  - every project namespace, database, bucket, and all registry contents")
-	fmt.Fprintln(out, "  - k3s itself and "+installer.StateDir)
+	if record.Node.Role == layout.RoleAgent {
+		fmt.Fprintf(out, "Removing this agent node takes it out of cluster %q:\n", record.Cluster)
+		fmt.Fprintln(out, "  - workloads placed on this node lose their local data")
+		fmt.Fprintln(out, "  - k3s itself and "+installer.StateDir)
+	} else {
+		fmt.Fprintf(out, "Removing this node destroys the cluster %q completely:\n", record.Cluster)
+		fmt.Fprintln(out, "  - every project namespace, database, bucket, and all registry contents")
+		fmt.Fprintln(out, "  - k3s itself and "+installer.StateDir)
+	}
 	fmt.Fprintln(out)
 	if !confirmCluster(reader, record.Cluster, confirmName) {
 		return fmt.Errorf("confirmation did not match the cluster name %q; nothing was removed", record.Cluster)
@@ -138,6 +145,11 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 	}
 	progress.Done("")
 	fmt.Fprintln(out, "\nThis host is fresh again.")
+	if record.Node.Role == layout.RoleAgent {
+		fmt.Fprintf(out, "The node object %s remains in the cluster; "+
+			"delete it from a server with `k3s kubectl delete node %s`.\n",
+			record.Node.Name, record.Node.Name)
+	}
 	return nil
 }
 

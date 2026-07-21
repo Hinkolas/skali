@@ -71,6 +71,26 @@ func TestAssertLayout(t *testing.T) {
 	require.Contains(t, message, "db-1 has joined but is not in the layout")
 }
 
+func TestAssertClusterMembership(t *testing.T) {
+	t.Parallel()
+
+	matching := []corev1.Node{
+		labeledNode("cp-1", true, layout.CapabilityEdge),
+		labeledNode("db-1", false, layout.CapabilityDatabase),
+	}
+	require.NoError(t, assertClusterMembership(matching, "production"))
+
+	stranger := labeledNode("db-2", false, layout.CapabilityDatabase)
+	stranger.Labels[layout.ClusterLabel] = "staging"
+	unlabeled := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "rogue-1"}}
+
+	err := assertClusterMembership(append(matching, stranger, unlabeled), "production")
+	require.Error(t, err)
+	message := err.Error()
+	require.Contains(t, message, `node db-2 carries cluster label "staging", expected "production"`)
+	require.Contains(t, message, "node rogue-1 has no skali.dev/cluster label")
+}
+
 func TestPrintLayoutAndTopology(t *testing.T) {
 	t.Parallel()
 	live := LayoutFromNodes([]corev1.Node{
