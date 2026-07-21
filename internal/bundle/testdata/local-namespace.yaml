@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skali-system
+  labels:
+    skali.dev/system: "true"

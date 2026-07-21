@@ -1,0 +1,16 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: skali-db
+  namespace: skali-system
+spec:
+  instances: 1
+  storage:
+    size: 10Gi
+  affinity:
+    nodeSelector:
+      skali.dev/capability-database: "true"
+  bootstrap:
+    initdb:
+      database: skali
+      owner: skali

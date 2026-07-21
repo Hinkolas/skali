@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: skali-bootstrap
+  namespace: skali-system
+type: Opaque
+data:
+  ADMIN_EMAIL: ZGV2QHNrYWxpLmxvY2FsaG9zdA==
+  ADMIN_PASSWORD: Z2VuZXJhdGVkLXBhc3N3b3Jk
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: skali-bootstrap-user
+  namespace: skali-system
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: skalid:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >
+              skalid user list 2>/dev/null | grep -q "$ADMIN_EMAIL" && exit 0;
+              printf '%s' "$ADMIN_PASSWORD" |
+              skalid user create --email "$ADMIN_EMAIL" --role admin --password-stdin
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: skali-db-app
+                  key: uri
+            - name: ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: skali-bootstrap
+                  key: ADMIN_EMAIL
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: skali-bootstrap
+                  key: ADMIN_PASSWORD

@@ -1,0 +1,22 @@
+# Lima VM for the skali-installer end-to-end suite: a faithful fresh Linux
+# host with real systemd. Nothing from the host is mounted; the test
+# harness copies the cross-compiled binary and fixtures in with limactl.
+# Create with `task lima:up`, run with `task test:installer`.
+minimumLimaVersion: "1.0.0"
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+
+cpus: 4
+memory: "6GiB"
+disk: "30GiB"
+
+# A fresh production host exposes nothing of the developer machine.
+mounts: []
+
+containerd:
+  system: false
+  user: false

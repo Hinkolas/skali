@@ -7,9 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/kube"
 )
@@ -27,16 +24,9 @@ type EnsureOptions struct {
 	Progress Progress
 }
 
-// Progress receives the ensure stages as they happen: Start begins a
-// stage, Done concludes the running one with optional detail, Skip
-// concludes it as not needed with the reason. A stage that errors is
-// never concluded; Ensure's caller settles it from the returned error.
-// A nil Progress is silent.
-type Progress interface {
-	Start(title string)
-	Done(detail string)
-	Skip(detail string)
-}
+// Progress receives the ensure stages as they happen; the shape is shared
+// with the bundle converge. A nil Progress is silent.
+type Progress = bundle.Progress
 
 type silentProgress struct{}
 
@@ -148,7 +138,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	// Anything off (a rebuilt CLI, a changed profile, a missing stamp, an
 	// unhealthy skalid) falls through to the converge.
 	if !opts.ForceConverge && status == ClusterRunning && !importNeeded &&
-		stampedBundleHash(ctx, client) == bundle.Hash(bundleProfile(state)) && probeEdge(ctx) {
+		bundle.StampedHash(ctx, client) == bundle.Hash(bundleProfile(state)) && probeEdge(ctx) {
 		progress.Start("Converge platform")
 		progress.Skip("unchanged since last converge")
 		return state, nil
@@ -163,7 +153,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	if err := waitEdgeHealthy(ctx); err != nil {
 		return nil, err
 	}
-	if err := stampBundleHash(ctx, client, bundleProfile(state)); err != nil {
+	if err := bundle.StampHash(ctx, client, bundleProfile(state)); err != nil {
 		return nil, err
 	}
 	progress.Done(MasterURL())
@@ -180,40 +170,6 @@ func bundleProfile(state *State) bundle.Profile {
 		AdminPassword: state.AdminPassword,
 		RegistryHost:  RegistryHost(),
 	}
-}
-
-// stampedBundleHash reads the hash stamped by the last completed converge;
-// absent or unreadable reads as empty, which matches no bundle.
-func stampedBundleHash(ctx context.Context, client *kube.Client) string {
-	namespace, err := client.Clientset.CoreV1().Namespaces().Get(ctx, bundle.Namespace, metav1.GetOptions{})
-	if err != nil {
-		return ""
-	}
-	return namespace.Annotations[bundle.HashAnnotation]
-}
-
-// stampBundleHash re-applies the namespace stage with the bundle hash
-// annotation added, under the same installer field manager, so the plain
-// namespace apply at the start of the next converge clears the stamp again.
-func stampBundleHash(ctx context.Context, client *kube.Client, profile bundle.Profile) error {
-	objects, err := bundle.Render(profile)
-	if err != nil {
-		return err
-	}
-	hash := bundle.Hash(profile)
-	stamped := make([]unstructured.Unstructured, 0, len(objects.Namespace))
-	for _, object := range objects.Namespace {
-		annotated := object.DeepCopy()
-		annotations := annotated.GetAnnotations()
-		if annotations == nil {
-			annotations = map[string]string{}
-		}
-		annotations[bundle.HashAnnotation] = hash
-		annotated.SetAnnotations(annotations)
-		stamped = append(stamped, *annotated)
-	}
-	applier := &bundle.Applier{Client: client}
-	return applier.ApplyObjects(ctx, stamped)
 }
 
 // applyBundle drives the ordered stages; every pass is a full converge, so
@@ -241,10 +197,10 @@ func applyBundle(ctx context.Context, client *kube.Client, state *State, progres
 	// Webhook-validated objects race their operator's serving certs; the
 	// retry absorbs the warm-up window.
 	progress.Start("Bootstrap database")
-	if err := applyWithRetry(ctx, applier, objects.Database); err != nil {
+	if err := applier.ApplyObjectsRetry(ctx, objects.Database, 2*time.Minute); err != nil {
 		return err
 	}
-	if err := applier.WaitClusterReady(ctx, bundle.Namespace, "skali-db"); err != nil {
+	if err := applier.WaitClusterReady(ctx, bundle.Namespace, "skali-db", 1); err != nil {
 		return err
 	}
 	progress.Done("tier: single")
@@ -272,24 +228,6 @@ func applyBundle(ctx context.Context, client *kube.Client, state *State, progres
 		return err
 	}
 	return nil
-}
-
-func applyWithRetry(ctx context.Context, applier *bundle.Applier, objects []unstructured.Unstructured) error {
-	deadline := time.Now().Add(2 * time.Minute)
-	for {
-		err := applier.ApplyObjects(ctx, objects)
-		if err == nil {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(3 * time.Second):
-		}
-	}
 }
 
 // probeEdge makes one health request to skalid through the local edge,

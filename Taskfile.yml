@@ -19,10 +19,11 @@ vars:
 
 tasks:
   build:
-    desc: Build both binaries into bin/
+    desc: Build all binaries into bin/
     cmds:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skalid ./cmd/skalid
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
+      - go build -ldflags "{{.LDFLAGS}}" -o bin/skali-installer ./cmd/install
 
   cli:install:
     desc: Build the skali CLI and install it to ~/.local/bin
@@ -35,7 +36,7 @@ tasks:
   generate:
     desc: Regenerate the JSON schemas and sqlc store
     cmds:
-      - go generate ./internal/manifest ./internal/layout
+      - go generate ./internal/manifest ./internal/layout ./internal/installer
       - sqlc generate
 
   generate:manifest:
@@ -85,6 +86,28 @@ tasks:
     desc: Run the skali dev end-to-end suite (creates and mutates the skali-dev cluster)
     cmds:
       - TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run 'TestDev' ./cmd/skali/...
+
+  lima:up:
+    desc: Create and start the installer e2e VM (Ubuntu, real systemd)
+    cmds:
+      # Existence check first: a bare `limactl start <name>` would silently
+      # create a default VM instead of using the template.
+      - |
+        if limactl list --format '{{"{{"}}.Name{{"}}"}}' 2>/dev/null | grep -qx skali-e2e; then
+          limactl start skali-e2e
+        else
+          limactl start --name skali-e2e --tty=false build/lima/skali-e2e.yaml
+        fi
+
+  lima:down:
+    desc: Delete the installer e2e VM
+    cmds:
+      - limactl delete -f skali-e2e || true
+
+  test:installer:
+    desc: Run the installer end-to-end suite in the Lima VM (task lima:up first)
+    cmds:
+      - TEST_SKALI_INSTALLER=1 go test -timeout 40m -count=1 -run 'TestInstaller' ./cmd/install/...
 
   dev:image:
     desc: Build the skalid image from the working tree; skali dev up imports and rolls it

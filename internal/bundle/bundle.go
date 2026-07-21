@@ -13,24 +13,48 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
+
+	"github.com/Hinkolas/skali/internal/layout"
 )
 
-// Pinned component versions of this bundle release. cert-manager is
-// deliberately absent: the local edge is HTTP-only, and TLS issuance
-// (`tls: automatic`) is a production-bundle concern that arrives with the
-// R4 installer.
+// Pinned component versions of this bundle release. cert-manager ships in
+// the bundle but applies only under a production profile: the local edge
+// stays HTTP-only, so TLS issuance (`tls: automatic`) only works on a
+// production installation.
 const (
-	Namespace     = "skali-system"
-	CNPGVersion   = "1.25.1"
-	RegistryImage = "registry:2.8.3"
+	Namespace   = "skali-system"
+	CNPGVersion = "1.25.1"
+	// CertManagerVersion pins the vendored cert-manager release. The asset
+	// is embedded even though the local profile never applies it; roughly
+	// one megabyte of CLI weight buys one shared bundle package.
+	CertManagerVersion = "1.20.1"
+	RegistryImage      = "registry:2.8.3"
 	// RegistryNodePort is the stable node port the host maps its loopback
 	// registry port onto.
 	RegistryNodePort = 30500
+	// RegistryInternalHost names the managed registry in production
+	// artifact references. It never resolves in DNS (.internal is reserved
+	// for private use): every node's containerd maps it onto the local
+	// registry NodePort through registries.yaml, exactly like
+	// localhost:5510 locally.
+	RegistryInternalHost = "registry.skali.internal"
+	// IssuerName is the ClusterIssuer every `tls: automatic` route binds
+	// to; the project renderer annotates ingresses with it, so the name is
+	// contract.
+	IssuerName = "skali"
+	// ACMEProductionServer is the default ACME directory.
+	ACMEProductionServer = "https://acme-v02.api.letsencrypt.org/directory"
+	// RecordName and RecordKey locate the in-cluster installation record
+	// that skalid imports on first boot (observation only; mutation
+	// authority over bootstrap resources stays with the installer).
+	RecordName = "skali-installation"
+	RecordKey  = "installation.yaml"
 	// HashAnnotation carries Hash() of the last fully converged bundle on
 	// the skali-system namespace. It is stamped only after a converge
 	// proved out end to end, and the plain namespace apply at the start of
@@ -39,11 +63,23 @@ const (
 	HashAnnotation = "skali.dev/bundle-hash"
 )
 
+// OperatorNamespaces are the namespaces the vendored operator manifests
+// create; scoped uninstall removes them last. cert-manager exists only on
+// production installations; deleting an absent namespace is a no-op.
+var OperatorNamespaces = []string{"cnpg-system", "cert-manager"}
+
 //go:embed assets/cnpg-1.25.1.yaml
 var cnpgManifest []byte
 
 // CNPGManifest is the pinned operator install manifest.
 func CNPGManifest() []byte { return cnpgManifest }
+
+//go:embed assets/cert-manager-1.20.1.yaml
+var certManagerManifest []byte
+
+// CertManagerManifest is the pinned cert-manager install manifest; applied
+// only under a production profile.
+func CertManagerManifest() []byte { return certManagerManifest }
 
 // Profile parameterizes one installation of the bundle.
 type Profile struct {
@@ -62,8 +98,82 @@ type Profile struct {
 	AdminEmail    string
 	AdminPassword string
 	// RegistryHost names the registry in artifact references as seen by
-	// build clients and nodes (localhost:5510 in the local profile).
+	// build clients and nodes (localhost:5510 in the local profile,
+	// RegistryInternalHost in production).
 	RegistryHost string
+	// Production selects the production shape of the bundle: cert-manager
+	// with the ACME skali issuer, a tier-sized database, capability-pinned
+	// placement, a TLS edge, and the in-cluster installation record. Nil
+	// renders the local development shape.
+	Production *Production
+}
+
+// Production parameterizes the production-only parts of the bundle. Every
+// field except ACMEServer is required; Render validates before rendering.
+type Production struct {
+	// IngressHost is the public api/ui domain (endpoints.api in
+	// init.yaml); it becomes the skalid ingress host and certificate
+	// subject.
+	IngressHost string
+	// ACMEEmail registers the ACME account behind the skali cluster
+	// issuer.
+	ACMEEmail string
+	// ACMEServer overrides the ACME directory URL; empty selects the
+	// Let's Encrypt production endpoint. Test installations whose port 80
+	// is not publicly reachable point it at the staging endpoint so
+	// pending issuance never burns production rate limits.
+	ACMEServer string
+	// Capabilities is the union of node capabilities in the layout, in
+	// display order; rendered semicolon-delimited into SKALI_CAPABILITIES.
+	Capabilities []string
+	// DatabaseTier sizes the bootstrap CNPG cluster: one instance for
+	// single, two for asynchronous, three with quorum replication for
+	// synchronous.
+	DatabaseTier layout.Tier
+	// DatabaseStorage and RegistryStorage size the installer-owned
+	// volumes (Kubernetes quantities, for example 10Gi).
+	DatabaseStorage string
+	RegistryStorage string
+	// InstallationRecord is the canonical YAML of the root-owned
+	// installation record; it is published as the skali-installation
+	// ConfigMap. The record must never carry credentials, and its
+	// canonical form must omit volatile fields: the text is a bundle-hash
+	// input, so anything that changes on every write would defeat the
+	// unchanged-bundle fast path.
+	InstallationRecord string
+}
+
+func (p *Production) validate() error {
+	switch {
+	case p.IngressHost == "":
+		return errors.New("bundle: production profile: ingress host is required")
+	case p.ACMEEmail == "":
+		return errors.New("bundle: production profile: acme email is required")
+	case len(p.Capabilities) == 0:
+		return errors.New("bundle: production profile: capabilities are required")
+	case p.DatabaseTier == "":
+		return errors.New("bundle: production profile: database tier is required")
+	case p.DatabaseStorage == "":
+		return errors.New("bundle: production profile: database storage size is required")
+	case p.RegistryStorage == "":
+		return errors.New("bundle: production profile: registry storage size is required")
+	case p.InstallationRecord == "":
+		return errors.New("bundle: production profile: installation record is required")
+	}
+	return nil
+}
+
+// TierInstances maps a database availability tier to its CNPG instance
+// count: single 1, asynchronous 2, synchronous 3.
+func TierInstances(tier layout.Tier) int {
+	switch tier {
+	case layout.TierSynchronous:
+		return 3
+	case layout.TierAsynchronous:
+		return 2
+	default:
+		return 1
+	}
 }
 
 // Objects renders the skalid-independent and skalid parts of the bundle
@@ -72,36 +182,53 @@ type Profile struct {
 type Objects struct {
 	// Namespace precedes everything.
 	Namespace []unstructured.Unstructured
+	// Issuer is the ACME ClusterIssuer named skali (requires
+	// cert-manager); empty under the local profile.
+	Issuer []unstructured.Unstructured
 	// Database is the CNPG cluster (requires the operator).
 	Database []unstructured.Unstructured
 	// Registry is the managed OCI registry.
 	Registry []unstructured.Unstructured
 	// Skalid is the control plane with its RBAC, service, and edge route.
 	Skalid []unstructured.Unstructured
+	// Record is the in-cluster installation record; empty under the local
+	// profile.
+	Record []unstructured.Unstructured
 	// BootstrapUser creates the first operator user.
 	BootstrapUser []unstructured.Unstructured
 }
 
 // stageSources renders the ordered stage manifests; Render parses them and
 // Hash fingerprints them, so the two always agree on the bundle's content.
+// Local-only and production-only stages render empty for the other
+// profile, contributing zero bytes to the hash.
 func stageSources(profile Profile) []string {
 	return []string{
 		namespaceYAML(),
-		databaseYAML(),
-		registryYAML(),
+		issuerYAML(profile),
+		databaseYAML(profile),
+		registryYAML(profile),
 		skalidYAML(profile),
+		recordYAML(profile),
 		bootstrapYAML(profile),
 	}
 }
 
 // Render produces every skali-owned bundle object for the profile.
 func Render(profile Profile) (*Objects, error) {
+	if profile.Production != nil {
+		if err := profile.Production.validate(); err != nil {
+			return nil, err
+		}
+	}
 	objects := &Objects{}
 	targets := []*[]unstructured.Unstructured{
 		&objects.Namespace,
+		&objects.Issuer,
 		&objects.Database,
 		&objects.Registry,
 		&objects.Skalid,
+		&objects.Record,
 		&objects.BootstrapUser,
 	}
 	for index, source := range stageSources(profile) {
@@ -115,12 +242,22 @@ func Render(profile Profile) (*Objects, error) {
 }
 
 // Hash fingerprints everything a profile's converge would apply, the
-// vendored operator manifest included: it changes exactly when a full
-// converge could change the cluster.
+// vendored operator manifests included: it changes exactly when a full
+// converge could change the cluster. Production excludes the
+// bootstrap-user stage: the admin password is never persisted host-side,
+// so a repeat run could not reproduce it, and the account is created by a
+// separate one-shot step outside the converge anyway. The local profile
+// keeps it (localdev records the credentials, and its converge applies the
+// stage).
 func Hash(profile Profile) string {
 	digest := sha256.New()
 	digest.Write(cnpgManifest)
-	for _, source := range stageSources(profile) {
+	sources := stageSources(profile)
+	if profile.Production != nil {
+		digest.Write(certManagerManifest)
+		sources[len(sources)-1] = ""
+	}
+	for _, source := range sources {
 		digest.Write([]byte(source))
 	}
 	return hex.EncodeToString(digest.Sum(nil))
@@ -157,24 +294,100 @@ metadata:
 `
 }
 
-func databaseYAML() string {
-	return `apiVersion: postgresql.cnpg.io/v1
+// issuerYAML renders the ACME ClusterIssuer every `tls: automatic` route
+// binds to. Production only: the local edge is HTTP-only.
+func issuerYAML(profile Profile) string {
+	if profile.Production == nil {
+		return ""
+	}
+	server := profile.Production.ACMEServer
+	if server == "" {
+		server = ACMEProductionServer
+	}
+	return fmt.Sprintf(`apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: %[1]s
+spec:
+  acme:
+    email: %[2]s
+    server: %[3]s
+    privateKeySecretRef:
+      name: skali-acme-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik
+`, IssuerName, profile.Production.ACMEEmail, server)
+}
+
+func databaseYAML(profile Profile) string {
+	instances := 1
+	storage := "1Gi"
+	affinity := ""
+	synchronous := ""
+	if production := profile.Production; production != nil {
+		instances = TierInstances(production.DatabaseTier)
+		storage = production.DatabaseStorage
+		// The affinity block renders only in production: local k3d nodes
+		// carry no capability labels and would strand the pod Pending.
+		affinity = "\n  affinity:\n    nodeSelector:\n      " +
+			layout.CapabilityLabel(layout.CapabilityDatabase) + `: "true"`
+		if production.DatabaseTier == layout.TierSynchronous {
+			// Three instances leave two standbys; transactions wait for
+			// any one of them (quorum "any 1 of 2").
+			synchronous = "\n  postgresql:\n    synchronous:\n      method: any\n      number: 1"
+		}
+	}
+	return fmt.Sprintf(`apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: skali-db
-  namespace: ` + Namespace + `
+  namespace: %[1]s
 spec:
-  instances: 1
+  instances: %[2]d
   storage:
-    size: 1Gi
+    size: %[3]s%[4]s%[5]s
   bootstrap:
     initdb:
       database: skali
       owner: skali
-`
+`, Namespace, instances, storage, affinity, synchronous)
 }
 
-func registryYAML() string {
+// recordYAML publishes the canonical installation record for skalid to
+// import on first boot. Production only.
+func recordYAML(profile Profile) string {
+	if profile.Production == nil {
+		return ""
+	}
+	object := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":      RecordName,
+			"namespace": Namespace,
+			"labels":    map[string]any{"skali.dev/system": "true"},
+		},
+		"data": map[string]any{RecordKey: profile.Production.InstallationRecord},
+	}
+	// Marshal (via JSON) sorts keys, so the output is deterministic; a
+	// map of strings cannot fail to encode.
+	data, _ := yaml.Marshal(object)
+	return string(data)
+}
+
+func registryYAML(profile Profile) string {
+	storage := "5Gi"
+	nodeSelector := ""
+	if production := profile.Production; production != nil {
+		storage = production.RegistryStorage
+		// Pin the single registry instance to a registry-capable node; the
+		// local-path volume provisions on first consumption, so pod and
+		// volume agree on the node.
+		nodeSelector = "\n      nodeSelector:\n        " +
+			layout.CapabilityLabel(layout.CapabilityRegistry) + `: "true"`
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -200,7 +413,7 @@ spec:
   accessModes: [ReadWriteOnce]
   resources:
     requests:
-      storage: 5Gi
+      storage: %[4]s
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -218,7 +431,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: skali-registry
-    spec:
+    spec:%[5]s
       containers:
         - name: registry
           image: %[2]s
@@ -250,13 +463,27 @@ spec:
     - port: 5000
       targetPort: 5000
       nodePort: %[3]d
-`, Namespace, RegistryImage, RegistryNodePort)
+`, Namespace, RegistryImage, RegistryNodePort, storage, nodeSelector)
 }
 
 func skalidYAML(profile Profile) string {
 	imageIDAnnotation := ""
 	if profile.SkalidImageID != "" {
 		imageIDAnnotation = "\n      annotations:\n        skali.dev/image-id: " + profile.SkalidImageID
+	}
+	capabilitiesEnv := ""
+	ingressAnnotations := ""
+	ingressTLS := ""
+	ingressHost := "skali.localhost"
+	if production := profile.Production; production != nil {
+		// Local dev omits the env and rides the config default; production
+		// states the installation's capability union explicitly.
+		capabilitiesEnv = "\n            - name: SKALI_CAPABILITIES\n              value: " +
+			strings.Join(production.Capabilities, ";")
+		ingressAnnotations = "\n  annotations:\n    cert-manager.io/cluster-issuer: " + IssuerName
+		ingressTLS = "\n  tls:\n    - hosts:\n        - " + production.IngressHost +
+			"\n      secretName: skalid-tls"
+		ingressHost = production.IngressHost
 	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
@@ -353,7 +580,7 @@ spec:
             - name: SKALI_REGISTRY_ENDPOINT
               value: skali-registry.%[1]s.svc:5000
             - name: SKALI_REGISTRY_INSECURE
-              value: "true"
+              value: "true"%[6]s
           readinessProbe:
             httpGet:
               path: /healthz
@@ -377,11 +604,11 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: skalid
-  namespace: %[1]s
+  namespace: %[1]s%[7]s
 spec:
-  ingressClassName: traefik
+  ingressClassName: traefik%[8]s
   rules:
-    - host: skali.localhost
+    - host: %[9]s
       http:
         paths:
           - path: /
@@ -392,7 +619,7 @@ spec:
                 port:
                   number: 80
 `, Namespace, profile.SkalidImage, base64.StdEncoding.EncodeToString([]byte(profile.AuthSecret)), profile.RegistryHost,
-		imageIDAnnotation)
+		imageIDAnnotation, capabilitiesEnv, ingressAnnotations, ingressTLS, ingressHost)
 }
 
 func bootstrapYAML(profile Profile) string {

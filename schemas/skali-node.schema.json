@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "$id": "https://skali.dev/schemas/v1/skali-node.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Skali installer node configuration",
+  "description": "Per-host install configuration consumed by skali-installer install --config.",
+  "required": [
+    "role",
+    "capabilities"
+  ],
+  "properties": {
+    "capabilities": {
+      "type": "array",
+      "description": "Designated workload capabilities for this node.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "application",
+          "database",
+          "object-storage",
+          "registry",
+          "edge"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "cluster": {
+      "type": "string",
+      "description": "Cluster name created by the first server. Defaults to production."
+    },
+    "join": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "description": "Join an existing cluster instead of creating one.",
+      "required": [
+        "server",
+        "tokenFile"
+      ],
+      "properties": {
+        "server": {
+          "type": "string",
+          "description": "URL of an existing K3s server, for example https://cp-1.internal:6443."
+        },
+        "tokenFile": {
+          "type": "string",
+          "description": "Path to a file holding the join token."
+        }
+      },
+      "additionalProperties": false
+    },
+    "role": {
+      "type": "string",
+      "description": "K3s role: server or agent.",
+      "enum": [
+        "server",
+        "agent"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

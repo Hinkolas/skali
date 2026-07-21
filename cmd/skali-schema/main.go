@@ -8,12 +8,13 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
 )
 
 func main() {
-	schema := flag.String("schema", "manifest", "schema to generate: manifest or layout")
+	schema := flag.String("schema", "manifest", "schema to generate: manifest, layout, node, or init")
 	output := flag.String("output", "", "output schema path")
 	flag.Parse()
 	if *output == "" {
@@ -28,8 +29,12 @@ func main() {
 		data, err = manifest.JSONSchema()
 	case "layout":
 		data, err = layout.JSONSchema()
+	case "node":
+		data, err = installer.NodeConfigJSONSchema()
+	case "init":
+		data, err = installer.InitConfigJSONSchema()
 	default:
-		fmt.Fprintf(os.Stderr, "error: unknown --schema %q; expected manifest or layout\n", *schema)
+		fmt.Fprintf(os.Stderr, "error: unknown --schema %q; expected manifest, layout, node, or init\n", *schema)
 		os.Exit(2)
 	}
 	if err != nil {

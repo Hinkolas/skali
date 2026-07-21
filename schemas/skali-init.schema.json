@@ -1,0 +1,81 @@
+{
+  "type": "object",
+  "$id": "https://skali.dev/schemas/v1/skali-init.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Skali installer init configuration",
+  "description": "Cluster initialization configuration consumed by skali-installer init --config.",
+  "required": [
+    "endpoints",
+    "tls",
+    "admin",
+    "skalid"
+  ],
+  "properties": {
+    "admin": {
+      "type": "object",
+      "required": [
+        "email",
+        "passwordFile"
+      ],
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Email of the first admin account."
+        },
+        "passwordFile": {
+          "type": "string",
+          "description": "Path to a file holding the admin password."
+        }
+      },
+      "additionalProperties": false
+    },
+    "endpoints": {
+      "type": "object",
+      "required": [
+        "api"
+      ],
+      "properties": {
+        "api": {
+          "type": "string",
+          "description": "Public api/ui domain, for example skali.example.com."
+        }
+      },
+      "additionalProperties": false
+    },
+    "skalid": {
+      "type": "object",
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "skalid image reference to install."
+        },
+        "imageId": {
+          "type": "string",
+          "description": "Optional image content identity behind a mutable tag."
+        }
+      },
+      "additionalProperties": false
+    },
+    "tls": {
+      "type": "object",
+      "required": [
+        "issuerEmail"
+      ],
+      "properties": {
+        "acmeServer": {
+          "type": "string",
+          "description": "Optional ACME directory URL override; empty selects the Let's Encrypt production endpoint. Point test installations at the staging endpoint."
+        },
+        "issuerEmail": {
+          "type": "string",
+          "description": "ACME account email for certificate issuance."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

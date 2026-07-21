@@ -1,0 +1,53 @@
+// Package installer is the engine behind skali-installer, the privileged
+// installation and recovery tool. It owns host-level k3s lifecycle, the
+// root-owned installation record, and the installer-owned skali-system
+// bundle converge. It never depends on the Skali API or product database
+// (section 14.1); its authority is exactly what skalid must not have
+// (section 14.5). All host mutation goes through host.Runner so the same
+// engine drives a local Linux host, a scripted test fake, and later a
+// Lima-managed VM.
+package installer
+
+import "github.com/Hinkolas/skali/internal/bundle"
+
+const (
+	// K3sVersion is the k3s release this installer provisions. Each
+	// installer release pins exactly one; it must agree with the k3d image
+	// pin in internal/localdev (guarded by a test).
+	K3sVersion = "v1.33.3+k3s1"
+
+	// StateDir is the root-owned installation state directory.
+	StateDir = "/var/lib/skali"
+	// RecordPath is the root-owned installation record (section 14.1).
+	RecordPath = StateDir + "/installation.yaml"
+	// LogDir receives per-run installer logs. Installer steps run before
+	// or below the product control plane, so they log locally, never to
+	// the product run journal.
+	LogDir = StateDir + "/logs"
+	// CacheDir holds fetched or unpacked installer inputs.
+	CacheDir = StateDir + "/cache"
+
+	// ProviderK3s marks installations whose Kubernetes lifecycle this
+	// installer owns.
+	ProviderK3s = "k3s"
+
+	// OwnershipManaged means the installer owns host-level k3s lifecycle.
+	// OwnershipExistingCluster is reserved for the existing-cluster mode of
+	// a later slice: the installer then owns only the Skali system bundle.
+	OwnershipManaged         = "managed"
+	OwnershipExistingCluster = "existing-cluster"
+
+	// DefaultCluster names the cluster when the operator does not.
+	DefaultCluster = "production"
+)
+
+// Progress narrates engine stages: Start begins a stage, Done or Skip
+// concludes it. A stage that errors is never concluded; the caller settles
+// it from the returned error. The shape is shared with the bundle converge.
+type Progress = bundle.Progress
+
+type silentProgress struct{}
+
+func (silentProgress) Start(string) {}
+func (silentProgress) Done(string)  {}
+func (silentProgress) Skip(string)  {}

@@ -50,6 +50,27 @@ func (a *Applier) ApplyObjects(ctx context.Context, objects []unstructured.Unstr
 	return nil
 }
 
+// ApplyObjectsRetry applies like ApplyObjects but retries the whole set
+// until the deadline: webhook-validated objects race their operator's
+// serving certs, and the retry absorbs the warm-up window.
+func (a *Applier) ApplyObjectsRetry(ctx context.Context, objects []unstructured.Unstructured, deadline time.Duration) error {
+	limit := time.Now().Add(deadline)
+	for {
+		err := a.ApplyObjects(ctx, objects)
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(limit) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
 // ApplyManifest applies one multi-document YAML manifest (the vendored
 // operators) and resets the REST mapper afterwards so kinds introduced by
 // new CRDs resolve.
@@ -121,8 +142,10 @@ func (a *Applier) WaitJobComplete(ctx context.Context, namespace, name string) e
 	})
 }
 
-// WaitClusterReady blocks until the CNPG cluster reports a healthy phase.
-func (a *Applier) WaitClusterReady(ctx context.Context, namespace, name string) error {
+// WaitClusterReady blocks until the CNPG cluster reports a healthy phase
+// with at least minReady ready instances; tier-sized production clusters
+// pass their instance count, the local profile passes 1.
+func (a *Applier) WaitClusterReady(ctx context.Context, namespace, name string, minReady int) error {
 	return a.wait(ctx, "database cluster "+name, func(ctx context.Context) (bool, error) {
 		resource := a.Client.Dynamic.Resource(cnpgClusterResource()).Namespace(namespace)
 		cluster, err := resource.Get(ctx, name, metav1.GetOptions{})
@@ -134,7 +157,7 @@ func (a *Applier) WaitClusterReady(ctx context.Context, namespace, name string) 
 		}
 		phase, _, _ := unstructured.NestedString(cluster.Object, "status", "phase")
 		ready, _, _ := unstructured.NestedInt64(cluster.Object, "status", "readyInstances")
-		return phase == "Cluster in healthy state" && ready > 0, nil
+		return phase == "Cluster in healthy state" && ready >= int64(minReady), nil
 	})
 }
 
