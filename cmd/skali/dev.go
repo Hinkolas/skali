@@ -35,7 +35,7 @@ func newDevCommand() *cobra.Command {
 			"the local platform. Local values never leave this machine.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			if _, err := ensureLocalPlatform(command, skalidImage); err != nil {
+			if _, err := ensureLocalPlatform(command, skalidImage, false); err != nil {
 				return err
 			}
 			opts := &deployOptions{
@@ -74,10 +74,10 @@ func newDevCommand() *cobra.Command {
 
 	up := &cobra.Command{
 		Use:   "up",
-		Short: "Ensure the local platform only",
+		Short: "Fully converge the local platform (create, repair, upgrade)",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			_, err := ensureLocalPlatform(command, skalidImage)
+			_, err := ensureLocalPlatform(command, skalidImage, true)
 			return err
 		},
 	}
@@ -123,7 +123,7 @@ func newDevCommand() *cobra.Command {
 		},
 	}
 	down.Flags().BoolVar(&purge, "purge", false, "destroy the environment completely, including volumes and all data")
-	down.Flags().BoolVar(&yes, "yes", false, "skip the typed confirmation for --purge")
+	down.Flags().BoolVar(&yes, "yes", false, "skip the confirmation for --purge")
 
 	ls := &cobra.Command{
 		Use:   "ls",
@@ -184,10 +184,7 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 		fmt.Fprintln(out, "  its namespace including all volumes, and its values, secrets,")
 		fmt.Fprintln(out, "  revisions, and history on the local platform.")
 		fmt.Fprintln(out, "Nothing outside this machine is affected.")
-		fmt.Fprintf(out, "\nType the project name %q to continue: ", name)
-		var answer string
-		_, _ = fmt.Scanln(&answer)
-		if strings.TrimSpace(answer) != name {
+		if !confirm(out, fmt.Sprintf("\nPurge %s from the local platform? [y/N] ", name)) {
 			return errors.New("aborted")
 		}
 	}
@@ -365,7 +362,7 @@ func (p *taskProgress) Abort() {
 
 // ensureLocalPlatform brings the platform up and logs the CLI into it,
 // storing the local context.
-func ensureLocalPlatform(command *cobra.Command, skalidImage string) (*localdev.State, error) {
+func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConverge bool) (*localdev.State, error) {
 	ctx := command.Context()
 	out := command.OutOrStdout()
 
@@ -378,8 +375,9 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string) (*localdev.
 	}
 	progress := &taskProgress{tasks: tasks}
 	state, err := localdev.Ensure(ctx, localdev.EnsureOptions{
-		SkalidImage: skalidImage,
-		Progress:    progress,
+		SkalidImage:   skalidImage,
+		ForceConverge: forceConverge,
+		Progress:      progress,
 	})
 	if err != nil {
 		progress.Abort()

@@ -266,10 +266,10 @@ func TestDevEndToEnd(t *testing.T) {
 	})
 
 	t.Run("PurgeRemovesEverything", func(t *testing.T) {
-		// Refused without the typed project name.
-		h.run(true, "no\n", "dev", "down", "--purge")
+		// Refused unless explicitly confirmed; No is the default.
+		h.run(true, "\n", "dev", "down", "--purge")
 
-		out := h.run(false, "hello-world\n", "dev", "down", "--purge")
+		out := h.run(false, "y\n", "dev", "down", "--purge")
 		require.Contains(t, out, "is purged from the local platform")
 
 		kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")

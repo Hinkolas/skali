@@ -68,3 +68,26 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, cnpg)
 }
+
+func TestHashTracksProfile(t *testing.T) {
+	t.Parallel()
+	base := Profile{
+		SkalidImage:   "skalid:dev",
+		SkalidImageID: "sha256:0123456789abcdef",
+		AuthSecret:    strings.Repeat("a", 32),
+		AdminEmail:    "dev@skali.localhost",
+		AdminPassword: "generated-password",
+		RegistryHost:  "localhost:5510",
+	}
+	require.Equal(t, Hash(base), Hash(base), "the hash must be deterministic")
+
+	// A rebuilt image changes only the image ID behind the same tag; the
+	// hash must move with it so the fast path yields to a converge.
+	rebuilt := base
+	rebuilt.SkalidImageID = "sha256:fedcba9876543210"
+	require.NotEqual(t, Hash(base), Hash(rebuilt))
+
+	changedRegistry := base
+	changedRegistry.RegistryHost = "localhost:5512"
+	require.NotEqual(t, Hash(base), Hash(changedRegistry))
+}

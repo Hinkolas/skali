@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/Hinkolas/skali/internal/bundle"
@@ -18,6 +19,10 @@ type EnsureOptions struct {
 	// SkalidImage overrides the control-plane image; empty keeps the
 	// recorded one.
 	SkalidImage string
+	// ForceConverge skips the unchanged-platform fast path and always runs
+	// the full bundle converge. skali dev up sets it, so one verb still
+	// proves and repairs the whole installation instead of assuming it.
+	ForceConverge bool
 	// Progress narrates the ensure stages.
 	Progress Progress
 }
@@ -115,8 +120,9 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
+	importNeeded := status == ClusterAbsent || state.SkalidImage != importedTag || imageID != state.ImportedImageID
 	progress.Start("Import " + state.SkalidImage)
-	if status == ClusterAbsent || state.SkalidImage != importedTag || imageID != state.ImportedImageID {
+	if importNeeded {
 		if err := ImportImage(ctx, state.SkalidImage); err != nil {
 			return nil, err
 		}
@@ -134,6 +140,20 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// The fast path: on an already-running cluster with an unchanged image,
+	// a bundle hash matching the stamp of the last completed converge plus
+	// one live health probe through the edge prove the platform current for
+	// the price of two round trips instead of a full no-op apply pass.
+	// Anything off (a rebuilt CLI, a changed profile, a missing stamp, an
+	// unhealthy skalid) falls through to the converge.
+	if !opts.ForceConverge && status == ClusterRunning && !importNeeded &&
+		stampedBundleHash(ctx, client) == bundle.Hash(bundleProfile(state)) && probeEdge(ctx) {
+		progress.Start("Converge platform")
+		progress.Skip("unchanged since last converge")
+		return state, nil
+	}
+
 	if err := applyBundle(ctx, client, state, progress); err != nil {
 		return nil, err
 	}
@@ -143,8 +163,57 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	if err := waitEdgeHealthy(ctx); err != nil {
 		return nil, err
 	}
+	if err := stampBundleHash(ctx, client, bundleProfile(state)); err != nil {
+		return nil, err
+	}
 	progress.Done(MasterURL())
 	return state, nil
+}
+
+// bundleProfile derives the bundle profile of this installation.
+func bundleProfile(state *State) bundle.Profile {
+	return bundle.Profile{
+		SkalidImage:   state.SkalidImage,
+		SkalidImageID: state.ImportedImageID,
+		AuthSecret:    state.AuthSecret,
+		AdminEmail:    state.AdminEmail,
+		AdminPassword: state.AdminPassword,
+		RegistryHost:  RegistryHost(),
+	}
+}
+
+// stampedBundleHash reads the hash stamped by the last completed converge;
+// absent or unreadable reads as empty, which matches no bundle.
+func stampedBundleHash(ctx context.Context, client *kube.Client) string {
+	namespace, err := client.Clientset.CoreV1().Namespaces().Get(ctx, bundle.Namespace, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	return namespace.Annotations[bundle.HashAnnotation]
+}
+
+// stampBundleHash re-applies the namespace stage with the bundle hash
+// annotation added, under the same installer field manager, so the plain
+// namespace apply at the start of the next converge clears the stamp again.
+func stampBundleHash(ctx context.Context, client *kube.Client, profile bundle.Profile) error {
+	objects, err := bundle.Render(profile)
+	if err != nil {
+		return err
+	}
+	hash := bundle.Hash(profile)
+	stamped := make([]unstructured.Unstructured, 0, len(objects.Namespace))
+	for _, object := range objects.Namespace {
+		annotated := object.DeepCopy()
+		annotations := annotated.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[bundle.HashAnnotation] = hash
+		annotated.SetAnnotations(annotations)
+		stamped = append(stamped, *annotated)
+	}
+	applier := &bundle.Applier{Client: client}
+	return applier.ApplyObjects(ctx, stamped)
 }
 
 // applyBundle drives the ordered stages; every pass is a full converge, so
@@ -152,14 +221,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 // skalid stage stays open for Ensure's edge health check.
 func applyBundle(ctx context.Context, client *kube.Client, state *State, progress Progress) error {
 	applier := &bundle.Applier{Client: client}
-	objects, err := bundle.Render(bundle.Profile{
-		SkalidImage:   state.SkalidImage,
-		SkalidImageID: state.ImportedImageID,
-		AuthSecret:    state.AuthSecret,
-		AdminEmail:    state.AdminEmail,
-		AdminPassword: state.AdminPassword,
-		RegistryHost:  RegistryHost(),
-	})
+	objects, err := bundle.Render(bundleProfile(state))
 	if err != nil {
 		return err
 	}
@@ -230,24 +292,30 @@ func applyWithRetry(ctx context.Context, applier *bundle.Applier, objects []unst
 	}
 }
 
-// waitEdgeHealthy polls skalid's health through the local edge, proving
-// ingress routing end to end.
-func waitEdgeHealthy(ctx context.Context) error {
+// probeEdge makes one health request to skalid through the local edge,
+// proving ingress routing end to end.
+func probeEdge(ctx context.Context) bool {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("http://127.0.0.1:%d/healthz", HTTPPort()), nil)
+	if err != nil {
+		return false
+	}
+	request.Host = "skali.localhost"
 	client := &http.Client{Timeout: 3 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return false
+	}
+	response.Body.Close()
+	return response.StatusCode == http.StatusOK
+}
+
+// waitEdgeHealthy polls the edge probe until skalid answers.
+func waitEdgeHealthy(ctx context.Context) error {
 	deadline := time.Now().Add(3 * time.Minute)
-	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", HTTPPort())
 	for {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return err
-		}
-		request.Host = "skali.localhost"
-		response, err := client.Do(request)
-		if err == nil {
-			response.Body.Close()
-			if response.StatusCode == http.StatusOK {
-				return nil
-			}
+		if probeEdge(ctx) {
+			return nil
 		}
 		if time.Now().After(deadline) {
 			return errors.New("localdev: skalid never became healthy through the edge at " + MasterURL())

@@ -9,8 +9,10 @@
 package bundle
 
 import (
+	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -29,6 +31,12 @@ const (
 	// RegistryNodePort is the stable node port the host maps its loopback
 	// registry port onto.
 	RegistryNodePort = 30500
+	// HashAnnotation carries Hash() of the last fully converged bundle on
+	// the skali-system namespace. It is stamped only after a converge
+	// proved out end to end, and the plain namespace apply at the start of
+	// the next converge clears it, so a half-applied bundle never looks
+	// current.
+	HashAnnotation = "skali.dev/bundle-hash"
 )
 
 //go:embed assets/cnpg-1.25.1.yaml
@@ -74,27 +82,48 @@ type Objects struct {
 	BootstrapUser []unstructured.Unstructured
 }
 
+// stageSources renders the ordered stage manifests; Render parses them and
+// Hash fingerprints them, so the two always agree on the bundle's content.
+func stageSources(profile Profile) []string {
+	return []string{
+		namespaceYAML(),
+		databaseYAML(),
+		registryYAML(),
+		skalidYAML(profile),
+		bootstrapYAML(profile),
+	}
+}
+
 // Render produces every skali-owned bundle object for the profile.
 func Render(profile Profile) (*Objects, error) {
 	objects := &Objects{}
-	stages := []struct {
-		target *[]unstructured.Unstructured
-		yaml   string
-	}{
-		{&objects.Namespace, namespaceYAML()},
-		{&objects.Database, databaseYAML()},
-		{&objects.Registry, registryYAML()},
-		{&objects.Skalid, skalidYAML(profile)},
-		{&objects.BootstrapUser, bootstrapYAML(profile)},
+	targets := []*[]unstructured.Unstructured{
+		&objects.Namespace,
+		&objects.Database,
+		&objects.Registry,
+		&objects.Skalid,
+		&objects.BootstrapUser,
 	}
-	for _, stage := range stages {
-		parsed, err := ParseManifest([]byte(stage.yaml))
+	for index, source := range stageSources(profile) {
+		parsed, err := ParseManifest([]byte(source))
 		if err != nil {
 			return nil, err
 		}
-		*stage.target = parsed
+		*targets[index] = parsed
 	}
 	return objects, nil
+}
+
+// Hash fingerprints everything a profile's converge would apply, the
+// vendored operator manifest included: it changes exactly when a full
+// converge could change the cluster.
+func Hash(profile Profile) string {
+	digest := sha256.New()
+	digest.Write(cnpgManifest)
+	for _, source := range stageSources(profile) {
+		digest.Write([]byte(source))
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 // ParseManifest splits one multi-document YAML manifest into unstructured
