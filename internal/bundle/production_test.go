@@ -30,6 +30,10 @@ func productionProfile() Profile {
 		RegistryHost: RegistryInternalHost,
 		Production: &Production{
 			IngressHost:        "skali.example.com",
+			RegistryDomain:     "registry.example.com",
+			TokenKeyPEM:        "-----BEGIN EC PRIVATE KEY-----\nfake\n-----END EC PRIVATE KEY-----\n",
+			TokenCertPEM:       "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+			NodePullSecret:     "node-pull-secret",
 			ACMEEmail:          "ops@example.com",
 			Capabilities:       layout.Capabilities,
 			DatabaseTier:       layout.TierSynchronous,
@@ -134,14 +138,22 @@ func TestRenderProductionObjects(t *testing.T) {
 	rules, _, _ := unstructured.NestedSlice(ingress.Object, "spec", "rules")
 	require.Equal(t, "skali.example.com", rules[0].(map[string]any)["host"])
 
-	// Registry: pinned to a registry-capable node with the sized volume.
-	var pvc, registryDeployment *unstructured.Unstructured
+	// Registry: token secret first, then the four base objects, the public
+	// ingress last.
+	require.Len(t, objects.Registry, 6)
+	var pvc, registryDeployment, tokenSecret, registryConfig, registryIngress *unstructured.Unstructured
 	for index := range objects.Registry {
 		switch objects.Registry[index].GetKind() {
 		case "PersistentVolumeClaim":
 			pvc = &objects.Registry[index]
 		case "Deployment":
 			registryDeployment = &objects.Registry[index]
+		case "Secret":
+			tokenSecret = &objects.Registry[index]
+		case "ConfigMap":
+			registryConfig = &objects.Registry[index]
+		case "Ingress":
+			registryIngress = &objects.Registry[index]
 		}
 	}
 	require.NotNil(t, pvc)
@@ -151,6 +163,42 @@ func TestRenderProductionObjects(t *testing.T) {
 	selector, _, _ := unstructured.NestedStringMap(registryDeployment.Object,
 		"spec", "template", "spec", "nodeSelector")
 	require.Equal(t, map[string]string{"skali.dev/capability-registry": "true"}, selector)
+
+	// Token auth: the registry config names the realm on the registry
+	// domain and trusts the certificate the token secret carries; the
+	// deployment mounts exactly that certificate.
+	require.NotNil(t, registryConfig)
+	configYML, _, _ := unstructured.NestedString(registryConfig.Object, "data", "config.yml")
+	require.Contains(t, configYML, "realm: https://registry.example.com/token")
+	require.Contains(t, configYML, "service: skali-registry")
+	require.Contains(t, configYML, "issuer: skalid")
+	require.Contains(t, configYML, "rootcertbundle: /etc/skali/registry-token/cert.pem")
+	require.NotNil(t, tokenSecret)
+	require.Equal(t, "skali-registry-token", tokenSecret.GetName())
+	require.Equal(t, "Secret", objects.Registry[0].GetKind(),
+		"the token secret must precede the deployment that mounts it")
+	deploymentJSON, err := registryDeployment.MarshalJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(deploymentJSON), "/etc/skali/registry-token")
+	require.Contains(t, string(deploymentJSON), "skali-registry-token")
+
+	// The registry ingress binds the registry domain with its own
+	// certificate and routes the token realm to skalid.
+	require.NotNil(t, registryIngress)
+	require.Equal(t, IssuerName, registryIngress.GetAnnotations()["cert-manager.io/cluster-issuer"])
+	registryTLS, _, _ := unstructured.NestedSlice(registryIngress.Object, "spec", "tls")
+	require.Len(t, registryTLS, 1)
+	registryTLSEntry := registryTLS[0].(map[string]any)
+	require.Equal(t, "skali-registry-tls", registryTLSEntry["secretName"])
+	require.Equal(t, []any{"registry.example.com"}, registryTLSEntry["hosts"])
+	ingressJSON, err := registryIngress.MarshalJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(ingressJSON), `"path":"/token"`)
+	require.Contains(t, string(ingressJSON), `"name":"skalid"`)
+
+	// Skalid learns the signing key and node secret from the token secret.
+	require.Contains(t, string(raw), "SKALI_REGISTRY_TOKEN_KEY")
+	require.Contains(t, string(raw), "SKALI_REGISTRY_NODE_SECRET")
 
 	// Record: the ConfigMap round-trips the canonical text exactly.
 	require.Len(t, objects.Record, 1)
@@ -174,10 +222,13 @@ func TestProductionHashProperties(t *testing.T) {
 
 	// Every production input moves the hash.
 	for name, mutate := range map[string]func(*Production){
-		"tier":    func(p *Production) { p.DatabaseTier = layout.TierSingle },
-		"ingress": func(p *Production) { p.IngressHost = "other.example.com" },
-		"acme":    func(p *Production) { p.ACMEServer = "https://acme-staging-v02.api.letsencrypt.org/directory" },
-		"record":  func(p *Production) { p.InstallationRecord = "version: \"1\"\ninstallationId: ffff\n" },
+		"tier":            func(p *Production) { p.DatabaseTier = layout.TierSingle },
+		"ingress":         func(p *Production) { p.IngressHost = "other.example.com" },
+		"acme":            func(p *Production) { p.ACMEServer = "https://acme-staging-v02.api.letsencrypt.org/directory" },
+		"record":          func(p *Production) { p.InstallationRecord = "version: \"1\"\ninstallationId: ffff\n" },
+		"registry domain": func(p *Production) { p.RegistryDomain = "other-registry.example.com" },
+		"token key":       func(p *Production) { p.TokenKeyPEM = "rotated" },
+		"node secret":     func(p *Production) { p.NodePullSecret = "rotated" },
 	} {
 		changed := productionProfile()
 		mutate(changed.Production)
@@ -202,6 +253,9 @@ func TestProductionProfileValidation(t *testing.T) {
 	t.Parallel()
 	for field, mutate := range map[string]func(*Production){
 		"ingress host":          func(p *Production) { p.IngressHost = "" },
+		"registry domain":       func(p *Production) { p.RegistryDomain = "" },
+		"registry token":        func(p *Production) { p.TokenKeyPEM = "" },
+		"node pull secret":      func(p *Production) { p.NodePullSecret = "" },
 		"acme email":            func(p *Production) { p.ACMEEmail = "" },
 		"capabilities":          func(p *Production) { p.Capabilities = nil },
 		"database tier":         func(p *Production) { p.DatabaseTier = "" },

@@ -21,6 +21,7 @@ import (
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
+	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
@@ -40,6 +41,12 @@ type Deps struct {
 	// Registry is the managed-registry client; a zero-host client means
 	// the build and import surfaces answer registry_disabled.
 	Registry *registry.Client
+	// RegistryToken signs registry auth tokens; nil (the anonymous local
+	// registry) leaves the token realm unregistered.
+	RegistryToken *registrytoken.Signer
+	// RegistryNodeSecret is the shared node pull credential the token
+	// realm accepts for the skali-node user; empty rejects that user.
+	RegistryNodeSecret string
 	// RuntimeLogs streams live application logs; nil-clientset streams
 	// answer node_unreachable.
 	RuntimeLogs *runtimelogs.Streamer
@@ -72,6 +79,17 @@ func NewRouter(d Deps) http.Handler {
 		w.Header().Set("Content-Type", "application/yaml")
 		_, _ = w.Write(apispec.OpenAPI)
 	})
+
+	// The registry token realm: the registry-domain ingress routes /token
+	// here. Registered only when a signing key is configured (production);
+	// the endpoint authenticates per request via Basic, never RequireAuth.
+	if d.RegistryToken != nil {
+		rt := &registryTokenHandlers{
+			auth: d.Auth, projects: d.Store, signer: d.RegistryToken,
+			nodeSecret: d.RegistryNodeSecret, now: time.Now,
+		}
+		r.Get("/token", rt.issue)
+	}
 
 	h := &authHandlers{auth: d.Auth}
 	jh := &runsHandlers{journal: d.Journal}

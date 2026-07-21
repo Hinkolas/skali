@@ -100,6 +100,17 @@ type API struct {
 	// anonymous loopback-only local registry needs it.
 	RegistryInsecure bool `env:"SKALI_REGISTRY_INSECURE,default=false"`
 
+	// RegistryTokenKey is the PEM signing key for registry tokens. Set on
+	// production installations, where the registry requires token auth;
+	// empty leaves the token endpoint unregistered (the anonymous local
+	// registry).
+	RegistryTokenKey string `env:"SKALI_REGISTRY_TOKEN_KEY,default="`
+
+	// RegistryNodeSecret is the shared credential containerd presents (as
+	// user skali-node) when nodes pull from the managed registry; it earns
+	// pull-only tokens. Empty rejects the node user.
+	RegistryNodeSecret string `env:"SKALI_REGISTRY_NODE_SECRET,default="`
+
 	// Capabilities lists what this installation can run, separated by
 	// semicolons; deployments whose revisions require more are rejected
 	// with a clear error instead of stalling. R3 installations serve

@@ -38,6 +38,7 @@ import (
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
+	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
@@ -116,6 +117,22 @@ func runServe() error {
 		Insecure: cfg.RegistryInsecure,
 	}
 
+	// The registry token signer exists only on installations whose registry
+	// requires token auth (production); skalid then serves the token realm
+	// and self-issues pull tokens for digest verification.
+	var tokenSigner *registrytoken.Signer
+	if cfg.RegistryTokenKey != "" {
+		tokenSigner, err = registrytoken.LoadSigner([]byte(cfg.RegistryTokenKey))
+		if err != nil {
+			return err
+		}
+		registryClient.TokenSource = func(repository string, actions []string) (string, error) {
+			access := []registrytoken.Access{{Type: "repository", Name: repository, Actions: actions}}
+			return tokenSigner.Mint(registrytoken.Service, registrytoken.Issuer, access,
+				time.Now(), registrytoken.TokenTTL)
+		}
+	}
+
 	// A fresh executor identity per boot: recovery fails attempts owned by
 	// executors that no longer exist.
 	executorID, err := uuid.NewV7()
@@ -184,19 +201,21 @@ func runServe() error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewRouter(api.Deps{
-			Auth:         authSvc,
-			Store:        st,
-			DB:           pool,
-			Projects:     projectSvc,
-			Values:       valueSvc,
-			Deploy:       deploySvc,
-			Artifacts:    artifactSvc,
-			Builds:       buildSvc,
-			Journal:      journalSvc,
-			Reconcile:    kernel,
-			Registry:     registryClient,
-			RuntimeLogs:  runtimeLogs,
-			Capabilities: cfg.Capabilities,
+			Auth:               authSvc,
+			Store:              st,
+			DB:                 pool,
+			Projects:           projectSvc,
+			Values:             valueSvc,
+			Deploy:             deploySvc,
+			Artifacts:          artifactSvc,
+			Builds:             buildSvc,
+			Journal:            journalSvc,
+			Reconcile:          kernel,
+			Registry:           registryClient,
+			RegistryToken:      tokenSigner,
+			RegistryNodeSecret: cfg.RegistryNodeSecret,
+			RuntimeLogs:        runtimeLogs,
+			Capabilities:       cfg.Capabilities,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

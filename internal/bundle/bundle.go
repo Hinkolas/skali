@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/registrytoken"
 )
 
 // Pinned component versions of this bundle release. cert-manager ships in
@@ -115,6 +116,19 @@ type Production struct {
 	// init.yaml); it becomes the skalid ingress host and certificate
 	// subject.
 	IngressHost string
+	// RegistryDomain is the public managed-registry domain
+	// (endpoints.registry in init.yaml): the registry ingress host, its
+	// certificate subject, and the host of the token realm the registry
+	// advertises in its 401 challenge.
+	RegistryDomain string
+	// TokenKeyPEM and TokenCertPEM are the registry token signing keypair
+	// the installer generated (or reused) at init: skalid signs with the
+	// key, the registry trusts the certificate offline.
+	TokenKeyPEM  string
+	TokenCertPEM string
+	// NodePullSecret is the shared credential containerd presents from
+	// registries.yaml; skalid grants it pull-only tokens.
+	NodePullSecret string
 	// ACMEEmail registers the ACME account behind the skali cluster
 	// issuer.
 	ACMEEmail string
@@ -147,6 +161,12 @@ func (p *Production) validate() error {
 	switch {
 	case p.IngressHost == "":
 		return errors.New("bundle: production profile: ingress host is required")
+	case p.RegistryDomain == "":
+		return errors.New("bundle: production profile: registry domain is required")
+	case p.TokenKeyPEM == "" || p.TokenCertPEM == "":
+		return errors.New("bundle: production profile: registry token keypair is required")
+	case p.NodePullSecret == "":
+		return errors.New("bundle: production profile: node pull secret is required")
 	case p.ACMEEmail == "":
 		return errors.New("bundle: production profile: acme email is required")
 	case len(p.Capabilities) == 0:
@@ -380,6 +400,11 @@ func recordYAML(profile Profile) string {
 func registryYAML(profile Profile) string {
 	storage := "5Gi"
 	nodeSelector := ""
+	authConfig := ""
+	tokenPrefix := ""
+	ingressSuffix := ""
+	certMount := ""
+	certVolume := ""
 	if production := profile.Production; production != nil {
 		storage = production.RegistryStorage
 		// Pin the single registry instance to a registry-capable node; the
@@ -387,8 +412,22 @@ func registryYAML(profile Profile) string {
 		// volume agree on the node.
 		nodeSelector = "\n      nodeSelector:\n        " +
 			layout.CapabilityLabel(layout.CapabilityRegistry) + `: "true"`
+		// Production requires the registry token protocol: the 401
+		// challenge points clients at the token realm on the registry
+		// domain, and the registry verifies minted tokens offline against
+		// the signing certificate.
+		authConfig = "\n    auth:\n      token:\n        realm: https://" +
+			production.RegistryDomain + "/token" +
+			"\n        service: " + registrytoken.Service +
+			"\n        issuer: " + registrytoken.Issuer +
+			"\n        rootcertbundle: /etc/skali/registry-token/cert.pem"
+		certMount = "\n            - name: token-cert\n              mountPath: /etc/skali/registry-token"
+		certVolume = "\n        - name: token-cert\n          secret:\n            secretName: skali-registry-token" +
+			"\n            items:\n              - key: cert.pem\n                path: cert.pem"
+		tokenPrefix = registryTokenSecretYAML(production)
+		ingressSuffix = registryIngressYAML(production)
 	}
-	return fmt.Sprintf(`apiVersion: v1
+	return tokenPrefix + fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata:
   name: skali-registry-config
@@ -402,7 +441,7 @@ data:
       delete:
         enabled: true
     http:
-      addr: :5000
+      addr: :5000%[6]s
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -441,14 +480,14 @@ spec:
             - name: data
               mountPath: /var/lib/registry
             - name: config
-              mountPath: /etc/docker/registry
+              mountPath: /etc/docker/registry%[7]s
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: skali-registry-data
         - name: config
           configMap:
-            name: skali-registry-config
+            name: skali-registry-config%[8]s
 ---
 apiVersion: v1
 kind: Service
@@ -463,7 +502,70 @@ spec:
     - port: 5000
       targetPort: 5000
       nodePort: %[3]d
-`, Namespace, RegistryImage, RegistryNodePort, storage, nodeSelector)
+`, Namespace, RegistryImage, RegistryNodePort, storage, nodeSelector,
+		authConfig, certMount, certVolume) + ingressSuffix
+}
+
+// registryTokenSecretYAML renders the token trust material: skalid reads
+// the signing key and the node pull secret, the registry mounts only the
+// certificate. It precedes the registry Deployment in the stage so the pod
+// never waits on a missing mount.
+func registryTokenSecretYAML(production *Production) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: skali-registry-token
+  namespace: %[1]s
+type: Opaque
+data:
+  key.pem: %[2]s
+  cert.pem: %[3]s
+  node-secret: %[4]s
+---
+`, Namespace,
+		base64.StdEncoding.EncodeToString([]byte(production.TokenKeyPEM)),
+		base64.StdEncoding.EncodeToString([]byte(production.TokenCertPEM)),
+		base64.StdEncoding.EncodeToString([]byte(production.NodePullSecret)))
+}
+
+// registryIngressYAML publishes the registry on its own domain. The /token
+// path routes to skalid (the realm must be reachable by exactly the
+// clients that can reach the registry); Traefik matches the longer path
+// first.
+func registryIngressYAML(production *Production) string {
+	return fmt.Sprintf(`---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: skali-registry
+  namespace: %[1]s
+  annotations:
+    cert-manager.io/cluster-issuer: %[2]s
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - %[3]s
+      secretName: skali-registry-tls
+  rules:
+    - host: %[3]s
+      http:
+        paths:
+          - path: /token
+            pathType: Prefix
+            backend:
+              service:
+                name: skalid
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: skali-registry
+                port:
+                  number: 5000
+`, Namespace, IssuerName, production.RegistryDomain)
 }
 
 func skalidYAML(profile Profile) string {
@@ -477,9 +579,13 @@ func skalidYAML(profile Profile) string {
 	ingressHost := "skali.localhost"
 	if production := profile.Production; production != nil {
 		// Local dev omits the env and rides the config default; production
-		// states the installation's capability union explicitly.
+		// states the installation's capability union explicitly. The token
+		// signing key and node pull secret ride the same production block:
+		// with them set, skalid serves the registry token realm.
 		capabilitiesEnv = "\n            - name: SKALI_CAPABILITIES\n              value: " +
-			strings.Join(production.Capabilities, ";")
+			strings.Join(production.Capabilities, ";") +
+			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
+			"\n            - name: SKALI_REGISTRY_NODE_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: node-secret"
 		ingressAnnotations = "\n  annotations:\n    cert-manager.io/cluster-issuer: " + IssuerName
 		ingressTLS = "\n  tls:\n    - hosts:\n        - " + production.IngressHost +
 			"\n      secretName: skalid-tls"

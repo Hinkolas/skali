@@ -12,6 +12,7 @@ import (
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/registrytoken"
 )
 
 // Host paths owned by k3s and its install script.
@@ -58,6 +59,11 @@ type k3sNode struct {
 	// Token is the resolved join token plaintext; written to K3sTokenPath,
 	// never passed through the environment.
 	Token string
+	// PullSecret is the cluster's shared registry pull credential, written
+	// into registries.yaml so containerd can earn pull tokens once the
+	// registry requires them. Servers generate it, agents receive it inside
+	// the composite join token; empty renders no credential.
+	PullSecret string
 }
 
 func (n k3sNode) role() string {
@@ -104,14 +110,31 @@ func k3sConfigYAML(node k3sNode) string {
 // fully at install time: the wildcard mirror enables Spegel, and the
 // managed-registry entry maps the constant internal host onto the
 // node-local NodePort so containerd resolves production artifact
-// references without DNS.
-func k3sRegistriesYAML() string {
+// references without DNS. The pull credential rides the configs section
+// under both the registry name and the endpoint host, because containerd
+// versions differ on which key credentials attach to.
+func k3sRegistriesYAML(pullSecret string) string {
+	configs := ""
+	if pullSecret != "" {
+		endpoint := fmt.Sprintf("127.0.0.1:%d", bundle.RegistryNodePort)
+		configs = fmt.Sprintf(`configs:
+  %q:
+    auth:
+      username: %s
+      password: %q
+  %q:
+    auth:
+      username: %s
+      password: %q
+`, endpoint, registrytoken.NodeUser, pullSecret,
+			bundle.RegistryInternalHost, registrytoken.NodeUser, pullSecret)
+	}
 	return fmt.Sprintf(`mirrors:
   "*":
   %q:
     endpoint:
       - "http://127.0.0.1:%d"
-`, bundle.RegistryInternalHost, bundle.RegistryNodePort)
+`, bundle.RegistryInternalHost, bundle.RegistryNodePort) + configs
 }
 
 // installK3s writes the k3s configuration and runs the vendored install
@@ -128,7 +151,7 @@ func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress 
 	if err := runner.WriteFile(ctx, K3sConfigPath, []byte(k3sConfigYAML(node)), 0o600); err != nil {
 		return fmt.Errorf("write k3s config: %w", err)
 	}
-	if err := runner.WriteFile(ctx, K3sRegistriesPath, []byte(k3sRegistriesYAML()), 0o600); err != nil {
+	if err := runner.WriteFile(ctx, K3sRegistriesPath, []byte(k3sRegistriesYAML(node.PullSecret)), 0o600); err != nil {
 		return fmt.Errorf("write k3s registries config: %w", err)
 	}
 	if role == layout.RoleAgent {

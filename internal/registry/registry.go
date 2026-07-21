@@ -1,10 +1,11 @@
-// Package registry is skalid's client of the managed OCI registry. Its one
-// R3 job is digest verification: an artifact only verifies after the
+// Package registry is skalid's client of the managed OCI registry. Its
+// core job is digest verification: an artifact only verifies after the
 // registry itself confirms the manifest is present, because client-reported
 // success is never trusted as deployment state. Repository layout helpers
 // pin the contract naming (release artifacts under skali/<project>/<app>,
-// imported upstream content under cache/<host>/<path>). Token minting,
-// retention, and garbage collection land in R4.
+// imported upstream content under cache/<host>/<path>). Against a
+// token-authenticated registry the client self-issues pull tokens through
+// TokenSource; retention and garbage collection are still to come.
 package registry
 
 import (
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
@@ -42,6 +44,11 @@ type Client struct {
 	// Insecure permits plain HTTP; the anonymous loopback-only local
 	// registry uses it.
 	Insecure bool
+	// TokenSource mints a registry token for one repository when the
+	// registry requires token auth. skalid holds the signing key, so it
+	// self-issues instead of round-tripping through the public realm. Nil
+	// keeps requests anonymous (the local registry).
+	TokenSource func(repository string, actions []string) (string, error)
 }
 
 func (c *Client) Disabled() bool { return c == nil || c.Host == "" }
@@ -67,7 +74,15 @@ func (c *Client) VerifyManifest(ctx context.Context, repository, digest string) 
 	if err != nil {
 		return fmt.Errorf("registry: parse %s@%s: %w", repository, digest, err)
 	}
-	descriptor, err := remote.Head(ref, remote.WithContext(ctx))
+	remoteOpts := []remote.Option{remote.WithContext(ctx)}
+	if c.TokenSource != nil {
+		token, err := c.TokenSource(repository, []string{"pull"})
+		if err != nil {
+			return fmt.Errorf("registry: mint pull token for %s: %w", repository, err)
+		}
+		remoteOpts = append(remoteOpts, remote.WithAuth(authn.FromConfig(authn.AuthConfig{RegistryToken: token})))
+	}
+	descriptor, err := remote.Head(ref, remoteOpts...)
 	if err != nil {
 		var terr *transport.Error
 		if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {

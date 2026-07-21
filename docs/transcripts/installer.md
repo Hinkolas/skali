@@ -45,10 +45,10 @@ derived topology
   database availability tier  single (1 database node)
   registry placement          cp-1 (installer-owned volume)
 
+  ok  Enable embedded registry mirror
   ok  Apply blessed operators (CNPG, Traefik, cert-manager)
   ok  Apply bootstrap database (CNPG, 1 instance, tier single)
   ok  Apply managed registry (single instance on cp-1)
-  ok  Enable embedded registry mirror
   ok  Apply skalid (wired to bootstrap credentials)
   ok  Write in-cluster installation record
   ok  Wait for skalid ready
@@ -66,6 +66,15 @@ Install logs: /var/lib/skali/logs/init-01J9X2.log
 
 `init` runs before `skalid` or its database exist, so its steps are logged
 locally, not in the product run journal.
+
+The managed registry requires token authentication from the start: `init`
+generates the token-signing keypair (the registry trusts the certificate,
+`skalid` holds the key and mints short-lived, repository-scoped tokens),
+and the registry publishes on its own domain with the token realm at
+`https://registry.example.com/token`. Point DNS for both domains at the
+cluster; nodes must be able to resolve the registry domain themselves,
+because containerd fetches pull tokens from that realm using the node
+credential the installer wrote into `/etc/rancher/k3s/registries.yaml`.
 
 ## 2. Non-interactive configuration
 
@@ -119,7 +128,15 @@ $ sudo skali-installer token
 join command for cluster "production" (token expires in 24h):
   sudo skali-installer join --server https://cp-1.internal:6443 \
     --token-file <file> --role agent --capabilities <list>
+
+join token (write it to <file> on the joining host, mode 0600):
+  skali1.eyJrM3MiOiJLMTAuLi4iLCJwdWxsIjoiLi4uIn0
 ```
+
+The printed token is composite: it bundles the k3s join token with the
+cluster's registry pull credential, so one paste enrolls the node for both.
+A raw k3s token still joins, but the node then pulls from the managed
+registry unauthenticated and fails once token auth challenges it.
 
 On each additional host (joining is initiated per host; the installer never
 stores SSH credentials or reaches into other machines):

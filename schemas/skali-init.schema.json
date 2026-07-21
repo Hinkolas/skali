@@ -32,12 +32,17 @@
     "endpoints": {
       "type": "object",
       "required": [
-        "api"
+        "api",
+        "registry"
       ],
       "properties": {
         "api": {
           "type": "string",
           "description": "Public api/ui domain, for example skali.example.com."
+        },
+        "registry": {
+          "type": "string",
+          "description": "Public managed-registry domain, for example registry.example.com."
         }
       },
       "additionalProperties": false

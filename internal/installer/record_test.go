@@ -95,10 +95,12 @@ func TestRecordCanonicalYAML(t *testing.T) {
 		Cluster:        "production",
 		Ownership:      OwnershipManaged,
 		Node:           NodeRecord{Name: "cp-1", Role: "server", Capabilities: []string{"application"}},
+		Endpoints:      &Endpoints{API: "skali.example.com", Registry: "registry.example.com"},
 		Versions:       Versions{Installer: "2.0.0", K3s: K3sVersion},
 	}
 	first, err := record.CanonicalYAML()
 	require.NoError(t, err)
+	require.Contains(t, first, "registry: registry.example.com")
 	require.NotContains(t, first, "createdAt")
 	require.NotContains(t, first, "updatedAt")
 	require.NotContains(t, first, "join",

@@ -88,7 +88,29 @@ func TestK3sRegistriesYAML(t *testing.T) {
   "registry.skali.internal":
     endpoint:
       - "http://127.0.0.1:30500"
-`, k3sRegistriesYAML())
+`, k3sRegistriesYAML(""))
+
+	// The pull credential attaches under both the endpoint host and the
+	// registry name; the rendered file must round-trip through the parser
+	// token and init read it back with.
+	withCredential := k3sRegistriesYAML("pull-secret-value")
+	require.Equal(t, `mirrors:
+  "*":
+  "registry.skali.internal":
+    endpoint:
+      - "http://127.0.0.1:30500"
+configs:
+  "127.0.0.1:30500":
+    auth:
+      username: skali-node
+      password: "pull-secret-value"
+  "registry.skali.internal":
+    auth:
+      username: skali-node
+      password: "pull-secret-value"
+`, withCredential)
+	require.Equal(t, "pull-secret-value", registriesPullSecret([]byte(withCredential)))
+	require.Empty(t, registriesPullSecret([]byte(k3sRegistriesYAML(""))))
 }
 
 func TestInstallK3sInvocation(t *testing.T) {

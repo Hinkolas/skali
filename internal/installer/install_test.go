@@ -59,17 +59,20 @@ func TestInstallFreshServer(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, record.InstallationID, loaded.InstallationID)
 
-	// The configs were written before the install script ran.
+	// The configs were written before the install script ran, and the
+	// first server minted the cluster's registry pull credential into
+	// registries.yaml.
 	writes := fake.Writes
 	require.Less(t, indexOf(writes, "write "+K3sConfigPath), indexOf(writes, "write "+RecordPath))
 	require.Contains(t, string(fake.FS[K3sRegistriesPath]), "registry.skali.internal")
+	require.NotEmpty(t, registriesPullSecret(fake.FS[K3sRegistriesPath]))
 }
 
 func TestInstallAgentJoin(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fake := linuxHost()
-	fake.FS["/root/token"] = []byte("K10abc::node:secret\n")
+	fake.FS["/root/token"] = []byte(encodeJoinToken("K10abc::node:secret", "pull-secret-value") + "\n")
 	joined := false
 	fake.Handlers["sh"] = func(host.Command) (host.Result, error) {
 		joined = true
@@ -97,8 +100,11 @@ func TestInstallAgentJoin(t *testing.T) {
 	require.Equal(t, "https://cp-1.internal:6443", record.Join.Server)
 	require.Nil(t, record.Endpoints, "agents never gather endpoints")
 
+	// The composite token splits: the k3s part lands in the token file,
+	// the pull credential in registries.yaml.
 	require.Equal(t, []byte("K10abc::node:secret\n"), fake.FS[K3sTokenPath])
 	require.Contains(t, string(fake.FS[K3sConfigPath]), "server: https://cp-1.internal:6443")
+	require.Equal(t, "pull-secret-value", registriesPullSecret(fake.FS[K3sRegistriesPath]))
 
 	loaded, err := LoadRecord(ctx, fake)
 	require.NoError(t, err)

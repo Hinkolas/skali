@@ -23,7 +23,9 @@ type JoinToken struct {
 
 // CreateJoinToken mints a time-limited agent join token on a server node
 // via `k3s token create`. Initialization is deliberately not required:
-// nodes join before init runs.
+// nodes join before init runs. The printed token is the composite form:
+// the k3s token plus the cluster's registry pull credential read back from
+// this server's registries.yaml, so one paste enrolls the node for both.
 func CreateJoinToken(ctx context.Context, runner host.Runner, record *Record) (*JoinToken, error) {
 	if record.Node.Role != layout.RoleServer {
 		return nil, fmt.Errorf("join tokens are created on a server node")
@@ -42,10 +44,14 @@ func CreateJoinToken(ctx context.Context, runner host.Runner, record *Record) (*
 	if token == "" {
 		return nil, fmt.Errorf("k3s token create produced no token")
 	}
+	pullSecret := ""
+	if registries, err := runner.ReadFile(ctx, K3sRegistriesPath); err == nil {
+		pullSecret = registriesPullSecret(registries)
+	}
 	return &JoinToken{
 		Cluster:   record.Cluster,
 		ServerURL: "https://" + net.JoinHostPort(serverJoinHost(ctx, runner, record.Node.Name), "6443"),
-		Token:     token,
+		Token:     encodeJoinToken(token, pullSecret),
 	}, nil
 }
 

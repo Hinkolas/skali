@@ -19,8 +19,33 @@ func newAuthCmd() *cobra.Command {
 		Use:   "auth",
 		Short: "Log in and out of a skali master",
 	}
-	cmd.AddCommand(newAuthLoginCmd(), newAuthLogoutCmd(), newAuthWhoamiCmd(), newAuthStatusCmd())
+	cmd.AddCommand(newAuthLoginCmd(), newAuthLogoutCmd(), newAuthWhoamiCmd(), newAuthStatusCmd(), newAuthTokenCmd())
 	return cmd
+}
+
+func newAuthTokenCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "token",
+		Short: "Print the stored session token (docker login password for the managed registry)",
+		Long: "Print the current context's session token to stdout, for example:\n\n" +
+			"  skali auth token | docker login registry.example.com -u you@example.com --password-stdin",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := cliconfig.Load()
+			if err != nil {
+				return err
+			}
+			name, context, err := cfg.Current()
+			if err != nil {
+				return err
+			}
+			if context.Token == "" {
+				return fmt.Errorf("not logged in on context %q; run `skali auth login` first", name)
+			}
+			fmt.Println(context.Token)
+			return nil
+		},
+	}
 }
 
 func newAuthLoginCmd() *cobra.Command {

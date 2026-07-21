@@ -102,6 +102,7 @@ func TestParseInitConfig(t *testing.T) {
 	t.Parallel()
 	config, err := ParseInitConfig([]byte(`endpoints:
   api: skali.example.com
+  registry: registry.example.com
 tls:
   issuerEmail: ops@example.com
 admin:
@@ -112,6 +113,7 @@ skalid:
 `))
 	require.NoError(t, err)
 	require.Equal(t, "skali.example.com", config.Endpoints.API)
+	require.Equal(t, "registry.example.com", config.Endpoints.Registry)
 	require.Equal(t, "ops@example.com", config.TLS.IssuerEmail)
 	require.Equal(t, "/root/skali-admin-password", config.Admin.PasswordFile)
 	require.Equal(t, "ghcr.io/hinkolas/skalid:v2.0.0", config.Skalid.Image)
@@ -120,7 +122,7 @@ skalid:
 func TestParseInitConfigRejections(t *testing.T) {
 	t.Parallel()
 	base := map[string]string{
-		"endpoints": "endpoints:\n  api: skali.example.com\n",
+		"endpoints": "endpoints:\n  api: skali.example.com\n  registry: registry.example.com\n",
 		"tls":       "tls:\n  issuerEmail: ops@example.com\n",
 		"admin":     "admin:\n  email: a@example.com\n  passwordFile: /root/pw\n",
 		"skalid":    "skalid:\n  image: skalid:dev\n",
@@ -148,6 +150,13 @@ func TestParseInitConfigRejections(t *testing.T) {
 		})
 	}
 
+	t.Run("missing endpoints.registry", func(t *testing.T) {
+		t.Parallel()
+		document := "endpoints:\n  api: skali.example.com\n" + base["tls"] + base["admin"] + base["skalid"]
+		_, err := ParseInitConfig([]byte(document))
+		require.ErrorContains(t, err, "endpoints.registry is required")
+	})
+
 	_, err := ParseInitConfig([]byte(build("") + "extra: field\n"))
 	require.ErrorContains(t, err, "field extra not found")
 }
@@ -165,4 +174,5 @@ func TestConfigSchemas(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(initSchema), InitSchemaID)
 	require.Contains(t, string(initSchema), "issuerEmail")
+	require.Contains(t, string(initSchema), "managed-registry domain")
 }

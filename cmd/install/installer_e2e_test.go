@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -205,6 +206,7 @@ func TestInstallerEndToEnd(t *testing.T) {
 	passwordFile := h.writeFixture("admin-password", "e2e-admin-password\n")
 	initConfig := h.writeFixture("init.yaml", fmt.Sprintf(`endpoints:
   api: skali.e2e.test
+  registry: registry.skali.e2e.test
 tls:
   issuerEmail: e2e@skali.e2e.test
   acmeServer: https://acme-staging-v02.api.letsencrypt.org/directory
@@ -219,6 +221,7 @@ skalid:
 		"--image-tar", "/tmp/skalid-dev.tar")
 	require.Equal(t, 0, code, initOut)
 	require.Contains(t, initOut, "Import skalid image skalid:dev")
+	require.Contains(t, initOut, "https://registry.skali.e2e.test")
 
 	// The control plane answers through the service proxy and the
 	// in-cluster record exists.
@@ -232,6 +235,79 @@ skalid:
 	require.Contains(t, statusOut, "Skali server")
 	require.Contains(t, statusOut, "database healthy")
 	require.Contains(t, statusOut, "skalid healthy")
+
+	// Registry token protocol phase, driven with curl against the NodePort
+	// and skalid's ClusterIP (both reachable from the node without DNS or
+	// TLS): anonymous requests are challenged, skalid-minted tokens are
+	// verified offline by the registry, and a token cannot push outside
+	// the repository it was granted.
+	challenge := h.vmOK("curl", "-si", "http://127.0.0.1:30500/v2/")
+	require.Contains(t, challenge, "401")
+	require.Contains(t, challenge, `realm="https://registry.skali.e2e.test/token"`)
+	require.Contains(t, challenge, `service="skali-registry"`)
+
+	skalidIP := strings.TrimSpace(h.vmOK("sudo", "k3s", "kubectl", "get", "svc",
+		"-n", "skali-system", "skalid", "-o", "jsonpath={.spec.clusterIP}"))
+	loginJSON := h.vmOK("curl", "-s", "-X", "POST",
+		"-H", "Content-Type: application/json",
+		"-d", `{"email":"admin@skali.e2e.test","password":"e2e-admin-password"}`,
+		"http://"+skalidIP+"/v1/auth/login")
+	var login struct {
+		Session struct {
+			Token string `json:"token"`
+		} `json:"session"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(loginJSON), &login), loginJSON)
+	require.NotEmpty(t, login.Session.Token, loginJSON)
+
+	mintUserToken := func(scope string) string {
+		mintJSON := h.vmOK("curl", "-s", "-u", "admin@skali.e2e.test:"+login.Session.Token,
+			"http://"+skalidIP+"/token?service=skali-registry&scope="+scope)
+		var minted struct {
+			Token string `json:"token"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(mintJSON), &minted), mintJSON)
+		require.NotEmpty(t, minted.Token, mintJSON)
+		return minted.Token
+	}
+	registryStatus := func(token, method, path string) string {
+		args := []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", method}
+		if token != "" {
+			args = append(args, "-H", "Authorization: Bearer "+token)
+		}
+		return h.vmOK(append(args, "http://127.0.0.1:30500"+path)...)
+	}
+
+	// The init transcript created no projects yet, so the granted
+	// repository rides the cache prefix every member may push to.
+	pushToken := mintUserToken("repository:cache/docker.io/library/alpine:push,pull")
+	require.Equal(t, "202", registryStatus(pushToken, "POST", "/v2/cache/docker.io/library/alpine/blobs/uploads/"),
+		"a skalid-minted token must clear the registry's offline verification")
+	require.Equal(t, "401", registryStatus(pushToken, "POST", "/v2/cache/docker.io/library/other/blobs/uploads/"),
+		"a token must not push outside its granted repository")
+	require.Equal(t, "401", registryStatus("", "POST", "/v2/cache/docker.io/library/alpine/blobs/uploads/"),
+		"anonymous pushes must be refused")
+
+	// The node credential from registries.yaml earns pull-only tokens.
+	registriesFile := h.vmOK("sudo", "cat", "/etc/rancher/k3s/registries.yaml")
+	nodeSecret := ""
+	for line := range strings.SplitSeq(registriesFile, "\n") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "password:") {
+			nodeSecret = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "password:")), `"`)
+			break
+		}
+	}
+	require.NotEmpty(t, nodeSecret, registriesFile)
+	nodeMintJSON := h.vmOK("curl", "-s", "-u", "skali-node:"+nodeSecret,
+		"http://"+skalidIP+"/token?service=skali-registry&scope=repository:cache/docker.io/library/alpine:push,pull")
+	var nodeMinted struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(nodeMintJSON), &nodeMinted), nodeMintJSON)
+	require.Equal(t, "401", registryStatus(nodeMinted.Token, "POST", "/v2/cache/docker.io/library/alpine/blobs/uploads/"),
+		"the node credential must never earn push access")
+	require.Equal(t, "404", registryStatus(nodeMinted.Token, "GET", "/v2/cache/docker.io/library/alpine/manifests/latest"),
+		"a pull-scoped node token must pass authorization and hit the absent manifest")
 
 	// Join phase: the agent VM enrolls through the explicit token/join
 	// flow, is asserted from the server side, then leaves again so the
@@ -282,6 +358,12 @@ skalid:
 	require.Contains(t, agentRecord, "role: agent")
 	require.Contains(t, agentRecord, "cluster: e2e")
 	require.Contains(t, agentRecord, "server: https://"+serverIP+":6443")
+
+	// The composite join token carried the cluster's registry pull
+	// credential into the agent's containerd config.
+	agentRegistries := h.vmOKOn(e2eAgentVM, "sudo", "cat", "/etc/rancher/k3s/registries.yaml")
+	require.Contains(t, agentRegistries, nodeSecret,
+		"the agent must receive the same pull credential the server minted")
 
 	// Cluster-side truth from the server: the node is Ready and carries
 	// exactly the labels the join stamped.

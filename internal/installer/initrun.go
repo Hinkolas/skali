@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/version"
 )
 
@@ -52,8 +53,9 @@ type InitOptions struct {
 
 // InitResult reports where the initialized installation answers.
 type InitResult struct {
-	APIURL  string
-	LogPath string
+	APIURL      string
+	RegistryURL string
+	LogPath     string
 }
 
 // Init initializes Skali on a joined cluster: it rebuilds the layout from
@@ -72,6 +74,9 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	}
 	if opts.Endpoints.API == "" {
 		return nil, errors.New("init requires the api/ui domain")
+	}
+	if opts.Endpoints.Registry == "" {
+		return nil, errors.New("init requires the registry domain")
 	}
 	if opts.TLS.IssuerEmail == "" {
 		return nil, errors.New("init requires the tls issuer email")
@@ -128,7 +133,28 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	log.line(fmt.Sprintf("derived topology: database tier %s (%d database nodes), registry on %s",
 		topology.DatabaseTier, topology.Capable[layout.CapabilityDatabase], registryNode))
 
+	// The mirror and the node pull credential are written at install time;
+	// init verifies rather than mutates, so no k3s restart ever interrupts
+	// the converge, and it verifies before the converge so a bad host file
+	// never leaves a half-applied bundle behind.
+	progress.Start("Enable embedded registry mirror")
+	registries, err := runner.ReadFile(ctx, K3sRegistriesPath)
+	if err != nil || !strings.Contains(string(registries), bundle.RegistryInternalHost) {
+		return fail(fmt.Errorf("%s is missing the %s mirror; re-run install",
+			K3sRegistriesPath, bundle.RegistryInternalHost))
+	}
+	pullSecret := registriesPullSecret(registries)
+	if pullSecret == "" {
+		return fail(fmt.Errorf("%s is missing the registry pull credential; re-run install",
+			K3sRegistriesPath))
+	}
+	progress.Skip("configured at install")
+
 	authSecret, err := ensureAuthSecret(ctx, client)
+	if err != nil {
+		return fail(err)
+	}
+	tokenKeyPEM, tokenCertPEM, err := ensureRegistryTokenKeypair(ctx, client)
 	if err != nil {
 		return fail(err)
 	}
@@ -136,7 +162,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	// The record published in-cluster carries the initialization inputs;
 	// mutate the in-memory record first so the canonical text, the bundle
 	// hash, and the eventual on-disk record all agree.
-	record.Endpoints = &Endpoints{API: opts.Endpoints.API}
+	record.Endpoints = &Endpoints{API: opts.Endpoints.API, Registry: opts.Endpoints.Registry}
 	record.TLS = &TLSConfig{IssuerEmail: opts.TLS.IssuerEmail, ACMEServer: opts.TLS.ACMEServer}
 	record.Versions.Bundle = version.Version
 	record.Versions.Installer = version.Version
@@ -152,6 +178,10 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
 			IngressHost:        opts.Endpoints.API,
+			RegistryDomain:     opts.Endpoints.Registry,
+			TokenKeyPEM:        tokenKeyPEM,
+			TokenCertPEM:       tokenCertPEM,
+			NodePullSecret:     pullSecret,
 			ACMEEmail:          opts.TLS.IssuerEmail,
 			ACMEServer:         opts.TLS.ACMEServer,
 			Capabilities:       layout.UnionCapabilities(live.Nodes),
@@ -165,17 +195,6 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if err := bundle.Converge(ctx, client, profile, progress); err != nil {
 		return fail(err)
 	}
-
-	// The mirror is written at install time (the registry host is a
-	// constant); init verifies rather than mutates, so no k3s restart ever
-	// interrupts the converge.
-	progress.Start("Enable embedded registry mirror")
-	registries, err := runner.ReadFile(ctx, K3sRegistriesPath)
-	if err != nil || !strings.Contains(string(registries), bundle.RegistryInternalHost) {
-		return fail(fmt.Errorf("%s is missing the %s mirror; re-run install",
-			K3sRegistriesPath, bundle.RegistryInternalHost))
-	}
-	progress.Skip("configured at install")
 
 	progress.Start("Wait for skalid ready")
 	if err := waitSkalidHealthy(ctx, client); err != nil {
@@ -204,7 +223,11 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if err := log.flush(ctx); err != nil {
 		return nil, err
 	}
-	return &InitResult{APIURL: "https://" + opts.Endpoints.API, LogPath: log.path}, nil
+	return &InitResult{
+		APIURL:      "https://" + opts.Endpoints.API,
+		RegistryURL: "https://" + opts.Endpoints.Registry,
+		LogPath:     log.path,
+	}, nil
 }
 
 // LayoutFromNodes rebuilds the installed layout from live node labels;
@@ -312,6 +335,26 @@ func ensureAuthSecret(ctx context.Context, client *kube.Client) (string, error) 
 		return "", fmt.Errorf("generate auth secret: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// ensureRegistryTokenKeypair reuses the registry token signing keypair
+// from the cluster so repeat init stays convergent and rotation stays an
+// explicit later operation; a fresh cluster gets a new keypair.
+func ensureRegistryTokenKeypair(ctx context.Context, client *kube.Client) (keyPEM, certPEM string, err error) {
+	secret, err := client.Clientset.CoreV1().Secrets(bundle.Namespace).Get(ctx, "skali-registry-token", metav1.GetOptions{})
+	if err == nil {
+		key, cert := secret.Data["key.pem"], secret.Data["cert.pem"]
+		if len(key) > 0 && len(cert) > 0 {
+			return string(key), string(cert), nil
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return "", "", fmt.Errorf("read registry token secret: %w", err)
+	}
+	keyBytes, certBytes, err := registrytoken.GenerateSigningKeypair()
+	if err != nil {
+		return "", "", err
+	}
+	return string(keyBytes), string(certBytes), nil
 }
 
 // waitSkalidHealthy proves skalid up through the service proxy: no DNS,

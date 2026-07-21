@@ -52,6 +52,15 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 	if err != nil {
 		return err
 	}
+	registryDomain := ""
+	if apiDomain != "" {
+		defaultRegistry := registryDomainDefault(apiDomain)
+		registryDomain, err = cliprompt.LineDefault(reader,
+			"  registry domain ["+defaultRegistry+"]: ", defaultRegistry)
+		if err != nil {
+			return err
+		}
+	}
 	issuerEmail, err := cliprompt.Line(reader, "  tls issuer email: ")
 	if err != nil {
 		return err
@@ -63,7 +72,7 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 		Capabilities: capabilities,
 	}
 	if apiDomain != "" {
-		opts.Endpoints = &installer.Endpoints{API: apiDomain}
+		opts.Endpoints = &installer.Endpoints{API: apiDomain, Registry: registryDomain}
 	}
 	if issuerEmail != "" {
 		opts.TLS = &installer.TLSConfig{IssuerEmail: issuerEmail}
@@ -199,6 +208,14 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 			return err
 		}
 	}
+	if opts.Endpoints.Registry == "" {
+		defaultRegistry := registryDomainDefault(opts.Endpoints.API)
+		opts.Endpoints.Registry, err = cliprompt.LineDefault(reader,
+			"  registry domain ["+defaultRegistry+"]: ", defaultRegistry)
+		if err != nil {
+			return err
+		}
+	}
 	if opts.TLS.IssuerEmail == "" {
 		opts.TLS.IssuerEmail, err = cliprompt.Line(reader, "  tls issuer email: ")
 		if err != nil {
@@ -279,7 +296,21 @@ func printInitReady(out *os.File, result *installer.InitResult) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Skali is ready:")
 	fmt.Fprintf(out, "  %-32s api/ui\n", result.APIURL)
-	fmt.Fprintln(out, "  managed registry: in-cluster only (public endpoint arrives with registry authentication)")
+	fmt.Fprintf(out, "  %-32s managed registry\n", result.RegistryURL)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Install logs:", result.LogPath)
+}
+
+// registryDomainDefault derives the registry domain suggestion from the
+// api/ui domain by replacing its first label: skali.example.com suggests
+// registry.example.com. A domain too short to strip is prefixed whole.
+func registryDomainDefault(apiDomain string) string {
+	if apiDomain == "" {
+		return ""
+	}
+	labels := strings.Split(apiDomain, ".")
+	if len(labels) >= 3 {
+		return "registry." + strings.Join(labels[1:], ".")
+	}
+	return "registry." + apiDomain
 }

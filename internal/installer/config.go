@@ -63,11 +63,10 @@ type InitConfig struct {
 	Skalid    SkalidConfig    `yaml:"skalid" json:"skalid"`
 }
 
-// EndpointsConfig declares the public domains. The registry domain arrives
-// with the public-registry slice; the managed registry stays in-cluster
-// only until then.
+// EndpointsConfig declares the public domains.
 type EndpointsConfig struct {
-	API string `yaml:"api" json:"api" jsonschema:"Public api/ui domain, for example skali.example.com."`
+	API      string `yaml:"api" json:"api" jsonschema:"Public api/ui domain, for example skali.example.com."`
+	Registry string `yaml:"registry" json:"registry" jsonschema:"Public managed-registry domain, for example registry.example.com."`
 }
 
 // TLSInitConfig parameterizes the ACME cluster issuer.
@@ -176,6 +175,9 @@ func ParseInitConfig(data []byte) (*InitConfig, error) {
 	}
 	if config.Endpoints.API == "" {
 		return nil, errors.New("init config: endpoints.api is required")
+	}
+	if config.Endpoints.Registry == "" {
+		return nil, errors.New("init config: endpoints.registry is required")
 	}
 	if config.TLS.IssuerEmail == "" {
 		return nil, errors.New("init config: tls.issuerEmail is required")

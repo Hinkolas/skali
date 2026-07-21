@@ -87,7 +87,7 @@ func newInitCmd() *cobra.Command {
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
 			opts := installer.InitOptions{
-				Endpoints:     installer.Endpoints{API: config.Endpoints.API},
+				Endpoints:     installer.Endpoints{API: config.Endpoints.API, Registry: config.Endpoints.Registry},
 				TLS:           installer.TLSConfig{IssuerEmail: config.TLS.IssuerEmail, ACMEServer: config.TLS.ACMEServer},
 				SkalidImage:   config.Skalid.Image,
 				SkalidImageID: config.Skalid.ImageID,

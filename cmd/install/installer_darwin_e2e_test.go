@@ -129,6 +129,7 @@ vm:
 	initConfig := filepath.Join(t.TempDir(), "init.yaml")
 	require.NoError(t, os.WriteFile(initConfig, fmt.Appendf(nil, `endpoints:
   api: skali.e2e.test
+  registry: registry.skali.e2e.test
 tls:
   issuerEmail: e2e@skali.e2e.test
   acmeServer: https://acme-staging-v02.api.letsencrypt.org/directory

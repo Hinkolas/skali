@@ -55,11 +55,12 @@ type NodeRecord struct {
 	Capabilities []string `yaml:"capabilities"`
 }
 
-// Endpoints are the public domains of the installation. The registry
-// endpoint arrives with the public-registry slice; until then the managed
-// registry is reachable in-cluster only.
+// Endpoints are the public domains of the installation.
 type Endpoints struct {
 	API string `yaml:"api"`
+	// Registry is the public managed-registry domain; empty on records
+	// written before initialization gathered it.
+	Registry string `yaml:"registry,omitempty"`
 }
 
 // TLSConfig parameterizes certificate issuance.

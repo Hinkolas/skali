@@ -124,16 +124,34 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 		// Resolve the token before any mutation so a bad path fails with
 		// the host untouched.
 		node.ServerURL = opts.Join.Server
-		node.Token = opts.Join.Token
-		if node.Token == "" {
+		token := opts.Join.Token
+		if token == "" {
 			data, err := runner.ReadFile(ctx, opts.Join.TokenFile)
 			if err != nil {
 				return nil, fmt.Errorf("read join token file %s: %w", opts.Join.TokenFile, err)
 			}
-			node.Token = strings.TrimSpace(string(data))
-			if node.Token == "" {
+			token = strings.TrimSpace(string(data))
+			if token == "" {
 				return nil, fmt.Errorf("join token file %s is empty", opts.Join.TokenFile)
 			}
+		}
+		node.Token, node.PullSecret, err = decodeJoinToken(token)
+		if err != nil {
+			return nil, err
+		}
+		if node.PullSecret == "" {
+			// Tolerated so a manually minted k3s token still joins, but the
+			// gap is put on the record of the run.
+			progress.Start("Store registry pull credential")
+			progress.Skip("the join token carries none; pulls from the managed registry will not authenticate")
+		}
+	} else {
+		// The first server mints the cluster's shared registry pull
+		// credential; `token` hands it to every joining node and init
+		// copies it into the cluster for skalid to honor.
+		node.PullSecret, err = newPullSecret()
+		if err != nil {
+			return nil, err
 		}
 	}
 

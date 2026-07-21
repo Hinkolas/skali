@@ -21,25 +21,35 @@ func tokenServerRecord() *Record {
 
 func TestCreateJoinToken(t *testing.T) {
 	t.Parallel()
-	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
-		"k3s": func(cmd host.Command) (host.Result, error) {
-			switch cmd.Args[0] {
-			case "token":
-				require.Equal(t, []string{"token", "create", "--ttl", JoinTokenTTL}, cmd.Args)
-				return host.Result{Stdout: "K10abc::node:secret\n"}, nil
-			case "kubectl":
-				return host.Result{Stdout: `{"status":{"addresses":[
+	fake := &host.Fake{
+		FS: map[string][]byte{
+			K3sRegistriesPath: []byte(k3sRegistriesYAML("pull-secret-value")),
+		},
+		Handlers: map[string]func(host.Command) (host.Result, error){
+			"k3s": func(cmd host.Command) (host.Result, error) {
+				switch cmd.Args[0] {
+				case "token":
+					require.Equal(t, []string{"token", "create", "--ttl", JoinTokenTTL}, cmd.Args)
+					return host.Result{Stdout: "K10abc::node:secret\n"}, nil
+				case "kubectl":
+					return host.Result{Stdout: `{"status":{"addresses":[
 					{"type":"InternalIP","address":"10.0.0.5"},
 					{"type":"Hostname","address":"cp-1"}]}}`}, nil
-			}
-			return host.Result{ExitCode: 1}, nil
+				}
+				return host.Result{ExitCode: 1}, nil
+			},
 		},
-	}}
+	}
 	token, err := CreateJoinToken(context.Background(), fake, tokenServerRecord())
 	require.NoError(t, err)
 	require.Equal(t, "e2e", token.Cluster)
 	require.Equal(t, "https://10.0.0.5:6443", token.ServerURL)
-	require.Equal(t, "K10abc::node:secret", token.Token)
+
+	// The printed token is the composite form carrying both credentials.
+	k3sToken, pullSecret, err := decodeJoinToken(token.Token)
+	require.NoError(t, err)
+	require.Equal(t, "K10abc::node:secret", k3sToken)
+	require.Equal(t, "pull-secret-value", pullSecret)
 }
 
 func TestCreateJoinTokenHostnameFallback(t *testing.T) {
@@ -56,8 +66,11 @@ func TestCreateJoinTokenHostnameFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://cp-1:6443", token.ServerURL,
 		"a failed address lookup falls back to the node name")
-	require.Equal(t, "K10abc::node:secret", token.Token,
+	k3sToken, pullSecret, err := decodeJoinToken(token.Token)
+	require.NoError(t, err)
+	require.Equal(t, "K10abc::node:secret", k3sToken,
 		"log preamble ahead of the token is tolerated")
+	require.Empty(t, pullSecret, "no registries.yaml means no pull credential")
 }
 
 func TestCreateJoinTokenFailure(t *testing.T) {
