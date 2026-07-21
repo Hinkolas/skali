@@ -5,13 +5,19 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
+
+// releaseVersionPattern matches release-shaped installer versions (vX.Y.Z,
+// no prerelease or dev suffix); only those have a published skalid image.
+var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
 // runInteractiveFreshFlow drives the transcript's fresh single-node
 // conversation: role and capability prompts, the api/ui domain and TLS
@@ -21,6 +27,9 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 	fmt.Fprintln(out, "This host is not part of a Skali installation. Install one?")
 	fmt.Fprintln(out)
 
+	if err := runDarwinVMPrompts(ctx, out, reader); err != nil {
+		return err
+	}
 	role, err := cliprompt.Select(reader, out, "  role: ",
 		[]string{"server (creates or extends a cluster)", "agent (joins an existing cluster)"}, 0)
 	if err != nil {
@@ -63,12 +72,18 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
 	opts.Progress = progress
+	if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
+		progress.Abort()
+		return err
+	}
 	record, err := installer.Install(ctx, runner(), opts)
 	if err != nil {
 		progress.Abort()
 		return err
 	}
+	warnings := finishDarwinInstall(ctx, progress)
 	progress.Done("")
+	printWarnings(out, warnings)
 
 	fmt.Fprintln(out)
 	if !cliprompt.ConfirmDefaultYes(reader, "This is the only node so far. Initialize Skali now? [Y/n] ") {
@@ -112,18 +127,27 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
-	_, err = installer.Install(ctx, runner(), installer.InstallOptions{
+	opts := installer.InstallOptions{
 		Cluster:      cluster,
 		Role:         layout.RoleAgent,
 		Capabilities: capabilities,
 		Join:         join,
 		Progress:     progress,
-	})
+	}
+	// On darwin this also reads a typed token file path on the Mac side;
+	// the engine would look for it inside the VM.
+	if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
+		progress.Abort()
+		return err
+	}
+	_, err = installer.Install(ctx, runner(), opts)
 	if err != nil {
 		progress.Abort()
 		return err
 	}
+	warnings := finishDarwinInstall(ctx, progress)
 	progress.Done("")
+	printWarnings(out, warnings)
 
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "This node has joined cluster %q. Run skali-installer init on a server "+
@@ -181,7 +205,18 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 			return err
 		}
 	}
-	opts.SkalidImage, err = cliprompt.Line(reader, "  skalid image (no published bootstrap images yet): ")
+	switch {
+	case imageTarFlag != "":
+		// A staged tar names the image itself; no prompt.
+	case releaseVersionPattern.MatchString(versionpkg.Version):
+		// A released installer has a published skalid image of the same
+		// version; the operator can still type any other reference.
+		defaultImage := "ghcr.io/hinkolas/skalid:" + versionpkg.Version
+		opts.SkalidImage, err = cliprompt.LineDefault(reader,
+			"  skalid image ["+defaultImage+"]: ", defaultImage)
+	default:
+		opts.SkalidImage, err = cliprompt.Line(reader, "  skalid image (dev build, no published default): ")
+	}
 	if err != nil {
 		return err
 	}
@@ -189,6 +224,13 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
 	opts.Progress = progress
+	if imageTarFlag != "" {
+		opts.SkalidImage, opts.SkalidImageID, err = stageSkalidImage(ctx, runner(), imageTarFlag, progress)
+		if err != nil {
+			progress.Abort()
+			return err
+		}
+	}
 	// The engine settles every running task before it asks for the admin
 	// account, so prompting here never interleaves with the task printer.
 	opts.Admin = func(ctx context.Context) (string, string, error) {

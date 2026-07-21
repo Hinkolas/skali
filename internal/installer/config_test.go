@@ -38,6 +38,20 @@ join:
 	pinned, err := ParseNodeConfig([]byte("role: server\ncapabilities: [edge]\nnodeIP: 192.168.64.5\n"))
 	require.NoError(t, err)
 	require.Equal(t, "192.168.64.5", pinned.NodeIP)
+
+	darwin, err := ParseNodeConfig([]byte(`role: server
+capabilities: [application, database]
+vm:
+  name: skali-e2e-darwin
+  network: user-v2
+  cpus: 2
+  memory: 3GiB
+  disk: 15GiB
+`))
+	require.NoError(t, err)
+	require.Equal(t, &VMConfig{
+		Name: "skali-e2e-darwin", Network: "user-v2", CPUs: 2, Memory: "3GiB", Disk: "15GiB",
+	}, darwin.VM)
 }
 
 func TestParseNodeConfigRejections(t *testing.T) {
@@ -63,6 +77,16 @@ func TestParseNodeConfigRejections(t *testing.T) {
 		"bad node ip": {"role: server\ncapabilities: [edge]\nnodeIP: not-an-ip\n",
 			"nodeIP \"not-an-ip\" is not a valid IP address"},
 		"multiple documents": {"role: server\ncapabilities: [edge]\n---\nrole: agent\ncapabilities: [edge]\n", "multiple YAML documents"},
+		"bad vm network": {"role: server\ncapabilities: [edge]\nvm:\n  network: nat\n",
+			"vm.network must be bridged, shared, or user-v2, got \"nat\""},
+		"bad vm cpus": {"role: server\ncapabilities: [edge]\nvm:\n  cpus: -2\n",
+			"vm.cpus must be a positive count"},
+		"bad vm memory": {"role: server\ncapabilities: [edge]\nvm:\n  memory: 12GB\n",
+			"vm.memory \"12GB\" is not a size like 12GiB"},
+		"bad vm disk": {"role: server\ncapabilities: [edge]\nvm:\n  disk: lots\n",
+			"vm.disk \"lots\" is not a size like 100GiB"},
+		"bad vm name": {"role: server\ncapabilities: [edge]\nvm:\n  name: \"-oops\"\n",
+			"vm.name \"-oops\" is not a valid Lima instance name"},
 	}
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -135,6 +159,7 @@ func TestConfigSchemas(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(node), NodeSchemaID)
 	require.Contains(t, string(node), `"server"`)
+	require.Contains(t, string(node), `"user-v2"`)
 
 	initSchema, err := InitConfigJSONSchema()
 	require.NoError(t, err)

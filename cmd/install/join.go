@@ -33,21 +33,37 @@ func newJoinCmd() *cobra.Command {
 				return fmt.Errorf("join requires --server, --token-file, and --capabilities")
 			}
 
+			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, ""); err != nil {
+				return err
+			}
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
-			_, err := installer.Install(ctx, runner(), installer.InstallOptions{
+			// On a Mac without a VM, join creates one with the fleet
+			// defaults; sizing overrides go through install --config.
+			if err := ensureDarwinVM(ctx, progress, nil); err != nil {
+				progress.Abort()
+				return err
+			}
+			opts := installer.InstallOptions{
 				Cluster:      cluster,
 				Role:         layout.RoleAgent,
 				Capabilities: capabilities,
 				Join:         &installer.JoinOptions{Server: server, TokenFile: tokenFile},
 				NodeIP:       nodeIP,
 				Progress:     progress,
-			})
+			}
+			if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
+				progress.Abort()
+				return err
+			}
+			_, err := installer.Install(ctx, runner(), opts)
 			if err != nil {
 				progress.Abort()
 				return err
 			}
+			warnings := finishDarwinInstall(ctx, progress)
 			progress.Done("")
+			printWarnings(out, warnings)
 			return nil
 		},
 	}

@@ -278,3 +278,114 @@ Removing the Skali bundle (`[2]`) requires typing the cluster name and lists
 what is destroyed: every project namespace, database, bucket, and the
 registry contents. Destroying a whole cluster is per-host by design; there is
 no single command that reaches into other machines.
+
+## 9. macOS host (Lima VM)
+
+Kubernetes nodes are Linux-only, so on a Mac the installer manages one
+headless Linux VM via Lima and installs the node inside it. The installer
+itself runs rootless on the Mac; privileged work happens inside the VM. The
+installation record and all state live in the VM, which is why a stopped VM
+is started before any question is answered.
+
+```console
+$ skali-installer
+skali-installer 2.0.0 (k3s v1.33.3+k3s1 pinned)
+
+host minis-01: fresh
+  os      macOS (darwin/arm64)
+  vm      none (installing creates a Linux VM via Lima)
+  k3s     not installed
+  record  none
+
+This host is not part of a Skali installation. Install one?
+
+  vm network (bridged, shared, user-v2) [bridged]:
+  vm cpus [9]:
+  vm memory [12GiB]:
+  vm disk [100GiB]:
+
+  ok  Create VM skali (bridged, 9 cpus, 12GiB memory, 100GiB disk)
+
+  role                  [1] server  [2] agent          : 2
+  cluster name          [production]                   :
+  capabilities          application, database          : application, database
+  server url            https://cp-1.internal:6443     : https://192.168.1.10:6443
+  join token file path  (empty to paste the token)     :
+  join token            (pasted, not echoed)           :
+
+  ok  Install k3s v1.33.3+k3s1 (agent)
+  ok  Join cluster "production"
+  ok  Stamp capability labels on node minis-01
+  ok  Write /var/lib/skali/installation.yaml
+  ok  Install login LaunchAgent
+
+This node has joined cluster "production". Run skali-installer init on a
+server once every planned node has joined.
+```
+
+The guest hostname is derived from the Mac's hostname, so a fleet of Macs
+yields distinct node names. The bridged network gives the VM its own LAN
+address; reserve it in the router's DHCP so the advertised node address
+stays stable. The default sizing gives the VM most of the machine (all
+cores minus one, memory minus 4GiB); a dedicated fleet Mac accepts the
+defaults.
+
+Bridged and shared networks need the one-time root-owned socket_vmnet
+setup. The installer never installs root components on the Mac; it checks
+and instructs instead:
+
+```console
+$ skali-installer install --config node.yaml
+error: the Lima network "bridged" is not configured in /Users/admin/.lima/_config/networks.yaml
+complete the one time socket_vmnet setup, then run skali-installer again:
+  1. install socket_vmnet root owned (see https://lima-vm.io/docs/config/network/):
+       curl -OSL https://github.com/lima-vm/socket_vmnet/releases/download/v1.2.2/socket_vmnet-1.2.2-$(uname -m).tar.gz
+       sudo tar Cxzvf / socket_vmnet-1.2.2-$(uname -m).tar.gz opt/socket_vmnet
+  2. allow Lima to launch it:
+       limactl sudoers | sudo tee /etc/sudoers.d/lima
+```
+
+Non-interactive installs describe the VM in the node configuration; every
+field is optional:
+
+```yaml
+# node.yaml (macOS)
+role: server
+capabilities: [application, database, object-storage, registry, edge]
+vm:
+  network: bridged
+  cpus: 9
+  memory: 12GiB
+  disk: 100GiB
+```
+
+The login LaunchAgent starts the VM at login; the installer warns when
+macOS auto login is disabled, because a headless Mac then stays down after
+a reboot until someone logs in. Repeat runs decorate the status with the
+VM:
+
+```console
+$ skali-installer status
+skali-installer 2.0.0 (k3s v1.33.3+k3s1 pinned)
+
+host minis-01: Skali agent (cluster "production")
+  vm         skali (Lima, network bridged)
+  k3s        v1.33.3+k3s1 (current)
+  ...
+```
+
+Node-scope uninstall removes the whole VM: k3s, the record, and all state
+go with it, and the LaunchAgent is unloaded.
+
+```console
+$ skali-installer uninstall --scope node --confirm production
+...
+  ok  Stop VM skali
+  ok  Delete VM skali
+  ok  Remove login LaunchAgent
+
+This Mac is fresh again.
+```
+
+Linux hosts are unaffected by all of this: they stay native, and a `vm`
+block in their node configuration is refused.

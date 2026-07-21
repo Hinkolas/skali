@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -31,12 +32,26 @@ type NodeConfig struct {
 	NodeIP string `yaml:"nodeIP,omitempty" json:"nodeIP,omitempty" jsonschema:"Optional IP address this node advertises inside the cluster; set it on multi-homed hosts."`
 	// Join enrolls this host into an existing cluster as an agent.
 	Join *JoinConfig `yaml:"join,omitempty" json:"join,omitempty" jsonschema:"Join an existing cluster instead of creating one."`
+	// VM shapes the Lima VM that hosts this node on a macOS machine.
+	// Linux installs refuse it.
+	VM *VMConfig `yaml:"vm,omitempty" json:"vm,omitempty" jsonschema:"macOS only: the Lima VM hosting this node."`
 }
 
 // JoinConfig points a joining host at an existing server.
 type JoinConfig struct {
 	Server    string `yaml:"server" json:"server" jsonschema:"URL of an existing K3s server, for example https://cp-1.internal:6443."`
 	TokenFile string `yaml:"tokenFile" json:"tokenFile" jsonschema:"Path to a file holding the join token."`
+}
+
+// VMConfig shapes the Lima VM that hosts a node on macOS, where Kubernetes
+// nodes are Linux-only. Every field is optional; the defaults size the VM
+// for a dedicated fleet Mac.
+type VMConfig struct {
+	Name    string `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"Lima instance name. Defaults to skali."`
+	Network string `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"VM network mode: bridged, shared, or user-v2. Defaults to bridged."`
+	CPUs    int    `yaml:"cpus,omitempty" json:"cpus,omitempty" jsonschema:"CPU cores allocated to the VM. Defaults to all host cores minus one."`
+	Memory  string `yaml:"memory,omitempty" json:"memory,omitempty" jsonschema:"VM memory such as 12GiB. Defaults to host memory minus 4GiB."`
+	Disk    string `yaml:"disk,omitempty" json:"disk,omitempty" jsonschema:"VM disk size such as 100GiB. Defaults to 100GiB."`
 }
 
 // InitConfig is the cluster initialization configuration (init.yaml)
@@ -117,7 +132,40 @@ func ParseNodeConfig(data []byte) (*NodeConfig, error) {
 			return nil, errors.New("node config: join.tokenFile is required")
 		}
 	}
+	if config.VM != nil {
+		if err := config.VM.Validate(); err != nil {
+			return nil, fmt.Errorf("node config: %w", err)
+		}
+	}
 	return &config, nil
+}
+
+var (
+	vmSizePattern = regexp.MustCompile(`^[1-9][0-9]*(GiB|MiB)$`)
+	vmNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+)
+
+// Validate checks shape only; whether a vm block is allowed at all is a
+// platform decision the command layer makes.
+func (vm *VMConfig) Validate() error {
+	switch vm.Network {
+	case "", "bridged", "shared", "user-v2":
+	default:
+		return fmt.Errorf("vm.network must be bridged, shared, or user-v2, got %q", vm.Network)
+	}
+	if vm.CPUs < 0 {
+		return errors.New("vm.cpus must be a positive count")
+	}
+	if vm.Memory != "" && !vmSizePattern.MatchString(vm.Memory) {
+		return fmt.Errorf("vm.memory %q is not a size like 12GiB", vm.Memory)
+	}
+	if vm.Disk != "" && !vmSizePattern.MatchString(vm.Disk) {
+		return fmt.Errorf("vm.disk %q is not a size like 100GiB", vm.Disk)
+	}
+	if vm.Name != "" && !vmNamePattern.MatchString(vm.Name) {
+		return fmt.Errorf("vm.name %q is not a valid Lima instance name", vm.Name)
+	}
+	return nil
 }
 
 // ParseInitConfig strictly parses one init.yaml document.

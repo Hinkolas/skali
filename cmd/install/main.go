@@ -16,6 +16,7 @@ import (
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/installer/host"
+	"github.com/Hinkolas/skali/internal/installer/limavm"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -31,9 +32,14 @@ func main() {
 		},
 	}
 
+	root.PersistentFlags().StringVar(&vmFlag, "vm", limavm.DefaultInstance,
+		"name of the Lima VM hosting the skali node (macOS only)")
+	root.PersistentFlags().StringVar(&imageTarFlag, "image-tar", "",
+		"docker-save tar of the skalid image, imported into the node during init (source installs)")
 	root.AddCommand(newInstallCmd(), newInitCmd(), newStatusCmd(), newUninstallCmd(),
 		newTokenCmd(), newJoinCmd())
 	root.AddCommand(stubCommands()...)
+	rootCmd = root
 
 	if err := root.Execute(); err != nil {
 		style := clirender.StyleFor(os.Stderr)
@@ -42,9 +48,24 @@ func main() {
 	}
 }
 
-// runner is the host boundary; every command mutates the host through it.
+// activeRunner is the host boundary; Linux keeps Local, and on macOS the
+// darwin prelude swaps in the Lima runner once the VM is known running.
+var activeRunner host.Runner = host.Local{}
+
+// runner is called by every command; it mutates the target host and never
+// the machine the operator types on.
 func runner() host.Runner {
-	return host.Local{}
+	return activeRunner
+}
+
+var (
+	vmFlag       string
+	imageTarFlag string
+	rootCmd      *cobra.Command
+)
+
+func vmFlagChanged() bool {
+	return rootCmd != nil && rootCmd.PersistentFlags().Changed("vm")
 }
 
 // banner prints the transcript-style version header.

@@ -1,0 +1,104 @@
+# Release configuration: binaries go to GitHub Releases as raw assets, the
+# skalid image goes to ghcr.io. Local verification: task release:check and
+# task release:snapshot. The real release runs from the tag-driven GitHub
+# workflow (.github/workflows/release.yml).
+version: 2
+
+project_name: skali
+
+builds:
+  - id: skali
+    main: ./cmd/skali
+    binary: skali
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      # v{{ .Version }} restores the v that goreleaser strips from the tag,
+      # matching the git-describe convention of Taskfile dev builds and the
+      # image tag below.
+      - -s -w -X github.com/Hinkolas/skali/internal/version.Version=v{{ .Version }}
+
+  - id: skali-installer
+    main: ./cmd/install
+    binary: skali-installer
+    env: [CGO_ENABLED=0]
+    # darwin is a real target: darwin mode runs the installer natively on
+    # the Mac and manages a Lima VM from there.
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/Hinkolas/skali/internal/version.Version=v{{ .Version }}
+
+  - id: skalid
+    main: ./cmd/skalid
+    binary: skalid
+    env: [CGO_ENABLED=0]
+    # skalid ships only as a container image.
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/Hinkolas/skali/internal/version.Version=v{{ .Version }}
+
+# Raw binaries, not tarballs: install.sh predicts the asset name and the
+# releases/latest/download URL, and no extraction step is needed on the
+# host. The names carry no version; the release tag does.
+archives:
+  - id: binaries
+    ids: [skali, skali-installer]
+    formats: [binary]
+    name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next-{{ .ShortCommit }}"
+
+# Per-arch images stitched into one manifest. The release Dockerfile only
+# assembles the runtime layer around the prebuilt binary; dev and e2e keep
+# building build/skalid.Dockerfile from source.
+dockers:
+  - id: skalid-amd64
+    ids: [skalid]
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: build/skalid.release.Dockerfile
+    image_templates:
+      - ghcr.io/hinkolas/skalid:v{{ .Version }}-amd64
+    build_flag_templates:
+      - --platform=linux/amd64
+  - id: skalid-arm64
+    ids: [skalid]
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: build/skalid.release.Dockerfile
+    image_templates:
+      - ghcr.io/hinkolas/skalid:v{{ .Version }}-arm64
+    build_flag_templates:
+      - --platform=linux/arm64
+
+docker_manifests:
+  - name_template: ghcr.io/hinkolas/skalid:v{{ .Version }}
+    image_templates:
+      - ghcr.io/hinkolas/skalid:v{{ .Version }}-amd64
+      - ghcr.io/hinkolas/skalid:v{{ .Version }}-arm64
+  - name_template: ghcr.io/hinkolas/skalid:latest
+    image_templates:
+      - ghcr.io/hinkolas/skalid:v{{ .Version }}-amd64
+      - ghcr.io/hinkolas/skalid:v{{ .Version }}-arm64
+
+changelog:
+  use: git
+
+release:
+  github:
+    owner: Hinkolas
+    name: skali
+  # install.sh rides along on every release so one URL serves both the
+  # script and the binaries it downloads.
+  extra_files:
+    - glob: install.sh

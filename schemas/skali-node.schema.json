@@ -61,6 +61,41 @@
         "server",
         "agent"
       ]
+    },
+    "vm": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "description": "macOS only: the Lima VM hosting this node.",
+      "properties": {
+        "cpus": {
+          "type": "integer",
+          "description": "CPU cores allocated to the VM. Defaults to all host cores minus one."
+        },
+        "disk": {
+          "type": "string",
+          "description": "VM disk size such as 100GiB. Defaults to 100GiB."
+        },
+        "memory": {
+          "type": "string",
+          "description": "VM memory such as 12GiB. Defaults to host memory minus 4GiB."
+        },
+        "name": {
+          "type": "string",
+          "description": "Lima instance name. Defaults to skali."
+        },
+        "network": {
+          "type": "string",
+          "description": "VM network mode: bridged, shared, or user-v2. Defaults to bridged.",
+          "enum": [
+            "bridged",
+            "shared",
+            "user-v2"
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

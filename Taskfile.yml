@@ -1,6 +1,6 @@
 # Project tasks. Dev dependencies come from the machine-global setup
 # (~/Taskfile.yml): one shared dev-postgres container, one database per
-# project — `task db` provisions skali's. The dev Kubernetes substrate is a
+# project; `task db` provisions skali's. The dev Kubernetes substrate is a
 # k3d cluster (see .plan/02-architecture.md).
 
 version: "3"
@@ -18,6 +18,8 @@ vars:
   LDFLAGS: -X github.com/Hinkolas/skali/internal/version.Version={{.VERSION}}
 
 tasks:
+  # --- Build and install ---
+
   build:
     desc: Build all binaries into bin/
     cmds:
@@ -25,13 +27,56 @@ tasks:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali-installer ./cmd/install
 
-  cli:install:
+  install:cli:
     desc: Build the skali CLI and install it to ~/.local/bin
     cmds:
-      # Same destination the future installer will use: on PATH, no sudo.
+      # Same destination the installer will use: on PATH, no sudo.
       - mkdir -p "$HOME/.local/bin"
       - go build -ldflags "{{.LDFLAGS}}" -o "$HOME/.local/bin/skali" ./cmd/skali
       - echo "installed $("$HOME/.local/bin/skali" --version) to ~/.local/bin/skali"
+
+  install:server:
+    desc: "Build everything from this checkout and run the interactive cluster installer (source install: no remote binaries or images; needs go and docker)"
+    interactive: true
+    cmds:
+      - task: build
+      - docker build -t skalid:dev -f build/skalid.Dockerfile .
+      - mkdir -p .cache
+      - docker save skalid:dev -o .cache/skalid-dev.tar
+      # Linux installs this host (hence sudo); macOS manages a Lima VM
+      # rootless. The tar is imported into the node during init instead of
+      # pulling from a registry.
+      - '{{if eq OS "linux"}}sudo {{end}}./bin/skali-installer --image-tar .cache/skalid-dev.tar'
+
+  # --- Dev loop ---
+
+  dev:
+    desc: Run the daemon against the shared dev Postgres (takes over :7070)
+    deps: [db]
+    cmds:
+      # Free the port first so a restart always wins, whatever started the
+      # previous instance (an old terminal, a background task, ...). 7070
+      # mirrors the HTTP_ADDR default.
+      - lsof -ti :7070 | xargs kill 2>/dev/null || true
+      - go run ./cmd/skalid serve
+
+  dev:web:
+    desc: Run the SvelteKit BFF dev server
+    dir: web
+    cmds:
+      - npm run dev
+
+  dev:image:
+    desc: Build the skalid image from the working tree; skali dev up imports and rolls it
+    cmds:
+      - docker build -t skalid:dev -f build/skalid.Dockerfile .
+
+  db:
+    desc: Ensure the shared dev Postgres is up and skali's database exists
+    cmds:
+      - task -g db:start DB_NAME={{.DB_NAME}}
+
+  # --- Code generation ---
 
   generate:
     desc: Regenerate the JSON schemas and sqlc store
@@ -39,38 +84,13 @@ tasks:
       - go generate ./internal/manifest ./internal/layout ./internal/installer
       - sqlc generate
 
-  generate:manifest:
-    desc: Regenerate schemas/skali.schema.json from the manifest wire types
-    cmds:
-      - go generate ./internal/manifest
-
-  generate:layout:
-    desc: Regenerate schemas/skali-layout.schema.json from the layout wire types
-    cmds:
-      - go generate ./internal/layout
+  # --- Tests ---
 
   test:
     desc: Run the Go test suite (DB tests need TEST_DATABASE_URL, see .env.example)
     cmds:
       # web/ is excluded: node_modules occasionally ships stray Go packages.
       - go test $(go list ./... | grep -v '/web/')
-
-  db:
-    desc: Ensure the shared dev Postgres is up and skali's database exists
-    cmds:
-      - task -g db:start DB_NAME={{.DB_NAME}}
-
-  k3d:up:
-    desc: Create the pinned k3d test cluster and write .k3d/kubeconfig
-    cmds:
-      - k3d cluster create skali-test --image rancher/k3s:v1.33.3-k3s1 --kubeconfig-update-default=false --wait || true
-      - mkdir -p .k3d
-      - k3d kubeconfig get skali-test > .k3d/kubeconfig
-
-  k3d:down:
-    desc: Delete the k3d test cluster
-    cmds:
-      - k3d cluster delete skali-test
 
   test:live:
     desc: Run the live cluster tests against the k3d test cluster
@@ -86,6 +106,30 @@ tasks:
     desc: Run the skali dev end-to-end suite (creates and mutates the skali-dev cluster)
     cmds:
       - TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run 'TestDev' ./cmd/skali/...
+
+  test:installer:
+    desc: Run the installer end-to-end suite in the Lima VM (task lima:up first)
+    cmds:
+      - TEST_SKALI_INSTALLER=1 go test -timeout 40m -count=1 -run 'TestInstallerEndToEnd' ./cmd/install/...
+
+  test:installer:darwin:
+    desc: Run the darwin installer end-to-end suite natively (creates and deletes its own small VM; stop the Linux e2e VMs first)
+    cmds:
+      - TEST_SKALI_INSTALLER_DARWIN=1 go test -timeout 40m -count=1 -run 'TestInstallerDarwin' ./cmd/install/...
+
+  # --- Test infrastructure ---
+
+  k3d:up:
+    desc: Create the pinned k3d test cluster and write .k3d/kubeconfig
+    cmds:
+      - k3d cluster create skali-test --image rancher/k3s:v1.33.3-k3s1 --kubeconfig-update-default=false --wait || true
+      - mkdir -p .k3d
+      - k3d kubeconfig get skali-test > .k3d/kubeconfig
+
+  k3d:down:
+    desc: Delete the k3d test cluster
+    cmds:
+      - k3d cluster delete skali-test
 
   lima:up:
     desc: Create and start the installer e2e VMs (server + agent, Ubuntu, real systemd)
@@ -111,28 +155,14 @@ tasks:
       - limactl delete -f skali-e2e || true
       - limactl delete -f skali-e2e-agent || true
 
-  test:installer:
-    desc: Run the installer end-to-end suite in the Lima VM (task lima:up first)
-    cmds:
-      - TEST_SKALI_INSTALLER=1 go test -timeout 40m -count=1 -run 'TestInstaller' ./cmd/install/...
+  # --- Release ---
 
-  dev:image:
-    desc: Build the skalid image from the working tree; skali dev up imports and rolls it
+  release:check:
+    desc: Validate .goreleaser.yaml
     cmds:
-      - docker build -t skalid:dev -f build/skalid.Dockerfile .
+      - goreleaser check
 
-  dev:
-    desc: Run the daemon against the shared dev Postgres (takes over :7070)
-    deps: [db]
+  release:snapshot:
+    desc: Build a local snapshot release into dist/ (no publish); pass flags after --, for example task release:snapshot -- --skip=docker
     cmds:
-      # Free the port first so a restart always wins, whatever started the
-      # previous instance (an old terminal, a background task, …). 7070
-      # mirrors the HTTP_ADDR default.
-      - lsof -ti :7070 | xargs kill 2>/dev/null || true
-      - go run ./cmd/skalid serve
-
-  dev:web:
-    desc: Run the SvelteKit BFF dev server
-    dir: web
-    cmds:
-      - npm run dev
+      - goreleaser release --snapshot --clean {{.CLI_ARGS}}

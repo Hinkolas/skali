@@ -1,0 +1,42 @@
+# Rendered by skali-installer. The Lima instance is the single source of
+# truth for VM sizing and network mode; there is no separate state file.
+minimumLimaVersion: "1.0.0"
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+
+vmType: "vz"
+cpus: {{.CPUs}}
+memory: "{{.Memory}}"
+disk: "{{.Disk}}"
+
+# A skali node exposes nothing of the Mac.
+mounts: []
+
+# k3s brings its own containerd inside the guest.
+containerd:
+  system: false
+  user: false
+
+networks:
+  - lima: {{.Network}}
+{{- if .ForwardPort}}
+
+# On user-v2 the Mac cannot reach guest addresses; this explicit rule
+# forwards the Kubernetes API to host loopback instead.
+portForwards:
+  - guestPort: 6443
+    hostPort: {{.ForwardPort}}
+{{- end}}
+
+# The guest hostname becomes the k3s node name. Without this every Mac
+# would produce the same lima-<instance> node name and collide in one
+# cluster. hostnamectl is idempotent, so re-running per boot is harmless.
+provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      hostnamectl set-hostname {{.Hostname}}

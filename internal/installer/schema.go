@@ -30,6 +30,7 @@ func NodeConfigSchema() (*jsonschema.Schema, error) {
 	capabilities := schema.Properties["capabilities"]
 	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: enum(layout.Capabilities...)}
 	capabilities.UniqueItems = true
+	schema.Properties["vm"].Properties["network"].Enum = enum("bridged", "shared", "user-v2")
 	return schema, nil
 }
 

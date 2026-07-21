@@ -33,14 +33,21 @@ type installerHarness struct {
 	// binary and fixtures live under /tmp inside the VMs.
 }
 
+// newBareHarness carries only the helper core; each suite adds its own
+// gate and VM expectations on top.
+func newBareHarness(t *testing.T) *installerHarness {
+	t.Helper()
+	repoRoot, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	return &installerHarness{t: t, repoRoot: repoRoot}
+}
+
 func newInstallerHarness(t *testing.T) *installerHarness {
 	t.Helper()
 	if os.Getenv("TEST_SKALI_INSTALLER") == "" {
 		t.Skip("set TEST_SKALI_INSTALLER=1 to run the installer end-to-end suite")
 	}
-	repoRoot, err := filepath.Abs("../..")
-	require.NoError(t, err)
-	harness := &installerHarness{t: t, repoRoot: repoRoot}
+	harness := newBareHarness(t)
 	harness.ensureVM(e2eVM)
 	harness.ensureVM(e2eAgentVM)
 	return harness
@@ -182,8 +189,8 @@ func TestInstallerEndToEnd(t *testing.T) {
 	repeatOut, code := h.vm("sudo", "/tmp/skali-installer", "install", "--config", nodeConfig)
 	require.NotEqual(t, 0, code, repeatOut)
 
-	// Stage the control-plane image: built on the host, imported into k3s
-	// containerd (bootstrap images never come from the managed registry).
+	// Stage the control-plane image: built on the host and handed to init
+	// as a tar (bootstrap images never come from the managed registry).
 	imageTar := filepath.Join(t.TempDir(), "skalid-dev.tar")
 	buildOut, code := h.hostCommand("docker", "build", "-t", "skalid:dev",
 		"-f", filepath.Join(h.repoRoot, "build", "skalid.Dockerfile"), h.repoRoot)
@@ -191,7 +198,6 @@ func TestInstallerEndToEnd(t *testing.T) {
 	saveOut, code := h.hostCommand("docker", "save", "skalid:dev", "-o", imageTar)
 	require.Equal(t, 0, code, saveOut)
 	h.copyIn(imageTar, "/tmp/skalid-dev.tar")
-	h.vmOK("sudo", "k3s", "ctr", "images", "import", "/tmp/skalid-dev.tar")
 
 	// Init: the ACME staging directory keeps pending issuance away from
 	// production rate limits; skali.e2e.test never resolves, so
@@ -208,8 +214,11 @@ admin:
 skalid:
   image: skalid:dev
 `, passwordFile))
-	initOut, code := h.vm("sudo", "/tmp/skali-installer", "init", "--config", initConfig)
+	// --image-tar imports the tar into the node's containerd during init.
+	initOut, code := h.vm("sudo", "/tmp/skali-installer", "init", "--config", initConfig,
+		"--image-tar", "/tmp/skalid-dev.tar")
 	require.Equal(t, 0, code, initOut)
+	require.Contains(t, initOut, "Import skalid image skalid:dev")
 
 	// The control plane answers through the service proxy and the
 	// in-cluster record exists.

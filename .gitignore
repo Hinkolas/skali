@@ -43,8 +43,12 @@ temp/
 # --- Local test cluster ---
 .k3d/
 
+# --- Local build artifacts (task install:server) ---
+.cache/
+
 # --- Go build output ---
 /bin/
+/dist/
 *.exe
 *.test
 *.out

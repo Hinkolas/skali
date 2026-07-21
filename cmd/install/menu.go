@@ -22,6 +22,20 @@ func runRoot(cmd *cobra.Command) error {
 	out := os.Stdout
 	banner(out)
 
+	present, err := darwinPrelude(ctx, out, vmPolicyStatus, "")
+	if err != nil {
+		return err
+	}
+	if !present {
+		printDarwinFreshHeader(out)
+		if !cliprompt.Interactive() {
+			fmt.Fprintln(out, "This host is not part of a Skali installation.")
+			fmt.Fprintln(out, "Non-interactive installs run: skali-installer install --config node.yaml")
+			return nil
+		}
+		return runInteractiveFreshFlow(ctx, out)
+	}
+
 	detected, err := installer.Detect(ctx, runner())
 	if err != nil {
 		return err
@@ -67,6 +81,9 @@ func unmanagedError() error {
 func printFreshHeader(out *os.File, detected *installer.Host) {
 	fmt.Fprintf(out, "host %s: %s\n", hostLabel(detected), detected.State)
 	fmt.Fprintf(out, "  os      %s (linux/%s)\n", orUnknown(detected.OS), goArch(detected.Arch))
+	if darwinInfo != nil {
+		fmt.Fprintf(out, "  vm      %s (Lima, network %s)\n", darwinInfo.Instance, darwinInfo.Network)
+	}
 	if detected.K3sVersion != "" {
 		fmt.Fprintf(out, "  k3s     %s (unmanaged)\n", detected.K3sVersion)
 	} else {
@@ -95,6 +112,9 @@ func printStatus(out *os.File, status *installer.Status) {
 		label = "healthy " + label
 	}
 	fmt.Fprintf(out, "host %s: %s\n", hostLabel(detected), label)
+	if darwinInfo != nil {
+		fmt.Fprintf(out, "  vm         %s (Lima, network %s)\n", darwinInfo.Instance, darwinInfo.Network)
+	}
 
 	k3sSuffix := "(expected " + installer.K3sVersion + ")"
 	if status.K3sCurrent {

@@ -19,6 +19,9 @@ func newTokenCmd() *cobra.Command {
 			ctx := cmd.Context()
 			out := os.Stdout
 
+			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
+				return err
+			}
 			detected, err := installer.Detect(ctx, runner())
 			if err != nil {
 				return err

@@ -2115,6 +2115,9 @@ Deliver:
 - External image import/cache and retention leases from revisions.
 - Unified deployment run tree across local executor steps, cloud executor
   steps, artifact verification, revision preparation, and rollout.
+- macOS host mode: the installer manages one headless Linux VM per Mac via
+  Lima (bridged networking by default, login LaunchAgent autostart) and
+  installs the node inside it; Linux hosts stay native.
 
 Exit criteria:
 
@@ -2140,6 +2143,9 @@ Exit criteria:
   assigned namespace.
 - Referenced release artifacts survive garbage collection; unreferenced cache
   content follows policy.
+- From a supported macOS host, the installer reaches the same healthy
+  single-node state inside a Lima-managed VM without sudo on the Mac, and
+  node-scope uninstall removes the VM entirely.
 
 ### R5 - Shared database substrate
 

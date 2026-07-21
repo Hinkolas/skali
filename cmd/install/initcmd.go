@@ -25,6 +25,9 @@ func newInitCmd() *cobra.Command {
 			ctx := cmd.Context()
 			out := os.Stdout
 
+			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
+				return err
+			}
 			detected, err := installer.Detect(ctx, runner())
 			if err != nil {
 				return err
@@ -72,7 +75,7 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			password, err := runner().ReadFile(ctx, config.Admin.PasswordFile)
+			password, err := readHostFile(ctx, config.Admin.PasswordFile)
 			if err != nil {
 				return fmt.Errorf("read admin password file %s: %w", config.Admin.PasswordFile, err)
 			}
@@ -94,6 +97,19 @@ func newInitCmd() *cobra.Command {
 				},
 				Progress: progress,
 				Out:      out,
+			}
+			if imageTarFlag != "" {
+				stagedImage, stagedID, err := stageSkalidImage(ctx, runner(), imageTarFlag, progress)
+				if err != nil {
+					progress.Abort()
+					return err
+				}
+				if stagedImage != config.Skalid.Image {
+					progress.Abort()
+					return fmt.Errorf("the image tar carries %s but the config names %s",
+						stagedImage, config.Skalid.Image)
+				}
+				opts.SkalidImageID = stagedID
 			}
 			result, err := installer.Init(ctx, runner(), detected.Record, opts)
 			if err != nil {

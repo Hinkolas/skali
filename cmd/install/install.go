@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -26,6 +27,14 @@ func newInstallCmd() *cobra.Command {
 					return fmt.Errorf("non-interactive run requires --config")
 				}
 				banner(out)
+				present, err := darwinPrelude(ctx, out, vmPolicyInstall, "")
+				if err != nil {
+					return err
+				}
+				if !present {
+					printDarwinFreshHeader(out)
+					return runInteractiveFreshFlow(ctx, out)
+				}
 				detected, err := installer.Detect(ctx, runner())
 				if err != nil {
 					return err
@@ -48,8 +57,22 @@ func newInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if config.VM != nil && runtime.GOOS != "darwin" {
+				return fmt.Errorf("node config: the vm block applies only to macOS hosts")
+			}
+			configVMName := ""
+			if config.VM != nil {
+				configVMName = config.VM.Name
+			}
+			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, configVMName); err != nil {
+				return err
+			}
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
+			if err := ensureDarwinVM(ctx, progress, config.VM); err != nil {
+				progress.Abort()
+				return err
+			}
 			opts := installer.InstallOptions{
 				Cluster:      config.Cluster,
 				Role:         config.Role,
@@ -63,12 +86,18 @@ func newInstallCmd() *cobra.Command {
 					TokenFile: config.Join.TokenFile,
 				}
 			}
+			if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
+				progress.Abort()
+				return err
+			}
 			_, err = installer.Install(ctx, runner(), opts)
 			if err != nil {
 				progress.Abort()
 				return err
 			}
+			warnings := finishDarwinInstall(ctx, progress)
 			progress.Done("")
+			printWarnings(out, warnings)
 			return nil
 		},
 	}

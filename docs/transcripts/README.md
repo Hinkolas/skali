@@ -29,8 +29,8 @@ Files:
   status, logs, stop, and reset.
 - `installer.md`: privileged installation: fresh single node, non-interactive
   configuration, multi-node join, cluster initialization, tier upgrade,
-  repeat execution, degraded diagnosis, existing Kubernetes, and scoped
-  uninstall.
+  repeat execution, degraded diagnosis, existing Kubernetes, scoped
+  uninstall, and macOS host management (Lima VM).
 
 The example project throughout is `examples/file-sharing` (application `web`,
 database `data`, bucket `files`, values `APP_DOMAIN` and secret
