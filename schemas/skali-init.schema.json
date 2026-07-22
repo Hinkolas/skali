@@ -3,7 +3,7 @@
   "$id": "https://skali.dev/schemas/v1/skali-init.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Skali installer init configuration",
-  "description": "Cluster initialization configuration consumed by skali-installer init --config.",
+  "description": "Cluster initialization configuration consumed by skali cluster init --config.",
   "required": [
     "endpoints",
     "tls",

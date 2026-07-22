@@ -19,7 +19,7 @@ func Schema() (*jsonschema.Schema, error) {
 	schema.ID = SchemaID
 	schema.Schema = "https://json-schema.org/draft/2020-12/schema"
 	schema.Title = "Skali cluster layout"
-	schema.Description = "Installation layout consumed by skali-installer: hosts, K3s roles, and designated node capabilities."
+	schema.Description = "Installation layout consumed by skali cluster: hosts, K3s roles, and designated node capabilities."
 	schema.Properties["version"].Const = new(any(CurrentVersion))
 	schema.Properties["name"].Pattern = stableKeyPattern.String()
 	schema.Properties["nodes"].PropertyNames = &jsonschema.Schema{

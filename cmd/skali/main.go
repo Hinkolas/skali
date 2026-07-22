@@ -1,6 +1,9 @@
 // Command skali is the workflow-oriented client of the Skali platform. It
 // owns local manifest, build, terminal, and development-runtime workflows while
-// remote state changes continue to go through the public skalid API.
+// remote state changes continue to go through the public skalid API. It also
+// carries the privileged installation and recovery role as the `skali cluster`
+// command group, whose engine never depends on the Skali API or product
+// database; see cluster.go.
 //
 // Configuration lives in ~/.config/skali/config.yaml as kubectl-style named
 // contexts (master URL + session token); see `skali context --help`.
@@ -21,7 +24,7 @@ import (
 func main() {
 	root := &cobra.Command{
 		Use:           "skali",
-		Short:         "Deploy and manage apps on a skali cluster",
+		Short:         "Deploy apps and manage skali clusters",
 		Version:       versionpkg.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -29,7 +32,7 @@ func main() {
 
 	root.AddCommand(newAuthCmd(), newContextCmd(), newValidateCmd(), newCompileCmd(),
 		newPlanCommand(), newDeployCommand(), newDevCommand(),
-		newRunsCommand(), newRunCommand(), newLogsCommand())
+		newRunsCommand(), newRunCommand(), newLogsCommand(), newClusterCommand())
 
 	if err := root.Execute(); err != nil {
 		style := clirender.StyleFor(os.Stderr)

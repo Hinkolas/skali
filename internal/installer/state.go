@@ -130,14 +130,14 @@ func Detect(ctx context.Context, runner host.Runner) (*Host, error) {
 func probeUnsupported(ctx context.Context, runner host.Runner) []string {
 	var problems []string
 	if kernel := probeLine(ctx, runner, "uname", "-s"); kernel != "" && kernel != "Linux" {
-		problems = append(problems, "skali-installer requires Linux, this host runs "+kernel)
+		problems = append(problems, "skali cluster requires Linux, this host runs "+kernel)
 	}
 	systemd, err := runner.Stat(ctx, "/run/systemd/system")
 	if err == nil && !systemd.Exists {
-		problems = append(problems, "skali-installer requires systemd")
+		problems = append(problems, "skali cluster requires systemd")
 	}
 	if uid := probeLine(ctx, runner, "id", "-u"); uid != "" && uid != "0" {
-		problems = append(problems, "skali-installer must run as root; re-run it under sudo")
+		problems = append(problems, "skali cluster must run as root; re-run it under sudo")
 	}
 	return problems
 }

@@ -37,10 +37,10 @@ Distinct product and operational roles:
   (`user`, `migrate`).
 - **`skali`** — the workflow-oriented CLI. It owns local manifest, build,
   terminal, and development-runtime workflows and uses the public API for
-  remote state changes; it does not administer production Kubernetes.
-- **`skali-installer`** *(planned)* — the privileged, repeatable installation
-  and recovery tool for host-level k3s lifecycle and installer-owned Skali
-  system resources. It is not a continuously running host daemon.
+  remote state changes. It also carries the privileged, repeatable `skali
+  cluster` command group for host-level k3s lifecycle and installer-owned
+  Skali system resources; no other command administers production
+  Kubernetes, and nothing here is a continuously running host daemon.
 - **`web/`** — SvelteKit BFF (adapter-node). Owns the browser session cookie
   and proxies `/api/v1/*` to the daemon; the bearer token never reaches
   browser JavaScript.

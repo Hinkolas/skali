@@ -25,7 +25,7 @@ func NodeConfigSchema() (*jsonschema.Schema, error) {
 	schema.ID = NodeSchemaID
 	schema.Schema = "https://json-schema.org/draft/2020-12/schema"
 	schema.Title = "Skali installer node configuration"
-	schema.Description = "Per-host install configuration consumed by skali-installer install --config."
+	schema.Description = "Per-host install configuration consumed by skali cluster install --config."
 	schema.Properties["role"].Enum = enum(layout.RoleServer, layout.RoleAgent)
 	capabilities := schema.Properties["capabilities"]
 	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: enum(layout.Capabilities...)}
@@ -43,7 +43,7 @@ func InitConfigSchema() (*jsonschema.Schema, error) {
 	schema.ID = InitSchemaID
 	schema.Schema = "https://json-schema.org/draft/2020-12/schema"
 	schema.Title = "Skali installer init configuration"
-	schema.Description = "Cluster initialization configuration consumed by skali-installer init --config."
+	schema.Description = "Cluster initialization configuration consumed by skali cluster init --config."
 	return schema, nil
 }
 

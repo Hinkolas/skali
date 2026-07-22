@@ -35,7 +35,7 @@ func newPullSecret() (string, error) {
 }
 
 // encodeJoinToken wraps the k3s token and the pull credential into the
-// composite form `skali-installer token` prints.
+// composite form `skali cluster token` prints.
 func encodeJoinToken(k3sToken, pullSecret string) string {
 	payload, _ := json.Marshal(joinTokenPayload{K3s: k3sToken, Pull: pullSecret})
 	return joinTokenPrefix + base64.RawURLEncoding.EncodeToString(payload)

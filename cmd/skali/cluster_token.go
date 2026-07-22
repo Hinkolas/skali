@@ -10,7 +10,7 @@ import (
 	"github.com/Hinkolas/skali/internal/installer"
 )
 
-func newTokenCmd() *cobra.Command {
+func newClusterTokenCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "token",
 		Short: "Print the join command for this cluster",
@@ -46,7 +46,7 @@ func newTokenCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "join command for cluster %q (token expires in %s):\n",
 				token.Cluster, installer.JoinTokenTTL)
-			fmt.Fprintf(out, "  sudo skali-installer join --server %s \\\n", token.ServerURL)
+			fmt.Fprintf(out, "  sudo skali cluster join --server %s \\\n", token.ServerURL)
 			fmt.Fprintf(out, "    --token-file <file> --role agent --capabilities <list>")
 			if token.Cluster != installer.DefaultCluster {
 				fmt.Fprintf(out, " --cluster %s", token.Cluster)

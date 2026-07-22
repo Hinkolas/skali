@@ -1,6 +1,7 @@
 #!/bin/sh
-# Skali bootstrap: downloads the skali-installer binary for this host from
-# GitHub Releases, verifies its sha256 checksum, and installs it.
+# Skali bootstrap: downloads the skali CLI binary for this host from
+# GitHub Releases, verifies its sha256 checksum, and installs it. Cluster
+# installation then runs through `skali cluster`.
 #
 # Usage:
 #   curl -fsSL https://github.com/Hinkolas/skali/releases/latest/download/install.sh | sh
@@ -13,7 +14,7 @@
 set -eu
 
 REPO="Hinkolas/skali"
-BINARY="skali-installer"
+BINARY="skali"
 API="https://api.github.com/repos/${REPO}/releases"
 
 log()  { printf '%s\n' "$*"; }
@@ -89,8 +90,8 @@ fi
 [ "$actual" = "$expected" ] || fail "checksum mismatch for $asset"
 
 if [ "$os" = "darwin" ]; then
-  # Rootless on macOS: the darwin-mode installer manages its Lima VM from
-  # the user session, so it lives on the user PATH.
+  # Rootless on macOS: `skali cluster` manages its Lima VM from the user
+  # session, so the CLI lives on the user PATH.
   dest="${HOME}/.local/bin"
   mkdir -p "$dest"
   install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
@@ -99,10 +100,11 @@ if [ "$os" = "darwin" ]; then
     *":${dest}:"*) ;;
     *) log "note: ${dest} is not on your PATH; add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
   esac
-  log "next: run ${BINARY} to set up Skali on this Mac"
+  log "next: run skali cluster to set up Skali on this Mac"
 else
-  # The installer itself must run privileged on Linux, so a system path
-  # (and sudo here) costs nothing extra.
+  # Cluster installation must run privileged on Linux, and sudo's
+  # secure_path includes /usr/local/bin, so a system path costs nothing
+  # extra.
   dest="/usr/local/bin"
   if [ "$(id -u)" = "0" ]; then
     install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
@@ -111,5 +113,5 @@ else
     sudo install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
   fi
   log "installed ${dest}/${BINARY}"
-  log "next: run sudo ${BINARY} to set up Skali on this host"
+  log "next: run sudo skali cluster to set up Skali on this host"
 fi

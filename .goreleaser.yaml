@@ -11,23 +11,14 @@ builds:
     main: ./cmd/skali
     binary: skali
     env: [CGO_ENABLED=0]
+    # darwin is a real target: `skali cluster` runs natively on the Mac and
+    # manages a Lima VM from there.
     goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags:
       # v{{ .Version }} restores the v that goreleaser strips from the tag,
       # matching the git-describe convention of Taskfile dev builds and the
       # image tag below.
-      - -s -w -X github.com/Hinkolas/skali/internal/version.Version=v{{ .Version }}
-
-  - id: skali-installer
-    main: ./cmd/install
-    binary: skali-installer
-    env: [CGO_ENABLED=0]
-    # darwin is a real target: darwin mode runs the installer natively on
-    # the Mac and manages a Lima VM from there.
-    goos: [linux, darwin]
-    goarch: [amd64, arm64]
-    ldflags:
       - -s -w -X github.com/Hinkolas/skali/internal/version.Version=v{{ .Version }}
 
   - id: skalid
@@ -45,7 +36,7 @@ builds:
 # host. The names carry no version; the release tag does.
 archives:
   - id: binaries
-    ids: [skali, skali-installer]
+    ids: [skali]
     formats: [binary]
     name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
 

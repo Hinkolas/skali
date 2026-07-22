@@ -10,10 +10,12 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
+	"github.com/Hinkolas/skali/internal/installer/limavm"
 )
 
-func newInstallCmd() *cobra.Command {
+func newClusterInstallCmd() *cobra.Command {
 	var configPath string
+	var assumeYes bool
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install k3s and prepare this host as a Skali node",
@@ -41,7 +43,7 @@ func newInstallCmd() *cobra.Command {
 				}
 				if detected.State != installer.StateFresh {
 					return fmt.Errorf("this host is not fresh (state %s); "+
-						"run skali-installer without arguments for maintenance options", detected.State)
+						"run skali cluster without arguments for maintenance options", detected.State)
 				}
 				printFreshHeader(out, detected)
 				return runInteractiveFreshFlow(ctx, out)
@@ -65,6 +67,16 @@ func newInstallCmd() *cobra.Command {
 				configVMName = config.VM.Name
 			}
 			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, configVMName); err != nil {
+				return err
+			}
+			// Mac dependency provisioning is the one thing outside the
+			// config's consent: it confirms (or takes --yes) and must run
+			// before the task printer starts, because sudo may prompt.
+			network := limavm.NetworkBridged
+			if config.VM != nil && config.VM.Network != "" {
+				network = limavm.Network(config.VM.Network)
+			}
+			if err := ensureDarwinDeps(ctx, out, nil, network, assumeYes); err != nil {
 				return err
 			}
 			tasks := clirender.NewTasks(out)
@@ -102,5 +114,6 @@ func newInstallCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "non-interactive node configuration (node.yaml)")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
 	return cmd
 }

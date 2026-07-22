@@ -15,7 +15,7 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-func newInitCmd() *cobra.Command {
+func newClusterInitCmd() *cobra.Command {
 	var configPath, layoutPath string
 	cmd := &cobra.Command{
 		Use:   "init",

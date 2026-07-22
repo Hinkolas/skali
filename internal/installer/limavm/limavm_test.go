@@ -181,9 +181,10 @@ func TestDeleteToleratesAbsent(t *testing.T) {
 
 func preflightFake(t *testing.T, files map[string]string) *host.Fake {
 	t.Helper()
-	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
-		"limactl": func(host.Command) (host.Result, error) { return host.Result{Stdout: "limactl version 2.1.4"}, nil },
-	}}
+	original := lookPath
+	lookPath = func(string) (string, error) { return "/opt/homebrew/bin/limactl", nil }
+	t.Cleanup(func() { lookPath = original })
+	fake := &host.Fake{}
 	for path, content := range files {
 		require.NoError(t, fake.WriteFile(context.Background(), path, []byte(content), 0o644))
 	}
@@ -215,8 +216,7 @@ func TestPreflight(t *testing.T) {
 		fake := preflightFake(t, nil)
 		err := Preflight(context.Background(), fake, NetworkBridged)
 		require.ErrorContains(t, err, `the Lima network "bridged" is not configured`)
-		require.ErrorContains(t, err, "socket_vmnet-1.2.2")
-		require.ErrorContains(t, err, "limactl sudoers | sudo tee /etc/sudoers.d/lima")
+		require.ErrorContains(t, err, "skali cluster install provisions it")
 	})
 
 	t.Run("missing network key", func(t *testing.T) {

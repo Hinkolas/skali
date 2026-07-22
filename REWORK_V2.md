@@ -52,11 +52,12 @@ the same `skalid`, schema, revision builder, service modules, Kubernetes
 drivers, observation system, and reconciliation engine as a production
 installation.
 
-The product has three deliberately separate operational roles. `skali` is the
-developer CLI and rich API client. `skali-installer` is the privileged,
-recoverable installation and cluster-maintenance tool. `skalid` is the
-continuously running product control plane inside Kubernetes. The installer,
-not `skalid` or the developer CLI, owns host-level K3s creation, node joining,
+The product has two deliberately separate binaries carrying three operational
+roles. `skali` is the developer CLI and rich API client, and it also carries
+the privileged, recoverable installation and cluster-maintenance role as the
+`skali cluster` command group. `skalid` is the continuously running product
+control plane inside Kubernetes. The `skali cluster` group, not `skalid` or
+the developer-workflow commands, owns host-level K3s creation, node joining,
 Kubernetes upgrades, diagnosis, repair, and removal.
 
 ## 2. Product vision
@@ -1535,10 +1536,14 @@ terminal, build-engine, or local-machine access:
 - Submit definitions/revisions through the public Skali API.
 
 Production K3s creation, node lifecycle, Kubernetes upgrades, diagnosis,
-repair, and uninstall belong exclusively to `skali-installer`. The developer
-CLI does not become a kubectl wrapper, follow kubeconfig for infrastructure
-mutation, or access Skali's Postgres directly. Its local lifecycle authority is
-limited to disposable, user-owned development installations.
+repair, and uninstall belong exclusively to the `skali cluster` command group,
+backed by the installer engine, which never depends on the Skali API or
+product database. Outside `skali cluster`, the CLI does not become a kubectl
+wrapper, follow kubeconfig for infrastructure mutation, or access Skali's
+Postgres directly; the authority separation is a command-group and package
+boundary rather than a binary boundary. The developer-workflow commands' local
+lifecycle authority is limited to disposable, user-owned development
+installations.
 
 Likely remote workflows are:
 
@@ -1646,19 +1651,30 @@ V2 separates developer workflow, privileged installation, and continuous
 reconciliation:
 
 - `skali` is the developer CLI. It owns project files, local builds, terminal
-  UX, remote Skali contexts, and disposable `skali dev` installations.
-- `skali-installer` is the administrator and recovery tool. It owns host-level
-  K3s installation, joining a host as a server or agent, Kubernetes upgrades,
-  diagnostics, repair, uninstall, and the installer-owned Skali system bundle.
+  UX, remote Skali contexts, and disposable `skali dev` installations. It also
+  carries the administrator and recovery role as the `skali cluster` command
+  group, which owns host-level K3s installation, joining a host as a server or
+  agent, Kubernetes upgrades, diagnostics, repair, uninstall, and the
+  installer-owned Skali system bundle.
 - `skalid` is the in-cluster control plane. It owns the public API, product
   state, observation, revision targeting, and project reconciliation.
 
-The installer is interactive by default and detects whether the current host
+`skali cluster` is interactive by default and detects whether the current host
 is fresh, a Skali-managed K3s server/agent, an unmanaged K3s host, or a damaged
 installation. Re-running it offers operations appropriate to that state, such
 as upgrade, diagnosis, repair, configuration change, restore, or uninstall.
 The same engine must also accept an explicit, non-interactive configuration for
 cloud-init, configuration management, and CI.
+
+On a Mac, `skali cluster` provisions its own dependencies rather than
+instructing the operator to install them: a pinned, checksum-verified Lima
+release into a rootless user prefix (an existing `limactl` on PATH, for
+example from Homebrew, is detected and used instead), a pinned,
+checksum-verified socket_vmnet plus the Lima sudoers file through exactly one
+confirmed privileged step that prints the commands it will run verbatim, and a
+default Lima networks configuration when none exists. It never edits an
+existing networks configuration, and the user-v2 network needs no root
+components at all.
 
 A root-owned installation record identifies provider, cluster, installation,
 node role, ownership mode, and installed versions. Local repair uses this
@@ -1732,8 +1748,8 @@ fleet assigns them narrowly.
 
 Setup is per-node installation followed by one explicit initialization:
 
-1. Run `skali-installer` on each host, choosing its K3s role and capabilities.
-2. After the intended nodes have joined, run `skali-installer init` once on a
+1. Run `skali cluster` on each host, choosing its K3s role and capabilities.
+2. After the intended nodes have joined, run `skali cluster init` once on a
    server node.
 3. `init` reads the cluster layout from node labels and installation records,
    derives the data-service topology from it, and applies the system bundle in
@@ -1793,9 +1809,11 @@ manages artifact contents through the normal build and import APIs.
 
 ### 14.5 Ownership, failure, and recovery
 
-`skali-installer` and `skalid` use disjoint ownership labels, field managers,
-RBAC, and prune scopes. `skalid` may reconcile explicitly delegated shared
-platform services and report bootstrap health, but it cannot reconcile or
+`skali cluster` and `skalid` use disjoint ownership labels, field managers,
+RBAC, and prune scopes. The server-side-apply field manager keeps the literal
+value `skali-installer` for continuity with existing installations. `skalid`
+may reconcile explicitly delegated shared platform services and report
+bootstrap health, but it cannot reconcile or
 delete the resources required to run itself. Bootstrap upgrades and repairs
 are installer operations, not project deployments.
 
@@ -2115,9 +2133,11 @@ Deliver:
 - External image import/cache and retention leases from revisions.
 - Unified deployment run tree across local executor steps, cloud executor
   steps, artifact verification, revision preparation, and rollout.
-- macOS host mode: the installer manages one headless Linux VM per Mac via
+- macOS host mode: `skali cluster` manages one headless Linux VM per Mac via
   Lima (bridged networking by default, login LaunchAgent autostart) and
-  installs the node inside it; Linux hosts stay native.
+  installs the node inside it; Linux hosts stay native. It provisions its own
+  Lima and socket_vmnet dependencies (pinned, checksum-verified, one confirmed
+  privileged step).
 - Local/LAN mode: an explicit HTTP-only installation profile for non-public
   domains (LAN hostnames such as `skali.<host>.localdomain` or
   sslip.io-style names). Init accepts the domains without a TLS issuer
@@ -2407,12 +2427,12 @@ The following decisions are part of this plan:
   a special pool.
 - Runs/steps/logs explain reconciliation but never drive it.
 - Local development is a distinct local Skali installation using the same core.
-- The developer CLI owns project files, builds, terminal workflows, remote
-  Skali contexts, and disposable local development; it is not an API mirror and
-  does not administer production Kubernetes.
-- The privileged installer owns host-level K3s and installer-owned Skali system
-  lifecycle, remains independent of the Skali API/database, and supports both
-  interactive and explicit non-interactive operation.
+- The developer-workflow commands own project files, builds, terminal
+  workflows, remote Skali contexts, and disposable local development; they are
+  not an API mirror and do not administer production Kubernetes.
+- The privileged `skali cluster` group owns host-level K3s and installer-owned
+  Skali system lifecycle, remains independent of the Skali API/database, and
+  supports both interactive and explicit non-interactive operation.
 - `skalid`, Skali Postgres, and the managed registry run inside Kubernetes by
   default as separately scalable workloads; supported external Postgres and
   registry providers do not change the reconciliation model.
@@ -2420,7 +2440,7 @@ The following decisions are part of this plan:
   resources have disjoint ownership and prune boundaries.
 - Node capabilities (`application`, `database`, `object-storage`, `registry`,
   `edge`) are assigned at node installation, stamped as labels, and recorded;
-  `skali-installer init` applies the system bundle from that recorded layout.
+  `skali cluster init` applies the system bundle from that recorded layout.
 - Database availability tiers derive from database-capable node count: one
   node is single-instance, two asynchronous, three or more synchronous. Tier
   changes are explicit installer operations, never side effects of node

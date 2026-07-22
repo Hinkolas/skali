@@ -63,13 +63,13 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 	case StateFresh:
 	case StateUnmanaged:
 		return nil, fmt.Errorf("k3s is installed but no skali installation record exists at %s; "+
-			"this host is not managed by skali-installer and will not be adopted or destroyed", RecordPath)
+			"this host is not managed by skali and will not be adopted or destroyed", RecordPath)
 	case StateUnsupported:
 		return nil, fmt.Errorf("this host cannot run a skali installation: %s",
 			joinProblems(detected.Problems))
 	default:
 		return nil, fmt.Errorf("this host already carries a skali installation (state %s); "+
-			"re-run skali-installer without arguments for maintenance options", detected.State)
+			"re-run skali cluster without arguments for maintenance options", detected.State)
 	}
 
 	role := opts.Role

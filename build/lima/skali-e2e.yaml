@@ -1,4 +1,4 @@
-# Lima VM for the skali-installer end-to-end suite: a faithful fresh Linux
+# Lima VM for the skali cluster end-to-end suite: a faithful fresh Linux
 # host with real systemd. Nothing from the host is mounted; the test
 # harness copies the cross-compiled binary and fixtures in with limactl.
 # Create with `task lima:up`, run with `task test:installer`.

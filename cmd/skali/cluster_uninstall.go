@@ -16,7 +16,7 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-func newUninstallCmd() *cobra.Command {
+func newClusterUninstallCmd() *cobra.Command {
 	var scope, confirmName string
 	cmd := &cobra.Command{
 		Use:   "uninstall",
@@ -106,7 +106,7 @@ func uninstallBundle(ctx context.Context, out *os.File, reader *bufio.Reader,
 		return err
 	}
 	progress.Done("")
-	fmt.Fprintln(out, "\nBare k3s keeps running; `skali-installer init` reinstalls Skali.")
+	fmt.Fprintln(out, "\nBare k3s keeps running; `skali cluster init` reinstalls Skali.")
 	return nil
 }
 

@@ -25,7 +25,6 @@ tasks:
     cmds:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skalid ./cmd/skalid
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
-      - go build -ldflags "{{.LDFLAGS}}" -o bin/skali-installer ./cmd/install
 
   install:cli:
     desc: Build the skali CLI and install it to ~/.local/bin
@@ -46,7 +45,7 @@ tasks:
       # Linux installs this host (hence sudo); macOS manages a Lima VM
       # rootless. The tar is imported into the node during init instead of
       # pulling from a registry.
-      - '{{if eq OS "linux"}}sudo {{end}}./bin/skali-installer --image-tar .cache/skalid-dev.tar'
+      - '{{if eq OS "linux"}}sudo {{end}}./bin/skali cluster --image-tar .cache/skalid-dev.tar'
 
   # --- Dev loop ---
 
@@ -107,15 +106,15 @@ tasks:
     cmds:
       - TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run 'TestDev' ./cmd/skali/...
 
-  test:installer:
-    desc: Run the installer end-to-end suite in the Lima VM (task lima:up first)
+  test:cluster:
+    desc: Run the skali cluster end-to-end suite in the Lima VM (task lima:up first)
     cmds:
-      - TEST_SKALI_INSTALLER=1 go test -timeout 50m -count=1 -run 'TestInstallerEndToEnd' ./cmd/install/...
+      - TEST_SKALI_CLUSTER=1 go test -timeout 50m -count=1 -run 'TestClusterEndToEnd' ./cmd/skali/...
 
-  test:installer:darwin:
-    desc: Run the darwin installer end-to-end suite natively (creates and deletes its own small VM; stop the Linux e2e VMs first)
+  test:cluster:darwin:
+    desc: Run the darwin skali cluster end-to-end suite natively (creates and deletes its own small VM; stop the Linux e2e VMs first)
     cmds:
-      - TEST_SKALI_INSTALLER_DARWIN=1 go test -timeout 40m -count=1 -run 'TestInstallerDarwin' ./cmd/install/...
+      - TEST_SKALI_CLUSTER_DARWIN=1 go test -timeout 40m -count=1 -run 'TestClusterDarwin' ./cmd/skali/...
 
   # --- Test infrastructure ---
 

@@ -14,10 +14,10 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-// runRoot is the bare `skali-installer` entry: detect, render the state
+// runClusterRoot is the bare `skali cluster` entry: detect, render the state
 // header, and offer the maintenance menu interactively. Detection is
 // read-only; no maintenance action runs without being selected.
-func runRoot(cmd *cobra.Command) error {
+func runClusterRoot(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	out := os.Stdout
 	banner(out)
@@ -30,7 +30,7 @@ func runRoot(cmd *cobra.Command) error {
 		printDarwinFreshHeader(out)
 		if !cliprompt.Interactive() {
 			fmt.Fprintln(out, "This host is not part of a Skali installation.")
-			fmt.Fprintln(out, "Non-interactive installs run: skali-installer install --config node.yaml")
+			fmt.Fprintln(out, "Non-interactive installs run: skali cluster install --config node.yaml")
 			return nil
 		}
 		return runInteractiveFreshFlow(ctx, out)
@@ -52,7 +52,7 @@ func runRoot(cmd *cobra.Command) error {
 		printFreshHeader(out, detected)
 		if !cliprompt.Interactive() {
 			fmt.Fprintln(out, "This host is not part of a Skali installation.")
-			fmt.Fprintln(out, "Non-interactive installs run: skali-installer install --config node.yaml")
+			fmt.Fprintln(out, "Non-interactive installs run: skali cluster install --config node.yaml")
 			return nil
 		}
 		return runInteractiveFreshFlow(ctx, out)
@@ -73,7 +73,7 @@ func runRoot(cmd *cobra.Command) error {
 // never adopted or destroyed.
 func unmanagedError() error {
 	return fmt.Errorf("k3s is installed but no skali installation record exists at %s; "+
-		"this host is not managed by skali-installer and will not be adopted or destroyed",
+		"this host is not managed by skali and will not be adopted or destroyed",
 		installer.RecordPath)
 }
 
@@ -124,11 +124,11 @@ func printStatus(out *os.File, status *installer.Status) {
 
 	switch {
 	case !status.Initialized:
-		fmt.Fprintln(out, "  bundle     not initialized; run skali-installer init")
+		fmt.Fprintln(out, "  bundle     not initialized; run skali cluster init")
 	case status.BundleCurrent:
 		fmt.Fprintf(out, "  bundle     %s (current)\n", status.BundleVersion)
 	default:
-		fmt.Fprintf(out, "  bundle     %s (installer is %s)\n", status.BundleVersion, versionpkg.Version)
+		fmt.Fprintf(out, "  bundle     %s (skali is %s)\n", status.BundleVersion, versionpkg.Version)
 	}
 
 	if status.ClusterReachable {

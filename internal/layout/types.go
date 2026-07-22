@@ -1,6 +1,6 @@
 // Package layout defines and parses the cluster-layout document consumed by
-// skali-installer. The layout records which hosts form an installation, their
-// K3s roles, and their designated capabilities; `skali-installer init` derives
+// skali cluster. The layout records which hosts form an installation, their
+// K3s roles, and their designated capabilities; `skali cluster init` derives
 // the data-service topology from it.
 package layout
 

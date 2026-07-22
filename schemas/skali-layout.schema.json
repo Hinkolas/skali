@@ -3,7 +3,7 @@
   "$id": "https://skali.dev/schemas/v1/skali-layout.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Skali cluster layout",
-  "description": "Installation layout consumed by skali-installer: hosts, K3s roles, and designated node capabilities.",
+  "description": "Installation layout consumed by skali cluster: hosts, K3s roles, and designated node capabilities.",
   "required": [
     "version",
     "name",

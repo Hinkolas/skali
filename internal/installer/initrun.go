@@ -261,7 +261,7 @@ func assertClusterMembership(nodes []corev1.Node, cluster string) error {
 		switch {
 		case !ok:
 			violations = append(violations,
-				fmt.Sprintf("node %s has no %s label; it did not join through skali-installer",
+				fmt.Sprintf("node %s has no %s label; it did not join through skali cluster",
 					node.Name, layout.ClusterLabel))
 		case labeled != cluster:
 			violations = append(violations,
@@ -465,7 +465,7 @@ func newInitLog(ctx context.Context, runner host.Runner) (*initLog, error) {
 		runner: runner,
 		path:   fmt.Sprintf("%s/init-%s.log", LogDir, time.Now().UTC().Format("20060102-150405")),
 	}
-	log.line("skali-installer init " + version.Version)
+	log.line("skali cluster init " + version.Version)
 	return log, log.flush(ctx)
 }
 

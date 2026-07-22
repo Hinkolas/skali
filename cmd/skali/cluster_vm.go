@@ -1,11 +1,12 @@
 package main
 
-// On macOS the installer manages one headless Linux VM via Lima and
+// On macOS `skali cluster` manages one headless Linux VM via Lima and
 // installs the node inside it: Kubernetes nodes are Linux-only, so the VM
 // is the node and the Mac is its chassis. Every function here is a no-op
-// on Linux, where the engine keeps running against the host directly. The
-// installer itself never needs sudo on the Mac; privileged work happens
-// inside the VM through host.Lima.
+// on Linux, where the engine keeps running against the host directly.
+// Privileged work happens inside the VM through host.Lima; the only sudo
+// on the Mac itself is the confirmed dependency-provisioning step
+// (cluster_provision.go).
 
 import (
 	"bufio"
@@ -13,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -77,6 +79,16 @@ func darwinPrelude(ctx context.Context, out *os.File, policy vmPolicy, configVMN
 		return false, err
 	}
 	resolvedVM = name
+	if _, err := exec.LookPath("limactl"); err != nil {
+		// No Lima on this Mac at all: that is a fresh Mac, not an error.
+		// The install flow provisions Lima before creating the VM, and
+		// maintenance has nothing to target.
+		preludeDone, preludePresent = true, false
+		if policy == vmPolicyMaintain {
+			return false, vmAbsentError()
+		}
+		return false, nil
+	}
 	mac := host.Local{}
 	info, err := limavm.Inspect(ctx, mac, name)
 	if err != nil {
@@ -104,7 +116,7 @@ func darwinPrelude(ctx context.Context, out *os.File, policy vmPolicy, configVMN
 }
 
 func vmAbsentError() error {
-	return fmt.Errorf("no skali VM named %q exists on this Mac; run skali-installer install first", resolvedVM)
+	return fmt.Errorf("no skali VM named %q exists on this Mac; run skali cluster install first", resolvedVM)
 }
 
 // resolveVMName picks the Lima instance name: an explicit config vm.name
@@ -195,6 +207,12 @@ func runDarwinVMPrompts(ctx context.Context, out *os.File, reader *bufio.Reader)
 		return err
 	}
 	fmt.Fprintln(out)
+
+	// Dependency provisioning runs before the task printer starts: sudo
+	// may prompt for a password.
+	if err := ensureDarwinDeps(ctx, out, reader, limavm.Network(vm.Network), false); err != nil {
+		return err
+	}
 
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)

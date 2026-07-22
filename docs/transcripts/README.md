@@ -27,11 +27,12 @@ Files:
   destructive confirmation.
 - `cli-dev.md`: the CLI-owned local installation: first run, repeat run,
   status, logs, stop, and reset.
-- `installer.md`: privileged installation: fresh single node, non-interactive
-  configuration, multi-node join, cluster initialization, registry token
-  authentication and the public registry domain, tier upgrade, version
-  upgrade (k3s and bundle), repeat execution, degraded diagnosis, existing
-  Kubernetes, scoped uninstall, and macOS host management (Lima VM).
+- `cli-cluster.md`: the privileged `skali cluster` group: fresh single node,
+  non-interactive configuration, multi-node join, cluster initialization,
+  registry token authentication and the public registry domain, tier
+  upgrade, version upgrade (k3s and bundle), repeat execution, degraded
+  diagnosis, existing Kubernetes, scoped uninstall, and macOS host
+  management (Lima VM with self-provisioned dependencies).
 
 The example project throughout is `examples/file-sharing` (application `web`,
 database `data`, bucket `files`, values `APP_DOMAIN` and secret

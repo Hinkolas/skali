@@ -14,7 +14,7 @@ import (
 // JoinTokenTTL is the fixed lifetime of a generated join token.
 const JoinTokenTTL = "24h"
 
-// JoinToken is what `skali-installer token` hands to the operator.
+// JoinToken is what `skali cluster token` hands to the operator.
 type JoinToken struct {
 	Cluster   string
 	ServerURL string

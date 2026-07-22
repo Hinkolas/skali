@@ -2,8 +2,8 @@ package layout
 
 import "slices"
 
-// Node labels stamped by skali-installer at install/join time. They are the
-// durable, cluster-readable form of the layout: `skali-installer init` and
+// Node labels stamped by skali cluster at install/join time. They are the
+// durable, cluster-readable form of the layout: `skali cluster init` and
 // later skalid rebuild node capabilities from these labels instead of
 // trusting a document on disk.
 const (

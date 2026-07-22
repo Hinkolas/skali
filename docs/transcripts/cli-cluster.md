@@ -1,9 +1,10 @@
-# Installer transcripts
+# Cluster transcripts
 
-`skali-installer` is the privileged installation and recovery tool. It owns
-host-level K3s lifecycle and the installer-owned Skali system bundle. It
-never depends on the Skali API or product database, and the developer CLI can
-never perform any action shown here.
+`skali cluster` is the privileged installation and recovery command group of
+the `skali` CLI. It owns host-level K3s lifecycle and the installer-owned
+Skali system bundle. It never depends on the Skali API or product database,
+and no other `skali` command can perform any action shown here; the boundary
+is the command group and its engine package.
 
 The root-owned installation record lives at
 `/var/lib/skali/installation.yaml`; `init` also writes an in-cluster copy
@@ -13,8 +14,8 @@ bookkeeping only; mutation authority over bootstrap resources stays here.
 ## 1. Interactive fresh single node
 
 ```console
-$ sudo skali-installer
-skali-installer 2.0.0 (k3s v1.33.3+k3s1 pinned)
+$ sudo skali cluster
+skali 2.0.0 (k3s v1.33.3+k3s1 pinned)
 
 host cp-1: fresh
   os      Ubuntu 24.04 (linux/amd64)
@@ -90,7 +91,7 @@ join:
 ```
 
 ```console
-$ sudo skali-installer install --config node.yaml
+$ sudo skali cluster install --config node.yaml
 $ echo $?
 0
 ```
@@ -110,7 +111,7 @@ admin:
 ```
 
 ```console
-$ sudo skali-installer init --config init.yaml
+$ sudo skali cluster init --config init.yaml
 ```
 
 Non-interactive runs take every decision from the configuration and fail
@@ -124,9 +125,9 @@ match it.
 On the first server:
 
 ```console
-$ sudo skali-installer token
+$ sudo skali cluster token
 join command for cluster "production" (token expires in 24h):
-  sudo skali-installer join --server https://cp-1.internal:6443 \
+  sudo skali cluster join --server https://cp-1.internal:6443 \
     --token-file <file> --role agent --capabilities <list>
 
 join token (write it to <file> on the joining host, mode 0600):
@@ -142,7 +143,7 @@ On each additional host (joining is initiated per host; the installer never
 stores SSH credentials or reaches into other machines):
 
 ```console
-$ sudo skali-installer join --server https://cp-1.internal:6443 \
+$ sudo skali cluster join --server https://cp-1.internal:6443 \
     --token-file /root/token --role agent --capabilities database
   ok  Install k3s v1.33.3+k3s1 (agent)
   ok  Join cluster "production"
@@ -153,7 +154,7 @@ $ sudo skali-installer join --server https://cp-1.internal:6443 \
 After all planned nodes have joined, once on a server:
 
 ```console
-$ sudo skali-installer init --config init.yaml
+$ sudo skali cluster init --config init.yaml
 cluster layout (from node labels)
   NODE    ROLE    CAPABILITIES
   cp-1    server  edge, registry
@@ -176,11 +177,11 @@ derived topology
 ## 4. Availability-tier upgrade after adding a database node
 
 After `join --role agent --capabilities database` on a new host db-3,
-re-running the installer on a server detects the drift between layout and
+re-running `skali cluster` on a server detects the drift between layout and
 deployed topology:
 
 ```console
-$ sudo skali-installer
+$ sudo skali cluster
 host cp-1: healthy Skali server (cluster "production")
 
   database nodes    3 (db-1, db-2, db-3)
@@ -214,21 +215,21 @@ scales its own databases: the installer scales only the bootstrap database,
 
 ## 5. Version upgrade (k3s and bundle)
 
-A newer installer on a host installed by an older one shows the drift in
+A newer `skali` on a host installed by an older one shows the drift in
 its status and moves both versions through the explicit upgrade command:
 
 ```console
-$ sudo skali-installer status
-skali-installer 2.1.0 (k3s v1.33.4+k3s1 pinned)
+$ sudo skali cluster status
+skali 2.1.0 (k3s v1.33.4+k3s1 pinned)
 
 host cp-1: healthy Skali server (cluster "production")
   k3s        v1.33.3+k3s1 (expected v1.33.4+k3s1)
-  bundle     2.0.0 (installer is 2.1.0)
+  bundle     2.0.0 (skali is 2.1.0)
   nodes      7 joined
   bootstrap  database healthy, registry healthy, skalid healthy
 
-$ sudo skali-installer upgrade
-skali-installer 2.1.0 (k3s v1.33.4+k3s1 pinned)
+$ sudo skali cluster upgrade
+skali 2.1.0 (k3s v1.33.4+k3s1 pinned)
 
 upgrade plan for host cp-1 (cluster "production")
   k3s     v1.33.3+k3s1 -> v1.33.4+k3s1
@@ -254,7 +255,7 @@ The k3s step re-runs the vendored install script under the new pin; the
 node's k3s configuration, the registry mirror, and the pull credential are
 never rewritten. The bundle step is the same converge as init: it reuses
 the cluster's secrets and stored answers, skips the admin bootstrap, and
-prompts only for record fields older installers never gathered (an old
+prompts only for record fields older versions never gathered (an old
 record without a registry domain asks once, with the derivation from the
 api domain as the default). Non-interactive runs take `--yes` and fail
 with a named field instead of prompting.
@@ -265,13 +266,13 @@ re-converges even when the versions already match, because the new image
 id must roll skalid.
 
 Agent nodes carry no bundle, so upgrade moves only k3s there. Upgrade the
-server first, then run upgrade on each node; an installer older than the
+server first, then run upgrade on each node; a `skali` older than the
 installed k3s refuses rather than downgrade.
 
 ## 6. Repeat execution performs no mutation
 
 ```console
-$ sudo skali-installer
+$ sudo skali cluster
 host cp-1: healthy Skali server (cluster "production")
   k3s        v1.33.3+k3s1 (current)
   bundle     2.0.0 (current)
@@ -287,11 +288,11 @@ Detection is read-only. No maintenance action runs without being selected.
 
 ## 7. Diagnosis while Skali is down
 
-The bootstrap database is unavailable; the API and UI are down. The
-installer diagnoses from host state and the Kubernetes API alone:
+The bootstrap database is unavailable; the API and UI are down. `skali
+cluster` diagnoses from host state and the Kubernetes API alone:
 
 ```console
-$ sudo skali-installer diagnose
+$ sudo skali cluster diagnose
 host cp-1: Skali server (cluster "production")
   ok    k3s service active
   ok    kubernetes api reachable
@@ -303,7 +304,7 @@ host cp-1: Skali server (cluster "production")
   fail  skalid: CrashLoopBackOff (cannot reach its database)
 
 suggested action
-  free or expand storage on node db-2, then: skali-installer repair
+  free or expand storage on node db-2, then: skali cluster repair
 ```
 
 No step above used the Skali API, the product database, or the registry.
@@ -313,7 +314,7 @@ down.
 ## 8. Existing Kubernetes cluster
 
 ```console
-$ skali-installer install --mode existing-cluster \
+$ skali cluster install --mode existing-cluster \
     --kubeconfig ~/.kube/config --config init.yaml
 mode: existing cluster (unmanaged hosts)
   This mode installs and maintains only the Skali system bundle. Node
@@ -328,7 +329,7 @@ In this mode `join`, node removal, and Kubernetes upgrades are refused.
 ## 9. Scoped uninstall
 
 ```console
-$ sudo skali-installer uninstall
+$ sudo skali cluster uninstall
 scope of removal on host db-2 (cluster "production"):
 
   [1] this node       drain and remove db-2 from the cluster; project data
@@ -354,15 +355,15 @@ no single command that reaches into other machines.
 
 ## 10. macOS host (Lima VM)
 
-Kubernetes nodes are Linux-only, so on a Mac the installer manages one
-headless Linux VM via Lima and installs the node inside it. The installer
-itself runs rootless on the Mac; privileged work happens inside the VM. The
+Kubernetes nodes are Linux-only, so on a Mac `skali cluster` manages one
+headless Linux VM via Lima and installs the node inside it. The CLI itself
+runs rootless on the Mac; privileged work happens inside the VM. The
 installation record and all state live in the VM, which is why a stopped VM
 is started before any question is answered.
 
 ```console
-$ skali-installer
-skali-installer 2.0.0 (k3s v1.33.3+k3s1 pinned)
+$ skali cluster
+skali 2.0.0 (k3s v1.33.3+k3s1 pinned)
 
 host minis-01: fresh
   os      macOS (darwin/arm64)
@@ -392,31 +393,56 @@ This host is not part of a Skali installation. Install one?
   ok  Write /var/lib/skali/installation.yaml
   ok  Install login LaunchAgent
 
-This node has joined cluster "production". Run skali-installer init on a
+This node has joined cluster "production". Run skali cluster init on a
 server once every planned node has joined.
 ```
 
 The guest hostname is derived from the Mac's hostname, so a fleet of Macs
 yields distinct node names. The bridged network gives the VM its own LAN
 address; reserve it in the router's DHCP so the advertised node address
-stays stable. The default sizing gives the VM most of the machine (all
-cores minus one, memory minus 4GiB); a dedicated fleet Mac accepts the
-defaults.
+stays stable, and prefer a wired interface, since bridging over WiFi is
+unreliable with many access points. The default sizing gives the VM most of
+the machine (all cores minus one, memory minus 4GiB); a dedicated fleet Mac
+accepts the defaults.
 
-Bridged and shared networks need the one-time root-owned socket_vmnet
-setup. The installer never installs root components on the Mac; it checks
-and instructs instead:
+`skali cluster` provisions its own Mac dependencies. Lima is installed from
+a pinned, checksum-verified release into a rootless user prefix (an
+existing `limactl` on PATH, for example from Homebrew, is detected and used
+instead), and a default Lima networks configuration is written when none
+exists, with the bridged interface detected from the default route. The
+bridged and shared networks additionally run over socket_vmnet, which is
+root-owned: everything missing is gathered into one plan that prints the
+privileged commands verbatim and runs after a single confirmation.
 
 ```console
-$ skali-installer install --config node.yaml
-error: the Lima network "bridged" is not configured in /Users/admin/.lima/_config/networks.yaml
-complete the one time socket_vmnet setup, then run skali-installer again:
-  1. install socket_vmnet root owned (see https://lima-vm.io/docs/config/network/):
-       curl -OSL https://github.com/lima-vm/socket_vmnet/releases/download/v1.2.2/socket_vmnet-1.2.2-$(uname -m).tar.gz
-       sudo tar Cxzvf / socket_vmnet-1.2.2-$(uname -m).tar.gz opt/socket_vmnet
-  2. allow Lima to launch it:
+$ skali cluster install --config node.yaml
+skali 2.0.0 (k3s v1.33.3+k3s1 pinned)
+
+this Mac is missing dependencies for the "bridged" network:
+  1. install Lima v2.2.0 into ~/.local/share/skali/lima (rootless)
+  2. write ~/.lima/_config/networks.yaml (bridged uses interface en0)
+  3. install socket_vmnet v1.2.2 root owned:
+       sudo tar Cxzf / <verified download> opt/socket_vmnet
+  4. allow Lima to launch it:
        limactl sudoers | sudo tee /etc/sudoers.d/lima
+
+Proceed? [y/N] y
+  ok  Install Lima v2.2.0
+  ok  Write ~/.lima/_config/networks.yaml
+Password:
+  ok  Install socket_vmnet v1.2.2
+  ok  Write /etc/sudoers.d/lima
+
+  ok  Create VM skali (bridged, 9 cpus, 12GiB memory, 100GiB disk)
+  ...
 ```
+
+Each provisioning step is skipped when its result already exists, so an
+interrupted run resumes with only the missing pieces in the plan.
+Non-interactive runs fail naming the missing components and `--yes`. A
+networks.yaml that exists but lacks the requested network is never edited;
+the run fails with instructions instead, because that file is operator
+configuration. The user-v2 network needs no root components at all.
 
 Non-interactive installs describe the VM in the node configuration; every
 field is optional:
@@ -438,8 +464,8 @@ a reboot until someone logs in. Repeat runs decorate the status with the
 VM:
 
 ```console
-$ skali-installer status
-skali-installer 2.0.0 (k3s v1.33.3+k3s1 pinned)
+$ skali cluster status
+skali 2.0.0 (k3s v1.33.3+k3s1 pinned)
 
 host minis-01: Skali agent (cluster "production")
   vm         skali (Lima, network bridged)
@@ -451,7 +477,7 @@ Node-scope uninstall removes the whole VM: k3s, the record, and all state
 go with it, and the LaunchAgent is unloaded.
 
 ```console
-$ skali-installer uninstall --scope node --confirm production
+$ skali cluster uninstall --scope node --confirm production
 ...
   ok  Stop VM skali
   ok  Delete VM skali

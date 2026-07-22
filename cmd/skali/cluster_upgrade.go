@@ -18,7 +18,7 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-func newUpgradeCmd() *cobra.Command {
+func newClusterUpgradeCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "upgrade",
@@ -59,7 +59,7 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		return fmt.Errorf("this host cannot run a skali installation: %s",
 			strings.Join(detected.Problems, "; "))
 	default:
-		return fmt.Errorf("no skali installation on this host (state %s); run skali-installer install first",
+		return fmt.Errorf("no skali installation on this host (state %s); run skali cluster install first",
 			detected.State)
 	}
 	record := detected.Record
@@ -68,7 +68,7 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		return errors.New("--image-tar applies to server upgrades; agent nodes run no bundle")
 	}
 	if role == layout.RoleServer && record.Versions.Bundle == "" {
-		return errors.New("the bundle was never initialized; run skali-installer init first")
+		return errors.New("the bundle was never initialized; run skali cluster init first")
 	}
 
 	plan := installer.PlanUpgrade(status, imageTarFlag != "")

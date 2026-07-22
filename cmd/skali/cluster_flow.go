@@ -96,7 +96,7 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 
 	fmt.Fprintln(out)
 	if !cliprompt.ConfirmDefaultYes(reader, "This is the only node so far. Initialize Skali now? [Y/n] ") {
-		fmt.Fprintln(out, "Run `skali-installer init` on this node once every planned node has joined.")
+		fmt.Fprintln(out, "Run `skali cluster init` on this node once every planned node has joined.")
 		return nil
 	}
 	fmt.Fprintln(out)
@@ -104,7 +104,7 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 }
 
 // runInteractiveJoinFlow enrolls this host into an existing cluster as an
-// agent: the server URL and token come from `skali-installer token` run on
+// agent: the server URL and token come from `skali cluster token` run on
 // a server. The token can be pasted directly so no file has to be staged
 // for an interactive join.
 func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Reader) error {
@@ -159,7 +159,7 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 	printWarnings(out, warnings)
 
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "This node has joined cluster %q. Run skali-installer init on a server "+
+	fmt.Fprintf(out, "This node has joined cluster %q. Run skali cluster init on a server "+
 		"once every planned node has joined.\n", cluster)
 	return nil
 }
@@ -278,7 +278,7 @@ func seedInitInputs(reader *bufio.Reader, promptAllowed bool,
 
 func missingRecordField(field string) error {
 	return fmt.Errorf("the installation record is missing the %s; "+
-		"run skali-installer upgrade interactively to provide it", field)
+		"run skali cluster upgrade interactively to provide it", field)
 }
 
 // resolveSkalidImage settles the control-plane image when no tar stages

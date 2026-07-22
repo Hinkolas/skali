@@ -1,4 +1,4 @@
-# Second Lima VM for the skali-installer end-to-end suite: the host that
+# Second Lima VM for the skali cluster end-to-end suite: the host that
 # joins the skali-e2e server as a k3s agent. Smaller than the server VM;
 # an agent runs no control plane and no system bundle.
 # Create with `task lima:up`, run with `task test:installer`.

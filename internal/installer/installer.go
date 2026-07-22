@@ -1,5 +1,5 @@
-// Package installer is the engine behind skali-installer, the privileged
-// installation and recovery tool. It owns host-level k3s lifecycle, the
+// Package installer is the engine behind the `skali cluster` group, the privileged
+// installation and recovery surface of the CLI. It owns host-level k3s lifecycle, the
 // root-owned installation record, and the installer-owned skali-system
 // bundle converge. It never depends on the Skali API or product database
 // (section 14.1); its authority is exactly what skalid must not have

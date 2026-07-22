@@ -10,7 +10,7 @@ import (
 	"github.com/Hinkolas/skali/internal/installer"
 )
 
-func newStatusCmd() *cobra.Command {
+func newClusterStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show the installation state and health of this host",

@@ -322,44 +322,6 @@ func runDevLs(command *cobra.Command, args []string) error {
 	return nil
 }
 
-// taskProgress renders localdev ensure stages through the live task
-// printer; an unconcluded stage on error settles as failed via Abort.
-type taskProgress struct {
-	tasks   *clirender.Tasks
-	current *clirender.Task
-}
-
-func (p *taskProgress) Start(title string) {
-	if p.current != nil {
-		p.current.Done("")
-	}
-	p.current = p.tasks.Start(title)
-}
-
-func (p *taskProgress) Done(detail string) {
-	if p.current == nil {
-		return
-	}
-	p.current.Done(detail)
-	p.current = nil
-}
-
-func (p *taskProgress) Skip(detail string) {
-	if p.current == nil {
-		return
-	}
-	p.current.Skip(detail)
-	p.current = nil
-}
-
-func (p *taskProgress) Abort() {
-	if p.current == nil {
-		return
-	}
-	p.current.Fail()
-	p.current = nil
-}
-
 // ensureLocalPlatform brings the platform up and logs the CLI into it,
 // storing the local context.
 func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConverge bool) (*localdev.State, error) {

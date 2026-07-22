@@ -32,7 +32,7 @@ func KubeClient(ctx context.Context, runner host.Runner) (*kube.Client, error) {
 			return nil, err
 		}
 	}
-	staged, err := os.CreateTemp("", "skali-installer-kubeconfig-*")
+	staged, err := os.CreateTemp("", "skali-kubeconfig-*")
 	if err != nil {
 		return nil, fmt.Errorf("stage kubeconfig: %w", err)
 	}

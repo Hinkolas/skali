@@ -16,25 +16,25 @@ import (
 	"github.com/Hinkolas/skali/internal/installer/limavm"
 )
 
-// The darwin end-to-end suite drives the NATIVE skali-installer binary on
-// this Mac: it creates its own small Lima VM (user-v2, so no socket_vmnet
-// setup is needed), installs a server inside it, initializes Skali, proves
-// the kubeconfig address rewrite through a healthy status, and deletes the
-// VM again through the node-scope uninstall. Gated: it pulls operator
-// images and takes many minutes.
+// The darwin end-to-end suite drives the NATIVE skali binary's cluster
+// group on this Mac: it creates its own small Lima VM (user-v2, so no
+// socket_vmnet setup is needed), installs a server inside it, initializes
+// Skali, proves the kubeconfig address rewrite through a healthy status,
+// and deletes the VM again through the node-scope uninstall. Gated: it
+// pulls operator images and takes many minutes.
 //
 //	limactl stop skali-e2e skali-e2e-agent   # this Mac does not fit all three VMs
-//	task test:installer:darwin
+//	task test:cluster:darwin
 //
 // The suite owns the VM lifecycle end to end and cleans up on failure.
 const darwinE2EVM = "skali-e2e-darwin"
 
-func TestInstallerDarwin(t *testing.T) {
-	if os.Getenv("TEST_SKALI_INSTALLER_DARWIN") == "" {
-		t.Skip("set TEST_SKALI_INSTALLER_DARWIN=1 to run the darwin installer end-to-end suite")
+func TestClusterDarwin(t *testing.T) {
+	if os.Getenv("TEST_SKALI_CLUSTER_DARWIN") == "" {
+		t.Skip("set TEST_SKALI_CLUSTER_DARWIN=1 to run the darwin cluster end-to-end suite")
 	}
 	if runtime.GOOS != "darwin" {
-		t.Skip("the darwin installer suite runs only on macOS")
+		t.Skip("the darwin cluster suite runs only on macOS")
 	}
 	h := newBareHarness(t)
 
@@ -58,14 +58,14 @@ func TestInstallerDarwin(t *testing.T) {
 
 	// Native build, run directly and never under sudo: on a Mac the
 	// privileged work happens inside the VM through limactl.
-	binary := filepath.Join(t.TempDir(), "skali-installer")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/install")
+	binary := filepath.Join(t.TempDir(), "skali")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/skali")
 	build.Dir = h.repoRoot
 	buildOut, err := build.CombinedOutput()
 	require.NoError(t, err, "build: %s", buildOut)
 	run := func(args ...string) (string, int) {
 		t.Helper()
-		return h.hostCommand(binary, append([]string{"--vm", darwinE2EVM}, args...)...)
+		return h.hostCommand(binary, append([]string{"cluster", "--vm", darwinE2EVM}, args...)...)
 	}
 
 	// Fresh detection: no VM means a fresh Mac.
@@ -166,7 +166,7 @@ skalid:
 	// Repeat bare execution with closed stdin performs no mutation.
 	before := h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",
 		"-o", "jsonpath={range .items[*]}{.metadata.name}={.metadata.resourceVersion} {end}")
-	repeatRun, code := h.hostCommand("sh", "-c", binary+" --vm "+darwinE2EVM+" </dev/null")
+	repeatRun, code := h.hostCommand("sh", "-c", binary+" cluster --vm "+darwinE2EVM+" </dev/null")
 	require.Equal(t, 0, code, repeatRun)
 	after := h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",
 		"-o", "jsonpath={range .items[*]}{.metadata.name}={.metadata.resourceVersion} {end}")

@@ -3,7 +3,7 @@
 // delete), the local state record, and the bootstrap orchestration that
 // applies the skali-system bundle. Its authority is deliberately limited
 // to user-owned development installations (section 11.6); production
-// clusters belong to skali-installer.
+// clusters belong to `skali cluster`.
 package localdev
 
 import (

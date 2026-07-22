@@ -8,12 +8,14 @@ import (
 
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
+	"github.com/Hinkolas/skali/internal/installer/limavm"
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-func newJoinCmd() *cobra.Command {
+func newClusterJoinCmd() *cobra.Command {
 	var server, tokenFile, role, cluster, nodeIP string
 	var capabilities []string
+	var assumeYes bool
 	cmd := &cobra.Command{
 		Use:   "join",
 		Short: "Join this host to an existing cluster",
@@ -34,6 +36,13 @@ func newJoinCmd() *cobra.Command {
 			}
 
 			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, ""); err != nil {
+				return err
+			}
+			// Join creates the VM with the fleet defaults (bridged), so
+			// dependency provisioning targets that network. It confirms
+			// (or takes --yes) and runs before the task printer starts,
+			// because sudo may prompt.
+			if err := ensureDarwinDeps(ctx, out, nil, limavm.NetworkBridged, assumeYes); err != nil {
 				return err
 			}
 			tasks := clirender.NewTasks(out)
@@ -73,5 +82,6 @@ func newJoinCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&capabilities, "capabilities", nil, "designated workload capabilities for this node")
 	cmd.Flags().StringVar(&cluster, "cluster", installer.DefaultCluster, "name of the cluster being joined")
 	cmd.Flags().StringVar(&nodeIP, "node-ip", "", "IP address this node advertises inside the cluster (multi-homed hosts)")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
 	return cmd
 }

@@ -16,7 +16,7 @@ import (
 )
 
 // NodeConfig is the per-host install configuration (node.yaml) consumed by
-// `skali-installer install --config`. Non-interactive runs take every
+// `skali cluster install --config`. Non-interactive runs take every
 // decision from it and fail rather than prompt.
 type NodeConfig struct {
 	// Cluster names the installation; the first server creates it.
@@ -55,7 +55,7 @@ type VMConfig struct {
 }
 
 // InitConfig is the cluster initialization configuration (init.yaml)
-// consumed by `skali-installer init --config`.
+// consumed by `skali cluster init --config`.
 type InitConfig struct {
 	Endpoints EndpointsConfig `yaml:"endpoints" json:"endpoints"`
 	TLS       TLSInitConfig   `yaml:"tls" json:"tls"`

@@ -3,7 +3,7 @@
   "$id": "https://skali.dev/schemas/v1/skali-node.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Skali installer node configuration",
-  "description": "Per-host install configuration consumed by skali-installer install --config.",
+  "description": "Per-host install configuration consumed by skali cluster install --config.",
   "required": [
     "role",
     "capabilities"
