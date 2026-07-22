@@ -1,14 +1,15 @@
 # Remote plan and deploy transcripts
 
-Context: the developer has an authenticated context `production-admin` for
-the installation at `https://skali.example.com`, and the project checkout
+Context: the developer has an authenticated remote `skali.example.com` for
+the installation at `https://skali.example.com` (added once with
+`skali remote add`, see `cli-remote.md`), and the project checkout
 contains `skali.yml` plus a gitignored `production.env`.
 
 ## 1. Plan with a local env file
 
 ```console
 $ skali plan --environment production --env-file ./production.env
-context      production-admin (https://skali.example.com)
+remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
 environment  production
 
@@ -28,7 +29,7 @@ mutates the environment: no values are stored, no target moves.
 
 ```console
 $ skali deploy --environment production --build=local --env-file ./production.env
-context      production-admin (https://skali.example.com)
+remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
 environment  production
 
@@ -80,7 +81,7 @@ Notes pinned by this transcript:
 - Staged values are promoted atomically with the target change, after
   artifacts verify.
 - The push to `registry.example.com` uses the ambient docker credentials;
-  log in once with `skali auth token | docker login registry.example.com
+  log in once with `skali remote token | docker login registry.example.com
   -u you@example.com --password-stdin`. Grants are scoped server-side: a
   session may push only project release repositories and the import cache,
   never arbitrary ones.

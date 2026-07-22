@@ -17,7 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/localdev"
 )
 
-const localContextName = "local"
+const localRemoteName = "local"
 const localEnvironmentName = "local"
 
 func newDevCommand() *cobra.Command {
@@ -264,7 +264,7 @@ func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID 
 func reauthLocal(ctx context.Context, api *client.Client) error {
 	state, err := localdev.LoadState()
 	if err != nil || state.AdminPassword == "" {
-		return errors.New("recent authentication required; run skali login")
+		return errors.New("recent authentication required; run skali dev up first")
 	}
 	if err := api.Reauthenticate(ctx, state.AdminPassword); err != nil {
 		return fmt.Errorf("reauthenticate against the local platform: %w", err)
@@ -291,11 +291,11 @@ func runDevLs(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	localContext := cfg.Contexts[localContextName]
-	if localContext == nil {
+	localRemote := cfg.Remotes[localRemoteName]
+	if localRemote == nil {
 		return errors.New("the local platform is not set up; run skali dev up first")
 	}
-	api := client.New(localContext.Master, localContext.Token, userAgent())
+	api := client.New(localRemote.Master, localRemote.Token, userAgent())
 	projects, err := api.ListProjects(ctx)
 	if err != nil {
 		return err
@@ -323,7 +323,7 @@ func runDevLs(command *cobra.Command, args []string) error {
 }
 
 // ensureLocalPlatform brings the platform up and logs the CLI into it,
-// storing the local context.
+// storing the local remote.
 func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConverge bool) (*localdev.State, error) {
 	ctx := command.Context()
 	out := command.OutOrStdout()
@@ -345,7 +345,7 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 		progress.Abort()
 		return nil, err
 	}
-	if err := loginLocalContext(ctx, state); err != nil {
+	if err := loginLocalRemote(ctx, state); err != nil {
 		return nil, err
 	}
 	return state, nil
@@ -389,18 +389,18 @@ func findRepoRoot() string {
 	}
 }
 
-// loginLocalContext authenticates against the local installation with the
-// recorded bootstrap credentials and stores the context.
-func loginLocalContext(ctx context.Context, state *localdev.State) error {
+// loginLocalRemote authenticates against the local installation with the
+// recorded bootstrap credentials and stores the local remote.
+func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 	cfg, err := cliconfig.Load()
 	if err != nil {
 		return err
 	}
-	existing := cfg.Contexts[localContextName]
+	existing := cfg.Remotes[localRemoteName]
 	if existing != nil && existing.Token != "" {
 		probe := client.New(localdev.MasterURL(), existing.Token, userAgent())
 		if _, err := probe.CurrentSession(ctx); err == nil {
-			cfg.CurrentContext = localContextName
+			cfg.CurrentRemote = localRemoteName
 			return cliconfig.Save(cfg)
 		}
 	}
@@ -412,19 +412,19 @@ func loginLocalContext(ctx context.Context, state *localdev.State) error {
 	if result.Session == nil {
 		return errors.New("the local platform unexpectedly demanded a second factor")
 	}
-	if cfg.Contexts == nil {
-		cfg.Contexts = map[string]*cliconfig.Context{}
+	if cfg.Remotes == nil {
+		cfg.Remotes = map[string]*cliconfig.Remote{}
 	}
-	cfg.Contexts[localContextName] = &cliconfig.Context{
+	cfg.Remotes[localRemoteName] = &cliconfig.Remote{
 		Master: localdev.MasterURL(),
 		Token:  result.Session.Token,
 	}
-	cfg.CurrentContext = localContextName
+	cfg.CurrentRemote = localRemoteName
 	return cliconfig.Save(cfg)
 }
 
 // localProjectEnvironment resolves the current project's local environment
-// through the local context.
+// through the local remote.
 func localProjectEnvironment(command *cobra.Command) (*client.Client, string, error) {
 	project, err := loadLocalProject("")
 	if err != nil {
@@ -434,11 +434,11 @@ func localProjectEnvironment(command *cobra.Command) (*client.Client, string, er
 	if err != nil {
 		return nil, "", err
 	}
-	localContext := cfg.Contexts[localContextName]
-	if localContext == nil {
+	localRemote := cfg.Remotes[localRemoteName]
+	if localRemote == nil {
 		return nil, "", errors.New("the local platform is not set up; run skali dev up first")
 	}
-	api := client.New(localContext.Master, localContext.Token, userAgent())
+	api := client.New(localRemote.Master, localRemote.Token, userAgent())
 	_, environmentID, err := resolveEnvironmentIDs(command.Context(), api,
 		project.Result.Definition.Name, localEnvironmentName, false)
 	if err != nil {
@@ -569,11 +569,11 @@ func runDevReset(command *cobra.Command, yes bool) error {
 	}
 	task.Done("")
 
-	// Drop the stored local context; its token died with the cluster.
+	// Drop the stored local remote; its token died with the cluster.
 	if cfg, err := cliconfig.Load(); err == nil {
-		delete(cfg.Contexts, localContextName)
-		if cfg.CurrentContext == localContextName {
-			cfg.CurrentContext = ""
+		delete(cfg.Remotes, localRemoteName)
+		if cfg.CurrentRemote == localRemoteName {
+			cfg.CurrentRemote = ""
 		}
 		_ = cliconfig.Save(cfg)
 	}

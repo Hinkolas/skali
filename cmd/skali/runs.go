@@ -15,7 +15,7 @@ import (
 	"github.com/Hinkolas/skali/internal/clirender"
 )
 
-// environmentIDByName resolves --environment against the current context.
+// environmentIDByName resolves --environment against the current remote.
 func environmentIDByName(command *cobra.Command, api *client.Client, environment string) (string, error) {
 	ctx := command.Context()
 	projects, err := api.ListProjects(ctx)

@@ -1,7 +1,7 @@
 // Package cliconfig reads and writes the skali CLI's client-side
-// configuration: kubectl-style named contexts, each holding a master URL and
-// the session token minted for it. The file lives under XDG config
-// (~/.config/skali/config.yaml) with 0600 permissions — it stores bearer
+// configuration: named remotes, each holding a master URL and the session
+// token minted for it. The file lives under XDG config
+// (~/.config/skali/config.yaml) with 0600 permissions; it stores bearer
 // tokens, nothing else does.
 package cliconfig
 
@@ -14,16 +14,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Context is one master a user can talk to.
-type Context struct {
+// Remote is one master a user can talk to.
+type Remote struct {
 	Master string `yaml:"master"`
 	Token  string `yaml:"token,omitempty"`
 }
 
 // Config is the on-disk shape of ~/.config/skali/config.yaml.
 type Config struct {
-	CurrentContext string              `yaml:"current_context,omitempty"`
-	Contexts       map[string]*Context `yaml:"contexts,omitempty"`
+	CurrentRemote string             `yaml:"current_remote,omitempty"`
+	Remotes       map[string]*Remote `yaml:"remotes,omitempty"`
 }
 
 // Path resolves the config file location: $XDG_CONFIG_HOME/skali/config.yaml,
@@ -49,7 +49,7 @@ func Load() (*Config, error) {
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return &Config{Contexts: map[string]*Context{}}, nil
+		return &Config{Remotes: map[string]*Remote{}}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cliconfig: read %s: %w", path, err)
@@ -58,8 +58,8 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("cliconfig: parse %s: %w", path, err)
 	}
-	if cfg.Contexts == nil {
-		cfg.Contexts = map[string]*Context{}
+	if cfg.Remotes == nil {
+		cfg.Remotes = map[string]*Remote{}
 	}
 	return &cfg, nil
 }
@@ -83,15 +83,15 @@ func Save(cfg *Config) error {
 	return nil
 }
 
-// Current returns the active context, or an error telling the user how to
+// Current returns the active remote, or an error telling the user how to
 // create one.
-func (c *Config) Current() (string, *Context, error) {
-	if c.CurrentContext == "" {
-		return "", nil, errors.New("no context selected; run `skali auth login --master <url>` first")
+func (c *Config) Current() (string, *Remote, error) {
+	if c.CurrentRemote == "" {
+		return "", nil, errors.New("no remote selected; run `skali remote add <url>` first")
 	}
-	ctx, ok := c.Contexts[c.CurrentContext]
+	remote, ok := c.Remotes[c.CurrentRemote]
 	if !ok {
-		return "", nil, fmt.Errorf("current context %q does not exist; run `skali context list`", c.CurrentContext)
+		return "", nil, fmt.Errorf("current remote %q does not exist; run `skali remote list`", c.CurrentRemote)
 	}
-	return c.CurrentContext, ctx, nil
+	return c.CurrentRemote, remote, nil
 }

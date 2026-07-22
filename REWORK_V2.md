@@ -1434,7 +1434,7 @@ without printing values. Non-interactive use must pass either `--env-file` or
 The deploy workflow is:
 
 1. Discover and parse the manifest locally for immediate feedback.
-2. Connect to the selected Skali context and submit the candidate definition.
+2. Connect to the selected Skali remote and submit the candidate definition.
 3. Select remote environment values or parse and securely upload the chosen env
    file as candidate values.
 4. Have `skalid` independently validate the definition/values and return a
@@ -1532,8 +1532,14 @@ terminal, build-engine, or local-machine access:
 - Manage the local development installation.
 - Attach to run steps and logs.
 - Stream application logs and execute into application members.
-- Manage remote contexts and authentication.
+- Manage named remotes and their authentication through the single
+  `skali remote` group.
 - Submit definitions/revisions through the public Skali API.
+
+Named remotes are managed by the `skali remote` group. `skali remote add <url>`
+creates the remote, named after the URL host by default, and performs the
+initial login; `skali remote login` re-authenticates an existing remote. The
+`local` remote is owned exclusively by `skali dev`.
 
 Production K3s creation, node lifecycle, Kubernetes upgrades, diagnosis,
 repair, and uninstall belong exclusively to the `skali cluster` command group,
@@ -1651,7 +1657,7 @@ V2 separates developer workflow, privileged installation, and continuous
 reconciliation:
 
 - `skali` is the developer CLI. It owns project files, local builds, terminal
-  UX, remote Skali contexts, and disposable `skali dev` installations. It also
+  UX, named Skali remotes, and disposable `skali dev` installations. It also
   carries the administrator and recovery role as the `skali cluster` command
   group, which owns host-level K3s installation, joining a host as a server or
   agent, Kubernetes upgrades, diagnostics, repair, uninstall, and the
@@ -2101,7 +2107,7 @@ Implementation notes (decided 2026-07-20, R3 landing):
   initContainer), and a bootstrap operator-user Job. cert-manager and TLS
   issuance are production-bundle concerns (R4); the rendered
   cluster-issuer annotation is inert locally. The CLI logs in through the
-  edge and stores the `local` context; a `skali-dev` cluster without an
+  edge and stores the `local` remote; a `skali-dev` cluster without an
   installation record is never adopted or destroyed.
 - Runtime logs stream through the API as a deliberate cluster pass-through
   (kubelet follow per member, previous-container tail after restarts);
@@ -2428,7 +2434,7 @@ The following decisions are part of this plan:
 - Runs/steps/logs explain reconciliation but never drive it.
 - Local development is a distinct local Skali installation using the same core.
 - The developer-workflow commands own project files, builds, terminal
-  workflows, remote Skali contexts, and disposable local development; they are
+  workflows, named Skali remotes, and disposable local development; they are
   not an API mirror and do not administer production Kubernetes.
 - The privileged `skali cluster` group owns host-level K3s and installer-owned
   Skali system lifecycle, remains independent of the Skali API/database, and

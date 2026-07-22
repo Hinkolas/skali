@@ -588,12 +588,12 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	if err != nil {
 		return "", err
 	}
-	cfg, contextName, api, err := currentClient()
+	cfg, remoteName, api, err := currentClient()
 	if err != nil {
 		return "", err
 	}
 	style := clirender.StyleFor(out)
-	master := cfg.Contexts[contextName].Master
+	master := cfg.Remotes[remoteName].Master
 	fmt.Fprintf(out, "%s      %s %s\n", style.Dim("project"),
 		project.Result.Definition.Name, style.Dim("("+filepath.Base(project.Path)+")"))
 	fmt.Fprintf(out, "%s  %s %s\n", style.Dim("environment"),

@@ -94,8 +94,8 @@ go run ./cmd/skalid user create --email you@example.com
 task dev
 
 # 5. CLI
-go run ./cmd/skali auth login --master http://localhost:7070
-go run ./cmd/skali auth whoami
+go run ./cmd/skali remote add http://localhost:7070
+go run ./cmd/skali remote status
 
 # 6. Web UI (vite dev server on :5173, BFF → API)
 cd web && cp .env.example .env && npm install
@@ -139,7 +139,7 @@ The generated editor schema is checked in at
 ```
 api/           OpenAPI 3.1 contract (embedded, served by the daemon)
 cmd/skalid     control plane: serve (default) | user | migrate
-cmd/skali      workflow CLI: auth, context, validate, compile
+cmd/skali      workflow CLI: remote, validate, compile
 migrations/    goose migrations (embedded; also sqlc's schema source)
 query/         sqlc query sources → generated into internal/store
 internal/
@@ -154,7 +154,7 @@ internal/
   client/        typed REST client used by cmd/skali (JSON + SSE)
   clirender/     terminal run-tree renderer (transcript glyph shape)
   compiler/      normalized project IR, references, units, dependency graph
-  cliconfig/     ~/.config/skali/config.yaml contexts
+  cliconfig/     ~/.config/skali/config.yaml named remotes
   config/        env-driven config (godotenv + envconfig)
   crypt/         shared at-rest encryption (AES-GCM, HKDF-derived keys)
   deploy/        deployment coordination: plan, artifact window, promotion

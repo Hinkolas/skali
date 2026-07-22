@@ -22,6 +22,9 @@ transcripts is a design change and belongs in REWORK_V2 first.
 
 Files:
 
+- `cli-remote.md`: the `skali remote` group: adding a remote with initial
+  login and TOTP, listing and switching, status, re-login, the registry
+  token, removal, and the reserved `local` remote.
 - `cli-deploy.md`: remote plan and deploy, local and cloud builds, env-file
   upload, remote-value reuse, failure atomicity, detach/reattach, and
   destructive confirmation.

@@ -5,8 +5,8 @@
 // command group, whose engine never depends on the Skali API or product
 // database; see cluster.go.
 //
-// Configuration lives in ~/.config/skali/config.yaml as kubectl-style named
-// contexts (master URL + session token); see `skali context --help`.
+// Configuration lives in ~/.config/skali/config.yaml as named remotes
+// (master URL + session token); see `skali remote --help`.
 package main
 
 import (
@@ -30,7 +30,7 @@ func main() {
 		SilenceErrors: true,
 	}
 
-	root.AddCommand(newAuthCmd(), newContextCmd(), newValidateCmd(), newCompileCmd(),
+	root.AddCommand(newRemoteCmd(), newValidateCmd(), newCompileCmd(),
 		newPlanCommand(), newDeployCommand(), newDevCommand(),
 		newRunsCommand(), newRunCommand(), newLogsCommand(), newClusterCommand())
 
@@ -50,15 +50,15 @@ func userAgent() string {
 	return fmt.Sprintf("skali/%s (%s)", versionpkg.Version, host)
 }
 
-// currentClient builds a client for the active context; token may be empty.
+// currentClient builds a client for the current remote; token may be empty.
 func currentClient() (*cliconfig.Config, string, *client.Client, error) {
 	cfg, err := cliconfig.Load()
 	if err != nil {
 		return nil, "", nil, err
 	}
-	name, ctx, err := cfg.Current()
+	name, remote, err := cfg.Current()
 	if err != nil {
 		return nil, "", nil, err
 	}
-	return cfg, name, client.New(ctx.Master, ctx.Token, userAgent()), nil
+	return cfg, name, client.New(remote.Master, remote.Token, userAgent()), nil
 }
