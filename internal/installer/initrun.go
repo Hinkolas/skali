@@ -148,8 +148,9 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	}
 	pullSecret := registriesPullSecret(registries)
 	if pullSecret == "" {
-		return fail(fmt.Errorf("%s is missing the registry pull credential; re-run install",
-			K3sRegistriesPath))
+		return fail(fmt.Errorf("%s is missing the registry pull credential; "+
+			"run skali cluster upgrade, which mints it for hosts installed "+
+			"before the registry required authentication", K3sRegistriesPath))
 	}
 	progress.Skip("configured at install")
 

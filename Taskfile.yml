@@ -26,6 +26,13 @@ tasks:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skalid ./cmd/skalid
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
 
+  build:image:
+    desc: Build the skalid:dev image from this checkout and save it to .cache/skalid-dev.tar (needs docker)
+    cmds:
+      - docker build -t skalid:dev -f build/skalid.Dockerfile .
+      - mkdir -p .cache
+      - docker save skalid:dev -o .cache/skalid-dev.tar
+
   install:cli:
     desc: Build the skali CLI and install it to ~/.local/bin
     cmds:
@@ -39,9 +46,7 @@ tasks:
     interactive: true
     cmds:
       - task: build
-      - docker build -t skalid:dev -f build/skalid.Dockerfile .
-      - mkdir -p .cache
-      - docker save skalid:dev -o .cache/skalid-dev.tar
+      - task: build:image
       # Linux installs this host (hence sudo); macOS manages a Lima VM
       # rootless. The tar is imported into the node during init instead of
       # pulling from a registry.

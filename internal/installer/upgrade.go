@@ -2,9 +2,11 @@ package installer
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/version"
@@ -59,6 +61,55 @@ func (p UpgradePlan) Nothing(role string) bool {
 		return !p.K3sDrifted
 	}
 	return !p.K3sDrifted && !p.BundleDrifted && !p.ImageForced
+}
+
+// NodePullCredentialMissing reports whether this server's registries.yaml
+// carries the managed-registry mirror but no node pull credential: the
+// shape of a host installed before the registry required authentication.
+// Such a host cannot re-run install, so upgrade is the migration path
+// that heals it.
+func NodePullCredentialMissing(ctx context.Context, runner host.Runner) (bool, error) {
+	registries, err := runner.ReadFile(ctx, K3sRegistriesPath)
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", K3sRegistriesPath, err)
+	}
+	if !strings.Contains(string(registries), bundle.RegistryInternalHost) {
+		return false, fmt.Errorf("%s is missing the %s mirror; this host was not installed by skali",
+			K3sRegistriesPath, bundle.RegistryInternalHost)
+	}
+	return registriesPullSecret(registries) == "", nil
+}
+
+// HealNodePullCredential mints the node pull credential and rewrites
+// registries.yaml exactly as a fresh install would. containerd only reads
+// the file at k3s startup, so when no k3s upgrade follows to restart the
+// service (restart true), it is restarted here and waited healthy; the
+// unit's KillMode=process keeps workload containers running through it.
+// The converge that follows reads the credential back from registries.yaml
+// and publishes it in-cluster, so skalid and the registry accept this node
+// once token authentication turns on.
+func HealNodePullCredential(ctx context.Context, runner host.Runner, restart bool, progress Progress) error {
+	progress.Start("Mint registry pull credential")
+	secret, err := newPullSecret()
+	if err != nil {
+		return err
+	}
+	if err := runner.WriteFile(ctx, K3sRegistriesPath, []byte(k3sRegistriesYAML(secret)), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", K3sRegistriesPath, err)
+	}
+	if !restart {
+		return nil
+	}
+	progress.Start("Restart k3s to load the credential")
+	result, err := runner.Run(ctx, host.Command{Name: "systemctl", Args: []string{"restart", "k3s"}})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("systemctl restart k3s: exit %d: %s",
+			result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	return waitK3sUpgraded(ctx, runner, layout.RoleServer, progress)
 }
 
 // UpgradeK3s re-runs the vendored install script under this installer's

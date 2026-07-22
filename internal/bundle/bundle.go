@@ -569,9 +569,27 @@ spec:
 }
 
 func skalidYAML(profile Profile) string {
-	imageIDAnnotation := ""
+	// Pod-template annotations force a roll on changes the spec cannot
+	// see: a re-imported image under the same tag, and the secret-backed
+	// env (secretKeyRef values resolve at container start, so a rotated
+	// token key or node pull secret would otherwise stay stale in the
+	// running pod). The checksum is a truncated one-way hash; it reveals
+	// nothing about the material.
+	var annotationLines []string
 	if profile.SkalidImageID != "" {
-		imageIDAnnotation = "\n      annotations:\n        skali.dev/image-id: " + profile.SkalidImageID
+		annotationLines = append(annotationLines, "skali.dev/image-id: "+profile.SkalidImageID)
+	}
+	if production := profile.Production; production != nil {
+		sum := sha256.Sum256([]byte(production.TokenKeyPEM + "\x00" + production.NodePullSecret))
+		annotationLines = append(annotationLines,
+			"skali.dev/registry-token-checksum: "+hex.EncodeToString(sum[:8]))
+	}
+	podAnnotations := ""
+	if len(annotationLines) > 0 {
+		podAnnotations = "\n      annotations:"
+		for _, line := range annotationLines {
+			podAnnotations += "\n        " + line
+		}
 	}
 	capabilitiesEnv := ""
 	ingressAnnotations := ""
@@ -728,7 +746,7 @@ spec:
                 port:
                   number: 80
 `, Namespace, profile.SkalidImage, base64.StdEncoding.EncodeToString([]byte(profile.AuthSecret)), profile.RegistryHost,
-		imageIDAnnotation, capabilitiesEnv, ingressAnnotations, ingressTLS, ingressHost)
+		podAnnotations, capabilitiesEnv, ingressAnnotations, ingressTLS, ingressHost)
 }
 
 func bootstrapYAML(profile Profile) string {

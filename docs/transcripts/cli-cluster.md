@@ -269,6 +269,16 @@ Agent nodes carry no bundle, so upgrade moves only k3s there. Upgrade the
 server first, then run upgrade on each node; a `skali` older than the
 installed k3s refuses rather than downgrade.
 
+Upgrade is also the migration path for a server installed before the
+registry required authentication: such a host has no node pull credential
+in its registries.yaml, and install refuses to re-run on a non-fresh
+host. The plan names the gap, and the upgrade mints the credential,
+rewrites registries.yaml exactly as a fresh install would, and restarts
+k3s to load it when no k3s upgrade restarts the service anyway
+(containers keep running through the restart). The converge then
+publishes the credential in-cluster, so the node keeps pulling once the
+registry challenges.
+
 ## 6. Repeat execution performs no mutation
 
 ```console

@@ -76,7 +76,17 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		return fmt.Errorf("this installer pins k3s %s but the host runs %s; a newer installer must run this upgrade",
 			plan.K3sTo, plan.K3sFrom)
 	}
-	if plan.Nothing(role) {
+	// A host installed before the registry required authentication has no
+	// node pull credential in registries.yaml; upgrade is its migration
+	// path, so the gap keeps the flow going even with no version drift.
+	credentialMissing := false
+	if role == layout.RoleServer {
+		credentialMissing, err = installer.NodePullCredentialMissing(ctx, runner())
+		if err != nil {
+			return err
+		}
+	}
+	if plan.Nothing(role) && !credentialMissing {
 		fmt.Fprintln(out, "already current, nothing to do")
 		return nil
 	}
@@ -101,7 +111,7 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	}
 
 	fmt.Fprintf(out, "upgrade plan for host %s (cluster %q)\n", hostLabel(detected), record.Cluster)
-	printUpgradePlan(out, plan, role, opts.SkalidImage, tarData != nil)
+	printUpgradePlan(out, plan, role, opts.SkalidImage, tarData != nil, credentialMissing)
 
 	if !yes {
 		if !cliprompt.Interactive() {
@@ -128,6 +138,15 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		return nil
 	}
 
+	// The credential is written before any k3s restart so containerd loads
+	// it: a following k3s upgrade restarts the service anyway, otherwise
+	// the heal restarts it itself.
+	if credentialMissing {
+		if err := installer.HealNodePullCredential(ctx, runner(), !plan.K3sDrifted, progress); err != nil {
+			progress.Abort()
+			return err
+		}
+	}
 	if plan.K3sDrifted {
 		if err := installer.UpgradeK3s(ctx, runner(), record, progress); err != nil {
 			progress.Abort()
@@ -159,7 +178,7 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 // printUpgradePlan renders the drift lines the confirmation refers to. A
 // server converges whenever the flow reaches this point, so the bundle
 // line always states what the converge is for.
-func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, image string, fromTar bool) {
+func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, image string, fromTar, credentialMissing bool) {
 	if plan.K3sDrifted {
 		fmt.Fprintf(out, "  k3s     %s -> %s\n", orUnknown(plan.K3sFrom), plan.K3sTo)
 	} else {
@@ -185,6 +204,13 @@ func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, image str
 			suffix = " (imported from tar)"
 		}
 		fmt.Fprintf(out, "  skalid  %s%s\n", image, suffix)
+	}
+	if credentialMissing {
+		detail := "minted during this upgrade"
+		if !plan.K3sDrifted {
+			detail += "; k3s restarts to load it (containers keep running)"
+		}
+		fmt.Fprintf(out, "  pull    node registry credential missing, %s\n", detail)
 	}
 	fmt.Fprintln(out)
 }

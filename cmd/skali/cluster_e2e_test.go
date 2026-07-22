@@ -279,12 +279,23 @@ skalid:
 	require.Contains(t, missingOut, "interactively")
 	h.vmOK("sudo", "cp", "/tmp/installation-backup.yaml", "/var/lib/skali/installation.yaml")
 
+	// Simulate a host installed before the registry required auth: drop
+	// the configs section (the pull credential) from registries.yaml. The
+	// upgrade must heal it, and every later phase (token minting, the
+	// composite join token, the agent's containerd config) then exercises
+	// the minted credential end to end.
+	h.vmOK("sudo", "sed", "-i", "/^configs:/,$d", "/etc/rancher/k3s/registries.yaml")
+	registriesStripped := h.vmOK("sudo", "cat", "/etc/rancher/k3s/registries.yaml")
+	require.NotContains(t, registriesStripped, "password:")
+
 	// The upgrade itself, reusing the already-staged image tar.
 	upgradeOut, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes",
 		"--image-tar", "/tmp/skalid-dev.tar")
 	require.Equal(t, 0, code, upgradeOut)
 	require.Contains(t, upgradeOut, e2eOlderK3s+" -> "+installer.K3sVersion)
 	require.Contains(t, upgradeOut, "0.0.0-e2e-a -> 0.0.0-dev")
+	require.Contains(t, upgradeOut, "node registry credential missing")
+	require.Contains(t, upgradeOut, "Mint registry pull credential")
 	require.Contains(t, upgradeOut, "Upgrade k3s to "+installer.K3sVersion)
 	require.Contains(t, upgradeOut, "upgrade complete:")
 
@@ -299,7 +310,8 @@ skalid:
 	require.Contains(t, namespaceJSON, `"skali.dev/bundle-hash"`)
 	require.NotContains(t, namespaceJSON, `"skali.dev/bundle-hash": ""`)
 
-	// The k3s script re-run must preserve the host-owned config files.
+	// The k3s script re-run must preserve the host-owned config files, and
+	// the heal must have put the minted credential back.
 	registriesAfter := h.vmOK("sudo", "cat", "/etc/rancher/k3s/registries.yaml")
 	require.Contains(t, registriesAfter, "registry.skali.internal")
 	require.Contains(t, registriesAfter, "password:")

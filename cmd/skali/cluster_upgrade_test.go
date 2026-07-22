@@ -71,7 +71,7 @@ func TestPrintUpgradePlanVariants(t *testing.T) {
 		BundleFrom: "1.0.0", BundleTo: "1.1.0", BundleDrifted: true,
 	}
 	var out bytes.Buffer
-	printUpgradePlan(&out, drifted, layout.RoleServer, "skalid:dev", true)
+	printUpgradePlan(&out, drifted, layout.RoleServer, "skalid:dev", true, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n"+
 		"  bundle  1.0.0 -> 1.1.0\n"+
@@ -82,7 +82,7 @@ func TestPrintUpgradePlanVariants(t *testing.T) {
 		BundleFrom: "1.1.0", BundleTo: "1.1.0", ImageForced: true,
 	}
 	out.Reset()
-	printUpgradePlan(&out, tarForced, layout.RoleServer, "skalid:dev", true)
+	printUpgradePlan(&out, tarForced, layout.RoleServer, "skalid:dev", true, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.3+k3s1 (current)\n"+
 		"  bundle  1.1.0 (reconverge for the new skalid image)\n"+
@@ -93,7 +93,7 @@ func TestPrintUpgradePlanVariants(t *testing.T) {
 		BundleFrom: "1.1.0", BundleTo: "1.1.0",
 	}
 	out.Reset()
-	printUpgradePlan(&out, k3sOnly, layout.RoleServer, "ghcr.io/hinkolas/skalid:1.1.0", false)
+	printUpgradePlan(&out, k3sOnly, layout.RoleServer, "ghcr.io/hinkolas/skalid:1.1.0", false, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n"+
 		"  bundle  1.1.0 (reconverge to republish the record)\n"+
@@ -103,9 +103,22 @@ func TestPrintUpgradePlanVariants(t *testing.T) {
 		K3sFrom: "v1.33.2+k3s1", K3sTo: "v1.33.3+k3s1", K3sDrifted: true,
 	}
 	out.Reset()
-	printUpgradePlan(&out, agent, layout.RoleAgent, "", false)
+	printUpgradePlan(&out, agent, layout.RoleAgent, "", false, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n\n"+
 		"This node is an agent: upgrade the server first, then run upgrade on each node.\n\n",
 		out.String())
+
+	// A pre-token-auth host: the credential line names the restart only
+	// when no k3s upgrade will restart the service anyway.
+	out.Reset()
+	printUpgradePlan(&out, drifted, layout.RoleServer, "skalid:dev", true, true)
+	require.Contains(t, out.String(), "  pull    node registry credential missing, minted during this upgrade\n")
+	require.NotContains(t, out.String(), "k3s restarts")
+
+	out.Reset()
+	printUpgradePlan(&out, tarForced, layout.RoleServer, "skalid:dev", true, true)
+	require.Contains(t, out.String(),
+		"  pull    node registry credential missing, minted during this upgrade; "+
+			"k3s restarts to load it (containers keep running)\n")
 }

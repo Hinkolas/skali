@@ -2,11 +2,13 @@ package installer
 
 import (
 	"context"
+	"io/fs"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/version"
@@ -230,4 +232,60 @@ func firstArg(cmd host.Command) string {
 		return ""
 	}
 	return cmd.Args[0]
+}
+
+func TestNodePullCredentialMissing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// A pre-token-auth host: the mirror exists, no configs section.
+	old := &host.Fake{FS: map[string][]byte{
+		K3sRegistriesPath: []byte(k3sRegistriesYAML("")),
+	}}
+	missing, err := NodePullCredentialMissing(ctx, old)
+	require.NoError(t, err)
+	require.True(t, missing)
+
+	current := &host.Fake{FS: map[string][]byte{
+		K3sRegistriesPath: []byte(k3sRegistriesYAML("cluster-pull-secret")),
+	}}
+	missing, err = NodePullCredentialMissing(ctx, current)
+	require.NoError(t, err)
+	require.False(t, missing)
+
+	noMirror := &host.Fake{FS: map[string][]byte{
+		K3sRegistriesPath: []byte("mirrors:\n  \"*\":\n"),
+	}}
+	_, err = NodePullCredentialMissing(ctx, noMirror)
+	require.ErrorContains(t, err, "mirror")
+
+	_, err = NodePullCredentialMissing(ctx, &host.Fake{})
+	require.ErrorContains(t, err, K3sRegistriesPath)
+}
+
+func TestHealNodePullCredentialWriteOnly(t *testing.T) {
+	t.Parallel()
+	fake := &host.Fake{FS: map[string][]byte{
+		K3sRegistriesPath: []byte(k3sRegistriesYAML("")),
+	}}
+	// restart=false: a k3s upgrade follows and restarts the service.
+	require.NoError(t, HealNodePullCredential(context.Background(), fake, false, silentProgress{}))
+	require.Empty(t, fake.Commands, "the write-only heal must run no commands")
+	require.Equal(t, fs.FileMode(0o600), fake.Modes[K3sRegistriesPath])
+	secret := registriesPullSecret(fake.FS[K3sRegistriesPath])
+	require.NotEmpty(t, secret, "the rewritten registries.yaml must carry the minted credential")
+	require.Contains(t, string(fake.FS[K3sRegistriesPath]), bundle.RegistryInternalHost,
+		"the mirror must survive the rewrite")
+}
+
+func TestHealNodePullCredentialRestarts(t *testing.T) {
+	t.Parallel()
+	fake := upgradeFake()
+	fake.FS = map[string][]byte{K3sRegistriesPath: []byte(k3sRegistriesYAML(""))}
+	require.NoError(t, HealNodePullCredential(context.Background(), fake, true, silentProgress{}))
+	requireCommand(t, fake, "systemctl", "restart", "k3s")
+	// The wait gates on the unit and the kube API, like any k3s restart.
+	requireCommand(t, fake, "systemctl", "is-active", "k3s.service")
+	requireCommand(t, fake, "k3s", "kubectl", "get", "--raw", "/readyz")
+	require.NotEmpty(t, registriesPullSecret(fake.FS[K3sRegistriesPath]))
 }
