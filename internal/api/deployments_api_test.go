@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,8 +12,28 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/store"
 )
+
+// decodeTokenAccessNames lists the repositories granted by the token in an
+// exchange response body.
+func decodeTokenAccessNames(t *testing.T, body map[string]any) []string {
+	t.Helper()
+	parts := strings.Split(body["token"].(string), ".")
+	require.Len(t, parts, 3)
+	claimsJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	var claims struct {
+		Access []registrytoken.Access `json:"access"`
+	}
+	require.NoError(t, json.Unmarshal(claimsJSON, &claims))
+	names := make([]string, 0, len(claims.Access))
+	for _, access := range claims.Access {
+		names = append(names, access.Name)
+	}
+	return names
+}
 
 // deployAPIManifest is the build-sourced flow manifest; the volume makes
 // its removal a destructive change for the gate tests.
@@ -139,7 +161,25 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Len(t, actions, 1)
 	action := actions[0].(map[string]any)
 	require.Equal(t, "build", action["action"])
-	require.Contains(t, action["push_ref"], "/skali/demo/web:")
+	// Push refs travel the public push host, never the internal one.
+	require.True(t, strings.HasPrefix(action["push_ref"].(string), testPushHost+"/skali/demo/web:"),
+		"push_ref %q should start with %s", action["push_ref"], testPushHost)
+
+	// The session token doubles as the docker login password: the realm
+	// grants push on this project's repositories and nothing out of
+	// contract.
+	status, tokenBody := a.exchangeToken([]string{"repository:skali/demo/web:push,pull"},
+		"deploy@example.com", token)
+	require.Equal(t, http.StatusOK, status, "%v", tokenBody)
+	require.Contains(t, decodeTokenAccessNames(t, tokenBody), "skali/demo/web")
+	status, tokenBody = a.exchangeToken(
+		[]string{"repository:skali/ghost/web:push,pull", "repository:admin/tools:pull"},
+		"deploy@example.com", token)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, decodeTokenAccessNames(t, tokenBody))
+	status, _ = a.exchangeToken([]string{"repository:skali/demo/web:push,pull"},
+		"deploy@example.com", "not-a-session")
+	require.Equal(t, http.StatusUnauthorized, status)
 
 	// Open the artifact window.
 	status, body = a.do("POST", "/v1/environments/"+envID+"/deployments", token, map[string]any{
@@ -200,6 +240,14 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	require.Equal(t, "verified", body["phase"])
 	require.Equal(t, webDigest, body["digest"])
+
+	// The stored artifact reference keeps the internal host: pods pull by
+	// it, only pushes travel the public push host.
+	artifactUUID, err := uuid.Parse(artifactID)
+	require.NoError(t, err)
+	artifact, err := a.st.GetArtifactByID(context.Background(), artifactUUID)
+	require.NoError(t, err)
+	require.Equal(t, a.registryHost+"/skali/demo/web", artifact.Reference)
 
 	// Complete: revision, atomic promotion, rollout handoff.
 	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)

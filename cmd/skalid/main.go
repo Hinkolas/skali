@@ -114,6 +114,7 @@ func runServe() error {
 	registryClient := &registry.Client{
 		Host:     cfg.RegistryHost,
 		Endpoint: cfg.RegistryEndpoint,
+		PushHost: cfg.RegistryPushHost,
 		Insecure: cfg.RegistryInsecure,
 	}
 

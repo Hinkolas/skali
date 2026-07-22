@@ -581,9 +581,12 @@ func skalidYAML(profile Profile) string {
 		// Local dev omits the env and rides the config default; production
 		// states the installation's capability union explicitly. The token
 		// signing key and node pull secret ride the same production block:
-		// with them set, skalid serves the registry token realm.
+		// with them set, skalid serves the registry token realm. The push
+		// host is the public registry domain: build clients push through the
+		// ingress while artifact references stay on the internal name.
 		capabilitiesEnv = "\n            - name: SKALI_CAPABILITIES\n              value: " +
 			strings.Join(production.Capabilities, ";") +
+			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
 			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
 			"\n            - name: SKALI_REGISTRY_NODE_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: node-secret"
 		ingressAnnotations = "\n  annotations:\n    cert-manager.io/cluster-issuer: " + IssuerName

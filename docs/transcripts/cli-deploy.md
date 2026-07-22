@@ -79,6 +79,11 @@ Notes pinned by this transcript:
   and value counts, never the values.
 - Staged values are promoted atomically with the target change, after
   artifacts verify.
+- The push to `registry.example.com` uses the ambient docker credentials;
+  log in once with `skali auth token | docker login registry.example.com
+  -u you@example.com --password-stdin`. Grants are scoped server-side: a
+  session may push only project release repositories and the import cache,
+  never arbitrary ones.
 - The CLI streams the run tree, but the run is server-owned: every step
   survives the terminal.
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
@@ -19,7 +20,10 @@ type ImportResult struct {
 // repository without a local daemon, preserving manifests and digests byte
 // for byte (a docker pull/push round trip would re-serialize and change
 // them). Multi-platform indexes are copied whole so a digest-pinned pull
-// works from any node architecture.
+// works from any node architecture. Both sides authenticate through the
+// default docker keychain, so one docker login covers a token-gated
+// managed registry and private upstreams alike; hosts without a stored
+// login stay anonymous (the local registry).
 func Import(ctx context.Context, upstream, targetRef string, insecureTarget bool, sink ProgressSink) (ImportResult, error) {
 	srcRef, err := name.ParseReference(upstream)
 	if err != nil {
@@ -33,9 +37,13 @@ func Import(ctx context.Context, upstream, targetRef string, insecureTarget bool
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("build: parse target %s: %w", targetRef, err)
 	}
+	remoteOpts := []remote.Option{
+		remote.WithContext(ctx),
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+	}
 
 	sink.Line("info", "resolving "+srcRef.String())
-	descriptor, err := remote.Get(srcRef, remote.WithContext(ctx))
+	descriptor, err := remote.Get(srcRef, remoteOpts...)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("build: resolve %s: %w", upstream, err)
 	}
@@ -45,7 +53,7 @@ func Import(ctx context.Context, upstream, targetRef string, insecureTarget bool
 		if err != nil {
 			return ImportResult{}, fmt.Errorf("build: read index %s: %w", upstream, err)
 		}
-		if err := remote.WriteIndex(dstRef, index, remote.WithContext(ctx)); err != nil {
+		if err := remote.WriteIndex(dstRef, index, remoteOpts...); err != nil {
 			return ImportResult{}, fmt.Errorf("build: push index to %s: %w", targetRef, err)
 		}
 	} else {
@@ -53,7 +61,7 @@ func Import(ctx context.Context, upstream, targetRef string, insecureTarget bool
 		if err != nil {
 			return ImportResult{}, fmt.Errorf("build: read image %s: %w", upstream, err)
 		}
-		if err := remote.Write(dstRef, image, remote.WithContext(ctx)); err != nil {
+		if err := remote.Write(dstRef, image, remoteOpts...); err != nil {
 			return ImportResult{}, fmt.Errorf("build: push image to %s: %w", targetRef, err)
 		}
 	}

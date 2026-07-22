@@ -96,6 +96,12 @@ type API struct {
 	// falls back to RegistryHost.
 	RegistryEndpoint string `env:"SKALI_REGISTRY_ENDPOINT,default="`
 
+	// RegistryPushHost names the registry in push references handed to
+	// build clients (the public registry domain in production, where
+	// RegistryHost is an in-cluster-only name); empty falls back to
+	// RegistryHost.
+	RegistryPushHost string `env:"SKALI_REGISTRY_PUSH_HOST,default="`
+
 	// RegistryInsecure permits plain HTTP toward the registry; the
 	// anonymous loopback-only local registry needs it.
 	RegistryInsecure bool `env:"SKALI_REGISTRY_INSECURE,default=false"`

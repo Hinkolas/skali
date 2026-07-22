@@ -41,6 +41,10 @@ type Client struct {
 	// in-cluster service in bundle installations); empty falls back to
 	// Host.
 	Endpoint string
+	// PushHost names the registry in push references handed to build
+	// clients (the public registry domain in production, where Host is an
+	// in-cluster-only name); empty falls back to Host.
+	PushHost string
 	// Insecure permits plain HTTP; the anonymous loopback-only local
 	// registry uses it.
 	Insecure bool
@@ -116,10 +120,19 @@ func CacheRepo(upstream string) (string, error) {
 
 // PushRef assembles the full pushable reference for a repository on the
 // managed registry. The tag only names what build clients push; identity
-// is always the digest.
+// is always the digest. Artifact references stay on Host: nodes pull by
+// the in-cluster name, only pushes travel the public one.
 func (c *Client) PushRef(repository, tag string) string {
 	if tag == "" {
 		tag = "latest"
 	}
-	return c.Host + "/" + strings.TrimPrefix(repository, "/") + ":" + tag
+	return c.PushHostname() + "/" + strings.TrimPrefix(repository, "/") + ":" + tag
+}
+
+// PushHostname is the host build clients push through.
+func (c *Client) PushHostname() string {
+	if c.PushHost != "" {
+		return c.PushHost
+	}
+	return c.Host
 }

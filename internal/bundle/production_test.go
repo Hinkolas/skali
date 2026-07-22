@@ -196,9 +196,12 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.Contains(t, string(ingressJSON), `"path":"/token"`)
 	require.Contains(t, string(ingressJSON), `"name":"skalid"`)
 
-	// Skalid learns the signing key and node secret from the token secret.
+	// Skalid learns the signing key and node secret from the token secret,
+	// and hands build clients push refs on the public registry domain.
 	require.Contains(t, string(raw), "SKALI_REGISTRY_TOKEN_KEY")
 	require.Contains(t, string(raw), "SKALI_REGISTRY_NODE_SECRET")
+	require.Contains(t, string(raw), `"SKALI_REGISTRY_PUSH_HOST"`)
+	require.Contains(t, string(raw), `"value":"registry.example.com"`)
 
 	// Record: the ConfigMap round-trips the canonical text exactly.
 	require.Len(t, objects.Record, 1)

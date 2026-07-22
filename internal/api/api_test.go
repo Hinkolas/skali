@@ -29,6 +29,7 @@ import (
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
+	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
@@ -45,7 +46,14 @@ type testAPI struct {
 	// held tracks "repository@digest" content the fake managed registry
 	// answers for; registryHolds seeds it.
 	held *sync.Map
+	// registryHost is the fake registry's address: the Host artifact
+	// references carry, distinct from the push host clients push through.
+	registryHost string
 }
+
+// testPushHost is the public push host the test registry client carries;
+// push refs must name it, artifact references never.
+const testPushHost = "push.example.test"
 
 func newTestAPI(t *testing.T) *testAPI {
 	t.Helper()
@@ -98,23 +106,53 @@ func newTestAPI(t *testing.T) *testAPI {
 	registryURL, err := url.Parse(fakeRegistry.URL)
 	require.NoError(t, err)
 
+	// Registry auth mirrors production: a real signer serves the /token
+	// realm, so the session-credential exchange is exercised against the
+	// real store-backed policy.
+	keyPEM, _, err := registrytoken.GenerateSigningKeypair()
+	require.NoError(t, err)
+	tokenSigner, err := registrytoken.LoadSigner(keyPEM)
+	require.NoError(t, err)
+
 	srv := httptest.NewServer(NewRouter(Deps{
-		Auth:         svc,
-		Store:        st,
-		DB:           pool,
-		Projects:     project.New(st),
-		Values:       values,
-		Deploy:       deploySvc,
-		Artifacts:    artifactSvc,
-		Builds:       buildstore.New(st),
-		Journal:      journalSvc,
-		Reconcile:    kernel,
-		Registry:     &registry.Client{Host: registryURL.Host},
-		RuntimeLogs:  &runtimelogs.Streamer{Observed: observed.Store, Store: st},
-		Capabilities: []string{"application", "edge"},
+		Auth:               svc,
+		Store:              st,
+		DB:                 pool,
+		Projects:           project.New(st),
+		Values:             values,
+		Deploy:             deploySvc,
+		Artifacts:          artifactSvc,
+		Builds:             buildstore.New(st),
+		Journal:            journalSvc,
+		Reconcile:          kernel,
+		Registry:           &registry.Client{Host: registryURL.Host, PushHost: testPushHost},
+		RegistryToken:      tokenSigner,
+		RegistryNodeSecret: "node-secret",
+		RuntimeLogs:        &runtimelogs.Streamer{Observed: observed.Store, Store: st},
+		Capabilities:       []string{"application", "edge"},
 	}))
 	t.Cleanup(srv.Close)
-	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc, observed: observed, held: held}
+	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc,
+		observed: observed, held: held, registryHost: registryURL.Host}
+}
+
+// exchangeToken drives the registry token realm with Basic credentials and
+// returns the status plus the decoded body.
+func (a *testAPI) exchangeToken(scopes []string, username, password string) (int, map[string]any) {
+	a.t.Helper()
+	query := url.Values{"service": []string{registrytoken.Service}}
+	for _, scope := range scopes {
+		query.Add("scope", scope)
+	}
+	req, err := http.NewRequest(http.MethodGet, a.srv.URL+"/token?"+query.Encode(), nil)
+	require.NoError(a.t, err)
+	req.SetBasicAuth(username, password)
+	res, err := a.srv.Client().Do(req)
+	require.NoError(a.t, err)
+	defer res.Body.Close()
+	var body map[string]any
+	require.NoError(a.t, json.NewDecoder(res.Body).Decode(&body))
+	return res.StatusCode, body
 }
 
 // registryHolds seeds fake managed-registry content.

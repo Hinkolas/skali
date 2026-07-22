@@ -92,4 +92,11 @@ func TestRepositoryLayout(t *testing.T) {
 	client := &Client{Host: "localhost:5510"}
 	require.Equal(t, "localhost:5510/skali/demo/web:release", client.PushRef("skali/demo/web", "release"))
 	require.Equal(t, "localhost:5510/cache/ghcr.io/x/y:latest", client.PushRef("cache/ghcr.io/x/y", ""))
+	require.Equal(t, "localhost:5510", client.PushHostname())
+
+	// Production: pushes travel the public domain, artifact references stay
+	// on the internal host.
+	client = &Client{Host: "registry.skali.internal", PushHost: "registry.example.com"}
+	require.Equal(t, "registry.example.com/skali/demo/web:release", client.PushRef("skali/demo/web", "release"))
+	require.Equal(t, "registry.example.com", client.PushHostname())
 }
