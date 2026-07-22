@@ -195,46 +195,10 @@ func promptCapabilities(reader *bufio.Reader) ([]string, error) {
 func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 	record *installer.Record, asserted *layout.Layout) error {
 	opts := installer.InitOptions{Out: out, Layout: asserted}
-	if record.Endpoints != nil {
-		opts.Endpoints = *record.Endpoints
+	if err := seedInitInputs(reader, true, record, &opts); err != nil {
+		return err
 	}
-	if record.TLS != nil {
-		opts.TLS = *record.TLS
-	}
-	var err error
-	if opts.Endpoints.API == "" {
-		opts.Endpoints.API, err = cliprompt.Line(reader, "  api/ui domain: ")
-		if err != nil {
-			return err
-		}
-	}
-	if opts.Endpoints.Registry == "" {
-		defaultRegistry := registryDomainDefault(opts.Endpoints.API)
-		opts.Endpoints.Registry, err = cliprompt.LineDefault(reader,
-			"  registry domain ["+defaultRegistry+"]: ", defaultRegistry)
-		if err != nil {
-			return err
-		}
-	}
-	if opts.TLS.IssuerEmail == "" {
-		opts.TLS.IssuerEmail, err = cliprompt.Line(reader, "  tls issuer email: ")
-		if err != nil {
-			return err
-		}
-	}
-	switch {
-	case imageTarFlag != "":
-		// A staged tar names the image itself; no prompt.
-	case releaseVersionPattern.MatchString(versionpkg.Version):
-		// A released installer has a published skalid image of the same
-		// version; the operator can still type any other reference.
-		defaultImage := "ghcr.io/hinkolas/skalid:" + versionpkg.Version
-		opts.SkalidImage, err = cliprompt.LineDefault(reader,
-			"  skalid image ["+defaultImage+"]: ", defaultImage)
-	default:
-		opts.SkalidImage, err = cliprompt.Line(reader, "  skalid image (dev build, no published default): ")
-	}
-	if err != nil {
+	if err := resolveSkalidImage(reader, true, &opts); err != nil {
 		return err
 	}
 
@@ -242,6 +206,7 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 	progress := newTaskProgress(tasks)
 	opts.Progress = progress
 	if imageTarFlag != "" {
+		var err error
 		opts.SkalidImage, opts.SkalidImageID, err = stageSkalidImage(ctx, runner(), imageTarFlag, progress)
 		if err != nil {
 			progress.Abort()
@@ -263,6 +228,85 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 	progress.Done("")
 	printInitReady(out, result)
 	return nil
+}
+
+// seedInitInputs seeds the init endpoints and TLS inputs from the record
+// where install or a previous init already gathered answers, and prompts
+// only for fields the record does not carry (fields added after the
+// recording installer's release stay empty on old records). When prompting
+// is not allowed, a missing field is an error naming it.
+func seedInitInputs(reader *bufio.Reader, promptAllowed bool,
+	record *installer.Record, opts *installer.InitOptions) error {
+	if record.Endpoints != nil {
+		opts.Endpoints = *record.Endpoints
+	}
+	if record.TLS != nil {
+		opts.TLS = *record.TLS
+	}
+	var err error
+	if opts.Endpoints.API == "" {
+		if !promptAllowed {
+			return missingRecordField("api/ui domain")
+		}
+		opts.Endpoints.API, err = cliprompt.Line(reader, "  api/ui domain: ")
+		if err != nil {
+			return err
+		}
+	}
+	if opts.Endpoints.Registry == "" {
+		if !promptAllowed {
+			return missingRecordField("registry domain")
+		}
+		defaultRegistry := registryDomainDefault(opts.Endpoints.API)
+		opts.Endpoints.Registry, err = cliprompt.LineDefault(reader,
+			"  registry domain ["+defaultRegistry+"]: ", defaultRegistry)
+		if err != nil {
+			return err
+		}
+	}
+	if opts.TLS.IssuerEmail == "" {
+		if !promptAllowed {
+			return missingRecordField("tls issuer email")
+		}
+		opts.TLS.IssuerEmail, err = cliprompt.Line(reader, "  tls issuer email: ")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func missingRecordField(field string) error {
+	return fmt.Errorf("the installation record is missing the %s; "+
+		"run skali-installer upgrade interactively to provide it", field)
+}
+
+// resolveSkalidImage settles the control-plane image when no tar stages
+// it: released installers default to the published image of the same
+// version, dev builds have no published default and must name one.
+func resolveSkalidImage(reader *bufio.Reader, promptAllowed bool, opts *installer.InitOptions) error {
+	var err error
+	switch {
+	case imageTarFlag != "":
+		// A staged tar names the image itself; no prompt.
+	case releaseVersionPattern.MatchString(versionpkg.Version):
+		// A released installer has a published skalid image of the same
+		// version; the operator can still type any other reference.
+		defaultImage := "ghcr.io/hinkolas/skalid:" + versionpkg.Version
+		if !promptAllowed {
+			opts.SkalidImage = defaultImage
+			return nil
+		}
+		opts.SkalidImage, err = cliprompt.LineDefault(reader,
+			"  skalid image ["+defaultImage+"]: ", defaultImage)
+	default:
+		if !promptAllowed {
+			return fmt.Errorf("no published skalid image exists for installer version %s; "+
+				"pass --image-tar or run interactively", versionpkg.Version)
+		}
+		opts.SkalidImage, err = cliprompt.Line(reader, "  skalid image (dev build, no published default): ")
+	}
+	return err
 }
 
 // promptAdmin collects the first operator account credentials with a

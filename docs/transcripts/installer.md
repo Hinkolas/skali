@@ -212,7 +212,63 @@ Tier changes never happen as a side effect of a node joining, and each owner
 scales its own databases: the installer scales only the bootstrap database,
 `skalid` scales its platform pools through an explicit product operation.
 
-## 5. Repeat execution performs no mutation
+## 5. Version upgrade (k3s and bundle)
+
+A newer installer on a host installed by an older one shows the drift in
+its status and moves both versions through the explicit upgrade command:
+
+```console
+$ sudo skali-installer status
+skali-installer 2.1.0 (k3s v1.33.4+k3s1 pinned)
+
+host cp-1: healthy Skali server (cluster "production")
+  k3s        v1.33.3+k3s1 (expected v1.33.4+k3s1)
+  bundle     2.0.0 (installer is 2.1.0)
+  nodes      7 joined
+  bootstrap  database healthy, registry healthy, skalid healthy
+
+$ sudo skali-installer upgrade
+skali-installer 2.1.0 (k3s v1.33.4+k3s1 pinned)
+
+upgrade plan for host cp-1 (cluster "production")
+  k3s     v1.33.3+k3s1 -> v1.33.4+k3s1
+  bundle  2.0.0 -> 2.1.0
+  skalid  ghcr.io/hinkolas/skalid:2.1.0
+
+Continue? [y/N] y
+
+  ok  Upgrade k3s to v1.33.4+k3s1 (server)
+  ok  Wait for k3s v1.33.4+k3s1 ready
+cluster layout
+  ...
+  ok  Wait for skalid ready
+
+upgrade complete:
+  k3s     v1.33.4+k3s1
+  bundle  2.1.0
+
+Install logs: /var/lib/skali/logs/init-20260722-104501.log
+```
+
+The k3s step re-runs the vendored install script under the new pin; the
+node's k3s configuration, the registry mirror, and the pull credential are
+never rewritten. The bundle step is the same converge as init: it reuses
+the cluster's secrets and stored answers, skips the admin bootstrap, and
+prompts only for record fields older installers never gathered (an old
+record without a registry domain asks once, with the derivation from the
+api domain as the default). Non-interactive runs take `--yes` and fail
+with a named field instead of prompting.
+
+Source installations upgrade the same way they initialize, handing the
+rebuilt image to the converge: `upgrade --yes --image-tar skalid-dev.tar`
+re-converges even when the versions already match, because the new image
+id must roll skalid.
+
+Agent nodes carry no bundle, so upgrade moves only k3s there. Upgrade the
+server first, then run upgrade on each node; an installer older than the
+installed k3s refuses rather than downgrade.
+
+## 6. Repeat execution performs no mutation
 
 ```console
 $ sudo skali-installer
@@ -229,7 +285,7 @@ nothing to do
 
 Detection is read-only. No maintenance action runs without being selected.
 
-## 6. Diagnosis while Skali is down
+## 7. Diagnosis while Skali is down
 
 The bootstrap database is unavailable; the API and UI are down. The
 installer diagnoses from host state and the Kubernetes API alone:
@@ -254,7 +310,7 @@ No step above used the Skali API, the product database, or the registry.
 Already-running project workloads are unaffected while the control plane is
 down.
 
-## 7. Existing Kubernetes cluster
+## 8. Existing Kubernetes cluster
 
 ```console
 $ skali-installer install --mode existing-cluster \
@@ -269,7 +325,7 @@ mode: existing cluster (unmanaged hosts)
 
 In this mode `join`, node removal, and Kubernetes upgrades are refused.
 
-## 8. Scoped uninstall
+## 9. Scoped uninstall
 
 ```console
 $ sudo skali-installer uninstall
@@ -296,7 +352,7 @@ what is destroyed: every project namespace, database, bucket, and the
 registry contents. Destroying a whole cluster is per-host by design; there is
 no single command that reaches into other machines.
 
-## 9. macOS host (Lima VM)
+## 10. macOS host (Lima VM)
 
 Kubernetes nodes are Linux-only, so on a Mac the installer manages one
 headless Linux VM via Lima and installs the node inside it. The installer

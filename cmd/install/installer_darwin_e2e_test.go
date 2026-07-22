@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/installer/limavm"
 )
 
@@ -97,7 +98,7 @@ vm:
 	record := h.vmOKOn(darwinE2EVM, "sudo", "cat", "/var/lib/skali/installation.yaml")
 	require.Contains(t, record, "cluster: e2e")
 	require.Contains(t, record, "role: server")
-	require.Contains(t, record, "k3s: v1.33.3+k3s1")
+	require.Contains(t, record, "k3s: "+installer.K3sVersion)
 
 	// The guest hostname is derived from the Mac's, so a fleet of Macs
 	// yields distinct node names.
@@ -155,6 +156,12 @@ skalid:
 	require.Contains(t, statusOut, "skalid healthy")
 	require.Contains(t, statusOut, "1 joined")
 	require.NotContains(t, statusOut, "kubernetes api unreachable")
+
+	// Upgrade with no drift proves the maintenance prelude path into the
+	// VM without converging anything.
+	upgradeOut, code := run("upgrade", "--yes")
+	require.Equal(t, 0, code, upgradeOut)
+	require.Contains(t, upgradeOut, "already current, nothing to do")
 
 	// Repeat bare execution with closed stdin performs no mutation.
 	before := h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",

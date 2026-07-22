@@ -21,34 +21,51 @@ import (
 // machine the operator runs the installer on (the Mac in darwin mode).
 func stageSkalidImage(ctx context.Context, runner host.Runner, tarPath string,
 	progress *taskProgress) (string, string, error) {
-	data, err := readHostFile(ctx, tarPath)
+	data, image, imageID, err := loadImageTar(ctx, tarPath)
 	if err != nil {
-		return "", "", fmt.Errorf("read image tar %s: %w", tarPath, err)
+		return "", "", err
 	}
-	image, imageID, err := parseImageTarManifest(data)
-	if err != nil {
-		return "", "", fmt.Errorf("image tar %s: %w", tarPath, err)
+	if err := importImageTar(ctx, runner, data, image, progress); err != nil {
+		return "", "", err
 	}
+	return image, imageID, nil
+}
 
+// loadImageTar reads the tar and names the image it carries without
+// touching the node; upgrade names the image in its plan before anything
+// is imported.
+func loadImageTar(ctx context.Context, tarPath string) (data []byte, image, imageID string, err error) {
+	data, err = readHostFile(ctx, tarPath)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("read image tar %s: %w", tarPath, err)
+	}
+	image, imageID, err = parseImageTarManifest(data)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("image tar %s: %w", tarPath, err)
+	}
+	return data, image, imageID, nil
+}
+
+// importImageTar writes the tar into the node and imports it into
+// containerd.
+func importImageTar(ctx context.Context, runner host.Runner, data []byte, image string,
+	progress *taskProgress) error {
 	progress.Start("Import skalid image " + image)
 	const remote = "/tmp/skali-image-import.tar"
 	if err := runner.WriteFile(ctx, remote, data, 0o600); err != nil {
-		return "", "", err
+		return err
 	}
 	result, err := runner.Run(ctx, host.Command{
 		Name: "k3s", Args: []string{"ctr", "images", "import", remote},
 	})
 	if err != nil {
-		return "", "", err
+		return err
 	}
 	if result.ExitCode != 0 {
-		return "", "", fmt.Errorf("k3s ctr images import failed with exit code %d: %s",
+		return fmt.Errorf("k3s ctr images import failed with exit code %d: %s",
 			result.ExitCode, strings.TrimSpace(result.Stderr))
 	}
-	if err := runner.Remove(ctx, remote); err != nil {
-		return "", "", err
-	}
-	return image, imageID, nil
+	return runner.Remove(ctx, remote)
 }
 
 // imageTarManifestEntry is the slice of a docker-save manifest.json this

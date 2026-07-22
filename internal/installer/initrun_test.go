@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
@@ -18,6 +20,26 @@ func labeledNode(name string, server bool, capabilities ...string) corev1.Node {
 		labels[layout.ControlPlaneLabel] = "true"
 	}
 	return corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}}
+}
+
+func TestInitAdminValidation(t *testing.T) {
+	t.Parallel()
+	record := &Record{Node: NodeRecord{Name: "cp-1", Role: layout.RoleServer}}
+	opts := InitOptions{
+		Endpoints:   Endpoints{API: "skali.example.com", Registry: "registry.example.com"},
+		TLS:         TLSConfig{IssuerEmail: "ops@example.com"},
+		SkalidImage: "skalid:dev",
+	}
+
+	_, err := Init(context.Background(), &host.Fake{}, record, opts)
+	require.ErrorContains(t, err, "admin credentials")
+
+	// SkipAdmin passes validation; the fake then fails at the first host
+	// probe instead, proving the admin gate was the only blocker.
+	opts.SkipAdmin = true
+	_, err = Init(context.Background(), &host.Fake{}, record, opts)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "admin credentials")
 }
 
 func TestLayoutFromNodes(t *testing.T) {

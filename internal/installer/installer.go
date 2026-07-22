@@ -10,12 +10,13 @@ package installer
 
 import "github.com/Hinkolas/skali/internal/bundle"
 
-const (
-	// K3sVersion is the k3s release this installer provisions. Each
-	// installer release pins exactly one; it must agree with the k3d image
-	// pin in internal/localdev (guarded by a test).
-	K3sVersion = "v1.33.3+k3s1"
+// K3sVersion is the k3s release this installer provisions. Each installer
+// release pins exactly one; it must agree with the k3d image pin in
+// internal/localdev (guarded by a test). A var only so e2e test builds can
+// rebase the pin via -ldflags -X; release builds never set it.
+var K3sVersion = "v1.33.3+k3s1"
 
+const (
 	// StateDir is the root-owned installation state directory.
 	StateDir = "/var/lib/skali"
 	// RecordPath is the root-owned installation record (section 14.1).

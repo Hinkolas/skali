@@ -93,7 +93,7 @@ func printFreshHeader(out *os.File, detected *installer.Host) {
 	fmt.Fprintln(out)
 }
 
-// printStatus renders the transcript section 5 status block.
+// printStatus renders the transcript section 6 status block.
 func printStatus(out *os.File, status *installer.Status) {
 	detected := status.Host
 	record := detected.Record
@@ -186,7 +186,7 @@ func runMenu(ctx context.Context, out *os.File, status *installer.Status) error 
 		case "2":
 			fmt.Fprintln(out, "not implemented in this slice: tier changes arrive with a later milestone")
 		case "3":
-			fmt.Fprintln(out, "not implemented in this slice: upgrades arrive with a later milestone")
+			return runUpgradeFlow(ctx, out, reader, false)
 		case "4":
 			fmt.Fprintln(out, "not implemented in this slice: diagnose and repair arrive with a later milestone")
 		case "5":

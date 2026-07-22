@@ -10,13 +10,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/installer"
 )
 
 // The end-to-end suite drives the built skali-installer binary inside the
 // skali-e2e Lima VMs (faithful fresh Ubuntu hosts with real systemd)
-// through the full cycle: install, init, status, agent token/join, repeat-run
-// no-op, scoped uninstall. Gated: it installs k3s and pulls operator images
-// inside the VMs and takes many minutes on the first run.
+// through the full cycle: install, init, status, version upgrade, agent
+// token/join, repeat-run no-op, scoped uninstall. Gated: it installs k3s
+// (twice: an older pin, then the upgrade to the current one) and pulls
+// operator images inside the VMs and takes many minutes on the first run.
 //
 //	task lima:up
 //	task test:installer
@@ -26,6 +29,11 @@ import (
 const (
 	e2eVM      = "skali-e2e"
 	e2eAgentVM = "skali-e2e-agent"
+
+	// e2eOlderK3s is the pin of the simulated older installer build the
+	// upgrade phase moves away from; it must be a real k3s release older
+	// than the current installer.K3sVersion pin.
+	e2eOlderK3s = "v1.33.2+k3s1"
 )
 
 type installerHarness struct {
@@ -150,7 +158,10 @@ func (h *installerHarness) writeFixture(name, content string) string {
 func TestInstallerEndToEnd(t *testing.T) {
 	h := newInstallerHarness(t)
 
-	// Cross-compile for the VM's architecture and copy the binary in.
+	// Cross-compile two builds for the VM's architecture: build A
+	// simulates the older release the host was first installed with (its
+	// own version stamp and an older k3s pin), and the plain build is the
+	// current installer under test, which later upgrades A's work.
 	arch := strings.TrimSpace(h.vmOK("uname", "-m"))
 	goArch := map[string]string{"aarch64": "arm64", "x86_64": "amd64"}[arch]
 	require.NotEmpty(t, goArch, "unexpected VM architecture %q", arch)
@@ -162,8 +173,19 @@ func TestInstallerEndToEnd(t *testing.T) {
 	require.NoError(t, err, "cross-compile: %s", out)
 	h.copyIn(binary, "/tmp/skali-installer")
 
+	binaryA := filepath.Join(t.TempDir(), "skali-installer-a")
+	buildA := exec.Command("go", "build", "-ldflags",
+		"-X github.com/Hinkolas/skali/internal/version.Version=0.0.0-e2e-a"+
+			" -X github.com/Hinkolas/skali/internal/installer.K3sVersion="+e2eOlderK3s,
+		"-o", binaryA, "./cmd/install")
+	buildA.Dir = h.repoRoot
+	buildA.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+goArch, "CGO_ENABLED=0")
+	outA, errA := buildA.CombinedOutput()
+	require.NoError(t, errA, "cross-compile older build: %s", outA)
+	h.copyIn(binaryA, "/tmp/skali-installer-a")
+
 	// Fresh detection before anything is installed.
-	statusOut, code := h.vm("sudo", "/tmp/skali-installer", "status")
+	statusOut, code := h.vm("sudo", "/tmp/skali-installer-a", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "fresh")
 
@@ -173,13 +195,13 @@ func TestInstallerEndToEnd(t *testing.T) {
 	serverIP := h.vmIP(e2eVM)
 	nodeConfig := h.writeFixture("node.yaml", fmt.Sprintf(
 		"cluster: e2e\nrole: server\ncapabilities: [application, database, object-storage, registry, edge]\nnodeIP: %s\n", serverIP))
-	installOut, code := h.vm("sudo", "/tmp/skali-installer", "install", "--config", nodeConfig)
+	installOut, code := h.vm("sudo", "/tmp/skali-installer-a", "install", "--config", nodeConfig)
 	require.Equal(t, 0, code, installOut)
 
 	record := h.vmOK("sudo", "cat", "/var/lib/skali/installation.yaml")
 	require.Contains(t, record, "cluster: e2e")
 	require.Contains(t, record, "role: server")
-	require.Contains(t, record, "k3s: v1.33.3+k3s1")
+	require.Contains(t, record, "k3s: "+e2eOlderK3s)
 
 	labels := h.vmOK("sudo", "k3s", "kubectl", "get", "nodes", "-o", "jsonpath={.items[0].metadata.labels}")
 	for _, capability := range []string{"application", "database", "object-storage", "registry", "edge"} {
@@ -187,7 +209,7 @@ func TestInstallerEndToEnd(t *testing.T) {
 	}
 
 	// Repeat install refuses: the host is no longer fresh.
-	repeatOut, code := h.vm("sudo", "/tmp/skali-installer", "install", "--config", nodeConfig)
+	repeatOut, code := h.vm("sudo", "/tmp/skali-installer-a", "install", "--config", nodeConfig)
 	require.NotEqual(t, 0, code, repeatOut)
 
 	// Stage the control-plane image: built on the host and handed to init
@@ -217,7 +239,7 @@ skalid:
   image: skalid:dev
 `, passwordFile))
 	// --image-tar imports the tar into the node's containerd during init.
-	initOut, code := h.vm("sudo", "/tmp/skali-installer", "init", "--config", initConfig,
+	initOut, code := h.vm("sudo", "/tmp/skali-installer-a", "init", "--config", initConfig,
 		"--image-tar", "/tmp/skalid-dev.tar")
 	require.Equal(t, 0, code, initOut)
 	require.Contains(t, initOut, "Import skalid image skalid:dev")
@@ -230,11 +252,68 @@ skalid:
 	require.NotEmpty(t, health)
 	h.vmOK("sudo", "k3s", "kubectl", "get", "configmap", "-n", "skali-system", "skali-installation")
 
-	statusOut, code = h.vm("sudo", "/tmp/skali-installer", "status")
+	statusOut, code = h.vm("sudo", "/tmp/skali-installer-a", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "Skali server")
 	require.Contains(t, statusOut, "database healthy")
 	require.Contains(t, statusOut, "skalid healthy")
+
+	// Upgrade phase: the current build takes over the installation build A
+	// created, moving k3s to the current pin and re-converging the bundle
+	// under the current version. It runs before the protocol and join
+	// phases so those exercise the upgraded cluster and the agent joins a
+	// server already on the current pin.
+	statusOut, code = h.vm("sudo", "/tmp/skali-installer", "status")
+	require.Equal(t, 0, code, statusOut)
+	require.Contains(t, statusOut, "(expected "+installer.K3sVersion+")")
+	require.Contains(t, statusOut, "(installer is 0.0.0-dev)")
+
+	// An older record missing a later-added field fails cleanly under
+	// --yes, naming the field, and mutates nothing.
+	h.vmOK("sudo", "cp", "/var/lib/skali/installation.yaml", "/tmp/installation-backup.yaml")
+	h.vmOK("sudo", "sed", "-i", "/registry:/d", "/var/lib/skali/installation.yaml")
+	missingOut, code := h.vm("sudo", "/tmp/skali-installer", "upgrade", "--yes",
+		"--image-tar", "/tmp/skalid-dev.tar")
+	require.NotEqual(t, 0, code, missingOut)
+	require.Contains(t, missingOut, "registry domain")
+	require.Contains(t, missingOut, "interactively")
+	h.vmOK("sudo", "cp", "/tmp/installation-backup.yaml", "/var/lib/skali/installation.yaml")
+
+	// The upgrade itself, reusing the already-staged image tar.
+	upgradeOut, code := h.vm("sudo", "/tmp/skali-installer", "upgrade", "--yes",
+		"--image-tar", "/tmp/skalid-dev.tar")
+	require.Equal(t, 0, code, upgradeOut)
+	require.Contains(t, upgradeOut, e2eOlderK3s+" -> "+installer.K3sVersion)
+	require.Contains(t, upgradeOut, "0.0.0-e2e-a -> 0.0.0-dev")
+	require.Contains(t, upgradeOut, "Upgrade k3s to "+installer.K3sVersion)
+	require.Contains(t, upgradeOut, "upgrade complete:")
+
+	versionOut := h.vmOK("k3s", "--version")
+	require.Contains(t, versionOut, installer.K3sVersion)
+	record = h.vmOK("sudo", "cat", "/var/lib/skali/installation.yaml")
+	require.Contains(t, record, "k3s: "+installer.K3sVersion)
+	require.Contains(t, record, "bundle: 0.0.0-dev")
+
+	// The converge restamped the bundle hash on the namespace.
+	namespaceJSON := h.vmOK("sudo", "k3s", "kubectl", "get", "namespace", "skali-system", "-o", "json")
+	require.Contains(t, namespaceJSON, `"skali.dev/bundle-hash"`)
+	require.NotContains(t, namespaceJSON, `"skali.dev/bundle-hash": ""`)
+
+	// The k3s script re-run must preserve the host-owned config files.
+	registriesAfter := h.vmOK("sudo", "cat", "/etc/rancher/k3s/registries.yaml")
+	require.Contains(t, registriesAfter, "registry.skali.internal")
+	require.Contains(t, registriesAfter, "password:")
+
+	statusOut, code = h.vm("sudo", "/tmp/skali-installer", "status")
+	require.Equal(t, 0, code, statusOut)
+	require.Contains(t, statusOut, installer.K3sVersion+" (current)")
+	require.Contains(t, statusOut, "0.0.0-dev (current)")
+	require.Contains(t, statusOut, "skalid healthy")
+
+	// Idempotence: a second upgrade has nothing to do.
+	repeatUpgrade, code := h.vm("sudo", "/tmp/skali-installer", "upgrade", "--yes")
+	require.Equal(t, 0, code, repeatUpgrade)
+	require.Contains(t, repeatUpgrade, "already current, nothing to do")
 
 	// Registry token protocol phase, driven with curl against the NodePort
 	// and skalid's ClusterIP (both reachable from the node without DNS or

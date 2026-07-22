@@ -45,6 +45,9 @@ type InitOptions struct {
 	// only after skalid is ready, so interactive runs prompt at the moment
 	// the transcript shows; the credentials are never persisted host-side.
 	Admin func(ctx context.Context) (email, password string, err error)
+	// SkipAdmin skips the admin bootstrap step; upgrade reuses the
+	// existing accounts and never collects credentials.
+	SkipAdmin bool
 	// Progress narrates stages; Out receives the layout and topology
 	// tables.
 	Progress Progress
@@ -84,7 +87,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if opts.SkalidImage == "" {
 		return nil, errors.New("init requires a skalid image")
 	}
-	if opts.Admin == nil {
+	if opts.Admin == nil && !opts.SkipAdmin {
 		return nil, errors.New("init requires admin credentials")
 	}
 	out := opts.Out
@@ -202,15 +205,17 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	}
 	progress.Done("")
 
-	email, password, err := opts.Admin(ctx)
-	if err != nil {
-		return fail(err)
-	}
-	adminProfile := profile
-	adminProfile.AdminEmail = email
-	adminProfile.AdminPassword = password
-	if err := bundle.EnsureAdminUser(ctx, client, adminProfile, progress); err != nil {
-		return fail(err)
+	if !opts.SkipAdmin {
+		email, password, err := opts.Admin(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		adminProfile := profile
+		adminProfile.AdminEmail = email
+		adminProfile.AdminPassword = password
+		if err := bundle.EnsureAdminUser(ctx, client, adminProfile, progress); err != nil {
+			return fail(err)
+		}
 	}
 
 	if err := SaveRecord(ctx, runner, record); err != nil {

@@ -14,7 +14,6 @@ func stubCommands() []*cobra.Command {
 	}{
 		{"diagnose", "Diagnose the installation from host state alone", "diagnosis"},
 		{"repair", "Repair a damaged installation", "repair"},
-		{"upgrade", "Upgrade k3s or the Skali bundle", "upgrades"},
 	}
 	commands := make([]*cobra.Command, 0, len(stubs))
 	for _, stub := range stubs {

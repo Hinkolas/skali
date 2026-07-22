@@ -110,7 +110,7 @@ tasks:
   test:installer:
     desc: Run the installer end-to-end suite in the Lima VM (task lima:up first)
     cmds:
-      - TEST_SKALI_INSTALLER=1 go test -timeout 40m -count=1 -run 'TestInstallerEndToEnd' ./cmd/install/...
+      - TEST_SKALI_INSTALLER=1 go test -timeout 50m -count=1 -run 'TestInstallerEndToEnd' ./cmd/install/...
 
   test:installer:darwin:
     desc: Run the darwin installer end-to-end suite natively (creates and deletes its own small VM; stop the Linux e2e VMs first)

@@ -36,8 +36,8 @@ func main() {
 		"name of the Lima VM hosting the skali node (macOS only)")
 	root.PersistentFlags().StringVar(&imageTarFlag, "image-tar", "",
 		"docker-save tar of the skalid image, imported into the node during init (source installs)")
-	root.AddCommand(newInstallCmd(), newInitCmd(), newStatusCmd(), newUninstallCmd(),
-		newTokenCmd(), newJoinCmd())
+	root.AddCommand(newInstallCmd(), newInitCmd(), newStatusCmd(), newUpgradeCmd(),
+		newUninstallCmd(), newTokenCmd(), newJoinCmd())
 	root.AddCommand(stubCommands()...)
 	rootCmd = root
 

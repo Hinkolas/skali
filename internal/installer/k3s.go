@@ -185,6 +185,95 @@ func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress 
 	return nil
 }
 
+// upgradeK3s re-runs the vendored install script under the new pin. The
+// script never touches /etc/rancher/k3s, so the config, registries, and
+// token files written at install time survive untouched; the k3s unit uses
+// KillMode=process, so workload containers keep running while the
+// supervisor restarts. The script is re-staged from this binary first:
+// refreshing it is part of any k3s bump. On SLE and CoreOS the script
+// skips the service start (INSTALL_K3S_SKIP_START), which would time the
+// follow-up wait out; the supported targets are Debian-family hosts.
+func upgradeK3s(ctx context.Context, runner host.Runner, role string, progress Progress) error {
+	progress.Start("Upgrade k3s to " + K3sVersion + " (" + role + ")")
+	if err := runner.MkdirAll(ctx, CacheDir, 0o750); err != nil {
+		return fmt.Errorf("create %s: %w", CacheDir, err)
+	}
+	if err := runner.WriteFile(ctx, k3sInstallScriptPath, k3sInstallScript, 0o700); err != nil {
+		return fmt.Errorf("write k3s install script: %w", err)
+	}
+	args := []string{k3sInstallScriptPath}
+	if role == layout.RoleAgent {
+		args = append(args, "agent")
+	}
+	result, err := runner.Run(ctx, host.Command{
+		Name: "sh",
+		Args: args,
+		Env:  []string{"INSTALL_K3S_VERSION=" + K3sVersion},
+	})
+	if err != nil {
+		return fmt.Errorf("run k3s install script: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("k3s install script failed with exit code %d: %s",
+			result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	progress.Done("")
+	return nil
+}
+
+// waitK3sUpgraded proves the upgraded k3s is back: the pinned version
+// answers, the role's unit is active, and on servers the kube API serves
+// /readyz, because the converge that follows calls the API with no retry.
+// waitNodeReady is not reused here: it parses a single-node list and this
+// wait must hold on multi-node clusters too.
+func waitK3sUpgraded(ctx context.Context, runner host.Runner, role string, progress Progress) error {
+	unit := "k3s.service"
+	if role == layout.RoleAgent {
+		unit = "k3s-agent.service"
+	}
+	progress.Start("Wait for k3s " + K3sVersion + " ready")
+	deadline := time.Now().Add(5 * time.Minute)
+	var lastDetail string
+	for {
+		lastDetail = probeK3sUpgraded(ctx, runner, role, unit)
+		if lastDetail == "" {
+			progress.Done("")
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("k3s never came back after the upgrade: %s", lastDetail)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// probeK3sUpgraded runs one round of the upgrade health checks; an empty
+// return means everything holds.
+func probeK3sUpgraded(ctx context.Context, runner host.Runner, role, unit string) string {
+	if version := probeK3sVersion(ctx, runner); version != K3sVersion {
+		return fmt.Sprintf("k3s reports version %q, expected %q", version, K3sVersion)
+	}
+	result, err := runner.Run(ctx, host.Command{
+		Name: "systemctl", Args: []string{"is-active", unit},
+	})
+	if err != nil || result.ExitCode != 0 {
+		return unit + " is not active"
+	}
+	if role != layout.RoleAgent {
+		result, err := runner.Run(ctx, host.Command{
+			Name: "k3s", Args: []string{"kubectl", "get", "--raw", "/readyz"},
+		})
+		if err != nil || result.ExitCode != 0 {
+			return "the kubernetes api is not ready yet"
+		}
+	}
+	return ""
+}
+
 // waitAgentJoined proves the join host-side: agents have no kube API
 // access, so readiness and labels cannot be checked from here. The
 // k3s-agent unit reporting active plus the kubelet kubeconfig existing
