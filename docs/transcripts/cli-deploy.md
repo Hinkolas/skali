@@ -3,17 +3,17 @@
 Context: the developer has an authenticated remote `skali.example.com` for
 the installation at `https://skali.example.com` (added once with
 `skali remote add`, see `cli-remote.md`), and the project checkout
-contains `skali.yml` plus a gitignored `production.env`.
+contains `skali.yml` plus a gitignored `.env.production`.
 
 ## 1. Plan with a local env file
 
 ```console
-$ skali plan --environment production --env-file ./production.env
+$ skali plan --environment production --env-file ./.env.production
 remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
 environment  production
 
-production.env: 1 plain, 1 secret value (values are validated, not shown)
+.env.production: 1 plain, 1 secret value (values are validated, not shown)
 
 plan against active revision 2a91a76b
   update  applications.web   artifact sha256:9f2c41d8... replaces sha256:11ba90c2...
@@ -25,17 +25,27 @@ no destructive changes
 Planning validates the candidate definition and values server-side and never
 mutates the environment: no values are stored, no target moves.
 
-## 2. Deploy with a local build and env-file upload
+## 2. Interactive deploy: environment selection and env-file override
+
+The environment's stored values are the default. Bare `skali deploy` asks for
+the environment when several exist, then offers the project root's `.env` and
+`.env.*` files as an explicit override:
 
 ```console
-$ skali deploy --environment production --build=local --env-file ./production.env
+$ skali deploy --build=local
 remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
+Environment:
+  1) production
+  2) staging
+Select [1-2]: 1
 environment  production
 
-Upload ./production.env to environment production?
-  1 plain, 1 secret value. Values are stored encrypted and never displayed.
-  [y/N] y
+Override the stored values of environment production with a local env file?
+  0) no, use the stored values
+  1) .env.production
+Select [0-1] (0): 1
+values       .env.production (1 plain, 1 secret)
 
 plan against active revision 2a91a76b
   update  applications.web   artifact will be rebuilt from ./web
@@ -46,7 +56,7 @@ Continue? [y/N] y
 run 01J9V2E8  deploy file-sharing to production
   ok  Validate project definition
   ok  Prepare environment values
-        production.env: 1 plain, 1 secret staged
+        .env.production: 1 plain, 1 secret staged
   ok  Prepare artifacts
         ok  web
               ok  Build locally (BuildKit)                            38s
@@ -75,9 +85,11 @@ active revision 8d1e15b3 (previously 2a91a76b)
 
 Notes pinned by this transcript:
 
-- Without `--env-file` or `--use-remote-env`, interactive use discovers a
-  likely env file and asks. The prompt names the file, project, environment,
-  and value counts, never the values.
+- The environment's stored values are the default value source. Interactive
+  use offers the discovered `.env` and `.env.*` files as an override
+  selection naming the file, project, environment, and value counts, never
+  the values; declining keeps the stored values. Non-interactive use uploads
+  only with an explicit `--env-file` and must name the environment.
 - Staged values are promoted atomically with the target change, after
   artifacts verify.
 - The push to `registry.example.com` uses the ambient docker credentials;
@@ -91,7 +103,7 @@ Notes pinned by this transcript:
 ## 3. The same deploy with a cloud build
 
 ```console
-$ skali deploy --environment production --build=cloud --use-remote-env
+$ skali deploy --environment production --build=cloud
 ...
   ok  Prepare artifacts
         ok  web
@@ -108,18 +120,19 @@ files never enter the uploaded build context.
 
 ## 4. Non-interactive use
 
-Non-interactive runs must choose a value source and approve the plan
-explicitly; nothing is discovered or uploaded by guesswork:
+Non-interactive runs must name the environment and approve the plan
+explicitly; the stored values apply unless `--env-file` is passed, and
+nothing is discovered or uploaded by guesswork:
 
 ```console
-$ skali deploy --environment production --build=auto --use-remote-env --yes
+$ skali deploy --environment production --build=auto --yes
 ```
 
 `--build=auto` follows installation policy (cloud builder when configured,
 local otherwise). A destructive plan is refused even with `--yes`:
 
 ```console
-$ skali deploy --environment production --use-remote-env --yes
+$ skali deploy --environment production --yes
 error: plan is destructive; review it and re-run with --allow-destructive
 $ echo $?
 1
@@ -128,7 +141,7 @@ $ echo $?
 ## 5. Failure leaves the environment untouched
 
 ```console
-$ skali deploy --environment production --build=local --use-remote-env
+$ skali deploy --environment production --build=local
 ...
 run 01J9V3AA  deploy file-sharing to production
   ok    Validate project definition
@@ -166,7 +179,7 @@ run 01J9V3AA  deploy file-sharing to production  failed
 ## 6. Detach and reattach
 
 ```console
-$ skali deploy --environment production --build=local --use-remote-env
+$ skali deploy --environment production --build=local
 ...
   run  Apply applications
          run  web
@@ -191,7 +204,7 @@ revision if the new one has not activated.
 After renaming the database key `data` to `main` in `skali.yml`:
 
 ```console
-$ skali deploy --environment production --use-remote-env
+$ skali deploy --environment production
 plan against active revision 8d1e15b3
   remove  databases.data   DESTRUCTIVE: deletes the logical database and its data
   create  databases.main

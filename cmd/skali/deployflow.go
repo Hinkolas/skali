@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +33,6 @@ type deployOptions struct {
 	Environment      string
 	Manifest         string
 	EnvFile          string
-	UseRemoteEnv     bool
 	BuildMode        string
 	Yes              bool
 	AllowDestructive bool
@@ -127,38 +129,31 @@ func resolveEnvironmentIDs(ctx context.Context, api *client.Client, projectName,
 	return projectID, environmentID, nil
 }
 
-// selectValues decides the value source per the contract: an explicit
-// file, the stored remote values, an auto-discovered file (announced or
-// confirmed), or a hard error for guessless non-interactive use.
+// selectValues decides the value source: an explicit --env-file, the bare-dev
+// automatic ./.env, an interactively selected override from the project
+// root's env files, or nil for the environment's stored values (the default).
 func selectValues(out io.Writer, project *localProject, opts *deployOptions) (*values.File, error) {
-	if opts.UseRemoteEnv {
-		return nil, nil
-	}
 	path := opts.EnvFile
 	if path == "" {
-		discovered := discoverEnvFile(project.Root, opts.Environment)
 		switch {
-		case discovered == "":
-			if opts.AutoEnvFile {
+		case opts.AutoEnvFile:
+			candidate := filepath.Join(project.Root, ".env")
+			info, err := os.Stat(candidate)
+			if err != nil || info.IsDir() {
 				return nil, nil
 			}
-			return nil, errors.New("choose a value source: --env-file PATH or --use-remote-env")
-		case opts.AutoEnvFile:
-			path = discovered
+			path = candidate
 		case interactive() && !opts.Yes:
-			parsed, err := values.ParseFile(discovered)
+			selected, err := chooseEnvFile(out, bufio.NewReader(os.Stdin), project.Root, opts.Environment)
 			if err != nil {
 				return nil, err
 			}
-			plain, secret := countBySecrecy(project.Result, parsed)
-			fmt.Fprintf(out, "Upload %s to environment %s?\n", discovered, opts.Environment)
-			fmt.Fprintf(out, "  %d plain, %d secret value(s). Values are stored encrypted and never displayed.\n", plain, secret)
-			if !confirm(out, "[y/N] ") {
+			if selected == "" {
 				return nil, nil
 			}
-			return parsed, nil
+			path = selected
 		default:
-			return nil, errors.New("choose a value source explicitly: --env-file PATH or --use-remote-env")
+			return nil, nil
 		}
 	}
 	parsed, err := values.ParseFile(path)
@@ -168,15 +163,115 @@ func selectValues(out io.Writer, project *localProject, opts *deployOptions) (*v
 	return parsed, nil
 }
 
-// discoverEnvFile prefers <environment>.env, then .env, in the project root.
-func discoverEnvFile(root, environment string) string {
-	for _, name := range []string{environment + ".env", ".env"} {
-		candidate := filepath.Join(root, name)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
+// discoverEnvFiles lists the project root's .env and .env.* files, .env
+// first, for the interactive override selection.
+func discoverEnvFiles(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == ".env" || strings.HasPrefix(name, ".env.") {
+			files = append(files, filepath.Join(root, name))
 		}
 	}
-	return ""
+	sort.Strings(files)
+	return files
+}
+
+// chooseEnvFile offers the discovered env files as an override for the
+// environment's stored values; an empty result keeps the stored values.
+func chooseEnvFile(out io.Writer, in *bufio.Reader, root, environment string) (string, error) {
+	files := discoverEnvFiles(root)
+	if len(files) == 0 {
+		return "", nil
+	}
+	fmt.Fprintf(out, "\nOverride the stored values of environment %s with a local env file?\n", environment)
+	options := make([]string, 0, len(files)+1)
+	options = append(options, "no, use the stored values")
+	for _, file := range files {
+		options = append(options, filepath.Base(file))
+	}
+	choice, err := promptSelect(out, in, options, 0, 0)
+	if err != nil {
+		return "", err
+	}
+	if choice == 0 {
+		return "", nil
+	}
+	return files[choice-1], nil
+}
+
+// chooseEnvironment lists the project's environments on the target
+// installation and asks for one; a single environment selects itself.
+func chooseEnvironment(ctx context.Context, out io.Writer, in *bufio.Reader, api *client.Client, projectName string) (string, error) {
+	projects, err := api.ListProjects(ctx)
+	if err != nil {
+		return "", err
+	}
+	projectID := ""
+	for _, project := range projects {
+		if project.Name == projectName {
+			projectID = project.ID
+		}
+	}
+	if projectID == "" {
+		return "", fmt.Errorf("project %s does not exist on this installation", projectName)
+	}
+	environments, err := api.ListEnvironments(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	if len(environments) == 0 {
+		return "", fmt.Errorf("project %s has no environments on this installation", projectName)
+	}
+	if len(environments) == 1 {
+		return environments[0].Name, nil
+	}
+	names := make([]string, 0, len(environments))
+	for _, environment := range environments {
+		names = append(names, environment.Name)
+	}
+	fmt.Fprintln(out, "Environment:")
+	choice, err := promptSelect(out, in, names, 1, -1)
+	if err != nil {
+		return "", err
+	}
+	return names[choice], nil
+}
+
+// promptSelect renders numbered options starting at start and reads a
+// selection, re-asking on invalid input; defaultIndex (relative to options,
+// -1 for none) applies on empty input. Returns the relative index.
+func promptSelect(out io.Writer, in *bufio.Reader, options []string, start, defaultIndex int) (int, error) {
+	for i, option := range options {
+		fmt.Fprintf(out, "  %d) %s\n", start+i, option)
+	}
+	prompt := fmt.Sprintf("Select [%d-%d]", start, start+len(options)-1)
+	if defaultIndex >= 0 {
+		prompt += fmt.Sprintf(" (%d)", start+defaultIndex)
+	}
+	prompt += ": "
+	for {
+		fmt.Fprint(out, prompt)
+		line, err := in.ReadString('\n')
+		answer := strings.TrimSpace(line)
+		if answer == "" && defaultIndex >= 0 {
+			return defaultIndex, nil
+		}
+		if number, convErr := strconv.Atoi(answer); convErr == nil &&
+			number >= start && number < start+len(options) {
+			return number - start, nil
+		}
+		if err != nil {
+			return 0, errors.New("no valid selection")
+		}
+	}
 }
 
 func countBySecrecy(result *compiler.Result, file *values.File) (plain, secret int) {
@@ -596,6 +691,17 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	master := cfg.Remotes[remoteName].Master
 	fmt.Fprintf(out, "%s      %s %s\n", style.Dim("project"),
 		project.Result.Definition.Name, style.Dim("("+filepath.Base(project.Path)+")"))
+	if opts.Environment == "" {
+		if !interactive() {
+			return "", errors.New("--environment is required")
+		}
+		environment, err := chooseEnvironment(ctx, out, bufio.NewReader(os.Stdin), api,
+			project.Result.Definition.Name)
+		if err != nil {
+			return "", err
+		}
+		opts.Environment = environment
+	}
 	fmt.Fprintf(out, "%s  %s %s\n", style.Dim("environment"),
 		opts.Environment, style.Dim("("+master+")"))
 

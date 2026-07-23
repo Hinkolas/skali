@@ -471,8 +471,10 @@ project/
 ```
 
 Environment files are optional CLI inputs, not part of the portable definition.
-They may live anywhere and are selected explicitly with `--env-file`. Remote
-environments normally use their independently stored value space. `.skali/` is
+They may live anywhere and are selected explicitly with `--env-file`;
+interactive deploys also offer the project root's `.env` and `.env.*` files as
+an override selection. Remote environments normally use their independently
+stored value space. `.skali/` is
 reserved for disposable local tool state rather than the canonical manifest.
 
 ### 6.2 Stable service identity
@@ -930,7 +932,7 @@ A deployment should read approximately like:
 Deploy project example to production
   Validate project definition
   Prepare environment values
-    Import production.env: 5 plain, 3 secret values
+    Import .env.production: 5 plain, 3 secret values
   Prepare artifacts
     web
       Build locally
@@ -1412,24 +1414,30 @@ The primary remote workflow is project-wide:
 ```sh
 # Build on this machine, upload selected values, push artifacts, and deploy.
 skali deploy --environment production --build=local \
-  --env-file ./production.env
+  --env-file ./.env.production
 
 # Send build work to a managed builder, but keep the same manifest and deploy.
 skali deploy --environment production --build=cloud \
-  --env-file ./production.env
+  --env-file ./.env.production
 
-# Deploy using values already stored for the remote environment.
-skali deploy --environment production --build=auto --use-remote-env
+# Deploy using the values already stored for the remote environment
+# (the default when no env file is passed).
+skali deploy --environment production --build=auto
 ```
 
 `--build=auto` follows project/installation policy and may choose a configured
 cloud builder or local fallback. The executor applies only to `build` sources;
 `image` sources are imported into the managed registry.
 
-Interactive use may discover likely env files and ask whether to upload one.
-The prompt must show the path, target installation, project, and environment,
-without printing values. Non-interactive use must pass either `--env-file` or
-`--use-remote-env`; it never guesses or uploads secrets.
+The environment's stored values are the default source. Interactive use asks
+for the environment when the flag is omitted (listing the project's
+environments), discovers the project root's `.env` and `.env.*` files, and
+offers them as an explicit override selection; declining keeps the stored
+values. The selection must show the path, target installation, project, and
+environment, without printing values. Non-interactive use must name the
+environment and uploads only with an explicit `--env-file`; without one the
+stored values apply. Skali never uploads a file that was not explicitly
+selected.
 
 The deploy workflow is:
 
@@ -1554,9 +1562,9 @@ installations.
 Likely remote workflows are:
 
 ```text
-skali plan --environment <name> [--env-file <path> | --use-remote-env]
-skali deploy --environment <name> --build=<local|cloud|auto>
-             [--env-file <path> | --use-remote-env]
+skali plan [--environment <name>] [--env-file <path>]
+skali deploy [--environment <name>] --build=<local|cloud|auto>
+             [--env-file <path>]
 skali status --environment <name>
 skali runs
 skali run show <run>
@@ -2326,7 +2334,7 @@ Exit criteria:
 - Idempotent repeated `skali dev`.
 - Local/cloud executor selection, build-cache, changed-source, and external
   image-import behavior.
-- Interactive env-file confirmation and non-interactive explicitness.
+- Interactive env-file selection and non-interactive explicitness.
 - Remote-value reuse without reading or overwriting secret values.
 - Terminal interruption and reattachment to a run.
 - Safe reset confirmation.
@@ -2412,8 +2420,8 @@ The following decisions are part of this plan:
 - Environment values are separate and typed; dotenv files are a CLI import
   format, secrecy is declared by the manifest, and there are no arbitrary
   overlay patches.
-- Non-interactive deploys explicitly choose `--env-file` or remote stored
-  values; Skali never guesses which secrets to upload.
+- Non-interactive deploys use the remote stored values unless an explicit
+  `--env-file` is passed; Skali never guesses which secrets to upload.
 - Application sources support either an existing OCI image or a project-relative
   build definition.
 - Build executor selection (`local`, `cloud`, or policy-driven `auto`) is a

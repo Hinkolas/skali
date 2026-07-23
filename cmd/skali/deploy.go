@@ -13,9 +13,6 @@ func newPlanCommand() *cobra.Command {
 		Short: "Compute and print the deployment plan without changing anything",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			if opts.Environment == "" {
-				return errors.New("--environment is required")
-			}
 			_, err := runDeployFlow(command, opts, true)
 			return err
 		},
@@ -31,12 +28,11 @@ func newDeployCommand() *cobra.Command {
 		Short: "Deploy the project to an environment",
 		Long: "Deploys the local manifest: candidate definition, staged values, plan\n" +
 			"confirmation, local builds and imports pushed to the managed registry,\n" +
-			"server-side verification, and the journaled rollout, rendered live.",
+			"server-side verification, and the journaled rollout, rendered live.\n" +
+			"The environment's stored values apply unless --env-file is passed or\n" +
+			"a discovered .env/.env.* file is selected interactively.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			if opts.Environment == "" {
-				return errors.New("--environment is required")
-			}
 			if opts.BuildMode != "" && opts.BuildMode != "local" && opts.BuildMode != "auto" {
 				return errors.New("--build must be local or auto (cloud builders arrive with R4)")
 			}
@@ -55,8 +51,9 @@ func newDeployCommand() *cobra.Command {
 }
 
 func addDeployFlags(command *cobra.Command, opts *deployOptions) {
-	command.Flags().StringVar(&opts.Environment, "environment", "", "target environment name")
+	command.Flags().StringVar(&opts.Environment, "environment", "",
+		"target environment name (prompted interactively when omitted)")
 	command.Flags().StringVar(&opts.Manifest, "manifest", "", "explicit manifest path (skali.yml discovered by default)")
-	command.Flags().StringVar(&opts.EnvFile, "env-file", "", "dotenv file to stage as candidate values")
-	command.Flags().BoolVar(&opts.UseRemoteEnv, "use-remote-env", false, "deploy with the environment's stored values")
+	command.Flags().StringVar(&opts.EnvFile, "env-file", "",
+		"dotenv file to stage as candidate values (default: the environment's stored values)")
 }

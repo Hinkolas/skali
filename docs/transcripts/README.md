@@ -25,9 +25,9 @@ Files:
 - `cli-remote.md`: the `skali remote` group: adding a remote with initial
   login and TOTP, listing and switching, status, re-login, the registry
   token, removal, and the reserved `local` remote.
-- `cli-deploy.md`: remote plan and deploy, local and cloud builds, env-file
-  upload, remote-value reuse, failure atomicity, detach/reattach, and
-  destructive confirmation.
+- `cli-deploy.md`: remote plan and deploy, interactive environment and
+  env-file selection, local and cloud builds, stored-value default, env-file
+  upload, failure atomicity, detach/reattach, and destructive confirmation.
 - `cli-dev.md`: the CLI-owned local installation: first run, repeat run,
   status, logs, stop, and reset.
 - `cli-cluster.md`: the privileged `skali cluster` group: fresh single node,

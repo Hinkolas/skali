@@ -241,7 +241,7 @@ func TestDevEndToEnd(t *testing.T) {
 			[]byte(strings.Replace(string(content), "hello from skali", "hello again from skali", 1)), 0o644))
 
 		out := h.run(false, "", "deploy", "--environment", "local",
-			"--use-remote-env", "--yes", "--detach")
+			"--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
 
 		// Kill the control plane while the rollout is in flight; the
