@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/store"
@@ -56,6 +57,21 @@ func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UU
 			warn("adopt run", err, "environment", environmentID)
 		}
 		return attachment
+	}
+	if run.Kind == "deployment" {
+		// A deployment run in its artifact window still belongs to the build
+		// client: rollout journaling and the rollout deadline begin at
+		// promote. Adopting earlier lets a stale unhealthy target fail a run
+		// whose deployment is still preparing.
+		deployment, err := k.deps.Store.GetDeploymentByRunID(ctx, &run.ID)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				warn("look up adopted run deployment", err, "run", run.ID)
+				return attachment
+			}
+		} else if deployment.Status == string(deploy.DeploymentPreparing) {
+			return attachment
+		}
 	}
 	attachment.run = &run
 	if run.Kind == "deployment" {

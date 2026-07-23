@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
@@ -43,6 +45,70 @@ func (f *kernelFixture) deployChanged(t *testing.T) *deploy.ExecuteResult {
 	})
 	require.NoError(t, err)
 	return result
+}
+
+// A deployment run in its artifact window is never adopted: while the
+// deployment row is preparing, the run belongs to the build client, and a
+// reconcile pass converging a stale unhealthy target must not deadline-fail
+// it (the incident shape: a wedged prior target plus a slow build).
+func TestPreparingDeploymentRunNotAdopted(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Nanosecond})
+	ctx := context.Background()
+
+	// Revision A promotes but never becomes healthy; the operator cancelled
+	// its run, leaving a stale unhealthy target behind.
+	first := f.executeDeployment(t)
+	f.fake.SetFresh()
+	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", "",
+		module.WorkloadStatus{Desired: 1, Ready: 0})
+	require.NoError(t, f.journal.FinishRun(ctx, first.RunID, journal.RunCancelled))
+
+	// A second deployment opens its artifact window: the run is running
+	// while the client builds, the deployment row stays preparing.
+	clientRun, err := f.journal.CreateRun(ctx, journal.RunInput{
+		Kind:          "deployment",
+		ProjectID:     f.projectID,
+		EnvironmentID: f.environmentID,
+		Actor:         "tester",
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.journal.StartRun(ctx, clientRun.ID))
+	revision, err := f.st.GetRevisionByID(ctx, first.RevisionID)
+	require.NoError(t, err)
+	deployment, err := f.st.CreateDeployment(ctx, store.CreateDeploymentParams{
+		ID:                  uuid.New(),
+		ProjectID:           f.projectID,
+		EnvironmentID:       f.environmentID,
+		DefinitionVersionID: revision.DefinitionVersionID,
+		RunID:               &clientRun.ID,
+		Actor:               "tester",
+		BuildExecutor:       "local",
+		Actions:             []byte("[]"),
+	})
+	require.NoError(t, err)
+
+	before := f.target(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+
+	run, err := f.st.GetRunByID(ctx, clientRun.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", run.Status,
+		"a preparing deployment's run must not be adopted or deadline-failed")
+	require.Equal(t, *before.TargetRevisionID, *f.target(t).TargetRevisionID,
+		"no fallback fires during the artifact window")
+
+	// Promote flips the boundary: the same run is adopted and the stale
+	// unhealthy target now fails it under the deadline.
+	require.NoError(t, f.st.SetDeploymentStatus(ctx, store.SetDeploymentStatusParams{
+		ID: deployment.ID, Status: string(deploy.DeploymentPromoted),
+	}))
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	run, err = f.st.GetRunByID(ctx, clientRun.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", run.Status)
 }
 
 // Section 8.4 automatic fallback: when a promoted revision misses its
