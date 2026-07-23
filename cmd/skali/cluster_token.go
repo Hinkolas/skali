@@ -12,7 +12,7 @@ import (
 )
 
 func newClusterTokenCmd() *cobra.Command {
-	var role string
+	var role, server string
 	cmd := &cobra.Command{
 		Use:   "token",
 		Short: "Print the join command for this cluster",
@@ -45,7 +45,13 @@ func newClusterTokenCmd() *cobra.Command {
 					detected.State)
 			}
 
-			token, err := installer.CreateJoinToken(ctx, runner(), detected.Record, role)
+			if server != "" {
+				server, err = installer.NormalizeJoinServer(server)
+				if err != nil {
+					return err
+				}
+			}
+			token, err := installer.CreateJoinTokenForServer(ctx, runner(), detected.Record, role, server)
 			if err != nil {
 				return err
 			}
@@ -56,12 +62,8 @@ func newClusterTokenCmd() *cobra.Command {
 				fmt.Fprintf(out, "join command for cluster %q (token expires in %s):\n",
 					token.Cluster, token.Expires)
 			}
-			fmt.Fprintf(out, "  sudo skali cluster join --server %s \\\n", token.ServerURL)
-			fmt.Fprintf(out, "    --token-file <file> --role %s --capabilities <list>", token.Role)
-			if token.Cluster != installer.DefaultCluster {
-				fmt.Fprintf(out, " --cluster %s", token.Cluster)
-			}
-			fmt.Fprintln(out)
+			fmt.Fprintln(out, "  sudo skali cluster join --token-file <file> --capabilities <list>")
+			fmt.Fprintf(out, "  endpoint encoded in token: %s\n", token.ServerURL)
 			fmt.Fprintln(out)
 			fmt.Fprintln(out, "join token (write it to <file> on the joining host, mode 0600):")
 			fmt.Fprintf(out, "  %s\n", token.Token)
@@ -80,5 +82,6 @@ func newClusterTokenCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", layout.RoleAgent, "role the token enrolls: agent or server")
+	cmd.Flags().StringVar(&server, "server", "", "advertised HTTPS join endpoint (defaults to this node's InternalIP:6443)")
 	return cmd
 }

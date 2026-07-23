@@ -368,6 +368,10 @@ func forceNamespacesGone(ctx context.Context, client *kube.Client, deletions []n
 type NodeRemovalPlan struct {
 	NodeName string
 	Role     string
+	// ClusterReachable reports whether the node inventory was read. A
+	// joining server cleaned up locally while this is false may leave a
+	// stale node or etcd member behind on the surviving servers.
+	ClusterReachable bool
 	// Servers, Agents, and Total describe the cluster when the API
 	// answered; Total 1 otherwise (agents and dead-API servers fall back
 	// to the single-node assumption).
@@ -401,6 +405,7 @@ func planNodeRemovalWith(ctx context.Context, client *kube.Client, plan *NodeRem
 	if err != nil {
 		return plan, nil
 	}
+	plan.ClusterReachable = true
 	plan.Total = len(nodes.Items)
 	for _, node := range nodes.Items {
 		if layout.RoleFromLabels(node.Labels) == layout.RoleServer {
@@ -464,17 +469,45 @@ func UninstallNode(ctx context.Context, runner host.Runner, record *Record, plan
 	if plan == nil {
 		plan = &NodeRemovalPlan{NodeName: record.Node.Name, Role: record.Node.Role, Total: 1}
 	}
-	if plan.Role == layout.RoleServer && plan.Total > 1 {
+	startAttempted := record.RegistrationMayHaveStarted()
+	if startAttempted && plan.Role == layout.RoleServer && plan.Total > 1 {
 		if err := removeSelfFromCluster(ctx, runner, plan.NodeName, progress); err != nil {
 			return err
 		}
 	}
 
 	progress.Start("Uninstall k3s")
-	if err := uninstallK3s(ctx, runner, record.Node.Role); err != nil {
-		return err
+	script := k3sUninstallScript
+	if record.Node.Role == layout.RoleAgent {
+		script = k3sAgentUninstallScript
 	}
-	progress.Done("")
+	info, statErr := runner.Stat(ctx, script)
+	if statErr != nil {
+		return statErr
+	}
+	if info.Exists {
+		if err := uninstallK3s(ctx, runner, record.Node.Role); err != nil {
+			return err
+		}
+		progress.Done("")
+	} else if !startAttempted {
+		if err := runner.Remove(ctx, K3sConfigDir); err != nil {
+			return fmt.Errorf("remove staged k3s config: %w", err)
+		}
+		progress.Skip("k3s was never started and no uninstall script exists")
+	} else {
+		// A partial or manually damaged install may have lost only the
+		// upstream uninstall helper. Re-run the pinned installer with
+		// startup disabled to reconstruct the binary, unit, and script,
+		// then immediately execute the normal upstream cleanup.
+		progress.Skip("upstream uninstall script is missing; reconstructing it")
+		if err := installK3sFiles(ctx, runner, k3sNode{Role: record.Node.Role}, progress); err != nil {
+			return fmt.Errorf("restore missing upstream uninstall script: %w", err)
+		}
+		if err := uninstallK3s(ctx, runner, record.Node.Role); err != nil {
+			return err
+		}
+	}
 
 	progress.Start("Remove " + StateDir)
 	// Everything under StateDir goes except the record, which goes last.

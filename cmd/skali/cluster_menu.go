@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
+	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
@@ -53,6 +55,16 @@ func runClusterRoot(cmd *cobra.Command) error {
 	case installer.StateUnmanaged:
 		printFreshHeader(out, detected)
 		return unmanagedError()
+	case installer.StateInterrupted, installer.StateOrphaned:
+		status, err := installer.GatherStatus(ctx, runner())
+		if err != nil {
+			return err
+		}
+		printStatus(out, status)
+		if !cliprompt.Interactive() {
+			return nil
+		}
+		return runRecoveryMenu(ctx, out, status)
 	case installer.StateFresh:
 		printFreshHeader(out, detected)
 		if !cliprompt.Interactive() {
@@ -111,6 +123,10 @@ func printStatus(out *os.File, status *installer.Status) {
 			label = fmt.Sprintf("Skali agent (cluster %q)", record.Cluster)
 		case installer.StateDamaged:
 			label = fmt.Sprintf("damaged Skali installation (cluster %q)", record.Cluster)
+		case installer.StateInterrupted:
+			label = fmt.Sprintf("interrupted Skali installation (cluster %q)", record.Cluster)
+		case installer.StateOrphaned:
+			label = fmt.Sprintf("orphaned Skali installation (cluster %q)", record.Cluster)
 		}
 	}
 	if detected.State == installer.StateServer && healthyOverall(status) {
@@ -119,6 +135,16 @@ func printStatus(out *os.File, status *installer.Status) {
 	fmt.Fprintf(out, "host %s: %s\n", hostLabel(detected), label)
 	if darwinInfo != nil {
 		fmt.Fprintf(out, "  vm         %s (Lima, network %s)\n", darwinInfo.Instance, darwinInfo.Network)
+	}
+	if record != nil && record.Lifecycle != nil && !record.InstallComplete() {
+		fmt.Fprintf(out, "  install    %s at phase %s\n",
+			record.Lifecycle.Status, record.Lifecycle.Phase)
+		if record.Lifecycle.LastError != "" {
+			fmt.Fprintf(out, "  error      %s\n", record.Lifecycle.LastError)
+		}
+		if record.Lifecycle.LastLog != "" {
+			fmt.Fprintf(out, "  log        %s\n", record.Lifecycle.LastLog)
+		}
 	}
 
 	k3sSuffix := "(expected " + installer.K3sVersion + ")"
@@ -174,6 +200,113 @@ func printStatus(out *os.File, status *installer.Status) {
 		fmt.Fprintf(out, "  problem    %s\n", problem)
 	}
 	fmt.Fprintln(out)
+}
+
+func runRecoveryMenu(ctx context.Context, out *os.File, status *installer.Status) error {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprintln(out, "recovery options")
+	choice, err := cliprompt.Select(reader, out, "  : ", []string{
+		"resume/edit inputs",
+		"diagnose",
+		"repair",
+		"uninstall",
+		"quit",
+	}, -1)
+	if err != nil {
+		return err
+	}
+	switch choice {
+	case 0:
+		return runInteractiveResume(ctx, out, reader, status.Host)
+	case 1:
+		diagnosis, err := installer.Diagnose(ctx, runner(), installer.DiagnoseOptions{})
+		if err != nil {
+			return err
+		}
+		printDiagnosis(out, diagnosis)
+		if diagnosis.Fails() > 0 {
+			return fmt.Errorf("diagnosis found %d problem(s)", diagnosis.Fails())
+		}
+		return nil
+	case 2:
+		if status.Host.State == installer.StateOrphaned {
+			if !cliprompt.Confirm(reader, "Recover ownership of this interrupted Skali install before repair? [y/N] ") {
+				return errors.New("recovery was not confirmed; nothing was changed")
+			}
+			if err := installer.PersistOrphanRecord(ctx, runner(), status.Host.Record); err != nil {
+				return err
+			}
+		}
+		return runRepairFlow(ctx, out, reader, false)
+	case 3:
+		return runUninstallFlow(ctx, out, reader, "", "")
+	default:
+		return nil
+	}
+}
+
+func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reader, detected *installer.Host) error {
+	record := detected.Record
+	if record == nil {
+		return errors.New("the interrupted installation has no recoverable inputs")
+	}
+	opts := installer.InstallOptions{
+		Cluster:       record.Cluster,
+		Role:          record.Node.Role,
+		Capabilities:  append([]string(nil), record.Node.Capabilities...),
+		Endpoints:     record.Endpoints,
+		TLS:           record.TLS,
+		RecoverOrphan: detected.State == installer.StateOrphaned,
+	}
+	if record.Join != nil {
+		tokenFile, err := cliprompt.Line(reader, "  join token file path (empty to paste the token): ")
+		if err != nil {
+			return err
+		}
+		token := ""
+		if tokenFile == "" {
+			token, err = cliprompt.Secret(reader, "  join token: ")
+			if err != nil {
+				return err
+			}
+		} else {
+			data, err := os.ReadFile(tokenFile)
+			if err != nil {
+				return fmt.Errorf("read join token file %s: %w", tokenFile, err)
+			}
+			token = strings.TrimSpace(string(data))
+		}
+		claims, err := installer.InspectJoinToken(token)
+		if err != nil {
+			return err
+		}
+		serverDefault := record.Join.Server
+		if claims.Server != "" {
+			serverDefault = claims.Server
+		}
+		server, err := cliprompt.LineDefault(reader, "  server url ["+serverDefault+"]: ", serverDefault)
+		if err != nil {
+			return err
+		}
+		opts.Join = &installer.JoinOptions{Server: server, Token: token}
+	}
+	fmt.Fprintln(out)
+	tasks := clirender.NewTasks(out)
+	progress := newTaskProgress(tasks)
+	opts.Progress = progress
+	if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
+		progress.Abort()
+		return err
+	}
+	_, err := installer.Install(ctx, runner(), opts)
+	if err != nil {
+		progress.Abort()
+		return err
+	}
+	progress.Done("")
+	fmt.Fprintf(out, "\nThis node completed its installation in cluster %q as a %s.\n",
+		record.Cluster, record.Node.Role)
+	return nil
 }
 
 // nodeRoleCounts words the nodes-line suffix: "1 server", "2 servers,

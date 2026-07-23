@@ -47,9 +47,8 @@ func runDiagnosis(cmd *cobra.Command, out *os.File) (*installer.Diagnosis, error
 		return nil, err
 	}
 	switch detected.State {
-	case installer.StateServer, installer.StateAgent, installer.StateDamaged:
-	case installer.StateUnmanaged:
-		return nil, unmanagedError()
+	case installer.StateServer, installer.StateAgent, installer.StateDamaged,
+		installer.StateInterrupted, installer.StateOrphaned, installer.StateUnmanaged:
 	default:
 		return nil, fmt.Errorf("nothing to diagnose on this host (state %s); run skali cluster install first",
 			detected.State)
@@ -77,6 +76,10 @@ func printDiagnosis(out io.Writer, diagnosis *installer.Diagnosis) {
 			label = fmt.Sprintf("Skali agent (cluster %q)", detected.Record.Cluster)
 		case installer.StateDamaged:
 			label = fmt.Sprintf("damaged Skali installation (cluster %q)", detected.Record.Cluster)
+		case installer.StateInterrupted:
+			label = fmt.Sprintf("interrupted Skali installation (cluster %q)", detected.Record.Cluster)
+		case installer.StateOrphaned:
+			label = fmt.Sprintf("orphaned Skali installation (cluster %q)", detected.Record.Cluster)
 		}
 	}
 	fmt.Fprintf(out, "host %s: %s\n", hostLabel(detected), label)

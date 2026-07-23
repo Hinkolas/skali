@@ -1,9 +1,11 @@
 package installer
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/layout"
@@ -110,4 +112,36 @@ func TestPlanRepairsHealthy(t *testing.T) {
 		RepairDeps{Runner: &host.Fake{}, Record: server})
 	require.Empty(t, actions, "a clean diagnosis plans no mutation")
 	require.Empty(t, refusals)
+}
+
+func TestPlanRepairsRestoresRecoveredRecord(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fake := &host.Fake{FS: map[string][]byte{}}
+	record := &Record{
+		Version:        RecordVersion,
+		InstallationID: "install-1",
+		Provider:       ProviderK3s,
+		Cluster:        "e2e",
+		Ownership:      OwnershipManaged,
+		Node:           NodeRecord{Name: "cp-1", Role: layout.RoleServer, Capabilities: []string{"edge"}},
+		Versions:       Versions{Installer: "test", K3s: K3sVersion},
+	}
+	fake.FS[RecordPath] = []byte(":corrupt:\n\t")
+	backup, err := yaml.Marshal(record)
+	require.NoError(t, err)
+	fake.FS[RecordBackupPath] = backup
+
+	diagnosis := repairDiagnosis(StateDamaged, record, "installation")
+	diagnosis.Host.RecordRecovered = true
+	diagnosis.Host.Problems = []string{"using " + RecordBackupPath}
+	actions, refusals := PlanRepairs(diagnosis, RepairDeps{Runner: fake, Record: record})
+	require.Empty(t, refusals)
+	require.Equal(t, []string{"restore-record"}, actionIDs(actions))
+	require.NoError(t, actions[0].Run(ctx))
+
+	restored, err := LoadRecord(ctx, fake)
+	require.NoError(t, err)
+	require.Equal(t, "install-1", restored.InstallationID)
+	require.False(t, recordRecovered(ctx, fake))
 }

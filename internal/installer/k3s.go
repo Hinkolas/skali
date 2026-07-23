@@ -160,14 +160,9 @@ func k3sRegistriesYAML(pullSecret string) string {
 `, bundle.RegistryInternalHost, bundle.RegistryNodePort) + configs
 }
 
-// installK3s writes the k3s configuration and runs the vendored install
-// script pinned to K3sVersion. The agent role is selected by the explicit
-// script argument, never by K3S_* environment variables: the script
-// persists every exported K3S_* value into the systemd env file, which
-// would leak the join token onto disk a second time.
-func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress Progress) error {
-	role := node.role()
-	progress.Start("Install k3s " + K3sVersion + " (" + role + ")")
+// configureK3s stages the complete desired configuration before the
+// upstream installer is invoked.
+func configureK3s(ctx context.Context, runner host.Runner, node k3sNode) error {
 	if err := runner.MkdirAll(ctx, K3sConfigDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", K3sConfigDir, err)
 	}
@@ -182,11 +177,28 @@ func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress 
 			return fmt.Errorf("write k3s join token: %w", err)
 		}
 	}
+	return nil
+}
+
+func stageK3sInstaller(ctx context.Context, runner host.Runner) error {
 	if err := runner.MkdirAll(ctx, CacheDir, 0o750); err != nil {
 		return fmt.Errorf("create %s: %w", CacheDir, err)
 	}
 	if err := runner.WriteFile(ctx, k3sInstallScriptPath, k3sInstallScript, 0o700); err != nil {
 		return fmt.Errorf("write k3s install script: %w", err)
+	}
+	return nil
+}
+
+// installK3sFiles runs the vendored upstream installer without starting
+// the service. This guarantees the uninstall script exists before k3s can
+// attempt registration and lets the transaction durably mark "starting"
+// immediately before the first potentially remote mutation.
+func installK3sFiles(ctx context.Context, runner host.Runner, node k3sNode, progress Progress) error {
+	role := node.role()
+	progress.Start("Install k3s " + K3sVersion + " (" + role + ")")
+	if err := stageK3sInstaller(ctx, runner); err != nil {
+		return err
 	}
 	args := []string{k3sInstallScriptPath}
 	if role == layout.RoleAgent {
@@ -195,7 +207,10 @@ func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress 
 	result, err := runner.Run(ctx, host.Command{
 		Name: "sh",
 		Args: args,
-		Env:  []string{"INSTALL_K3S_VERSION=" + K3sVersion},
+		Env: []string{
+			"INSTALL_K3S_VERSION=" + K3sVersion,
+			"INSTALL_K3S_SKIP_START=true",
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("run k3s install script: %w", err)
@@ -208,6 +223,38 @@ func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress 
 	return nil
 }
 
+func startK3s(ctx context.Context, runner host.Runner, role string, progress Progress) error {
+	unit := "k3s.service"
+	if role == layout.RoleAgent {
+		unit = "k3s-agent.service"
+	}
+	progress.Start("Start " + unit)
+	result, err := runner.Run(ctx, host.Command{
+		Name: "systemctl", Args: []string{"start", unit},
+	})
+	if err != nil {
+		return fmt.Errorf("start %s: %w", unit, err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("start %s: exit %d: %s", unit, result.ExitCode,
+			strings.TrimSpace(result.Stderr))
+	}
+	progress.Done("")
+	return nil
+}
+
+// installK3s remains the focused host primitive used by tests and callers
+// outside the transaction engine.
+func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress Progress) error {
+	if err := configureK3s(ctx, runner, node); err != nil {
+		return err
+	}
+	if err := installK3sFiles(ctx, runner, node, progress); err != nil {
+		return err
+	}
+	return startK3s(ctx, runner, node.role(), progress)
+}
+
 // upgradeK3s re-runs the vendored install script under the new pin. The
 // script never touches /etc/rancher/k3s, so the config, registries, and
 // token files written at install time survive untouched; the k3s unit uses
@@ -218,11 +265,8 @@ func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress 
 // follow-up wait out; the supported targets are Debian-family hosts.
 func upgradeK3s(ctx context.Context, runner host.Runner, role string, progress Progress) error {
 	progress.Start("Upgrade k3s to " + K3sVersion + " (" + role + ")")
-	if err := runner.MkdirAll(ctx, CacheDir, 0o750); err != nil {
-		return fmt.Errorf("create %s: %w", CacheDir, err)
-	}
-	if err := runner.WriteFile(ctx, k3sInstallScriptPath, k3sInstallScript, 0o700); err != nil {
-		return fmt.Errorf("write k3s install script: %w", err)
+	if err := stageK3sInstaller(ctx, runner); err != nil {
+		return err
 	}
 	args := []string{k3sInstallScriptPath}
 	if role == layout.RoleAgent {

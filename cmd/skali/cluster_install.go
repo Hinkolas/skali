@@ -46,12 +46,21 @@ func newClusterInstallCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if detected.State != installer.StateFresh {
+				switch detected.State {
+				case installer.StateFresh:
+					printFreshHeader(out, detected)
+					return runInteractiveFreshFlow(ctx, out)
+				case installer.StateInterrupted, installer.StateOrphaned:
+					status, err := installer.GatherStatus(ctx, runner())
+					if err != nil {
+						return err
+					}
+					printStatus(out, status)
+					return runRecoveryMenu(ctx, out, status)
+				default:
 					return fmt.Errorf("this host is not fresh (state %s); "+
 						"run skali cluster without arguments for maintenance options", detected.State)
 				}
-				printFreshHeader(out, detected)
-				return runInteractiveFreshFlow(ctx, out)
 			}
 
 			// A config file is full consent: every decision comes from it
@@ -96,6 +105,9 @@ func newClusterInstallCmd() *cobra.Command {
 				Capabilities: config.Capabilities,
 				NodeIP:       config.NodeIP,
 				Progress:     progress,
+				// A matching config file is full non-interactive consent
+				// to recover the exact Skali fingerprint it describes.
+				RecoverOrphan: true,
 			}
 			if config.Join != nil {
 				opts.Join = &installer.JoinOptions{

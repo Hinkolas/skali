@@ -49,7 +49,8 @@ func runUninstallFlow(ctx context.Context, out *os.File, reader *bufio.Reader, s
 		return err
 	}
 	switch detected.State {
-	case installer.StateServer, installer.StateAgent, installer.StateDamaged:
+	case installer.StateServer, installer.StateAgent, installer.StateDamaged,
+		installer.StateInterrupted, installer.StateOrphaned:
 	case installer.StateUnmanaged:
 		return unmanagedError()
 	default:
@@ -61,6 +62,9 @@ func runUninstallFlow(ctx context.Context, out *os.File, reader *bufio.Reader, s
 			installer.RecordPath)
 	}
 
+	if scope == "" && record.Versions.Bundle == "" {
+		scope = "node"
+	}
 	if scope == "" {
 		fmt.Fprintf(out, "scope of removal on host %s (cluster %q):\n\n", hostLabel(detected), record.Cluster)
 		choice, err := cliprompt.Select(reader, out, "  : ", []string{
@@ -75,6 +79,9 @@ func runUninstallFlow(ctx context.Context, out *os.File, reader *bufio.Reader, s
 
 	switch scope {
 	case "bundle":
+		if record.Versions.Bundle == "" {
+			return fmt.Errorf("the Skali bundle was never initialized; use --scope node to remove the interrupted host install")
+		}
 		return uninstallBundle(ctx, out, reader, record, confirmName)
 	case "node":
 		return uninstallNode(ctx, out, reader, record, confirmName)
@@ -118,6 +125,8 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 		return err
 	}
 	leavingServer := record.Node.Role == layout.RoleServer && plan.Total > 1
+	mayLeaveStaleMembership := record.RegistrationMayHaveStarted() &&
+		record.Join != nil && !plan.ClusterReachable
 
 	fmt.Fprintln(out)
 	switch {
@@ -137,9 +146,21 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 	} else {
 		fmt.Fprintln(out, "  - k3s itself and "+installer.StateDir)
 	}
+	if mayLeaveStaleMembership {
+		fmt.Fprintln(out, "  - the cluster API is unreachable; local cleanup may leave stale node or etcd membership")
+	}
 	fmt.Fprintln(out)
 	if !confirmCluster(reader, record.Cluster, confirmName) {
 		return fmt.Errorf("confirmation did not match the cluster name %q; nothing was removed", record.Cluster)
+	}
+	if record.InstallationID == "" {
+		if err := installer.PersistOrphanRecord(ctx, runner(), record); err != nil {
+			return fmt.Errorf("record recovered ownership before uninstall: %w", err)
+		}
+		record, err = installer.LoadRecord(ctx, runner())
+		if err != nil {
+			return err
+		}
 	}
 
 	if darwinInfo != nil {
@@ -154,9 +175,13 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 	}
 	progress.Done("")
 	fmt.Fprintln(out, "\nThis host is fresh again.")
-	if record.Node.Role == layout.RoleAgent {
+	if mayLeaveStaleMembership && record.Node.Role == layout.RoleAgent {
 		fmt.Fprintf(out, "The node object %s remains in the cluster; "+
 			"delete it from a server with `k3s kubectl delete node %s`.\n",
+			record.Node.Name, record.Node.Name)
+	} else if mayLeaveStaleMembership {
+		fmt.Fprintf(out, "The cluster could not confirm removal of server %s. From a surviving server, "+
+			"run `k3s kubectl delete node %s` and verify the control-plane membership before reusing this node name.\n",
 			record.Node.Name, record.Node.Name)
 	}
 	return nil

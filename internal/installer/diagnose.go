@@ -109,6 +109,19 @@ func Diagnose(ctx context.Context, runner host.Runner, opts DiagnoseOptions) (*D
 	}
 
 	// Host level. Damaged-state problems become fail checks first.
+	if detected.State == StateInterrupted && detected.Record != nil && detected.Record.Lifecycle != nil {
+		lifecycle := detected.Record.Lifecycle
+		detail := lifecycle.Status + " at phase " + lifecycle.Phase
+		if lifecycle.LastError != "" {
+			detail += ": " + lifecycle.LastError
+		}
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "install transaction", Severity: SeverityFail, Detail: detail,
+		})
+		suggest("rerun skali cluster install/join with corrected inputs, or choose resume/edit from skali cluster")
+		suggest("skali cluster repair")
+		suggest("skali cluster uninstall --scope node")
+	}
 	for _, problem := range detected.Problems {
 		diagnosis.Checks = append(diagnosis.Checks, Check{
 			Name: "installation", Severity: SeverityFail, Detail: problem,
@@ -118,6 +131,9 @@ func Diagnose(ctx context.Context, runner host.Runner, opts DiagnoseOptions) (*D
 		} else {
 			suggest("skali cluster repair")
 		}
+	}
+	if detected.State == StateOrphaned {
+		suggest("run skali cluster to reconstruct, resume, or uninstall this fingerprinted older installation")
 	}
 
 	role := layout.RoleServer

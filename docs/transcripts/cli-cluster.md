@@ -24,8 +24,9 @@ host cp-1: fresh
 
 This host is not part of a Skali installation. Install one?
 
-  role                  [1] server  [2] agent          : 1
-  first server          creates cluster "production"   : yes
+  installation          [1] create a new cluster
+                        [2] join an existing cluster    : 1
+  cluster name          [production]                   :
   capabilities          application, database, object-storage,
                         registry, edge                 : all
   api/ui domain                                        : skali.example.com
@@ -66,9 +67,10 @@ Install logs: /var/lib/skali/logs/init-01J9X2.log
 ```
 
 The first server initializes the embedded etcd cluster (`cluster-init`),
-so additional servers can join later without a datastore change. Answering
-"no" to the first-server question routes into the join flow of section 3
-as an additional server.
+so additional servers can join later without a datastore change. Choosing
+the join path asks for the token first, derives its cluster, role, and
+default endpoint, then asks only for capabilities and any desired endpoint
+override.
 
 `init` runs before `skalid` or its database exist, so its steps are logged
 locally, not in the product run journal.
@@ -88,10 +90,8 @@ Per-host install configuration (cloud-init, CI):
 
 ```yaml
 # node.yaml (agent joining an existing cluster)
-role: agent
 capabilities: [database]
 join:
-  server: https://cp-1.internal:6443
   tokenFile: /root/skali-join-token
 ```
 
@@ -119,6 +119,11 @@ admin:
 $ sudo skali cluster init --config init.yaml
 ```
 
+Current `skali1` tokens supply the cluster, role, and default server URL.
+Older secure tokens remain usable when `cluster`, `role`, and
+`join.server` are supplied in the config. Conflicting config and token
+claims are rejected before the host is changed.
+
 Non-interactive runs take every decision from the configuration and fail
 rather than prompt. An optional cluster-layout document
 (`schemas/skali-layout.schema.json`) can be passed with `--layout` to assert
@@ -132,24 +137,25 @@ On the first server:
 ```console
 $ sudo skali cluster token
 join command for cluster "production" (token expires in 24h):
-  sudo skali cluster join --server https://cp-1.internal:6443 \
-    --token-file <file> --role agent --capabilities <list>
+  sudo skali cluster join --token-file <file> --capabilities <list>
 
 join token (write it to <file> on the joining host, mode 0600):
-  skali1.eyJrM3MiOiJLMTAuLi4iLCJwdWxsIjoiLi4uIn0
+  skali1.eyJrM3MiOiJLMTAuLi4iLCJwdWxsIjoiLi4uIiwicm9sZSI6ImFnZW50IiwiY2x1c3RlciI6InByb2R1Y3Rpb24iLCJzZXJ2ZXIiOiJodHRwczovL2NwLTEuaW50ZXJuYWw6NjQ0MyJ9
 ```
 
-The printed token is composite: it bundles the k3s join token with the
-cluster's registry pull credential, so one paste enrolls the node for both.
-A raw k3s token still joins, but the node then pulls from the managed
-registry unauthenticated and fails once token auth challenges it.
+The printed token is composite: it bundles a secure `K10` k3s token, the
+cluster's registry pull credential, and non-secret cluster/role/server
+routing claims. A raw secure k3s token still works when those routing values
+are supplied explicitly, but the node then lacks the managed-registry
+credential. Short k3s tokens are refused because they cannot authenticate
+the target cluster before credentials are sent.
 
 On each additional host (joining is initiated per host; the installer never
 stores SSH credentials or reaches into other machines):
 
 ```console
-$ sudo skali cluster join --server https://cp-1.internal:6443 \
-    --token-file /root/token --role agent --capabilities database
+$ sudo skali cluster join --token-file /root/token --capabilities database
+  ok  Validate https://cp-1.internal:6443 CA and agent credential
   ok  Install k3s v1.33.3+k3s1 (agent)
   ok  Join cluster "production"
   ok  Stamp capability labels on node db-1
@@ -165,11 +171,10 @@ mint server tokens; reinstalling the cluster is the path to HA there.
 ```console
 $ sudo skali cluster token --role server
 join command for cluster "production" (server token, never expires):
-  sudo skali cluster join --server https://cp-1.internal:6443 \
-    --token-file <file> --role server --capabilities <list>
+  sudo skali cluster join --token-file <file> --capabilities <list>
 
 join token (write it to <file> on the joining host, mode 0600):
-  skali1.eyJrM3MiOiJLMTAuLi4iLCJwdWxsIjoiLi4uIiwicm9sZSI6InNlcnZlciJ9
+  skali1.eyJrM3MiOiJLMTAuLi4iLCJwdWxsIjoiLi4uIiwicm9sZSI6InNlcnZlciIsImNsdXN0ZXIiOiJwcm9kdWN0aW9uIiwic2VydmVyIjoiaHR0cHM6Ly9jcC0xLmludGVybmFsOjY0NDMifQ
 
 warning: this is the cluster's permanent server token; it grants full
 administrator access and never expires. Delete the token file on the
@@ -179,8 +184,8 @@ note: this join would make 2 servers; etcd quorum prefers one or three
 ```
 
 ```console
-$ sudo skali cluster join --server https://cp-1.internal:6443 \
-    --token-file /root/token --role server --capabilities edge
+$ sudo skali cluster join --token-file /root/token --capabilities edge
+  ok  Validate https://cp-1.internal:6443 CA and server credential
   ok  Install k3s v1.33.3+k3s1 (server)
   ok  Join cluster "production"
   ok  Stamp capability labels on node cp-2
@@ -192,6 +197,12 @@ so join another server soon
 
 The even-count warnings never refuse: two servers is the unavoidable step
 on the way to three.
+
+Use `skali cluster token --server https://cluster-lb.example.com:6443` to
+advertise a load balancer or alternate address. A joining host may also
+override the token's endpoint with `join --server`; the override is accepted
+only when its CA hash and role-specific credential probe match the token.
+The authenticated probe performs no node registration.
 
 After all planned nodes have joined, once on a server:
 
@@ -386,6 +397,56 @@ nothing to do
 ```
 
 Detection is read-only. No maintenance action runs without being selected.
+Repeating a matching `cluster install` or `cluster join` is likewise a
+successful no-op.
+
+### Interrupted install recovery
+
+Every new install writes an atomic ownership record in `prepared` state
+before k3s configuration is staged. The record advances through
+`configured`, `installed`, `starting`, `joined`, and `complete`; its
+`.prev` file retains the last valid copy.
+
+Join inputs are validated first. For example, mistyping `.3` as `.4`
+produces:
+
+```console
+$ sudo skali cluster join --server https://10.1.0.4:6443 \
+    --token-file /root/token --capabilities edge
+error: join preflight for https://10.1.0.4:6443 failed:
+connection was refused; No changes were made.
+```
+
+If k3s fails after startup becomes possible, the record, k3s token,
+configuration, and datastore are retained:
+
+```console
+$ sudo skali cluster
+host cp-2: interrupted Skali installation (cluster "production")
+  install    failed at phase starting
+  error      start k3s.service: ... failed to get CA certs ...
+  log        /var/lib/skali/logs/install-20260723-220730-a1b2c3d4.log
+
+recovery options
+  [1] resume/edit inputs
+  [2] diagnose
+  [3] repair
+  [4] uninstall
+  [5] quit
+```
+
+Choosing resume accepts a corrected endpoint and retains the installation
+ID. `status` and `diagnose` render this state even while k3s is inactive.
+`repair` can restore a corrupt primary record from `.prev`, resume the
+install transaction, recreate missing k3s service/uninstall files, and
+restart the role-correct unit. `uninstall --scope node` works before or
+after registration was attempted and removes the transaction record last.
+
+A recordless k3s host is called `orphaned` only when both Skali capability
+and cluster labels and the Skali-managed registry mirror are present.
+Interactive recovery can explicitly reconstruct ownership, resume with
+corrected inputs, or uninstall. Ordinary third-party k3s remains
+`unmanaged` and is never adopted or destroyed.
 
 ## 7. Diagnosis while Skali is down
 
@@ -445,13 +506,13 @@ $ sudo skali cluster repair
 nothing to repair
 ```
 
-The v1 action set: reinstall the k3s service (a damaged unit or binary
-with a readable record; configuration and datastore are preserved),
-restart k3s, rewrite registries.yaml (minting a new node pull credential,
-followed by a forced reconverge that publishes it), and reconverge the
-bundle from the running cluster's own inputs (unhealthy components or an
-interrupted converge whose hash stamp is missing). `--yes` confirms every
-planned action for scripts.
+The action set: restore an atomic record backup, resume an interrupted host
+install (including another authenticated preflight), reinstall missing k3s
+service files, restart k3s, rewrite registries.yaml (minting a new node pull
+credential, followed by a forced reconverge that publishes it), and
+reconverge the bundle from the running cluster's own inputs (unhealthy
+components or an interrupted converge whose hash stamp is missing). `--yes`
+confirms every planned action for scripts.
 
 Repair never guesses identity: an unreadable installation record is a
 refusal pointing at the restore inputs, never a synthesized record. An

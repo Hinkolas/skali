@@ -30,7 +30,7 @@ join:
   tokenFile: /root/skali-join-token
 `))
 	require.NoError(t, err)
-	require.Equal(t, DefaultCluster, agent.Cluster)
+	require.Empty(t, agent.Cluster, "joining clusters are derived from current Skali tokens")
 	require.NotNil(t, agent.Join)
 	require.Equal(t, "https://cp-1.internal:6443", agent.Join.Server)
 	require.Equal(t, "/root/skali-join-token", agent.Join.TokenFile)
@@ -44,6 +44,15 @@ join:
 	require.NoError(t, err)
 	require.NotNil(t, joiningServer.Join)
 	require.Equal(t, "server", joiningServer.Role)
+
+	tokenDriven, err := ParseNodeConfig([]byte(`capabilities: [edge]
+join:
+  tokenFile: /root/skali-join-token
+`))
+	require.NoError(t, err)
+	require.Empty(t, tokenDriven.Role)
+	require.Empty(t, tokenDriven.Cluster)
+	require.Empty(t, tokenDriven.Join.Server)
 
 	pinned, err := ParseNodeConfig([]byte("role: server\ncapabilities: [edge]\nnodeIP: 192.168.64.5\n"))
 	require.NoError(t, err)
@@ -76,12 +85,10 @@ func TestParseNodeConfigRejections(t *testing.T) {
 		"unknown capability": {"role: server\ncapabilities: [gpu]\n", "unknown capability"},
 		"agent without join": {"role: agent\ncapabilities: [database]\n",
 			"role agent requires a join block"},
-		"join without server": {"role: agent\ncapabilities: [database]\njoin:\n  tokenFile: /root/token\n",
-			"join.server is required"},
 		"server join without token file": {"role: server\ncapabilities: [edge]\njoin:\n  server: https://cp-1.internal:6443\n",
 			"join.tokenFile is required"},
 		"join server not https": {"role: agent\ncapabilities: [database]\njoin:\n  server: http://cp-1.internal:6443\n  tokenFile: /root/token\n",
-			"join.server must be an https:// URL"},
+			"join server must be an https:// URL"},
 		"join without token file": {"role: agent\ncapabilities: [database]\njoin:\n  server: https://cp-1.internal:6443\n",
 			"join.tokenFile is required"},
 		"bad node ip": {"role: server\ncapabilities: [edge]\nnodeIP: not-an-ip\n",

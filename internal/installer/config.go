@@ -23,7 +23,7 @@ type NodeConfig struct {
 	// Defaults to production.
 	Cluster string `yaml:"cluster,omitempty" json:"cluster,omitempty" jsonschema:"Cluster name created by the first server. Defaults to production."`
 	// Role is the K3s role of this host: server or agent.
-	Role string `yaml:"role" json:"role" jsonschema:"K3s role: server or agent."`
+	Role string `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"K3s role: server or agent. Current join tokens supply it for joining nodes."`
 	// Capabilities designates what this node runs.
 	Capabilities []string `yaml:"capabilities" json:"capabilities" jsonschema:"Designated workload capabilities for this node."`
 	// NodeIP pins the address this node advertises inside the cluster.
@@ -41,7 +41,7 @@ type NodeConfig struct {
 
 // JoinConfig points a joining host at an existing server.
 type JoinConfig struct {
-	Server    string `yaml:"server" json:"server" jsonschema:"URL of an existing K3s server, for example https://cp-1.internal:6443."`
+	Server    string `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"Optional alternate URL of an existing K3s server; current Skali tokens supply a default."`
 	TokenFile string `yaml:"tokenFile" json:"tokenFile" jsonschema:"Path to a file holding the join token."`
 }
 
@@ -98,10 +98,13 @@ func ParseNodeConfig(data []byte) (*NodeConfig, error) {
 	if err := strictParse(data, &config); err != nil {
 		return nil, fmt.Errorf("node config: %w", err)
 	}
-	if config.Cluster == "" {
+	if config.Cluster == "" && config.Join == nil {
 		config.Cluster = DefaultCluster
 	}
-	if config.Role != layout.RoleServer && config.Role != layout.RoleAgent {
+	if config.Role == "" && config.Join == nil {
+		return nil, errors.New("node config: role is required when creating the first server")
+	}
+	if config.Role != "" && config.Role != layout.RoleServer && config.Role != layout.RoleAgent {
 		return nil, fmt.Errorf("node config: role must be server or agent, got %q", config.Role)
 	}
 	if len(config.Capabilities) == 0 {
@@ -120,11 +123,10 @@ func ParseNodeConfig(data []byte) (*NodeConfig, error) {
 		return nil, errors.New("node config: role agent requires a join block pointing at an existing server")
 	}
 	if config.Join != nil {
-		if config.Join.Server == "" {
-			return nil, errors.New("node config: join.server is required")
-		}
-		if !strings.HasPrefix(config.Join.Server, "https://") {
-			return nil, fmt.Errorf("node config: join.server must be an https:// URL, got %q", config.Join.Server)
+		if config.Join.Server != "" {
+			if _, err := normalizeJoinServer(config.Join.Server); err != nil {
+				return nil, fmt.Errorf("node config: %w", err)
+			}
 		}
 		if config.Join.TokenFile == "" {
 			return nil, errors.New("node config: join.tokenFile is required")

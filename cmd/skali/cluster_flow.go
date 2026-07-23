@@ -30,16 +30,13 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 	if err := runDarwinVMPrompts(ctx, out, reader); err != nil {
 		return err
 	}
-	role, err := cliprompt.Select(reader, out, "  role: ",
-		[]string{"server (creates or extends a cluster)", "agent (joins an existing cluster)"}, 0)
+	installation, err := cliprompt.Select(reader, out, "  installation: ",
+		[]string{"create a new cluster", "join an existing cluster"}, 0)
 	if err != nil {
 		return err
 	}
-	if role == 1 {
-		return runInteractiveJoinFlow(ctx, out, reader, layout.RoleAgent)
-	}
-	if !cliprompt.ConfirmDefaultYes(reader, "  first server (creates a new cluster)? [Y/n] ") {
-		return runInteractiveJoinFlow(ctx, out, reader, layout.RoleServer)
+	if installation == 1 {
+		return runInteractiveJoinFlow(ctx, out, reader)
 	}
 
 	cluster, err := cliprompt.LineDefault(reader,
@@ -110,30 +107,65 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 // the given role: the server URL and token come from `skali cluster
 // token` run on a server. The token can be pasted directly so no file has
 // to be staged for an interactive join.
-func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Reader, role string) error {
-	cluster, err := cliprompt.LineDefault(reader,
-		"  cluster name ["+installer.DefaultCluster+"]: ", installer.DefaultCluster)
+func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Reader) error {
+	tokenFile, err := cliprompt.Line(reader, "  join token file path (empty to paste the token): ")
+	if err != nil {
+		return err
+	}
+	token := ""
+	if tokenFile == "" {
+		token, err = cliprompt.Secret(reader, "  join token: ")
+		if err != nil {
+			return err
+		}
+	} else {
+		data, readErr := os.ReadFile(tokenFile)
+		if readErr != nil {
+			return fmt.Errorf("read join token file %s: %w", tokenFile, readErr)
+		}
+		token = strings.TrimSpace(string(data))
+		if token == "" {
+			return fmt.Errorf("join token file %s is empty", tokenFile)
+		}
+	}
+	claims, err := installer.InspectJoinToken(token)
+	if err != nil {
+		return err
+	}
+
+	role := claims.Role
+	if role == "" {
+		choice, err := cliprompt.Select(reader, out, "  role: ",
+			[]string{"agent", "server"}, 0)
+		if err != nil {
+			return err
+		}
+		role = []string{layout.RoleAgent, layout.RoleServer}[choice]
+	} else {
+		fmt.Fprintf(out, "  role: %s (from token)\n", role)
+	}
+	cluster := claims.Cluster
+	if cluster == "" {
+		cluster, err = cliprompt.LineDefault(reader,
+			"  cluster name ["+installer.DefaultCluster+"]: ", installer.DefaultCluster)
+		if err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(out, "  cluster: %s (from token)\n", cluster)
+	}
+	server := claims.Server
+	if server == "" {
+		server, err = cliprompt.Line(reader, "  server url (https://<server>:6443): ")
+	} else {
+		server, err = cliprompt.LineDefault(reader, "  server url ["+server+"]: ", server)
+	}
 	if err != nil {
 		return err
 	}
 	capabilities, err := promptCapabilities(reader)
 	if err != nil {
 		return err
-	}
-	server, err := cliprompt.Line(reader, "  server url (https://<first-server>:6443): ")
-	if err != nil {
-		return err
-	}
-	join := &installer.JoinOptions{Server: server}
-	join.TokenFile, err = cliprompt.Line(reader, "  join token file path (empty to paste the token): ")
-	if err != nil {
-		return err
-	}
-	if join.TokenFile == "" {
-		join.Token, err = cliprompt.Secret(reader, "  join token: ")
-		if err != nil {
-			return err
-		}
 	}
 	fmt.Fprintln(out)
 
@@ -143,11 +175,9 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 		Cluster:      cluster,
 		Role:         role,
 		Capabilities: capabilities,
-		Join:         join,
+		Join:         &installer.JoinOptions{Server: server, Token: token},
 		Progress:     progress,
 	}
-	// On darwin this also reads a typed token file path on the Mac side;
-	// the engine would look for it inside the VM.
 	if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
 		progress.Abort()
 		return err

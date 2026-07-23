@@ -110,9 +110,9 @@ vm:
 	_, err = os.Stat(plistPath)
 	require.NoError(t, err, "the login LaunchAgent must exist after install")
 
-	// Repeat install refuses: the VM already carries an installation.
+	// A repeated matching install is an idempotent successful no-op.
 	repeatOut, code := run("install", "--config", nodeConfig)
-	require.NotEqual(t, 0, code, repeatOut)
+	require.Equal(t, 0, code, repeatOut)
 
 	// Build the control-plane image on the Mac; init stages the tar into
 	// the VM's containerd through the runner (the source-install path).

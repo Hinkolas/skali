@@ -21,6 +21,9 @@ type Fake struct {
 	// Handlers dispatches Run by Command.Name; a missing handler fails the
 	// call loudly so tests declare every command they expect.
 	Handlers map[string]func(Command) (Result, error)
+	// HTTPHandler scripts read-only HTTP probes.
+	HTTPHandler func(HTTPRequest) (HTTPResponse, error)
+	Requests    []HTTPRequest
 	// Commands records every Run in order.
 	Commands []Command
 	// Writes records every mutating filesystem call in order, as
@@ -73,6 +76,23 @@ func (f *Fake) WriteFile(_ context.Context, path string, data []byte, perm fs.Fi
 	return nil
 }
 
+func (f *Fake) ReplaceFile(_ context.Context, path, backup string, data []byte, perm fs.FileMode) error {
+	f.init()
+	path = cleanPath(path)
+	if backup != "" {
+		backup = cleanPath(backup)
+		if current, ok := f.FS[path]; ok && current != nil {
+			f.FS[backup] = append([]byte(nil), current...)
+			f.Modes[backup] = perm
+			f.Writes = append(f.Writes, "replace "+backup)
+		}
+	}
+	f.FS[path] = append([]byte(nil), data...)
+	f.Modes[path] = perm
+	f.Writes = append(f.Writes, "replace "+path)
+	return nil
+}
+
 func (f *Fake) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {
 	f.init()
 	path = cleanPath(path)
@@ -113,6 +133,14 @@ func (f *Fake) Stat(_ context.Context, path string) (Info, error) {
 		}
 	}
 	return Info{}, nil
+}
+
+func (f *Fake) ProbeHTTP(_ context.Context, request HTTPRequest) (HTTPResponse, error) {
+	f.Requests = append(f.Requests, request)
+	if f.HTTPHandler == nil {
+		return HTTPResponse{}, fmt.Errorf("host fake: no HTTP probe handler for %q", request.URL)
+	}
+	return f.HTTPHandler(request)
 }
 
 // Paths lists every stored path in sorted order, for assertions.

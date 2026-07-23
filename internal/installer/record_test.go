@@ -134,3 +134,28 @@ func TestRecordAgentJoinRoundTrip(t *testing.T) {
 	require.NotNil(t, loaded.Join)
 	require.Equal(t, "https://cp-1.internal:6443", loaded.Join.Server)
 }
+
+func TestRecordFallsBackToLastValidBackup(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fake := &host.Fake{}
+	record := &Record{
+		Version:        RecordVersion,
+		InstallationID: "a1b2c3",
+		Provider:       ProviderK3s,
+		Cluster:        "production",
+		Ownership:      OwnershipManaged,
+		Node:           NodeRecord{Name: "cp-1", Role: "server", Capabilities: []string{"edge"}},
+		Versions:       Versions{Installer: "2.0.0", K3s: K3sVersion},
+	}
+	require.NoError(t, SaveRecord(ctx, fake, record))
+	record.Cluster = "updated"
+	require.NoError(t, SaveRecord(ctx, fake, record))
+	require.Contains(t, fake.FS, RecordBackupPath)
+
+	fake.FS[RecordPath] = []byte(":truncated:\n\t")
+	recovered, err := LoadRecord(ctx, fake)
+	require.NoError(t, err)
+	require.Equal(t, "production", recovered.Cluster)
+	require.True(t, recordRecovered(ctx, fake))
+}

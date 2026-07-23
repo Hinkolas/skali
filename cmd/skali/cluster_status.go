@@ -46,8 +46,13 @@ func newClusterStatusCmd() *cobra.Command {
 				return nil
 			}
 			printStatus(out, status)
-			if status.Host.State == installer.StateDamaged {
+			switch status.Host.State {
+			case installer.StateDamaged:
 				return fmt.Errorf("this installation is damaged")
+			case installer.StateInterrupted:
+				return fmt.Errorf("this installation is interrupted and can be resumed, repaired, or uninstalled")
+			case installer.StateOrphaned:
+				return fmt.Errorf("this older interrupted installation requires explicit recovery")
 			}
 			return nil
 		},

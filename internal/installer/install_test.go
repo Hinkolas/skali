@@ -2,8 +2,16 @@ package installer
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -15,7 +23,22 @@ import (
 // handler and a node that comes up ready and labeled.
 func installReadyHost(capabilities []string) *host.Fake {
 	fake := linuxHost()
-	fake.Handlers["sh"] = func(host.Command) (host.Result, error) { return host.Result{}, nil }
+	started := false
+	fake.Handlers["sh"] = func(host.Command) (host.Result, error) {
+		fake.FS[K3sBinaryPath] = []byte("binary")
+		fake.FS[k3sUninstallScript] = []byte("script")
+		return host.Result{}, nil
+	}
+	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
+		if len(cmd.Args) > 0 && cmd.Args[0] == "start" {
+			started = true
+			return host.Result{}, nil
+		}
+		if started && len(cmd.Args) == 2 && cmd.Args[0] == "is-active" {
+			return host.Result{Stdout: "active\n"}, nil
+		}
+		return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
+	}
 	fake.Handlers["k3s"] = func(cmd host.Command) (host.Result, error) {
 		labels := layout.CapabilityLabels(capabilities)
 		labels[layout.ClusterLabel] = "e2e"
@@ -31,6 +54,32 @@ func installReadyHost(capabilities []string) *host.Fake {
 		return host.Result{Stdout: string(data)}, nil
 	}
 	return fake
+}
+
+func secureTestToken(t *testing.T, fake *host.Fake, credentials string) string {
+	t.Helper()
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "k3s-test-ca"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IsCA:         true,
+		KeyUsage:     x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	require.NoError(t, err)
+	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	hash, err := hashK3sCA(ca)
+	require.NoError(t, err)
+	fake.HTTPHandler = func(request host.HTTPRequest) (host.HTTPResponse, error) {
+		if strings.HasSuffix(request.URL, "/cacerts") {
+			return host.HTTPResponse{StatusCode: 200, Body: ca}, nil
+		}
+		return host.HTTPResponse{StatusCode: 200, Body: []byte(`{}`)}, nil
+	}
+	return "K10" + hash + "::" + credentials
 }
 
 func TestInstallFreshServer(t *testing.T) {
@@ -59,11 +108,11 @@ func TestInstallFreshServer(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, record.InstallationID, loaded.InstallationID)
 
-	// The configs were written before the install script ran, and the
-	// first server minted the cluster's registry pull credential into
-	// registries.yaml and initialized the embedded etcd cluster.
+	// The durable ownership record precedes config mutation; the first
+	// server then mints the cluster's registry pull credential and
+	// initializes the embedded etcd cluster.
 	writes := fake.Writes
-	require.Less(t, indexOf(writes, "write "+K3sConfigPath), indexOf(writes, "write "+RecordPath))
+	require.Less(t, indexOf(writes, "replace "+RecordPath), indexOf(writes, "write "+K3sConfigPath))
 	require.Contains(t, string(fake.FS[K3sConfigPath]), "cluster-init: true")
 	require.Contains(t, string(fake.FS[K3sRegistriesPath]), "registry.skali.internal")
 	require.NotEmpty(t, registriesPullSecret(fake.FS[K3sRegistriesPath]))
@@ -73,7 +122,8 @@ func TestInstallAgentJoin(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fake := linuxHost()
-	fake.FS["/root/token"] = []byte(encodeJoinToken("K10abc::node:secret", "pull-secret-value", layout.RoleAgent) + "\n")
+	k3sToken := secureTestToken(t, fake, "abcdef.abcdefghijklmnop")
+	fake.FS["/root/token"] = []byte(encodeJoinToken(k3sToken, "pull-secret-value", layout.RoleAgent) + "\n")
 	joined := false
 	fake.Handlers["sh"] = func(host.Command) (host.Result, error) {
 		joined = true
@@ -81,6 +131,10 @@ func TestInstallAgentJoin(t *testing.T) {
 		return host.Result{}, nil
 	}
 	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
+		if len(cmd.Args) > 0 && cmd.Args[0] == "start" {
+			joined = true
+			return host.Result{}, nil
+		}
 		if joined && len(cmd.Args) == 2 && cmd.Args[0] == "is-active" && cmd.Args[1] == "k3s-agent.service" {
 			return host.Result{Stdout: "active\n"}, nil
 		}
@@ -103,7 +157,7 @@ func TestInstallAgentJoin(t *testing.T) {
 
 	// The composite token splits: the k3s part lands in the token file,
 	// the pull credential in registries.yaml.
-	require.Equal(t, []byte("K10abc::node:secret\n"), fake.FS[K3sTokenPath])
+	require.Equal(t, []byte(k3sToken+"\n"), fake.FS[K3sTokenPath])
 	require.Contains(t, string(fake.FS[K3sConfigPath]), "server: https://cp-1.internal:6443")
 	require.Equal(t, "pull-secret-value", registriesPullSecret(fake.FS[K3sRegistriesPath]))
 
@@ -129,13 +183,18 @@ func TestInstallServerJoin(t *testing.T) {
 	ctx := context.Background()
 	capabilities := []string{layout.CapabilityApplication}
 	fake := installReadyHost(capabilities)
-	fake.FS["/root/token"] = []byte(encodeJoinToken("K10abc::server:secret", "pull-secret-value", layout.RoleServer) + "\n")
+	k3sToken := secureTestToken(t, fake, "server:secret")
+	fake.FS["/root/token"] = []byte(encodeJoinToken(k3sToken, "pull-secret-value", layout.RoleServer) + "\n")
 	joined := false
 	fake.Handlers["sh"] = func(host.Command) (host.Result, error) {
 		joined = true
 		return host.Result{}, nil
 	}
 	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
+		if len(cmd.Args) > 0 && cmd.Args[0] == "start" {
+			joined = true
+			return host.Result{}, nil
+		}
 		if joined && len(cmd.Args) == 2 && cmd.Args[0] == "is-active" && cmd.Args[1] == "k3s.service" {
 			return host.Result{Stdout: "active\n"}, nil
 		}
@@ -161,7 +220,7 @@ func TestInstallServerJoin(t *testing.T) {
 	require.Contains(t, config, "token-file: "+K3sTokenPath)
 	require.Contains(t, config, "embedded-registry: true")
 	require.NotContains(t, config, "cluster-init")
-	require.Equal(t, []byte("K10abc::server:secret\n"), fake.FS[K3sTokenPath])
+	require.Equal(t, []byte(k3sToken+"\n"), fake.FS[K3sTokenPath])
 	require.Equal(t, "pull-secret-value", registriesPullSecret(fake.FS[K3sRegistriesPath]))
 }
 
@@ -230,7 +289,39 @@ func TestInstallRefusesExistingInstallation(t *testing.T) {
 	_, err := Install(context.Background(), fake, InstallOptions{
 		Capabilities: []string{layout.CapabilityApplication},
 	})
-	require.ErrorContains(t, err, "already carries a skali installation")
+	require.ErrorContains(t, err, "already carries a complete Skali installation")
+	require.Empty(t, fake.Writes)
+}
+
+func TestInstallMatchingCompleteInstallationIsNoOp(t *testing.T) {
+	t.Parallel()
+	fake := withRecord(t, withK3s(linuxHost(), "k3s.service", true), "server")
+	record, err := Install(context.Background(), fake, InstallOptions{
+		Cluster:      "production",
+		Role:         layout.RoleServer,
+		Capabilities: []string{layout.CapabilityEdge, layout.CapabilityApplication},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "0f0f0f0f", record.InstallationID)
+	require.Empty(t, fake.Writes)
+}
+
+func TestInstallCompleteNoOpStillRejectsConflictingTokenClaims(t *testing.T) {
+	t.Parallel()
+	fake := withRecord(t, withK3s(linuxHost(), "k3s.service", true), "server")
+	record, err := LoadRecord(context.Background(), fake)
+	require.NoError(t, err)
+	record.Join = &JoinRecord{Server: "https://10.1.0.3:6443"}
+	require.NoError(t, SaveRecord(context.Background(), fake, record))
+	fake.Writes = nil
+
+	token := encodeJoinTokenWithClaims("K10abc::server:secret", "", layout.RoleServer,
+		"other", "https://10.1.0.3:6443")
+	_, err = Install(context.Background(), fake, InstallOptions{
+		Capabilities: []string{layout.CapabilityApplication, layout.CapabilityEdge},
+		Join:         &JoinOptions{Token: token},
+	})
+	require.ErrorContains(t, err, "requested inputs do not match")
 	require.Empty(t, fake.Writes)
 }
 
@@ -242,6 +333,7 @@ func TestUninstallNodeRemovesRecordLast(t *testing.T) {
 			return host.Result{}, nil
 		},
 	}}
+	fake.FS = map[string][]byte{k3sUninstallScript: []byte("script")}
 	record := &Record{
 		Version: RecordVersion, InstallationID: "x",
 		Node: NodeRecord{Role: layout.RoleServer},
@@ -254,6 +346,57 @@ func TestUninstallNodeRemovesRecordLast(t *testing.T) {
 	info, err := fake.Stat(ctx, StateDir)
 	require.NoError(t, err)
 	require.False(t, info.Exists)
+}
+
+func TestUninstallIncompletePreStartInstallUsesLocalCleanup(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fake := &host.Fake{FS: map[string][]byte{
+		K3sConfigPath:     []byte("staged"),
+		K3sRegistriesPath: []byte("staged"),
+	}}
+	record := &Record{
+		Version: RecordVersion, InstallationID: "x",
+		Cluster: "e2e", Node: NodeRecord{Role: layout.RoleServer},
+		Lifecycle: &InstallLifecycle{
+			Status: InstallStatusFailed, Phase: InstallPhaseConfigured,
+		},
+	}
+	require.NoError(t, SaveRecord(ctx, fake, record))
+	require.NoError(t, UninstallNode(ctx, fake, record, nil, nil))
+	info, err := fake.Stat(ctx, StateDir)
+	require.NoError(t, err)
+	require.False(t, info.Exists)
+	_, present := fake.FS[K3sConfigPath]
+	require.False(t, present)
+	require.Empty(t, fake.Commands, "a never-started transaction needs no k3s command")
+}
+
+func TestUninstallReconstructsMissingUpstreamScript(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fake := &host.Fake{}
+	fake.Handlers = map[string]func(host.Command) (host.Result, error){
+		"sh": func(host.Command) (host.Result, error) {
+			fake.FS[k3sUninstallScript] = []byte("restored script")
+			return host.Result{}, nil
+		},
+		k3sUninstallScript: func(host.Command) (host.Result, error) {
+			return host.Result{}, nil
+		},
+	}
+	record := &Record{
+		Version: RecordVersion, InstallationID: "x",
+		Cluster: "e2e", Node: NodeRecord{Role: layout.RoleServer},
+		Lifecycle: &InstallLifecycle{
+			Status: InstallStatusFailed, Phase: InstallPhaseStarting, StartAttempted: true,
+		},
+	}
+	require.NoError(t, SaveRecord(ctx, fake, record))
+	require.NoError(t, UninstallNode(ctx, fake, record, nil, nil))
+	require.Len(t, fake.Commands, 2)
+	require.Equal(t, "sh", fake.Commands[0].Name)
+	require.Equal(t, k3sUninstallScript, fake.Commands[1].Name)
 }
 
 func TestUninstallLeavingServerRemovesSelfFirst(t *testing.T) {
@@ -280,6 +423,7 @@ func TestUninstallLeavingServerRemovesSelfFirst(t *testing.T) {
 			return host.Result{}, nil
 		},
 	}}
+	fake.FS = map[string][]byte{k3sUninstallScript: []byte("script")}
 	record := &Record{
 		Version: RecordVersion, InstallationID: "x",
 		Node: NodeRecord{Name: "cp-2", Role: layout.RoleServer},

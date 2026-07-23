@@ -28,14 +28,14 @@ func newClusterJoinCmd() *cobra.Command {
 			if existingClusterMode() {
 				return existingModeRefusal("join")
 			}
-			if role != layout.RoleAgent && role != layout.RoleServer {
+			if role != "" && role != layout.RoleAgent && role != layout.RoleServer {
 				return fmt.Errorf("role must be server or agent, got %q", role)
 			}
 			// The full flag set is the consent, like --config elsewhere;
 			// join never prompts. Interactive enrollment lives in the
 			// fresh-host flow of a bare run.
-			if server == "" || tokenFile == "" || len(capabilities) == 0 {
-				return fmt.Errorf("join requires --server, --token-file, and --capabilities")
+			if tokenFile == "" || len(capabilities) == 0 {
+				return fmt.Errorf("join requires --token-file and --capabilities; current Skali tokens supply --server, --role, and --cluster")
 			}
 
 			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, ""); err != nil {
@@ -57,12 +57,13 @@ func newClusterJoinCmd() *cobra.Command {
 				return err
 			}
 			opts := installer.InstallOptions{
-				Cluster:      cluster,
-				Role:         role,
-				Capabilities: capabilities,
-				Join:         &installer.JoinOptions{Server: server, TokenFile: tokenFile},
-				NodeIP:       nodeIP,
-				Progress:     progress,
+				Cluster:       cluster,
+				Role:          role,
+				Capabilities:  capabilities,
+				Join:          &installer.JoinOptions{Server: server, TokenFile: tokenFile},
+				NodeIP:        nodeIP,
+				Progress:      progress,
+				RecoverOrphan: true,
 			}
 			if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
 				progress.Abort()
@@ -80,11 +81,11 @@ func newClusterJoinCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&server, "server", "", "URL of an existing k3s server, for example https://cp-1.internal:6443")
+	cmd.Flags().StringVar(&server, "server", "", "alternate URL of an existing k3s server (current Skali tokens supply a default)")
 	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to a file holding the join token")
-	cmd.Flags().StringVar(&role, "role", layout.RoleAgent, "k3s role of this host: agent or server")
+	cmd.Flags().StringVar(&role, "role", "", "k3s role of this host; must match the token claim")
 	cmd.Flags().StringSliceVar(&capabilities, "capabilities", nil, "designated workload capabilities for this node")
-	cmd.Flags().StringVar(&cluster, "cluster", installer.DefaultCluster, "name of the cluster being joined")
+	cmd.Flags().StringVar(&cluster, "cluster", "", "name of the cluster being joined; must match the token claim")
 	cmd.Flags().StringVar(&nodeIP, "node-ip", "", "IP address this node advertises inside the cluster (multi-homed hosts)")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
 	return cmd

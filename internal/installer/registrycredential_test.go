@@ -28,10 +28,35 @@ func TestJoinTokenServerRole(t *testing.T) {
 	require.Equal(t, layout.RoleServer, role)
 }
 
+func TestJoinTokenRoutingClaims(t *testing.T) {
+	t.Parallel()
+	token := encodeJoinTokenWithClaims(
+		"K10abc::server:secret",
+		"pull-secret-value",
+		layout.RoleServer,
+		"e2e",
+		"https://10.1.0.3:6443",
+	)
+	decoded, err := decodeJoinTokenClaims(token)
+	require.NoError(t, err)
+	require.True(t, decoded.Composite)
+	require.Equal(t, "e2e", decoded.Cluster)
+	require.Equal(t, "https://10.1.0.3:6443", decoded.Server)
+
+	claims, err := InspectJoinToken(token)
+	require.NoError(t, err)
+	require.Equal(t, JoinTokenClaims{
+		Cluster: "e2e",
+		Server:  "https://10.1.0.3:6443",
+		Role:    layout.RoleServer,
+	}, claims)
+}
+
 func TestJoinTokenRawFallback(t *testing.T) {
 	t.Parallel()
-	// A manually minted k3s token passes through untouched, with no pull
-	// credential and no role claim.
+	// A manually minted secure k3s token passes through untouched, with
+	// no pull credential or routing claims; the installer requires those
+	// missing claims to be supplied explicitly.
 	k3sToken, pullSecret, role, err := decodeJoinToken("K10abc::node:secret")
 	require.NoError(t, err)
 	require.Equal(t, "K10abc::node:secret", k3sToken)

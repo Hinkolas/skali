@@ -44,6 +44,47 @@ func PlanRepairs(diag *Diagnosis, deps RepairDeps) (actions []RepairAction, refu
 	}
 	record := deps.Record
 
+	if diag.Host.RecordRecovered && record != nil {
+		actions = append(actions, RepairAction{
+			ID:      "restore-record",
+			Title:   "Restore the installation record",
+			Confirm: "Atomically restore the primary installation record from its last valid backup. Continue? [y/N] ",
+			Run: func(ctx context.Context) error {
+				progress.Start("Restore " + RecordPath)
+				if err := SaveRecord(ctx, deps.Runner, record); err != nil {
+					return err
+				}
+				progress.Done("")
+				return nil
+			},
+		})
+	}
+
+	if diag.Host.State == StateInterrupted && record != nil {
+		actions = append(actions, RepairAction{
+			ID:    "resume-install",
+			Title: "Resume interrupted installation",
+			Confirm: "Revalidate the recorded join endpoint and credential, then resume the k3s " +
+				"installation from its durable transaction. Continue? [y/N] ",
+			Run: func(ctx context.Context) error {
+				opts := InstallOptions{
+					Cluster:      record.Cluster,
+					Role:         record.Node.Role,
+					Capabilities: append([]string(nil), record.Node.Capabilities...),
+					Endpoints:    record.Endpoints,
+					TLS:          record.TLS,
+					Progress:     progress,
+				}
+				if record.Join != nil {
+					opts.Join = &JoinOptions{Server: record.Join.Server, TokenFile: K3sTokenPath}
+				}
+				_, err := Install(ctx, deps.Runner, opts)
+				return err
+			},
+		})
+		return actions, refusals
+	}
+
 	if diag.Host.State == StateDamaged && record == nil {
 		refusals = append(refusals, "the installation record is unreadable; repair never guesses the "+
 			"installation's identity. Restore the saved record; skali cluster restore lists the required inputs")
@@ -61,7 +102,16 @@ func PlanRepairs(diag *Diagnosis, deps RepairDeps) (actions []RepairAction, refu
 		role = layout.RoleAgent
 	}
 
-	if diag.Host.State == StateDamaged {
+	needsK3sReinstall := diag.Host.State == StateDamaged && !diag.Host.RecordRecovered
+	if diag.Host.State == StateDamaged && diag.Host.RecordRecovered {
+		for _, problem := range diag.Host.Problems {
+			if !strings.Contains(problem, RecordBackupPath) {
+				needsK3sReinstall = true
+				break
+			}
+		}
+	}
+	if needsK3sReinstall {
 		actions = append(actions, RepairAction{
 			ID:    "reinstall-k3s",
 			Title: "Reinstall the k3s service",

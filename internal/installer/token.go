@@ -37,6 +37,12 @@ type JoinToken struct {
 // pull credential read back from this server's registries.yaml, so one
 // paste enrolls the node for both.
 func CreateJoinToken(ctx context.Context, runner host.Runner, record *Record, role string) (*JoinToken, error) {
+	return CreateJoinTokenForServer(ctx, runner, record, role, "")
+}
+
+// CreateJoinTokenForServer is CreateJoinToken with an optional advertised
+// endpoint override for load balancers and alternate routable addresses.
+func CreateJoinTokenForServer(ctx context.Context, runner host.Runner, record *Record, role, serverOverride string) (*JoinToken, error) {
 	if record.Node.Role != layout.RoleServer {
 		return nil, fmt.Errorf("join tokens are created on a server node")
 	}
@@ -45,6 +51,13 @@ func CreateJoinToken(ctx context.Context, runner host.Runner, record *Record, ro
 	}
 	if role != layout.RoleServer && role != layout.RoleAgent {
 		return nil, fmt.Errorf("token role must be server or agent, got %q", role)
+	}
+	if serverOverride != "" {
+		var err error
+		serverOverride, err = normalizeJoinServer(serverOverride)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var token string
 	expires := JoinTokenTTL
@@ -82,10 +95,14 @@ func CreateJoinToken(ctx context.Context, runner host.Runner, record *Record, ro
 	if registries, err := runner.ReadFile(ctx, K3sRegistriesPath); err == nil {
 		pullSecret = registriesPullSecret(registries)
 	}
+	serverURL := serverOverride
+	if serverURL == "" {
+		serverURL = "https://" + net.JoinHostPort(serverJoinHost(ctx, runner, record.Node.Name), "6443")
+	}
 	return &JoinToken{
 		Cluster:   record.Cluster,
-		ServerURL: "https://" + net.JoinHostPort(serverJoinHost(ctx, runner, record.Node.Name), "6443"),
-		Token:     encodeJoinToken(token, pullSecret, role),
+		ServerURL: serverURL,
+		Token:     encodeJoinTokenWithClaims(token, pullSecret, role, record.Cluster, serverURL),
 		Role:      role,
 		Expires:   expires,
 	}, nil

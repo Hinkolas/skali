@@ -142,7 +142,8 @@ configs:
 func TestInstallK3sInvocation(t *testing.T) {
 	t.Parallel()
 	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
-		"sh": func(host.Command) (host.Result, error) { return host.Result{}, nil },
+		"sh":        func(host.Command) (host.Result, error) { return host.Result{}, nil },
+		"systemctl": func(host.Command) (host.Result, error) { return host.Result{}, nil },
 	}}
 	err := installK3s(context.Background(), fake, k3sNode{
 		Name: "cp-1", Cluster: "production",
@@ -153,11 +154,12 @@ func TestInstallK3sInvocation(t *testing.T) {
 	// Configs are written before the script runs.
 	require.Contains(t, fake.FS, K3sConfigPath)
 	require.Contains(t, fake.FS, K3sRegistriesPath)
-	require.Len(t, fake.Commands, 1)
+	require.Len(t, fake.Commands, 2)
 	command := fake.Commands[0]
 	require.Equal(t, "sh", command.Name)
 	require.Equal(t, []string{k3sInstallScriptPath}, command.Args)
 	require.Contains(t, command.Env, "INSTALL_K3S_VERSION="+K3sVersion)
+	require.Contains(t, command.Env, "INSTALL_K3S_SKIP_START=true")
 
 	// The vendored script itself was staged executable.
 	require.NotEmpty(t, fake.FS[k3sInstallScriptPath])
@@ -166,7 +168,8 @@ func TestInstallK3sInvocation(t *testing.T) {
 func TestInstallK3sAgentInvocation(t *testing.T) {
 	t.Parallel()
 	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
-		"sh": func(host.Command) (host.Result, error) { return host.Result{}, nil },
+		"sh":        func(host.Command) (host.Result, error) { return host.Result{}, nil },
+		"systemctl": func(host.Command) (host.Result, error) { return host.Result{}, nil },
 	}}
 	err := installK3s(context.Background(), fake, k3sNode{
 		Name: "db-1", Cluster: "production",
@@ -182,7 +185,7 @@ func TestInstallK3sAgentInvocation(t *testing.T) {
 	require.Less(t, indexOf(fake.Writes, "write "+K3sTokenPath),
 		indexOf(fake.Writes, "write "+k3sInstallScriptPath))
 
-	require.Len(t, fake.Commands, 1)
+	require.Len(t, fake.Commands, 2)
 	command := fake.Commands[0]
 	require.Equal(t, "sh", command.Name)
 	require.Equal(t, []string{k3sInstallScriptPath, "agent"}, command.Args,
@@ -198,7 +201,8 @@ func TestInstallK3sAgentInvocation(t *testing.T) {
 func TestInstallK3sJoiningServerInvocation(t *testing.T) {
 	t.Parallel()
 	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
-		"sh": func(host.Command) (host.Result, error) { return host.Result{}, nil },
+		"sh":        func(host.Command) (host.Result, error) { return host.Result{}, nil },
+		"systemctl": func(host.Command) (host.Result, error) { return host.Result{}, nil },
 	}}
 	err := installK3s(context.Background(), fake, k3sNode{
 		Name: "cp-2", Cluster: "production",
@@ -212,7 +216,7 @@ func TestInstallK3sJoiningServerInvocation(t *testing.T) {
 	// A joining server writes the token file like an agent but runs the
 	// script with no role argument (the server role is the default).
 	require.Equal(t, []byte("K10abc::server:secret\n"), fake.FS[K3sTokenPath])
-	require.Len(t, fake.Commands, 1)
+	require.Len(t, fake.Commands, 2)
 	require.Equal(t, []string{k3sInstallScriptPath}, fake.Commands[0].Args)
 }
 

@@ -157,3 +157,41 @@ func TestDetectGathersFacts(t *testing.T) {
 	require.NotNil(t, detected.Record)
 	require.Equal(t, "production", detected.Record.Cluster)
 }
+
+func TestDetectOrphanedSkaliInstall(t *testing.T) {
+	t.Parallel()
+	fake := withK3s(linuxHost(), "k3s.service", false)
+	fake.FS[K3sConfigPath] = []byte(k3sConfigYAML(k3sNode{
+		Name:         "cp-2",
+		Cluster:      "e2e",
+		Role:         "server",
+		Capabilities: []string{"application", "edge"},
+		ServerURL:    "https://10.1.0.4:6443",
+	}))
+	fake.FS[K3sRegistriesPath] = []byte(k3sRegistriesYAML("pull"))
+
+	detected, err := Detect(context.Background(), fake)
+	require.NoError(t, err)
+	require.Equal(t, StateOrphaned, detected.State)
+	require.Equal(t, "e2e", detected.Record.Cluster)
+	require.Equal(t, "https://10.1.0.4:6443", detected.Record.Join.Server)
+	require.Empty(t, detected.Record.InstallationID)
+
+	require.NoError(t, PersistOrphanRecord(context.Background(), fake, detected.Record))
+	detected, err = Detect(context.Background(), fake)
+	require.NoError(t, err)
+	require.Equal(t, StateInterrupted, detected.State)
+	require.NotEmpty(t, detected.Record.InstallationID)
+	require.True(t, detected.Record.Lifecycle.StartAttempted)
+}
+
+func TestDetectDoesNotAdoptPartialFingerprint(t *testing.T) {
+	t.Parallel()
+	fake := withK3s(linuxHost(), "k3s.service", true)
+	fake.FS[K3sConfigPath] = []byte("node-label:\n  - skali.dev/cluster=e2e\n  - skali.dev/capability-edge=true\n")
+	// Missing the independent Skali registry fingerprint.
+	detected, err := Detect(context.Background(), fake)
+	require.NoError(t, err)
+	require.Equal(t, StateUnmanaged, detected.State)
+	require.Nil(t, detected.Record)
+}

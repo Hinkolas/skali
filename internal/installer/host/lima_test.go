@@ -116,6 +116,54 @@ func TestLimaWriteFile(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestLimaReplaceFileIsAtomicAndKeepsBackup(t *testing.T) {
+	t.Parallel()
+	fake := &Fake{Handlers: map[string]func(Command) (Result, error){
+		"limactl": func(cmd Command) (Result, error) {
+			payload, err := io.ReadAll(cmd.Stdin)
+			require.NoError(t, err)
+			require.Equal(t, []byte("new record"), payload)
+			joined := strings.Join(cmd.Args, "\n")
+			require.Contains(t, joined, `mktemp "$dir/.$base.tmp.XXXXXX"`)
+			require.Contains(t, joined, `sync "$tmp"`)
+			require.Contains(t, joined, `mv -f -- "$tmp" "$target"`)
+			require.Contains(t, joined, `sync "$dir"`)
+			require.Equal(t, "/var/lib/skali/installation.yaml",
+				cmd.Args[len(cmd.Args)-2])
+			require.Equal(t, "/var/lib/skali/installation.yaml.prev",
+				cmd.Args[len(cmd.Args)-1])
+			return Result{}, nil
+		},
+	}}
+	err := limaOn(fake).ReplaceFile(context.Background(),
+		"/var/lib/skali/installation.yaml",
+		"/var/lib/skali/installation.yaml.prev",
+		[]byte("new record"), 0o600)
+	require.NoError(t, err)
+}
+
+func TestLimaProbeHTTPKeepsCredentialsOutOfArgumentsAndEnvironment(t *testing.T) {
+	t.Parallel()
+	const secret = "abcdef.abcdefghijklmnop"
+	fake := &Fake{Handlers: map[string]func(Command) (Result, error){
+		"limactl": func(cmd Command) (Result, error) {
+			require.NotContains(t, strings.Join(cmd.Args, " "), secret)
+			require.NotContains(t, strings.Join(cmd.Env, " "), secret)
+			config, err := io.ReadAll(cmd.Stdin)
+			require.NoError(t, err)
+			require.Contains(t, string(config), "Authorization: Bearer "+secret)
+			return Result{Stdout: "{}\n200"}, nil
+		},
+	}}
+	response, err := limaOn(fake).ProbeHTTP(context.Background(), HTTPRequest{
+		URL: "https://10.1.0.3:6443/v1-k3s/config", Insecure: true,
+		Bearer: secret,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, response.StatusCode)
+	require.Equal(t, "{}", string(response.Body))
+}
+
 func TestLimaMkdirAllAndRemove(t *testing.T) {
 	t.Parallel()
 	fake := &Fake{Handlers: map[string]func(Command) (Result, error){

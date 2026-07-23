@@ -3,12 +3,15 @@ package host
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // limaAbsentExit signals a missing path from the in-guest shell snippets.
@@ -107,6 +110,43 @@ func (l Lima) WriteFile(ctx context.Context, path string, data []byte, perm fs.F
 	return nil
 }
 
+func (l Lima) ReplaceFile(ctx context.Context, path, backup string, data []byte, perm fs.FileMode) error {
+	script := fmt.Sprintf(`set -eu
+target="$1"
+backup="$2"
+dir=$(dirname -- "$target")
+base=$(basename -- "$target")
+tmp=$(mktemp "$dir/.$base.tmp.XXXXXX")
+trap 'rm -f -- "$tmp"' EXIT
+cat > "$tmp"
+chmod %o "$tmp"
+sync "$tmp"
+if [ -n "$backup" ] && [ -f "$target" ]; then
+  btmp=$(mktemp "$dir/.$base.backup.XXXXXX")
+  trap 'rm -f -- "$tmp" "$btmp"' EXIT
+  cp -- "$target" "$btmp"
+  chmod %o "$btmp"
+  sync "$btmp"
+  mv -f -- "$btmp" "$backup"
+fi
+mv -f -- "$tmp" "$target"
+sync "$dir"
+`, perm.Perm(), perm.Perm())
+	result, err := l.host().Run(ctx, Command{
+		Name:  "limactl",
+		Args:  l.shellArgs("sudo", "sh", "-c", script, "sh", path, backup),
+		Stdin: bytes.NewReader(data),
+	})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("replace %s in VM %s: exit %d: %s",
+			path, l.Instance, result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	return nil
+}
+
 func (l Lima) MkdirAll(ctx context.Context, path string, perm fs.FileMode) error {
 	// Only the final directory gets the explicit mode; every directory the
 	// engine creates has an existing parent, so this matches Local.
@@ -177,6 +217,69 @@ func (l Lima) Stat(ctx context.Context, path string) (Info, error) {
 		mode |= fs.ModeDir
 	}
 	return Info{Exists: true, Mode: mode, Size: size}, nil
+}
+
+func (l Lima) ProbeHTTP(ctx context.Context, request HTTPRequest) (HTTPResponse, error) {
+	timeout := request.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	args := []string{"--silent", "--show-error", "--max-time",
+		strconv.Itoa(max(1, int(timeout.Seconds()))), "--output", "-", "--write-out", "\n%{http_code}"}
+	if request.Insecure {
+		args = append(args, "--insecure")
+	}
+	if !request.Insecure && len(request.CACerts) > 0 {
+		random := make([]byte, 8)
+		if _, err := rand.Read(random); err != nil {
+			return HTTPResponse{}, err
+		}
+		caPath := "/tmp/skali-preflight-ca-" + fmt.Sprintf("%x", random)
+		if err := l.WriteFile(ctx, caPath, request.CACerts, 0o600); err != nil {
+			return HTTPResponse{}, err
+		}
+		defer l.Remove(context.WithoutCancel(ctx), caPath)
+		args = append(args, "--cacert", caPath)
+	}
+
+	var config strings.Builder
+	switch {
+	case request.Bearer != "":
+		fmt.Fprintf(&config, "header = \"Authorization: Bearer %s\"\n", curlConfigEscape(request.Bearer))
+	case request.Username != "":
+		credentials := base64.StdEncoding.EncodeToString([]byte(request.Username + ":" + request.Password))
+		fmt.Fprintf(&config, "header = \"Authorization: Basic %s\"\n", credentials)
+	}
+	if config.Len() > 0 {
+		args = append(args, "--config", "-")
+	}
+	args = append(args, request.URL)
+	result, err := l.Run(ctx, Command{
+		Name:  "curl",
+		Args:  args,
+		Stdin: strings.NewReader(config.String()),
+	})
+	if err != nil {
+		return HTTPResponse{}, err
+	}
+	if result.ExitCode != 0 {
+		return HTTPResponse{}, fmt.Errorf("curl failed with exit code %d: %s",
+			result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	index := strings.LastIndex(result.Stdout, "\n")
+	if index < 0 {
+		return HTTPResponse{}, fmt.Errorf("curl returned no HTTP status")
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(result.Stdout[index+1:]))
+	if err != nil {
+		return HTTPResponse{}, fmt.Errorf("parse curl HTTP status %q: %w", result.Stdout[index+1:], err)
+	}
+	return HTTPResponse{StatusCode: code, Body: []byte(result.Stdout[:index])}, nil
+}
+
+func curlConfigEscape(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	return strings.ReplaceAll(value, `"`, `\"`)
 }
 
 // limaInstance is the slice of `limactl list --format json` output this

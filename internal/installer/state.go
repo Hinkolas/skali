@@ -5,9 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
+
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/version"
 )
 
 // HostState classifies what the installer found on this host. Detection is
@@ -25,6 +31,13 @@ const (
 	// StateUnmanaged is a host running k3s without a skali record. The
 	// adoption guard applies: it is never adopted or destroyed.
 	StateUnmanaged HostState = "unmanaged"
+	// StateOrphaned is a recordless k3s host carrying the complete,
+	// Skali-specific config fingerprint of an older interrupted install.
+	// It is recoverable only after explicit operator confirmation.
+	StateOrphaned HostState = "orphaned"
+	// StateInterrupted is a Skali-owned installation transaction that did
+	// not reach its complete phase.
+	StateInterrupted HostState = "interrupted"
 	// StateDamaged has a record that is unreadable or contradicts host
 	// state; Problems lists what was found.
 	StateDamaged HostState = "damaged"
@@ -49,6 +62,9 @@ type Host struct {
 	// Record is the loaded installation record; nil unless state is
 	// server, agent, or damaged with a readable record.
 	Record *Record
+	// RecordRecovered means Record came from RecordBackupPath because the
+	// primary record was missing or unreadable.
+	RecordRecovered bool
 	// Problems explains damaged and unsupported states.
 	Problems []string
 }
@@ -82,6 +98,14 @@ func Detect(ctx context.Context, runner host.Runner) (*Host, error) {
 	switch {
 	case errors.Is(recordErr, ErrNoRecord):
 		if k3sPresent {
+			if orphan := detectOrphanRecord(ctx, runner, serverUnit, agentUnit); orphan != nil {
+				detected.State = StateOrphaned
+				detected.Record = orphan
+				detected.Problems = []string{
+					"k3s has Skali-owned node labels and registry configuration, but the installation record is missing",
+				}
+				return detected, nil
+			}
 			detected.State = StateUnmanaged
 			return detected, nil
 		}
@@ -93,8 +117,13 @@ func Detect(ctx context.Context, runner host.Runner) (*Host, error) {
 		return detected, nil
 	}
 	detected.Record = record
+	detected.RecordRecovered = recordRecovered(ctx, runner)
 
 	var problems []string
+	if detected.RecordRecovered {
+		problems = append(problems, "the primary installation record is missing or unreadable; using "+
+			RecordBackupPath)
+	}
 	if !binary.Exists {
 		problems = append(problems, "installation record exists but "+K3sBinaryPath+" is missing")
 	}
@@ -113,6 +142,11 @@ func Detect(ctx context.Context, runner host.Runner) (*Host, error) {
 		problems = append(problems, fmt.Sprintf("record has unknown node role %q", record.Node.Role))
 	}
 
+	if !record.InstallComplete() {
+		detected.State = StateInterrupted
+		detected.Problems = problems
+		return detected, nil
+	}
 	if len(problems) > 0 {
 		detected.State = StateDamaged
 		detected.Problems = problems
@@ -124,6 +158,103 @@ func Detect(ctx context.Context, runner host.Runner) (*Host, error) {
 		detected.State = StateServer
 	}
 	return detected, nil
+}
+
+type orphanK3sConfig struct {
+	NodeName   string   `yaml:"node-name"`
+	Server     string   `yaml:"server"`
+	NodeLabels []string `yaml:"node-label"`
+}
+
+// detectOrphanRecord recognizes only the pair of Skali-owned fingerprints
+// written by installK3s: cluster/capability labels plus the managed
+// registry mirror. A binary, unit, state directory, or cache file alone is
+// never enough to cross the unmanaged-host boundary.
+func detectOrphanRecord(ctx context.Context, runner host.Runner, serverUnit, agentUnit unitStatus) *Record {
+	configData, err := runner.ReadFile(ctx, K3sConfigPath)
+	if err != nil {
+		return nil
+	}
+	registriesData, err := runner.ReadFile(ctx, K3sRegistriesPath)
+	if err != nil {
+		return nil
+	}
+	var registries struct {
+		Mirrors map[string]any `yaml:"mirrors"`
+	}
+	if err := yaml.Unmarshal(registriesData, &registries); err != nil {
+		return nil
+	}
+	if _, managedRegistry := registries.Mirrors[bundle.RegistryInternalHost]; !managedRegistry {
+		return nil
+	}
+	var config orphanK3sConfig
+	if err := yaml.Unmarshal(configData, &config); err != nil {
+		return nil
+	}
+	labels := map[string]string{}
+	for _, entry := range config.NodeLabels {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			labels[key] = value
+		}
+	}
+	cluster := labels[layout.ClusterLabel]
+	capabilities := layout.CapabilitiesFromLabels(labels)
+	if cluster == "" || config.NodeName == "" || len(capabilities) == 0 {
+		return nil
+	}
+	if serverUnit.present && agentUnit.present {
+		return nil
+	}
+	role := layout.RoleAgent
+	if serverUnit.present {
+		role = layout.RoleServer
+	} else if !agentUnit.present {
+		return nil
+	}
+	record := &Record{
+		Version:   RecordVersion,
+		Provider:  ProviderK3s,
+		Cluster:   cluster,
+		Ownership: OwnershipManaged,
+		Node: NodeRecord{
+			Name:         config.NodeName,
+			Role:         role,
+			Capabilities: capabilities,
+		},
+		Versions: Versions{Installer: version.Version, K3s: K3sVersion},
+	}
+	if config.Server != "" {
+		record.Join = &JoinRecord{Server: config.Server}
+	}
+	return record
+}
+
+// PersistOrphanRecord converts a read-only orphan reconstruction into a
+// durable interrupted transaction after the command layer has obtained
+// explicit consent.
+func PersistOrphanRecord(ctx context.Context, runner host.Runner, record *Record) error {
+	if record == nil || record.Cluster == "" || record.Node.Role == "" || len(record.Node.Capabilities) == 0 {
+		return errors.New("cannot recover orphaned install: required Skali fingerprints are incomplete")
+	}
+	recovered := *record
+	recovered.InstallationID = uuid.NewString()
+	now := time.Now().UTC().Truncate(time.Second)
+	recovered.Lifecycle = &InstallLifecycle{
+		Status:         InstallStatusFailed,
+		Phase:          InstallPhaseStarting,
+		AttemptID:      uuid.NewString(),
+		StartAttempted: true,
+		LastError:      "recovered ownership of an interrupted install created before transaction records",
+		StartedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := SaveRecord(ctx, runner, &recovered); err != nil {
+		return err
+	}
+	*record = recovered
+	return nil
 }
 
 // probeUnsupported returns the failed platform requirements.

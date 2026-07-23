@@ -50,8 +50,27 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 		return err
 	}
 	detected := status.Host
+	if detected.State == installer.StateOrphaned {
+		if !yes {
+			if !cliprompt.Interactive() {
+				return errors.New("recovering an orphaned Skali install non-interactively requires --yes")
+			}
+			if !cliprompt.Confirm(reader,
+				"Recover ownership of this fingerprinted interrupted Skali install? [y/N] ") {
+				return errors.New("recovery was not confirmed; nothing was changed")
+			}
+		}
+		if err := installer.PersistOrphanRecord(ctx, runner(), detected.Record); err != nil {
+			return err
+		}
+		status, err = installer.GatherStatus(ctx, runner())
+		if err != nil {
+			return err
+		}
+		detected = status.Host
+	}
 	switch detected.State {
-	case installer.StateServer, installer.StateAgent, installer.StateDamaged:
+	case installer.StateServer, installer.StateAgent, installer.StateDamaged, installer.StateInterrupted:
 	case installer.StateUnmanaged:
 		return unmanagedError()
 	default:

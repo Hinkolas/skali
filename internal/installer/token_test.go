@@ -53,6 +53,33 @@ func TestCreateJoinToken(t *testing.T) {
 	require.Equal(t, "K10abc::node:secret", k3sToken)
 	require.Equal(t, "pull-secret-value", pullSecret)
 	require.Equal(t, layout.RoleAgent, role)
+	claims, err := InspectJoinToken(token.Token)
+	require.NoError(t, err)
+	require.Equal(t, "e2e", claims.Cluster)
+	require.Equal(t, "https://10.0.0.5:6443", claims.Server)
+}
+
+func TestCreateJoinTokenAdvertisesAlternateServer(t *testing.T) {
+	t.Parallel()
+	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
+		"k3s": func(cmd host.Command) (host.Result, error) {
+			if cmd.Args[0] == "token" {
+				return host.Result{Stdout: "K10abc::node:secret\n"}, nil
+			}
+			return host.Result{ExitCode: 1}, nil
+		},
+	}}
+	token, err := CreateJoinTokenForServer(context.Background(), fake,
+		tokenServerRecord(), layout.RoleAgent, "https://cluster.example.com:6443")
+	require.NoError(t, err)
+	require.Equal(t, "https://cluster.example.com:6443", token.ServerURL)
+	claims, err := InspectJoinToken(token.Token)
+	require.NoError(t, err)
+	require.Equal(t, token.ServerURL, claims.Server)
+
+	_, err = CreateJoinTokenForServer(context.Background(), fake,
+		tokenServerRecord(), layout.RoleAgent, "https://user@cluster.example.com:6443")
+	require.ErrorContains(t, err, "without credentials")
 }
 
 func TestCreateJoinTokenDefaultsToAgent(t *testing.T) {

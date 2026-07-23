@@ -46,10 +46,54 @@ type Record struct {
 	// cluster whose hosts skali does not administer); nil for managed
 	// installations. It is a bundle-hash input, so its choices correctly
 	// move the hash.
-	Existing  *ExistingClusterRecord `yaml:"existing,omitempty"`
-	Versions  Versions               `yaml:"versions"`
-	CreatedAt time.Time              `yaml:"createdAt"`
-	UpdatedAt time.Time              `yaml:"updatedAt"`
+	Existing *ExistingClusterRecord `yaml:"existing,omitempty"`
+	Versions Versions               `yaml:"versions"`
+	// Lifecycle is present while a managed host install is in progress or
+	// failed. Records written before lifecycle tracking omit it and are
+	// treated as complete.
+	Lifecycle *InstallLifecycle `yaml:"lifecycle,omitempty"`
+	CreatedAt time.Time         `yaml:"createdAt"`
+	UpdatedAt time.Time         `yaml:"updatedAt"`
+}
+
+const (
+	InstallStatusInstalling = "installing"
+	InstallStatusFailed     = "failed"
+	InstallStatusComplete   = "complete"
+
+	InstallPhasePrepared   = "prepared"
+	InstallPhaseConfigured = "configured"
+	InstallPhaseInstalled  = "installed"
+	InstallPhaseStarting   = "starting"
+	InstallPhaseJoined     = "joined"
+	InstallPhaseComplete   = "complete"
+)
+
+// InstallLifecycle is the durable transaction journal embedded in the
+// ownership record. It deliberately contains no join or registry secrets.
+type InstallLifecycle struct {
+	Status         string    `yaml:"status"`
+	Phase          string    `yaml:"phase"`
+	AttemptID      string    `yaml:"attemptId,omitempty"`
+	StartAttempted bool      `yaml:"startAttempted,omitempty"`
+	LastError      string    `yaml:"lastError,omitempty"`
+	LastLog        string    `yaml:"lastLog,omitempty"`
+	StartedAt      time.Time `yaml:"startedAt,omitempty"`
+	UpdatedAt      time.Time `yaml:"updatedAt,omitempty"`
+}
+
+// InstallComplete treats legacy records with no lifecycle as complete.
+func (r *Record) InstallComplete() bool {
+	return r != nil && (r.Lifecycle == nil ||
+		r.Lifecycle.Status == InstallStatusComplete ||
+		r.Lifecycle.Phase == InstallPhaseComplete)
+}
+
+// RegistrationMayHaveStarted is deliberately conservative for legacy
+// records: before lifecycle tracking, every completed install had started
+// k3s.
+func (r *Record) RegistrationMayHaveStarted() bool {
+	return r != nil && (r.Lifecycle == nil || r.Lifecycle.StartAttempted)
 }
 
 // ExistingClusterRecord holds the operator's declared shape for an
@@ -116,19 +160,55 @@ type Versions struct {
 func LoadRecord(ctx context.Context, runner host.Runner) (*Record, error) {
 	data, err := runner.ReadFile(ctx, RecordPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, ErrNoRecord
+		backup, backupErr := runner.ReadFile(ctx, RecordBackupPath)
+		if errors.Is(backupErr, fs.ErrNotExist) {
+			return nil, ErrNoRecord
+		}
+		if backupErr != nil {
+			return nil, fmt.Errorf("read installation record backup: %w", backupErr)
+		}
+		record, parseErr := parseRecord(backup, RecordBackupPath)
+		if parseErr != nil {
+			return nil, fmt.Errorf("primary installation record is missing and backup is unusable: %w", parseErr)
+		}
+		return record, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read installation record: %w", err)
 	}
+	record, parseErr := parseRecord(data, RecordPath)
+	if parseErr == nil {
+		return record, nil
+	}
+	backup, backupErr := runner.ReadFile(ctx, RecordBackupPath)
+	if backupErr == nil {
+		if recovered, recoveredErr := parseRecord(backup, RecordBackupPath); recoveredErr == nil {
+			return recovered, nil
+		}
+	}
+	return nil, parseErr
+}
+
+func parseRecord(data []byte, path string) (*Record, error) {
 	var record Record
 	if err := yaml.Unmarshal(data, &record); err != nil {
-		return nil, fmt.Errorf("parse installation record %s: %w", RecordPath, err)
+		return nil, fmt.Errorf("parse installation record %s: %w", path, err)
 	}
 	if record.Version == "" || record.InstallationID == "" {
-		return nil, fmt.Errorf("installation record %s is missing its identity fields", RecordPath)
+		return nil, fmt.Errorf("installation record %s is missing its identity fields", path)
 	}
 	return &record, nil
+}
+
+// recordRecovered reports whether LoadRecord would need the backup because
+// the primary is absent or invalid.
+func recordRecovered(ctx context.Context, runner host.Runner) bool {
+	data, err := runner.ReadFile(ctx, RecordPath)
+	if err != nil {
+		return true
+	}
+	_, err = parseRecord(data, RecordPath)
+	return err != nil
 }
 
 // InClusterRecord reads the installation record Init published as a
@@ -170,7 +250,13 @@ func SaveRecord(ctx context.Context, runner host.Runner, record *Record) error {
 	if err := runner.MkdirAll(ctx, StateDir, 0o750); err != nil {
 		return fmt.Errorf("create %s: %w", StateDir, err)
 	}
-	if err := runner.WriteFile(ctx, RecordPath, data, 0o600); err != nil {
+	backup := ""
+	if current, err := runner.ReadFile(ctx, RecordPath); err == nil {
+		if _, err := parseRecord(current, RecordPath); err == nil {
+			backup = RecordBackupPath
+		}
+	}
+	if err := runner.ReplaceFile(ctx, RecordPath, backup, data, 0o600); err != nil {
 		return fmt.Errorf("write installation record: %w", err)
 	}
 	return nil
@@ -179,7 +265,10 @@ func SaveRecord(ctx context.Context, runner host.Runner, record *Record) error {
 // RemoveRecord deletes the record; scoped uninstall removes it last so an
 // interrupted uninstall re-detects as damaged rather than fresh.
 func RemoveRecord(ctx context.Context, runner host.Runner) error {
-	return runner.Remove(ctx, RecordPath)
+	if err := runner.Remove(ctx, RecordPath); err != nil {
+		return err
+	}
+	return runner.Remove(ctx, RecordBackupPath)
 }
 
 // CanonicalYAML renders the record for the in-cluster copy and therefore

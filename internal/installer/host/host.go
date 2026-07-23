@@ -9,12 +9,16 @@ package host
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // Command describes one process execution on the host.
@@ -46,6 +50,23 @@ type Info struct {
 	Size   int64
 }
 
+// HTTPRequest describes one read-only request made from the target host.
+// Authentication stays out of command arguments and environment entries.
+type HTTPRequest struct {
+	URL      string
+	CACerts  []byte
+	Insecure bool
+	Username string
+	Password string
+	Bearer   string
+	Timeout  time.Duration
+}
+
+type HTTPResponse struct {
+	StatusCode int
+	Body       []byte
+}
+
 // Runner executes privileged operations on one target host. Run returns an
 // error only when the command could not be executed at all; MkdirAll and
 // Remove are idempotent.
@@ -53,10 +74,14 @@ type Runner interface {
 	Run(ctx context.Context, cmd Command) (Result, error)
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error
+	// ReplaceFile durably replaces path and optionally preserves the
+	// previous contents at backup.
+	ReplaceFile(ctx context.Context, path, backup string, data []byte, perm fs.FileMode) error
 	MkdirAll(ctx context.Context, path string, perm fs.FileMode) error
 	// Remove deletes the path recursively; an absent path is not an error.
 	Remove(ctx context.Context, path string) error
 	Stat(ctx context.Context, path string) (Info, error)
+	ProbeHTTP(ctx context.Context, request HTTPRequest) (HTTPResponse, error)
 }
 
 // APIAddresser is implemented by runners whose target host is not this
@@ -114,6 +139,52 @@ func (Local) WriteFile(_ context.Context, path string, data []byte, perm fs.File
 	return os.Chmod(path, perm)
 }
 
+func (Local) ReplaceFile(_ context.Context, path, backup string, data []byte, perm fs.FileMode) error {
+	if backup != "" {
+		if current, err := os.ReadFile(path); err == nil {
+			if err := replaceLocalFile(backup, current, perm); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return replaceLocalFile(path, data, perm)
+}
+
+func replaceLocalFile(path string, data []byte, perm fs.FileMode) error {
+	dir := filepath.Dir(path)
+	temp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(perm); err != nil {
+		temp.Close()
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	if directory, err := os.Open(dir); err == nil {
+		defer directory.Close()
+		return directory.Sync()
+	}
+	return nil
+}
+
 func (Local) MkdirAll(_ context.Context, path string, perm fs.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
@@ -131,6 +202,56 @@ func (Local) Stat(_ context.Context, path string) (Info, error) {
 		return Info{}, err
 	}
 	return Info{Exists: true, Mode: stat.Mode(), Size: stat.Size()}, nil
+}
+
+func (Local) ProbeHTTP(ctx context.Context, request HTTPRequest) (HTTPResponse, error) {
+	timeout := request.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if request.Insecure {
+		tlsConfig.InsecureSkipVerify = true // bootstrap fetch; the caller validates the CA hash.
+	} else if len(request.CACerts) > 0 {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(request.CACerts) {
+			return HTTPResponse{}, errors.New("HTTP probe CA bundle contains no certificates")
+		}
+		tlsConfig.RootCAs = pool
+	}
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			TLSClientConfig:   tlsConfig,
+		},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			// Bootstrap probes authenticate one exact origin. Following a
+			// redirect could validate or disclose credentials to a target
+			// the operator did not supply.
+			return http.ErrUseLastResponse
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, request.URL, nil)
+	if err != nil {
+		return HTTPResponse{}, err
+	}
+	switch {
+	case request.Bearer != "":
+		req.Header.Set("Authorization", "Bearer "+request.Bearer)
+	case request.Username != "":
+		req.SetBasicAuth(request.Username, request.Password)
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return HTTPResponse{}, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	if err != nil {
+		return HTTPResponse{}, err
+	}
+	return HTTPResponse{StatusCode: response.StatusCode, Body: body}, nil
 }
 
 // cleanPath normalizes fake filesystem keys so tests and engine agree.

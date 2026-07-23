@@ -21,6 +21,9 @@ const (
 	StateDir = "/var/lib/skali"
 	// RecordPath is the root-owned installation record (section 14.1).
 	RecordPath = StateDir + "/installation.yaml"
+	// RecordBackupPath retains the last valid record so a truncated or
+	// interrupted write never removes the installer's recovery authority.
+	RecordBackupPath = StateDir + "/installation.yaml.prev"
 	// LogDir receives per-run installer logs. Installer steps run before
 	// or below the product control plane, so they log locally, never to
 	// the product run journal.

@@ -22,9 +22,20 @@ const joinTokenPrefix = "skali1."
 // a confusing k3s bootstrap error; raw (non-composite) tokens carry no
 // claim.
 type joinTokenPayload struct {
-	K3s  string `json:"k3s"`
-	Pull string `json:"pull,omitempty"`
-	Role string `json:"role,omitempty"`
+	K3s     string `json:"k3s"`
+	Pull    string `json:"pull,omitempty"`
+	Role    string `json:"role,omitempty"`
+	Cluster string `json:"cluster,omitempty"`
+	Server  string `json:"server,omitempty"`
+}
+
+type decodedJoinToken struct {
+	K3s       string
+	Pull      string
+	Role      string
+	Cluster   string
+	Server    string
+	Composite bool
 }
 
 // newPullSecret generates the cluster's shared registry pull credential;
@@ -42,7 +53,13 @@ func newPullSecret() (string, error) {
 // minted role into the composite form `skali cluster token` prints. An
 // empty role means an agent token.
 func encodeJoinToken(k3sToken, pullSecret, role string) string {
-	payload, _ := json.Marshal(joinTokenPayload{K3s: k3sToken, Pull: pullSecret, Role: role})
+	return encodeJoinTokenWithClaims(k3sToken, pullSecret, role, "", "")
+}
+
+func encodeJoinTokenWithClaims(k3sToken, pullSecret, role, cluster, server string) string {
+	payload, _ := json.Marshal(joinTokenPayload{
+		K3s: k3sToken, Pull: pullSecret, Role: role, Cluster: cluster, Server: server,
+	})
 	return joinTokenPrefix + base64.RawURLEncoding.EncodeToString(payload)
 }
 
@@ -51,21 +68,36 @@ func encodeJoinToken(k3sToken, pullSecret, role string) string {
 // role claim so a manually minted token still joins (with a visible
 // warning about unauthenticated registry pulls).
 func decodeJoinToken(token string) (k3sToken, pullSecret, role string, err error) {
+	decoded, err := decodeJoinTokenClaims(token)
+	if err != nil {
+		return "", "", "", err
+	}
+	return decoded.K3s, decoded.Pull, decoded.Role, nil
+}
+
+func decodeJoinTokenClaims(token string) (decodedJoinToken, error) {
 	if !strings.HasPrefix(token, joinTokenPrefix) {
-		return token, "", "", nil
+		return decodedJoinToken{K3s: token}, nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, joinTokenPrefix))
 	if err != nil {
-		return "", "", "", fmt.Errorf("malformed skali join token: %w", err)
+		return decodedJoinToken{}, fmt.Errorf("malformed skali join token: %w", err)
 	}
 	var payload joinTokenPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", "", "", fmt.Errorf("malformed skali join token: %w", err)
+		return decodedJoinToken{}, fmt.Errorf("malformed skali join token: %w", err)
 	}
 	if payload.K3s == "" {
-		return "", "", "", fmt.Errorf("malformed skali join token: no k3s token inside")
+		return decodedJoinToken{}, fmt.Errorf("malformed skali join token: no k3s token inside")
 	}
-	return payload.K3s, payload.Pull, payload.Role, nil
+	return decodedJoinToken{
+		K3s:       payload.K3s,
+		Pull:      payload.Pull,
+		Role:      payload.Role,
+		Cluster:   payload.Cluster,
+		Server:    payload.Server,
+		Composite: true,
+	}, nil
 }
 
 // registriesPullSecret extracts the node pull credential from a rendered
