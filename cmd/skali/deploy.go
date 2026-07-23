@@ -7,7 +7,7 @@ import (
 )
 
 func newPlanCommand() *cobra.Command {
-	opts := &deployOptions{}
+	opts := &deployOptions{UseBinding: true}
 	command := &cobra.Command{
 		Use:   "plan",
 		Short: "Compute and print the deployment plan without changing anything",
@@ -22,7 +22,7 @@ func newPlanCommand() *cobra.Command {
 }
 
 func newDeployCommand() *cobra.Command {
-	opts := &deployOptions{}
+	opts := &deployOptions{UseBinding: true}
 	command := &cobra.Command{
 		Use:   "deploy",
 		Short: "Deploy the project to an environment",
@@ -52,7 +52,7 @@ func newDeployCommand() *cobra.Command {
 
 func addDeployFlags(command *cobra.Command, opts *deployOptions) {
 	command.Flags().StringVar(&opts.Environment, "environment", "",
-		"target environment name (prompted interactively when omitted)")
+		"target environment name (defaults to the checkout binding, prompted interactively otherwise)")
 	command.Flags().StringVar(&opts.Manifest, "manifest", "", "explicit manifest path (skali.yml discovered by default)")
 	command.Flags().StringVar(&opts.EnvFile, "env-file", "",
 		"dotenv file to stage as candidate values (default: the environment's stored values)")

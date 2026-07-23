@@ -440,7 +440,7 @@ func localProjectEnvironment(command *cobra.Command) (*client.Client, string, er
 	}
 	api := client.New(localRemote.Master, localRemote.Token, userAgent())
 	_, environmentID, err := resolveEnvironmentIDs(command.Context(), api,
-		project.Result.Definition.Name, localEnvironmentName, false)
+		project.Result.Definition.Name, localEnvironmentName)
 	if err != nil {
 		return nil, "", err
 	}

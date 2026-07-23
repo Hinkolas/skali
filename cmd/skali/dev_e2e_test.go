@@ -183,6 +183,8 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "run ")
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 2*time.Minute)
+		// dev never writes the checkout binding.
+		require.NoDirExists(t, filepath.Join(h.projectDir, ".skali"))
 	})
 
 	t.Run("RepeatUnchangedReusesArtifact", func(t *testing.T) {
@@ -243,6 +245,8 @@ func TestDevEndToEnd(t *testing.T) {
 		out := h.run(false, "", "deploy", "--environment", "local",
 			"--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
+		// Deploys against the dev-owned local remote are never bound.
+		require.NoDirExists(t, filepath.Join(h.projectDir, ".skali"))
 
 		// Kill the control plane while the rollout is in flight; the
 		// restarted skalid must resume toward the same revision.

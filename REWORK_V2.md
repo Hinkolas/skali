@@ -477,6 +477,15 @@ an override selection. Remote environments normally use their independently
 stored value space. `.skali/` is
 reserved for disposable local tool state rather than the canonical manifest.
 
+Within that reserved space, `.skali/target.yaml` is the checkout binding: it
+records where this checkout deploys as the remote master URL, the project
+name, and the default environment. The first successful `skali plan` or
+`skali deploy` writes it and makes the directory self-ignoring by creating
+`.skali/.gitignore` containing `*`; deleting the directory relinks the
+checkout on the next run. One checkout binds exactly one target; hosting the
+same source twice means two checkouts. The binding stores no secrets and
+never travels in the portable definition.
+
 ### 6.2 Stable service identity
 
 Every service has a stable key inside the project definition. The key, not a
@@ -1435,9 +1444,29 @@ environments), discovers the project root's `.env` and `.env.*` files, and
 offers them as an explicit override selection; declining keeps the stored
 values. The selection must show the path, target installation, project, and
 environment, without printing values. Non-interactive use must name the
-environment and uploads only with an explicit `--env-file`; without one the
-stored values apply. Skali never uploads a file that was not explicitly
-selected.
+environment, either with `--environment` or through the checkout binding, and
+uploads only with an explicit `--env-file`; without one the stored values
+apply. Skali never uploads a file that was not explicitly selected.
+
+The checkout binding (`.skali/target.yaml`, section 6.1) selects the deploy
+target. Its master URL wins over the machine's current remote and is resolved
+among the machine's configured remotes by master URL, never by remote name;
+without a matching remote the command fails and points at `skali remote add`.
+The bound environment is the default for interactive and non-interactive use
+alike, and `--environment` overrides it for one invocation without rewriting
+the binding. The manifest `name:` remains the project identity and must equal
+the bound project name; a mismatch is an error, never a rename. `skali dev`
+neither reads nor writes the binding. Writing the binding is local tool
+state, not an installation mutation: both `skali plan` and `skali deploy`
+record it once the project and environment resolve, except against the
+dev-owned `local` remote, which is never bound.
+
+Only interactive `skali deploy` may create a missing project or environment
+on the installation, each behind an explicit `[y/N]` confirmation; when a
+freshly created project has no environments, the environment name is prompted
+with `production` as the default. `skali plan` never mutates the
+installation: with a missing project or environment it fails and points at
+`skali deploy`. Non-interactive deploys never create.
 
 The deploy workflow is:
 
@@ -1542,6 +1571,7 @@ terminal, build-engine, or local-machine access:
 - Stream application logs and execute into application members.
 - Manage named remotes and their authentication through the single
   `skali remote` group.
+- Maintain the per-checkout deploy-target binding in `.skali/`.
 - Submit definitions/revisions through the public Skali API.
 
 Named remotes are managed by the `skali remote` group. `skali remote add <url>`

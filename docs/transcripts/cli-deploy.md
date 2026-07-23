@@ -5,6 +5,11 @@ the installation at `https://skali.example.com` (added once with
 `skali remote add`, see `cli-remote.md`), and the project checkout
 contains `skali.yml` plus a gitignored `.env.production`.
 
+The first successful plan or deploy links the checkout to its target in
+`.skali/target.yaml` (remote master URL, project, default environment) and
+makes the directory self-ignoring. The transcripts show the link note where
+it appears; once linked, the bound target applies without the note.
+
 ## 1. Plan with a local env file
 
 ```console
@@ -12,6 +17,7 @@ $ skali plan --environment production --env-file ./.env.production
 remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
 environment  production
+linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
 
 .env.production: 1 plain, 1 secret value (values are validated, not shown)
 
@@ -23,13 +29,16 @@ no destructive changes
 ```
 
 Planning validates the candidate definition and values server-side and never
-mutates the environment: no values are stored, no target moves.
+mutates the environment: no values are stored, no target moves. Writing the
+checkout binding is local tool state, not an installation mutation, so plan
+links too.
 
 ## 2. Interactive deploy: environment selection and env-file override
 
-The environment's stored values are the default. Bare `skali deploy` asks for
-the environment when several exist, then offers the project root's `.env` and
-`.env.*` files as an explicit override:
+The environment's stored values are the default. In a checkout not yet
+linked, bare `skali deploy` asks for the environment when several exist,
+then offers the project root's `.env` and `.env.*` files as an explicit
+override:
 
 ```console
 $ skali deploy --build=local
@@ -40,6 +49,7 @@ Environment:
   2) staging
 Select [1-2]: 1
 environment  production
+linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
 
 Override the stored values of environment production with a local env file?
   0) no, use the stored values
@@ -89,7 +99,15 @@ Notes pinned by this transcript:
   use offers the discovered `.env` and `.env.*` files as an override
   selection naming the file, project, environment, and value counts, never
   the values; declining keeps the stored values. Non-interactive use uploads
-  only with an explicit `--env-file` and must name the environment.
+  only with an explicit `--env-file` and must name the environment, either
+  with `--environment` or through the checkout binding.
+- Once linked, the bound environment is the default: bare `skali deploy`
+  targets it without asking, and `--environment` overrides it for one
+  invocation without rewriting the binding.
+- The binding's master URL selects the remote, resolved among this machine's
+  remotes by URL rather than name; it wins over the machine's current
+  remote. Without a matching remote the command fails and points at
+  `skali remote add`.
 - Staged values are promoted atomically with the target change, after
   artifacts verify.
 - The push to `registry.example.com` uses the ambient docker credentials;
@@ -100,7 +118,44 @@ Notes pinned by this transcript:
 - The CLI streams the run tree, but the run is server-owned: every step
   survives the terminal.
 
-## 3. The same deploy with a cloud build
+## 3. First deploy against a fresh installation: creation and binding
+
+When the project does not exist on the installation yet, interactive
+`skali deploy` offers to create it, prompts for the first environment name,
+and links the checkout:
+
+```console
+$ skali deploy --build=local
+remote       skali.example.com (https://skali.example.com)
+project      file-sharing (skali.yml)
+Create project file-sharing on skali.example.com? [y/N] y
+Environment name (production): 
+Create environment production in project file-sharing? [y/N] y
+environment  production
+linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
+
+plan for the initial deployment
+...
+```
+
+Creation is deploy-only and interactive-only. `skali plan` never mutates the
+installation, and non-interactive deploys never create:
+
+```console
+$ skali plan --environment production
+error: project file-sharing does not exist on https://skali.example.com; skali plan never changes the installation, run skali deploy to create it
+$ skali deploy --environment production --yes
+error: project file-sharing does not exist on https://skali.example.com; run skali deploy interactively to create it
+$ echo $?
+1
+```
+
+The same policy applies to a missing environment in an existing project:
+interactive deploy confirms `Create environment staging in project
+file-sharing? [y/N]`, plan and non-interactive deploy refuse with the
+matching guidance.
+
+## 4. The same deploy with a cloud build
 
 ```console
 $ skali deploy --environment production --build=cloud
@@ -118,14 +173,21 @@ The executor changes; the manifest, the resulting artifact contract, the
 revision shape, and reconciliation do not. Selected env files and `.env`
 files never enter the uploaded build context.
 
-## 4. Non-interactive use
+## 5. Non-interactive use
 
-Non-interactive runs must name the environment and approve the plan
-explicitly; the stored values apply unless `--env-file` is passed, and
-nothing is discovered or uploaded by guesswork:
+Non-interactive runs must name the environment, either with `--environment`
+or through the checkout binding, and approve the plan explicitly; the stored
+values apply unless `--env-file` is passed, and nothing is discovered or
+uploaded by guesswork:
 
 ```console
 $ skali deploy --environment production --build=auto --yes
+```
+
+In a linked checkout the bound environment applies, so CI needs only:
+
+```console
+$ skali deploy --yes
 ```
 
 `--build=auto` follows installation policy (cloud builder when configured,
@@ -138,7 +200,7 @@ $ echo $?
 1
 ```
 
-## 5. Failure leaves the environment untouched
+## 6. Failure leaves the environment untouched
 
 ```console
 $ skali deploy --environment production --build=local
@@ -176,7 +238,7 @@ run 01J9V3AA  deploy file-sharing to production  failed
   fail  Build locally (attempt 1)  logs: skali run logs 01J9V3AA --step build.web
 ```
 
-## 6. Detach and reattach
+## 7. Detach and reattach
 
 ```console
 $ skali deploy --environment production --build=local
@@ -199,7 +261,7 @@ Detaching never cancels. Cancellation is explicit
 (`skali run cancel 01J9V4QF`) and returns the target to the prior active
 revision if the new one has not activated.
 
-## 7. Destructive change confirmation
+## 8. Destructive change confirmation
 
 After renaming the database key `data` to `main` in `skali.yml`:
 

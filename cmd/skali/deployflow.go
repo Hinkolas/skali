@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -21,6 +22,8 @@ import (
 	"golang.org/x/term"
 
 	"github.com/Hinkolas/skali/internal/build"
+	"github.com/Hinkolas/skali/internal/checkout"
+	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/compiler"
@@ -40,8 +43,13 @@ type deployOptions struct {
 	// AutoEnvFile uses ./.env automatically when present (bare dev).
 	AutoEnvFile bool
 	// CreateMissing provisions the project and environment through the API
-	// when absent (local dev); remote deploys demand they exist.
+	// when absent (local dev); remote deploys create only interactively,
+	// behind explicit confirmation.
 	CreateMissing bool
+	// UseBinding reads and writes the .skali/ checkout binding; set by
+	// plan and deploy. dev force-selects the local remote and never
+	// touches the binding.
+	UseBinding bool
 }
 
 // project bundles everything the flow knows about the local checkout.
@@ -85,48 +93,83 @@ func interactive() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// resolveEnvironmentIDs finds (or with CreateMissing provisions) the
-// project and environment on the target installation.
-func resolveEnvironmentIDs(ctx context.Context, api *client.Client, projectName, environmentName string, createMissing bool) (projectID, environmentID string, err error) {
+// findProject lists the installation's projects once and returns the
+// named one, or nil when absent.
+func findProject(ctx context.Context, api *client.Client, name string) (*client.Project, error) {
 	projects, err := api.ListProjects(ctx)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	for _, project := range projects {
-		if project.Name == projectName {
-			projectID = project.ID
+	for i := range projects {
+		if projects[i].Name == name {
+			return &projects[i], nil
 		}
 	}
-	if projectID == "" {
-		if !createMissing {
-			return "", "", fmt.Errorf("project %s does not exist on this installation", projectName)
+	return nil, nil
+}
+
+// findEnvironment returns the named environment among the given, or nil.
+func findEnvironment(environments []client.Environment, name string) *client.Environment {
+	for i := range environments {
+		if environments[i].Name == name {
+			return &environments[i]
 		}
-		created, err := api.CreateProject(ctx, projectName)
-		if err != nil {
-			return "", "", err
-		}
-		projectID = created.ID
 	}
-	environments, err := api.ListEnvironments(ctx, projectID)
+	return nil
+}
+
+// resolveEnvironmentIDs finds the project and environment on the target
+// installation; both must exist.
+func resolveEnvironmentIDs(ctx context.Context, api *client.Client, projectName, environmentName string) (projectID, environmentID string, err error) {
+	project, err := findProject(ctx, api, projectName)
 	if err != nil {
 		return "", "", err
 	}
-	for _, environment := range environments {
-		if environment.Name == environmentName {
-			environmentID = environment.ID
+	if project == nil {
+		return "", "", fmt.Errorf("project %s does not exist on this installation", projectName)
+	}
+	environments, err := api.ListEnvironments(ctx, project.ID)
+	if err != nil {
+		return "", "", err
+	}
+	environment := findEnvironment(environments, environmentName)
+	if environment == nil {
+		return "", "", fmt.Errorf("environment %s does not exist in project %s", environmentName, projectName)
+	}
+	return project.ID, environment.ID, nil
+}
+
+// sameMaster reports whether two master URLs identify the same
+// installation: folded scheme and host, identical path after trailing
+// slashes are trimmed. Scheme and port differences are distinct
+// installations by design.
+func sameMaster(a, b string) bool {
+	trimmedA := strings.TrimRight(strings.TrimSpace(a), "/")
+	trimmedB := strings.TrimRight(strings.TrimSpace(b), "/")
+	parsedA, errA := url.Parse(trimmedA)
+	parsedB, errB := url.Parse(trimmedB)
+	if errA != nil || errB != nil {
+		return strings.EqualFold(trimmedA, trimmedB)
+	}
+	return strings.EqualFold(parsedA.Scheme, parsedB.Scheme) &&
+		strings.EqualFold(parsedA.Host, parsedB.Host) &&
+		parsedA.Path == parsedB.Path
+}
+
+// lookupRemoteByMaster finds the remote whose master URL matches, scanning
+// names in sorted order so duplicates resolve deterministically.
+func lookupRemoteByMaster(cfg *cliconfig.Config, master string) (string, *cliconfig.Remote, bool) {
+	names := make([]string, 0, len(cfg.Remotes))
+	for name := range cfg.Remotes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if remote := cfg.Remotes[name]; remote != nil && sameMaster(remote.Master, master) {
+			return name, remote, true
 		}
 	}
-	if environmentID == "" {
-		if !createMissing {
-			return "", "", fmt.Errorf("environment %s does not exist in project %s", environmentName, projectName)
-		}
-		created, err := api.CreateEnvironment(ctx, projectID, environmentName)
-		if err != nil {
-			return "", "", err
-		}
-		environmentID = created.ID
-	}
-	return projectID, environmentID, nil
+	return "", nil, false
 }
 
 // selectValues decides the value source: an explicit --env-file, the bare-dev
@@ -207,29 +250,9 @@ func chooseEnvFile(out io.Writer, in *bufio.Reader, root, environment string) (s
 	return files[choice-1], nil
 }
 
-// chooseEnvironment lists the project's environments on the target
-// installation and asks for one; a single environment selects itself.
-func chooseEnvironment(ctx context.Context, out io.Writer, in *bufio.Reader, api *client.Client, projectName string) (string, error) {
-	projects, err := api.ListProjects(ctx)
-	if err != nil {
-		return "", err
-	}
-	projectID := ""
-	for _, project := range projects {
-		if project.Name == projectName {
-			projectID = project.ID
-		}
-	}
-	if projectID == "" {
-		return "", fmt.Errorf("project %s does not exist on this installation", projectName)
-	}
-	environments, err := api.ListEnvironments(ctx, projectID)
-	if err != nil {
-		return "", err
-	}
-	if len(environments) == 0 {
-		return "", fmt.Errorf("project %s has no environments on this installation", projectName)
-	}
+// chooseEnvironment asks for one of the project's environments; a single
+// environment selects itself. The caller guarantees at least one.
+func chooseEnvironment(out io.Writer, in *bufio.Reader, environments []client.Environment) (string, error) {
 	if len(environments) == 1 {
 		return environments[0].Name, nil
 	}
@@ -243,6 +266,27 @@ func chooseEnvironment(ctx context.Context, out io.Writer, in *bufio.Reader, api
 		return "", err
 	}
 	return names[choice], nil
+}
+
+// promptText prints "label (fallback): " and reads one trimmed line; empty
+// input takes the fallback.
+func promptText(out io.Writer, in *bufio.Reader, label, fallback string) string {
+	fmt.Fprintf(out, "%s (%s): ", label, fallback)
+	line, _ := in.ReadString('\n')
+	answer := strings.TrimSpace(line)
+	if answer == "" {
+		return fallback
+	}
+	return answer
+}
+
+// confirmLine asks a yes/no question on the given reader; anything but a
+// yes declines.
+func confirmLine(out io.Writer, in *bufio.Reader, prompt string) bool {
+	fmt.Fprint(out, prompt)
+	line, _ := in.ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
 }
 
 // promptSelect renders numbered options starting at start and reads a
@@ -676,6 +720,180 @@ const (
 	deployOutcomeDetached = "detached"
 )
 
+// deployTarget is the resolved destination of one plan, deploy, or dev
+// invocation.
+type deployTarget struct {
+	remoteName    string
+	master        string
+	api           *client.Client
+	projectID     string
+	environmentID string
+}
+
+// resolveDeployTarget resolves remote, project, and environment, creating
+// project and environment per policy (interactive deploy behind explicit
+// confirmation, dev silently, plan and non-interactive never), and links
+// the checkout on success. prompts is interactive() && !opts.Yes.
+func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
+	project *localProject, opts *deployOptions, planOnly, prompts bool) (*deployTarget, error) {
+
+	style := clirender.StyleFor(out)
+	projectName := project.Result.Definition.Name
+
+	cfg, err := cliconfig.Load()
+	if err != nil {
+		return nil, err
+	}
+	var binding *checkout.Target
+	if opts.UseBinding {
+		if binding, err = checkout.Load(project.Root); err != nil {
+			return nil, err
+		}
+	}
+	if binding != nil && binding.Project != projectName {
+		return nil, fmt.Errorf("this checkout is linked to project %s but the manifest names %s; "+
+			"fix the manifest name or delete .skali/target.yaml to relink", binding.Project, projectName)
+	}
+
+	var remoteName string
+	var remote *cliconfig.Remote
+	if binding != nil {
+		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
+		if !ok {
+			return nil, fmt.Errorf("no remote for %s on this machine; run skali remote add %s",
+				binding.Master, binding.Master)
+		}
+		remoteName, remote = name, found
+	} else {
+		if remoteName, remote, err = cfg.Current(); err != nil {
+			return nil, err
+		}
+	}
+	api := client.New(remote.Master, remote.Token, userAgent())
+
+	if opts.UseBinding {
+		fmt.Fprintf(out, "%s       %s %s\n", style.Dim("remote"), remoteName,
+			style.Dim("("+remote.Master+")"))
+	}
+	fmt.Fprintf(out, "%s      %s %s\n", style.Dim("project"),
+		projectName, style.Dim("("+filepath.Base(project.Path)+")"))
+
+	// The bound environment is the default; --environment overrides it for
+	// one invocation without rewriting the binding.
+	if opts.Environment == "" && binding != nil {
+		opts.Environment = binding.Environment
+	}
+
+	proj, err := findProject(ctx, api, projectName)
+	if err != nil {
+		return nil, err
+	}
+	projectID := ""
+	switch {
+	case proj != nil:
+		projectID = proj.ID
+	case planOnly:
+		return nil, fmt.Errorf("project %s does not exist on %s; "+
+			"skali plan never changes the installation, run skali deploy to create it",
+			projectName, remote.Master)
+	case opts.CreateMissing:
+		created, err := api.CreateProject(ctx, projectName)
+		if err != nil {
+			return nil, err
+		}
+		projectID = created.ID
+	case !prompts:
+		return nil, fmt.Errorf("project %s does not exist on %s; "+
+			"run skali deploy interactively to create it", projectName, remote.Master)
+	default:
+		if !confirmLine(out, in, fmt.Sprintf("Create project %s on %s? [y/N] ", projectName, remoteName)) {
+			return nil, errors.New("aborted")
+		}
+		created, err := api.CreateProject(ctx, projectName)
+		if err != nil {
+			return nil, err
+		}
+		projectID = created.ID
+	}
+
+	environments, err := api.ListEnvironments(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Environment == "" {
+		switch {
+		case !prompts:
+			return nil, errors.New("--environment is required")
+		case len(environments) == 0 && planOnly:
+			return nil, fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
+				projectName, remote.Master)
+		case len(environments) == 0:
+			opts.Environment = promptText(out, in, "Environment name", "production")
+		default:
+			environment, err := chooseEnvironment(out, in, environments)
+			if err != nil {
+				return nil, err
+			}
+			opts.Environment = environment
+		}
+	}
+
+	environment := findEnvironment(environments, opts.Environment)
+	environmentID := ""
+	switch {
+	case environment != nil:
+		environmentID = environment.ID
+	case planOnly:
+		return nil, fmt.Errorf("environment %s does not exist in project %s on %s; "+
+			"skali plan never changes the installation, run skali deploy to create it",
+			opts.Environment, projectName, remote.Master)
+	case opts.CreateMissing:
+		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
+		if err != nil {
+			return nil, err
+		}
+		environmentID = created.ID
+	case !prompts:
+		return nil, fmt.Errorf("environment %s does not exist in project %s on %s; "+
+			"run skali deploy interactively to create it", opts.Environment, projectName, remote.Master)
+	default:
+		if !confirmLine(out, in, fmt.Sprintf("Create environment %s in project %s? [y/N] ",
+			opts.Environment, projectName)) {
+			return nil, errors.New("aborted")
+		}
+		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
+		if err != nil {
+			return nil, err
+		}
+		environmentID = created.ID
+	}
+
+	fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), opts.Environment)
+
+	// Link the checkout on first contact. The dev-owned local remote is
+	// disposable and never bound.
+	if opts.UseBinding && binding == nil && remoteName != localRemoteName {
+		if err := checkout.Save(project.Root, &checkout.Target{
+			Master:      remote.Master,
+			Project:     projectName,
+			Environment: opts.Environment,
+		}); err != nil {
+			return nil, err
+		}
+		fmt.Fprintln(out, style.Dim(fmt.Sprintf(
+			"linked to remote %s, project %s, environment %s; stored in .skali/",
+			remoteName, projectName, opts.Environment)))
+	}
+
+	return &deployTarget{
+		remoteName:    remoteName,
+		master:        remote.Master,
+		api:           api,
+		projectID:     projectID,
+		environmentID: environmentID,
+	}, nil
+}
+
 func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (string, error) {
 	ctx := command.Context()
 	out := command.OutOrStdout()
@@ -683,33 +901,14 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	if err != nil {
 		return "", err
 	}
-	cfg, remoteName, api, err := currentClient()
-	if err != nil {
-		return "", err
-	}
 	style := clirender.StyleFor(out)
-	master := cfg.Remotes[remoteName].Master
-	fmt.Fprintf(out, "%s      %s %s\n", style.Dim("project"),
-		project.Result.Definition.Name, style.Dim("("+filepath.Base(project.Path)+")"))
-	if opts.Environment == "" {
-		if !interactive() {
-			return "", errors.New("--environment is required")
-		}
-		environment, err := chooseEnvironment(ctx, out, bufio.NewReader(os.Stdin), api,
-			project.Result.Definition.Name)
-		if err != nil {
-			return "", err
-		}
-		opts.Environment = environment
-	}
-	fmt.Fprintf(out, "%s  %s %s\n", style.Dim("environment"),
-		opts.Environment, style.Dim("("+master+")"))
-
-	projectID, environmentID, err := resolveEnvironmentIDs(ctx, api,
-		project.Result.Definition.Name, opts.Environment, opts.CreateMissing)
+	prompts := interactive() && !opts.Yes
+	target, err := resolveDeployTarget(ctx, out, bufio.NewReader(os.Stdin),
+		project, opts, planOnly, prompts)
 	if err != nil {
 		return "", err
 	}
+	api, projectID, environmentID := target.api, target.projectID, target.environmentID
 	definitionVersion, err := api.SubmitDefinition(ctx, projectID, string(project.Source), "yaml")
 	if err != nil {
 		return "", err
