@@ -100,10 +100,10 @@ func applyAll(objects []runtime.Object) []Op {
 // observed in R2 (the one rendered Secret is always desired), so they are
 // not prunable either.
 var prunableKinds = map[schema.GroupKind]bool{
-	{Group: "apps", Kind: "Deployment"}:                      true,
-	{Group: "", Kind: "Service"}:                             true,
-	{Group: "networking.k8s.io", Kind: "Ingress"}:            true,
-	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}:  true,
+	{Group: "apps", Kind: "Deployment"}:                     true,
+	{Group: "", Kind: "Service"}:                            true,
+	{Group: "networking.k8s.io", Kind: "Ingress"}:           true,
+	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}: true,
 }
 
 // planPrune lists observed objects of the environment that are prunable and
@@ -183,8 +183,12 @@ func bareKey(dotted string) string {
 type desiredSet struct {
 	namespace *corev1.Namespace
 	secret    *corev1.Secret
-	services  map[string]serviceObjects
-	refs      []kube.ObjectRef // every desired object, for prune planning
+	// pullSecret is rendered only when the kernel is configured for
+	// public-domain pulls (existing clusters); nil otherwise. Secrets are
+	// not observed or prunable, so it needs no prune handling.
+	pullSecret *corev1.Secret
+	services   map[string]serviceObjects
+	refs       []kube.ObjectRef // every desired object, for prune planning
 }
 
 // groupObjects splits the flat rendered object list per service key.

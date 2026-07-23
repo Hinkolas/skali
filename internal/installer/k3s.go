@@ -36,6 +36,17 @@ const (
 	// token-authenticated registration with the server succeeded, making it
 	// the host-side join proof on nodes that have no kube API access.
 	k3sAgentKubeletKubeconfig = "/var/lib/rancher/k3s/agent/kubelet.kubeconfig"
+
+	// K3sServerTokenPath is the permanent server token k3s generates on
+	// every server. It is the only credential that can join an additional
+	// server (it doubles as the passphrase for the bootstrap data a joining
+	// server fetches), so `token --role server` reads it instead of minting
+	// a TTL token.
+	K3sServerTokenPath = "/var/lib/rancher/k3s/server/token"
+	// k3sEtcdDBDir exists exactly when the server runs on embedded etcd;
+	// legacy installs on the default sqlite datastore lack it and cannot
+	// accept additional servers.
+	k3sEtcdDBDir = "/var/lib/rancher/k3s/server/db/etcd"
 )
 
 // Vendored https://get.k3s.io; the script owns the systemd unit, selinux
@@ -46,39 +57,45 @@ const (
 var k3sInstallScript []byte
 
 // k3sNode describes the node being provisioned. ServerURL and Token are
-// set only when the node joins an existing cluster as an agent.
+// set only when the node joins an existing cluster, as an agent or as an
+// additional server.
 type k3sNode struct {
-	Name         string
-	Cluster      string
+	Name    string
+	Cluster string
+	// Role is the k3s role; empty means layout.RoleServer.
+	Role         string
 	Capabilities []string
 	// NodeIP pins the advertised address on multi-homed hosts; empty keeps
 	// the k3s default (the default-route interface).
 	NodeIP string
-	// ServerURL points a joining agent at an existing server.
+	// ServerURL points a joining node at an existing server.
 	ServerURL string
 	// Token is the resolved join token plaintext; written to K3sTokenPath,
 	// never passed through the environment.
 	Token string
 	// PullSecret is the cluster's shared registry pull credential, written
 	// into registries.yaml so containerd can earn pull tokens once the
-	// registry requires them. Servers generate it, agents receive it inside
-	// the composite join token; empty renders no credential.
+	// registry requires them. The first server generates it, joining nodes
+	// receive it inside the composite join token; empty renders no
+	// credential.
 	PullSecret string
 }
 
 func (n k3sNode) role() string {
-	if n.ServerURL != "" {
-		return layout.RoleAgent
+	if n.Role == "" {
+		return layout.RoleServer
 	}
-	return layout.RoleServer
+	return n.Role
 }
 
 // k3sConfigYAML renders /etc/rancher/k3s/config.yaml. It is written before
 // the install script runs so k3s starts configured: capability labels ride
 // node registration, Traefik stays enabled as the edge, and on servers the
 // embedded registry mirror (Spegel) keeps already-pulled images available
-// while the managed registry is down. Agents reference the server and the
-// token file here; embedded-registry is a server-only flag and would be
+// while the managed registry is down. The first server initializes the
+// embedded etcd cluster (cluster-init) so additional servers can join
+// later without a datastore migration; joining nodes reference the server
+// and the token file. embedded-registry is a server-only flag and would be
 // fatal on an agent.
 func k3sConfigYAML(node k3sNode) string {
 	var builder strings.Builder
@@ -86,10 +103,16 @@ func k3sConfigYAML(node k3sNode) string {
 	if node.NodeIP != "" {
 		builder.WriteString("node-ip: " + node.NodeIP + "\n")
 	}
-	if node.role() == layout.RoleAgent {
+	switch {
+	case node.role() == layout.RoleAgent:
 		builder.WriteString("server: " + node.ServerURL + "\n")
 		builder.WriteString("token-file: " + K3sTokenPath + "\n")
-	} else {
+	case node.ServerURL != "":
+		builder.WriteString("server: " + node.ServerURL + "\n")
+		builder.WriteString("token-file: " + K3sTokenPath + "\n")
+		builder.WriteString("embedded-registry: true\n")
+	default:
+		builder.WriteString("cluster-init: true\n")
 		builder.WriteString("embedded-registry: true\n")
 	}
 	builder.WriteString("node-label:\n")
@@ -154,7 +177,7 @@ func installK3s(ctx context.Context, runner host.Runner, node k3sNode, progress 
 	if err := runner.WriteFile(ctx, K3sRegistriesPath, []byte(k3sRegistriesYAML(node.PullSecret)), 0o600); err != nil {
 		return fmt.Errorf("write k3s registries config: %w", err)
 	}
-	if role == layout.RoleAgent {
+	if node.Token != "" {
 		if err := runner.WriteFile(ctx, K3sTokenPath, []byte(node.Token+"\n"), 0o600); err != nil {
 			return fmt.Errorf("write k3s join token: %w", err)
 		}
@@ -317,10 +340,58 @@ func waitAgentJoined(ctx context.Context, runner host.Runner, cluster, nodeName 
 	return nil
 }
 
-// waitNodeReady polls the node through k3s's own kubectl (via the runner,
-// so the phase stays portable to remote runners) until it reports Ready
-// and carries the stamped capability labels.
-func waitNodeReady(ctx context.Context, runner host.Runner, capabilities []string, progress Progress) error {
+// waitServerJoined proves an additional server's join: the k3s unit is
+// active, the local kube API answers /readyz (joining servers run a full
+// control plane, unlike agents), and the own node object reports Ready
+// with the stamped labels.
+func waitServerJoined(ctx context.Context, runner host.Runner, cluster, nodeName string, capabilities []string, progress Progress) error {
+	progress.Start("Join cluster " + fmt.Sprintf("%q", cluster))
+	deadline := time.Now().Add(5 * time.Minute)
+	var lastDetail string
+	for {
+		if time.Now().After(deadline) {
+			if lastDetail == "" {
+				lastDetail = "no status observed"
+			}
+			return fmt.Errorf("k3s server never joined the cluster: %s", lastDetail)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+		result, err := runner.Run(ctx, host.Command{
+			Name: "systemctl", Args: []string{"is-active", "k3s.service"},
+		})
+		if err != nil || result.ExitCode != 0 {
+			lastDetail = "k3s.service is not active"
+			continue
+		}
+		result, err = runner.Run(ctx, host.Command{
+			Name: "k3s", Args: []string{"kubectl", "get", "--raw", "/readyz"},
+		})
+		if err != nil || result.ExitCode != 0 {
+			lastDetail = "the kubernetes api is not ready yet"
+			continue
+		}
+		progress.Done("")
+		break
+	}
+	return waitNodeReady(ctx, runner, nodeName, capabilities, progress)
+}
+
+// datastoreIsEtcd reports whether this server runs on embedded etcd.
+// Legacy installs predate cluster-init and run on the default sqlite
+// datastore, which cannot accept additional servers.
+func datastoreIsEtcd(ctx context.Context, runner host.Runner) bool {
+	info, err := runner.Stat(ctx, k3sEtcdDBDir)
+	return err == nil && info.Exists
+}
+
+// waitNodeReady polls the named node through k3s's own kubectl (via the
+// runner, so the phase stays portable to remote runners) until it reports
+// Ready and carries the stamped capability labels.
+func waitNodeReady(ctx context.Context, runner host.Runner, nodeName string, capabilities []string, progress Progress) error {
 	progress.Start("Stamp capability labels on node")
 	deadline := time.Now().Add(5 * time.Minute)
 	var lastErr error
@@ -343,28 +414,28 @@ func waitNodeReady(ctx context.Context, runner host.Runner, capabilities []strin
 			lastErr = fmt.Errorf("k3s kubectl get nodes: exit %d", result.ExitCode)
 			continue
 		}
-		name, ready, labels, err := parseNodeList([]byte(result.Stdout))
+		ready, labels, err := parseNodeList([]byte(result.Stdout), nodeName)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		if !ready {
-			lastErr = fmt.Errorf("node %s is not ready yet", name)
+			lastErr = fmt.Errorf("node %s is not ready yet", nodeName)
 			continue
 		}
 		missing := missingCapabilityLabels(labels, capabilities)
 		if len(missing) > 0 {
-			lastErr = fmt.Errorf("node %s is missing labels %s", name, strings.Join(missing, ", "))
+			lastErr = fmt.Errorf("node %s is missing labels %s", nodeName, strings.Join(missing, ", "))
 			continue
 		}
-		progress.Done(name)
+		progress.Done(nodeName)
 		return nil
 	}
 }
 
-// parseNodeList extracts the single node's name, readiness, and labels
-// from a kubectl node list.
-func parseNodeList(data []byte) (name string, ready bool, labels map[string]string, err error) {
+// parseNodeList extracts the named node's readiness and labels from a
+// kubectl node list; on multi-node clusters the list carries every member.
+func parseNodeList(data []byte, nodeName string) (ready bool, labels map[string]string, err error) {
 	var list struct {
 		Items []struct {
 			Metadata struct {
@@ -380,18 +451,20 @@ func parseNodeList(data []byte) (name string, ready bool, labels map[string]stri
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(data, &list); err != nil {
-		return "", false, nil, fmt.Errorf("parse node list: %w", err)
+		return false, nil, fmt.Errorf("parse node list: %w", err)
 	}
-	if len(list.Items) == 0 {
-		return "", false, nil, fmt.Errorf("no nodes registered yet")
-	}
-	node := list.Items[0]
-	for _, condition := range node.Status.Conditions {
-		if condition.Type == "Ready" && condition.Status == "True" {
-			ready = true
+	for _, node := range list.Items {
+		if node.Metadata.Name != nodeName {
+			continue
 		}
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == "Ready" && condition.Status == "True" {
+				ready = true
+			}
+		}
+		return ready, node.Metadata.Labels, nil
 	}
-	return node.Metadata.Name, ready, node.Metadata.Labels, nil
+	return false, nil, fmt.Errorf("node %s is not registered yet", nodeName)
 }
 
 func missingCapabilityLabels(labels map[string]string, capabilities []string) []string {

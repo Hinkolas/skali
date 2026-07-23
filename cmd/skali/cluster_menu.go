@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/installer"
+	"github.com/Hinkolas/skali/internal/layout"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -20,6 +21,10 @@ import (
 func runClusterRoot(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	out := os.Stdout
+
+	if existingClusterMode() {
+		return runExistingRoot(ctx, out)
+	}
 	banner(out)
 
 	present, err := darwinPrelude(ctx, out, vmPolicyStatus, "")
@@ -122,17 +127,37 @@ func printStatus(out *os.File, status *installer.Status) {
 	}
 	fmt.Fprintf(out, "  k3s        %s %s\n", orUnknown(detected.K3sVersion), k3sSuffix)
 
+	maintained := ""
+	if status.InitOwner != "" {
+		maintained = "; maintained on " + status.InitOwner
+	}
 	switch {
 	case !status.Initialized:
 		fmt.Fprintln(out, "  bundle     not initialized; run skali cluster init")
 	case status.BundleCurrent:
-		fmt.Fprintf(out, "  bundle     %s (current)\n", status.BundleVersion)
+		fmt.Fprintf(out, "  bundle     %s (current%s)\n", status.BundleVersion, maintained)
 	default:
-		fmt.Fprintf(out, "  bundle     %s (skali is %s)\n", status.BundleVersion, versionpkg.Version)
+		fmt.Fprintf(out, "  bundle     %s (skali is %s%s)\n", status.BundleVersion, versionpkg.Version, maintained)
+	}
+	if status.Datastore == "sqlite" {
+		fmt.Fprintln(out, "  datastore  sqlite (legacy; server join disabled, reinstall to enable ha)")
 	}
 
 	if status.ClusterReachable {
-		fmt.Fprintf(out, "  nodes      %d joined\n", status.Nodes)
+		if status.TierDrift() {
+			fmt.Fprintf(out, "  tier       deployed %s, available %s (run skali cluster tier)\n",
+				status.DeployedTier, status.AvailableTier)
+		}
+		fmt.Fprintf(out, "  nodes      %d joined (%s)\n", len(status.Nodes), nodeRoleCounts(status))
+		servers := status.Servers()
+		if servers > 0 && servers%2 == 0 {
+			fmt.Fprintf(out, "  servers    %d (even count; etcd quorum prefers one or three)\n", servers)
+		}
+		for _, node := range status.Nodes {
+			if !node.Current && node.K3sVersion != "" {
+				fmt.Fprintf(out, "  node       %s %s (needs upgrade)\n", node.Name, node.K3sVersion)
+			}
+		}
 		parts := make([]string, 0, len(status.Components))
 		for _, component := range status.Components {
 			if component.Healthy {
@@ -151,6 +176,25 @@ func printStatus(out *os.File, status *installer.Status) {
 	fmt.Fprintln(out)
 }
 
+// nodeRoleCounts words the nodes-line suffix: "1 server", "2 servers,
+// 1 agent".
+func nodeRoleCounts(status *installer.Status) string {
+	servers := status.Servers()
+	agents := len(status.Nodes) - servers
+	parts := []string{pluralCount(servers, "server")}
+	if agents > 0 {
+		parts = append(parts, pluralCount(agents, "agent"))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func pluralCount(count int, noun string) string {
+	if count == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", count, noun)
+}
+
 func healthyOverall(status *installer.Status) bool {
 	if !status.ClusterReachable || !status.Initialized || len(status.Components) == 0 {
 		return false
@@ -164,18 +208,25 @@ func healthyOverall(status *installer.Status) bool {
 }
 
 // runMenu is the deliberately dumb maintenance loop: numbered dispatch,
-// re-render, and named refusals for operations of later slices.
+// re-render, and named refusals for operations of later slices. Tier
+// drift switches the first prompt to the verbose menu naming the pending
+// tier change.
 func runMenu(ctx context.Context, out *os.File, status *installer.Status) error {
 	reader := bufio.NewReader(os.Stdin)
-	if healthyOverall(status) && status.BundleCurrent && status.K3sCurrent {
+	if healthyOverall(status) && status.BundleCurrent && status.K3sCurrent && !status.TierDrift() {
 		fmt.Fprintln(out, "nothing to do")
 	}
+	prompt := "  [1] status  [2] apply tier  [3] upgrade  [4] repair  [5] uninstall  [q] quit\n  : "
+	if status.TierDrift() {
+		printTierDriftBlock(out, status)
+		prompt = verboseMenu(status) + "  : "
+	}
 	for {
-		answer, err := cliprompt.Line(reader,
-			"  [1] status  [2] apply tier  [3] upgrade  [4] repair  [5] uninstall  [q] quit\n  : ")
+		answer, err := cliprompt.Line(reader, prompt)
 		if err != nil {
 			return nil
 		}
+		prompt = "  [1] status  [2] apply tier  [3] upgrade  [4] repair  [5] uninstall  [q] quit\n  : "
 		switch strings.ToLower(answer) {
 		case "1":
 			refreshed, err := installer.GatherStatus(ctx, runner())
@@ -184,11 +235,11 @@ func runMenu(ctx context.Context, out *os.File, status *installer.Status) error 
 			}
 			printStatus(out, refreshed)
 		case "2":
-			fmt.Fprintln(out, "not implemented in this slice: tier changes arrive with a later milestone")
+			return runTierFlow(ctx, out, reader, false)
 		case "3":
 			return runUpgradeFlow(ctx, out, reader, false)
 		case "4":
-			fmt.Fprintln(out, "not implemented in this slice: diagnose and repair arrive with a later milestone")
+			return runRepairFlow(ctx, out, reader, false)
 		case "5":
 			return runUninstallFlow(ctx, out, reader, "", "")
 		case "q", "quit", "":
@@ -196,6 +247,41 @@ func runMenu(ctx context.Context, out *os.File, status *installer.Status) error 
 		default:
 			fmt.Fprintln(out, "please answer 1-5 or q")
 		}
+	}
+}
+
+// printTierDriftBlock renders the pending tier change ahead of the menu.
+func printTierDriftBlock(out *os.File, status *installer.Status) {
+	fmt.Fprintf(out, "  database nodes    %d (%s)\n",
+		len(status.DatabaseNodes), strings.Join(status.DatabaseNodes, ", "))
+	fmt.Fprintf(out, "  deployed tier     %s\n", status.DeployedTier)
+	fmt.Fprintf(out, "  available tier    %s\n", status.AvailableTier)
+	fmt.Fprintln(out)
+}
+
+// verboseMenu describes each entry; shown when a tier change is pending
+// so entry [2] names what applying it would do.
+func verboseMenu(status *installer.Status) string {
+	tierAction := "upgrade system databases to " + string(status.AvailableTier)
+	if bundleTierRank(status.AvailableTier) < bundleTierRank(status.DeployedTier) {
+		tierAction = "downgrade system databases to " + string(status.AvailableTier)
+	}
+	return "" +
+		"  [1] status        show installation health\n" +
+		"  [2] apply tier    " + tierAction + "\n" +
+		"  [3] upgrade       k3s / bundle versions\n" +
+		"  [4] repair        diagnose and repair\n" +
+		"  [5] uninstall     scoped removal\n"
+}
+
+func bundleTierRank(tier layout.Tier) int {
+	switch tier {
+	case layout.TierSynchronous:
+		return 3
+	case layout.TierAsynchronous:
+		return 2
+	default:
+		return 1
 	}
 }
 

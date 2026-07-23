@@ -26,6 +26,9 @@ func newClusterUpgradeCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := os.Stdout
+			if existingClusterMode() {
+				return runExistingUpgrade(cmd.Context(), out)
+			}
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
 			return runUpgradeFlow(cmd.Context(), out, reader, yes)
@@ -53,7 +56,7 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	case installer.StateUnmanaged:
 		return unmanagedError()
 	case installer.StateDamaged:
-		return fmt.Errorf("this installation is damaged: %s; repair is not implemented in this slice",
+		return fmt.Errorf("this installation is damaged: %s; run skali cluster diagnose, then skali cluster repair",
 			strings.Join(detected.Problems, "; "))
 	case installer.StateUnsupported:
 		return fmt.Errorf("this host cannot run a skali installation: %s",
@@ -64,11 +67,24 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	}
 	record := detected.Record
 	role := record.Node.Role
-	if role == layout.RoleAgent && imageTarFlag != "" {
-		return errors.New("--image-tar applies to server upgrades; agent nodes run no bundle")
-	}
+	// A server whose local record never initialized the bundle is a
+	// secondary server when the in-cluster record names the init owner:
+	// its bundle is maintained there, so this host moves k3s only.
+	bundleOwner := ""
 	if role == layout.RoleServer && record.Versions.Bundle == "" {
-		return errors.New("the bundle was never initialized; run skali cluster init first")
+		if status.InitOwner == "" {
+			return errors.New("the bundle was never initialized; run skali cluster init first")
+		}
+		bundleOwner = status.InitOwner
+	}
+	if imageTarFlag != "" {
+		if role == layout.RoleAgent {
+			return errors.New("--image-tar applies to server upgrades; agent nodes run no bundle")
+		}
+		if bundleOwner != "" {
+			return fmt.Errorf("--image-tar applies to bundle upgrades; the bundle is maintained on %s",
+				bundleOwner)
+		}
 	}
 
 	plan := installer.PlanUpgrade(status, imageTarFlag != "")
@@ -79,15 +95,22 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	// A host installed before the registry required authentication has no
 	// node pull credential in registries.yaml; upgrade is its migration
 	// path, so the gap keeps the flow going even with no version drift.
+	// Secondary servers are excluded: healing mints a new credential that
+	// only a converge (the init owner's) can publish in-cluster.
 	credentialMissing := false
-	if role == layout.RoleServer {
+	if role == layout.RoleServer && bundleOwner == "" {
 		credentialMissing, err = installer.NodePullCredentialMissing(ctx, runner())
 		if err != nil {
 			return err
 		}
 	}
-	if plan.Nothing(role) && !credentialMissing {
+	nothing := plan.Nothing(role)
+	if bundleOwner != "" {
+		nothing = !plan.K3sDrifted
+	}
+	if nothing && !credentialMissing {
 		fmt.Fprintln(out, "already current, nothing to do")
+		printRemainingUpgrades(out, status)
 		return nil
 	}
 
@@ -96,7 +119,7 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	promptAllowed := !yes && cliprompt.Interactive()
 	opts := installer.InitOptions{Out: out, SkipAdmin: true}
 	var tarData []byte
-	if role == layout.RoleServer {
+	if role == layout.RoleServer && bundleOwner == "" {
 		if err := seedInitInputs(reader, promptAllowed, record, &opts); err != nil {
 			return err
 		}
@@ -111,7 +134,8 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	}
 
 	fmt.Fprintf(out, "upgrade plan for host %s (cluster %q)\n", hostLabel(detected), record.Cluster)
-	printUpgradePlan(out, plan, role, opts.SkalidImage, tarData != nil, credentialMissing)
+	printUpgradePlan(out, plan, role, bundleOwner, opts.SkalidImage, tarData != nil, credentialMissing)
+	printUpgradeSequence(out, status)
 
 	if !yes {
 		if !cliprompt.Interactive() {
@@ -126,8 +150,8 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
 
-	if role == layout.RoleAgent {
-		if err := installer.UpgradeAgent(ctx, runner(), record, progress); err != nil {
+	if role == layout.RoleAgent || bundleOwner != "" {
+		if err := installer.UpgradeNode(ctx, runner(), record, progress); err != nil {
 			progress.Abort()
 			return err
 		}
@@ -135,6 +159,10 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "upgrade complete:")
 		fmt.Fprintf(out, "  k3s  %s\n", installer.K3sVersion)
+		if bundleOwner != "" {
+			fmt.Fprintf(out, "  bundle maintained on %s\n", bundleOwner)
+		}
+		printRemainingAfterUpgrade(ctx, out)
 		return nil
 	}
 
@@ -172,13 +200,59 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	fmt.Fprintf(out, "  bundle  %s\n", versionpkg.Version)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Install logs:", result.LogPath)
+	printRemainingAfterUpgrade(ctx, out)
 	return nil
 }
 
+// printUpgradeSequence renders the ordered per-host plan on multi-node
+// clusters: servers first, one at a time, then agents. Display only; the
+// operator runs upgrade on each host.
+func printUpgradeSequence(out io.Writer, status *installer.Status) {
+	steps := installer.UpgradeSequence(status)
+	if len(status.Nodes) < 2 || len(steps) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "cluster upgrade order (run per host, one at a time, wait for ready between servers):")
+	for i, step := range steps {
+		suffix := "run there: sudo skali cluster upgrade"
+		if step.IsSelf {
+			suffix = "(this host)"
+		}
+		fmt.Fprintf(out, "  %d. %-12s %-6s %s -> %s  %s\n",
+			i+1, step.Name, step.Role, orUnknown(step.From), installer.K3sVersion, suffix)
+	}
+	fmt.Fprintln(out)
+}
+
+// printRemainingUpgrades names the still-drifted other nodes from an
+// already gathered status.
+func printRemainingUpgrades(out io.Writer, status *installer.Status) {
+	var remaining []string
+	for _, step := range installer.UpgradeSequence(status) {
+		if !step.IsSelf {
+			remaining = append(remaining, step.Name)
+		}
+	}
+	if len(remaining) > 0 {
+		fmt.Fprintf(out, "next: run sudo skali cluster upgrade on %s\n", strings.Join(remaining, ", then "))
+	}
+}
+
+// printRemainingAfterUpgrade re-gathers the status after a completed
+// upgrade so the guidance reflects what this host's upgrade changed.
+func printRemainingAfterUpgrade(ctx context.Context, out io.Writer) {
+	status, err := installer.GatherStatus(ctx, runner())
+	if err != nil {
+		return
+	}
+	printRemainingUpgrades(out, status)
+}
+
 // printUpgradePlan renders the drift lines the confirmation refers to. A
-// server converges whenever the flow reaches this point, so the bundle
-// line always states what the converge is for.
-func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, image string, fromTar, credentialMissing bool) {
+// bundle-owning server converges whenever the flow reaches this point, so
+// its bundle line always states what the converge is for; agents and
+// secondary servers move k3s only.
+func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, bundleOwner, image string, fromTar, credentialMissing bool) {
 	if plan.K3sDrifted {
 		fmt.Fprintf(out, "  k3s     %s -> %s\n", orUnknown(plan.K3sFrom), plan.K3sTo)
 	} else {
@@ -186,7 +260,12 @@ func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, image str
 	}
 	if role == layout.RoleAgent {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, "This node is an agent: upgrade the server first, then run upgrade on each node.")
+		fmt.Fprintln(out, "This node is an agent: upgrade the servers first, one at a time, then each agent.")
+		fmt.Fprintln(out)
+		return
+	}
+	if bundleOwner != "" {
+		fmt.Fprintf(out, "  bundle  maintained on %s\n", bundleOwner)
 		fmt.Fprintln(out)
 		return
 	}

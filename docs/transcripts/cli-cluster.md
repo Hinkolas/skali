@@ -65,6 +65,11 @@ Skali is ready:
 Install logs: /var/lib/skali/logs/init-01J9X2.log
 ```
 
+The first server initializes the embedded etcd cluster (`cluster-init`),
+so additional servers can join later without a datastore change. Answering
+"no" to the first-server question routes into the join flow of section 3
+as an additional server.
+
 `init` runs before `skalid` or its database exist, so its steps are logged
 locally, not in the product run journal.
 
@@ -151,6 +156,43 @@ $ sudo skali cluster join --server https://cp-1.internal:6443 \
   ok  Write /var/lib/skali/installation.yaml
 ```
 
+Additional servers join with the cluster's permanent server token, because
+k3s bootstrap tokens can only join agents. The token command prints the
+risk and the quorum consequence, and a token minted for one role refuses
+the other at join time. A server on the legacy sqlite datastore refuses to
+mint server tokens; reinstalling the cluster is the path to HA there.
+
+```console
+$ sudo skali cluster token --role server
+join command for cluster "production" (server token, never expires):
+  sudo skali cluster join --server https://cp-1.internal:6443 \
+    --token-file <file> --role server --capabilities <list>
+
+join token (write it to <file> on the joining host, mode 0600):
+  skali1.eyJrM3MiOiJLMTAuLi4iLCJwdWxsIjoiLi4uIiwicm9sZSI6InNlcnZlciJ9
+
+warning: this is the cluster's permanent server token; it grants full
+administrator access and never expires. Delete the token file on the
+joining host once the join completes.
+
+note: this join would make 2 servers; etcd quorum prefers one or three
+```
+
+```console
+$ sudo skali cluster join --server https://cp-1.internal:6443 \
+    --token-file /root/token --role server --capabilities edge
+  ok  Install k3s v1.33.3+k3s1 (server)
+  ok  Join cluster "production"
+  ok  Stamp capability labels on node cp-2
+  ok  Write /var/lib/skali/installation.yaml
+
+warning: the cluster now has 2 servers; etcd quorum prefers one or three,
+so join another server soon
+```
+
+The even-count warnings never refuse: two servers is the unavoidable step
+on the way to three.
+
 After all planned nodes have joined, once on a server:
 
 ```console
@@ -213,6 +255,35 @@ Tier changes never happen as a side effect of a node joining, and each owner
 scales its own databases: the installer scales only the bootstrap database,
 `skalid` scales its platform pools through an explicit product operation.
 
+The non-interactive form is `sudo skali cluster tier --yes`; status marks a
+pending change with a drift line (`tier deployed single, available
+asynchronous (run skali cluster tier)`). The reverse direction exists for a
+cluster that lost a database node; the downgrade warns instead:
+
+```console
+$ sudo skali cluster tier
+
+tier plan for host cp-1 (cluster "production")
+  database nodes    2 (db-1, db-2)
+  deployed tier     synchronous
+  available tier    asynchronous
+
+Downgrade the bootstrap database from synchronous to asynchronous
+replication. This removes a replica and lowers availability; no data is
+deleted. Continue? [y/N] y
+
+  ok  Scale bootstrap database to 2 instance(s) (asynchronous replication)
+  ok  Verify replication state
+
+bootstrap database tier: asynchronous
+```
+
+The tier apply is deliberately narrow: it scales only the bootstrap
+database and restamps the bundle hash, never moving versions or touching
+the record; it refuses when the bundle is not current (upgrade converges at
+the available tier anyway). Refusing the downgrade would strand the extra
+replica unschedulable forever, so it stays an explicit, warned choice.
+
 ## 5. Version upgrade (k3s and bundle)
 
 A newer `skali` on a host installed by an older one shows the drift in
@@ -266,8 +337,28 @@ re-converges even when the versions already match, because the new image
 id must roll skalid.
 
 Agent nodes carry no bundle, so upgrade moves only k3s there. Upgrade the
-server first, then run upgrade on each node; a `skali` older than the
-installed k3s refuses rather than downgrade.
+servers first, one at a time, waiting for ready between them, then each
+agent; a `skali` older than the installed k3s refuses rather than
+downgrade. On a multi-node cluster the plan prints the ordered per-host
+sequence, and a completed upgrade names what is still drifted:
+
+```console
+cluster upgrade order (run per host, one at a time, wait for ready between servers):
+  1. cp-1   server  v1.33.3+k3s1 -> v1.33.4+k3s1  (this host)
+  2. cp-2   server  v1.33.3+k3s1 -> v1.33.4+k3s1  run there: sudo skali cluster upgrade
+  3. db-1   agent   v1.33.3+k3s1 -> v1.33.4+k3s1  run there: sudo skali cluster upgrade
+...
+next: run sudo skali cluster upgrade on cp-2, then db-1
+```
+
+Status marks drifted members with per-node `(needs upgrade)` lines, and an
+even server count carries the quorum note.
+
+The bundle is maintained by the node that first initialized the cluster
+(the init owner): its canonical record is a bundle-hash input, so a
+converge from another server would churn the published record. A secondary
+server's status and upgrade plan print `bundle maintained on cp-1` and its
+upgrade moves only k3s; init refuses there, naming the owner.
 
 Upgrade is also the migration path for a server installed before the
 registry required authentication: such a host has no node pull credential
@@ -319,22 +410,150 @@ suggested action
 
 No step above used the Skali API, the product database, or the registry.
 Already-running project workloads are unaffected while the control plane is
-down.
+down. A diagnosis that found problems exits nonzero, so scripts can gate on
+it; warnings (a version drift, a pending volume claim) never flip the exit
+code.
+
+## 7a. Repair
+
+`skali cluster repair` is diagnose-first: it runs the same read-only
+diagnosis, maps the findings onto scoped actions, and confirms each action
+individually before touching anything. A clean diagnosis performs no
+mutation.
+
+```console
+$ sudo skali cluster repair
+host cp-1: Skali server (cluster "production")
+  fail  k3s service: k3s.service is not active
+  ...
+
+suggested action
+  skali cluster repair
+
+Restart the k3s service. Workload containers keep running through the
+restart. Continue? [y/N] y
+  ok  Restart k3s
+  ok  Wait for k3s v1.33.3+k3s1 ready
+
+host cp-1: Skali server (cluster "production")
+  ok    k3s service: active
+  ok    kubernetes api: reachable
+  ...
+
+$ sudo skali cluster repair
+...
+nothing to repair
+```
+
+The v1 action set: reinstall the k3s service (a damaged unit or binary
+with a readable record; configuration and datastore are preserved),
+restart k3s, rewrite registries.yaml (minting a new node pull credential,
+followed by a forced reconverge that publishes it), and reconverge the
+bundle from the running cluster's own inputs (unhealthy components or an
+interrupted converge whose hash stamp is missing). `--yes` confirms every
+planned action for scripts.
+
+Repair never guesses identity: an unreadable installation record is a
+refusal pointing at the restore inputs, never a synthesized record. An
+agent whose registries.yaml lost its credential is told to re-join with a
+fresh token, because a locally minted credential is unknown to the
+cluster. On a secondary server the reconverge refuses, naming the init
+owner.
+
+## 7b. Restore entry point
+
+```console
+$ sudo skali cluster restore
+host cp-1: fresh
+
+restore rebuilds a Skali installation from three inputs:
+  1. the saved installation record (a copy of /var/lib/skali/installation.yaml)
+  2. an off-cluster database backup
+  3. the registry artifacts (release images and cache contents)
+
+Keep the record with your backups; nothing in the cluster can recreate it.
+
+error: not implemented in this slice: restore arrives with a later milestone
+```
+
+The command is the entry point only: it states the recovery contract and
+refuses. Record import and database restore land with the backup/restore
+milestones.
 
 ## 8. Existing Kubernetes cluster
 
+For a cluster whose hosts skali does not administer, the installer runs
+from any workstation (macOS included, no VM, no root) with an explicit
+kubeconfig. It owns only the Skali system bundle: install and initialize
+collapse into one step, and node, k3s, and Kubernetes-version lifecycle
+stay with the cluster operator.
+
+```yaml
+# existing.yaml
+endpoints:
+  api: skali.example.com
+  registry: registry.example.com
+tls:
+  issuerEmail: ops@example.com
+admin:
+  email: nicholas@example.com
+  passwordFile: /root/skali-admin-password
+skalid:
+  image: ghcr.io/hinkolas/skalid:v2.0.0
+ingress:
+  className: nginx           # required; k3s's traefik cannot be assumed
+storage:
+  className: fast-ssd        # optional; empty uses the cluster default
+database:
+  tier: single               # explicit here (no node labels to count)
+operators:
+  cnpg: install              # or use-existing to reuse the cluster's operator
+  certManager: install
+```
+
 ```console
 $ skali cluster install --mode existing-cluster \
-    --kubeconfig ~/.kube/config --config init.yaml
+    --kubeconfig ~/.kube/config --config existing.yaml
 mode: existing cluster (unmanaged hosts)
   This mode installs and maintains only the Skali system bundle. Node
   lifecycle, k3s, and Kubernetes upgrades remain yours.
   ok  Verify cluster version and storage prerequisites
   ok  Apply blessed operators
   ...
+  ok  Wait for skalid ready
+  ok  Create admin account
+
+Skali is ready:
+  https://skali.example.com        api/ui
+  https://registry.example.com     managed registry
+
+Application images pull through the registry domain; skalid injects a
+pull secret into each project namespace. The registry domain must be
+publicly resolvable and issuable for pulls to succeed.
 ```
 
-In this mode `join`, node removal, and Kubernetes upgrades are refused.
+Image pulls are the one thing an unmanaged cluster cannot do the managed
+way: its nodes have no containerd mirror for `registry.skali.internal`.
+So artifact references and pulls both travel the public registry domain,
+and `skalid` injects a pull-only credential into every project namespace.
+
+`operators.cnpg: install` refuses when the cluster already runs CNPG (its
+CRD is present); set `use-existing` to reuse it, and the converge skips
+the vendored operator, relying on the bundle's own health proofs instead.
+A default StorageClass is required unless `storage.className` names one,
+and the named IngressClass must exist.
+
+The record lives in the cluster (the `skali-installation` ConfigMap), not
+on the workstation, so repeat installs, status, upgrade, and uninstall
+all read it back. `status`, `upgrade` (reconverge from the record), and
+`diagnose` work through the kubeconfig; `init`, `join`, `token`, node-scope
+uninstall, `tier`, and host `repair` are refused, each naming what applies
+instead. `--mode existing-cluster` requires `--kubeconfig` and refuses
+`--vm` and `--image-tar`; the ambient kubeconfig is never consulted.
+
+Caveat: `skalid` holds cluster-wide RBAC over core workload kinds, so
+installing into a cluster shared with unrelated tenants is not yet
+recommended. Scoping that RBAC is a later slice.
 
 ## 9. Scoped uninstall
 
@@ -351,17 +570,41 @@ scope of removal on host db-2 (cluster "production"):
                       per-host, run uninstall on every member
   : 1
 
-Removing node db-2 relocates 2 database instances. The database tier drops
-from synchronous to asynchronous. Type the node name to continue: db-2
-  ok  Drain and relocate database instances
-  ok  Remove node from cluster
-  ok  Uninstall k3s and remove /var/lib/skali
+Removing node db-2 is refused while skali-system data lives on it:
+
+  skali-system data lives on this node (skali-db-2); relocate it first
 ```
+
+A server without local system data leaves after stating the quorum
+consequence:
+
+```console
+$ sudo skali cluster uninstall --scope node --confirm production
+
+Removing this server takes it out of cluster "production":
+  - workloads placed on this node lose their local data
+  - the remaining 2 servers tolerate 0 failure(s); etcd quorum prefers
+    an odd count, so rejoin a server soon
+  - k3s itself and /var/lib/skali
+
+  ok  Drain node cp-3
+  ok  Remove node from cluster
+  ok  Uninstall k3s
+  ok  Remove /var/lib/skali
+```
+
+The leaving server deletes its own node object first: k3s retires the
+etcd member while the cluster is still functional, then the host teardown
+follows. The last server refuses to leave while agents remain, and a
+removal that would break quorum states the consequence before the typed
+confirmation.
 
 Removing the Skali bundle (`[2]`) requires typing the cluster name and lists
 what is destroyed: every project namespace, database, bucket, and the
 registry contents. Destroying a whole cluster is per-host by design; there is
-no single command that reaches into other machines.
+no single command that reaches into other machines. In existing-cluster mode
+the bundle scope removes only the operator namespaces skali installed: an
+operator marked `use-existing` at install stays untouched.
 
 ## 10. macOS host (Lima VM)
 

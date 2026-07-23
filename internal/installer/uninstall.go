@@ -15,6 +15,7 @@ import (
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubernetes"
+	"github.com/Hinkolas/skali/internal/layout"
 )
 
 // BundleInventory lists what removing the Skali bundle destroys: every
@@ -130,16 +131,111 @@ func deleteNamespaces(ctx context.Context, client *kube.Client, names []string) 
 	}
 }
 
-// UninstallNode removes k3s and the skali state from this host. Single
-// node only in this slice: removing the only node destroys the cluster, so
-// the caller confirms with the cluster name. The record is removed last so
-// an interrupted uninstall re-detects as damaged rather than fresh.
-func UninstallNode(ctx context.Context, runner host.Runner, record *Record, nodeCount int, progress Progress) error {
+// NodeRemovalPlan states what removing this node means, computed
+// read-only before any confirmation.
+type NodeRemovalPlan struct {
+	NodeName string
+	Role     string
+	// Servers, Agents, and Total describe the cluster when the API
+	// answered; Total 1 otherwise (agents and dead-API servers fall back
+	// to the single-node assumption).
+	Servers int
+	Agents  int
+	Total   int
+}
+
+// PlanNodeRemoval computes the removal plan and enforces the multi-node
+// guards: the last server never leaves while agents remain, and a server
+// carrying skali-system data refuses until it is relocated. Agents have
+// no kube API access and plan host-side, exactly like servers whose API
+// is unreachable (a single-node cluster with a dead API must still be
+// uninstallable; that is the recovery path).
+func PlanNodeRemoval(ctx context.Context, runner host.Runner, record *Record) (*NodeRemovalPlan, error) {
+	plan := &NodeRemovalPlan{NodeName: record.Node.Name, Role: record.Node.Role, Total: 1}
+	if record.Node.Role != layout.RoleServer {
+		return plan, nil
+	}
+	client, err := KubeClient(ctx, runner)
+	if err != nil {
+		return plan, nil
+	}
+	return planNodeRemovalWith(ctx, client, plan)
+}
+
+// planNodeRemovalWith fills the plan from the cluster; split out so the
+// guards are testable against a fake clientset.
+func planNodeRemovalWith(ctx context.Context, client *kube.Client, plan *NodeRemovalPlan) (*NodeRemovalPlan, error) {
+	nodes, err := client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return plan, nil
+	}
+	plan.Total = len(nodes.Items)
+	for _, node := range nodes.Items {
+		if layout.RoleFromLabels(node.Labels) == layout.RoleServer {
+			plan.Servers++
+		} else {
+			plan.Agents++
+		}
+	}
+	if plan.Total <= 1 {
+		return plan, nil
+	}
+	if plan.Servers <= 1 {
+		return nil, errors.New("this is the only server; remove the agents first or destroy the cluster per host")
+	}
+	blocking, err := blockingSystemWorkloads(ctx, client, plan.NodeName)
+	if err != nil {
+		return nil, err
+	}
+	if len(blocking) > 0 {
+		return nil, fmt.Errorf("skali-system data lives on this node (%s); relocate it first",
+			strings.Join(blocking, ", "))
+	}
+	return plan, nil
+}
+
+// blockingSystemWorkloads lists skali-system pods with persistent volume
+// claims scheduled on the node; their data would vanish with the node.
+func blockingSystemWorkloads(ctx context.Context, client *kube.Client, nodeName string) ([]string, error) {
+	pods, err := client.Clientset.CoreV1().Pods(bundle.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list skali-system pods: %w", err)
+	}
+	var blocking []string
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName != nodeName {
+			continue
+		}
+		for _, volume := range pod.Spec.Volumes {
+			if volume.PersistentVolumeClaim != nil {
+				blocking = append(blocking, pod.Name)
+				break
+			}
+		}
+	}
+	sort.Strings(blocking)
+	return blocking, nil
+}
+
+// UninstallNode removes k3s and the skali state from this host. On a
+// multi-node cluster the leaving server first drains and deletes its own
+// node object: k3s's member controller removes the etcd member on node
+// delete, and only while the cluster is functional, so the order is
+// delete-then-uninstall (the uninstall script does no member removal, and
+// a merely stopped server would rejoin on restart). The record is removed
+// last so an interrupted uninstall re-detects as damaged rather than
+// fresh.
+func UninstallNode(ctx context.Context, runner host.Runner, record *Record, plan *NodeRemovalPlan, progress Progress) error {
 	if progress == nil {
 		progress = silentProgress{}
 	}
-	if nodeCount > 1 {
-		return errors.New("removing a node from a multi-node cluster is not implemented in this slice")
+	if plan == nil {
+		plan = &NodeRemovalPlan{NodeName: record.Node.Name, Role: record.Node.Role, Total: 1}
+	}
+	if plan.Role == layout.RoleServer && plan.Total > 1 {
+		if err := removeSelfFromCluster(ctx, runner, plan.NodeName, progress); err != nil {
+			return err
+		}
 	}
 
 	progress.Start("Uninstall k3s")
@@ -164,6 +260,49 @@ func UninstallNode(ctx context.Context, runner host.Runner, record *Record, node
 	}
 	progress.Done("")
 	return nil
+}
+
+// removeSelfFromCluster drains best-effort, deletes the own node object,
+// and waits until the removal takes effect. After a successful delete a
+// dead local API also counts as done: retiring this member may take the
+// local apiserver's etcd backend with it.
+func removeSelfFromCluster(ctx context.Context, runner host.Runner, nodeName string, progress Progress) error {
+	progress.Start("Drain node " + nodeName)
+	result, err := runner.Run(ctx, host.Command{Name: "k3s", Args: []string{
+		"kubectl", "drain", nodeName, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=120s",
+	}})
+	if err != nil || result.ExitCode != 0 {
+		progress.Skip("drain did not complete; continuing with removal")
+	} else {
+		progress.Done("")
+	}
+
+	progress.Start("Remove node from cluster")
+	result, err = runner.Run(ctx, host.Command{Name: "k3s", Args: []string{"kubectl", "delete", "node", nodeName}})
+	if err != nil {
+		return fmt.Errorf("delete node %s: %w", nodeName, err)
+	}
+	if result.ExitCode != 0 && !strings.Contains(strings.ToLower(result.Stderr), "not found") {
+		return fmt.Errorf("delete node %s: exit %d: %s", nodeName, result.ExitCode,
+			strings.TrimSpace(result.Stderr))
+	}
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		result, err := runner.Run(ctx, host.Command{Name: "k3s", Args: []string{"kubectl", "get", "node", nodeName}})
+		if err != nil || result.ExitCode != 0 {
+			progress.Done("")
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("node %s is still present after its removal; "+
+				"verify from another server with k3s kubectl get nodes", nodeName)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 // DescribeBundleRemoval renders what a bundle uninstall destroys, for the

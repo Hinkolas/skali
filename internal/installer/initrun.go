@@ -121,6 +121,18 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if err := assertClusterMembership(nodeList.Items, record.Cluster); err != nil {
 		return fail(err)
 	}
+	// The init-owner rule: the canonical record embeds this node's
+	// identity and is a bundle-hash input, so a converge from a second
+	// server would churn the published record and hash. The bundle stays
+	// maintained by the node that first initialized it; other servers
+	// upgrade k3s only.
+	if record.Versions.Bundle == "" {
+		if published, err := InClusterRecord(ctx, client); err == nil && published != nil &&
+			published.Node.Name != "" && published.Node.Name != record.Node.Name {
+			return fail(fmt.Errorf("this cluster was initialized from %s; run init and upgrade there",
+				published.Node.Name))
+		}
+	}
 	live := LayoutFromNodes(nodeList.Items, record.Cluster)
 	printLayout(out, live)
 	log.line("cluster layout: " + compactLayout(live))

@@ -34,6 +34,14 @@ type Options struct {
 	// CLI compile preview) stays possible without an environment.
 	EnvironmentID    string
 	RevisionChecksum string
+
+	// ImagePullSecretName references the named pull secret from every
+	// rendered pod; empty renders none (managed clusters pull through the
+	// containerd mirror instead).
+	ImagePullSecretName string
+	// IngressClassName names the class of rendered routes; empty renders
+	// traefik, the managed k3s edge.
+	IngressClassName string
 }
 
 func Render(result *compiler.Result, options Options) ([]runtime.Object, error) {
@@ -155,6 +163,11 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			},
 		},
 	}
+	if options.ImagePullSecretName != "" {
+		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
+			{Name: options.ImagePullSecretName},
+		}
+	}
 	for _, volumeKey := range sortedKeys(application.Volumes) {
 		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
 			Name: volumeKey,
@@ -184,6 +197,10 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		})
 	}
 
+	ingressClass := options.IngressClassName
+	if ingressClass == "" {
+		ingressClass = "traefik"
+	}
 	for _, routeKey := range sortedKeys(application.Routes) {
 		route := application.Routes[routeKey]
 		domain, err := compiler.ResolveExpression(route.Domain, options.Variables)
@@ -199,7 +216,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				Labels:    cloneMap(labels),
 			},
 			Spec: networkingv1.IngressSpec{
-				IngressClassName: stringPointer("traefik"),
+				IngressClassName: stringPointer(ingressClass),
 				Rules: []networkingv1.IngressRule{{
 					Host: domain,
 					IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{

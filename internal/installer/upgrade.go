@@ -130,15 +130,55 @@ func UpgradeK3s(ctx context.Context, runner host.Runner, record *Record, progres
 	return nil
 }
 
-// UpgradeAgent upgrades an agent node: k3s only, since agents run no
-// bundle. The agent record is host-local and no bundle-hash input, so it
-// is saved directly.
-func UpgradeAgent(ctx context.Context, runner host.Runner, record *Record, progress Progress) error {
+// UpgradeNode upgrades a node that maintains no bundle: k3s only. Agents
+// always land here, and so do secondary servers, whose bundle is
+// maintained by the init owner. On these nodes the local record is no
+// bundle-hash input, so it is saved directly.
+func UpgradeNode(ctx context.Context, runner host.Runner, record *Record, progress Progress) error {
 	if err := UpgradeK3s(ctx, runner, record, progress); err != nil {
 		return err
 	}
 	record.Versions.Installer = version.Version
 	return SaveRecord(ctx, runner, record)
+}
+
+// NodeUpgradeStep is one host in the ordered multi-node upgrade plan.
+type NodeUpgradeStep struct {
+	Name   string
+	Role   string
+	From   string
+	IsSelf bool
+}
+
+// UpgradeSequence orders the per-host k3s upgrades from a gathered
+// status: this host first when drifted, then the remaining servers
+// name-sorted, then agents; nodes already on the pin are omitted. Purely
+// informational: upgrades run per host, so the sequence is printed
+// guidance, never remote execution.
+func UpgradeSequence(status *Status) []NodeUpgradeStep {
+	self := status.Host.Hostname
+	var steps []NodeUpgradeStep
+	add := func(node NodeStatus) {
+		steps = append(steps, NodeUpgradeStep{
+			Name: node.Name, Role: node.Role, From: node.K3sVersion, IsSelf: node.Name == self,
+		})
+	}
+	for _, node := range status.Nodes {
+		if node.Name == self && !node.Current {
+			add(node)
+		}
+	}
+	for _, node := range status.Nodes {
+		if node.Name != self && node.Role == layout.RoleServer && !node.Current {
+			add(node)
+		}
+	}
+	for _, node := range status.Nodes {
+		if node.Name != self && node.Role == layout.RoleAgent && !node.Current {
+			add(node)
+		}
+	}
+	return steps
 }
 
 // compareK3sVersions orders two k3s version strings such as v1.33.3+k3s1:

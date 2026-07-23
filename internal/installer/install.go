@@ -24,7 +24,8 @@ type InstallOptions struct {
 	// Capabilities designates what this node runs.
 	Capabilities []string
 	// Join enrolls this host into an existing cluster; required for
-	// agents, refused for servers in this slice.
+	// agents, optional for servers (absent means the first server, which
+	// creates the cluster).
 	Join *JoinOptions
 	// NodeIP pins the advertised address on multi-homed hosts.
 	NodeIP string
@@ -79,14 +80,10 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 	if role != layout.RoleServer && role != layout.RoleAgent {
 		return nil, fmt.Errorf("role must be server or agent, got %q", role)
 	}
-	if role == layout.RoleServer && opts.Join != nil {
-		return nil, fmt.Errorf("joining as an additional server is not implemented in this slice; " +
-			"it arrives with a later milestone")
+	if role == layout.RoleAgent && opts.Join == nil {
+		return nil, fmt.Errorf("role agent requires join options pointing at an existing server")
 	}
-	if role == layout.RoleAgent {
-		if opts.Join == nil {
-			return nil, fmt.Errorf("role agent requires join options pointing at an existing server")
-		}
+	if opts.Join != nil {
 		if !strings.HasPrefix(opts.Join.Server, "https://") {
 			return nil, fmt.Errorf("join server must be an https:// URL, got %q", opts.Join.Server)
 		}
@@ -117,10 +114,11 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 	node := k3sNode{
 		Name:         nodeName,
 		Cluster:      cluster,
+		Role:         role,
 		Capabilities: opts.Capabilities,
 		NodeIP:       opts.NodeIP,
 	}
-	if role == layout.RoleAgent {
+	if opts.Join != nil {
 		// Resolve the token before any mutation so a bad path fails with
 		// the host untouched.
 		node.ServerURL = opts.Join.Server
@@ -135,9 +133,19 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 				return nil, fmt.Errorf("join token file %s is empty", opts.Join.TokenFile)
 			}
 		}
-		node.Token, node.PullSecret, err = decodeJoinToken(token)
+		var tokenRole string
+		node.Token, node.PullSecret, tokenRole, err = decodeJoinToken(token)
 		if err != nil {
 			return nil, err
+		}
+		// A role claim inside the composite token must match the join: a
+		// bootstrap (agent) token cannot join a server, and joining an
+		// agent with the permanent server token would work but hand the
+		// host a far stronger credential than it needs. Raw k3s tokens
+		// carry no claim and pass for either role.
+		if tokenRole != "" && tokenRole != role {
+			return nil, fmt.Errorf("this join token was minted for role %s, not %s; "+
+				"mint a matching token with skali cluster token --role %s", tokenRole, role, role)
 		}
 		if node.PullSecret == "" {
 			// Tolerated so a manually minted k3s token still joins, but the
@@ -158,12 +166,17 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 	if err := installK3s(ctx, runner, node, progress); err != nil {
 		return nil, err
 	}
-	if role == layout.RoleAgent {
+	switch {
+	case role == layout.RoleAgent:
 		if err := waitAgentJoined(ctx, runner, cluster, nodeName, progress); err != nil {
 			return nil, err
 		}
-	} else {
-		if err := waitNodeReady(ctx, runner, opts.Capabilities, progress); err != nil {
+	case opts.Join != nil:
+		if err := waitServerJoined(ctx, runner, cluster, nodeName, opts.Capabilities, progress); err != nil {
+			return nil, err
+		}
+	default:
+		if err := waitNodeReady(ctx, runner, nodeName, opts.Capabilities, progress); err != nil {
 			return nil, err
 		}
 	}
@@ -187,7 +200,7 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 			K3s:       K3sVersion,
 		},
 	}
-	if role == layout.RoleAgent {
+	if opts.Join != nil {
 		record.Join = &JoinRecord{Server: opts.Join.Server}
 	}
 	if err := SaveRecord(ctx, runner, record); err != nil {

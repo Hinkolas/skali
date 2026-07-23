@@ -3,6 +3,8 @@ package installer
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -11,6 +13,7 @@ import (
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/version"
 )
 
@@ -19,6 +22,20 @@ type ComponentStatus struct {
 	Name    string
 	Healthy bool
 	Detail  string
+}
+
+// NodeStatus describes one cluster member for status display and upgrade
+// sequencing.
+type NodeStatus struct {
+	Name string
+	Role string
+	// Ready is the node's Ready condition.
+	Ready bool
+	// K3sVersion is the kubelet version, which on k3s carries the +k3s
+	// packaging suffix.
+	K3sVersion string
+	// Current reports whether the node runs this installer's k3s pin.
+	Current bool
 }
 
 // Status is everything the read-only status view renders. Gathering never
@@ -33,13 +50,47 @@ type Status struct {
 	BundleVersion string
 	BundleCurrent bool
 	Initialized   bool
-	// Nodes counts cluster members when the API is reachable.
-	Nodes int
+	// Nodes lists cluster members when the API is reachable.
+	Nodes []NodeStatus
 	// Components lists bootstrap component health; empty when the cluster
 	// is unreachable.
 	Components []ComponentStatus
 	// ClusterReachable reports whether the Kubernetes API answered.
 	ClusterReachable bool
+	// Datastore is "etcd" or "sqlite" on servers, empty on agents.
+	// Legacy sqlite servers keep working single-node but cannot accept
+	// additional servers.
+	Datastore string
+	// InitOwner names the node whose init maintains the bundle when the
+	// in-cluster record was published by a different node; empty when
+	// this node owns the bundle or the cluster record is unreadable.
+	InitOwner string
+	// DeployedTier is the tier the running skali-db instance count
+	// represents; AvailableTier the tier the database-capable node count
+	// derives. Both empty when the cluster or database is unreadable.
+	DeployedTier  layout.Tier
+	AvailableTier layout.Tier
+	// DatabaseNodes lists the database-capable node names, sorted.
+	DatabaseNodes []string
+	// DatabaseInstances is the deployed skali-db spec.instances.
+	DatabaseInstances int
+}
+
+// TierDrift reports whether the deployed and available tiers are both
+// known and disagree.
+func (s *Status) TierDrift() bool {
+	return s.DeployedTier != "" && s.AvailableTier != "" && s.DeployedTier != s.AvailableTier
+}
+
+// Servers counts the control-plane members in Nodes.
+func (s *Status) Servers() int {
+	count := 0
+	for _, node := range s.Nodes {
+		if node.Role == layout.RoleServer {
+			count++
+		}
+	}
+	return count
 }
 
 // GatherStatus probes host, record, and (when reachable) the cluster.
@@ -55,6 +106,12 @@ func GatherStatus(ctx context.Context, runner host.Runner) (*Status, error) {
 	status.K3sCurrent = detected.K3sVersion == K3sVersion
 	status.BundleVersion = detected.Record.Versions.Bundle
 	status.Initialized = detected.Record.Versions.Bundle != ""
+	if detected.Record.Node.Role == layout.RoleServer {
+		status.Datastore = "sqlite"
+		if datastoreIsEtcd(ctx, runner) {
+			status.Datastore = "etcd"
+		}
+	}
 
 	client, err := KubeClient(ctx, runner)
 	if err != nil {
@@ -65,22 +122,60 @@ func GatherStatus(ctx context.Context, runner host.Runner) (*Status, error) {
 		return status, nil
 	}
 	status.ClusterReachable = true
-	status.Nodes = len(nodes.Items)
+	for _, node := range nodes.Items {
+		ready := false
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == "Ready" && condition.Status == "True" {
+				ready = true
+			}
+		}
+		kubelet := node.Status.NodeInfo.KubeletVersion
+		status.Nodes = append(status.Nodes, NodeStatus{
+			Name:       node.Name,
+			Role:       layout.RoleFromLabels(node.Labels),
+			Ready:      ready,
+			K3sVersion: kubelet,
+			Current:    kubelet == K3sVersion,
+		})
+		if slices.Contains(layout.CapabilitiesFromLabels(node.Labels), layout.CapabilityDatabase) {
+			status.DatabaseNodes = append(status.DatabaseNodes, node.Name)
+		}
+	}
+	sort.Slice(status.Nodes, func(i, j int) bool { return status.Nodes[i].Name < status.Nodes[j].Name })
+	sort.Strings(status.DatabaseNodes)
+	status.AvailableTier = layout.DeriveTier(len(status.DatabaseNodes))
+
+	// On a server whose local record never initialized the bundle, the
+	// in-cluster record identifies the init owner: the bundle exists and
+	// is maintained there, so status must not claim it is missing.
+	if record, err := InClusterRecord(ctx, client); err == nil && record != nil {
+		if record.Node.Name != "" && record.Node.Name != detected.Hostname {
+			status.InitOwner = record.Node.Name
+		}
+		if !status.Initialized && record.Versions.Bundle != "" {
+			status.BundleVersion = record.Versions.Bundle
+			status.Initialized = true
+		}
+	}
 	if status.Initialized {
 		status.BundleCurrent = status.BundleVersion == version.Version &&
 			bundle.StampedHash(ctx, client) != ""
 	}
-	status.Components = gatherComponents(ctx, client)
+	status.Components, status.DatabaseInstances = gatherComponents(ctx, client)
+	if status.DatabaseInstances > 0 {
+		status.DeployedTier = bundle.TierFromInstances(status.DatabaseInstances)
+	}
 	return status, nil
 }
 
-func gatherComponents(ctx context.Context, client *kube.Client) []ComponentStatus {
+func gatherComponents(ctx context.Context, client *kube.Client) ([]ComponentStatus, int) {
+	database, instances := databaseComponent(ctx, client)
 	components := []ComponentStatus{
-		databaseComponent(ctx, client),
+		database,
 		deploymentComponent(ctx, client, "registry", bundle.Namespace, "skali-registry"),
 		deploymentComponent(ctx, client, "skalid", bundle.Namespace, "skalid"),
 	}
-	return components
+	return components, instances
 }
 
 func deploymentComponent(ctx context.Context, client *kube.Client, label, namespace, name string) ComponentStatus {
@@ -99,13 +194,13 @@ func deploymentComponent(ctx context.Context, client *kube.Client, label, namesp
 	return ComponentStatus{Name: label, Detail: fmt.Sprintf("%d/%d replicas available", available, desired)}
 }
 
-func databaseComponent(ctx context.Context, client *kube.Client) ComponentStatus {
+func databaseComponent(ctx context.Context, client *kube.Client) (ComponentStatus, int) {
 	resource := client.Dynamic.Resource(schema.GroupVersionResource{
 		Group: "postgresql.cnpg.io", Version: "v1", Resource: "clusters",
 	}).Namespace(bundle.Namespace)
 	cluster, err := resource.Get(ctx, "skali-db", metav1.GetOptions{})
 	if err != nil {
-		return ComponentStatus{Name: "database", Detail: "not found"}
+		return ComponentStatus{Name: "database", Detail: "not found"}, 0
 	}
 	phase, _, _ := unstructured.NestedString(cluster.Object, "status", "phase")
 	ready, _, _ := unstructured.NestedInt64(cluster.Object, "status", "readyInstances")
@@ -113,7 +208,7 @@ func databaseComponent(ctx context.Context, client *kube.Client) ComponentStatus
 	healthy := phase == "Cluster in healthy state" && ready >= instances
 	detail := fmt.Sprintf("%d/%d instances ready", ready, instances)
 	if healthy {
-		detail = "healthy"
+		detail = fmt.Sprintf("healthy (%s)", bundle.TierFromInstances(int(instances)))
 	}
-	return ComponentStatus{Name: "database", Healthy: healthy, Detail: detail}
+	return ComponentStatus{Name: "database", Healthy: healthy, Detail: detail}, int(instances)
 }

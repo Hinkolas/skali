@@ -11,7 +11,8 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-// JoinTokenTTL is the fixed lifetime of a generated join token.
+// JoinTokenTTL is the fixed lifetime of a generated agent join token.
+// Server tokens are the permanent k3s server credential and never expire.
 const JoinTokenTTL = "24h"
 
 // JoinToken is what `skali cluster token` hands to the operator.
@@ -19,30 +20,63 @@ type JoinToken struct {
 	Cluster   string
 	ServerURL string
 	Token     string
+	// Role is the role the token was minted for: layout.RoleAgent or
+	// layout.RoleServer.
+	Role string
+	// Expires describes the token lifetime for display: JoinTokenTTL for
+	// agent tokens, "never" for server tokens.
+	Expires string
 }
 
-// CreateJoinToken mints a time-limited agent join token on a server node
-// via `k3s token create`. Initialization is deliberately not required:
-// nodes join before init runs. The printed token is the composite form:
-// the k3s token plus the cluster's registry pull credential read back from
-// this server's registries.yaml, so one paste enrolls the node for both.
-func CreateJoinToken(ctx context.Context, runner host.Runner, record *Record) (*JoinToken, error) {
+// CreateJoinToken produces a join token on a server node. Agent tokens
+// are minted time-limited via `k3s token create`; server tokens read the
+// permanent server credential (k3s bootstrap tokens cannot join servers),
+// which the caller must surface with explicit warnings. Initialization is
+// deliberately not required: nodes join before init runs. The printed
+// token is the composite form: the k3s token plus the cluster's registry
+// pull credential read back from this server's registries.yaml, so one
+// paste enrolls the node for both.
+func CreateJoinToken(ctx context.Context, runner host.Runner, record *Record, role string) (*JoinToken, error) {
 	if record.Node.Role != layout.RoleServer {
 		return nil, fmt.Errorf("join tokens are created on a server node")
 	}
-	result, err := runner.Run(ctx, host.Command{
-		Name: "k3s", Args: []string{"token", "create", "--ttl", JoinTokenTTL},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("run k3s token create: %w", err)
+	if role == "" {
+		role = layout.RoleAgent
 	}
-	if result.ExitCode != 0 {
-		return nil, fmt.Errorf("k3s token create failed with exit code %d: %s",
-			result.ExitCode, strings.TrimSpace(result.Stderr))
+	if role != layout.RoleServer && role != layout.RoleAgent {
+		return nil, fmt.Errorf("token role must be server or agent, got %q", role)
 	}
-	token := lastNonEmptyLine(result.Stdout)
-	if token == "" {
-		return nil, fmt.Errorf("k3s token create produced no token")
+	var token string
+	expires := JoinTokenTTL
+	if role == layout.RoleServer {
+		if !datastoreIsEtcd(ctx, runner) {
+			return nil, fmt.Errorf("this server runs on the legacy sqlite datastore, which cannot " +
+				"accept additional servers; reinstall the cluster to enable ha")
+		}
+		data, err := runner.ReadFile(ctx, K3sServerTokenPath)
+		if err != nil {
+			return nil, fmt.Errorf("read k3s server token: %w", err)
+		}
+		token = strings.TrimSpace(string(data))
+		if token == "" {
+			return nil, fmt.Errorf("k3s server token at %s is empty", K3sServerTokenPath)
+		}
+		expires = "never"
+	} else {
+		result, err := runner.Run(ctx, host.Command{
+			Name: "k3s", Args: []string{"token", "create", "--ttl", JoinTokenTTL},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("run k3s token create: %w", err)
+		}
+		if result.ExitCode != 0 {
+			return nil, fmt.Errorf("k3s token create failed with exit code %d: %s",
+				result.ExitCode, strings.TrimSpace(result.Stderr))
+		}
+		token = lastNonEmptyLine(result.Stdout)
+		if token == "" {
+			return nil, fmt.Errorf("k3s token create produced no token")
+		}
 	}
 	pullSecret := ""
 	if registries, err := runner.ReadFile(ctx, K3sRegistriesPath); err == nil {
@@ -51,8 +85,34 @@ func CreateJoinToken(ctx context.Context, runner host.Runner, record *Record) (*
 	return &JoinToken{
 		Cluster:   record.Cluster,
 		ServerURL: "https://" + net.JoinHostPort(serverJoinHost(ctx, runner, record.Node.Name), "6443"),
-		Token:     encodeJoinToken(token, pullSecret),
+		Token:     encodeJoinToken(token, pullSecret, role),
+		Role:      role,
+		Expires:   expires,
 	}, nil
+}
+
+// CountServers counts control-plane members through the server's own
+// kubectl, for the even-count quorum warning. Zero with an error means
+// the count is unknown.
+func CountServers(ctx context.Context, runner host.Runner) (int, error) {
+	result, err := runner.Run(ctx, host.Command{
+		Name: "k3s", Args: []string{"kubectl", "get", "nodes",
+			"-l", "node-role.kubernetes.io/control-plane=true", "-o", "name"},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("run k3s kubectl get nodes: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return 0, fmt.Errorf("k3s kubectl get nodes failed with exit code %d: %s",
+			result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	count := 0
+	for line := range strings.SplitSeq(result.Stdout, "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // serverJoinHost resolves the address agents should join through: the

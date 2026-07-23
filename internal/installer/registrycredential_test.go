@@ -5,26 +5,38 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/layout"
 )
 
 func TestJoinTokenRoundtrip(t *testing.T) {
 	t.Parallel()
-	token := encodeJoinToken("K10abc::node:secret", "pull-secret-value")
+	token := encodeJoinToken("K10abc::node:secret", "pull-secret-value", layout.RoleAgent)
 	require.True(t, strings.HasPrefix(token, joinTokenPrefix))
-	k3sToken, pullSecret, err := decodeJoinToken(token)
+	k3sToken, pullSecret, role, err := decodeJoinToken(token)
 	require.NoError(t, err)
 	require.Equal(t, "K10abc::node:secret", k3sToken)
 	require.Equal(t, "pull-secret-value", pullSecret)
+	require.Equal(t, layout.RoleAgent, role)
+}
+
+func TestJoinTokenServerRole(t *testing.T) {
+	t.Parallel()
+	token := encodeJoinToken("K10abc::server:secret", "pull-secret-value", layout.RoleServer)
+	_, _, role, err := decodeJoinToken(token)
+	require.NoError(t, err)
+	require.Equal(t, layout.RoleServer, role)
 }
 
 func TestJoinTokenRawFallback(t *testing.T) {
 	t.Parallel()
 	// A manually minted k3s token passes through untouched, with no pull
-	// credential.
-	k3sToken, pullSecret, err := decodeJoinToken("K10abc::node:secret")
+	// credential and no role claim.
+	k3sToken, pullSecret, role, err := decodeJoinToken("K10abc::node:secret")
 	require.NoError(t, err)
 	require.Equal(t, "K10abc::node:secret", k3sToken)
 	require.Empty(t, pullSecret)
+	require.Empty(t, role)
 }
 
 func TestJoinTokenMalformed(t *testing.T) {
@@ -32,9 +44,9 @@ func TestJoinTokenMalformed(t *testing.T) {
 	for name, token := range map[string]string{
 		"bad base64": joinTokenPrefix + "not-base64!!!",
 		"bad json":   joinTokenPrefix + "bm90IGpzb24",
-		"no k3s":     encodeJoinToken("", "pull-only"),
+		"no k3s":     encodeJoinToken("", "pull-only", ""),
 	} {
-		_, _, err := decodeJoinToken(token)
+		_, _, _, err := decodeJoinToken(token)
 		require.ErrorContains(t, err, "malformed skali join token", name)
 	}
 }

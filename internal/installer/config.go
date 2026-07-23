@@ -30,7 +30,9 @@ type NodeConfig struct {
 	// Needed on multi-homed hosts where the default-route interface is not
 	// the one other nodes can reach.
 	NodeIP string `yaml:"nodeIP,omitempty" json:"nodeIP,omitempty" jsonschema:"Optional IP address this node advertises inside the cluster; set it on multi-homed hosts."`
-	// Join enrolls this host into an existing cluster as an agent.
+	// Join enrolls this host into an existing cluster, as an agent or as
+	// an additional server; required for agents, absent for the first
+	// server.
 	Join *JoinConfig `yaml:"join,omitempty" json:"join,omitempty" jsonschema:"Join an existing cluster instead of creating one."`
 	// VM shapes the Lima VM that hosts this node on a macOS machine.
 	// Linux installs refuse it.
@@ -114,13 +116,10 @@ func ParseNodeConfig(data []byte) (*NodeConfig, error) {
 	if config.NodeIP != "" && net.ParseIP(config.NodeIP) == nil {
 		return nil, fmt.Errorf("node config: nodeIP %q is not a valid IP address", config.NodeIP)
 	}
-	if config.Role == layout.RoleServer && config.Join != nil {
-		return nil, errors.New("node config: joining as an additional server is not implemented in this slice; it arrives with a later milestone")
+	if config.Role == layout.RoleAgent && config.Join == nil {
+		return nil, errors.New("node config: role agent requires a join block pointing at an existing server")
 	}
-	if config.Role == layout.RoleAgent {
-		if config.Join == nil {
-			return nil, errors.New("node config: role agent requires a join block pointing at an existing server")
-		}
+	if config.Join != nil {
 		if config.Join.Server == "" {
 			return nil, errors.New("node config: join.server is required")
 		}

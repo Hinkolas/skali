@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
@@ -25,6 +23,9 @@ func newClusterUninstallCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := os.Stdout
+			if existingClusterMode() {
+				return runExistingUninstall(ctx, out, bufio.NewReader(os.Stdin), scope, confirmName)
+			}
 			if scope == "" && !cliprompt.Interactive() {
 				return fmt.Errorf("non-interactive run requires --scope bundle|node and --confirm <cluster>")
 			}
@@ -112,24 +113,22 @@ func uninstallBundle(ctx context.Context, out *os.File, reader *bufio.Reader,
 
 func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 	record *installer.Record, confirmName string) error {
-	// Removing the only node destroys the cluster; count members when the
-	// API answers, and fall back to the single-node assumption this slice
-	// can actually create when it does not.
-	nodeCount := 1
-	if client, err := installer.KubeClient(ctx, runner()); err == nil {
-		if nodes, err := client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{}); err == nil {
-			nodeCount = len(nodes.Items)
-		}
+	plan, err := installer.PlanNodeRemoval(ctx, runner(), record)
+	if err != nil {
+		return err
 	}
-	if nodeCount > 1 {
-		return fmt.Errorf("removing a node from a multi-node cluster is not implemented in this slice")
-	}
+	leavingServer := record.Node.Role == layout.RoleServer && plan.Total > 1
 
 	fmt.Fprintln(out)
-	if record.Node.Role == layout.RoleAgent {
+	switch {
+	case record.Node.Role == layout.RoleAgent:
 		fmt.Fprintf(out, "Removing this agent node takes it out of cluster %q:\n", record.Cluster)
 		fmt.Fprintln(out, "  - workloads placed on this node lose their local data")
-	} else {
+	case leavingServer:
+		fmt.Fprintf(out, "Removing this server takes it out of cluster %q:\n", record.Cluster)
+		fmt.Fprintln(out, "  - workloads placed on this node lose their local data")
+		printQuorumConsequence(out, plan.Servers-1)
+	default:
 		fmt.Fprintf(out, "Removing this node destroys the cluster %q completely:\n", record.Cluster)
 		fmt.Fprintln(out, "  - every project namespace, database, bucket, and all registry contents")
 	}
@@ -149,7 +148,7 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
-	if err := installer.UninstallNode(ctx, runner(), record, nodeCount, progress); err != nil {
+	if err := installer.UninstallNode(ctx, runner(), record, plan, progress); err != nil {
 		progress.Abort()
 		return err
 	}
@@ -161,6 +160,19 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 			record.Node.Name, record.Node.Name)
 	}
 	return nil
+}
+
+// printQuorumConsequence words what the server count after removal means
+// for etcd quorum.
+func printQuorumConsequence(out *os.File, remaining int) {
+	switch {
+	case remaining == 1:
+		fmt.Fprintln(out, "  - the cluster keeps running on its single remaining server")
+	case remaining%2 == 0:
+		fmt.Fprintf(out, "  - the remaining %d servers tolerate %d failure(s); "+
+			"etcd quorum prefers an odd count, so rejoin a server soon\n",
+			remaining, remaining-(remaining/2+1))
+	}
 }
 
 // confirmCluster accepts either the pre-supplied --confirm value or a

@@ -203,6 +203,12 @@ func TestClusterEndToEnd(t *testing.T) {
 	require.Contains(t, record, "role: server")
 	require.Contains(t, record, "k3s: "+e2eOlderK3s)
 
+	// The first server initializes the embedded etcd cluster; every later
+	// phase (upgrade, server join) runs on etcd from day one.
+	serverConfig := h.vmOK("sudo", "cat", "/etc/rancher/k3s/config.yaml")
+	require.Contains(t, serverConfig, "cluster-init: true")
+	h.vmOK("sudo", "test", "-d", "/var/lib/rancher/k3s/server/db/etcd")
+
 	labels := h.vmOK("sudo", "k3s", "kubectl", "get", "nodes", "-o", "jsonpath={.items[0].metadata.labels}")
 	for _, capability := range []string{"application", "database", "object-storage", "registry", "edge"} {
 		require.Contains(t, labels, "skali.dev/capability-"+capability)
@@ -400,9 +406,10 @@ skalid:
 	require.Equal(t, "404", registryStatus(nodeMinted.Token, "GET", "/v2/cache/docker.io/library/alpine/manifests/latest"),
 		"a pull-scoped node token must pass authorization and hit the absent manifest")
 
-	// Join phase: the agent VM enrolls through the explicit token/join
-	// flow, is asserted from the server side, then leaves again so the
-	// remaining single-node phases run unchanged.
+	// Join phases: the second VM first enrolls as an additional SERVER
+	// (etcd pair), is asserted and removed again (exercising drain, the
+	// self node delete, and etcd member removal 2 -> 1), then re-enrolls
+	// as an agent so the remaining single-node phases run unchanged.
 	agentArch := strings.TrimSpace(h.vmOKOn(e2eAgentVM, "uname", "-m"))
 	require.Equal(t, arch, agentArch, "both VMs must share one architecture for one binary")
 	h.copyInTo(e2eAgentVM, binary, "/tmp/skali")
@@ -420,8 +427,71 @@ skalid:
 	require.Equal(t, 0, code, agentStatus)
 	require.Contains(t, agentStatus, "fresh")
 
-	// Mint the join token on the server; the token is the last non-blank
-	// output line by contract.
+	// Server join: the permanent server token carries its warnings and
+	// the even-count quorum note.
+	serverTokenOut, code := h.vm("sudo", "/tmp/skali", "cluster", "token", "--role", "server")
+	require.Equal(t, 0, code, serverTokenOut)
+	require.Contains(t, serverTokenOut, "server token, never expires")
+	require.Contains(t, serverTokenOut, "--role server")
+	require.Contains(t, serverTokenOut, "permanent server token")
+	require.Contains(t, serverTokenOut, "would make 2 servers")
+	var serverJoinToken string
+	for line := range strings.SplitSeq(serverTokenOut, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.Contains(trimmed, " ") {
+			serverJoinToken = trimmed
+		}
+	}
+	require.NotEmpty(t, serverJoinToken)
+
+	serverTokenFile := h.writeFixtureOn(e2eAgentVM, "server-join-token", serverJoinToken+"\n")
+	h.vmOKOn(e2eAgentVM, "chmod", "600", serverTokenFile)
+	serverJoinOut, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
+		"--server", "https://"+serverIP+":6443", "--token-file", serverTokenFile,
+		"--role", "server", "--capabilities", "application", "--cluster", "e2e",
+		"--node-ip", agentIP)
+	require.Equal(t, 0, code, serverJoinOut)
+	require.Contains(t, serverJoinOut, "(server)")
+	require.Contains(t, serverJoinOut, "etcd quorum prefers one or three")
+
+	secondName := strings.TrimSpace(h.vmOKOn(e2eAgentVM, "hostname"))
+	secondLabels := h.vmOK("sudo", "k3s", "kubectl", "get", "node", secondName,
+		"-o", "jsonpath={.metadata.labels}")
+	require.Contains(t, secondLabels, "node-role.kubernetes.io/control-plane")
+	require.Contains(t, secondLabels, "node-role.kubernetes.io/etcd")
+	require.Contains(t, secondLabels, "skali.dev/capability-application")
+
+	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
+	require.Equal(t, 0, code, statusOut)
+	require.Contains(t, statusOut, "2 joined (2 servers)")
+	require.Contains(t, statusOut, "even count")
+
+	// The secondary server's bundle is maintained by the init owner: its
+	// status names the owner and its upgrade has nothing to converge.
+	secondStatus, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "status")
+	require.Equal(t, 0, code, secondStatus)
+	require.Contains(t, secondStatus, "maintained on")
+	secondUpgrade, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "upgrade", "--yes")
+	require.Equal(t, 0, code, secondUpgrade)
+	require.Contains(t, secondUpgrade, "already current, nothing to do")
+
+	// The leaving server removes itself: drain, self node delete (k3s
+	// retires the etcd member), then the host teardown. The remaining
+	// server must keep a healthy API through it.
+	serverLeave, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali",
+		"cluster", "uninstall", "--scope", "node", "--confirm", "e2e")
+	require.Equal(t, 0, code, serverLeave)
+	require.Contains(t, serverLeave, "Remove node from cluster")
+	_, code = h.vmOn(e2eAgentVM, "test", "-e", "/usr/local/bin/k3s")
+	require.NotEqual(t, 0, code, "k3s must be gone from the leaving server VM")
+	remainingNodes := strings.TrimSpace(h.vmOK("sh", "-c",
+		"sudo k3s kubectl get nodes --no-headers | wc -l"))
+	require.Equal(t, "1", remainingNodes, "the remaining server must answer with one node")
+	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
+	require.Equal(t, 0, code, statusOut)
+	require.Contains(t, statusOut, "skalid healthy")
+
+	// Agent join: mint the time-limited token on the server; the token is
+	// the last non-blank output line by contract.
 	tokenOut, code := h.vm("sudo", "/tmp/skali", "cluster", "token")
 	require.Equal(t, 0, code, tokenOut)
 	require.Contains(t, tokenOut, `join command for cluster "e2e"`)
@@ -471,6 +541,33 @@ skalid:
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "2 joined")
 
+	// Tier phase: the database-capable agent raised the available tier;
+	// status shows the drift, diagnose stays clean, and the explicit tier
+	// apply scales the bootstrap database up.
+	require.Contains(t, statusOut, "deployed single, available asynchronous")
+	diagnoseOut, code := h.vm("sudo", "/tmp/skali", "cluster", "diagnose")
+	require.Equal(t, 0, code, diagnoseOut)
+	require.Contains(t, diagnoseOut, "k3s service: active")
+	require.Contains(t, diagnoseOut, "kubernetes api: reachable")
+	require.Contains(t, diagnoseOut, "nodes 2/2 ready")
+
+	tierOut, code := h.vm("sudo", "/tmp/skali", "cluster", "tier", "--yes")
+	require.Equal(t, 0, code, tierOut)
+	require.Contains(t, tierOut, "deployed tier     single")
+	require.Contains(t, tierOut, "available tier    asynchronous")
+	require.Contains(t, tierOut, "Scale bootstrap database to 2 instance(s)")
+	require.Contains(t, tierOut, "bootstrap database tier: asynchronous")
+
+	repeatTier, code := h.vm("sudo", "/tmp/skali", "cluster", "tier", "--yes")
+	require.Equal(t, 0, code, repeatTier)
+	require.Contains(t, repeatTier, "nothing to do")
+
+	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
+	require.Equal(t, 0, code, statusOut)
+	require.Contains(t, statusOut, "database healthy (asynchronous)")
+	require.Contains(t, statusOut, "0.0.0-dev (current)",
+		"the tier apply must restamp the bundle hash")
+
 	// A repeat join refuses: the agent host is no longer fresh.
 	repeatJoin, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
 		"--server", "https://"+serverIP+":6443", "--token-file", tokenFile,
@@ -498,6 +595,40 @@ skalid:
 	nodeCount := strings.TrimSpace(h.vmOK("sh", "-c",
 		"sudo k3s kubectl get nodes --no-headers | wc -l"))
 	require.Equal(t, "1", nodeCount)
+
+	// The database node left with its replica; the explicit downgrade
+	// restores single-instance health (tier changes are never automatic).
+	downgradeOut, code := h.vm("sudo", "/tmp/skali", "cluster", "tier", "--yes")
+	require.Equal(t, 0, code, downgradeOut)
+	require.Contains(t, downgradeOut, "Downgrade the bootstrap database")
+	require.Contains(t, downgradeOut, "bootstrap database tier: single")
+
+	// Repair phase: stop k3s, watch diagnose fail with the suggested
+	// action, let repair restart it, and prove the repeat is a no-op.
+	h.vmOK("sudo", "systemctl", "stop", "k3s")
+	diagnoseOut, code = h.vm("sudo", "/tmp/skali", "cluster", "diagnose")
+	require.NotEqual(t, 0, code, diagnoseOut)
+	require.Contains(t, diagnoseOut, "k3s service")
+	require.Contains(t, diagnoseOut, "skali cluster repair")
+
+	repairOut, code := h.vm("sudo", "/tmp/skali", "cluster", "repair", "--yes")
+	require.Equal(t, 0, code, repairOut)
+	require.Contains(t, repairOut, "Restart k3s")
+
+	diagnoseOut, code = h.vm("sudo", "/tmp/skali", "cluster", "diagnose")
+	require.Equal(t, 0, code, diagnoseOut)
+
+	repeatRepair, code := h.vm("sudo", "/tmp/skali", "cluster", "repair", "--yes")
+	require.Equal(t, 0, code, repeatRepair)
+	require.Contains(t, repeatRepair, "nothing to repair")
+
+	// Restore is an entry point only: it prints the recovery contract and
+	// refuses.
+	restoreOut, code := h.vm("sudo", "/tmp/skali", "cluster", "restore")
+	require.NotEqual(t, 0, code, restoreOut)
+	require.Contains(t, restoreOut, "installation record")
+	require.Contains(t, restoreOut, "database backup")
+	require.Contains(t, restoreOut, "not implemented")
 
 	// Repeat bare execution with closed stdin performs no mutation.
 	before := h.vmOK("sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",

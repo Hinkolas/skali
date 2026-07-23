@@ -187,12 +187,21 @@ func runServe() error {
 	if kubeClient != nil {
 		kernelDeps.Cluster = kubeClient
 	}
-	kernel = reconcile.New(kernelDeps, reconcile.Config{
-		Resync:          cfg.ReconcileResync,
-		Audit:           cfg.ReconcileAudit,
-		RolloutDeadline: cfg.RolloutDeadline,
-		StaleThreshold:  cfg.StaleThreshold,
-	})
+	reconcileCfg := reconcile.Config{
+		Resync:           cfg.ReconcileResync,
+		Audit:            cfg.ReconcileAudit,
+		RolloutDeadline:  cfg.RolloutDeadline,
+		StaleThreshold:   cfg.StaleThreshold,
+		IngressClassName: cfg.IngressClass,
+	}
+	if cfg.RegistryPullSecret {
+		reconcileCfg.PullSecret = &reconcile.PullSecretConfig{
+			Host:     cfg.RegistryHost,
+			Username: registrytoken.NodeUser,
+			Password: cfg.RegistryNodeSecret,
+		}
+	}
+	kernel = reconcile.New(kernelDeps, reconcileCfg)
 	deploySvc.SetEnqueuer(kernel)
 
 	runtimeLogs := &runtimelogs.Streamer{Observed: observed, Store: st}

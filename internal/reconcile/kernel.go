@@ -56,6 +56,21 @@ type Config struct {
 	RolloutDeadline time.Duration
 	StaleThreshold  time.Duration
 	Workers         int
+	// PullSecret injects a registry pull secret into every environment
+	// namespace (existing clusters, where nodes have no containerd
+	// mirror); nil renders none.
+	PullSecret *PullSecretConfig
+	// IngressClassName names the class of rendered routes; empty renders
+	// traefik.
+	IngressClassName string
+}
+
+// PullSecretConfig is the credential rendered into environment pull
+// secrets: the shared node user, granted pull-only tokens.
+type PullSecretConfig struct {
+	Host     string
+	Username string
+	Password string
 }
 
 type Kernel struct {

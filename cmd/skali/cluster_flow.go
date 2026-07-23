@@ -36,7 +36,10 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 		return err
 	}
 	if role == 1 {
-		return runInteractiveJoinFlow(ctx, out, reader)
+		return runInteractiveJoinFlow(ctx, out, reader, layout.RoleAgent)
+	}
+	if !cliprompt.ConfirmDefaultYes(reader, "  first server (creates a new cluster)? [Y/n] ") {
+		return runInteractiveJoinFlow(ctx, out, reader, layout.RoleServer)
 	}
 
 	cluster, err := cliprompt.LineDefault(reader,
@@ -103,11 +106,11 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 	return runInteractiveInit(ctx, out, reader, record, nil)
 }
 
-// runInteractiveJoinFlow enrolls this host into an existing cluster as an
-// agent: the server URL and token come from `skali cluster token` run on
-// a server. The token can be pasted directly so no file has to be staged
-// for an interactive join.
-func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Reader) error {
+// runInteractiveJoinFlow enrolls this host into an existing cluster in
+// the given role: the server URL and token come from `skali cluster
+// token` run on a server. The token can be pasted directly so no file has
+// to be staged for an interactive join.
+func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Reader, role string) error {
 	cluster, err := cliprompt.LineDefault(reader,
 		"  cluster name ["+installer.DefaultCluster+"]: ", installer.DefaultCluster)
 	if err != nil {
@@ -138,7 +141,7 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 	progress := newTaskProgress(tasks)
 	opts := installer.InstallOptions{
 		Cluster:      cluster,
-		Role:         layout.RoleAgent,
+		Role:         role,
 		Capabilities: capabilities,
 		Join:         join,
 		Progress:     progress,
@@ -156,11 +159,12 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 	}
 	warnings := finishDarwinInstall(ctx, progress)
 	progress.Done("")
+	warnings = append(warnings, serverCountWarning(ctx, role)...)
 	printWarnings(out, warnings)
 
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "This node has joined cluster %q. Run skali cluster init on a server "+
-		"once every planned node has joined.\n", cluster)
+	fmt.Fprintf(out, "This node has joined cluster %q as a %s. Run skali cluster init on a "+
+		"server once every planned node has joined.\n", cluster, role)
 	return nil
 }
 

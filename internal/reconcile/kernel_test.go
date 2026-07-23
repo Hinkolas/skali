@@ -22,8 +22,8 @@ import (
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
-	"github.com/Hinkolas/skali/internal/valuestore"
 	"github.com/Hinkolas/skali/internal/values"
+	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 const kernelManifest = `version: "1"

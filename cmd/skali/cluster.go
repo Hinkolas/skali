@@ -25,9 +25,13 @@ func newClusterCommand() *cobra.Command {
 		Short: "Install, maintain, and recover a Skali cluster",
 		// The nearest PersistentPreRun wins in cobra and the skali root has
 		// none, so this fires for every cluster subcommand and never for
-		// the developer-workflow commands.
+		// the developer-workflow commands. Existing-cluster mode owns only
+		// the bundle in a cluster it does not administer, so it never
+		// touches host lifecycle: no Lima, no darwin prelude, no root.
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			useManagedLima()
+			if !existingClusterMode() {
+				useManagedLima()
+			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClusterRoot(cmd)
@@ -38,9 +42,13 @@ func newClusterCommand() *cobra.Command {
 		"name of the Lima VM hosting the skali node (macOS only)")
 	cluster.PersistentFlags().StringVar(&imageTarFlag, "image-tar", "",
 		"docker-save tar of the skalid image, imported into the node during init (source installs)")
+	cluster.PersistentFlags().StringVar(&modeFlag, "mode", "",
+		"installation mode: empty for managed k3s, or existing-cluster to install only the bundle")
+	cluster.PersistentFlags().StringVar(&kubeconfigFlag, "kubeconfig", "",
+		"explicit kubeconfig for existing-cluster mode (never the ambient one)")
 	cluster.AddCommand(newClusterInstallCmd(), newClusterInitCmd(), newClusterStatusCmd(),
-		newClusterUpgradeCmd(), newClusterUninstallCmd(), newClusterTokenCmd(), newClusterJoinCmd())
-	cluster.AddCommand(stubCommands()...)
+		newClusterUpgradeCmd(), newClusterUninstallCmd(), newClusterTokenCmd(), newClusterJoinCmd(),
+		newClusterTierCmd(), newClusterDiagnoseCmd(), newClusterRepairCmd(), newClusterRestoreCmd())
 	clusterCmd = cluster
 	return cluster
 }
@@ -56,13 +64,47 @@ func runner() host.Runner {
 }
 
 var (
-	vmFlag       string
-	imageTarFlag string
-	clusterCmd   *cobra.Command
+	vmFlag         string
+	imageTarFlag   string
+	modeFlag       string
+	kubeconfigFlag string
+	clusterCmd     *cobra.Command
 )
 
 func vmFlagChanged() bool {
 	return clusterCmd != nil && clusterCmd.PersistentFlags().Changed("vm")
+}
+
+// existingClusterMode reports whether --mode existing-cluster is set.
+func existingClusterMode() bool {
+	return modeFlag == "existing-cluster"
+}
+
+// validateModeFlags enforces the mode/kubeconfig contract: existing-cluster
+// requires an explicit kubeconfig and refuses the host-lifecycle flags;
+// --kubeconfig without the mode is an error; any other --mode value is
+// rejected. It returns the loaded kube client for existing-cluster mode.
+func validateExistingMode() error {
+	switch modeFlag {
+	case "", "managed":
+		if kubeconfigFlag != "" {
+			return fmt.Errorf("--kubeconfig applies only to --mode existing-cluster")
+		}
+		return nil
+	case "existing-cluster":
+		if kubeconfigFlag == "" {
+			return fmt.Errorf("--mode existing-cluster requires --kubeconfig")
+		}
+		if vmFlagChanged() {
+			return fmt.Errorf("--vm applies only to managed installations, not --mode existing-cluster")
+		}
+		if imageTarFlag != "" {
+			return fmt.Errorf("--image-tar applies only to managed installations, not --mode existing-cluster")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown --mode %q; expected existing-cluster or empty", modeFlag)
+	}
 }
 
 // banner prints the transcript-style version header.

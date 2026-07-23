@@ -155,6 +155,29 @@ type Production struct {
 	// input, so anything that changes on every write would defeat the
 	// unchanged-bundle fast path.
 	InstallationRecord string
+	// External marks an existing-cluster installation: a cluster whose
+	// hosts skali does not administer. Nil renders the managed-k3s bundle
+	// byte-identically to before the field existed (the frozen testdata
+	// pins that).
+	External *ExternalCluster
+}
+
+// ExternalCluster shapes the bundle for a cluster the installer does not
+// own: no capability nodeSelectors (placement belongs to the operator),
+// explicit ingress and storage classes, optional reuse of operators the
+// cluster already runs, and image pulls through the public registry
+// domain via an injected pull secret.
+type ExternalCluster struct {
+	// IngressClassName is required: it feeds the ACME http01 solver, the
+	// bundle's own ingresses, and skalid's route rendering.
+	IngressClassName string
+	// StorageClassName is optional; empty relies on the cluster default.
+	StorageClassName string
+	// SkipCNPG and SkipCertManager reuse operators the cluster already
+	// runs instead of applying the vendored manifests; the skipped
+	// manifest also leaves the bundle hash.
+	SkipCNPG        bool
+	SkipCertManager bool
 }
 
 func (p *Production) validate() error {
@@ -179,8 +202,19 @@ func (p *Production) validate() error {
 		return errors.New("bundle: production profile: registry storage size is required")
 	case p.InstallationRecord == "":
 		return errors.New("bundle: production profile: installation record is required")
+	case p.External != nil && p.External.IngressClassName == "":
+		return errors.New("bundle: production profile: existing-cluster mode requires an ingress class")
 	}
 	return nil
+}
+
+// ingressClassName resolves the ingress class every bundle route uses:
+// the managed k3s edge is always traefik, existing clusters name theirs.
+func (p *Production) ingressClassName() string {
+	if p.External != nil {
+		return p.External.IngressClassName
+	}
+	return "traefik"
 }
 
 // TierInstances maps a database availability tier to its CNPG instance
@@ -193,6 +227,19 @@ func TierInstances(tier layout.Tier) int {
 		return 2
 	default:
 		return 1
+	}
+}
+
+// TierFromInstances is the inverse: the tier a deployed skali-db instance
+// count represents, for tier-drift detection against the derived tier.
+func TierFromInstances(instances int) layout.Tier {
+	switch {
+	case instances >= 3:
+		return layout.TierSynchronous
+	case instances == 2:
+		return layout.TierAsynchronous
+	default:
+		return layout.TierSingle
 	}
 }
 
@@ -271,10 +318,21 @@ func Render(profile Profile) (*Objects, error) {
 // stage).
 func Hash(profile Profile) string {
 	digest := sha256.New()
-	digest.Write(cnpgManifest)
+	skipCNPG, skipCertManager := false, false
+	if profile.Production != nil && profile.Production.External != nil {
+		// Skipped operator manifests leave the hash too: "unchanged
+		// bundle" must stay truthful when a converge would not apply them.
+		skipCNPG = profile.Production.External.SkipCNPG
+		skipCertManager = profile.Production.External.SkipCertManager
+	}
+	if !skipCNPG {
+		digest.Write(cnpgManifest)
+	}
 	sources := stageSources(profile)
 	if profile.Production != nil {
-		digest.Write(certManagerManifest)
+		if !skipCertManager {
+			digest.Write(certManagerManifest)
+		}
 		sources[len(sources)-1] = ""
 	}
 	for _, source := range sources {
@@ -337,8 +395,8 @@ spec:
     solvers:
       - http01:
           ingress:
-            ingressClassName: traefik
-`, IssuerName, profile.Production.ACMEEmail, server)
+            ingressClassName: %[4]s
+`, IssuerName, profile.Production.ACMEEmail, server, profile.Production.ingressClassName())
 }
 
 func databaseYAML(profile Profile) string {
@@ -346,13 +404,19 @@ func databaseYAML(profile Profile) string {
 	storage := "1Gi"
 	affinity := ""
 	synchronous := ""
+	storageClass := ""
 	if production := profile.Production; production != nil {
 		instances = TierInstances(production.DatabaseTier)
 		storage = production.DatabaseStorage
-		// The affinity block renders only in production: local k3d nodes
-		// carry no capability labels and would strand the pod Pending.
-		affinity = "\n  affinity:\n    nodeSelector:\n      " +
-			layout.CapabilityLabel(layout.CapabilityDatabase) + `: "true"`
+		if production.External == nil {
+			// The affinity block renders only on managed k3s: local k3d
+			// nodes and existing-cluster nodes carry no capability labels
+			// and would strand the pod Pending.
+			affinity = "\n  affinity:\n    nodeSelector:\n      " +
+				layout.CapabilityLabel(layout.CapabilityDatabase) + `: "true"`
+		} else if production.External.StorageClassName != "" {
+			storageClass = "\n    storageClass: " + production.External.StorageClassName
+		}
 		if production.DatabaseTier == layout.TierSynchronous {
 			// Three instances leave two standbys; transactions wait for
 			// any one of them (quorum "any 1 of 2").
@@ -367,12 +431,12 @@ metadata:
 spec:
   instances: %[2]d
   storage:
-    size: %[3]s%[4]s%[5]s
+    size: %[3]s%[6]s%[4]s%[5]s
   bootstrap:
     initdb:
       database: skali
       owner: skali
-`, Namespace, instances, storage, affinity, synchronous)
+`, Namespace, instances, storage, affinity, synchronous, storageClass)
 }
 
 // recordYAML publishes the canonical installation record for skalid to
@@ -405,13 +469,18 @@ func registryYAML(profile Profile) string {
 	ingressSuffix := ""
 	certMount := ""
 	certVolume := ""
+	storageClass := ""
 	if production := profile.Production; production != nil {
 		storage = production.RegistryStorage
-		// Pin the single registry instance to a registry-capable node; the
-		// local-path volume provisions on first consumption, so pod and
-		// volume agree on the node.
-		nodeSelector = "\n      nodeSelector:\n        " +
-			layout.CapabilityLabel(layout.CapabilityRegistry) + `: "true"`
+		if production.External == nil {
+			// Pin the single registry instance to a registry-capable node;
+			// the local-path volume provisions on first consumption, so pod
+			// and volume agree on the node.
+			nodeSelector = "\n      nodeSelector:\n        " +
+				layout.CapabilityLabel(layout.CapabilityRegistry) + `: "true"`
+		} else if production.External.StorageClassName != "" {
+			storageClass = "\n  storageClassName: " + production.External.StorageClassName
+		}
 		// Production requires the registry token protocol: the 401
 		// challenge points clients at the token realm on the registry
 		// domain, and the registry verifies minted tokens offline against
@@ -448,7 +517,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: skali-registry-data
   namespace: %[1]s
-spec:
+spec:%[9]s
   accessModes: [ReadWriteOnce]
   resources:
     requests:
@@ -503,7 +572,7 @@ spec:
       targetPort: 5000
       nodePort: %[3]d
 `, Namespace, RegistryImage, RegistryNodePort, storage, nodeSelector,
-		authConfig, certMount, certVolume) + ingressSuffix
+		authConfig, certMount, certVolume, storageClass) + ingressSuffix
 }
 
 // registryTokenSecretYAML renders the token trust material: skalid reads
@@ -542,7 +611,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: %[2]s
 spec:
-  ingressClassName: traefik
+  ingressClassName: %[4]s
   tls:
     - hosts:
         - %[3]s
@@ -565,7 +634,7 @@ spec:
                 name: skali-registry
                 port:
                   number: 5000
-`, Namespace, IssuerName, production.RegistryDomain)
+`, Namespace, IssuerName, production.RegistryDomain, production.ingressClassName())
 }
 
 func skalidYAML(profile Profile) string {
@@ -595,6 +664,7 @@ func skalidYAML(profile Profile) string {
 	ingressAnnotations := ""
 	ingressTLS := ""
 	ingressHost := "skali.localhost"
+	ingressClass := "traefik"
 	if production := profile.Production; production != nil {
 		// Local dev omits the env and rides the config default; production
 		// states the installation's capability union explicitly. The token
@@ -607,10 +677,19 @@ func skalidYAML(profile Profile) string {
 			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
 			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
 			"\n            - name: SKALI_REGISTRY_NODE_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: node-secret"
+		if production.External != nil {
+			// Existing clusters have no containerd mirror, so pulls travel
+			// the public domain: skalid injects a pull secret into every
+			// environment namespace and stamps its ingress class into the
+			// routes it renders.
+			capabilitiesEnv += "\n            - name: SKALI_REGISTRY_PULL_SECRET\n              value: \"true\"" +
+				"\n            - name: SKALI_INGRESS_CLASS\n              value: " + production.External.IngressClassName
+		}
 		ingressAnnotations = "\n  annotations:\n    cert-manager.io/cluster-issuer: " + IssuerName
 		ingressTLS = "\n  tls:\n    - hosts:\n        - " + production.IngressHost +
 			"\n      secretName: skalid-tls"
 		ingressHost = production.IngressHost
+		ingressClass = production.ingressClassName()
 	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
@@ -733,7 +812,7 @@ metadata:
   name: skalid
   namespace: %[1]s%[7]s
 spec:
-  ingressClassName: traefik%[8]s
+  ingressClassName: %[10]s%[8]s
   rules:
     - host: %[9]s
       http:
@@ -746,7 +825,7 @@ spec:
                 port:
                   number: 80
 `, Namespace, profile.SkalidImage, base64.StdEncoding.EncodeToString([]byte(profile.AuthSecret)), profile.RegistryHost,
-		podAnnotations, capabilitiesEnv, ingressAnnotations, ingressTLS, ingressHost)
+		podAnnotations, capabilitiesEnv, ingressAnnotations, ingressTLS, ingressHost, ingressClass)
 }
 
 func bootstrapYAML(profile Profile) string {

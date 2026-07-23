@@ -18,6 +18,10 @@ func newClusterStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := os.Stdout
+
+			if existingClusterMode() {
+				return runExistingStatus(ctx, out)
+			}
 			banner(out)
 
 			present, err := darwinPrelude(ctx, out, vmPolicyStatus, "")

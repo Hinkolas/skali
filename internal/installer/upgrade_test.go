@@ -175,7 +175,7 @@ func TestUpgradeK3sAgentInvocation(t *testing.T) {
 		Version: RecordVersion, InstallationID: "test-id",
 		Node: NodeRecord{Name: "db-1", Role: layout.RoleAgent},
 	}
-	require.NoError(t, UpgradeAgent(context.Background(), fake, record, silentProgress{}))
+	require.NoError(t, UpgradeNode(context.Background(), fake, record, silentProgress{}))
 
 	script := fake.Commands[0]
 	require.Equal(t, "sh", script.Name)
@@ -187,7 +187,7 @@ func TestUpgradeK3sAgentInvocation(t *testing.T) {
 		require.NotEqual(t, "kubectl", firstArg(cmd), "agents have no kube API to gate on")
 	}
 
-	// The agent record is host-local, so UpgradeAgent persists it itself.
+	// The agent record is host-local, so UpgradeNode persists it itself.
 	require.Equal(t, K3sVersion, record.Versions.K3s)
 	saved := string(fake.FS[RecordPath])
 	require.Contains(t, saved, "k3s: "+K3sVersion)

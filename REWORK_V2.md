@@ -1727,10 +1727,18 @@ K3s cluster is initiated independently on each host; the first version does not
 store SSH credentials or require a permanent privileged host agent.
 
 For an existing Kubernetes cluster whose hosts are not administered by Skali,
-the installer may run from an administrator workstation with an explicit
-kubeconfig, or the equivalent system bundle may be installed through Helm. In
-that mode it owns only the Skali installation and must not claim node or
-Kubernetes-version lifecycle.
+the installer runs from an administrator workstation with an explicit
+kubeconfig (a Helm chart of the same system bundle remains a possible later
+convenience). In that mode it owns only the Skali installation and must not
+claim node or Kubernetes-version lifecycle. The installation record is
+cluster-resident (the in-cluster ConfigMap), since a workstation keeps no
+host state; install and initialization collapse into one step; and because
+unmanaged nodes carry no containerd registry mirror, application images are
+pulled through the public registry domain with a pull-only credential
+injected into each project namespace. The operator names the cluster's
+ingress class and (optionally) its storage class, may reuse operators the
+cluster already runs, and declares the database tier explicitly. Reported
+platform state is unchanged from the managed path.
 
 ### 14.2 Default installation topology
 

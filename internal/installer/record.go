@@ -8,8 +8,12 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
+	"github.com/Hinkolas/skali/internal/kube"
 )
 
 // ErrNoRecord reports an absent installation record.
@@ -38,9 +42,35 @@ type Record struct {
 	// empty until known.
 	Endpoints *Endpoints `yaml:"endpoints,omitempty"`
 	TLS       *TLSConfig `yaml:"tls,omitempty"`
-	Versions  Versions   `yaml:"versions"`
-	CreatedAt time.Time  `yaml:"createdAt"`
-	UpdatedAt time.Time  `yaml:"updatedAt"`
+	// Existing carries the shape of an existing-cluster installation (a
+	// cluster whose hosts skali does not administer); nil for managed
+	// installations. It is a bundle-hash input, so its choices correctly
+	// move the hash.
+	Existing  *ExistingClusterRecord `yaml:"existing,omitempty"`
+	Versions  Versions               `yaml:"versions"`
+	CreatedAt time.Time              `yaml:"createdAt"`
+	UpdatedAt time.Time              `yaml:"updatedAt"`
+}
+
+// ExistingClusterRecord holds the operator's declared shape for an
+// existing-cluster installation: the fields the bundle needs that a
+// managed installation instead derives from node labels and host files.
+type ExistingClusterRecord struct {
+	IngressClassName string          `yaml:"ingressClassName"`
+	StorageClassName string          `yaml:"storageClassName,omitempty"`
+	DatabaseTier     string          `yaml:"databaseTier"`
+	DatabaseStorage  string          `yaml:"databaseStorage"`
+	RegistryStorage  string          `yaml:"registryStorage"`
+	Capabilities     []string        `yaml:"capabilities"`
+	Operators        OperatorsRecord `yaml:"operators"`
+}
+
+// OperatorsRecord records whether the vendored operators were installed
+// or an existing installation was reused, so a bundle uninstall never
+// deletes an operator namespace skali did not create.
+type OperatorsRecord struct {
+	CNPG        string `yaml:"cnpg"`
+	CertManager string `yaml:"certManager"`
 }
 
 // JoinRecord is the enrollment bookkeeping of an agent node.
@@ -101,6 +131,30 @@ func LoadRecord(ctx context.Context, runner host.Runner) (*Record, error) {
 	return &record, nil
 }
 
+// InClusterRecord reads the installation record Init published as a
+// ConfigMap. It identifies the init owner: the node whose canonical record
+// is a bundle-hash input, and therefore the only node whose init/upgrade
+// may converge the bundle. A missing ConfigMap returns (nil, nil): the
+// cluster was never initialized.
+func InClusterRecord(ctx context.Context, client *kube.Client) (*Record, error) {
+	configMap, err := client.Clientset.CoreV1().ConfigMaps(bundle.Namespace).
+		Get(ctx, bundle.RecordName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read in-cluster installation record: %w", err)
+	}
+	var record Record
+	if err := yaml.Unmarshal([]byte(configMap.Data[bundle.RecordKey]), &record); err != nil {
+		return nil, fmt.Errorf("parse in-cluster installation record: %w", err)
+	}
+	if record.InstallationID == "" {
+		return nil, fmt.Errorf("in-cluster installation record is missing its identity fields")
+	}
+	return &record, nil
+}
+
 // SaveRecord writes the record root-owned: directory 0750, file 0600. The
 // record holds no secrets, but it is an authority artifact nothing outside
 // root needs.
@@ -134,16 +188,17 @@ func RemoveRecord(ctx context.Context, runner host.Runner) error {
 // them the stamped hash.
 func (r *Record) CanonicalYAML() (string, error) {
 	type canonicalRecord struct {
-		Version        string      `yaml:"version"`
-		InstallationID string      `yaml:"installationId"`
-		Provider       string      `yaml:"provider"`
-		Cluster        string      `yaml:"cluster"`
-		Ownership      string      `yaml:"ownership"`
-		Node           NodeRecord  `yaml:"node"`
-		Join           *JoinRecord `yaml:"join,omitempty"`
-		Endpoints      *Endpoints  `yaml:"endpoints,omitempty"`
-		TLS            *TLSConfig  `yaml:"tls,omitempty"`
-		Versions       Versions    `yaml:"versions"`
+		Version        string                 `yaml:"version"`
+		InstallationID string                 `yaml:"installationId"`
+		Provider       string                 `yaml:"provider"`
+		Cluster        string                 `yaml:"cluster"`
+		Ownership      string                 `yaml:"ownership"`
+		Node           NodeRecord             `yaml:"node"`
+		Join           *JoinRecord            `yaml:"join,omitempty"`
+		Endpoints      *Endpoints             `yaml:"endpoints,omitempty"`
+		TLS            *TLSConfig             `yaml:"tls,omitempty"`
+		Existing       *ExistingClusterRecord `yaml:"existing,omitempty"`
+		Versions       Versions               `yaml:"versions"`
 	}
 	data, err := yaml.Marshal(canonicalRecord{
 		Version:        r.Version,
@@ -155,6 +210,7 @@ func (r *Record) CanonicalYAML() (string, error) {
 		Join:           r.Join,
 		Endpoints:      r.Endpoints,
 		TLS:            r.TLS,
+		Existing:       r.Existing,
 		Versions:       r.Versions,
 	})
 	if err != nil {

@@ -49,31 +49,58 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	applier := &Applier{Client: client, WaitTimeout: 10 * time.Minute}
 	production := profile.Production
 
+	skipCNPG, skipCertManager := false, false
+	if production != nil && production.External != nil {
+		skipCNPG = production.External.SkipCNPG
+		skipCertManager = production.External.SkipCertManager
+	}
+
 	progress.Start("Apply blessed operators")
 	if err := applier.ApplyObjects(ctx, objects.Namespace); err != nil {
 		return err
 	}
-	if err := applier.ApplyManifest(ctx, CNPGManifest()); err != nil {
-		return err
+	if !skipCNPG {
+		if err := applier.ApplyManifest(ctx, CNPGManifest()); err != nil {
+			return err
+		}
 	}
-	if production != nil {
+	if production != nil && !skipCertManager {
 		if err := applier.ApplyManifest(ctx, CertManagerManifest()); err != nil {
 			return err
 		}
 	}
-	if err := applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"); err != nil {
-		return err
+	// Reused operators are Helm or otherwise installs with their own
+	// deployment names, so the fixed-name waits only cover what this
+	// converge applied; the downstream proofs (skali-db reaching healthy,
+	// the webhook-validated issuer apply) cover reused operators.
+	if !skipCNPG {
+		if err := applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"); err != nil {
+			return err
+		}
 	}
-	operators := "CNPG " + CNPGVersion + ", Traefik (k3s)"
+	cnpgDetail := "CNPG " + CNPGVersion
+	if skipCNPG {
+		cnpgDetail = "CNPG (existing)"
+	}
+	operators := cnpgDetail + ", Traefik (k3s)"
 	if production != nil {
-		// The cainjector wait closes a known CRD-conversion race; the
-		// webhook wait covers issuer validation.
-		for _, name := range []string{"cert-manager", "cert-manager-webhook", "cert-manager-cainjector"} {
-			if err := applier.WaitDeploymentReady(ctx, "cert-manager", name); err != nil {
-				return err
+		certManagerDetail := "cert-manager " + CertManagerVersion
+		if skipCertManager {
+			certManagerDetail = "cert-manager (existing)"
+		} else {
+			// The cainjector wait closes a known CRD-conversion race; the
+			// webhook wait covers issuer validation.
+			for _, name := range []string{"cert-manager", "cert-manager-webhook", "cert-manager-cainjector"} {
+				if err := applier.WaitDeploymentReady(ctx, "cert-manager", name); err != nil {
+					return err
+				}
 			}
 		}
-		operators = "CNPG " + CNPGVersion + ", cert-manager " + CertManagerVersion + ", Traefik (k3s)"
+		operators = cnpgDetail + ", " + certManagerDetail + ", Traefik (k3s)"
+		if production.External != nil {
+			operators = cnpgDetail + ", " + certManagerDetail + ", ingress class " +
+				production.External.IngressClassName
+		}
 	}
 	progress.Done(operators)
 

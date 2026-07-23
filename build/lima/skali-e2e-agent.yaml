@@ -1,7 +1,8 @@
 # Second Lima VM for the skali cluster end-to-end suite: the host that
-# joins the skali-e2e server as a k3s agent. Smaller than the server VM;
-# an agent runs no control plane and no system bundle.
-# Create with `task lima:up`, run with `task test:installer`.
+# joins the skali-e2e server, first as an additional k3s server (etcd
+# pair) and later as an agent. Smaller than the server VM, but sized for
+# a temporary control plane with etcd.
+# Create with `task lima:up`, run with `task test:cluster`.
 minimumLimaVersion: "1.0.0"
 
 images:
@@ -12,7 +13,7 @@ images:
 
 vmType: "vz"
 cpus: 2
-memory: "3GiB"
+memory: "4GiB"
 disk: "15GiB"
 
 # A fresh production host exposes nothing of the developer machine.

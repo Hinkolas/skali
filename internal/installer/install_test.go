@@ -61,9 +61,10 @@ func TestInstallFreshServer(t *testing.T) {
 
 	// The configs were written before the install script ran, and the
 	// first server minted the cluster's registry pull credential into
-	// registries.yaml.
+	// registries.yaml and initialized the embedded etcd cluster.
 	writes := fake.Writes
 	require.Less(t, indexOf(writes, "write "+K3sConfigPath), indexOf(writes, "write "+RecordPath))
+	require.Contains(t, string(fake.FS[K3sConfigPath]), "cluster-init: true")
 	require.Contains(t, string(fake.FS[K3sRegistriesPath]), "registry.skali.internal")
 	require.NotEmpty(t, registriesPullSecret(fake.FS[K3sRegistriesPath]))
 }
@@ -72,7 +73,7 @@ func TestInstallAgentJoin(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fake := linuxHost()
-	fake.FS["/root/token"] = []byte(encodeJoinToken("K10abc::node:secret", "pull-secret-value") + "\n")
+	fake.FS["/root/token"] = []byte(encodeJoinToken("K10abc::node:secret", "pull-secret-value", layout.RoleAgent) + "\n")
 	joined := false
 	fake.Handlers["sh"] = func(host.Command) (host.Result, error) {
 		joined = true
@@ -123,15 +124,70 @@ func TestInstallAgentRequiresJoin(t *testing.T) {
 	require.Empty(t, fake.Writes)
 }
 
-func TestInstallServerRefusesJoin(t *testing.T) {
+func TestInstallServerJoin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	capabilities := []string{layout.CapabilityApplication}
+	fake := installReadyHost(capabilities)
+	fake.FS["/root/token"] = []byte(encodeJoinToken("K10abc::server:secret", "pull-secret-value", layout.RoleServer) + "\n")
+	joined := false
+	fake.Handlers["sh"] = func(host.Command) (host.Result, error) {
+		joined = true
+		return host.Result{}, nil
+	}
+	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
+		if joined && len(cmd.Args) == 2 && cmd.Args[0] == "is-active" && cmd.Args[1] == "k3s.service" {
+			return host.Result{Stdout: "active\n"}, nil
+		}
+		return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
+	}
+
+	record, err := Install(ctx, fake, InstallOptions{
+		Cluster:      "e2e",
+		Role:         layout.RoleServer,
+		Capabilities: capabilities,
+		Join:         &JoinOptions{Server: "https://cp-1.internal:6443", TokenFile: "/root/token"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, layout.RoleServer, record.Node.Role)
+	require.NotNil(t, record.Join)
+	require.Equal(t, "https://cp-1.internal:6443", record.Join.Server)
+
+	// A joining server references the existing server and never
+	// initializes a new etcd cluster; the token and pull credential land
+	// exactly like an agent join.
+	config := string(fake.FS[K3sConfigPath])
+	require.Contains(t, config, "server: https://cp-1.internal:6443")
+	require.Contains(t, config, "token-file: "+K3sTokenPath)
+	require.Contains(t, config, "embedded-registry: true")
+	require.NotContains(t, config, "cluster-init")
+	require.Equal(t, []byte("K10abc::server:secret\n"), fake.FS[K3sTokenPath])
+	require.Equal(t, "pull-secret-value", registriesPullSecret(fake.FS[K3sRegistriesPath]))
+}
+
+func TestInstallServerJoinRefusesAgentToken(t *testing.T) {
 	t.Parallel()
 	fake := linuxHost()
+	fake.FS["/root/token"] = []byte(encodeJoinToken("K10abc::node:secret", "pull", layout.RoleAgent) + "\n")
 	_, err := Install(context.Background(), fake, InstallOptions{
 		Role:         layout.RoleServer,
 		Capabilities: []string{layout.CapabilityApplication},
 		Join:         &JoinOptions{Server: "https://cp-1.internal:6443", TokenFile: "/root/token"},
 	})
-	require.ErrorContains(t, err, "joining as an additional server is not implemented in this slice")
+	require.ErrorContains(t, err, "minted for role agent, not server")
+	require.Empty(t, fake.Writes, "a role mismatch must fail before any mutation")
+}
+
+func TestInstallAgentJoinRefusesServerToken(t *testing.T) {
+	t.Parallel()
+	fake := linuxHost()
+	fake.FS["/root/token"] = []byte(encodeJoinToken("K10abc::server:secret", "pull", layout.RoleServer) + "\n")
+	_, err := Install(context.Background(), fake, InstallOptions{
+		Role:         layout.RoleAgent,
+		Capabilities: []string{layout.CapabilityDatabase},
+		Join:         &JoinOptions{Server: "https://cp-1.internal:6443", TokenFile: "/root/token"},
+	})
+	require.ErrorContains(t, err, "minted for role server, not agent")
 	require.Empty(t, fake.Writes)
 }
 
@@ -178,15 +234,6 @@ func TestInstallRefusesExistingInstallation(t *testing.T) {
 	require.Empty(t, fake.Writes)
 }
 
-func TestUninstallNodeGuardsMultiNode(t *testing.T) {
-	t.Parallel()
-	fake := &host.Fake{}
-	record := &Record{Node: NodeRecord{Role: layout.RoleServer}}
-	err := UninstallNode(context.Background(), fake, record, 3, nil)
-	require.ErrorContains(t, err, "multi-node cluster is not implemented in this slice")
-	require.Empty(t, fake.Commands)
-}
-
 func TestUninstallNodeRemovesRecordLast(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -202,11 +249,60 @@ func TestUninstallNodeRemovesRecordLast(t *testing.T) {
 	require.NoError(t, SaveRecord(ctx, fake, record))
 	fake.Writes = nil
 
-	require.NoError(t, UninstallNode(ctx, fake, record, 1, nil))
+	require.NoError(t, UninstallNode(ctx, fake, record, nil, nil))
 	require.Less(t, indexOf(fake.Writes, "remove "+CacheDir), indexOf(fake.Writes, "remove "+RecordPath))
 	info, err := fake.Stat(ctx, StateDir)
 	require.NoError(t, err)
 	require.False(t, info.Exists)
+}
+
+func TestUninstallLeavingServerRemovesSelfFirst(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	nodePresent := true
+	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
+		"k3s": func(cmd host.Command) (host.Result, error) {
+			switch cmd.Args[1] {
+			case "drain":
+				return host.Result{ExitCode: 1, Stderr: "cannot delete pods\n"}, nil
+			case "delete":
+				nodePresent = false
+				return host.Result{}, nil
+			case "get":
+				if nodePresent {
+					return host.Result{}, nil
+				}
+				return host.Result{ExitCode: 1, Stderr: "not found\n"}, nil
+			}
+			return host.Result{ExitCode: 1}, nil
+		},
+		"/usr/local/bin/k3s-uninstall.sh": func(host.Command) (host.Result, error) {
+			return host.Result{}, nil
+		},
+	}}
+	record := &Record{
+		Version: RecordVersion, InstallationID: "x",
+		Node: NodeRecord{Name: "cp-2", Role: layout.RoleServer},
+	}
+	require.NoError(t, SaveRecord(ctx, fake, record))
+	fake.Writes = nil
+	fake.Commands = nil
+
+	plan := &NodeRemovalPlan{NodeName: "cp-2", Role: layout.RoleServer, Servers: 2, Total: 3}
+	require.NoError(t, UninstallNode(ctx, fake, record, plan, nil))
+
+	// Drain (tolerated failure), then the self node delete, then the
+	// uninstall script: member removal needs a functional cluster, so the
+	// delete must precede the script.
+	require.Equal(t, "drain", fake.Commands[0].Args[1])
+	require.Equal(t, "delete", fake.Commands[1].Args[1])
+	scriptIndex := -1
+	for i, cmd := range fake.Commands {
+		if cmd.Name == "/usr/local/bin/k3s-uninstall.sh" {
+			scriptIndex = i
+		}
+	}
+	require.Greater(t, scriptIndex, 1)
 }
 
 func indexOf(entries []string, needle string) int {
