@@ -397,7 +397,7 @@ func UninstallExistingClusterBundle(ctx context.Context, client *kube.Client, re
 	}
 	for index, wave := range waves {
 		progress.Start(titles[index])
-		deleted, err := deleteNamespaces(ctx, client, wave)
+		deleted, err := deleteNamespaces(ctx, client, wave, progress)
 		if err != nil {
 			return err
 		}

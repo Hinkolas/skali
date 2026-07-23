@@ -606,6 +606,21 @@ no single command that reaches into other machines. In existing-cluster mode
 the bundle scope removes only the operator namespaces skali installed: an
 operator marked `use-existing` at install stays untouched.
 
+Each namespace wave waits briefly for termination. A namespace wedged on a
+controller finalizer (a cert-manager ACME order it can no longer clean up, a
+database volume) never terminates on its own, so rather than hang, the wave
+surfaces what it is waiting on and then forces the namespace out. This is
+safe because the uninstall is an explicitly confirmed destroy of a known
+bundle; the finalizers it clears guard cleanup this removal discards anyway.
+
+```console
+  ok  Remove project namespaces  3 namespace(s)
+        waiting for skali-maxbau-production: Some content in the namespace
+        has finalizers remaining: finalizer.acme.cert-manager.io in 3
+        resource instances
+        forcing termination of skali-maxbau-production
+```
+
 ## 10. macOS host (Lima VM)
 
 Kubernetes nodes are Linux-only, so on a Mac `skali cluster` manages one
