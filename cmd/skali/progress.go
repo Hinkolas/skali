@@ -38,6 +38,14 @@ func (p *taskProgress) Skip(detail string) {
 	p.current = nil
 }
 
+// Note publishes transient detail for long-running installer stages, such
+// as the finalizer currently holding a namespace in Terminating.
+func (p *taskProgress) Note(line string) {
+	if p.current != nil {
+		p.current.Note(line)
+	}
+}
+
 func (p *taskProgress) Abort() {
 	if p.current == nil {
 		return

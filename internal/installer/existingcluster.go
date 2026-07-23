@@ -382,6 +382,9 @@ func UninstallExistingClusterBundle(ctx context.Context, client *kube.Client, re
 	if err != nil {
 		return err
 	}
+	if err := stopBundleReconciler(ctx, client, progress); err != nil {
+		return err
+	}
 	operators := ownedOperatorNamespaces(record)
 	waves := [][]string{
 		inventory.ProjectNamespaces,
@@ -397,7 +400,7 @@ func UninstallExistingClusterBundle(ctx context.Context, client *kube.Client, re
 	}
 	for index, wave := range waves {
 		progress.Start(titles[index])
-		deleted, err := deleteNamespaces(ctx, client, wave)
+		deleted, err := deleteNamespaces(ctx, client, wave, progress)
 		if err != nil {
 			return err
 		}

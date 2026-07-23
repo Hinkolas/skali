@@ -8,8 +8,11 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
@@ -43,18 +46,51 @@ func GatherBundleInventory(ctx context.Context, client *kube.Client) (*BundleInv
 	return inventory, nil
 }
 
+const (
+	skalidRBACName      = "skalid"
+	skalidDeployment    = "skalid"
+	reconcilerStopTitle = "Stop Skali reconciliation"
+)
+
+// Namespace-termination pacing. Bundle removal is an explicitly confirmed
+// destroy, so a namespace that is still terminating after a short grace
+// period is escalated to finalization instead of making the command spin for
+// ten minutes. Vars let focused tests collapse the waits.
+var (
+	namespaceTerminationGrace = 90 * time.Second
+	namespaceForceDeadline    = 30 * time.Second
+	namespacePollInterval     = 3 * time.Second
+)
+
+type progressNoter interface {
+	Note(string)
+}
+
+func note(progress Progress, line string) {
+	if noter, ok := progress.(progressNoter); ok {
+		noter.Note(line)
+	}
+}
+
 // UninstallBundle removes Skali and all project workloads and data from
-// the cluster, keeping bare k3s running. Deletion order: project
-// namespaces, the platform namespace, skali-system, then the operator
-// namespaces; each wave waits for termination. The record survives with
-// its bundle version cleared, so the host re-detects as an uninitialized
-// managed server.
+// the cluster, keeping bare k3s running. The inventory is captured while
+// the control plane still exists, then skalid is denied cluster access and
+// scaled down before any project namespace is deleted. That ordering is
+// essential: namespace deletion events otherwise ask the level-triggered
+// reconciler to recreate the active environment immediately. Deletion then
+// proceeds through project, platform, system, and operator namespaces. The
+// record survives with its bundle version cleared, so the host re-detects
+// as an uninitialized managed server.
 func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Client, record *Record, progress Progress) error {
 	if progress == nil {
 		progress = silentProgress{}
 	}
 	inventory, err := GatherBundleInventory(ctx, client)
 	if err != nil {
+		return err
+	}
+
+	if err := stopBundleReconciler(ctx, client, progress); err != nil {
 		return err
 	}
 
@@ -72,7 +108,7 @@ func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Clien
 	}
 	for index, wave := range waves {
 		progress.Start(titles[index])
-		deleted, err := deleteNamespaces(ctx, client, wave)
+		deleted, err := deleteNamespaces(ctx, client, wave, progress)
 		if err != nil {
 			return err
 		}
@@ -92,41 +128,237 @@ func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Clien
 	return nil
 }
 
-// deleteNamespaces deletes the named namespaces and waits for termination;
-// absent namespaces are skipped.
-func deleteNamespaces(ctx context.Context, client *kube.Client, names []string) (int, error) {
-	deleted := 0
+// stopBundleReconciler removes skalid's cluster authorization before
+// scaling its deployment down. Revoking authorization first closes the
+// race with an already-running worker: even while its pod is terminating,
+// it can no longer recreate a namespace. The fixed-name RBAC objects are
+// bundle-owned cluster-scoped resources and would otherwise survive a
+// namespace-only uninstall.
+func stopBundleReconciler(ctx context.Context, client *kube.Client, progress Progress) error {
+	progress.Start(reconcilerStopTitle)
+	changed := false
+
+	err := client.Clientset.RbacV1().ClusterRoleBindings().Delete(
+		ctx, skalidRBACName, metav1.DeleteOptions{})
+	switch {
+	case err == nil:
+		changed = true
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("revoke skalid cluster role binding: %w", err)
+	}
+
+	err = client.Clientset.RbacV1().ClusterRoles().Delete(
+		ctx, skalidRBACName, metav1.DeleteOptions{})
+	switch {
+	case err == nil:
+		changed = true
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("remove skalid cluster role: %w", err)
+	}
+
+	scaled := false
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, err := client.Clientset.AppsV1().Deployments(bundle.Namespace).
+			Get(ctx, skalidDeployment, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
+			return nil
+		}
+		deployment = deployment.DeepCopy()
+		replicas := int32(0)
+		deployment.Spec.Replicas = &replicas
+		if _, err := client.Clientset.AppsV1().Deployments(bundle.Namespace).
+			Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		scaled = true
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("scale skalid deployment to zero: %w", err)
+	}
+	changed = changed || scaled
+
+	if !changed {
+		progress.Skip("already stopped")
+		return nil
+	}
+	progress.Done("cluster access revoked, deployment scaled to zero")
+	return nil
+}
+
+type namespaceDeletion struct {
+	name string
+	uid  types.UID
+}
+
+// deleteNamespaces deletes the named namespaces with UID preconditions and
+// waits for termination; absent namespaces are skipped. A UID change is
+// reported immediately as recreation instead of being mistaken for a slow
+// termination. Namespaces genuinely wedged on finalizers are surfaced while
+// waiting and finalized after the grace period.
+func deleteNamespaces(ctx context.Context, client *kube.Client, names []string, progress Progress) (int, error) {
+	deletions := make([]namespaceDeletion, 0, len(names))
 	for _, name := range names {
-		err := client.Clientset.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
+		namespace, err := client.Clientset.CoreV1().Namespaces().
+			Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			continue
 		}
 		if err != nil {
-			return deleted, fmt.Errorf("delete namespace %s: %w", name, err)
+			return len(deletions), fmt.Errorf("read namespace %s for deletion: %w", name, err)
 		}
-		deleted++
+		uid := namespace.UID
+		err = client.Clientset.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{
+			Preconditions: &metav1.Preconditions{UID: &uid},
+		})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return len(deletions), fmt.Errorf("delete namespace %s: %w", name, err)
+		}
+		deletions = append(deletions, namespaceDeletion{name: name, uid: uid})
 	}
-	deadline := time.Now().Add(10 * time.Minute)
+	deleted := len(deletions)
+	if deleted == 0 {
+		return 0, nil
+	}
+
+	stuck, err := waitNamespacesGone(ctx, client, deletions, progress)
+	if err != nil {
+		return deleted, err
+	}
+	if err := forceNamespacesGone(ctx, client, stuck, progress); err != nil {
+		return deleted, err
+	}
+	return deleted, nil
+}
+
+// waitNamespacesGone waits through the normal namespace-controller path,
+// returning only namespaces still present after the grace period.
+func waitNamespacesGone(ctx context.Context, client *kube.Client, deletions []namespaceDeletion, progress Progress) ([]namespaceDeletion, error) {
+	deadline := time.Now().Add(namespaceTerminationGrace)
 	for {
-		remaining := 0
-		for _, name := range names {
-			_, err := client.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
-			if err == nil {
-				remaining++
-			} else if !apierrors.IsNotFound(err) {
-				return deleted, fmt.Errorf("wait for namespace %s: %w", name, err)
+		remaining := make([]namespaceDeletion, 0, len(deletions))
+		blockers := make([]string, 0, len(deletions))
+		for _, deletion := range deletions {
+			namespace, err := client.Clientset.CoreV1().Namespaces().
+				Get(ctx, deletion.name, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("wait for namespace %s: %w", deletion.name, err)
+			}
+			if namespace.UID != deletion.uid {
+				return nil, fmt.Errorf("namespace %s was recreated during uninstall "+
+					"(deleted uid %s, current uid %s); stop the controller that owns it and retry",
+					deletion.name, deletion.uid, namespace.UID)
+			}
+			remaining = append(remaining, deletion)
+			if blocker := namespaceBlocker(namespace); blocker != "" {
+				blockers = append(blockers, deletion.name+": "+blocker)
+			} else {
+				blockers = append(blockers, deletion.name)
 			}
 		}
-		if remaining == 0 {
-			return deleted, nil
+		if len(remaining) == 0 {
+			return nil, nil
 		}
+		note(progress, "waiting for "+strings.Join(blockers, "; "))
 		if time.Now().After(deadline) {
-			return deleted, fmt.Errorf("timed out waiting for %d namespace(s) to terminate", remaining)
+			return remaining, nil
 		}
 		select {
 		case <-ctx.Done():
-			return deleted, ctx.Err()
-		case <-time.After(3 * time.Second):
+			return nil, ctx.Err()
+		case <-time.After(namespacePollInterval):
+		}
+	}
+}
+
+// namespaceBlocker summarizes active namespace termination conditions.
+func namespaceBlocker(namespace *corev1.Namespace) string {
+	var reasons []string
+	for _, condition := range namespace.Status.Conditions {
+		if condition.Status != corev1.ConditionTrue {
+			continue
+		}
+		message := strings.TrimSpace(condition.Message)
+		if message == "" {
+			message = string(condition.Reason)
+		}
+		if message != "" {
+			reasons = append(reasons, message)
+		}
+	}
+	return strings.Join(reasons, "; ")
+}
+
+// forceNamespacesGone clears every stuck namespace's kubernetes finalizer
+// through the finalize subresource, then verifies the exact UIDs disappear
+// under one shared deadline. It never finalizes a same-named replacement.
+func forceNamespacesGone(ctx context.Context, client *kube.Client, deletions []namespaceDeletion, progress Progress) error {
+	for _, deletion := range deletions {
+		note(progress, "forcing termination of "+deletion.name)
+		namespace, err := client.Clientset.CoreV1().Namespaces().
+			Get(ctx, deletion.name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read stuck namespace %s: %w", deletion.name, err)
+		}
+		if namespace.UID != deletion.uid {
+			return fmt.Errorf("namespace %s was recreated before forced termination "+
+				"(deleted uid %s, current uid %s)", deletion.name, deletion.uid, namespace.UID)
+		}
+		if len(namespace.Spec.Finalizers) == 0 {
+			continue
+		}
+		namespace = namespace.DeepCopy()
+		namespace.Spec.Finalizers = nil
+		if _, err := client.Clientset.CoreV1().Namespaces().
+			Finalize(ctx, namespace, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("force namespace %s: %w", deletion.name, err)
+		}
+	}
+
+	deadline := time.Now().Add(namespaceForceDeadline)
+	for {
+		var remaining []string
+		for _, deletion := range deletions {
+			namespace, err := client.Clientset.CoreV1().Namespaces().
+				Get(ctx, deletion.name, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("confirm namespace %s removed: %w", deletion.name, err)
+			}
+			if namespace.UID != deletion.uid {
+				return fmt.Errorf("namespace %s was recreated after forced termination "+
+					"(deleted uid %s, current uid %s)", deletion.name, deletion.uid, namespace.UID)
+			}
+			remaining = append(remaining, deletion.name)
+		}
+		if len(remaining) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("namespace(s) %s did not terminate after clearing finalizers; "+
+				"inspect with kubectl get namespace <name> -o yaml", strings.Join(remaining, ", "))
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(namespacePollInterval):
 		}
 	}
 }

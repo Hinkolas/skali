@@ -117,3 +117,16 @@ func TestOwnedOperatorNamespaces(t *testing.T) {
 		Operators: OperatorsRecord{CNPG: "use-existing", CertManager: "use-existing"}}}
 	require.Empty(t, ownedOperatorNamespaces(reuseBoth))
 }
+
+func TestUninstallExistingClusterStopsReconcilerFirst(t *testing.T) {
+	ctx := context.Background()
+	client := &kube.Client{Clientset: k8sfake.NewSimpleClientset()}
+	record := &Record{Existing: &ExistingClusterRecord{
+		Operators: OperatorsRecord{CNPG: "use-existing", CertManager: "use-existing"},
+	}}
+	progress := &recordingProgress{}
+
+	require.NoError(t, UninstallExistingClusterBundle(ctx, client, record, progress))
+	require.NotEmpty(t, progress.starts)
+	require.Equal(t, reconcilerStopTitle, progress.starts[0])
+}
