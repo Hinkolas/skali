@@ -15,50 +15,34 @@ import (
 	"github.com/Hinkolas/skali/internal/clirender"
 )
 
-// environmentIDByName resolves --environment against the current remote.
-func environmentIDByName(command *cobra.Command, api *client.Client, environment string) (string, error) {
-	ctx := command.Context()
-	projects, err := api.ListProjects(ctx)
-	if err != nil {
-		return "", err
-	}
-	for _, project := range projects {
-		environments, err := api.ListEnvironments(ctx, project.ID)
-		if err != nil {
-			return "", err
-		}
-		for _, candidate := range environments {
-			if candidate.Name == environment {
-				return candidate.ID, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("environment %s not found on this installation", environment)
-}
-
-func newRunsCommand() *cobra.Command {
-	var environment string
+func newRunCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "runs",
-		Short: "List an environment's runs",
+		Use:   "run",
+		Short: "List, inspect, attach to, or cancel runs",
+	}
+
+	var environment string
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List the environment's runs",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			if environment == "" {
-				return errors.New("--environment is required")
-			}
-			_, _, api, err := currentClient()
+			start, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			environmentID, err := environmentIDByName(command, api, environment)
+			target, err := resolveQueryTarget(command.Context(), start, environment)
 			if err != nil {
 				return err
 			}
-			runs, err := api.ListRuns(command.Context(), environmentID)
+			runs, err := target.api.ListRuns(command.Context(), target.environmentID)
 			if err != nil {
 				return err
 			}
 			out := command.OutOrStdout()
+			style := clirender.StyleFor(out)
+			fmt.Fprintf(out, "%s  %s %s\n\n", style.Dim("environment"),
+				target.environment, style.Dim("("+target.remoteName+")"))
 			fmt.Fprintf(out, "%-36s  %-11s  %-9s  %s\n", "RUN", "KIND", "STATUS", "STARTED")
 			for _, run := range runs {
 				started := ""
@@ -70,22 +54,16 @@ func newRunsCommand() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "environment name")
-	return command
-}
-
-func newRunCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "run",
-		Short: "Inspect, attach to, or cancel a run",
-	}
+	list.Flags().StringVar(&environment, "environment", "",
+		"environment name (default: the checkout binding)")
+	command.AddCommand(list)
 
 	show := &cobra.Command{
 		Use:   "show <run-id>",
 		Short: "Print a run's step tree",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			_, _, api, err := currentClient()
+			api, err := queryClient()
 			if err != nil {
 				return err
 			}
@@ -107,7 +85,7 @@ func newRunCommand() *cobra.Command {
 		Short: "Attach the terminal to a run until it settles",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			_, _, api, err := currentClient()
+			api, err := queryClient()
 			if err != nil {
 				return err
 			}
@@ -129,7 +107,7 @@ func newRunCommand() *cobra.Command {
 			"deployment returns the target to the prior active revision.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			_, _, api, err := currentClient()
+			api, err := queryClient()
 			if err != nil {
 				return err
 			}
@@ -155,7 +133,7 @@ func newRunCommand() *cobra.Command {
 			if stepKey == "" {
 				return errors.New("--step is required")
 			}
-			_, _, api, err := currentClient()
+			api, err := queryClient()
 			if err != nil {
 				return err
 			}
@@ -191,24 +169,22 @@ func newLogsCommand() *cobra.Command {
 		Short: "Stream live application logs",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			if environment == "" {
-				return errors.New("--environment is required")
-			}
 			if len(args) == 1 {
 				service = args[0]
 			}
-			_, _, api, err := currentClient()
+			start, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			environmentID, err := environmentIDByName(command, api, environment)
+			target, err := resolveQueryTarget(command.Context(), start, environment)
 			if err != nil {
 				return err
 			}
-			return streamRuntimeLogs(command, api, environmentID, service)
+			return streamRuntimeLogs(command, target.api, target.environmentID, service)
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "environment name")
+	command.Flags().StringVar(&environment, "environment", "",
+		"environment name (default: the checkout binding)")
 	return command
 }
 

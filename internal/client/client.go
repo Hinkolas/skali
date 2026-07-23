@@ -27,6 +27,9 @@ type Client struct {
 	streaming *http.Client
 }
 
+// Master reports the base URL this client talks to.
+func (c *Client) Master() string { return c.base }
+
 func New(master, token, userAgent string) *Client {
 	transport := localhostTransport()
 	return &Client{
