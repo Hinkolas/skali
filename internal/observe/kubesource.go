@@ -300,24 +300,44 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 func (k *KubeSource) addNodeInformer(lw cache.ListerWatcher) {
 	informer := cache.NewSharedIndexInformer(lw, &corev1.Node{}, k.opts.Resync, cache.Indexers{})
 	k.watchErrors(informer)
-	fanOut := func(raw any) {
+	asNode := func(raw any) (*corev1.Node, bool) {
 		if tombstone, ok := raw.(cache.DeletedFinalStateUnknown); ok {
 			raw = tombstone.Obj
 		}
 		node, ok := raw.(*corev1.Node)
-		if !ok {
-			return
-		}
+		return node, ok
+	}
+	fanOut := func(node *corev1.Node) {
 		for _, environment := range k.store.EnvironmentsOnNode(node.Name) {
 			k.enqueue(environment)
 		}
 	}
+	upsert := func(raw any) {
+		if node, ok := asNode(raw); ok {
+			k.store.SetNodeArch(node.Name, nodeArch(node))
+			fanOut(node)
+		}
+	}
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    fanOut,
-		UpdateFunc: func(_, raw any) { fanOut(raw) },
-		DeleteFunc: fanOut,
+		AddFunc:    upsert,
+		UpdateFunc: func(_, raw any) { upsert(raw) },
+		DeleteFunc: func(raw any) {
+			if node, ok := asNode(raw); ok {
+				k.store.RemoveNode(node.Name)
+				fanOut(node)
+			}
+		},
 	})
 	k.informers = append(k.informers, namedInformer{kind: "Node", informer: informer})
+}
+
+// nodeArch reads a node's CPU architecture, preferring the kubelet-reported
+// value over the standard arch label.
+func nodeArch(node *corev1.Node) string {
+	if arch := node.Status.NodeInfo.Architecture; arch != "" {
+		return arch
+	}
+	return node.Labels["kubernetes.io/arch"]
 }
 
 func (k *KubeSource) addEventInformer(lw cache.ListerWatcher) {

@@ -2231,6 +2231,14 @@ components:
             - type: "null"
             - $ref: "#/components/schemas/RevisionRef"
         observation: { $ref: "#/components/schemas/Observation" }
+        platforms:
+          type: array
+          items:
+            type: string
+          description: >
+            Observed cluster node platforms, e.g. linux/amd64. Empty until
+            the observation source has synced. Clients building images
+            should target every listed platform.
         services:
           type: array
           items: { $ref: "#/components/schemas/ServiceStatus" }
@@ -2318,6 +2326,10 @@ components:
           type: string
         platform:
           type: string
+          description: >
+            Target platform(s) of the build. May be a comma-joined sorted
+            list (e.g. linux/amd64,linux/arm64) covering every cluster
+            platform.
 
     ArtifactAction:
       type: object

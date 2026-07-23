@@ -25,6 +25,7 @@ type Status struct {
 	Target        *RevisionRef
 	Active        *RevisionRef
 	Observation   module.SourceStatus
+	Platforms     []string // observed cluster node platforms, empty until observation syncs
 	Services      []ServiceStatus
 }
 
@@ -65,6 +66,7 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		EnvironmentID: environmentID,
 		State:         target.State,
 		Observation:   k.deps.Observed.Source(),
+		Platforms:     k.deps.Observed.NodePlatforms(),
 	}
 	var targetRevision *revision.Revision
 	if target.TargetRevisionID != nil {

@@ -373,3 +373,26 @@ func TestRollback(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorIs(t, f.deploy.Rollback(ctx, other.ID, first.RevisionID), ErrRevisionMismatch)
 }
+
+func TestPlatformsOverlap(t *testing.T) {
+	cases := []struct {
+		name      string
+		submitted string
+		cluster   []string
+		want      bool
+	}{
+		{"exact match", "linux/amd64", []string{"linux/amd64"}, true},
+		{"superset covers", "linux/amd64,linux/arm64", []string{"linux/amd64"}, true},
+		{"partial coverage counts", "linux/amd64", []string{"linux/amd64", "linux/arm64"}, true},
+		{"disjoint fails", "linux/arm64", []string{"linux/amd64"}, false},
+		{"empty submitted skips", "", []string{"linux/amd64"}, true},
+		{"empty cluster skips", "linux/arm64", nil, true},
+		{"whitespace only skips", " , ", []string{"linux/amd64"}, true},
+		{"spaced list matches", " linux/amd64 , linux/arm64 ", []string{"linux/arm64"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, platformsOverlap(tc.submitted, tc.cluster))
+		})
+	}
+}

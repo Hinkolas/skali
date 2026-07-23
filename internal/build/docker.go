@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -85,7 +86,7 @@ func (d *Docker) Build(ctx context.Context, req BuildRequest, sink ProgressSink)
 	go streamLines(&wg, stderr, sink)
 	wg.Wait()
 	if err := cmd.Wait(); err != nil {
-		return Result{}, fmt.Errorf("build: buildx build failed: %w", err)
+		return Result{}, fmt.Errorf("build: buildx build failed: %w%s", err, crossBuildHint(req.Platform))
 	}
 
 	digest, err := digestFromMetadata(metadata.Name())
@@ -101,6 +102,26 @@ func (d *Docker) Build(ctx context.Context, req BuildRequest, sink ProgressSink)
 		return Result{}, fmt.Errorf("build: encode provenance: %w", err)
 	}
 	return Result{Digest: digest, Provenance: provenance}, nil
+}
+
+// crossBuildHint annotates a build failure when the target platforms do not
+// include the builder's native one: the most likely extra requirement is
+// binfmt emulation, and for multi-platform pushes a docker-container
+// builder. The native platform is linux on the host architecture even on
+// macOS, where builds run inside the Docker Desktop Linux VM.
+func crossBuildHint(platform string) string {
+	if platform == "" {
+		return ""
+	}
+	native := "linux/" + runtime.GOARCH
+	for target := range strings.SplitSeq(platform, ",") {
+		if strings.TrimSpace(target) == native {
+			return ""
+		}
+	}
+	return " (building for " + platform + " on a " + runtime.GOARCH + " host may need emulation: " +
+		"'docker run --privileged --rm tonistiigi/binfmt --install all'; " +
+		"multi-platform builds may also need a docker-container builder: 'docker buildx create --use')"
 }
 
 // CheckBuildx probes docker buildx availability; the error carries an

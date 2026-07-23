@@ -60,10 +60,13 @@ func newE2EHarness(t *testing.T) *e2eHarness {
 	out, err = image.CombinedOutput()
 	require.NoError(t, err, "build skalid image: %s", out)
 
-	// The example project in a scratch copy so source edits are safe.
+	// The example project in a scratch copy so source edits are safe. A
+	// checkout binding left behind by real deploys of the example must not
+	// travel along: the suite asserts bare dev never creates one.
 	projectDir := filepath.Join(t.TempDir(), "hello-world")
 	require.NoError(t, exec.Command("cp", "-R",
 		filepath.Join(repoRoot, "examples", "hello-world"), projectDir).Run())
+	require.NoError(t, os.RemoveAll(filepath.Join(projectDir, ".skali")))
 	require.NoError(t, os.WriteFile(filepath.Join(projectDir, ".env"),
 		[]byte("APP_DOMAIN=hello-world.localhost\n"), 0o644))
 

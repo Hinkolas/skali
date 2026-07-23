@@ -552,6 +552,57 @@ func TestDeploymentRequiresBuildInputs(t *testing.T) {
 	_ = strings.TrimSpace("")
 }
 
+// The platform guard: a build that targets none of the observed cluster
+// platforms is rejected at plan and open time; overlap or an unobserved
+// cluster passes.
+func TestDeploymentPlatformGuard(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("platform@example.com", "hunter2hunter2")
+	token := a.login("platform@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+	definitionVersion := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	candidate := a.stageValues(t, token, envID, definitionVersion, "platform-secret")
+
+	planWith := func(platform string) (int, map[string]any) {
+		builds := buildsPayload()
+		builds["web"].(map[string]any)["platform"] = platform
+		return a.do("POST", "/v1/environments/"+envID+"/plan", token, map[string]any{
+			"definition_version_id": definitionVersion,
+			"candidate_id":          candidate,
+			"builds":                builds,
+		})
+	}
+
+	// No observed nodes: the guard skips, whatever the platform.
+	status, body := planWith("linux/arm64")
+	require.Equal(t, http.StatusOK, status, "%v", body)
+
+	// An amd64-only cluster refuses an arm64-only build.
+	a.observed.SetNodeArch("node-1", "amd64")
+	status, body = planWith("linux/arm64")
+	require.Equal(t, http.StatusUnprocessableEntity, status, "%v", body)
+	require.Equal(t, "platform_mismatch", errCode(body))
+	require.Contains(t, errMessage(body), "linux/amd64")
+	require.Contains(t, errMessage(body), "upgrade the skali CLI")
+
+	// A matching or covering build passes.
+	status, body = planWith("linux/amd64")
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	status, body = planWith("linux/amd64,linux/arm64")
+	require.Equal(t, http.StatusOK, status, "%v", body)
+
+	// Open enforces the same rule.
+	builds := buildsPayload()
+	status, body = a.do("POST", "/v1/environments/"+envID+"/deployments", token, map[string]any{
+		"definition_version_id": definitionVersion,
+		"candidate_id":          candidate,
+		"build_executor":        "local",
+		"builds":                builds,
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, status, "%v", body)
+	require.Equal(t, "platform_mismatch", errCode(body))
+}
+
 func errCode(body map[string]any) string {
 	detail, _ := body["error"].(map[string]any)
 	code, _ := detail["code"].(string)

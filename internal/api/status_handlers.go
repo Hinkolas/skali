@@ -60,6 +60,7 @@ type environmentStatusPayload struct {
 	TargetRevision *revisionRefPayload    `json:"target_revision"`
 	ActiveRevision *revisionRefPayload    `json:"active_revision"`
 	Observation    observationPayload     `json:"observation"`
+	Platforms      []string               `json:"platforms"`
 	Services       []serviceStatusPayload `json:"services"`
 }
 
@@ -81,6 +82,7 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 		EnvironmentID: status.EnvironmentID.String(),
 		State:         status.State,
 		Observation:   newObservationPayload(status.Observation),
+		Platforms:     append([]string{}, status.Platforms...),
 		Services:      make([]serviceStatusPayload, 0, len(status.Services)),
 	}
 	if status.Target != nil {

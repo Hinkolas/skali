@@ -84,6 +84,28 @@ func TestRemoveAndNodeIndex(t *testing.T) {
 	require.Len(t, fake.Snapshot(envID).Objects, 1)
 }
 
+func TestNodePlatforms(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	require.Empty(t, store.NodePlatforms())
+
+	store.SetNodeArch("a", "arm64")
+	store.SetNodeArch("b", "amd64")
+	store.SetNodeArch("c", "amd64")
+	require.Equal(t, []string{"linux/amd64", "linux/arm64"}, store.NodePlatforms())
+
+	store.RemoveNode("a")
+	require.Equal(t, []string{"linux/amd64"}, store.NodePlatforms())
+
+	store.SetNodeArch("d", "")
+	require.Equal(t, []string{"linux/amd64"}, store.NodePlatforms(),
+		"a node without a reported arch must not register")
+
+	store.SetNodeArch("b", "")
+	store.RemoveNode("c")
+	require.Empty(t, store.NodePlatforms())
+}
+
 func TestStalenessEvaluation(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1700000000, 0)

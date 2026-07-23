@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -59,19 +60,65 @@ func TestLoadLocalProjectAndBuildInputs(t *testing.T) {
 	require.Equal(t, "flowdemo", project.Result.Definition.Name)
 	require.Equal(t, root, project.Root)
 
-	inputs, contexts, err := buildInputs(project, map[string]string{"APP_DOMAIN": "flow.localhost"}, []string{envFile})
+	inputs, contexts, err := buildInputs(project, map[string]string{"APP_DOMAIN": "flow.localhost"}, []string{envFile}, "linux/amd64")
 	require.NoError(t, err)
 	require.Contains(t, inputs, "web")
 	require.Len(t, inputs["web"].InputHash, 64)
-	require.True(t, strings.HasPrefix(inputs["web"].Platform, "linux/"))
+	require.Equal(t, "linux/amd64", inputs["web"].Platform)
 	// The env file never enters the context inventory.
 	require.NotContains(t, contexts["web"].Files, ".env")
 
+	// The platform is part of the dedup key: a different target rebuilds.
+	otherPlatform, _, err := buildInputs(project, map[string]string{"APP_DOMAIN": "flow.localhost"}, []string{envFile}, "linux/arm64")
+	require.NoError(t, err)
+	require.NotEqual(t, inputs["web"].InputHash, otherPlatform["web"].InputHash)
+
 	// A source change moves the input hash; the dedup key is honest.
 	writeFile(t, root, "main.txt", "changed")
-	changed, _, err := buildInputs(project, map[string]string{"APP_DOMAIN": "flow.localhost"}, []string{envFile})
+	changed, _, err := buildInputs(project, map[string]string{"APP_DOMAIN": "flow.localhost"}, []string{envFile}, "linux/amd64")
 	require.NoError(t, err)
 	require.NotEqual(t, inputs["web"].InputHash, changed["web"].InputHash)
+}
+
+func TestResolveBuildPlatform(t *testing.T) {
+	local := "linux/" + runtime.GOARCH
+
+	// No status (old server or failed fetch): host arch plus a notice.
+	var out strings.Builder
+	require.Equal(t, local, resolveBuildPlatform(&out, nil, ""))
+	require.Contains(t, out.String(), "did not report")
+
+	// An empty platform list is the same fallback.
+	out.Reset()
+	require.Equal(t, local, resolveBuildPlatform(&out, &client.EnvironmentStatus{}, ""))
+	require.Contains(t, out.String(), "did not report")
+
+	// A reported platform wins; a foreign one is announced.
+	out.Reset()
+	status := &client.EnvironmentStatus{Platforms: []string{"linux/amd64"}}
+	require.Equal(t, "linux/amd64", resolveBuildPlatform(&out, status, ""))
+	if local != "linux/amd64" {
+		require.Contains(t, out.String(), "cluster architecture")
+	}
+
+	// A matching single platform stays silent.
+	out.Reset()
+	status = &client.EnvironmentStatus{Platforms: []string{local}}
+	require.Equal(t, local, resolveBuildPlatform(&out, status, ""))
+	require.Empty(t, out.String())
+
+	// Mixed clusters join into one sorted multi-platform build.
+	out.Reset()
+	status = &client.EnvironmentStatus{Platforms: []string{"linux/arm64", "linux/amd64"}}
+	require.Equal(t, "linux/amd64,linux/arm64", resolveBuildPlatform(&out, status, ""))
+
+	// An override beats the report and is canonicalized.
+	out.Reset()
+	status = &client.EnvironmentStatus{Platforms: []string{"linux/amd64"}}
+	require.Equal(t, "linux/arm64", resolveBuildPlatform(&out, status, "linux/arm64"))
+	require.Contains(t, out.String(), "override")
+	require.Equal(t, "linux/amd64,linux/arm64",
+		resolveBuildPlatform(io.Discard, nil, " linux/arm64, linux/amd64 ,linux/arm64"))
 }
 
 func TestDiscoverEnvFiles(t *testing.T) {

@@ -40,6 +40,9 @@ type deployOptions struct {
 	Yes              bool
 	AllowDestructive bool
 	Detach           bool
+	// Platform overrides the build platform(s); empty follows the
+	// server-reported cluster architecture.
+	Platform string
 	// AutoEnvFile uses ./.env automatically when present (bare dev).
 	AutoEnvFile bool
 	// CreateMissing provisions the project and environment through the API
@@ -336,12 +339,56 @@ func countBySecrecy(result *compiler.Result, file *values.File) (plain, secret i
 	return plain, secret
 }
 
+// resolveBuildPlatform picks the platform local builds target: an explicit
+// override wins, then the platforms the server observed on the cluster
+// nodes, then the host architecture when the server reports nothing (older
+// servers, observation not yet synced). Multiple platforms join into one
+// comma-separated multi-platform build.
+func resolveBuildPlatform(out io.Writer, status *client.EnvironmentStatus, override string) string {
+	style := clirender.StyleFor(out)
+	local := "linux/" + runtime.GOARCH
+	if override != "" {
+		platform := canonicalPlatforms(strings.Split(override, ","))
+		fmt.Fprintf(out, "%s     %s %s\n", style.Dim("platform"), platform, style.Dim("(override)"))
+		return platform
+	}
+	if status != nil && len(status.Platforms) > 0 {
+		platform := canonicalPlatforms(status.Platforms)
+		if platform != local {
+			fmt.Fprintf(out, "%s     %s %s\n", style.Dim("platform"), platform, style.Dim("(cluster architecture)"))
+		}
+		return platform
+	}
+	fmt.Fprintf(out, "%s     %s %s\n", style.Dim("platform"), local,
+		style.Dim("(local architecture; the server did not report cluster platforms)"))
+	return local
+}
+
+// canonicalPlatforms trims, dedupes, and sorts so that equal platform sets
+// produce equal strings and therefore equal input hashes.
+func canonicalPlatforms(platforms []string) string {
+	seen := make(map[string]struct{}, len(platforms))
+	cleaned := make([]string, 0, len(platforms))
+	for _, platform := range platforms {
+		platform = strings.TrimSpace(platform)
+		if platform == "" {
+			continue
+		}
+		if _, ok := seen[platform]; ok {
+			continue
+		}
+		seen[platform] = struct{}{}
+		cleaned = append(cleaned, platform)
+	}
+	sort.Strings(cleaned)
+	return strings.Join(cleaned, ",")
+}
+
 // buildInputs computes the per-application hashes: the dedup key the
 // server decides reuse with. Selected env files never enter the context.
-func buildInputs(project *localProject, variables map[string]string, excludeFiles []string) (map[string]client.BuildInput, map[string]*build.Context, error) {
+func buildInputs(project *localProject, variables map[string]string, excludeFiles []string, platform string) (map[string]client.BuildInput, map[string]*build.Context, error) {
 	inputs := make(map[string]client.BuildInput)
 	contexts := make(map[string]*build.Context)
-	platform := "linux/" + runtime.GOARCH
 	for key, application := range project.Result.Definition.Applications {
 		if application.Source.Kind != "build" {
 			continue
@@ -953,7 +1000,14 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		excludeFiles = append(excludeFiles, file.Path)
 	}
 
-	inputs, contexts, err := buildInputs(project, localValues, excludeFiles)
+	// The environment status is fetched before hashing because it carries
+	// the cluster's node platforms, which are part of every input hash.
+	var envStatus *client.EnvironmentStatus
+	if status, err := api.EnvironmentStatus(ctx, environmentID); err == nil {
+		envStatus = status
+	}
+	platform := resolveBuildPlatform(out, envStatus, opts.Platform)
+	inputs, contexts, err := buildInputs(project, localValues, excludeFiles, platform)
 	if err != nil {
 		return "", err
 	}
@@ -965,8 +1019,8 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	}
 
 	activeChecksum := ""
-	if status, err := api.EnvironmentStatus(ctx, environmentID); err == nil && status.ActiveRevision != nil {
-		activeChecksum = status.ActiveRevision.Checksum
+	if envStatus != nil && envStatus.ActiveRevision != nil {
+		activeChecksum = envStatus.ActiveRevision.Checksum
 	}
 	planned, err := api.Plan(ctx, environmentID, request)
 	if err != nil {

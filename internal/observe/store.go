@@ -60,6 +60,7 @@ type Store struct {
 	objects       map[objectKey]*Object
 	byEnvironment map[uuid.UUID]map[objectKey]struct{}
 	podsByNode    map[string]map[uuid.UUID]int
+	nodeArch      map[string]string
 	events        map[objectKey][]EventRecord
 
 	state      string // module.SourceUnknown | SourceFresh | SourceStale
@@ -80,6 +81,7 @@ func NewStore(clock func() time.Time) *Store {
 		objects:       make(map[objectKey]*Object),
 		byEnvironment: make(map[uuid.UUID]map[objectKey]struct{}),
 		podsByNode:    make(map[string]map[uuid.UUID]int),
+		nodeArch:      make(map[string]string),
 		events:        make(map[objectKey][]EventRecord),
 		state:         module.SourceUnknown,
 		broadcast:     newBroadcaster(),
@@ -245,6 +247,45 @@ func (s *Store) EnvironmentsOnNode(node string) []uuid.UUID {
 		return environments[i].String() < environments[j].String()
 	})
 	return environments
+}
+
+// SetNodeArch records one node's CPU architecture. An empty arch removes
+// the entry so a node that stops reporting does not pin a stale value.
+func (s *Store) SetNodeArch(name, arch string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if arch == "" {
+		delete(s.nodeArch, name)
+		return
+	}
+	s.nodeArch[name] = arch
+}
+
+// RemoveNode drops a deleted node's architecture record.
+func (s *Store) RemoveNode(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.nodeArch, name)
+}
+
+// NodePlatforms lists the platforms images must target to run on the
+// observed nodes, as sorted deduplicated "linux/<arch>" strings. Empty
+// until the node informer has delivered anything.
+func (s *Store) NodePlatforms() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[string]struct{}, len(s.nodeArch))
+	platforms := make([]string, 0, len(s.nodeArch))
+	for _, arch := range s.nodeArch {
+		platform := "linux/" + arch
+		if _, ok := seen[platform]; ok {
+			continue
+		}
+		seen[platform] = struct{}{}
+		platforms = append(platforms, platform)
+	}
+	sort.Strings(platforms)
+	return platforms
 }
 
 // ManagedNamespaces lists observed managed namespaces for audit

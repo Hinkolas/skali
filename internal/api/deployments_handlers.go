@@ -152,6 +152,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		DefinitionVersionID: definitionVersionID,
 		CandidateID:         candidateID,
 		BuildInputs:         decodeBuildInputs(req.Builds),
+		NodePlatforms:       h.reconcile.NodePlatforms(),
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)
@@ -197,6 +198,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 			DefinitionVersionID: definitionVersionID,
 			CandidateID:         candidateID,
 			BuildInputs:         decodeBuildInputs(req.Builds),
+			NodePlatforms:       h.reconcile.NodePlatforms(),
 		},
 		Actor:              user.ID.String(),
 		BuildExecutor:      req.BuildExecutor,
@@ -516,6 +518,7 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	var capabilities *deploy.UnsupportedCapabilitiesError
 	var missingInput *deploy.MissingBuildInputError
 	var incomplete *deploy.ArtifactsIncompleteError
+	var platformMismatch *deploy.PlatformMismatchError
 	switch {
 	case errors.Is(err, deploy.ErrEnvironmentNotFound),
 		errors.Is(err, deploy.ErrRevisionNotFound),
@@ -546,6 +549,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, codeUnsupportedCapabilities, trimDeployPrefix(err))
 	case errors.As(err, &missingInput):
 		writeError(w, http.StatusBadRequest, codeBadRequest, trimDeployPrefix(err))
+	case errors.As(err, &platformMismatch):
+		writeError(w, http.StatusUnprocessableEntity, codePlatformMismatch, trimDeployPrefix(err))
 	case errors.As(err, &incomplete):
 		writeError(w, http.StatusConflict, codeArtifactsIncomplete, trimDeployPrefix(err))
 	default:

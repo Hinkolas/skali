@@ -2,6 +2,7 @@ package observe_test
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -104,6 +105,11 @@ func TestLiveListWatchPropagation(t *testing.T) {
 		}
 		return pods == 2
 	}, 60*time.Second, 200*time.Millisecond, "pods must be observed with identity labels")
+
+	// The node informer records the cluster platform; the k3d node runs on
+	// the host architecture.
+	require.Contains(t, store.NodePlatforms(), "linux/"+runtime.GOARCH,
+		"node architectures must be observed")
 }
 
 // Exit criterion: watch disconnect is visible as stale/unknown and recovers

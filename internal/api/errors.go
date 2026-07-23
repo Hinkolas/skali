@@ -44,6 +44,7 @@ const (
 	codeDigestMismatch          = "digest_mismatch"
 	codeArtifactsIncomplete     = "artifacts_incomplete"
 	codeUnsupportedCapabilities = "unsupported_capabilities"
+	codePlatformMismatch        = "platform_mismatch"
 )
 
 // writeInternalError logs the real error and reports an opaque 500.

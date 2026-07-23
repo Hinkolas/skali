@@ -54,6 +54,20 @@ func (e *MissingBuildInputError) Error() string {
 	return "deploy: application " + e.Application + " uses a build source but no build input hashes were submitted"
 }
 
+// PlatformMismatchError: a submitted build targets none of the observed
+// cluster platforms, so the image could not run on any node.
+type PlatformMismatchError struct {
+	Application string
+	Submitted   string
+	Cluster     []string
+}
+
+func (e *PlatformMismatchError) Error() string {
+	return "deploy: application " + e.Application + " would be built for " + e.Submitted +
+		" but the cluster nodes run " + strings.Join(e.Cluster, ", ") +
+		"; upgrade the skali CLI (newer versions build for the cluster platform automatically) or pass a matching --platform"
+}
+
 // ArtifactsIncompleteError: completion was requested before every artifact
 // verified.
 type ArtifactsIncompleteError struct{ Missing []string }
@@ -96,6 +110,9 @@ type PlanInput struct {
 	// current values.
 	CandidateID uuid.UUID
 	BuildInputs map[string]BuildInput
+	// NodePlatforms are the observed cluster platforms; empty skips the
+	// platform guard (observation not synced, or an api-only server).
+	NodePlatforms []string
 }
 
 // Preview is a computed plan with its artifact decisions; nothing is
@@ -140,7 +157,7 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 	if err != nil {
 		return nil, err
 	}
-	return s.preview(ctx, env, definitionVersion, definition, in.CandidateID, in.BuildInputs)
+	return s.preview(ctx, env, definitionVersion, definition, in.CandidateID, in.BuildInputs, in.NodePlatforms)
 }
 
 // Open starts one deployment: it re-runs the plan gate, creates the run
@@ -164,7 +181,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	if missing := missingCapabilities(revision.RequiredCapabilities(definition), in.Capabilities); len(missing) > 0 {
 		return nil, &UnsupportedCapabilitiesError{Missing: missing}
 	}
-	preview, err := s.preview(ctx, env, definitionVersion, definition, in.CandidateID, in.BuildInputs)
+	preview, err := s.preview(ctx, env, definitionVersion, definition, in.CandidateID, in.BuildInputs, in.NodePlatforms)
 	if err != nil {
 		return nil, err
 	}
@@ -492,10 +509,37 @@ func (s *Service) TouchDeployment(ctx context.Context, deploymentID uuid.UUID) e
 	return nil
 }
 
+// platformsOverlap reports whether a submitted platform string (possibly a
+// comma-joined list) targets at least one observed cluster platform, i.e.
+// whether the resulting image could run anywhere. Either side being empty
+// means unknown and skips the guard: partial coverage is a deliberate
+// client choice, only a fully unrunnable build is rejected.
+func platformsOverlap(submitted string, cluster []string) bool {
+	if submitted == "" || len(cluster) == 0 {
+		return true
+	}
+	targets := make(map[string]struct{})
+	for platform := range strings.SplitSeq(submitted, ",") {
+		if platform = strings.TrimSpace(platform); platform != "" {
+			targets[platform] = struct{}{}
+		}
+	}
+	if len(targets) == 0 {
+		return true
+	}
+	for _, platform := range cluster {
+		if _, ok := targets[platform]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // preview computes the plan and per-application artifact decisions without
 // creating anything.
 func (s *Service) preview(ctx context.Context, env store.Environment, definitionVersion store.DefinitionVersion,
-	definition compiler.ProjectDefinition, candidateID uuid.UUID, buildInputs map[string]BuildInput) (*Preview, error) {
+	definition compiler.ProjectDefinition, candidateID uuid.UUID, buildInputs map[string]BuildInput,
+	nodePlatforms []string) (*Preview, error) {
 
 	resolvedValues, secretVersions, err := s.resolveValues(ctx, env.ID, candidateID)
 	if err != nil {
@@ -536,6 +580,9 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 		input, ok := buildInputs[key]
 		if !ok || input.InputHash == "" {
 			return nil, &MissingBuildInputError{Application: key}
+		}
+		if !platformsOverlap(input.Platform, nodePlatforms) {
+			return nil, &PlatformMismatchError{Application: key, Submitted: input.Platform, Cluster: nodePlatforms}
 		}
 		row, err := s.st.GetReusableArtifact(ctx, store.GetReusableArtifactParams{
 			ProjectID:   &env.ProjectID,

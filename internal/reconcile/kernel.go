@@ -196,6 +196,12 @@ type ObservationInfo struct {
 	Workers    int
 }
 
+// NodePlatforms exposes the observed cluster platforms to the API layer
+// without leaking the observed store.
+func (k *Kernel) NodePlatforms() []string {
+	return k.deps.Observed.NodePlatforms()
+}
+
 func (k *Kernel) Observation() ObservationInfo {
 	info := ObservationInfo{
 		Mode:       "api-only",

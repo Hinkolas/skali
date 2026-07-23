@@ -40,12 +40,20 @@ func TestEnvironmentStatus(t *testing.T) {
 	observation := body["observation"].(map[string]any)
 	require.Equal(t, "unknown", observation["state"])
 	require.Empty(t, body["services"])
+	require.NotNil(t, body["platforms"], "platforms must be an empty list, not null")
+	require.Empty(t, body["platforms"])
 
 	// A synced fake flips freshness without any cluster involvement.
 	a.observed.SetFresh()
 	status, body = a.do("GET", "/v1/environments/"+envID+"/status", token, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "fresh", body["observation"].(map[string]any)["state"])
+
+	// Observed nodes surface as deduplicated sorted platforms.
+	a.observed.SetNodeArch("node-a", "amd64")
+	status, body = a.do("GET", "/v1/environments/"+envID+"/status", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, []any{"linux/amd64"}, body["platforms"])
 
 	// Unknown environments are 404, malformed ids too.
 	status, _ = a.do("GET", "/v1/environments/"+uuid.NewString()+"/status", token, nil)

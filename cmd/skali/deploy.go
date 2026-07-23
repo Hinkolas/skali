@@ -56,4 +56,6 @@ func addDeployFlags(command *cobra.Command, opts *deployOptions) {
 	command.Flags().StringVar(&opts.Manifest, "manifest", "", "explicit manifest path (skali.yml discovered by default)")
 	command.Flags().StringVar(&opts.EnvFile, "env-file", "",
 		"dotenv file to stage as candidate values (default: the environment's stored values)")
+	command.Flags().StringVar(&opts.Platform, "platform", "",
+		"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
 }
