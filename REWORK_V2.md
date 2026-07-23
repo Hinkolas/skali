@@ -2168,26 +2168,22 @@ Deliver:
   and scoped uninstall operations.
 - Root-owned installation identity and strict separation between installer-
   owned bootstrap resources and `skalid`-owned product resources.
-- Production managed-registry installation, scoped authentication, health, and
-  capacity observation.
+- Production managed-registry installation, scoped authentication, and health
+  as reported by the installer. Capacity observation moved to R7 (2026-07-23).
 - Remote `skali plan` and `skali deploy` through the headless API.
 - `--env-file` upload and `--use-remote-env` behavior for remote environments.
 - Local build-and-push to a remote Skali registry.
-- Managed cloud builder using the same build schema and Artifact contract.
-- External image import/cache and retention leases from revisions.
-- Unified deployment run tree across local executor steps, cloud executor
-  steps, artifact verification, revision preparation, and rollout.
+- Unified deployment run tree across local executor steps, artifact
+  verification, revision preparation, and rollout.
 - macOS host mode: `skali cluster` manages one headless Linux VM per Mac via
   Lima (bridged networking by default, login LaunchAgent autostart) and
   installs the node inside it; Linux hosts stay native. It provisions its own
   Lima and socket_vmnet dependencies (pinned, checksum-verified, one confirmed
   privileged step).
-- Local/LAN mode: an explicit HTTP-only installation profile for non-public
-  domains (LAN hostnames such as `skali.<host>.localdomain` or
-  sslip.io-style names). Init accepts the domains without a TLS issuer
-  email, installs neither cert-manager nor the ACME issuer, and renders the
-  api/ui and registry edges without TLS blocks, so a LAN installation never
-  runs a doomed certificate loop.
+
+Deferred out of R4 on 2026-07-23 (see section 18): the managed cloud builder,
+external image import/cache with retention leases, and the local/LAN HTTP-only
+installation profile.
 
 Exit criteria:
 
@@ -2201,25 +2197,13 @@ Exit criteria:
 - Installer diagnostics remain available when `skalid` or Skali Postgres is
   unavailable, and uninstall scopes distinguish Skali, the current node, and
   the whole cluster.
-- The same manifest can be deployed using local build and cloud build without
-  changing its service definition.
-- Both executors produce verified artifacts that enter revisions through the
-  same code path.
-- An upstream image remains deployable from the managed cache after the
-  upstream is made unavailable.
-- A build, upload, or import failure leaves remote values, target revision, and
+- A build or upload failure leaves remote values, target revision, and
   active revision unchanged.
 - Registry credentials are scoped, short-lived, and cannot push outside their
   assigned namespace.
-- Referenced release artifacts survive garbage collection; unreferenced cache
-  content follows policy.
 - From a supported macOS host, the installer reaches the same healthy
   single-node state inside a Lima-managed VM without sudo on the Mac, and
   node-scope uninstall removes the VM entirely.
-- A LAN-only installation initializes without an issuer email, serves the UI
-  and registry over plain HTTP on the chosen hostnames with no cert-manager
-  components installed, and a later re-init with a public domain and issuer
-  email upgrades it to TLS in place.
 
 ### R5 - Shared database substrate
 
@@ -2277,6 +2261,8 @@ Deliver:
   platform policies/modules.
 - Cancel and rollback UX.
 - Activity, metrics, and runtime-log surfaces.
+- Registry health and capacity observation in the system surfaces (moved from
+  R4 on 2026-07-23).
 
 Exit criteria:
 
@@ -2403,8 +2389,9 @@ Required for the v2 core:
 
 - Project definition and environment values.
 - Headless validate/plan/deploy/status/run/log workflows.
-- Local and cloud builds through one Build/Artifact contract.
-- Integrated managed OCI registry for build uploads and external image caching.
+- Local builds through one Build/Artifact contract that cloud builds adopt
+  when they land.
+- Integrated managed OCI registry for build uploads.
 - Immutable revisions, target/active pointers, plan, deploy, cancel, rollback.
 - Observed-state store and responsive health.
 - Execution runs with detailed steps and logs.
@@ -2421,8 +2408,16 @@ Important but layered after the core proves itself:
 - Environment priority and advanced placement policies.
 - Database relocation/capacity spill.
 - Erasure coding and object lifecycle policies.
-- Git-triggered builds, buildpacks, and horizontally scalable remote builder
-  pools beyond the initial managed cloud builder.
+- The managed cloud builder, external image import/cache, retention leases,
+  and the cloud build-context upload protocol, deferred from R4 on 2026-07-23:
+  they land as one slice with git-triggered push-to-deploy (native GitHub
+  integration), since cloud builds are only needed once pushes deploy without
+  a local CLI. Buildpacks and horizontally scalable remote builder pools layer
+  after that slice.
+- Local/LAN mode (an explicit HTTP-only installation profile for non-public
+  domains: init without a TLS issuer email, no cert-manager or ACME issuer,
+  api/ui and registry edges without TLS blocks), deferred from R4 on
+  2026-07-23 and rescheduled into a later milestone when prioritized.
 - Templates/marketplace and Compose import.
 - More database engines.
 - Multiple application processes, sidecars, and cron jobs.
@@ -2520,8 +2515,8 @@ re-homed to the milestone that implements it:
 - Local prerequisite: the first release requires Docker. A Lima provider is a
   later local-runtime provider, not a v2 blocker.
 - Local builder: BuildKit through the Docker daemon. The cloud build-context
-  upload protocol and provenance metadata are fixed in R4 alongside the
-  builder service.
+  upload protocol and provenance metadata are fixed alongside the builder
+  service, which moved to the deferred push-to-deploy slice (section 18).
 - Installer state file and layout: resolved by the cluster-layout schema and
   the installer transcripts. Each installer release pins one k3s version;
   multi-node upgrade sequencing UX lands in R4.
