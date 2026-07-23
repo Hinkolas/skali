@@ -54,19 +54,3 @@ type silentProgress struct{}
 func (silentProgress) Start(string) {}
 func (silentProgress) Done(string)  {}
 func (silentProgress) Skip(string)  {}
-
-// progressNoter is the optional Progress capability to publish a transient
-// status line under the running stage (the spinner tail). The interactive
-// task printer implements it; the silent and plain progresses do not, and
-// note is a no-op for them.
-type progressNoter interface {
-	Note(line string)
-}
-
-// note publishes a transient status line when the progress supports it,
-// used to surface what a long-running stage is waiting on.
-func note(progress Progress, line string) {
-	if noter, ok := progress.(progressNoter); ok {
-		noter.Note(line)
-	}
-}

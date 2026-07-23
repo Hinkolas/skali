@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -44,22 +43,11 @@ func GatherBundleInventory(ctx context.Context, client *kube.Client) (*BundleInv
 	return inventory, nil
 }
 
-// Namespace-termination pacing. A bundle uninstall is an explicitly
-// confirmed destroy, so a namespace still terminating after the grace
-// period is escalated to a forced removal rather than waited on until a
-// hard timeout. These are vars, not consts, only so tests can shrink them.
-var (
-	namespaceTerminationGrace = 90 * time.Second
-	namespaceForceDeadline    = 30 * time.Second
-	namespacePollInterval     = 3 * time.Second
-)
-
 // UninstallBundle removes Skali and all project workloads and data from
 // the cluster, keeping bare k3s running. Deletion order: project
 // namespaces, the platform namespace, skali-system, then the operator
-// namespaces; each wave waits briefly for termination and forces out any
-// namespace wedged on a controller finalizer. The record survives with its
-// bundle version cleared, so the host re-detects as an uninitialized
+// namespaces; each wave waits for termination. The record survives with
+// its bundle version cleared, so the host re-detects as an uninitialized
 // managed server.
 func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Client, record *Record, progress Progress) error {
 	if progress == nil {
@@ -84,7 +72,7 @@ func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Clien
 	}
 	for index, wave := range waves {
 		progress.Start(titles[index])
-		deleted, err := deleteNamespaces(ctx, client, wave, progress)
+		deleted, err := deleteNamespaces(ctx, client, wave)
 		if err != nil {
 			return err
 		}
@@ -104,15 +92,9 @@ func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Clien
 	return nil
 }
 
-// deleteNamespaces deletes the named namespaces and waits for them to
-// terminate, returning how many were present to delete. Absent namespaces
-// are skipped. A namespace still terminating after the grace period is not
-// an error: it is almost always wedged on a controller finalizer (a
-// cert-manager ACME order it can no longer clean up, a CNPG volume) that no
-// amount of waiting clears. Since a bundle uninstall is an explicitly
-// confirmed destroy, deleteNamespaces surfaces the blocker while it waits,
-// then forces the stuck namespaces out.
-func deleteNamespaces(ctx context.Context, client *kube.Client, names []string, progress Progress) (int, error) {
+// deleteNamespaces deletes the named namespaces and waits for termination;
+// absent namespaces are skipped.
+func deleteNamespaces(ctx context.Context, client *kube.Client, names []string) (int, error) {
 	deleted := 0
 	for _, name := range names {
 		err := client.Clientset.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
@@ -124,131 +106,27 @@ func deleteNamespaces(ctx context.Context, client *kube.Client, names []string, 
 		}
 		deleted++
 	}
-	if deleted == 0 {
-		return 0, nil
-	}
-	stuck, err := waitNamespacesGone(ctx, client, names, progress)
-	if err != nil {
-		return deleted, err
-	}
-	if len(stuck) > 0 {
-		if err := forceNamespacesGone(ctx, client, stuck, progress); err != nil {
-			return deleted, err
-		}
-	}
-	return deleted, nil
-}
-
-// waitNamespacesGone polls the named namespaces until they are gone or the
-// grace period expires, returning the names still present. It narrates what
-// each lingering namespace is blocked on (its termination conditions) so a
-// stall is never a silent spinner.
-func waitNamespacesGone(ctx context.Context, client *kube.Client, names []string, progress Progress) ([]string, error) {
-	deadline := time.Now().Add(namespaceTerminationGrace)
+	deadline := time.Now().Add(10 * time.Minute)
 	for {
-		var remaining, blockers []string
+		remaining := 0
 		for _, name := range names {
-			ns, err := client.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			if err != nil {
-				return nil, fmt.Errorf("wait for namespace %s: %w", name, err)
-			}
-			remaining = append(remaining, name)
-			if blocker := namespaceBlocker(ns); blocker != "" {
-				blockers = append(blockers, name+": "+blocker)
-			} else {
-				blockers = append(blockers, name)
+			_, err := client.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+			if err == nil {
+				remaining++
+			} else if !apierrors.IsNotFound(err) {
+				return deleted, fmt.Errorf("wait for namespace %s: %w", name, err)
 			}
 		}
-		if len(remaining) == 0 {
-			return nil, nil
+		if remaining == 0 {
+			return deleted, nil
 		}
-		note(progress, "waiting for "+strings.Join(blockers, "; "))
 		if time.Now().After(deadline) {
-			return remaining, nil
+			return deleted, fmt.Errorf("timed out waiting for %d namespace(s) to terminate", remaining)
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(namespacePollInterval):
-		}
-	}
-}
-
-// namespaceBlocker summarizes why a terminating namespace has not finished:
-// the messages of its termination conditions that report a problem. Empty
-// when nothing is reported yet (the namespace controller has not caught up).
-func namespaceBlocker(ns *corev1.Namespace) string {
-	var reasons []string
-	for _, condition := range ns.Status.Conditions {
-		if condition.Status != corev1.ConditionTrue {
-			continue
-		}
-		message := strings.TrimSpace(condition.Message)
-		if message == "" {
-			message = string(condition.Reason)
-		}
-		if message != "" {
-			reasons = append(reasons, message)
-		}
-	}
-	return strings.Join(reasons, "; ")
-}
-
-// forceNamespacesGone clears the kubernetes finalizer from namespaces still
-// terminating and confirms they leave. This is deliberate: the uninstall is
-// an explicitly confirmed destroy of a known bundle, so its stuck
-// namespaces are ours to force, and the finalizers that wedge them
-// (cert-manager ACME state, CNPG volumes) guard cleanup this destroy
-// discards anyway. A generic force would be unsafe because a finalizer can
-// guard external state, but here the set is bounded and known. The child
-// objects are removed with the namespace; any lingering external state (an
-// ACME order) expires on its own.
-func forceNamespacesGone(ctx context.Context, client *kube.Client, names []string, progress Progress) error {
-	for _, name := range names {
-		note(progress, "forcing termination of "+name)
-		if err := forceNamespace(ctx, client, name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// forceNamespace clears a single namespace's spec finalizers through the
-// finalize subresource and waits until it is removed.
-func forceNamespace(ctx context.Context, client *kube.Client, name string) error {
-	ns, err := client.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read stuck namespace %s: %w", name, err)
-	}
-	if len(ns.Spec.Finalizers) > 0 {
-		ns.Spec.Finalizers = nil
-		if _, err := client.Clientset.CoreV1().Namespaces().Finalize(ctx, ns, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("force namespace %s: %w", name, err)
-		}
-	}
-	deadline := time.Now().Add(namespaceForceDeadline)
-	for {
-		_, err := client.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("confirm namespace %s removed: %w", name, err)
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("namespace %s did not terminate after clearing its finalizers; "+
-				"inspect it with k3s kubectl get namespace %s -o yaml", name, name)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(namespacePollInterval):
+			return deleted, ctx.Err()
+		case <-time.After(3 * time.Second):
 		}
 	}
 }

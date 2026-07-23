@@ -38,16 +38,6 @@ func (p *taskProgress) Skip(detail string) {
 	p.current = nil
 }
 
-// Note publishes a transient status line under the running stage, used to
-// surface what a long wait is blocked on. It is a no-op with no stage
-// running.
-func (p *taskProgress) Note(line string) {
-	if p.current == nil {
-		return
-	}
-	p.current.Note(line)
-}
-
 func (p *taskProgress) Abort() {
 	if p.current == nil {
 		return
