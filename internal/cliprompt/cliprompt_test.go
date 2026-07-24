@@ -235,6 +235,9 @@ func TestThemeUsesSingleChoiceStates(t *testing.T) {
 	require.Equal(t, "● Agent", styles.Focused.SelectedOption.Render("○ Agent"))
 	require.Equal(t, "Application", styles.Focused.SelectedOption.Render("Application"))
 	require.Equal(t, "Database", styles.Focused.UnselectedOption.Render("Database"))
+	require.False(t, styles.Focused.Base.GetBorderLeft())
+	require.Zero(t, styles.Focused.Base.GetPaddingLeft())
+	require.Equal(t, "  ", styles.Focused.SelectSelector.String())
 	require.NotContains(t, styles.Focused.FocusedButton.Render("Yes"), "\x1b[")
 	require.NotContains(t, styles.Focused.ErrorMessage.Render("invalid"), "\x1b[")
 }

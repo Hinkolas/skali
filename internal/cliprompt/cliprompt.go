@@ -382,18 +382,15 @@ func skaliTheme(noColor bool) huh.Theme {
 		theme := huh.ThemeBase(isDark)
 		palette := newPromptPalette(noColor)
 
-		rail := lipgloss.Border{Left: "│"}
-		theme.Focused.Base = lipgloss.NewStyle().
-			PaddingLeft(1).
-			BorderStyle(rail).
-			BorderLeft(true).
-			BorderForeground(palette.accent.GetForeground())
+		// Keep the active milestone aligned with settled prompts. A field-wide
+		// left border would place the title's ◆ one column inside the rail.
+		theme.Focused.Base = lipgloss.NewStyle()
 		// Titles carry separately styled marker, question, and inline hint.
 		theme.Focused.Title = lipgloss.NewStyle()
 		theme.Focused.Description = palette.description
 		theme.Focused.ErrorIndicator = palette.danger.SetString("✗ ")
 		theme.Focused.ErrorMessage = palette.danger
-		theme.Focused.SelectSelector = lipgloss.NewStyle()
+		theme.Focused.SelectSelector = lipgloss.NewStyle().SetString("  ")
 		theme.Focused.Option = lipgloss.NewStyle()
 		theme.Focused.MultiSelectSelector = palette.accent.SetString("› ")
 		theme.Focused.SelectedPrefix = palette.success.SetString("■ ")
