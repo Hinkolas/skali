@@ -45,12 +45,12 @@ $ skali deploy --build=local
 remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
 ◆ Which environment should Skali use?
-└ production
+│ production
 environment  production
 linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
 
 ◆ Override production with a local env file?
-└ .env.production
+│ .env.production
 values       .env.production (1 plain, 1 secret)
 
 plan against active revision 2a91a76b
@@ -58,7 +58,7 @@ plan against active revision 2a91a76b
   value   SESSION_SECRET     update (secret)
 
 ◆ Continue with this deployment?
-└ Yes
+│ Yes
 
 run 01J9V2E8  deploy file-sharing to production
   ok  Validate project definition
@@ -91,7 +91,7 @@ active revision 8d1e15b3 (previously 2a91a76b)
 ```
 
 While a choice is active, the same block shows its keyboard hint and choices;
-it settles to the compact `◆`/`└` form above before deployment rendering
+it settles to the compact `◆`/`│` form above before deployment rendering
 starts:
 
 ```console
@@ -136,11 +136,11 @@ $ skali deploy --build=local
 remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
 ◆ Create project file-sharing on skali.example.com?
-└ Yes
+│ Yes
 ◆ Environment name
-└ production
+│ production
 ◆ Create environment production in project file-sharing?
-└ Yes
+│ Yes
 environment  production
 linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
 
@@ -283,7 +283,7 @@ plan against active revision 8d1e15b3
   update  applications.web  configuration changed
 
 ◆ This plan is destructive
-└ confirmed
+│ confirmed
 ...
 ```
 

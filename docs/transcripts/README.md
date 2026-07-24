@@ -21,11 +21,15 @@ duration cosmetics, and identifier formats. A behavioral deviation from these
 transcripts is a design change and belongs in REWORK_V2 first.
 
 Interactive examples use the settled prompt shape: `◆` introduces a question,
-`└` keeps its answer in the transcript, and secrets settle as `entered`.
+and a straight `│` keeps its muted answer in the connected transcript. Secrets
+settle as `entered`.
 While a prompt is active, `│` connects its rows and a muted hint names the
 keys: arrows navigate and edit, Space toggles a multi-select, and Enter
-submits. Choice prompts keep their complete option list visible. Piped input
-and `TERM=dumb` use deterministic line/number prompts without ANSI sequences.
+submits. Confirmations use the compact inline `○ Yes / ● No` shape and also
+accept `y`/`n`. Choice prompts keep their complete option list visible. Piped
+input and `TERM=dumb` use deterministic line/number prompts without ANSI sequences.
+Interactive text defaults remain outside the editing buffer and appear as a
+muted `hit Enter to use …` hint.
 `SKALI_ACCESSIBLE=1` forces that renderer on a TTY; `NO_COLOR` keeps keyboard
 interaction but removes color.
 

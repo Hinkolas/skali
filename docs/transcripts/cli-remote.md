@@ -12,9 +12,9 @@ re-authenticates an existing entry, and the `local` remote belongs to
 ```console
 $ skali remote add https://skali.example.com
 ◆ Email
-└ dana@example.com
+│ dana@example.com
 ◆ Password
-└ entered
+│ entered
 logged in to https://skali.example.com as dana@example.com (remote "skali.example.com")
 ```
 
@@ -29,9 +29,9 @@ only written after the login succeeds.
 ```console
 $ skali remote add https://staging.example.com --name staging --email dana@example.com
 ◆ Password
-└ entered
+│ entered
 ◆ Two-factor code
-└ 123456
+│ 123456
 logged in to https://staging.example.com as dana@example.com (remote "staging")
 ```
 
@@ -78,9 +78,9 @@ session: expired or revoked; run `skali remote login`
 
 $ skali remote login
 ◆ Email
-└ dana@example.com
+│ dana@example.com
 ◆ Password
-└ entered
+│ entered
 logged in to https://skali.example.com as dana@example.com (remote "skali.example.com")
 ```
 

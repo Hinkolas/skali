@@ -146,11 +146,12 @@ func (s *Session) Text(ctx context.Context, options TextOptions) (string, error)
 	if !s.terminalUI() {
 		return s.plainText(options)
 	}
-	value := options.Default
+	var value string
 	field := huh.NewInput().
-		Title(promptTitle(options.Title, "type, use arrows to edit, enter to confirm", s.noColor)).
+		Title(promptTitle(options.Title, "", s.noColor)).
 		Description(options.Description).
-		Placeholder(options.Placeholder).
+		Placeholder(textInputPlaceholder(options)).
+		Prompt(" ").
 		Value(&value)
 	if options.CharLimit > 0 {
 		field.CharLimit(options.CharLimit)
@@ -186,6 +187,7 @@ func (s *Session) Secret(ctx context.Context, options SecretOptions) (string, er
 		Title(promptTitle(options.Title, "type, use arrows to edit, enter to confirm", s.noColor)).
 		Description(options.Description).
 		EchoMode(huh.EchoModePassword).
+		Prompt(" ").
 		Value(&value)
 	if options.Validate != nil {
 		field.Validate(options.Validate)
@@ -270,12 +272,7 @@ func (s *Session) Confirm(ctx context.Context, options ConfirmOptions) (bool, er
 		return s.plainConfirm(options)
 	}
 	value := options.Default
-	field := huh.NewConfirm().
-		Title(promptTitle(options.Title, "use arrows or y/n, enter to confirm", s.noColor)).
-		Description(options.Description).
-		Affirmative("Yes").
-		Negative("No").
-		Value(&value)
+	field := newConfirmField(options, &value, s.noColor)
 	if err := s.run(ctx, field); err != nil {
 		return false, err
 	}
@@ -285,6 +282,24 @@ func (s *Session) Confirm(ctx context.Context, options ConfirmOptions) (bool, er
 	}
 	s.settle(options.Title, answer, false)
 	return value, nil
+}
+
+func newConfirmField(options ConfirmOptions, value *bool, noColor bool) *huh.Confirm {
+	title := promptTitle(options.Title, "use arrows or y/n, enter to confirm", noColor)
+	description := ""
+	if options.Description == "" {
+		title += "\n"
+	} else {
+		description = "\n" + options.Description + "\n"
+	}
+	return huh.NewConfirm().
+		Title(title).
+		Description(description).
+		Affirmative("Yes /").
+		Negative("No").
+		Value(value).
+		Inline(true).
+		WithButtonAlignment(lipgloss.Left)
 }
 
 // ConfirmTyped asks the user to type an exact value. It is used for
@@ -338,19 +353,31 @@ func (s *Session) settle(title, value string, secret bool) {
 		return
 	}
 	accent, answer := settledStyles(s.noColor)
-	fmt.Fprintf(s.out, "%s %s\n", accent.Render("◆"), title)
+	fmt.Fprintf(s.out, "%s  %s\n", accent.Render("◆"), title)
 	if secret {
-		fmt.Fprintf(s.out, "%s %s\n", accent.Render("└"), answer.Render("entered"))
+		fmt.Fprintf(s.out, "%s  %s\n", accent.Render("│"), answer.Render("entered"))
 		return
 	}
-	fmt.Fprintf(s.out, "%s %s\n", accent.Render("└"), answer.Render(value))
+	fmt.Fprintf(s.out, "%s  %s\n", accent.Render("│"), answer.Render(value))
 }
 
 func promptTitle(title, hint string, noColor bool) string {
 	palette := newPromptPalette(noColor)
-	return palette.accent.Render("◆") + "  " +
-		palette.selected.Render(title) + "  " +
-		palette.hint.Render("("+hint+")")
+	rendered := palette.accent.Render("◆") + "  " + palette.selected.Render(title)
+	if hint != "" {
+		rendered += "  " + palette.hint.Render("("+hint+")")
+	}
+	return rendered
+}
+
+func textInputPlaceholder(options TextOptions) string {
+	if options.Default != "" {
+		return " (hit Enter to use '" + options.Default + "')"
+	}
+	if options.Placeholder != "" {
+		return " " + options.Placeholder
+	}
+	return ""
 }
 
 func optionText(option Option) string {
@@ -397,6 +424,9 @@ func skaliTheme(noColor bool) huh.Theme {
 		theme := huh.ThemeBase(isDark)
 		palette := newPromptPalette(noColor)
 
+		// Keep one quiet row beneath the active form so prompts do not sit
+		// directly against the terminal window edge.
+		theme.Form.Base = lipgloss.NewStyle().PaddingBottom(1)
 		// The milestone replaces the rail on the question row; subsequent
 		// rows continue the connected prompt flow beneath it.
 		theme.Focused.Base = activePromptBase(palette.accent)
@@ -434,20 +464,14 @@ func skaliTheme(noColor bool) huh.Theme {
 		theme.Focused.TextInput.Cursor = palette.success
 		theme.Focused.TextInput.Prompt = palette.accent
 		theme.Focused.TextInput.Placeholder = palette.muted
-		focusedButton := lipgloss.NewStyle().
-			Padding(0, 2).
-			MarginRight(1)
-		if !noColor {
-			focusedButton = focusedButton.
-				Foreground(palette.buttonText.GetForeground()).
-				Background(palette.success.GetForeground()).
-				Bold(true)
-		}
-		theme.Focused.FocusedButton = focusedButton
+		theme.Focused.FocusedButton = lipgloss.NewStyle().
+			Transform(func(value string) string {
+				return renderConfirmChoice(value, true, palette)
+			})
 		theme.Focused.BlurredButton = lipgloss.NewStyle().
-			Foreground(palette.muted.GetForeground()).
-			Padding(0, 2).
-			MarginRight(1)
+			Transform(func(value string) string {
+				return renderConfirmChoice(value, false, palette)
+			})
 		theme.Blurred = theme.Focused
 		theme.Blurred.Base = lipgloss.NewStyle().PaddingLeft(1)
 		theme.Blurred.Title = lipgloss.NewStyle()
@@ -468,6 +492,24 @@ func activePromptBase(accent lipgloss.Style) lipgloss.Style {
 	})
 }
 
+func renderConfirmChoice(value string, focused bool, palette promptPalette) string {
+	hasSeparator := strings.HasSuffix(value, " /")
+	label := strings.TrimSuffix(value, " /")
+
+	marker := palette.muted.Render("○")
+	renderedLabel := palette.muted.Render(label)
+	if focused {
+		marker = palette.success.Render("●")
+		renderedLabel = palette.selected.Render(label)
+	}
+
+	rendered := marker + " " + renderedLabel
+	if hasSeparator {
+		rendered += palette.muted.Render(" / ")
+	}
+	return rendered
+}
+
 type promptPalette struct {
 	accent      lipgloss.Style
 	success     lipgloss.Style
@@ -476,7 +518,6 @@ type promptPalette struct {
 	hint        lipgloss.Style
 	description lipgloss.Style
 	danger      lipgloss.Style
-	buttonText  lipgloss.Style
 }
 
 func newPromptPalette(noColor bool) promptPalette {
@@ -493,7 +534,6 @@ func newPromptPalette(noColor bool) promptPalette {
 		hint:        lipgloss.NewStyle().Foreground(lipgloss.Color("7")),
 		description: lipgloss.NewStyle().Foreground(lipgloss.Color("7")),
 		danger:      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
-		buttonText:  lipgloss.NewStyle().Foreground(lipgloss.Color("15")),
 	}
 }
 
@@ -502,7 +542,7 @@ func settledStyles(noColor bool) (lipgloss.Style, lipgloss.Style) {
 		return lipgloss.NewStyle(), lipgloss.NewStyle()
 	}
 	palette := newPromptPalette(false)
-	return palette.accent, palette.selected
+	return palette.accent, palette.muted
 }
 
 func (s *Session) plainText(options TextOptions) (string, error) {

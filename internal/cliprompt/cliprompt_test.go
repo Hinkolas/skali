@@ -205,6 +205,15 @@ func TestTerminalTextEditingKeys(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "production", answer)
 
+		session, _, ctx, cancel = terminal("staging\r")
+		defer cancel()
+		answer, err = session.Text(ctx, TextOptions{
+			Title:   "Environment",
+			Default: "production",
+		})
+		require.NoError(t, err)
+		require.Equal(t, "staging", answer)
+
 		session, _, ctx, cancel = terminal("  staging  \r")
 		defer cancel()
 		answer, err = session.Text(ctx, TextOptions{Title: "Environment"})
@@ -257,6 +266,16 @@ func TestThemeUsesSingleChoiceStates(t *testing.T) {
 		palette.muted.Render("○ Create a new cluster"),
 		coloredStyles.Focused.UnselectedOption.Render(encoded))
 
+	require.Equal(t,
+		"● Yes / ○ No",
+		styles.Focused.FocusedButton.Render("Yes /")+
+			styles.Focused.BlurredButton.Render("No"))
+	require.Equal(t,
+		"○ Yes / ● No",
+		styles.Focused.BlurredButton.Render("Yes /")+
+			styles.Focused.FocusedButton.Render("No"))
+	require.Equal(t, 1, styles.Form.Base.GetPaddingBottom())
+
 	require.False(t, styles.Focused.Base.GetBorderLeft())
 	require.Zero(t, styles.Focused.Base.GetPaddingLeft())
 	require.Empty(t, styles.Focused.SelectSelector.String())
@@ -273,6 +292,35 @@ func TestPromptTitleKeepsHintInline(t *testing.T) {
 		"◆  What would you like to do?  (use arrow keys, enter to select)",
 		title)
 	require.NotContains(t, title, "\n")
+	require.Equal(t,
+		"◆  Where should the project be created?",
+		promptTitle("Where should the project be created?", "", true))
+}
+
+func TestTextInputPlaceholderKeepsDefaultOutOfEditingBuffer(t *testing.T) {
+	require.Equal(t,
+		" (hit Enter to use './')",
+		textInputPlaceholder(TextOptions{Default: "./"}))
+	require.Equal(t,
+		" project-name",
+		textInputPlaceholder(TextOptions{Placeholder: "project-name"}))
+	require.Empty(t, textInputPlaceholder(TextOptions{}))
+}
+
+func TestSettledPromptUsesContinuousMutedFlow(t *testing.T) {
+	var out strings.Builder
+	session := NewPlain(strings.NewReader(""), &out)
+	session.interactive = true
+
+	session.settle("How should this host join Skali?", "Create a new cluster", false)
+	require.Equal(t,
+		"◆  How should this host join Skali?\n│  Create a new cluster\n",
+		out.String())
+
+	_, answer := settledStyles(false)
+	require.Equal(t,
+		newPromptPalette(false).muted.Render("Create a new cluster"),
+		answer.Render("Create a new cluster"))
 }
 
 func TestListHeightShowsEveryOption(t *testing.T) {
@@ -342,6 +390,33 @@ func TestTerminalConfirmDefaultYes(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, answer)
+}
+
+func TestTerminalConfirmDefaultNo(t *testing.T) {
+	session, _, ctx, cancel := terminal("\r")
+	defer cancel()
+
+	answer, err := session.Confirm(ctx, ConfirmOptions{Title: "Continue?"})
+	require.NoError(t, err)
+	require.False(t, answer)
+}
+
+func TestConfirmFieldUsesInlineRadioLayout(t *testing.T) {
+	value := false
+	field := newConfirmField(ConfirmOptions{Title: "Continue?"}, &value, true)
+	field.WithTheme(skaliTheme(true))
+	field.WithWidth(80)
+	field.WithHeight(3)
+	field.Focus()
+	require.Contains(t, field.View(), "○ Yes / ● No")
+
+	value = true
+	field = newConfirmField(ConfirmOptions{Title: "Continue?", Default: true}, &value, true)
+	field.WithTheme(skaliTheme(true))
+	field.WithWidth(80)
+	field.WithHeight(3)
+	field.Focus()
+	require.Contains(t, field.View(), "● Yes / ○ No")
 }
 
 func TestPseudoTerminalEditingCancellationAndRestoration(t *testing.T) {

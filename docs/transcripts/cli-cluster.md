@@ -121,24 +121,24 @@ Skali cluster
 This host is not part of a Skali installation. Install one?
 
 ◆ How should this host join Skali?
-└ Create a new cluster
+│ Create a new cluster
 ◆ cluster name
-└ production
+│ production
 ◆ What should this node run?
-└ application, database, object-storage, registry, edge
+│ application, database, object-storage, registry, edge
 ◆ api/ui domain
-└ skali.example.com
+│ skali.example.com
 ◆ registry domain
-└ registry.example.com
+│ registry.example.com
 ◆ tls issuer email
-└ ops@example.com
+│ ops@example.com
 
   ok  Install k3s v1.33.3+k3s1 (server)
   ok  Stamp capability labels on node cp-1
   ok  Write /var/lib/skali/installation.yaml
 
 ◆ This is the only node so far. Initialize Skali now?
-└ Yes
+│ Yes
 
 cluster layout
   NODE   ROLE    CAPABILITIES
@@ -157,9 +157,9 @@ derived topology
   ok  Wait for skalid ready
 
 ◆ admin email
-└ nicholas@example.com
+│ nicholas@example.com
 ◆ admin password
-└ entered
+│ entered
   ok  Create admin account
 
 Skali is ready:
@@ -171,7 +171,7 @@ Install logs: /var/lib/skali/logs/init-01J9X2.log
 
 Active single-selects show `●`/`○` and use the arrow keys. Capability
 multi-selects show `■`/`□`; Space toggles and Enter confirms. Each answer
-then settles to the connected `◆`/`└` shape above before installation tasks
+then settles to the connected `◆`/`│` shape above before installation tasks
 start.
 
 The first server initializes the embedded etcd cluster (`cluster-init`),
@@ -351,13 +351,13 @@ $ sudo skali cluster
   available tier    synchronous
 
 ◆ What would you like to do?
-└ Apply database tier
+│ Apply database tier
 
 Upgrade the bootstrap database from asynchronous to synchronous quorum
 replication. This adds a replica and briefly reconfigures replication; no
 data is deleted.
 ◆ Apply this database tier change?
-└ Yes
+│ Yes
 
   ok  Scale bootstrap database to 3 instances (quorum any 1 of 2)
   ok  Verify replication state
@@ -390,7 +390,7 @@ Downgrade the bootstrap database from synchronous to asynchronous
 replication. This removes a replica and lowers availability; no data is
 deleted.
 ◆ Apply this database tier change?
-└ Yes
+│ Yes
 
   ok  Scale bootstrap database to 2 instance(s) (asynchronous replication)
   ok  Verify replication state
@@ -433,7 +433,7 @@ upgrade plan for host cp-1 (cluster "production")
   skalid  ghcr.io/hinkolas/skalid:2.1.0
 
 ◆ Continue with this upgrade?
-└ Yes
+│ Yes
 
   ok  Upgrade k3s to v1.33.4+k3s1 (server)
   ok  Wait for k3s v1.33.4+k3s1 ready
@@ -509,7 +509,7 @@ $ sudo skali cluster
 
 nothing to do
 ◆ What would you like to do?
-└ Quit
+│ Quit
 ```
 
 Detection is read-only. No maintenance action runs without being selected.
@@ -609,7 +609,7 @@ suggested action
   skali cluster repair
 
 ◆ Restart the k3s service. Workload containers keep running through the restart. Continue?
-└ Yes
+│ Yes
   ok  Restart k3s
   ok  Wait for k3s v1.33.3+k3s1 ready
 
@@ -739,7 +739,7 @@ recommended. Scoping that RBAC is a later slice.
 ```console
 $ sudo skali cluster uninstall
 ◆ What should be removed from db-2?
-└ This node
+│ This node
 
 Removing node db-2 is refused while skali-system data lives on it:
 
@@ -801,28 +801,28 @@ Skali cluster
 This host is not part of a Skali installation. Install one?
 
 ◆ How should the VM connect to the network?
-└ bridged
+│ bridged
 ◆ vm cpus
-└ 9
+│ 9
 ◆ vm memory
-└ 12GiB
+│ 12GiB
 ◆ vm disk
-└ 100GiB
+│ 100GiB
 
   ok  Create VM skali (bridged, 9 cpus, 12GiB memory, 100GiB disk)
 
 ◆ join token file path (empty to paste the token)
-└
+│
 ◆ join token
-└ entered
+│ entered
 ◆ Which Kubernetes role should this node use?
-└ Agent
+│ Agent
 ◆ cluster name
-└ production
+│ production
 ◆ server url
-└ https://192.168.1.10:6443
+│ https://192.168.1.10:6443
 ◆ What should this node run?
-└ application, database
+│ application, database
 
   ok  Install k3s v1.33.3+k3s1 (agent)
   ok  Join cluster "production"
@@ -866,7 +866,7 @@ this Mac is missing dependencies for the "bridged" network:
        limactl sudoers | sudo tee /etc/sudoers.d/lima
 
 ◆ Install these dependencies?
-└ Yes
+│ Yes
   ok  Install Lima v2.2.0
   ok  Write ~/.lima/_config/networks.yaml
 Password:
