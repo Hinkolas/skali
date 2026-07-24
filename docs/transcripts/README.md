@@ -28,7 +28,8 @@ submits. Confirmations use the compact inline `○ Yes / ● No` shape and also
 accept `y`/`n`. Choice prompts keep their complete option list visible. Piped
 input and `TERM=dumb` use deterministic line/number prompts without ANSI sequences.
 Interactive text defaults remain outside the editing buffer and appear as a
-muted `hit Enter to use …` hint.
+muted `hit Enter to use …` hint. Typed destructive confirmations keep their
+exact-value instruction on the question row and their editor directly below it.
 `SKALI_ACCESSIBLE=1` forces that renderer on a TTY; `NO_COLOR` keeps keyboard
 interaction but removes color.
 

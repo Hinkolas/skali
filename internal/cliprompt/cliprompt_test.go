@@ -274,6 +274,11 @@ func TestThemeUsesSingleChoiceStates(t *testing.T) {
 		"○ Yes / ● No",
 		styles.Focused.BlurredButton.Render("Yes /")+
 			styles.Focused.FocusedButton.Render("No"))
+	require.Equal(t,
+		" ○ Yes / ● No",
+		styles.Focused.BlurredButton.Render(" Yes /")+
+			styles.Focused.FocusedButton.Render("No"))
+	require.Equal(t, " Type the value exactly.", styles.Focused.Description.Render("Type the value exactly."))
 	require.Equal(t, 1, styles.Form.Base.GetPaddingBottom())
 
 	require.False(t, styles.Focused.Base.GetBorderLeft())
@@ -409,6 +414,7 @@ func TestConfirmFieldUsesInlineRadioLayout(t *testing.T) {
 	field.WithHeight(3)
 	field.Focus()
 	require.Contains(t, field.View(), "○ Yes / ● No")
+	require.Contains(t, field.View(), "│  ○ Yes / ● No")
 
 	value = true
 	field = newConfirmField(ConfirmOptions{Title: "Continue?", Default: true}, &value, true)
@@ -417,6 +423,32 @@ func TestConfirmFieldUsesInlineRadioLayout(t *testing.T) {
 	field.WithHeight(3)
 	field.Focus()
 	require.Contains(t, field.View(), "● Yes / ○ No")
+	require.Contains(t, field.View(), "│  ● Yes / ○ No")
+}
+
+func TestTypedConfirmationKeepsPromptCompactAndInputBelow(t *testing.T) {
+	value := "skali-dev"
+	field := newTypedConfirmField(
+		"Confirm cluster removal",
+		"skali-dev",
+		&value,
+		func(input string) error {
+			if input != "skali-dev" {
+				return errors.New("incorrect")
+			}
+			return nil
+		},
+		true,
+	)
+	field.WithTheme(skaliTheme(true))
+	field.WithWidth(120)
+	field.WithHeight(1)
+	field.Focus()
+
+	view := field.View()
+	require.Contains(t, view,
+		`◆  Confirm cluster removal  (type "skali-dev" to confirm)`)
+	require.Contains(t, view, "\n│  skali-dev")
 }
 
 func TestPseudoTerminalEditingCancellationAndRestoration(t *testing.T) {

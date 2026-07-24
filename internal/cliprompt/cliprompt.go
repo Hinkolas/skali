@@ -295,7 +295,7 @@ func newConfirmField(options ConfirmOptions, value *bool, noColor bool) *huh.Con
 	return huh.NewConfirm().
 		Title(title).
 		Description(description).
-		Affirmative("Yes /").
+		Affirmative(" Yes /").
 		Negative("No").
 		Value(value).
 		Inline(true).
@@ -320,17 +320,26 @@ func (s *Session) ConfirmTyped(ctx context.Context, title, description, expected
 		return value == expected, err
 	}
 	var value string
-	field := huh.NewInput().
-		Title(promptTitle(title, "type the value exactly, enter to confirm", s.noColor)).
-		Description(description).
-		Value(&value).
-		Validate(validate)
+	field := newTypedConfirmField(title, expected, &value, validate, s.noColor)
 	err := s.run(ctx, field)
 	if err != nil {
 		return false, err
 	}
 	s.settle(title, "confirmed", false)
 	return value == expected, nil
+}
+
+func newTypedConfirmField(
+	title, expected string,
+	value *string,
+	validate func(string) error,
+	noColor bool,
+) *huh.Input {
+	return huh.NewInput().
+		Title(promptTitle(title, fmt.Sprintf("type %q to confirm", expected), noColor)).
+		Prompt(" ").
+		Value(value).
+		Validate(validate)
 }
 
 func (s *Session) run(ctx context.Context, field huh.Field) error {
@@ -432,12 +441,12 @@ func skaliTheme(noColor bool) huh.Theme {
 		theme.Focused.Base = activePromptBase(palette.accent)
 		// Titles carry separately styled marker, question, and inline hint.
 		theme.Focused.Title = lipgloss.NewStyle()
-		theme.Focused.Description = palette.description
+		theme.Focused.Description = palette.description.PaddingLeft(1)
 		theme.Focused.ErrorIndicator = palette.danger.SetString("✗ ")
 		theme.Focused.ErrorMessage = palette.danger
 		theme.Focused.SelectSelector = lipgloss.NewStyle().SetString(" ")
 		theme.Focused.Option = lipgloss.NewStyle()
-		theme.Focused.MultiSelectSelector = palette.accent.SetString("› ")
+		theme.Focused.MultiSelectSelector = palette.accent.SetString(" › ")
 		theme.Focused.SelectedPrefix = palette.success.SetString("■ ")
 		theme.Focused.UnselectedPrefix = palette.muted.SetString("□ ")
 		theme.Focused.SelectedOption = lipgloss.NewStyle().
@@ -475,7 +484,7 @@ func skaliTheme(noColor bool) huh.Theme {
 		theme.Blurred = theme.Focused
 		theme.Blurred.Base = lipgloss.NewStyle().PaddingLeft(1)
 		theme.Blurred.Title = lipgloss.NewStyle()
-		theme.Blurred.Description = palette.description
+		theme.Blurred.Description = theme.Focused.Description
 		theme.Group.Title = theme.Focused.Title
 		theme.Group.Description = theme.Focused.Description
 		return theme
@@ -493,6 +502,8 @@ func activePromptBase(accent lipgloss.Style) lipgloss.Style {
 }
 
 func renderConfirmChoice(value string, focused bool, palette promptPalette) string {
+	indent := strings.HasPrefix(value, " ")
+	value = strings.TrimPrefix(value, " ")
 	hasSeparator := strings.HasSuffix(value, " /")
 	label := strings.TrimSuffix(value, " /")
 
@@ -506,6 +517,9 @@ func renderConfirmChoice(value string, focused bool, palette promptPalette) stri
 	rendered := marker + " " + renderedLabel
 	if hasSeparator {
 		rendered += palette.muted.Render(" / ")
+	}
+	if indent {
+		rendered = " " + rendered
 	}
 	return rendered
 }
