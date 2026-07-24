@@ -382,15 +382,15 @@ func skaliTheme(noColor bool) huh.Theme {
 		theme := huh.ThemeBase(isDark)
 		palette := newPromptPalette(noColor)
 
-		// Keep the active milestone aligned with settled prompts. A field-wide
-		// left border would place the title's ◆ one column inside the rail.
-		theme.Focused.Base = lipgloss.NewStyle()
+		// The milestone replaces the rail on the question row; subsequent
+		// rows continue the connected prompt flow beneath it.
+		theme.Focused.Base = activePromptBase(palette.accent)
 		// Titles carry separately styled marker, question, and inline hint.
 		theme.Focused.Title = lipgloss.NewStyle()
 		theme.Focused.Description = palette.description
 		theme.Focused.ErrorIndicator = palette.danger.SetString("✗ ")
 		theme.Focused.ErrorMessage = palette.danger
-		theme.Focused.SelectSelector = lipgloss.NewStyle().SetString("  ")
+		theme.Focused.SelectSelector = lipgloss.NewStyle()
 		theme.Focused.Option = lipgloss.NewStyle()
 		theme.Focused.MultiSelectSelector = palette.accent.SetString("› ")
 		theme.Focused.SelectedPrefix = palette.success.SetString("■ ")
@@ -435,6 +435,16 @@ func skaliTheme(noColor bool) huh.Theme {
 		theme.Group.Title = theme.Focused.Title
 		theme.Group.Description = theme.Focused.Description
 		return theme
+	})
+}
+
+func activePromptBase(accent lipgloss.Style) lipgloss.Style {
+	return lipgloss.NewStyle().Transform(func(value string) string {
+		lines := strings.Split(value, "\n")
+		for index := 1; index < len(lines); index++ {
+			lines[index] = accent.Render("│") + " " + lines[index]
+		}
+		return strings.Join(lines, "\n")
 	})
 }
 
