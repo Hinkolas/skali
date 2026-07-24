@@ -428,8 +428,7 @@ func prepareReconciledInit(ctx context.Context, record *installer.Record,
 		// A converged initialized platform may be safely converged again.
 		return &reconciledInitOperation{Store: store, RegistryNode: registryNode}, nil
 	}
-	fmt.Fprintf(os.Stdout, "initialization operation %s accepted; target revision %s\n",
-		operation.ID, operation.TargetRevision)
+	printAcceptedOperation(operation)
 	_ = state
 	if err := waitForInitializationGate(ctx, store, operation.ID, progress); err != nil {
 		return nil, err

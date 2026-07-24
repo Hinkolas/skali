@@ -53,9 +53,6 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 	if d.Kubeconfig == "" {
 		d.Kubeconfig = installer.K3sKubeconfigPath
 	}
-	if d.Listen == "" {
-		d.Listen = ":" + clusterstate.DefaultCoordinatorPort
-	}
 	if d.Runner == nil {
 		d.Runner = host.Local{}
 	}
@@ -66,6 +63,21 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
+	}
+	if d.Listen == "" {
+		agentConfig, err := installer.LoadAgentConfig(ctx, d.Runner)
+		if err != nil {
+			return fmt.Errorf("load coordinator node identity: %w", err)
+		}
+		node, err := clientset.CoreV1().Nodes().Get(ctx, agentConfig.NodeName,
+			metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("load coordinator node %s: %w", agentConfig.NodeName, err)
+		}
+		d.Listen, err = coordinatorListenAddress(*node)
+		if err != nil {
+			return err
+		}
 	}
 	store := &clusterstate.Store{Client: clientset}
 	if d.Identity == "" {
@@ -95,6 +107,7 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 		return fmt.Errorf("listen for coordinator enrollment: %w", err)
 	}
 	tlsListener := tls.NewListener(listener, tlsConfig)
+	d.log("coordinator listening", "address", d.Listen)
 	serverErr := make(chan error, 1)
 	go func() {
 		err := server.Serve(tlsListener)
@@ -113,6 +126,18 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 	case err := <-serverErr:
 		return err
 	}
+}
+
+// coordinatorListenAddress deliberately binds the node's routable
+// Kubernetes address instead of all interfaces. k3s owns loopback port
+// 6444 for local kube-apiserver access; binding :6444 would collide with it.
+func coordinatorListenAddress(node corev1.Node) (string, error) {
+	for _, address := range node.Status.Addresses {
+		if address.Type == corev1.NodeInternalIP && net.ParseIP(address.Address) != nil {
+			return net.JoinHostPort(address.Address, clusterstate.DefaultCoordinatorPort), nil
+		}
+	}
+	return "", fmt.Errorf("coordinator node %s has no valid InternalIP", node.Name)
 }
 
 func (d *CoordinatorDaemon) controlLoop(ctx context.Context, store *clusterstate.Store,

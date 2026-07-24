@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
+	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/layout"
 )
@@ -366,8 +368,7 @@ func newClusterApplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stdout, "cluster operation %s accepted; target revision %s\n",
-				operation.ID, operation.TargetRevision)
+			printAcceptedOperation(operation)
 			if wait {
 				return waitClusterOperation(cmd.Context(), store, operation.ID)
 			}
@@ -437,18 +438,56 @@ func candidatePlan(state *clusterstate.State, rebalance bool) (clusterstate.Plan
 }
 
 func printClusterPlan(plan clusterstate.Plan) {
-	fmt.Fprintf(os.Stdout, "cluster plan %s -> %s\n", plan.FromRevision, plan.TargetRevision)
+	renderClusterPlan(os.Stdout, plan)
+}
+
+func renderClusterPlan(out io.Writer, plan clusterstate.Plan) {
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "%s %s\n", style.BrightCyan("◆"), style.Bold("Cluster plan"))
+	clusterPlanRow(out, style, "from", shortRevision(plan.FromRevision))
+	clusterPlanRow(out, style, "target", shortRevision(plan.TargetRevision))
 	if plan.Empty() {
+		clusterPlanRow(out, style, "actions", style.Muted("none"))
 		return
 	}
-	fmt.Fprint(os.Stdout, plan.String())
+	fmt.Fprintln(out, "  "+style.Muted("actions"))
+	for _, action := range plan.Actions {
+		title := strings.ReplaceAll(string(action.Kind), "-", " ")
+		if action.NodeName != "" {
+			title += " · " + action.NodeName
+		}
+		fmt.Fprintf(out, "    %s %s\n", style.Glyph("pending", 0), title)
+		if len(action.From) > 0 || len(action.To) > 0 {
+			from, to := strings.Join(action.From, ", "), strings.Join(action.To, ", ")
+			if from == "" {
+				from = "none"
+			}
+			if to == "" {
+				to = "none"
+			}
+			fmt.Fprintf(out, "      %s\n", style.Muted(from+" → "+to))
+		}
+		if action.Detail != "" {
+			fmt.Fprintf(out, "      %s\n", style.Muted(action.Detail))
+		}
+	}
 	if plan.DatabaseTierFrom != plan.DatabaseTierTo {
-		fmt.Fprintf(os.Stdout, "database tier             %s -> %s\n",
-			plan.DatabaseTierFrom, plan.DatabaseTierTo)
+		clusterPlanRow(out, style, "database",
+			fmt.Sprintf("%s → %s", plan.DatabaseTierFrom, plan.DatabaseTierTo))
 	}
 	for _, warning := range plan.Warnings {
-		fmt.Fprintf(os.Stdout, "warning: %s\n", warning)
+		clusterPlanRow(out, style, "warning", style.BrightYellow(warning))
 	}
+}
+
+func clusterPlanRow(out io.Writer, style *clirender.Style, label, value string) {
+	fmt.Fprintf(out, "  %s %s\n", style.Muted(fmt.Sprintf("%-10s", label)), value)
+}
+
+func printAcceptedOperation(operation clusterstate.Operation) {
+	style := clirender.StyleFor(os.Stdout)
+	printStatusRow(os.Stdout, style, "operation",
+		shortRevision(operation.ID)+" "+style.BrightGreen("accepted"))
 }
 
 func waitClusterOperation(ctx context.Context, store *clusterstate.Store, operationID string) error {

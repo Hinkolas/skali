@@ -27,7 +27,9 @@ const (
 	NodeLabel       = "skali.dev/enrolled-node"
 	OperationLabel  = "skali.dev/reconciliation-operation"
 
-	CurrentVersion         = 1
+	CurrentVersion = 1
+	// k3s also uses 6444, but only on loopback for local kube-apiserver
+	// access. Coordinators must bind their node InternalIP, never :6444.
 	DefaultCoordinatorPort = "6444"
 
 	NodeDesiredPresent = "present"

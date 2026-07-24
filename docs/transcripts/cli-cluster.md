@@ -55,13 +55,19 @@ staged capabilities for db-2 in candidate revision ...
 No cluster services were modified.
 
 $ sudo skali cluster plan
-cluster plan ... -> ...
-add-server                db-2 -> application,database
-add-agent                 app-2 -> application
-reconcile-platform         reconcile platform once at database tier asynchronous
+◆ Cluster plan
+  from       ...
+  target     ...
+  actions
+    ○ add server · db-2
+      none → application, database
+    ○ add agent · app-2
+      none → application
+    ○ reconcile platform
+      reconcile platform once at database tier asynchronous
 
 $ sudo skali cluster apply --wait
-cluster operation ... accepted; target revision ...
+  operation  ... accepted
 cluster converged at revision ...
 ```
 

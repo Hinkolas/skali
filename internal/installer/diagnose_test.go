@@ -59,6 +59,11 @@ func diagnoseHost(t *testing.T) *host.Fake {
 	t.Helper()
 	fake := withRecord(t, withK3s(linuxHost(), "k3s.service", true), layout.RoleServer)
 	fake.FS[K3sRegistriesPath] = []byte(k3sRegistriesYAML("pull-secret-value"))
+	record, err := LoadRecord(context.Background(), fake)
+	require.NoError(t, err)
+	record.Versions.Bundle = "test"
+	require.NoError(t, SaveRecord(context.Background(), fake, record))
+	fake.Writes = nil
 	return fake
 }
 
@@ -136,6 +141,10 @@ func TestDiagnoseVersionDriftWarns(t *testing.T) {
 	t.Parallel()
 	fake := withRecord(t, withK3s(linuxHost(), "k3s.service", true), layout.RoleServer)
 	fake.FS[K3sRegistriesPath] = []byte(k3sRegistriesYAML("pull-secret-value"))
+	record, err := LoadRecord(context.Background(), fake)
+	require.NoError(t, err)
+	record.Versions.Bundle = "test"
+	require.NoError(t, SaveRecord(context.Background(), fake, record))
 	fake.Handlers["k3s"] = func(cmd host.Command) (host.Result, error) {
 		return host.Result{Stdout: "k3s version v1.33.2+k3s1 (0000)\n"}, nil
 	}
@@ -148,6 +157,25 @@ func TestDiagnoseVersionDriftWarns(t *testing.T) {
 	require.Zero(t, diagnosis.Fails(), "a version drift warns, never fails")
 	require.Equal(t, SeverityWarn, findCheck(t, diagnosis, "k3s version").Severity)
 	require.Contains(t, diagnosis.Suggestions, "skali cluster upgrade")
+}
+
+func TestDiagnoseBeforeInitializationSkipsMissingBundle(t *testing.T) {
+	t.Parallel()
+	fake := withRecord(t, withK3s(linuxHost(), "k3s.service", true), layout.RoleServer)
+	fake.FS[K3sRegistriesPath] = []byte(k3sRegistriesYAML("pull-secret-value"))
+	client := diagnoseClient([]runtime.Object{liveProfileNode()})
+
+	diagnosis, err := Diagnose(context.Background(), fake, DiagnoseOptions{Client: client})
+	require.NoError(t, err)
+	require.Zero(t, diagnosis.Fails())
+	require.Equal(t, "not initialized yet (expected)",
+		findCheck(t, diagnosis, "platform bundle").Detail)
+	for _, name := range []string{"bootstrap database", "managed registry", "skalid"} {
+		for _, check := range diagnosis.Checks {
+			require.NotEqual(t, name, check.Name)
+		}
+	}
+	require.Empty(t, diagnosis.Suggestions)
 }
 
 func TestDiagnoseSectionSevenScene(t *testing.T) {

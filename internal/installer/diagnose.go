@@ -236,7 +236,13 @@ func Diagnose(ctx context.Context, runner host.Runner, opts DiagnoseOptions) (*D
 			return diagnosis, nil
 		}
 	}
-	diagnoseKubernetes(ctx, client, diagnosis, suggest)
+	expectBundle := detected.Record == nil || detected.Record.Versions.Bundle != ""
+	if !expectBundle {
+		if published, err := InClusterRecord(ctx, client); err == nil && published != nil {
+			expectBundle = published.Versions.Bundle != ""
+		}
+	}
+	diagnoseKubernetes(ctx, client, diagnosis, suggest, expectBundle)
 	return diagnosis, nil
 }
 
@@ -253,14 +259,15 @@ func DiagnoseCluster(ctx context.Context, client *kube.Client) *Diagnosis {
 		}
 		diagnosis.Suggestions = append(diagnosis.Suggestions, action)
 	}
-	diagnoseKubernetes(ctx, client, diagnosis, suggest)
+	diagnoseKubernetes(ctx, client, diagnosis, suggest, true)
 	return diagnosis
 }
 
 // diagnoseKubernetes appends the cluster-level checks: node readiness, the
 // bootstrap database, the registry and skalid deployments, and warn-only
 // volume and certificate checks.
-func diagnoseKubernetes(ctx context.Context, client *kube.Client, diagnosis *Diagnosis, suggest func(string)) {
+func diagnoseKubernetes(ctx context.Context, client *kube.Client, diagnosis *Diagnosis,
+	suggest func(string), expectBundle bool) {
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	nodes, err := client.Clientset.CoreV1().Nodes().List(probeCtx, metav1.ListOptions{})
 	cancel()
@@ -298,6 +305,13 @@ func diagnoseKubernetes(ctx context.Context, client *kube.Client, diagnosis *Dia
 		suggest("skali cluster repair")
 	}
 	diagnosis.Checks = append(diagnosis.Checks, nodesCheck)
+
+	if !expectBundle {
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "platform bundle", Detail: "not initialized yet (expected)",
+		})
+		return
+	}
 
 	databaseFailed := diagnoseDatabase(ctx, client, diagnosis, suggest)
 	diagnoseDeployment(ctx, client, diagnosis, suggest,

@@ -397,6 +397,19 @@ func StartHostd(ctx context.Context, runner host.Runner, coordinator bool) error
 			return fmt.Errorf("start %s: exit %d: %s", unit, result.ExitCode,
 				strings.TrimSpace(result.Stderr))
 		}
+		result, err = runner.Run(ctx, host.Command{
+			Name: "systemctl", Args: []string{"is-active", unit},
+		})
+		if err != nil {
+			return fmt.Errorf("verify %s: %w", unit, err)
+		}
+		if result.ExitCode != 0 {
+			detail := strings.TrimSpace(result.Stderr)
+			if detail == "" {
+				detail = strings.TrimSpace(result.Stdout)
+			}
+			return fmt.Errorf("%s did not stay active: %s", unit, detail)
+		}
 	}
 	return nil
 }

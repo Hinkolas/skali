@@ -12,6 +12,21 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
+func TestStartHostdRejectsServiceThatDidNotStayActive(t *testing.T) {
+	t.Parallel()
+	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
+		"systemctl": func(cmd host.Command) (host.Result, error) {
+			if len(cmd.Args) > 0 && cmd.Args[0] == "is-active" {
+				return host.Result{ExitCode: 3, Stdout: "failed\n"}, nil
+			}
+			return host.Result{}, nil
+		},
+	}}
+
+	err := StartHostd(context.Background(), fake, true)
+	require.ErrorContains(t, err, "skali-node-agent.service did not stay active: failed")
+}
+
 func TestResumeEnrolledHostdUsesExistingIdentity(t *testing.T) {
 	t.Parallel()
 	fake := linuxHost()
