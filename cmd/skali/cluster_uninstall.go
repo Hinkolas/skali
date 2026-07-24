@@ -68,15 +68,27 @@ func runUninstallFlow(ctx context.Context, out *os.File, reader *bufio.Reader, s
 		scope = "node"
 	}
 	if scope == "" {
-		fmt.Fprintf(out, "scope of removal on host %s (cluster %q):\n\n", hostLabel(detected), record.Cluster)
-		choice, err := cliprompt.Select(reader, out, "  : ", []string{
-			"skali bundle    remove Skali and all project workloads and data; keep bare k3s running",
-			"this node       remove k3s and every trace of skali from this host",
-		}, -1)
+		choice, err := promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
+			Title: fmt.Sprintf("What should be removed from %s?", hostLabel(detected)),
+			Description: fmt.Sprintf("This host belongs to cluster %q.",
+				record.Cluster),
+			Options: []cliprompt.Option{
+				{
+					Label:       "Skali bundle",
+					Description: "remove Skali, workloads, and data; keep bare k3s",
+					Value:       "bundle",
+				},
+				{
+					Label:       "This node",
+					Description: "remove k3s and every trace of Skali from this host",
+					Value:       "node",
+				},
+			},
+		})
 		if err != nil {
 			return err
 		}
-		scope = []string{"bundle", "node"}[choice]
+		scope = choice
 	}
 
 	switch scope {
@@ -105,7 +117,11 @@ func uninstallBundle(ctx context.Context, out *os.File, reader *bufio.Reader,
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, installer.DescribeBundleRemoval(inventory))
 	fmt.Fprintln(out)
-	if !confirmCluster(reader, record.Cluster, confirmName) {
+	confirmed, err := confirmCluster(ctx, out, reader, record.Cluster, confirmName)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
 		return fmt.Errorf("confirmation did not match the cluster name %q; nothing was removed", record.Cluster)
 	}
 
@@ -205,7 +221,11 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 		fmt.Fprintln(out, "  - the cluster API is unreachable; local cleanup may leave stale node or etcd membership")
 	}
 	fmt.Fprintln(out)
-	if !confirmCluster(reader, record.Cluster, confirmName) {
+	confirmed, err := confirmCluster(ctx, out, reader, record.Cluster, confirmName)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
 		return fmt.Errorf("confirmation did not match the cluster name %q; nothing was removed", record.Cluster)
 	}
 	if record.InstallationID == "" {
@@ -283,13 +303,15 @@ func printQuorumConsequence(out *os.File, remaining int) {
 
 // confirmCluster accepts either the pre-supplied --confirm value or a
 // type-the-name-back prompt.
-func confirmCluster(reader *bufio.Reader, cluster, supplied string) bool {
+func confirmCluster(ctx context.Context, out *os.File, reader *bufio.Reader, cluster, supplied string) (bool, error) {
 	if supplied != "" {
-		return supplied == cluster
+		return supplied == cluster, nil
 	}
 	if !cliprompt.Interactive() {
-		return false
+		return false, nil
 	}
-	return cliprompt.ConfirmTyped(reader,
-		fmt.Sprintf("Type the cluster name (%s) to continue: ", cluster), cluster)
+	return promptSession(out, reader).ConfirmTyped(ctx,
+		"Confirm cluster removal",
+		fmt.Sprintf("Type %q exactly to continue.", cluster),
+		cluster)
 }

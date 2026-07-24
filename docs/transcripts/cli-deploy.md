@@ -44,24 +44,21 @@ override:
 $ skali deploy --build=local
 remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
-Environment:
-  1) production
-  2) staging
-Select [1-2]: 1
+◆ Which environment should Skali use?
+└ production
 environment  production
 linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
 
-Override the stored values of environment production with a local env file?
-  0) no, use the stored values
-  1) .env.production
-Select [0-1] (0): 1
+◆ Override production with a local env file?
+└ .env.production
 values       .env.production (1 plain, 1 secret)
 
 plan against active revision 2a91a76b
   update  applications.web   artifact will be rebuilt from ./web
   value   SESSION_SECRET     update (secret)
 
-Continue? [y/N] y
+◆ Continue with this deployment?
+└ Yes
 
 run 01J9V2E8  deploy file-sharing to production
   ok  Validate project definition
@@ -91,6 +88,16 @@ run 01J9V2E8  deploy file-sharing to production
 
 active revision 8d1e15b3 (previously 2a91a76b)
   https://files.example.com  ->  applications.web
+```
+
+While a choice is active, the same block shows its keyboard hint and choices;
+it settles to the compact `◆`/`└` form above before deployment rendering
+starts:
+
+```console
+◆ Which environment should Skali use?  (use arrow keys, enter to select)
+│ ● production
+│ ○ staging
 ```
 
 Notes pinned by this transcript:
@@ -128,9 +135,12 @@ and links the checkout:
 $ skali deploy --build=local
 remote       skali.example.com (https://skali.example.com)
 project      file-sharing (skali.yml)
-Create project file-sharing on skali.example.com? [y/N] y
-Environment name (production): 
-Create environment production in project file-sharing? [y/N] y
+◆ Create project file-sharing on skali.example.com?
+└ Yes
+◆ Environment name
+└ production
+◆ Create environment production in project file-sharing?
+└ Yes
 environment  production
 linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
 
@@ -152,8 +162,8 @@ $ echo $?
 
 The same policy applies to a missing environment in an existing project:
 interactive deploy confirms `Create environment staging in project
-file-sharing? [y/N]`, plan and non-interactive deploy refuse with the
-matching guidance.
+file-sharing?` with No selected by default; plan and non-interactive deploy
+refuse with the matching guidance.
 
 ## 4. The same deploy with a cloud build
 
@@ -272,10 +282,13 @@ plan against active revision 8d1e15b3
   create  databases.main
   update  applications.web  configuration changed
 
-This plan is destructive. Type the environment name to continue: production
+◆ This plan is destructive
+└ confirmed
 ...
 ```
 
+While active, the description says `Type "production" exactly to continue`;
+the entered name is replaced by `confirmed` in the settled transcript.
 Interactive confirmation requires typing the environment name.
 Non-interactive use requires `--allow-destructive`. Stable keys are the
 identity: a rename is a destroy plus a create, and the plan says so before

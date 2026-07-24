@@ -180,8 +180,16 @@ func runDarwinVMPrompts(ctx context.Context, out *os.File, reader *bufio.Reader)
 	hostname, _ := os.Hostname()
 	defaults := limavm.DefaultSpec(ctx, mac, hostname)
 
-	network, err := cliprompt.LineDefault(reader,
-		"  vm network (bridged, shared, user-v2) ["+string(defaults.Network)+"]: ", string(defaults.Network))
+	network, err := promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
+		Title:       "How should the VM connect to the network?",
+		Description: "Bridged provides a LAN address; shared and user-v2 use NAT.",
+		Options: []cliprompt.Option{
+			{Label: "bridged", Description: "LAN-visible address", Value: string(limavm.NetworkBridged)},
+			{Label: "shared", Description: "socket_vmnet NAT", Value: string(limavm.NetworkShared)},
+			{Label: "user-v2", Description: "rootless user-mode NAT", Value: string(limavm.NetworkUserV2)},
+		},
+		DefaultValue: string(defaults.Network),
+	})
 	if err != nil {
 		return err
 	}

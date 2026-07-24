@@ -301,21 +301,25 @@ func shortRevision(value string) string {
 
 func runRecoveryMenu(ctx context.Context, out *os.File, status *installer.Status) error {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Fprintln(out, "recovery options")
-	choice, err := cliprompt.Select(reader, out, "  : ", []string{
-		"resume/edit inputs",
-		"diagnose",
-		"repair",
-		"uninstall",
-		"quit",
-	}, -1)
+	choice, err := promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
+		Title:       "How should Skali recover this installation?",
+		Description: "Diagnosis is read-only; other actions may ask for confirmation.",
+		Options: []cliprompt.Option{
+			{Label: "Resume or edit inputs", Value: "resume"},
+			{Label: "Diagnose", Value: "diagnose"},
+			{Label: "Repair", Value: "repair"},
+			{Label: "Uninstall", Value: "uninstall"},
+			{Label: "Quit", Value: "quit"},
+		},
+		DefaultValue: "quit",
+	})
 	if err != nil {
 		return err
 	}
 	switch choice {
-	case 0:
+	case "resume":
 		return runInteractiveResume(ctx, out, reader, status.Host)
-	case 1:
+	case "diagnose":
 		diagnosis, err := installer.Diagnose(ctx, runner(), installer.DiagnoseOptions{})
 		if err != nil {
 			return err
@@ -325,9 +329,15 @@ func runRecoveryMenu(ctx context.Context, out *os.File, status *installer.Status
 			return fmt.Errorf("diagnosis found %d problem(s)", diagnosis.Fails())
 		}
 		return nil
-	case 2:
+	case "repair":
 		if status.Host.State == installer.StateOrphaned {
-			if !cliprompt.Confirm(reader, "Recover ownership of this interrupted Skali install before repair? [y/N] ") {
+			confirmed, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+				Title: "Recover ownership of this interrupted Skali install before repair?",
+			})
+			if err != nil {
+				return err
+			}
+			if !confirmed {
 				return errors.New("recovery was not confirmed; nothing was changed")
 			}
 			if err := installer.PersistOrphanRecord(ctx, runner(), status.Host.Record); err != nil {
@@ -335,7 +345,7 @@ func runRecoveryMenu(ctx context.Context, out *os.File, status *installer.Status
 			}
 		}
 		return runRepairFlow(ctx, out, reader, false)
-	case 3:
+	case "uninstall":
 		return runUninstallFlow(ctx, out, reader, "", "")
 	default:
 		return nil
@@ -496,36 +506,47 @@ func runMenu(ctx context.Context, out *os.File, status *installer.Status) error 
 	if healthyOverall(status) && status.BundleCurrent && status.K3sCurrent && !status.TierDrift() {
 		fmt.Fprintln(out, "nothing to do")
 	}
-	prompt := "  [1] status  [2] apply tier  [3] upgrade  [4] repair  [5] uninstall  [q] quit\n  : "
+	description := ""
 	if status.TierDrift() {
 		printTierDriftBlock(out, status)
-		prompt = verboseMenu(status) + "  : "
+		description = fmt.Sprintf("Database tier change pending: %s to %s.",
+			status.DeployedTier, status.AvailableTier)
 	}
 	for {
-		answer, err := cliprompt.Line(reader, prompt)
+		answer, err := promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
+			Title:       "What would you like to do?",
+			Description: description,
+			Options: []cliprompt.Option{
+				{Label: "Show status", Value: "status"},
+				{Label: "Apply database tier", Value: "tier"},
+				{Label: "Upgrade", Value: "upgrade"},
+				{Label: "Repair", Value: "repair"},
+				{Label: "Uninstall", Value: "uninstall"},
+				{Label: "Quit", Value: "quit"},
+			},
+			DefaultValue: "quit",
+		})
 		if err != nil {
 			return nil
 		}
-		prompt = "  [1] status  [2] apply tier  [3] upgrade  [4] repair  [5] uninstall  [q] quit\n  : "
-		switch strings.ToLower(answer) {
-		case "1":
+		description = ""
+		switch answer {
+		case "status":
 			refreshed, err := installer.GatherStatus(ctx, runner())
 			if err != nil {
 				return err
 			}
 			printStatus(out, refreshed)
-		case "2":
+		case "tier":
 			return runTierFlow(ctx, out, reader, false)
-		case "3":
+		case "upgrade":
 			return runUpgradeFlow(ctx, out, reader, false)
-		case "4":
+		case "repair":
 			return runRepairFlow(ctx, out, reader, false)
-		case "5":
+		case "uninstall":
 			return runUninstallFlow(ctx, out, reader, "", "")
-		case "q", "quit", "":
+		case "quit":
 			return nil
-		default:
-			fmt.Fprintln(out, "please answer 1-5 or q")
 		}
 	}
 }

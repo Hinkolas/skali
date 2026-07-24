@@ -122,7 +122,13 @@ func ensureDarwinDeps(ctx context.Context, out *os.File, reader *bufio.Reader, n
 		if reader == nil {
 			reader = bufio.NewReader(os.Stdin)
 		}
-		if !cliprompt.Confirm(reader, "Proceed? [y/N] ") {
+		confirmed, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: "Install these dependencies?",
+		})
+		if err != nil {
+			return err
+		}
+		if !confirmed {
 			return fmt.Errorf("provisioning cancelled; nothing was installed")
 		}
 	}

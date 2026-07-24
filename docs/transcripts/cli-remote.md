@@ -11,8 +11,10 @@ re-authenticates an existing entry, and the `local` remote belongs to
 
 ```console
 $ skali remote add https://skali.example.com
-Email: dana@example.com
-Password:
+◆ Email
+└ dana@example.com
+◆ Password
+└ entered
 logged in to https://skali.example.com as dana@example.com (remote "skali.example.com")
 ```
 
@@ -26,13 +28,17 @@ only written after the login succeeds.
 
 ```console
 $ skali remote add https://staging.example.com --name staging --email dana@example.com
-Password:
-Two-factor code: 123456
+◆ Password
+└ entered
+◆ Two-factor code
+└ 123456
 logged in to https://staging.example.com as dana@example.com (remote "staging")
 ```
 
 `--name` overrides the derived name; the name `local` is refused because it is
-reserved for the local development platform.
+reserved for the local development platform. Text and masked fields accept
+Left/Right, Home/End, Backspace, and Delete while active; passwords are never
+copied into settled output.
 
 ## 3. List and switch
 
@@ -71,8 +77,10 @@ health:  ok
 session: expired or revoked; run `skali remote login`
 
 $ skali remote login
-Email: dana@example.com
-Password:
+◆ Email
+└ dana@example.com
+◆ Password
+└ entered
 logged in to https://skali.example.com as dana@example.com (remote "skali.example.com")
 ```
 

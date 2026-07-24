@@ -340,11 +340,16 @@ func newClusterApplyCmd() *cobra.Command {
 					return errors.New("non-interactive apply requires --yes")
 				}
 				reader := bufio.NewReader(os.Stdin)
-				prompt := "Apply this cluster revision? [y/N] "
+				title := "Apply this cluster revision?"
 				if plan.Destructive {
-					prompt = "Apply these destructive cluster changes? [y/N] "
+					title = "Apply these destructive cluster changes?"
 				}
-				if !cliprompt.Confirm(reader, prompt) {
+				confirmed, err := promptSession(os.Stdout, reader).Confirm(
+					cmd.Context(), cliprompt.ConfirmOptions{Title: title})
+				if err != nil {
+					return err
+				}
+				if !confirmed {
 					return errors.New("cluster apply cancelled; nothing was changed")
 				}
 			}

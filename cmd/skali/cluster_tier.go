@@ -90,7 +90,13 @@ func runTierFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes bo
 			fmt.Fprintln(out)
 			return errors.New("non-interactive run requires --yes")
 		}
-		if !cliprompt.Confirm(reader, " Continue? [y/N] ") {
+		confirmed, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: "Apply this database tier change?",
+		})
+		if err != nil {
+			return err
+		}
+		if !confirmed {
 			return errors.New("tier change cancelled; nothing was changed")
 		}
 	}

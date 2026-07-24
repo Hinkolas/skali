@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -40,12 +41,26 @@ func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly boo
 		return err
 	}
 	if !seedOnly {
-		installation, err := cliprompt.Select(reader, out, "  installation: ",
-			[]string{"create a new cluster", "join an existing cluster"}, 0)
+		installation, err := promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
+			Title: "How should this host join Skali?",
+			Options: []cliprompt.Option{
+				{
+					Label:       "Create a new cluster",
+					Description: "start the first server on this host",
+					Value:       "create",
+				},
+				{
+					Label:       "Join an existing cluster",
+					Description: "use an enrollment or join token",
+					Value:       "join",
+				},
+			},
+			DefaultValue: "create",
+		})
 		if err != nil {
 			return err
 		}
-		if installation == 1 {
+		if installation == "join" {
 			return runInteractiveJoinFlow(ctx, out, reader)
 		}
 	}
@@ -55,7 +70,7 @@ func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly boo
 	if err != nil {
 		return err
 	}
-	capabilities, err := promptCapabilities(reader)
+	capabilities, err := promptCapabilities(ctx, out, reader)
 	if err != nil {
 		return err
 	}
@@ -94,7 +109,14 @@ func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly boo
 	printWarnings(out, warnings)
 
 	fmt.Fprintln(out)
-	if !cliprompt.ConfirmDefaultYes(reader, "This is the only node so far. Initialize Skali now? [Y/n] ") {
+	initialize, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+		Title:   "This is the only node so far. Initialize Skali now?",
+		Default: true,
+	})
+	if err != nil {
+		return err
+	}
+	if !initialize {
 		fmt.Fprintln(out, "Run `skali cluster init` on this node once every planned node has joined.")
 		return nil
 	}
@@ -134,7 +156,7 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 		if promptErr != nil {
 			return promptErr
 		}
-		capabilities, promptErr := promptCapabilities(reader)
+		capabilities, promptErr := promptCapabilities(ctx, out, reader)
 		if promptErr != nil {
 			return promptErr
 		}
@@ -157,12 +179,17 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 
 	role := claims.Role
 	if role == "" {
-		choice, err := cliprompt.Select(reader, out, "  role: ",
-			[]string{"agent", "server"}, 0)
+		role, err = promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
+			Title: "Which Kubernetes role should this node use?",
+			Options: []cliprompt.Option{
+				{Label: "Agent", Description: "runs workloads only", Value: layout.RoleAgent},
+				{Label: "Server", Description: "joins the control plane", Value: layout.RoleServer},
+			},
+			DefaultValue: layout.RoleAgent,
+		})
 		if err != nil {
 			return err
 		}
-		role = []string{layout.RoleAgent, layout.RoleServer}[choice]
 	} else {
 		fmt.Fprintf(out, "  role: %s (from token)\n", role)
 	}
@@ -185,7 +212,7 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 	if err != nil {
 		return err
 	}
-	capabilities, err := promptCapabilities(reader)
+	capabilities, err := promptCapabilities(ctx, out, reader)
 	if err != nil {
 		return err
 	}
@@ -221,27 +248,26 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 }
 
 // promptCapabilities asks for a capability list, defaulting to all.
-func promptCapabilities(reader *bufio.Reader) ([]string, error) {
-	prompt := "  capabilities (" + strings.Join(layout.Capabilities, ", ") + ") [all]: "
-	answer, err := cliprompt.Line(reader, prompt)
-	if err != nil {
-		return nil, err
+func promptCapabilities(ctx context.Context, out *os.File, reader *bufio.Reader) ([]string, error) {
+	options := make([]cliprompt.Option, 0, len(layout.Capabilities))
+	for _, capability := range layout.Capabilities {
+		options = append(options, cliprompt.Option{
+			Label: capability,
+			Value: capability,
+		})
 	}
-	if answer == "" || answer == "all" {
-		return append([]string(nil), layout.Capabilities...), nil
-	}
-	var capabilities []string
-	for part := range strings.SplitSeq(answer, ",") {
-		capability := strings.TrimSpace(part)
-		if capability == "" {
-			continue
-		}
-		capabilities = append(capabilities, capability)
-	}
-	if len(capabilities) == 0 {
-		return append([]string(nil), layout.Capabilities...), nil
-	}
-	return capabilities, nil
+	return promptSession(out, reader).MultiSelect(ctx, cliprompt.MultiSelectOptions{
+		Title:         "What should this node run?",
+		Description:   "Capabilities control workload placement.",
+		Options:       options,
+		DefaultValues: append([]string(nil), layout.Capabilities...),
+		Validate: func(values []string) error {
+			if len(values) == 0 {
+				return errors.New("select at least one capability")
+			}
+			return nil
+		},
+	})
 }
 
 // runInteractiveInit initializes the cluster, defaulting from the record

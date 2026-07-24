@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/localdev"
 )
@@ -187,7 +188,13 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 		fmt.Fprintln(out, "  its namespace including all volumes, and its values, secrets,")
 		fmt.Fprintln(out, "  revisions, and history on the local platform.")
 		fmt.Fprintln(out, "Nothing outside this machine is affected.")
-		if !confirm(out, fmt.Sprintf("\nPurge %s from the local platform? [y/N] ", name)) {
+		confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: fmt.Sprintf("Purge %s from the local platform?", name),
+		})
+		if err != nil {
+			return err
+		}
+		if !confirmed {
 			return errors.New("aborted")
 		}
 	}
@@ -551,7 +558,13 @@ func runDevReset(command *cobra.Command, yes bool) error {
 		fmt.Fprintf(out, "  cluster %s, its volumes, the local registry and its artifacts,\n", localdev.ClusterName())
 		fmt.Fprintln(out, "  local Skali state, and all locally deployed project data.")
 		fmt.Fprintln(out, "Nothing outside this machine is affected.")
-		if !confirm(out, "\nDestroy the local installation? [y/N] ") {
+		confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: "Destroy the local installation?",
+		})
+		if err != nil {
+			return err
+		}
+		if !confirmed {
 			return errors.New("aborted")
 		}
 	}

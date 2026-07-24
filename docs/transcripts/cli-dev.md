@@ -110,7 +110,8 @@ This destroys the complete local installation:
   local Skali state, and all locally deployed project data.
 Nothing outside this machine is affected.
 
-Destroy the local installation? [y/N] y
+◆ Destroy the local installation?
+└ Yes
   ok    Delete cluster skali-dev and volumes
   ok    Remove local registry storage
   ok    Remove local installation record

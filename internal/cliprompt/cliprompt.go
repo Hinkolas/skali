@@ -1,113 +1,655 @@
-// Package cliprompt holds the hand-rolled interactive primitives the CLIs
-// share: line and secret prompts, y/N and type-the-name-back confirms, and
-// a numbered selection. Prompts write to stderr so piped stdout stays
-// clean; answers come from one shared reader so buffered input is never
-// lost between prompts. There is deliberately no TUI dependency.
+// Package cliprompt provides the interactive controls shared by the Skali
+// command-line programs. Real terminals get cursor-aware Huh controls;
+// pipes, tests, dumb terminals, and accessibility mode get deterministic
+// line-oriented prompts without ANSI control sequences.
 package cliprompt
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 )
 
-// Interactive reports whether both stdin and stdout are terminals; only
-// then may a command prompt.
+// ErrAborted is returned when the user interrupts an active prompt.
+var ErrAborted = errors.New("prompt aborted")
+
+// Option separates a choice's stored value from its user-facing copy.
+type Option struct {
+	Label       string
+	Description string
+	Value       string
+}
+
+// TextOptions configures a single-line input.
+type TextOptions struct {
+	Title       string
+	Description string
+	Default     string
+	Placeholder string
+	CharLimit   int
+	Validate    func(string) error
+}
+
+// SecretOptions configures a masked single-line input.
+type SecretOptions struct {
+	Title       string
+	Description string
+	Validate    func(string) error
+}
+
+// SelectOptions configures a single-choice prompt.
+type SelectOptions struct {
+	Title        string
+	Description  string
+	Options      []Option
+	DefaultValue string
+}
+
+// MultiSelectOptions configures a multiple-choice prompt.
+type MultiSelectOptions struct {
+	Title         string
+	Description   string
+	Options       []Option
+	DefaultValues []string
+	Limit         int
+	Validate      func([]string) error
+}
+
+// ConfirmOptions configures a yes/no prompt.
+type ConfirmOptions struct {
+	Title       string
+	Description string
+	Default     bool
+}
+
+// Session owns prompt input, output, mode, and the buffered reader used by
+// plain prompts. A Session can be injected in tests and shared by a complete
+// conversation so piped input is never lost between questions.
+type Session struct {
+	in          io.Reader
+	out         io.Writer
+	reader      *bufio.Reader
+	interactive bool
+	accessible  bool
+	noColor     bool
+}
+
+// New creates a prompt session and derives its behavior from the supplied
+// streams and environment. SKALI_ACCESSIBLE forces line-oriented prompts on a
+// terminal; TERM=dumb does the same. NO_COLOR keeps the interactive controls
+// but removes color.
+func New(in io.Reader, out io.Writer) *Session {
+	if in == nil {
+		in = os.Stdin
+	}
+	if out == nil {
+		out = os.Stderr
+	}
+	reader, ok := in.(*bufio.Reader)
+	if !ok {
+		reader = bufio.NewReader(in)
+	}
+	_, noColor := os.LookupEnv("NO_COLOR")
+	return &Session{
+		in:          in,
+		out:         out,
+		reader:      reader,
+		interactive: isTerminal(in) && isTerminal(out),
+		accessible:  os.Getenv("SKALI_ACCESSIBLE") == "1" || os.Getenv("TERM") == "dumb",
+		noColor:     noColor,
+	}
+}
+
+// NewPlain creates a deterministic line-oriented session regardless of the
+// supplied streams. It is intended for tests and explicitly piped workflows.
+func NewPlain(in io.Reader, out io.Writer) *Session {
+	session := New(in, out)
+	session.interactive = false
+	session.accessible = false
+	session.noColor = true
+	return session
+}
+
+// Interactive reports whether both session streams are terminals. Accessible
+// and dumb-terminal modes may still choose the plain renderer on those TTYs.
+func (s *Session) Interactive() bool { return s.interactive }
+
+// Interactive reports whether stdin and stdout are terminals; command policy
+// uses it to decide whether asking a question is allowed at all.
 func Interactive() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// Line prints a prompt to stderr and reads one trimmed line.
-func Line(r *bufio.Reader, prompt string) (string, error) {
-	fmt.Fprint(os.Stderr, prompt)
-	line, err := r.ReadString('\n')
-	if err != nil && line == "" {
+func isTerminal(stream any) bool {
+	file, ok := stream.(interface{ Fd() uintptr })
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func (s *Session) terminalUI() bool {
+	return s.interactive && !s.accessible
+}
+
+// Text asks for editable single-line text.
+func (s *Session) Text(ctx context.Context, options TextOptions) (string, error) {
+	if !s.terminalUI() {
+		return s.plainText(options)
+	}
+	value := options.Default
+	field := huh.NewInput().
+		Title(activeTitle(options.Title)).
+		Description(withHint(options.Description, "type, use arrows to edit, enter to confirm")).
+		Placeholder(options.Placeholder).
+		Value(&value)
+	if options.CharLimit > 0 {
+		field.CharLimit(options.CharLimit)
+	}
+	normalize := func(raw string) string {
+		normalized := strings.TrimSpace(raw)
+		if normalized == "" {
+			return options.Default
+		}
+		return normalized
+	}
+	if options.Validate != nil {
+		field.Validate(func(raw string) error {
+			return options.Validate(normalize(raw))
+		})
+	}
+	if err := s.run(ctx, field); err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(line), nil
+	value = normalize(value)
+	s.settle(options.Title, value, false)
+	return value, nil
 }
 
-// LineDefault prompts like Line but substitutes fallback for an empty
-// answer.
-func LineDefault(r *bufio.Reader, prompt, fallback string) (string, error) {
-	answer, err := Line(r, prompt)
-	if err != nil {
+// Secret asks for editable masked text. The settled transcript never contains
+// the entered value.
+func (s *Session) Secret(ctx context.Context, options SecretOptions) (string, error) {
+	if !s.terminalUI() {
+		return s.plainSecret(options)
+	}
+	var value string
+	field := huh.NewInput().
+		Title(activeTitle(options.Title)).
+		Description(withHint(options.Description, "type, use arrows to edit, enter to confirm")).
+		EchoMode(huh.EchoModePassword).
+		Value(&value)
+	if options.Validate != nil {
+		field.Validate(options.Validate)
+	}
+	if err := s.run(ctx, field); err != nil {
 		return "", err
 	}
-	if answer == "" {
-		return fallback, nil
-	}
-	return answer, nil
+	s.settle(options.Title, "entered", true)
+	return value, nil
 }
 
-// Secret reads without echo on a terminal, and falls back to a plain line
-// read when stdin is piped (scripts, CI).
-func Secret(r *bufio.Reader, prompt string) (string, error) {
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return Line(r, prompt)
+// Select asks for exactly one option.
+func (s *Session) Select(ctx context.Context, options SelectOptions) (string, error) {
+	if len(options.Options) == 0 {
+		return "", errors.New("select prompt has no options")
 	}
-	fmt.Fprint(os.Stderr, prompt)
-	secret, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
+	if !s.terminalUI() {
+		return s.plainSelect(options)
+	}
+	value := options.DefaultValue
+	choices := make([]huh.Option[string], 0, len(options.Options))
+	for _, option := range options.Options {
+		choices = append(choices, huh.NewOption("○ "+optionText(option), option.Value))
+	}
+	field := huh.NewSelect[string]().
+		Title(activeTitle(options.Title)).
+		Description(withHint(options.Description, "use arrow keys, enter to select")).
+		Options(choices...).
+		Value(&value).
+		Height(listHeight(len(choices)))
+	if err := s.run(ctx, field); err != nil {
 		return "", err
 	}
-	return string(secret), nil
+	s.settle(options.Title, optionLabel(options.Options, value), false)
+	return value, nil
 }
 
-// Confirm asks a y/N question; only y and yes answer true.
-func Confirm(r *bufio.Reader, prompt string) bool {
-	answer, err := Line(r, prompt)
-	if err != nil {
-		return false
+// MultiSelect asks for zero or more options.
+func (s *Session) MultiSelect(ctx context.Context, options MultiSelectOptions) ([]string, error) {
+	if len(options.Options) == 0 {
+		return nil, errors.New("multi-select prompt has no options")
 	}
-	answer = strings.ToLower(answer)
-	return answer == "y" || answer == "yes"
-}
-
-// ConfirmDefaultYes asks a Y/n question; empty, y, and yes answer true.
-func ConfirmDefaultYes(r *bufio.Reader, prompt string) bool {
-	answer, err := Line(r, prompt)
-	if err != nil {
-		return false
+	if !s.terminalUI() {
+		return s.plainMultiSelect(options)
 	}
-	answer = strings.ToLower(answer)
-	return answer == "" || answer == "y" || answer == "yes"
-}
-
-// ConfirmTyped requires the expected name typed back exactly; the guard
-// for destructive operations.
-func ConfirmTyped(r *bufio.Reader, prompt, expected string) bool {
-	answer, err := Line(r, prompt)
-	if err != nil {
-		return false
+	values := append([]string(nil), options.DefaultValues...)
+	choices := make([]huh.Option[string], 0, len(options.Options))
+	for _, option := range options.Options {
+		choice := huh.NewOption(optionText(option), option.Value)
+		if slices.Contains(values, option.Value) {
+			choice = choice.Selected(true)
+		}
+		choices = append(choices, choice)
 	}
-	return answer == expected
+	field := huh.NewMultiSelect[string]().
+		Title(activeTitle(options.Title)).
+		Description(withHint(options.Description, "use arrows and space, enter to confirm")).
+		Options(choices...).
+		Value(&values).
+		Height(listHeight(len(choices))).
+		Filterable(len(choices) > 7)
+	if options.Limit > 0 {
+		field.Limit(options.Limit)
+	}
+	if options.Validate != nil {
+		field.Validate(options.Validate)
+	}
+	if err := s.run(ctx, field); err != nil {
+		return nil, err
+	}
+	labels := make([]string, 0, len(values))
+	for _, value := range values {
+		labels = append(labels, optionLabel(options.Options, value))
+	}
+	s.settle(options.Title, strings.Join(labels, ", "), false)
+	return values, nil
 }
 
-// Select prompts with numbered options and returns the chosen index; an
-// empty answer picks fallback (pass -1 to require an answer).
-func Select(r *bufio.Reader, out io.Writer, prompt string, options []string, fallback int) (int, error) {
-	for index, option := range options {
-		fmt.Fprintf(out, "  [%d] %s\n", index+1, option)
+// Confirm asks a yes/no question with an explicit safe default.
+func (s *Session) Confirm(ctx context.Context, options ConfirmOptions) (bool, error) {
+	if !s.terminalUI() {
+		return s.plainConfirm(options)
+	}
+	value := options.Default
+	field := huh.NewConfirm().
+		Title(activeTitle(options.Title)).
+		Description(withHint(options.Description, "use arrows or y/n, enter to confirm")).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&value)
+	if err := s.run(ctx, field); err != nil {
+		return false, err
+	}
+	answer := "No"
+	if value {
+		answer = "Yes"
+	}
+	s.settle(options.Title, answer, false)
+	return value, nil
+}
+
+// ConfirmTyped asks the user to type an exact value. It is used for
+// destructive operations and renders only "confirmed" after success.
+func (s *Session) ConfirmTyped(ctx context.Context, title, description, expected string) (bool, error) {
+	validate := func(value string) error {
+		if value != expected {
+			return fmt.Errorf("type %q exactly to continue", expected)
+		}
+		return nil
+	}
+	if !s.terminalUI() {
+		value, err := s.plainText(TextOptions{
+			Title:       title,
+			Description: description,
+			Validate:    validate,
+		})
+		return value == expected, err
+	}
+	var value string
+	field := huh.NewInput().
+		Title(activeTitle(title)).
+		Description(withHint(description, "type the value exactly, enter to confirm")).
+		Value(&value).
+		Validate(validate)
+	err := s.run(ctx, field)
+	if err != nil {
+		return false, err
+	}
+	s.settle(title, "confirmed", false)
+	return value == expected, nil
+}
+
+func (s *Session) run(ctx context.Context, field huh.Field) error {
+	form := huh.NewForm(huh.NewGroup(field)).
+		WithInput(s.in).
+		WithOutput(s.out).
+		WithTheme(skaliTheme(s.noColor)).
+		WithAccessible(false).
+		WithShowHelp(false).
+		WithShowErrors(true)
+	err := form.RunWithContext(ctx)
+	if errors.Is(err, huh.ErrUserAborted) || errors.Is(err, context.Canceled) {
+		return ErrAborted
+	}
+	return err
+}
+
+func (s *Session) settle(title, value string, secret bool) {
+	if !s.terminalUI() {
+		return
+	}
+	accent, answer := settledStyles(s.noColor)
+	fmt.Fprintf(s.out, "%s %s\n", accent.Render("◆"), title)
+	if secret {
+		fmt.Fprintf(s.out, "%s %s\n", accent.Render("└"), answer.Render("entered"))
+		return
+	}
+	fmt.Fprintf(s.out, "%s %s\n", accent.Render("└"), answer.Render(value))
+}
+
+func activeTitle(title string) string { return "◆  " + title }
+
+func withHint(description, hint string) string {
+	if description == "" {
+		return "(" + hint + ")"
+	}
+	return description + "  (" + hint + ")"
+}
+
+func optionText(option Option) string {
+	if option.Description == "" {
+		return option.Label
+	}
+	return option.Label + "  " + option.Description
+}
+
+func optionLabel(options []Option, value string) string {
+	for _, option := range options {
+		if option.Value == value {
+			return option.Label
+		}
+	}
+	return value
+}
+
+func listHeight(count int) int {
+	if count < 3 {
+		return count
+	}
+	if count > 8 {
+		return 8
+	}
+	return count
+}
+
+func skaliTheme(noColor bool) huh.Theme {
+	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
+		theme := huh.ThemeBase(isDark)
+		lightDark := lipgloss.LightDark(isDark)
+		var accent color.Color = lightDark(lipgloss.Color("#0F766E"), lipgloss.Color("#5EEAD4"))
+		var success color.Color = lightDark(lipgloss.Color("#15803D"), lipgloss.Color("#86EFAC"))
+		var muted color.Color = lightDark(lipgloss.Color("#64748B"), lipgloss.Color("245"))
+		var danger color.Color = lightDark(lipgloss.Color("#BE123C"), lipgloss.Color("#FB7185"))
+		var buttonText color.Color = lipgloss.Color("0")
+		if noColor {
+			accent, success, muted, danger = lipgloss.NoColor{}, lipgloss.NoColor{},
+				lipgloss.NoColor{}, lipgloss.NoColor{}
+			buttonText = lipgloss.NoColor{}
+		}
+
+		rail := lipgloss.Border{Left: "│"}
+		theme.Focused.Base = lipgloss.NewStyle().
+			PaddingLeft(1).
+			BorderStyle(rail).
+			BorderLeft(true).
+			BorderForeground(accent)
+		theme.Focused.Title = lipgloss.NewStyle().Bold(true).Foreground(accent)
+		theme.Focused.Description = lipgloss.NewStyle().Foreground(muted)
+		theme.Focused.ErrorIndicator = lipgloss.NewStyle().Foreground(danger).SetString("✗ ")
+		theme.Focused.ErrorMessage = lipgloss.NewStyle().Foreground(danger)
+		theme.Focused.SelectSelector = lipgloss.NewStyle()
+		theme.Focused.Option = lipgloss.NewStyle()
+		theme.Focused.MultiSelectSelector = lipgloss.NewStyle().Foreground(accent).SetString("› ")
+		theme.Focused.SelectedPrefix = lipgloss.NewStyle().Foreground(success).SetString("■ ")
+		theme.Focused.UnselectedPrefix = lipgloss.NewStyle().Foreground(muted).SetString("□ ")
+		theme.Focused.SelectedOption = lipgloss.NewStyle().
+			Foreground(success).
+			Transform(func(value string) string {
+				return "● " + strings.TrimPrefix(value, "○ ")
+			})
+		theme.Focused.UnselectedOption = lipgloss.NewStyle().Foreground(muted)
+		theme.Focused.TextInput.Cursor = lipgloss.NewStyle().Foreground(success)
+		theme.Focused.TextInput.Prompt = lipgloss.NewStyle().Foreground(accent)
+		theme.Focused.TextInput.Placeholder = lipgloss.NewStyle().Foreground(muted)
+		theme.Focused.FocusedButton = lipgloss.NewStyle().
+			Foreground(buttonText).
+			Background(accent).
+			Padding(0, 2).
+			MarginRight(1)
+		theme.Focused.BlurredButton = lipgloss.NewStyle().
+			Foreground(muted).
+			Padding(0, 2).
+			MarginRight(1)
+		theme.Blurred = theme.Focused
+		theme.Blurred.Base = lipgloss.NewStyle().PaddingLeft(1)
+		theme.Blurred.Title = lipgloss.NewStyle().Foreground(muted)
+		theme.Blurred.Description = lipgloss.NewStyle().Foreground(muted)
+		theme.Group.Title = theme.Focused.Title
+		theme.Group.Description = theme.Focused.Description
+		return theme
+	})
+}
+
+func settledStyles(noColor bool) (lipgloss.Style, lipgloss.Style) {
+	if noColor {
+		return lipgloss.NewStyle(), lipgloss.NewStyle()
+	}
+	// ANSI aqua/green follow the terminal palette, keeping settled answers
+	// legible on both light and dark backgrounds.
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("6")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+}
+
+func (s *Session) plainText(options TextOptions) (string, error) {
+	if options.Description != "" {
+		fmt.Fprintln(s.out, options.Description)
 	}
 	for {
-		answer, err := Line(r, prompt)
-		if err != nil {
-			return 0, err
+		prompt := options.Title
+		if options.Default != "" {
+			prompt += " [" + options.Default + "]"
 		}
-		if answer == "" && fallback >= 0 {
-			return fallback, nil
+		fmt.Fprint(s.out, prompt+": ")
+		line, err := s.reader.ReadString('\n')
+		if err != nil && line == "" {
+			return "", err
 		}
-		choice, err := strconv.Atoi(answer)
-		if err == nil && choice >= 1 && choice <= len(options) {
-			return choice - 1, nil
+		value := strings.TrimSpace(line)
+		if value == "" {
+			value = options.Default
 		}
-		fmt.Fprintf(os.Stderr, "please answer 1-%d\n", len(options))
+		if options.CharLimit > 0 && len([]rune(value)) > options.CharLimit {
+			fmt.Fprintf(s.out, "input cannot exceed %d characters\n", options.CharLimit)
+			continue
+		}
+		if options.Validate != nil {
+			if err := options.Validate(value); err != nil {
+				fmt.Fprintln(s.out, err)
+				continue
+			}
+		}
+		return value, nil
 	}
+}
+
+func (s *Session) plainSecret(options SecretOptions) (string, error) {
+	// A terminal in accessibility mode can still suppress echo.
+	if file, ok := s.in.(interface{ Fd() uintptr }); ok && isTerminal(s.in) {
+		for {
+			fmt.Fprint(s.out, options.Title+": ")
+			value, err := term.ReadPassword(int(file.Fd()))
+			fmt.Fprintln(s.out)
+			if err != nil {
+				return "", err
+			}
+			answer := string(value)
+			if options.Validate != nil {
+				if err := options.Validate(answer); err != nil {
+					fmt.Fprintln(s.out, err)
+					continue
+				}
+			}
+			return answer, nil
+		}
+	}
+	return s.plainText(TextOptions{
+		Title:    options.Title,
+		Validate: options.Validate,
+	})
+}
+
+func (s *Session) plainSelect(options SelectOptions) (string, error) {
+	defaultIndex := -1
+	fmt.Fprintln(s.out, options.Title+":")
+	if options.Description != "" {
+		fmt.Fprintln(s.out, "  "+options.Description)
+	}
+	for index, option := range options.Options {
+		fmt.Fprintf(s.out, "  %d) %s\n", index+1, optionText(option))
+		if option.Value == options.DefaultValue {
+			defaultIndex = index
+		}
+	}
+	for {
+		prompt := fmt.Sprintf("Select [1-%d]", len(options.Options))
+		if defaultIndex >= 0 {
+			prompt += fmt.Sprintf(" (%d)", defaultIndex+1)
+		}
+		fmt.Fprint(s.out, prompt+": ")
+		line, err := s.reader.ReadString('\n')
+		answer := strings.TrimSpace(line)
+		if answer == "" && defaultIndex >= 0 {
+			return options.Options[defaultIndex].Value, nil
+		}
+		choice, conversionErr := strconv.Atoi(answer)
+		if conversionErr == nil && choice >= 1 && choice <= len(options.Options) {
+			return options.Options[choice-1].Value, nil
+		}
+		if err != nil {
+			return "", errors.New("no valid selection")
+		}
+		fmt.Fprintf(s.out, "please answer 1-%d\n", len(options.Options))
+	}
+}
+
+func (s *Session) plainMultiSelect(options MultiSelectOptions) ([]string, error) {
+	fmt.Fprintln(s.out, options.Title+":")
+	if options.Description != "" {
+		fmt.Fprintln(s.out, "  "+options.Description)
+	}
+	for index, option := range options.Options {
+		marker := " "
+		if slices.Contains(options.DefaultValues, option.Value) {
+			marker = "x"
+		}
+		fmt.Fprintf(s.out, "  %d) [%s] %s\n", index+1, marker, optionText(option))
+	}
+	for {
+		fmt.Fprint(s.out, "Select comma-separated numbers (empty keeps defaults): ")
+		line, err := s.reader.ReadString('\n')
+		if err != nil && line == "" {
+			return nil, err
+		}
+		answer := strings.TrimSpace(line)
+		values := append([]string(nil), options.DefaultValues...)
+		if answer != "" {
+			values = nil
+			for part := range strings.SplitSeq(answer, ",") {
+				index, conversionErr := strconv.Atoi(strings.TrimSpace(part))
+				if conversionErr != nil || index < 1 || index > len(options.Options) {
+					fmt.Fprintf(s.out, "please answer with numbers 1-%d\n", len(options.Options))
+					values = nil
+					break
+				}
+				value := options.Options[index-1].Value
+				if !slices.Contains(values, value) {
+					values = append(values, value)
+				}
+			}
+			if values == nil {
+				continue
+			}
+		}
+		if options.Limit > 0 && len(values) > options.Limit {
+			fmt.Fprintf(s.out, "select at most %d options\n", options.Limit)
+			continue
+		}
+		if options.Validate != nil {
+			if err := options.Validate(values); err != nil {
+				fmt.Fprintln(s.out, err)
+				continue
+			}
+		}
+		return values, nil
+	}
+}
+
+func (s *Session) plainConfirm(options ConfirmOptions) (bool, error) {
+	suffix := "[y/N]"
+	if options.Default {
+		suffix = "[Y/n]"
+	}
+	if options.Description != "" {
+		fmt.Fprintln(s.out, options.Description)
+	}
+	for {
+		fmt.Fprintf(s.out, "%s %s ", options.Title, suffix)
+		line, err := s.reader.ReadString('\n')
+		if err != nil && line == "" {
+			return false, err
+		}
+		answer := strings.ToLower(strings.TrimSpace(line))
+		switch answer {
+		case "":
+			return options.Default, nil
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		default:
+			fmt.Fprintln(s.out, "please answer yes or no")
+		}
+	}
+}
+
+// Legacy adapters keep small internal callers source-compatible while all
+// rendering and parsing still flows through Session.
+
+func legacySession(r *bufio.Reader, out io.Writer) *Session {
+	if Interactive() {
+		return New(os.Stdin, out)
+	}
+	return NewPlain(r, out)
+}
+
+func legacyTitle(prompt string) string {
+	trimmed := strings.TrimSpace(prompt)
+	return strings.TrimSpace(strings.TrimSuffix(trimmed, ":"))
+}
+
+// Line asks for a line using the shared prompt layer.
+func Line(r *bufio.Reader, prompt string) (string, error) {
+	return legacySession(r, os.Stderr).Text(context.Background(), TextOptions{Title: legacyTitle(prompt)})
+}
+
+// LineDefault asks for a line with a default.
+func LineDefault(r *bufio.Reader, prompt, fallback string) (string, error) {
+	title := legacyTitle(prompt)
+	title = strings.TrimSpace(strings.TrimSuffix(title, "["+fallback+"]"))
+	return legacySession(r, os.Stderr).Text(context.Background(), TextOptions{
+		Title: title, Default: fallback,
+	})
+}
+
+// Secret asks for masked text on a terminal and a plain line on a pipe.
+func Secret(r *bufio.Reader, prompt string) (string, error) {
+	return legacySession(r, os.Stderr).Secret(context.Background(), SecretOptions{Title: legacyTitle(prompt)})
 }

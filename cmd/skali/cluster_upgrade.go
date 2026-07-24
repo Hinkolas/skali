@@ -141,7 +141,13 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		if !cliprompt.Interactive() {
 			return errors.New("non-interactive run requires --yes")
 		}
-		if !cliprompt.Confirm(reader, "Continue? [y/N] ") {
+		confirmed, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: "Continue with this upgrade?",
+		})
+		if err != nil {
+			return err
+		}
+		if !confirmed {
 			return errors.New("upgrade cancelled; nothing was changed")
 		}
 		fmt.Fprintln(out)

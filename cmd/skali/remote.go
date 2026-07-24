@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -11,10 +10,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/cliprompt"
 )
 
 func newRemoteCmd() *cobra.Command {
@@ -368,17 +367,31 @@ func parseMasterURL(raw string) (name, master string, err error) {
 // loginSession collects credentials (the email is prompted unless provided),
 // performs the login, and answers a TOTP challenge when one is presented.
 func loginSession(ctx context.Context, master, email string) (*client.SessionCreated, error) {
-	// One shared reader so buffered lines are never lost between prompts
-	// (matters for piped stdin).
-	stdin := bufio.NewReader(os.Stdin)
+	prompts := cliprompt.New(os.Stdin, os.Stderr)
 	if email == "" {
-		line, err := promptLine(stdin, "Email: ")
+		line, err := prompts.Text(ctx, cliprompt.TextOptions{
+			Title: "Email",
+			Validate: func(value string) error {
+				if value == "" {
+					return errors.New("email is required")
+				}
+				return nil
+			},
+		})
 		if err != nil {
 			return nil, fmt.Errorf("read email: %w", err)
 		}
 		email = line
 	}
-	password, err := promptSecret(stdin, "Password: ")
+	password, err := prompts.Secret(ctx, cliprompt.SecretOptions{
+		Title: "Password",
+		Validate: func(value string) error {
+			if value == "" {
+				return errors.New("password is required")
+			}
+			return nil
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("read password: %w", err)
 	}
@@ -390,7 +403,22 @@ func loginSession(ctx context.Context, master, email string) (*client.SessionCre
 	}
 	sess := res.Session
 	if res.Challenge != nil {
-		code, err := promptLine(stdin, "Two-factor code: ")
+		code, err := prompts.Text(ctx, cliprompt.TextOptions{
+			Title:       "Two-factor code",
+			Description: "Enter the six-digit code from your authenticator.",
+			CharLimit:   6,
+			Validate: func(value string) error {
+				if len(value) != 6 {
+					return errors.New("enter a six-digit code")
+				}
+				for _, digit := range value {
+					if digit < '0' || digit > '9' {
+						return errors.New("enter a six-digit code")
+					}
+				}
+				return nil
+			},
+		})
 		if err != nil {
 			return nil, fmt.Errorf("read code: %w", err)
 		}
@@ -400,29 +428,4 @@ func loginSession(ctx context.Context, master, email string) (*client.SessionCre
 		}
 	}
 	return sess, nil
-}
-
-// promptLine prints a prompt to stderr and reads one trimmed line.
-func promptLine(r *bufio.Reader, prompt string) (string, error) {
-	fmt.Fprint(os.Stderr, prompt)
-	line, err := r.ReadString('\n')
-	if err != nil && line == "" {
-		return "", err
-	}
-	return strings.TrimSpace(line), nil
-}
-
-// promptSecret reads without echo on a terminal, and falls back to a plain
-// line read when stdin is piped (scripts, CI).
-func promptSecret(r *bufio.Reader, prompt string) (string, error) {
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return promptLine(r, prompt)
-	}
-	fmt.Fprint(os.Stderr, prompt)
-	secret, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
-		return "", err
-	}
-	return string(secret), nil
 }

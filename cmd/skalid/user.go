@@ -9,9 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"golang.org/x/term"
-
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -63,7 +62,7 @@ func userCreate(ctx context.Context, st *store.Store, args []string) error {
 		return errors.New("usage: skalid user create --email <address> [--name <display>] [--role admin|member] [--password-stdin]")
 	}
 
-	password, err := readPassword(*passwordStdin)
+	password, err := readPassword(ctx, *passwordStdin)
 	if err != nil {
 		return err
 	}
@@ -105,7 +104,7 @@ func userSetRole(ctx context.Context, st *store.Store, args []string) error {
 // readPassword collects the password without it ending up in shell history:
 // interactively via a no-echo double prompt, or from stdin for scripting
 // (printf '%s' "$PW" | skalid user create --email a@b.c --password-stdin).
-func readPassword(fromStdin bool) (string, error) {
+func readPassword(ctx context.Context, fromStdin bool) (string, error) {
 	if fromStdin {
 		data, err := bufio.NewReader(os.Stdin).ReadString('\n')
 		if err != nil && data == "" {
@@ -114,22 +113,35 @@ func readPassword(fromStdin bool) (string, error) {
 		return strings.TrimRight(data, "\r\n"), nil
 	}
 
-	fmt.Fprint(os.Stderr, "Password: ")
-	first, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
-		return "", fmt.Errorf("read password (use --password-stdin when not on a terminal): %w", err)
+	prompts := cliprompt.New(os.Stdin, os.Stderr)
+	if !prompts.Interactive() {
+		return "", errors.New("read password (use --password-stdin when not on a terminal)")
 	}
-	fmt.Fprint(os.Stderr, "Repeat password: ")
-	second, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stderr)
+	first, err := prompts.Secret(ctx, cliprompt.SecretOptions{
+		Title: "Password",
+		Validate: func(value string) error {
+			if value == "" {
+				return errors.New("password must not be empty")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	second, err := prompts.Secret(ctx, cliprompt.SecretOptions{
+		Title: "Repeat password",
+		Validate: func(value string) error {
+			if value != first {
+				return errors.New("passwords do not match")
+			}
+			return nil
+		},
+	})
 	if err != nil {
 		return "", err
 	}
-	if string(first) != string(second) {
-		return "", errors.New("passwords do not match")
-	}
-	return string(first), nil
+	return second, nil
 }
 
 func userList(ctx context.Context, st *store.Store) error {

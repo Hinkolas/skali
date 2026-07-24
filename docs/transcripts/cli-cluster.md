@@ -117,20 +117,25 @@ host cp-1: fresh
 
 This host is not part of a Skali installation. Install one?
 
-  installation          [1] create a new cluster
-                        [2] join an existing cluster    : 1
-  cluster name          [production]                   :
-  capabilities          application, database, object-storage,
-                        registry, edge                 : all
-  api/ui domain                                        : skali.example.com
-  registry domain                                      : registry.example.com
-  tls issuer email                                     : ops@example.com
+◆ How should this host join Skali?
+└ Create a new cluster
+◆ cluster name
+└ production
+◆ What should this node run?
+└ application, database, object-storage, registry, edge
+◆ api/ui domain
+└ skali.example.com
+◆ registry domain
+└ registry.example.com
+◆ tls issuer email
+└ ops@example.com
 
   ok  Install k3s v1.33.3+k3s1 (server)
   ok  Stamp capability labels on node cp-1
   ok  Write /var/lib/skali/installation.yaml
 
-This is the only node so far. Initialize Skali now? [Y/n] y
+◆ This is the only node so far. Initialize Skali now?
+└ Yes
 
 cluster layout
   NODE   ROLE    CAPABILITIES
@@ -148,8 +153,10 @@ derived topology
   ok  Write in-cluster installation record
   ok  Wait for skalid ready
 
-  admin email     : nicholas@example.com
-  admin password  : (prompted, not echoed)
+◆ admin email
+└ nicholas@example.com
+◆ admin password
+└ entered
   ok  Create admin account
 
 Skali is ready:
@@ -158,6 +165,11 @@ Skali is ready:
 
 Install logs: /var/lib/skali/logs/init-01J9X2.log
 ```
+
+Active single-selects show `●`/`○` and use the arrow keys. Capability
+multi-selects show `■`/`□`; Space toggles and Enter confirms. Each answer
+then settles to the connected `◆`/`└` shape above before installation tasks
+start.
 
 The first server initializes the embedded etcd cluster (`cluster-init`),
 so additional servers can join later without a datastore change. Choosing
@@ -334,16 +346,14 @@ host cp-1: healthy Skali server (cluster "production")
   deployed tier     asynchronous
   available tier    synchronous
 
-  [1] status        show installation health
-  [2] apply tier    upgrade system databases to synchronous
-  [3] upgrade       k3s / bundle versions
-  [4] repair        diagnose and repair
-  [5] uninstall     scoped removal
-  : 2
+◆ What would you like to do?
+└ Apply database tier
 
 Upgrade the bootstrap database from asynchronous to synchronous quorum
 replication. This adds a replica and briefly reconfigures replication; no
-data is deleted. Continue? [y/N] y
+data is deleted.
+◆ Apply this database tier change?
+└ Yes
 
   ok  Scale bootstrap database to 3 instances (quorum any 1 of 2)
   ok  Verify replication state
@@ -374,7 +384,9 @@ tier plan for host cp-1 (cluster "production")
 
 Downgrade the bootstrap database from synchronous to asynchronous
 replication. This removes a replica and lowers availability; no data is
-deleted. Continue? [y/N] y
+deleted.
+◆ Apply this database tier change?
+└ Yes
 
   ok  Scale bootstrap database to 2 instance(s) (asynchronous replication)
   ok  Verify replication state
@@ -411,7 +423,8 @@ upgrade plan for host cp-1 (cluster "production")
   bundle  2.0.0 -> 2.1.0
   skalid  ghcr.io/hinkolas/skalid:2.1.0
 
-Continue? [y/N] y
+◆ Continue with this upgrade?
+└ Yes
 
   ok  Upgrade k3s to v1.33.4+k3s1 (server)
   ok  Wait for k3s v1.33.4+k3s1 ready
@@ -485,8 +498,8 @@ host cp-1: healthy Skali server (cluster "production")
   bootstrap  database healthy (synchronous), registry healthy, skalid healthy
 
 nothing to do
-  [1] status  [2] apply tier  [3] upgrade  [4] repair  [5] uninstall  [q] quit
-  : q
+◆ What would you like to do?
+└ Quit
 ```
 
 Detection is read-only. No maintenance action runs without being selected.
@@ -520,12 +533,12 @@ host cp-2: interrupted Skali installation (cluster "production")
   error      start k3s.service: ... failed to get CA certs ...
   log        /var/lib/skali/logs/install-20260723-220730-a1b2c3d4.log
 
-recovery options
-  [1] resume/edit inputs
-  [2] diagnose
-  [3] repair
-  [4] uninstall
-  [5] quit
+◆ How should Skali recover this installation?  (use arrow keys, enter to select)
+│ ● Resume or edit inputs
+│ ○ Diagnose
+│ ○ Repair
+│ ○ Uninstall
+│ ○ Quit
 ```
 
 Choosing resume accepts a corrected endpoint and retains the installation
@@ -584,8 +597,8 @@ host cp-1: Skali server (cluster "production")
 suggested action
   skali cluster repair
 
-Restart the k3s service. Workload containers keep running through the
-restart. Continue? [y/N] y
+◆ Restart the k3s service. Workload containers keep running through the restart. Continue?
+└ Yes
   ok  Restart k3s
   ok  Wait for k3s v1.33.3+k3s1 ready
 
@@ -713,16 +726,8 @@ recommended. Scoping that RBAC is a later slice.
 
 ```console
 $ sudo skali cluster uninstall
-scope of removal on host db-2 (cluster "production"):
-
-  [1] this node       drain and remove db-2 from the cluster; project data
-                      placed only on this node is relocated first or the
-                      removal is refused
-  [2] skali bundle    remove Skali and all project workloads and data from
-                      the cluster; keep bare k3s running
-  [3] entire cluster  not available from one host: destroying a cluster is
-                      per-host, run uninstall on every member
-  : 1
+◆ What should be removed from db-2?
+└ This node
 
 Removing node db-2 is refused while skali-system data lives on it:
 
@@ -753,7 +758,7 @@ follows. The last server refuses to leave while agents remain, and a
 removal that would break quorum states the consequence before the typed
 confirmation.
 
-Removing the Skali bundle (`[2]`) requires typing the cluster name and lists
+Selecting the Skali bundle requires typing the cluster name and lists
 what is destroyed: every project namespace, database, bucket, and the
 registry contents. Destroying a whole cluster is per-host by design; there is
 no single command that reaches into other machines. In existing-cluster mode
@@ -780,19 +785,29 @@ host minis-01: fresh
 
 This host is not part of a Skali installation. Install one?
 
-  vm network (bridged, shared, user-v2) [bridged]:
-  vm cpus [9]:
-  vm memory [12GiB]:
-  vm disk [100GiB]:
+◆ How should the VM connect to the network?
+└ bridged
+◆ vm cpus
+└ 9
+◆ vm memory
+└ 12GiB
+◆ vm disk
+└ 100GiB
 
   ok  Create VM skali (bridged, 9 cpus, 12GiB memory, 100GiB disk)
 
-  role                  [1] server  [2] agent          : 2
-  cluster name          [production]                   :
-  capabilities          application, database          : application, database
-  server url            https://cp-1.internal:6443     : https://192.168.1.10:6443
-  join token file path  (empty to paste the token)     :
-  join token            (pasted, not echoed)           :
+◆ join token file path (empty to paste the token)
+└
+◆ join token
+└ entered
+◆ Which Kubernetes role should this node use?
+└ Agent
+◆ cluster name
+└ production
+◆ server url
+└ https://192.168.1.10:6443
+◆ What should this node run?
+└ application, database
 
   ok  Install k3s v1.33.3+k3s1 (agent)
   ok  Join cluster "production"
@@ -833,7 +848,8 @@ this Mac is missing dependencies for the "bridged" network:
   4. allow Lima to launch it:
        limactl sudoers | sudo tee /etc/sudoers.d/lima
 
-Proceed? [y/N] y
+◆ Install these dependencies?
+└ Yes
   ok  Install Lima v2.2.0
   ok  Write ~/.lima/_config/networks.yaml
 Password:

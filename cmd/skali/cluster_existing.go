@@ -67,7 +67,7 @@ func runExistingInstall(ctx context.Context, out *os.File, reader *bufio.Reader,
 		if !cliprompt.Interactive() {
 			return errors.New("non-interactive run requires --config")
 		}
-		config, adminPassword, err = promptExistingConfig(reader)
+		config, adminPassword, err = promptExistingConfig(ctx, out, reader)
 		if err != nil {
 			return err
 		}
@@ -105,7 +105,7 @@ func runExistingInstall(ctx context.Context, out *os.File, reader *bufio.Reader,
 
 // promptExistingConfig gathers the existing-cluster configuration
 // interactively, mirroring the config schema.
-func promptExistingConfig(reader *bufio.Reader) (*installer.ExistingClusterConfig, string, error) {
+func promptExistingConfig(ctx context.Context, out *os.File, reader *bufio.Reader) (*installer.ExistingClusterConfig, string, error) {
 	config := &installer.ExistingClusterConfig{}
 	var err error
 	if config.Endpoints.API, err = cliprompt.Line(reader, "  api/ui domain: "); err != nil {
@@ -125,7 +125,16 @@ func promptExistingConfig(reader *bufio.Reader) (*installer.ExistingClusterConfi
 	if config.Storage.ClassName, err = cliprompt.Line(reader, "  storage class (empty for the cluster default): "); err != nil {
 		return nil, "", err
 	}
-	if config.Database.Tier, err = cliprompt.LineDefault(reader, "  database tier [single]: ", "single"); err != nil {
+	if config.Database.Tier, err = promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
+		Title:       "Database availability tier",
+		Description: "Choose the bootstrap database replication mode.",
+		Options: []cliprompt.Option{
+			{Label: "single", Description: "one instance", Value: "single"},
+			{Label: "asynchronous", Description: "replicated with asynchronous failover", Value: "asynchronous"},
+			{Label: "synchronous", Description: "replicated with synchronous failover", Value: "synchronous"},
+		},
+		DefaultValue: "single",
+	}); err != nil {
 		return nil, "", err
 	}
 	if config.Skalid.Image, err = cliprompt.Line(reader, "  skalid image: "); err != nil {
@@ -284,7 +293,11 @@ func runExistingUninstall(ctx context.Context, out *os.File, reader *bufio.Reade
 	fmt.Fprintln(out, installer.DescribeBundleRemoval(inventory))
 	fmt.Fprintln(out, "Operators reused from the cluster (use-existing) are left in place.")
 	fmt.Fprintln(out)
-	if !confirmCluster(reader, detection.Record.Cluster, confirmName) {
+	confirmed, err := confirmCluster(ctx, out, reader, detection.Record.Cluster, confirmName)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
 		return fmt.Errorf("confirmation did not match the cluster name %q; nothing was removed", detection.Record.Cluster)
 	}
 	tasks := clirender.NewTasks(out)
@@ -332,24 +345,30 @@ func runExistingRoot(ctx context.Context, out *os.File) error {
 	}
 	reader := bufio.NewReader(os.Stdin)
 	for {
-		answer, err := cliprompt.Line(reader,
-			"  [1] status  [2] upgrade  [3] uninstall  [q] quit\n  : ")
+		answer, err := promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
+			Title: "What would you like to do?",
+			Options: []cliprompt.Option{
+				{Label: "Show status", Value: "status"},
+				{Label: "Upgrade", Value: "upgrade"},
+				{Label: "Uninstall", Value: "uninstall"},
+				{Label: "Quit", Value: "quit"},
+			},
+			DefaultValue: "quit",
+		})
 		if err != nil {
 			return nil
 		}
-		switch strings.ToLower(answer) {
-		case "1":
+		switch answer {
+		case "status":
 			if err := runExistingStatus(ctx, out); err != nil {
 				return err
 			}
-		case "2":
+		case "upgrade":
 			return runExistingUpgrade(ctx, out)
-		case "3":
+		case "uninstall":
 			return runExistingUninstall(ctx, out, reader, "", "")
-		case "q", "quit", "":
+		case "quit":
 			return nil
-		default:
-			fmt.Fprintln(out, "please answer 1-3 or q")
 		}
 	}
 }

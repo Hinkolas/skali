@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +24,7 @@ import (
 	"github.com/Hinkolas/skali/internal/checkout"
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
@@ -90,10 +90,6 @@ func loadLocalProject(explicit string) (*localProject, error) {
 		Source: source,
 		Result: result,
 	}, nil
-}
-
-func interactive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
 // findProject lists the installation's projects once and returns the
@@ -189,7 +185,7 @@ func selectValues(out io.Writer, project *localProject, opts *deployOptions) (*v
 				return nil, nil
 			}
 			path = candidate
-		case interactive() && !opts.Yes:
+		case cliprompt.Interactive() && !opts.Yes:
 			selected, err := chooseEnvFile(out, bufio.NewReader(os.Stdin), project.Root, opts.Environment)
 			if err != nil {
 				return nil, err
@@ -237,20 +233,23 @@ func chooseEnvFile(out io.Writer, in *bufio.Reader, root, environment string) (s
 	if len(files) == 0 {
 		return "", nil
 	}
-	fmt.Fprintf(out, "\nOverride the stored values of environment %s with a local env file?\n", environment)
-	options := make([]string, 0, len(files)+1)
-	options = append(options, "no, use the stored values")
+	options := make([]cliprompt.Option, 0, len(files)+1)
+	options = append(options, cliprompt.Option{
+		Label: "Use stored values",
+		Value: "",
+	})
 	for _, file := range files {
-		options = append(options, filepath.Base(file))
+		options = append(options, cliprompt.Option{
+			Label: filepath.Base(file),
+			Value: file,
+		})
 	}
-	choice, err := promptSelect(out, in, options, 0, 0)
-	if err != nil {
-		return "", err
-	}
-	if choice == 0 {
-		return "", nil
-	}
-	return files[choice-1], nil
+	return promptSession(out, in).Select(context.Background(), cliprompt.SelectOptions{
+		Title:        fmt.Sprintf("Override %s with a local env file?", environment),
+		Description:  "Stored environment values remain the default.",
+		Options:      options,
+		DefaultValue: "",
+	})
 }
 
 // chooseEnvironment asks for one of the project's environments; a single
@@ -259,66 +258,17 @@ func chooseEnvironment(out io.Writer, in *bufio.Reader, environments []client.En
 	if len(environments) == 1 {
 		return environments[0].Name, nil
 	}
-	names := make([]string, 0, len(environments))
+	options := make([]cliprompt.Option, 0, len(environments))
 	for _, environment := range environments {
-		names = append(names, environment.Name)
+		options = append(options, cliprompt.Option{
+			Label: environment.Name,
+			Value: environment.Name,
+		})
 	}
-	fmt.Fprintln(out, "Environment:")
-	choice, err := promptSelect(out, in, names, 1, -1)
-	if err != nil {
-		return "", err
-	}
-	return names[choice], nil
-}
-
-// promptText prints "label (fallback): " and reads one trimmed line; empty
-// input takes the fallback.
-func promptText(out io.Writer, in *bufio.Reader, label, fallback string) string {
-	fmt.Fprintf(out, "%s (%s): ", label, fallback)
-	line, _ := in.ReadString('\n')
-	answer := strings.TrimSpace(line)
-	if answer == "" {
-		return fallback
-	}
-	return answer
-}
-
-// confirmLine asks a yes/no question on the given reader; anything but a
-// yes declines.
-func confirmLine(out io.Writer, in *bufio.Reader, prompt string) bool {
-	fmt.Fprint(out, prompt)
-	line, _ := in.ReadString('\n')
-	answer := strings.ToLower(strings.TrimSpace(line))
-	return answer == "y" || answer == "yes"
-}
-
-// promptSelect renders numbered options starting at start and reads a
-// selection, re-asking on invalid input; defaultIndex (relative to options,
-// -1 for none) applies on empty input. Returns the relative index.
-func promptSelect(out io.Writer, in *bufio.Reader, options []string, start, defaultIndex int) (int, error) {
-	for i, option := range options {
-		fmt.Fprintf(out, "  %d) %s\n", start+i, option)
-	}
-	prompt := fmt.Sprintf("Select [%d-%d]", start, start+len(options)-1)
-	if defaultIndex >= 0 {
-		prompt += fmt.Sprintf(" (%d)", start+defaultIndex)
-	}
-	prompt += ": "
-	for {
-		fmt.Fprint(out, prompt)
-		line, err := in.ReadString('\n')
-		answer := strings.TrimSpace(line)
-		if answer == "" && defaultIndex >= 0 {
-			return defaultIndex, nil
-		}
-		if number, convErr := strconv.Atoi(answer); convErr == nil &&
-			number >= start && number < start+len(options) {
-			return number - start, nil
-		}
-		if err != nil {
-			return 0, errors.New("no valid selection")
-		}
-	}
+	return promptSession(out, in).Select(context.Background(), cliprompt.SelectOptions{
+		Title:   "Which environment should Skali use?",
+		Options: options,
+	})
 }
 
 func countBySecrecy(result *compiler.Result, file *values.File) (plain, secret int) {
@@ -488,22 +438,12 @@ func actionColor(style *clirender.Style, action string) string {
 	return padded
 }
 
-func confirm(out io.Writer, prompt string) bool {
-	fmt.Fprint(out, prompt)
-	var answer string
-	_, _ = fmt.Scanln(&answer)
-	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y" || answer == "yes"
-}
-
 // confirmDestructive requires the environment name typed back.
-func confirmDestructive(out io.Writer, environment string) bool {
-	style := clirender.StyleFor(out)
-	fmt.Fprintf(out, "\n%s Type the environment name to continue: ",
-		style.BoldRed("This plan is destructive."))
-	var answer string
-	_, _ = fmt.Scanln(&answer)
-	return strings.TrimSpace(answer) == environment
+func confirmDestructive(ctx context.Context, out io.Writer, environment string) (bool, error) {
+	return cliprompt.New(os.Stdin, out).ConfirmTyped(ctx,
+		"This plan is destructive",
+		fmt.Sprintf("Type %q exactly to continue.", environment),
+		environment)
 }
 
 // stepLogSink batches engine progress into the journal's client surface;
@@ -780,7 +720,7 @@ type deployTarget struct {
 // resolveDeployTarget resolves remote, project, and environment, creating
 // project and environment per policy (interactive deploy behind explicit
 // confirmation, dev silently, plan and non-interactive never), and links
-// the checkout on success. prompts is interactive() && !opts.Yes.
+// the checkout on success. prompts is cliprompt.Interactive() && !opts.Yes.
 func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 	project *localProject, opts *deployOptions, planOnly, prompts bool) (*deployTarget, error) {
 
@@ -853,7 +793,13 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		return nil, fmt.Errorf("project %s does not exist on %s; "+
 			"run skali deploy interactively to create it", projectName, remote.Master)
 	default:
-		if !confirmLine(out, in, fmt.Sprintf("Create project %s on %s? [y/N] ", projectName, remoteName)) {
+		confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: fmt.Sprintf("Create project %s on %s?", projectName, remoteName),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !confirmed {
 			return nil, errors.New("aborted")
 		}
 		created, err := api.CreateProject(ctx, projectName)
@@ -875,7 +821,19 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 			return nil, fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
 				projectName, remote.Master)
 		case len(environments) == 0:
-			opts.Environment = promptText(out, in, "Environment name", "production")
+			opts.Environment, err = promptSession(out, in).Text(ctx, cliprompt.TextOptions{
+				Title:   "Environment name",
+				Default: "production",
+				Validate: func(value string) error {
+					if value == "" {
+						return errors.New("environment name is required")
+					}
+					return nil
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
 		default:
 			environment, err := chooseEnvironment(out, in, environments)
 			if err != nil {
@@ -904,8 +862,14 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		return nil, fmt.Errorf("environment %s does not exist in project %s on %s; "+
 			"run skali deploy interactively to create it", opts.Environment, projectName, remote.Master)
 	default:
-		if !confirmLine(out, in, fmt.Sprintf("Create environment %s in project %s? [y/N] ",
-			opts.Environment, projectName)) {
+		confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: fmt.Sprintf("Create environment %s in project %s?",
+				opts.Environment, projectName),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !confirmed {
 			return nil, errors.New("aborted")
 		}
 		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
@@ -949,7 +913,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 	style := clirender.StyleFor(out)
-	prompts := interactive() && !opts.Yes
+	prompts := cliprompt.Interactive() && !opts.Yes
 	target, err := resolveDeployTarget(ctx, out, bufio.NewReader(os.Stdin),
 		project, opts, planOnly, prompts)
 	if err != nil {
@@ -1038,8 +1002,12 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	// Confirmation: destructive plans demand the typed environment name or
 	// the explicit flag; ordinary plans a simple yes.
 	if planned.Plan.Destructive() && !opts.AllowDestructive {
-		if interactive() && !opts.Yes {
-			if !confirmDestructive(out, opts.Environment) {
+		if cliprompt.Interactive() && !opts.Yes {
+			confirmed, err := confirmDestructive(ctx, out, opts.Environment)
+			if err != nil {
+				return "", err
+			}
+			if !confirmed {
 				return "", errors.New("aborted")
 			}
 			request.AllowDestructive = true
@@ -1049,10 +1017,16 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	} else if planned.Plan.Destructive() {
 		request.AllowDestructive = true
 	} else if !opts.Yes {
-		if !interactive() {
+		if !cliprompt.Interactive() {
 			return "", errors.New("non-interactive use requires --yes")
 		}
-		if !confirm(out, "\nContinue? [y/N] ") {
+		confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: "Continue with this deployment?",
+		})
+		if err != nil {
+			return "", err
+		}
+		if !confirmed {
 			return "", errors.New("aborted")
 		}
 	}

@@ -20,6 +20,14 @@ What may drift during implementation: exact wording, spacing, spinner and
 duration cosmetics, and identifier formats. A behavioral deviation from these
 transcripts is a design change and belongs in REWORK_V2 first.
 
+Interactive examples use the settled prompt shape: `◆` introduces a question,
+`└` keeps its answer in the transcript, and secrets settle as `entered`.
+While a prompt is active, `│` connects its rows and a muted hint names the
+keys: arrows navigate and edit, Space toggles a multi-select, and Enter
+submits. Piped input and `TERM=dumb` use deterministic line/number prompts
+without ANSI sequences. `SKALI_ACCESSIBLE=1` forces that renderer on a TTY;
+`NO_COLOR` keeps keyboard interaction but removes color.
+
 Files:
 
 - `cli-remote.md`: the `skali remote` group: adding a remote with initial

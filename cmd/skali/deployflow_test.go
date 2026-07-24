@@ -132,28 +132,6 @@ func TestDiscoverEnvFiles(t *testing.T) {
 	require.Equal(t, []string{generic, production, staging}, discoverEnvFiles(root))
 }
 
-func TestPromptSelect(t *testing.T) {
-	var out strings.Builder
-	in := bufio.NewReader(strings.NewReader("nope\n2\n"))
-	choice, err := promptSelect(&out, in, []string{"production", "staging"}, 1, -1)
-	require.NoError(t, err)
-	require.Equal(t, 1, choice)
-	require.Contains(t, out.String(), "  1) production\n")
-	require.Contains(t, out.String(), "Select [1-2]: ")
-
-	out.Reset()
-	in = bufio.NewReader(strings.NewReader("\n"))
-	choice, err = promptSelect(&out, in, []string{"no, use the stored values", ".env"}, 0, 0)
-	require.NoError(t, err)
-	require.Equal(t, 0, choice)
-	require.Contains(t, out.String(), "Select [0-1] (0): ")
-
-	// EOF without a valid answer is an error, not an infinite loop.
-	in = bufio.NewReader(strings.NewReader("9\n"))
-	_, err = promptSelect(&out, in, []string{"a", "b"}, 1, -1)
-	require.Error(t, err)
-}
-
 func TestChooseEnvFile(t *testing.T) {
 	root := t.TempDir()
 	var out strings.Builder
@@ -167,11 +145,11 @@ func TestChooseEnvFile(t *testing.T) {
 	writeFile(t, root, ".env", "A=1\n")
 	production := writeFile(t, root, ".env.production", "A=1\n")
 
-	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("2\n")), root, "production")
+	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("3\n")), root, "production")
 	require.NoError(t, err)
 	require.Equal(t, production, selected)
-	require.Contains(t, out.String(), "Override the stored values of environment production")
-	require.Contains(t, out.String(), "  0) no, use the stored values\n")
+	require.Contains(t, out.String(), "Override production with a local env file?")
+	require.Contains(t, out.String(), "  1) Use stored values\n")
 
 	// Empty input takes the default: keep the stored values.
 	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), root, "production")
@@ -189,7 +167,7 @@ func TestChooseEnvironment(t *testing.T) {
 	name, err := chooseEnvironment(&out, bufio.NewReader(strings.NewReader("2\n")), environments)
 	require.NoError(t, err)
 	require.Equal(t, "staging", name)
-	require.Contains(t, out.String(), "Environment:\n")
+	require.Contains(t, out.String(), "Which environment should Skali use?:\n")
 	require.Contains(t, out.String(), "  2) staging\n")
 
 	// A single environment selects itself without a prompt.
@@ -198,25 +176,6 @@ func TestChooseEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "production", name)
 	require.Empty(t, out.String())
-}
-
-func TestPromptText(t *testing.T) {
-	var out strings.Builder
-	answer := promptText(&out, bufio.NewReader(strings.NewReader("staging\n")), "Environment name", "production")
-	require.Equal(t, "staging", answer)
-	require.Equal(t, "Environment name (production): ", out.String())
-
-	answer = promptText(&out, bufio.NewReader(strings.NewReader("\n")), "Environment name", "production")
-	require.Equal(t, "production", answer)
-}
-
-func TestConfirmLine(t *testing.T) {
-	var out strings.Builder
-	require.True(t, confirmLine(&out, bufio.NewReader(strings.NewReader("y\n")), "Create? [y/N] "))
-	require.Equal(t, "Create? [y/N] ", out.String())
-	require.True(t, confirmLine(&out, bufio.NewReader(strings.NewReader("YES\n")), "Create? [y/N] "))
-	require.False(t, confirmLine(&out, bufio.NewReader(strings.NewReader("\n")), "Create? [y/N] "))
-	require.False(t, confirmLine(&out, bufio.NewReader(strings.NewReader("")), "Create? [y/N] "))
 }
 
 func TestSameMaster(t *testing.T) {
@@ -480,7 +439,7 @@ func TestResolveDeployTargetInteractiveCreateFlow(t *testing.T) {
 	require.Equal(t, "p1", target.projectID)
 	require.Equal(t, "e1", target.environmentID)
 	require.Contains(t, out.String(), "Create project flowdemo on r? [y/N] ")
-	require.Contains(t, out.String(), "Environment name (production): ")
+	require.Contains(t, out.String(), "Environment name [production]: ")
 	require.Contains(t, out.String(), "Create environment production in project flowdemo? [y/N] ")
 	require.Contains(t, out.String(),
 		"linked to remote r, project flowdemo, environment production; stored in .skali/")

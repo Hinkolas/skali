@@ -56,8 +56,13 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 			if !cliprompt.Interactive() {
 				return errors.New("coordinator reconciliation is paused; repair requires --yes to resume it")
 			}
-			if !cliprompt.Confirm(reader,
-				"Resume coordinator reconciliation from its durable target? [y/N] ") {
+			confirmed, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+				Title: "Resume coordinator reconciliation from its durable target?",
+			})
+			if err != nil {
+				return err
+			}
+			if !confirmed {
 				return errors.New("coordinator reconciliation remains paused")
 			}
 		}
@@ -85,8 +90,13 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 			if !cliprompt.Interactive() {
 				return errors.New("repairing the interrupted seed coordinator requires --yes")
 			}
-			if !cliprompt.Confirm(reader,
-				"Resume the seed coordinator bootstrap with the same cluster identity? [y/N] ") {
+			confirmed, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+				Title: "Resume the seed coordinator bootstrap with the same cluster identity?",
+			})
+			if err != nil {
+				return err
+			}
+			if !confirmed {
 				return errors.New("seed coordinator repair was not confirmed")
 			}
 		}
@@ -109,8 +119,13 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 			if !cliprompt.Interactive() {
 				return errors.New("recovering an orphaned Skali install non-interactively requires --yes")
 			}
-			if !cliprompt.Confirm(reader,
-				"Recover ownership of this fingerprinted interrupted Skali install? [y/N] ") {
+			confirmed, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+				Title: "Recover ownership of this fingerprinted interrupted Skali install?",
+			})
+			if err != nil {
+				return err
+			}
+			if !confirmed {
 				return errors.New("recovery was not confirmed; nothing was changed")
 			}
 		}
@@ -183,7 +198,13 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 			if !cliprompt.Interactive() {
 				return errors.New("non-interactive run requires --yes")
 			}
-			if !cliprompt.Confirm(reader, action.Confirm) {
+			confirmed, err := promptSession(out, reader).Confirm(ctx, cliprompt.ConfirmOptions{
+				Title: strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(action.Confirm), "[y/N]")),
+			})
+			if err != nil {
+				return err
+			}
+			if !confirmed {
 				fmt.Fprintf(out, "skipped: %s\n", action.Title)
 				continue
 			}
