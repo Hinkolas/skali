@@ -23,6 +23,8 @@ import (
 // ErrAborted is returned when the user interrupts an active prompt.
 var ErrAborted = errors.New("prompt aborted")
 
+const optionDescriptionSeparator = "\x1f"
+
 // Option separates a choice's stored value from its user-facing copy.
 type Option struct {
 	Label       string
@@ -206,7 +208,7 @@ func (s *Session) Select(ctx context.Context, options SelectOptions) (string, er
 	value := options.DefaultValue
 	choices := make([]huh.Option[string], 0, len(options.Options))
 	for _, option := range options.Options {
-		choices = append(choices, huh.NewOption("○ "+optionText(option), option.Value))
+		choices = append(choices, huh.NewOption(selectOptionText(option), option.Value))
 	}
 	field := huh.NewSelect[string]().
 		Title(promptTitle(options.Title, "use arrow keys, enter to select", s.noColor)).
@@ -355,7 +357,20 @@ func optionText(option Option) string {
 	if option.Description == "" {
 		return option.Label
 	}
-	return option.Label + "  " + option.Description
+	return option.Label + " (" + option.Description + ")"
+}
+
+func selectOptionText(option Option) string {
+	value := "○ " + option.Label
+	if option.Description != "" {
+		value += optionDescriptionSeparator + option.Description
+	}
+	return value
+}
+
+func splitSelectOption(value string) (label, description string) {
+	label, description, _ = strings.Cut(value, optionDescriptionSeparator)
+	return label, description
 }
 
 func optionLabel(options []Option, value string) string {
@@ -400,16 +415,21 @@ func skaliTheme(noColor bool) huh.Theme {
 				if !strings.HasPrefix(value, "○ ") {
 					return palette.selected.Render(value)
 				}
-				return palette.success.Render("●") + " " +
-					palette.selected.Render(strings.TrimPrefix(value, "○ "))
+				label, description := splitSelectOption(strings.TrimPrefix(value, "○ "))
+				rendered := palette.success.Render("●") + " " +
+					palette.selected.Render(label)
+				if description != "" {
+					rendered += palette.muted.Render(" (" + description + ")")
+				}
+				return rendered
 			})
 		theme.Focused.UnselectedOption = lipgloss.NewStyle().
 			Transform(func(value string) string {
 				if !strings.HasPrefix(value, "○ ") {
-					return value
+					return palette.muted.Render(value)
 				}
-				return palette.muted.Render("○") + " " +
-					strings.TrimPrefix(value, "○ ")
+				label, _ := splitSelectOption(strings.TrimPrefix(value, "○ "))
+				return palette.muted.Render("○ " + label)
 			})
 		theme.Focused.TextInput.Cursor = palette.success
 		theme.Focused.TextInput.Prompt = palette.accent

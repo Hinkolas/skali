@@ -110,7 +110,7 @@ func TestPlainSelectMapsDisplayToValue(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "agent", answer)
-	require.Contains(t, out.String(), "1) Server  runs the control plane")
+	require.Contains(t, out.String(), "1) Server (runs the control plane)")
 	require.Contains(t, out.String(), "please answer 1-2")
 }
 
@@ -235,6 +235,28 @@ func TestThemeUsesSingleChoiceStates(t *testing.T) {
 	require.Equal(t, "● Agent", styles.Focused.SelectedOption.Render("○ Agent"))
 	require.Equal(t, "Application", styles.Focused.SelectedOption.Render("Application"))
 	require.Equal(t, "Database", styles.Focused.UnselectedOption.Render("Database"))
+	encoded := selectOptionText(Option{
+		Label:       "Create a new cluster",
+		Description: "start the first server on this host",
+	})
+	require.Equal(t,
+		"● Create a new cluster (start the first server on this host)",
+		styles.Focused.SelectedOption.Render(encoded))
+	require.Equal(t,
+		"○ Create a new cluster",
+		styles.Focused.UnselectedOption.Render(encoded))
+
+	coloredStyles := skaliTheme(false).Theme(true)
+	palette := newPromptPalette(false)
+	require.Equal(t,
+		palette.success.Render("●")+" "+
+			palette.selected.Render("Create a new cluster")+
+			palette.muted.Render(" (start the first server on this host)"),
+		coloredStyles.Focused.SelectedOption.Render(encoded))
+	require.Equal(t,
+		palette.muted.Render("○ Create a new cluster"),
+		coloredStyles.Focused.UnselectedOption.Render(encoded))
+
 	require.False(t, styles.Focused.Base.GetBorderLeft())
 	require.Zero(t, styles.Focused.Base.GetPaddingLeft())
 	require.Empty(t, styles.Focused.SelectSelector.String())
