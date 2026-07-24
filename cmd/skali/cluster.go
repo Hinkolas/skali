@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/installer/limavm"
@@ -114,5 +115,12 @@ func validateExistingMode() error {
 
 // banner prints the transcript-style version header.
 func banner(out *os.File) {
-	fmt.Fprintf(out, "skali %s (k3s %s pinned)\n\n", versionpkg.Version, installer.K3sVersion)
+	style := clirender.StyleFor(out)
+	fmt.Fprintln(out, style.Bold("Skali cluster"))
+	fmt.Fprintf(out, "  %s %s\n",
+		style.Muted(fmt.Sprintf("%-8s", "version")), versionpkg.Version)
+	fmt.Fprintf(out, "  %s %s %s\n\n",
+		style.Muted(fmt.Sprintf("%-8s", "k3s")),
+		installer.K3sVersion,
+		style.Muted("(pinned)"))
 }

@@ -98,17 +98,24 @@ func unmanagedError() error {
 
 // printFreshHeader renders the fresh/unmanaged host block.
 func printFreshHeader(out *os.File, detected *installer.Host) {
-	fmt.Fprintf(out, "host %s: %s\n", hostLabel(detected), detected.State)
-	fmt.Fprintf(out, "  os      %s (linux/%s)\n", orUnknown(detected.OS), goArch(detected.Arch))
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "%s %s\n",
+		style.BrightCyan("◆"),
+		style.Bold(hostLabel(detected)))
+	printStatusRow(out, style, "status", style.BrightYellow(string(detected.State)))
+	printStatusRow(out, style, "os",
+		fmt.Sprintf("%s (linux/%s)", orUnknown(detected.OS), goArch(detected.Arch)))
 	if darwinInfo != nil {
-		fmt.Fprintf(out, "  vm      %s (Lima, network %s)\n", darwinInfo.Instance, darwinInfo.Network)
+		printStatusRow(out, style, "vm",
+			fmt.Sprintf("%s (Lima, network %s)", darwinInfo.Instance, darwinInfo.Network))
 	}
 	if detected.K3sVersion != "" {
-		fmt.Fprintf(out, "  k3s     %s (unmanaged)\n", detected.K3sVersion)
+		printStatusRow(out, style, "k3s",
+			fmt.Sprintf("%s %s", detected.K3sVersion, style.BrightYellow("(unmanaged)")))
 	} else {
-		fmt.Fprintln(out, "  k3s     not installed")
+		printStatusRow(out, style, "k3s", style.Muted("not installed"))
 	}
-	fmt.Fprintln(out, "  record  none")
+	printStatusRow(out, style, "record", style.Muted("none"))
 	fmt.Fprintln(out)
 }
 
@@ -116,6 +123,7 @@ func printFreshHeader(out *os.File, detected *installer.Host) {
 func printStatus(out *os.File, status *installer.Status) {
 	detected := status.Host
 	record := detected.Record
+	style := clirender.StyleFor(out)
 	label := string(detected.State)
 	if record != nil {
 		switch detected.State {
@@ -133,29 +141,34 @@ func printStatus(out *os.File, status *installer.Status) {
 			label = fmt.Sprintf("enrolled Skali candidate (cluster %q)", record.Cluster)
 		}
 	}
+	fmt.Fprintf(out, "%s %s\n",
+		style.BrightCyan("◆"),
+		style.Bold(hostLabel(detected)))
 	if detected.State == installer.StateServer && healthyOverall(status) {
-		label = "healthy " + label
+		label = style.BrightGreen("healthy") + " · " + label
 	}
-	fmt.Fprintf(out, "host %s: %s\n", hostLabel(detected), label)
+	printStatusRow(out, style, "status", label)
 	if darwinInfo != nil {
-		fmt.Fprintf(out, "  vm         %s (Lima, network %s)\n", darwinInfo.Instance, darwinInfo.Network)
+		printStatusRow(out, style, "vm",
+			fmt.Sprintf("%s (Lima, network %s)", darwinInfo.Instance, darwinInfo.Network))
 	}
 	if record != nil && record.Lifecycle != nil && !record.InstallComplete() {
-		fmt.Fprintf(out, "  install    %s at phase %s\n",
-			record.Lifecycle.Status, record.Lifecycle.Phase)
+		printStatusRow(out, style, "install",
+			fmt.Sprintf("%s at phase %s", record.Lifecycle.Status, record.Lifecycle.Phase))
 		if record.Lifecycle.LastError != "" {
-			fmt.Fprintf(out, "  error      %s\n", record.Lifecycle.LastError)
+			printStatusRow(out, style, "error", style.Red(record.Lifecycle.LastError))
 		}
 		if record.Lifecycle.LastLog != "" {
-			fmt.Fprintf(out, "  log        %s\n", record.Lifecycle.LastLog)
+			printStatusRow(out, style, "log", record.Lifecycle.LastLog)
 		}
 	}
 
-	k3sSuffix := "(expected " + installer.K3sVersion + ")"
+	k3sSuffix := style.BrightYellow("(expected " + installer.K3sVersion + ")")
 	if status.K3sCurrent {
-		k3sSuffix = "(current)"
+		k3sSuffix = style.BrightGreen("(current)")
 	}
-	fmt.Fprintf(out, "  k3s        %s %s\n", orUnknown(detected.K3sVersion), k3sSuffix)
+	printStatusRow(out, style, "k3s",
+		fmt.Sprintf("%s %s", orUnknown(detected.K3sVersion), k3sSuffix))
 
 	maintained := ""
 	if status.InitOwner != "" {
@@ -163,45 +176,56 @@ func printStatus(out *os.File, status *installer.Status) {
 	}
 	switch {
 	case !status.Initialized:
-		fmt.Fprintln(out, "  bundle     not initialized; run skali cluster init")
+		printStatusRow(out, style, "bundle",
+			style.BrightYellow("not initialized")+"; run skali cluster init")
 	case status.BundleCurrent:
-		fmt.Fprintf(out, "  bundle     %s (current%s)\n", status.BundleVersion, maintained)
+		printStatusRow(out, style, "bundle",
+			fmt.Sprintf("%s %s", status.BundleVersion,
+				style.BrightGreen("(current"+maintained+")")))
 	default:
-		fmt.Fprintf(out, "  bundle     %s (skali is %s%s)\n", status.BundleVersion, versionpkg.Version, maintained)
+		printStatusRow(out, style, "bundle",
+			fmt.Sprintf("%s %s", status.BundleVersion,
+				style.BrightYellow("(skali is "+versionpkg.Version+maintained+")")))
 	}
 	if status.Datastore == "sqlite" {
-		fmt.Fprintln(out, "  datastore  sqlite (legacy; server join disabled, reinstall to enable ha)")
+		printStatusRow(out, style, "datastore",
+			style.BrightYellow("sqlite (legacy; server join disabled, reinstall to enable ha)"))
 	}
 
 	if status.ClusterReachable {
 		if status.TierDrift() {
-			fmt.Fprintf(out, "  tier       deployed %s, available %s (run skali cluster tier)\n",
-				status.DeployedTier, status.AvailableTier)
+			printStatusRow(out, style, "tier",
+				style.BrightYellow(fmt.Sprintf("deployed %s, available %s (run skali cluster tier)",
+					status.DeployedTier, status.AvailableTier)))
 		}
-		fmt.Fprintf(out, "  nodes      %d joined (%s)\n", len(status.Nodes), nodeRoleCounts(status))
+		printStatusRow(out, style, "nodes",
+			fmt.Sprintf("%d joined (%s)", len(status.Nodes), nodeRoleCounts(status)))
 		servers := status.Servers()
 		if servers > 0 && servers%2 == 0 {
-			fmt.Fprintf(out, "  servers    %d (even count; etcd quorum prefers one or three)\n", servers)
+			printStatusRow(out, style, "servers",
+				style.BrightYellow(fmt.Sprintf("%d (even count; etcd quorum prefers one or three)", servers)))
 		}
 		for _, node := range status.Nodes {
 			if !node.Current && node.K3sVersion != "" {
-				fmt.Fprintf(out, "  node       %s %s (needs upgrade)\n", node.Name, node.K3sVersion)
+				printStatusRow(out, style, "node",
+					fmt.Sprintf("%s %s %s", node.Name, node.K3sVersion,
+						style.BrightYellow("(needs upgrade)")))
 			}
 		}
 		parts := make([]string, 0, len(status.Components))
 		for _, component := range status.Components {
 			if component.Healthy {
-				parts = append(parts, component.Name+" healthy")
+				parts = append(parts, component.Name+" "+style.BrightGreen("healthy"))
 			} else {
-				parts = append(parts, component.Name+" "+component.Detail)
+				parts = append(parts, component.Name+" "+style.BrightYellow(component.Detail))
 			}
 		}
-		fmt.Fprintf(out, "  bootstrap  %s\n", strings.Join(parts, ", "))
+		printStatusRow(out, style, "bootstrap", strings.Join(parts, ", "))
 	} else {
-		fmt.Fprintln(out, "  cluster    kubernetes api unreachable")
+		printStatusRow(out, style, "cluster", style.Red("kubernetes api unreachable"))
 	}
 	for _, problem := range detected.Problems {
-		fmt.Fprintf(out, "  problem    %s\n", problem)
+		printStatusRow(out, style, "problem", style.Red(problem))
 	}
 	if record != nil && record.Reconciled() {
 		printReconciledStatus(out, status)
@@ -209,85 +233,106 @@ func printStatus(out *os.File, status *installer.Status) {
 	fmt.Fprintln(out)
 }
 
+func printStatusRow(out *os.File, style *clirender.Style, label, value string) {
+	fmt.Fprintf(out, "  %s %s\n", style.Muted(fmt.Sprintf("%-10s", label)), value)
+}
+
 func printReconciledStatus(out *os.File, status *installer.Status) {
+	style := clirender.StyleFor(out)
 	if status.Reconciled == nil {
 		record := status.Host.Record
 		if status.Host.State == installer.StateEnrolled {
-			fmt.Fprintln(out, "  enrollment awaiting cluster apply")
+			printStatusRow(out, style, "enrollment",
+				style.BrightYellow("awaiting cluster apply"))
 			if record.Coordinator != nil &&
 				len(record.Coordinator.Endpoints) > 0 {
-				fmt.Fprintf(out, "  coordinator %s\n",
+				printStatusRow(out, style, "coordinator",
 					record.Coordinator.Endpoints[0])
 			}
 		} else if status.CoordinatorError != "" {
-			fmt.Fprintf(out, "  coordinator unavailable: %s\n", status.CoordinatorError)
+			printStatusRow(out, style, "coordinator",
+				style.Red("unavailable: "+status.CoordinatorError))
 		}
 		if record != nil && record.Coordinator != nil {
 			cache := record.Coordinator
 			if cache.ConvergedRevision != "" {
-				fmt.Fprintf(out, "  cached      converged %s\n",
-					shortRevision(cache.ConvergedRevision))
+				printStatusRow(out, style, "cached",
+					"converged "+shortRevision(cache.ConvergedRevision))
 			}
 			if cache.TargetRevision != "" {
-				fmt.Fprintf(out, "  cached      target %s\n",
-					shortRevision(cache.TargetRevision))
+				printStatusRow(out, style, "cached",
+					"target "+shortRevision(cache.TargetRevision))
 			}
 			if cache.CandidateRevision != "" {
-				fmt.Fprintf(out, "  cached      candidate %s\n",
-					shortRevision(cache.CandidateRevision))
+				printStatusRow(out, style, "cached",
+					"candidate "+shortRevision(cache.CandidateRevision))
 			}
 			if cache.LastOperation != "" {
-				fmt.Fprintf(out, "  cached      operation %s (%s)\n",
-					shortRevision(cache.LastOperation), cache.LastOperationPhase)
+				printStatusRow(out, style, "cached",
+					fmt.Sprintf("operation %s (%s)",
+						shortRevision(cache.LastOperation), cache.LastOperationPhase))
 			}
 		}
 		return
 	}
 	state := status.Reconciled
 	if state.ReconciliationPaused {
-		fmt.Fprintln(out, "  reconcile  paused for recovery")
+		printStatusRow(out, style, "reconcile",
+			style.BrightYellow("paused for recovery"))
 	}
-	fmt.Fprintf(out, "  revision   converged %s\n", shortRevision(state.ConvergedRevision))
+	printStatusRow(out, style, "revision",
+		"converged "+shortRevision(state.ConvergedRevision))
 	if state.TargetRevision != "" {
-		fmt.Fprintf(out, "  target     %s\n", shortRevision(state.TargetRevision))
+		printStatusRow(out, style, "target", shortRevision(state.TargetRevision))
 	}
-	fmt.Fprintf(out, "  candidate  %s\n", shortRevision(state.CandidateRevision))
+	printStatusRow(out, style, "candidate", shortRevision(state.CandidateRevision))
 	if plan, err := candidatePlan(state, false); err == nil && !plan.Empty() {
-		fmt.Fprintf(out, "  changes    %d pending action(s); run skali cluster plan\n",
-			len(plan.Actions))
+		printStatusRow(out, style, "changes",
+			style.BrightYellow(fmt.Sprintf("%d pending action(s); run skali cluster plan",
+				len(plan.Actions))))
 	}
 	if state.CurrentOperation != "" {
 		if operation, ok := state.Operations[state.CurrentOperation]; ok {
-			fmt.Fprintf(out, "  operation  %s (%s)\n",
-				shortRevision(operation.ID), operation.Phase)
+			printStatusRow(out, style, "operation",
+				fmt.Sprintf("%s (%s)", shortRevision(operation.ID), operation.Phase))
 			for _, node := range clusterstate.SortedNodes(state.Nodes) {
 				step, exists := operation.NodeSteps[node.ID]
 				if !exists {
 					continue
 				}
-				fmt.Fprintf(out, "  progress   %-20s %-12s %s\n",
-					node.Name, step.Action, step.Phase)
+				printStatusRow(out, style, "progress",
+					fmt.Sprintf("%-20s %-12s %s", node.Name, step.Action, step.Phase))
 				if step.LastError != "" {
-					fmt.Fprintf(out, "  error      %s: %s\n", node.Name, step.LastError)
+					printStatusRow(out, style, "error",
+						style.Red(node.Name+": "+step.LastError))
 				}
 			}
 			if operation.Phase == clusterstate.OperationFailed {
-				fmt.Fprintln(out, "  recovery   skali cluster diagnose")
-				fmt.Fprintln(out, "  recovery   skali cluster apply --yes")
+				printStatusRow(out, style, "recovery", "skali cluster diagnose")
+				printStatusRow(out, style, "recovery", "skali cluster apply --yes")
 			}
 		}
 	}
 	now := time.Now()
-	for _, node := range clusterstate.SortedNodes(state.Nodes) {
+	nodes := clusterstate.SortedNodes(state.Nodes)
+	if len(nodes) > 0 {
+		fmt.Fprintln(out, "  "+style.Muted("managed nodes"))
+	}
+	for _, node := range nodes {
 		heartbeat := "never"
 		if !node.LastSeen.IsZero() {
 			heartbeat = now.Sub(node.LastSeen).Round(time.Second).String() + " ago"
 		}
-		fmt.Fprintf(out, "  managed    %-20s %-7s %-22s heartbeat %s\n",
-			node.Name, node.Role, node.Phase, heartbeat)
+		phase := fmt.Sprintf("%-22s", node.Phase)
+		if node.Phase == clusterstate.NodePhaseActive {
+			phase = style.BrightGreen(phase)
+		}
+		fmt.Fprintf(out, "    %-20s %-7s %s %s\n",
+			node.Name, node.Role, phase, style.Muted("heartbeat "+heartbeat))
 		if node.Phase == clusterstate.NodePhaseAwaitingCleanup {
-			fmt.Fprintf(out, "  recovery   skali cluster node forget %s --force  (only if the host is unreachable)\n",
-				node.Name)
+			printStatusRow(out, style, "recovery",
+				fmt.Sprintf("skali cluster node forget %s --force  (only if the host is unreachable)",
+					node.Name))
 		}
 	}
 }

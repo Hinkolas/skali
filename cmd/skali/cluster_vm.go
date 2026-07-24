@@ -339,11 +339,14 @@ func printDarwinFreshHeader(out *os.File) {
 	if err != nil || hostname == "" {
 		hostname = "(unknown)"
 	}
-	fmt.Fprintf(out, "host %s: fresh\n", hostname)
-	fmt.Fprintf(out, "  os      macOS (darwin/%s)\n", runtime.GOARCH)
-	fmt.Fprintln(out, "  vm      none (installing creates a Linux VM via Lima)")
-	fmt.Fprintln(out, "  k3s     not installed")
-	fmt.Fprintln(out, "  record  none")
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "%s %s\n", style.BrightCyan("◆"), style.Bold(hostname))
+	printStatusRow(out, style, "status", style.BrightYellow("fresh"))
+	printStatusRow(out, style, "os", fmt.Sprintf("macOS (darwin/%s)", runtime.GOARCH))
+	printStatusRow(out, style, "vm",
+		style.Muted("none")+" (installing creates a Linux VM via Lima)")
+	printStatusRow(out, style, "k3s", style.Muted("not installed"))
+	printStatusRow(out, style, "record", style.Muted("none"))
 	fmt.Fprintln(out)
 }
 

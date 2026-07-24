@@ -33,10 +33,20 @@ func (s *Style) wrap(code, text string) string {
 	return "\x1b[" + code + "m" + text + "\x1b[0m"
 }
 
-func (s *Style) Green(text string) string   { return s.wrap("32", text) }
-func (s *Style) Red(text string) string     { return s.wrap("31", text) }
-func (s *Style) Yellow(text string) string  { return s.wrap("33", text) }
-func (s *Style) Cyan(text string) string    { return s.wrap("36", text) }
+func (s *Style) Green(text string) string  { return s.wrap("32", text) }
+func (s *Style) Red(text string) string    { return s.wrap("31", text) }
+func (s *Style) Yellow(text string) string { return s.wrap("33", text) }
+func (s *Style) Cyan(text string) string   { return s.wrap("36", text) }
+func (s *Style) BrightGreen(text string) string {
+	return s.wrap("92", text)
+}
+func (s *Style) BrightCyan(text string) string {
+	return s.wrap("96", text)
+}
+func (s *Style) BrightYellow(text string) string {
+	return s.wrap("93", text)
+}
+func (s *Style) Muted(text string) string   { return s.wrap("90", text) }
 func (s *Style) Dim(text string) string     { return s.wrap("2", text) }
 func (s *Style) Bold(text string) string    { return s.wrap("1", text) }
 func (s *Style) BoldRed(text string) string { return s.wrap("1;31", text) }

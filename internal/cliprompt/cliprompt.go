@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image/color"
 	"io"
 	"os"
 	"slices"
@@ -147,8 +146,8 @@ func (s *Session) Text(ctx context.Context, options TextOptions) (string, error)
 	}
 	value := options.Default
 	field := huh.NewInput().
-		Title(activeTitle(options.Title)).
-		Description(withHint(options.Description, "type, use arrows to edit, enter to confirm")).
+		Title(promptTitle(options.Title, "type, use arrows to edit, enter to confirm", s.noColor)).
+		Description(options.Description).
 		Placeholder(options.Placeholder).
 		Value(&value)
 	if options.CharLimit > 0 {
@@ -182,8 +181,8 @@ func (s *Session) Secret(ctx context.Context, options SecretOptions) (string, er
 	}
 	var value string
 	field := huh.NewInput().
-		Title(activeTitle(options.Title)).
-		Description(withHint(options.Description, "type, use arrows to edit, enter to confirm")).
+		Title(promptTitle(options.Title, "type, use arrows to edit, enter to confirm", s.noColor)).
+		Description(options.Description).
 		EchoMode(huh.EchoModePassword).
 		Value(&value)
 	if options.Validate != nil {
@@ -210,11 +209,11 @@ func (s *Session) Select(ctx context.Context, options SelectOptions) (string, er
 		choices = append(choices, huh.NewOption("○ "+optionText(option), option.Value))
 	}
 	field := huh.NewSelect[string]().
-		Title(activeTitle(options.Title)).
-		Description(withHint(options.Description, "use arrow keys, enter to select")).
+		Title(promptTitle(options.Title, "use arrow keys, enter to select", s.noColor)).
+		Description(options.Description).
 		Options(choices...).
 		Value(&value).
-		Height(listHeight(len(choices)))
+		Height(listHeight(len(choices), options.Description))
 	if err := s.run(ctx, field); err != nil {
 		return "", err
 	}
@@ -240,11 +239,11 @@ func (s *Session) MultiSelect(ctx context.Context, options MultiSelectOptions) (
 		choices = append(choices, choice)
 	}
 	field := huh.NewMultiSelect[string]().
-		Title(activeTitle(options.Title)).
-		Description(withHint(options.Description, "use arrows and space, enter to confirm")).
+		Title(promptTitle(options.Title, "use arrows and space, enter to confirm", s.noColor)).
+		Description(options.Description).
 		Options(choices...).
 		Value(&values).
-		Height(listHeight(len(choices))).
+		Height(listHeight(len(choices), options.Description)).
 		Filterable(len(choices) > 7)
 	if options.Limit > 0 {
 		field.Limit(options.Limit)
@@ -270,8 +269,8 @@ func (s *Session) Confirm(ctx context.Context, options ConfirmOptions) (bool, er
 	}
 	value := options.Default
 	field := huh.NewConfirm().
-		Title(activeTitle(options.Title)).
-		Description(withHint(options.Description, "use arrows or y/n, enter to confirm")).
+		Title(promptTitle(options.Title, "use arrows or y/n, enter to confirm", s.noColor)).
+		Description(options.Description).
 		Affirmative("Yes").
 		Negative("No").
 		Value(&value)
@@ -305,8 +304,8 @@ func (s *Session) ConfirmTyped(ctx context.Context, title, description, expected
 	}
 	var value string
 	field := huh.NewInput().
-		Title(activeTitle(title)).
-		Description(withHint(description, "type the value exactly, enter to confirm")).
+		Title(promptTitle(title, "type the value exactly, enter to confirm", s.noColor)).
+		Description(description).
 		Value(&value).
 		Validate(validate)
 	err := s.run(ctx, field)
@@ -345,13 +344,11 @@ func (s *Session) settle(title, value string, secret bool) {
 	fmt.Fprintf(s.out, "%s %s\n", accent.Render("└"), answer.Render(value))
 }
 
-func activeTitle(title string) string { return "◆  " + title }
-
-func withHint(description, hint string) string {
-	if description == "" {
-		return "(" + hint + ")"
-	}
-	return description + "  (" + hint + ")"
+func promptTitle(title, hint string, noColor bool) string {
+	palette := newPromptPalette(noColor)
+	return palette.accent.Render("◆") + "  " +
+		palette.selected.Render(title) + "  " +
+		palette.hint.Render("("+hint+")")
 }
 
 func optionText(option Option) string {
@@ -370,82 +367,115 @@ func optionLabel(options []Option, value string) string {
 	return value
 }
 
-func listHeight(count int) int {
-	if count < 3 {
-		return count
+func listHeight(count int, description string) int {
+	// Huh's Height includes the title and description. Account for both so
+	// the option viewport itself always has room for every choice.
+	height := count + 1
+	if description != "" {
+		height++
 	}
-	if count > 8 {
-		return 8
-	}
-	return count
+	return height
 }
 
 func skaliTheme(noColor bool) huh.Theme {
 	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
 		theme := huh.ThemeBase(isDark)
-		lightDark := lipgloss.LightDark(isDark)
-		var accent color.Color = lightDark(lipgloss.Color("#0F766E"), lipgloss.Color("#5EEAD4"))
-		var success color.Color = lightDark(lipgloss.Color("#15803D"), lipgloss.Color("#86EFAC"))
-		var muted color.Color = lightDark(lipgloss.Color("#64748B"), lipgloss.Color("245"))
-		var danger color.Color = lightDark(lipgloss.Color("#BE123C"), lipgloss.Color("#FB7185"))
-		var buttonText color.Color = lipgloss.Color("0")
-		if noColor {
-			accent, success, muted, danger = lipgloss.NoColor{}, lipgloss.NoColor{},
-				lipgloss.NoColor{}, lipgloss.NoColor{}
-			buttonText = lipgloss.NoColor{}
-		}
+		palette := newPromptPalette(noColor)
 
 		rail := lipgloss.Border{Left: "│"}
 		theme.Focused.Base = lipgloss.NewStyle().
 			PaddingLeft(1).
 			BorderStyle(rail).
 			BorderLeft(true).
-			BorderForeground(accent)
-		theme.Focused.Title = lipgloss.NewStyle().Bold(true).Foreground(accent)
-		theme.Focused.Description = lipgloss.NewStyle().Foreground(muted)
-		theme.Focused.ErrorIndicator = lipgloss.NewStyle().Foreground(danger).SetString("✗ ")
-		theme.Focused.ErrorMessage = lipgloss.NewStyle().Foreground(danger)
+			BorderForeground(palette.accent.GetForeground())
+		// Titles carry separately styled marker, question, and inline hint.
+		theme.Focused.Title = lipgloss.NewStyle()
+		theme.Focused.Description = palette.description
+		theme.Focused.ErrorIndicator = palette.danger.SetString("✗ ")
+		theme.Focused.ErrorMessage = palette.danger
 		theme.Focused.SelectSelector = lipgloss.NewStyle()
 		theme.Focused.Option = lipgloss.NewStyle()
-		theme.Focused.MultiSelectSelector = lipgloss.NewStyle().Foreground(accent).SetString("› ")
-		theme.Focused.SelectedPrefix = lipgloss.NewStyle().Foreground(success).SetString("■ ")
-		theme.Focused.UnselectedPrefix = lipgloss.NewStyle().Foreground(muted).SetString("□ ")
+		theme.Focused.MultiSelectSelector = palette.accent.SetString("› ")
+		theme.Focused.SelectedPrefix = palette.success.SetString("■ ")
+		theme.Focused.UnselectedPrefix = palette.muted.SetString("□ ")
 		theme.Focused.SelectedOption = lipgloss.NewStyle().
-			Foreground(success).
 			Transform(func(value string) string {
-				return "● " + strings.TrimPrefix(value, "○ ")
+				if !strings.HasPrefix(value, "○ ") {
+					return palette.selected.Render(value)
+				}
+				return palette.success.Render("●") + " " +
+					palette.selected.Render(strings.TrimPrefix(value, "○ "))
 			})
-		theme.Focused.UnselectedOption = lipgloss.NewStyle().Foreground(muted)
-		theme.Focused.TextInput.Cursor = lipgloss.NewStyle().Foreground(success)
-		theme.Focused.TextInput.Prompt = lipgloss.NewStyle().Foreground(accent)
-		theme.Focused.TextInput.Placeholder = lipgloss.NewStyle().Foreground(muted)
-		theme.Focused.FocusedButton = lipgloss.NewStyle().
-			Foreground(buttonText).
-			Background(accent).
+		theme.Focused.UnselectedOption = lipgloss.NewStyle().
+			Transform(func(value string) string {
+				if !strings.HasPrefix(value, "○ ") {
+					return value
+				}
+				return palette.muted.Render("○") + " " +
+					strings.TrimPrefix(value, "○ ")
+			})
+		theme.Focused.TextInput.Cursor = palette.success
+		theme.Focused.TextInput.Prompt = palette.accent
+		theme.Focused.TextInput.Placeholder = palette.muted
+		focusedButton := lipgloss.NewStyle().
 			Padding(0, 2).
 			MarginRight(1)
+		if !noColor {
+			focusedButton = focusedButton.
+				Foreground(palette.buttonText.GetForeground()).
+				Background(palette.success.GetForeground()).
+				Bold(true)
+		}
+		theme.Focused.FocusedButton = focusedButton
 		theme.Focused.BlurredButton = lipgloss.NewStyle().
-			Foreground(muted).
+			Foreground(palette.muted.GetForeground()).
 			Padding(0, 2).
 			MarginRight(1)
 		theme.Blurred = theme.Focused
 		theme.Blurred.Base = lipgloss.NewStyle().PaddingLeft(1)
-		theme.Blurred.Title = lipgloss.NewStyle().Foreground(muted)
-		theme.Blurred.Description = lipgloss.NewStyle().Foreground(muted)
+		theme.Blurred.Title = lipgloss.NewStyle()
+		theme.Blurred.Description = palette.description
 		theme.Group.Title = theme.Focused.Title
 		theme.Group.Description = theme.Focused.Description
 		return theme
 	})
 }
 
+type promptPalette struct {
+	accent      lipgloss.Style
+	success     lipgloss.Style
+	selected    lipgloss.Style
+	muted       lipgloss.Style
+	hint        lipgloss.Style
+	description lipgloss.Style
+	danger      lipgloss.Style
+	buttonText  lipgloss.Style
+}
+
+func newPromptPalette(noColor bool) promptPalette {
+	if noColor {
+		return promptPalette{}
+	}
+	// Bright ANSI colors follow the user's terminal palette, retaining
+	// contrast across light and dark themes without hard-coding a background.
+	return promptPalette{
+		accent:      lipgloss.NewStyle().Foreground(lipgloss.Color("14")),
+		success:     lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
+		selected:    lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true),
+		muted:       lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
+		hint:        lipgloss.NewStyle().Foreground(lipgloss.Color("7")),
+		description: lipgloss.NewStyle().Foreground(lipgloss.Color("7")),
+		danger:      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
+		buttonText:  lipgloss.NewStyle().Foreground(lipgloss.Color("15")),
+	}
+}
+
 func settledStyles(noColor bool) (lipgloss.Style, lipgloss.Style) {
 	if noColor {
 		return lipgloss.NewStyle(), lipgloss.NewStyle()
 	}
-	// ANSI aqua/green follow the terminal palette, keeping settled answers
-	// legible on both light and dark backgrounds.
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("6")),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	palette := newPromptPalette(false)
+	return palette.accent, palette.selected
 }
 
 func (s *Session) plainText(options TextOptions) (string, error) {

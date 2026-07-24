@@ -24,9 +24,10 @@ Interactive examples use the settled prompt shape: `◆` introduces a question,
 `└` keeps its answer in the transcript, and secrets settle as `entered`.
 While a prompt is active, `│` connects its rows and a muted hint names the
 keys: arrows navigate and edit, Space toggles a multi-select, and Enter
-submits. Piped input and `TERM=dumb` use deterministic line/number prompts
-without ANSI sequences. `SKALI_ACCESSIBLE=1` forces that renderer on a TTY;
-`NO_COLOR` keeps keyboard interaction but removes color.
+submits. Choice prompts keep their complete option list visible. Piped input
+and `TERM=dumb` use deterministic line/number prompts without ANSI sequences.
+`SKALI_ACCESSIBLE=1` forces that renderer on a TTY; `NO_COLOR` keeps keyboard
+interaction but removes color.
 
 Files:
 

@@ -108,12 +108,15 @@ migrate these clusters.
 
 ```console
 $ sudo skali cluster
-skali 2.0.0 (k3s v1.33.3+k3s1 pinned)
+Skali cluster
+  version  2.0.0
+  k3s      v1.33.3+k3s1 (pinned)
 
-host cp-1: fresh
-  os      Ubuntu 24.04 (linux/amd64)
-  k3s     not installed
-  record  none
+◆ cp-1
+  status     fresh
+  os         Ubuntu 24.04 (linux/amd64)
+  k3s        not installed
+  record     none
 
 This host is not part of a Skali installation. Install one?
 
@@ -340,7 +343,8 @@ deployed topology:
 
 ```console
 $ sudo skali cluster
-host cp-1: healthy Skali server (cluster "production")
+◆ cp-1
+  status     healthy · Skali server (cluster "production")
 
   database nodes    3 (db-1, db-2, db-3)
   deployed tier     asynchronous
@@ -407,16 +411,21 @@ its status and moves both versions through the explicit upgrade command:
 
 ```console
 $ sudo skali cluster status
-skali 2.1.0 (k3s v1.33.4+k3s1 pinned)
+Skali cluster
+  version  2.1.0
+  k3s      v1.33.4+k3s1 (pinned)
 
-host cp-1: healthy Skali server (cluster "production")
+◆ cp-1
+  status     healthy · Skali server (cluster "production")
   k3s        v1.33.3+k3s1 (expected v1.33.4+k3s1)
   bundle     2.0.0 (skali is 2.1.0)
   nodes      7 joined
   bootstrap  database healthy, registry healthy, skalid healthy
 
 $ sudo skali cluster upgrade
-skali 2.1.0 (k3s v1.33.4+k3s1 pinned)
+Skali cluster
+  version  2.1.0
+  k3s      v1.33.4+k3s1 (pinned)
 
 upgrade plan for host cp-1 (cluster "production")
   k3s     v1.33.3+k3s1 -> v1.33.4+k3s1
@@ -491,7 +500,8 @@ registry challenges.
 
 ```console
 $ sudo skali cluster
-host cp-1: healthy Skali server (cluster "production")
+◆ cp-1
+  status     healthy · Skali server (cluster "production")
   k3s        v1.33.3+k3s1 (current)
   bundle     2.0.0 (current)
   nodes      7 joined, 7 expected
@@ -528,7 +538,8 @@ configuration, and datastore are retained:
 
 ```console
 $ sudo skali cluster
-host cp-2: interrupted Skali installation (cluster "production")
+◆ cp-2
+  status     interrupted Skali installation (cluster "production")
   install    failed at phase starting
   error      start k3s.service: ... failed to get CA certs ...
   log        /var/lib/skali/logs/install-20260723-220730-a1b2c3d4.log
@@ -631,7 +642,8 @@ owner.
 
 ```console
 $ sudo skali cluster restore
-host cp-1: fresh
+◆ cp-1
+  status     fresh
 
 restore rebuilds a Skali installation from three inputs:
   1. the saved installation record (a copy of /var/lib/skali/installation.yaml)
@@ -775,13 +787,16 @@ is started before any question is answered.
 
 ```console
 $ skali cluster
-skali 2.0.0 (k3s v1.33.3+k3s1 pinned)
+Skali cluster
+  version  2.0.0
+  k3s      v1.33.3+k3s1 (pinned)
 
-host minis-01: fresh
-  os      macOS (darwin/arm64)
-  vm      none (installing creates a Linux VM via Lima)
-  k3s     not installed
-  record  none
+◆ minis-01
+  status     fresh
+  os         macOS (darwin/arm64)
+  vm         none (installing creates a Linux VM via Lima)
+  k3s        not installed
+  record     none
 
 This host is not part of a Skali installation. Install one?
 
@@ -838,7 +853,9 @@ privileged commands verbatim and runs after a single confirmation.
 
 ```console
 $ skali cluster install --config node.yaml
-skali 2.0.0 (k3s v1.33.3+k3s1 pinned)
+Skali cluster
+  version  2.0.0
+  k3s      v1.33.3+k3s1 (pinned)
 
 this Mac is missing dependencies for the "bridged" network:
   1. install Lima v2.2.0 into ~/.local/share/skali/lima (rootless)
@@ -888,9 +905,12 @@ VM:
 
 ```console
 $ skali cluster status
-skali 2.0.0 (k3s v1.33.3+k3s1 pinned)
+Skali cluster
+  version  2.0.0
+  k3s      v1.33.3+k3s1 (pinned)
 
-host minis-01: Skali agent (cluster "production")
+◆ minis-01
+  status     Skali agent (cluster "production")
   vm         skali (Lima, network bridged)
   k3s        v1.33.3+k3s1 (current)
   ...

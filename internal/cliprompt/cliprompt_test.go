@@ -233,8 +233,23 @@ func TestThemeUsesSingleChoiceStates(t *testing.T) {
 	styles := skaliTheme(true).Theme(true)
 	require.Equal(t, "○ Server", styles.Focused.UnselectedOption.Render("○ Server"))
 	require.Equal(t, "● Agent", styles.Focused.SelectedOption.Render("○ Agent"))
+	require.Equal(t, "Application", styles.Focused.SelectedOption.Render("Application"))
+	require.Equal(t, "Database", styles.Focused.UnselectedOption.Render("Database"))
 	require.NotContains(t, styles.Focused.FocusedButton.Render("Yes"), "\x1b[")
 	require.NotContains(t, styles.Focused.ErrorMessage.Render("invalid"), "\x1b[")
+}
+
+func TestPromptTitleKeepsHintInline(t *testing.T) {
+	title := promptTitle("What would you like to do?", "use arrow keys, enter to select", true)
+	require.Equal(t,
+		"◆  What would you like to do?  (use arrow keys, enter to select)",
+		title)
+	require.NotContains(t, title, "\n")
+}
+
+func TestListHeightShowsEveryOption(t *testing.T) {
+	require.Equal(t, 7, listHeight(6, ""))
+	require.Equal(t, 8, listHeight(6, "Additional context"))
 }
 
 func TestTerminalMultiSelectKeys(t *testing.T) {
