@@ -172,6 +172,18 @@ func TestClusterEndToEnd(t *testing.T) {
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "cross-compile: %s", out)
 	h.copyIn(binary, "/tmp/skali")
+	hostdBinary := filepath.Join(t.TempDir(), "skali-hostd")
+	buildHostd := exec.Command("go", "build", "-o", hostdBinary, "./cmd/skali-hostd")
+	buildHostd.Dir = h.repoRoot
+	buildHostd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+vmGoArch, "CGO_ENABLED=0")
+	hostdOut, hostdErr := buildHostd.CombinedOutput()
+	require.NoError(t, hostdErr, "cross-compile hostd: %s", hostdOut)
+	h.copyIn(hostdBinary, "/tmp/skali-hostd")
+	h.copyInTo(e2eAgentVM, hostdBinary, "/tmp/skali-hostd")
+	h.vmOK("sudo", "install", "-m", "0755", "/tmp/skali-hostd",
+		installer.HostdBinaryPath)
+	h.vmOKOn(e2eAgentVM, "sudo", "install", "-m", "0755", "/tmp/skali-hostd",
+		installer.HostdBinaryPath)
 
 	binaryA := filepath.Join(t.TempDir(), "skali-a")
 	buildA := exec.Command("go", "build", "-ldflags",
@@ -418,26 +430,24 @@ skalid:
 	// Reachability preflight: a failure here is vzNAT inter-VM traffic
 	// being blocked (see build/lima/skali-e2e.yaml), not an installer bug.
 	preflight, code := h.vmOn(e2eAgentVM, "curl", "-ksS", "-o", "/dev/null", "--max-time", "15",
-		"https://"+serverIP+":6443/ping")
+		"https://"+serverIP+":6444/healthz")
 	require.Equal(t, 0, code,
-		"agent VM cannot reach the server on the shared vmnet (%s:6443): %s; "+
+		"agent VM cannot reach the server on the shared vmnet (%s:6444): %s; "+
 			"vzNAT inter-VM traffic may be blocked on this host", serverIP, preflight)
 
 	agentStatus, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, agentStatus)
 	require.Contains(t, agentStatus, "fresh")
 
-	// Server join: the permanent server token carries its warnings and
-	// the even-count quorum note.
+	// Server enrollment uses a one-time auth-only invitation. It carries
+	// neither the coordinator endpoint nor a k3s credential.
 	serverTokenOut, code := h.vm("sudo", "/tmp/skali", "cluster", "token", "--role", "server")
 	require.Equal(t, 0, code, serverTokenOut)
-	require.Contains(t, serverTokenOut, "server token, never expires")
-	require.Contains(t, serverTokenOut, "endpoint encoded in token: https://"+serverIP+":6443")
-	require.Contains(t, serverTokenOut, "permanent server token")
-	require.Contains(t, serverTokenOut, "would make 2 servers")
+	require.Contains(t, serverTokenOut, "one-time server invitation")
+	require.Contains(t, serverTokenOut, "authentication only")
 	var serverJoinToken string
 	for line := range strings.SplitSeq(serverTokenOut, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.Contains(trimmed, " ") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "skali.") {
 			serverJoinToken = trimmed
 		}
 	}
@@ -451,11 +461,11 @@ skalid:
 	// record. The same token can immediately be retried with the right
 	// endpoint.
 	wrongJoinOut, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
-		"--server", "https://127.0.0.1:6443", "--token-file", serverTokenFile,
+		"--server", "https://127.0.0.1:6444", "--token-file", serverTokenFile,
 		"--role", "server", "--capabilities", "application", "--cluster", "e2e",
 		"--node-ip", agentIP)
 	require.NotEqual(t, 0, code, wrongJoinOut)
-	require.Contains(t, wrongJoinOut, "connection was refused")
+	require.Contains(t, wrongJoinOut, "refused the connection")
 	require.Contains(t, wrongJoinOut, "No changes were made.")
 	_, code = h.vmOn(e2eAgentVM, "test", "-e", installer.K3sBinaryPath)
 	require.NotEqual(t, 0, code, "failed preflight must not install k3s")
@@ -463,12 +473,22 @@ skalid:
 	require.NotEqual(t, 0, code, "failed preflight must not create a transaction record")
 
 	serverJoinOut, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
-		"--server", "https://"+serverIP+":6443", "--token-file", serverTokenFile,
+		"--server", serverIP, "--token-file", serverTokenFile,
 		"--role", "server", "--capabilities", "application", "--cluster", "e2e",
 		"--node-ip", agentIP)
 	require.Equal(t, 0, code, serverJoinOut)
-	require.Contains(t, serverJoinOut, "(server)")
-	require.Contains(t, serverJoinOut, "etcd quorum prefers one or three")
+	require.Contains(t, serverJoinOut, "pending cluster apply")
+	require.Contains(t, serverJoinOut, "No k3s files or services were installed")
+	_, code = h.vmOn(e2eAgentVM, "test", "-e", installer.K3sBinaryPath)
+	require.NotEqual(t, 0, code, "enrollment must not install k3s")
+
+	serverPlan, code := h.vm("sudo", "/tmp/skali", "cluster", "plan")
+	require.Equal(t, 0, code, serverPlan)
+	require.Contains(t, serverPlan, "add-server")
+	serverApply, code := h.vm("sudo", "/tmp/skali", "cluster", "apply",
+		"--yes", "--wait")
+	require.Equal(t, 0, code, serverApply)
+	require.Contains(t, serverApply, "cluster converged")
 
 	secondName := strings.TrimSpace(h.vmOKOn(e2eAgentVM, "hostname"))
 	secondLabels := h.vmOK("sudo", "k3s", "kubectl", "get", "node", secondName,
@@ -482,22 +502,25 @@ skalid:
 	require.Contains(t, statusOut, "2 joined (2 servers)")
 	require.Contains(t, statusOut, "even count")
 
-	// The secondary server's bundle is maintained by the init owner: its
-	// status names the owner and its upgrade has nothing to converge.
+	// Version-2 has no init owner: every active server can inspect the
+	// shared coordinator and the already-current bundle.
 	secondStatus, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, secondStatus)
-	require.Contains(t, secondStatus, "maintained on")
+	require.Contains(t, secondStatus, "converged")
 	secondUpgrade, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "upgrade", "--yes")
 	require.Equal(t, 0, code, secondUpgrade)
 	require.Contains(t, secondUpgrade, "already current, nothing to do")
 
-	// The leaving server removes itself: drain, self node delete (k3s
-	// retires the etcd member), then the host teardown. The remaining
-	// server must keep a healthy API through it.
-	serverLeave, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali",
-		"cluster", "uninstall", "--scope", "node", "--confirm", "e2e")
+	// Removal is staged centrally. Apply drains and deletes membership,
+	// then the remote agent acknowledges installer-owned local cleanup.
+	removeOut, code := h.vm("sudo", "/tmp/skali", "cluster", "node", "remove",
+		secondName)
+	require.Equal(t, 0, code, removeOut)
+	require.Contains(t, removeOut, "staged removal")
+	serverLeave, code := h.vm("sudo", "/tmp/skali", "cluster", "apply",
+		"--yes", "--wait")
 	require.Equal(t, 0, code, serverLeave)
-	require.Contains(t, serverLeave, "Remove node from cluster")
+	require.Contains(t, serverLeave, "cluster converged")
 	_, code = h.vmOn(e2eAgentVM, "test", "-e", "/usr/local/bin/k3s")
 	require.NotEqual(t, 0, code, "k3s must be gone from the leaving server VM")
 	remainingNodes := strings.TrimSpace(h.vmOK("sh", "-c",
@@ -506,16 +529,16 @@ skalid:
 	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "skalid healthy")
+	h.vmOKOn(e2eAgentVM, "sudo", "install", "-m", "0755", "/tmp/skali-hostd",
+		installer.HostdBinaryPath)
 
-	// Agent join: mint the time-limited token on the server; the token is
-	// the last non-blank output line by contract.
+	// Agent enrollment is another one-use invitation.
 	tokenOut, code := h.vm("sudo", "/tmp/skali", "cluster", "token")
 	require.Equal(t, 0, code, tokenOut)
-	require.Contains(t, tokenOut, `join command for cluster "e2e"`)
-	require.Contains(t, tokenOut, "endpoint encoded in token: https://"+serverIP+":6443")
+	require.Contains(t, tokenOut, `one-time agent invitation for cluster "e2e"`)
 	var joinToken string
 	for line := range strings.SplitSeq(tokenOut, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "skali.") {
 			joinToken = trimmed
 		}
 	}
@@ -526,11 +549,17 @@ skalid:
 	h.vmOKOn(e2eAgentVM, "chmod", "600", tokenFile)
 
 	joinOut, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
-		"--server", "https://"+serverIP+":6443", "--token-file", tokenFile,
+		"--server", serverIP, "--token-file", tokenFile,
 		"--role", "agent", "--capabilities", "database", "--cluster", "e2e",
 		"--node-ip", agentIP)
 	require.Equal(t, 0, code, joinOut)
-	require.Contains(t, joinOut, "(agent)")
+	require.Contains(t, joinOut, "pending cluster apply")
+	agentPlan, code := h.vm("sudo", "/tmp/skali", "cluster", "plan")
+	require.Equal(t, 0, code, agentPlan)
+	require.Contains(t, agentPlan, "add-agent")
+	agentApply, code := h.vm("sudo", "/tmp/skali", "cluster", "apply",
+		"--yes", "--wait")
+	require.Equal(t, 0, code, agentApply)
 
 	agentRecord := h.vmOKOn(e2eAgentVM, "sudo", "cat", "/var/lib/skali/installation.yaml")
 	require.Contains(t, agentRecord, "role: agent")
@@ -558,74 +587,36 @@ skalid:
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "2 joined")
 
-	// Tier phase: the database-capable agent raised the available tier;
-	// status shows the drift, diagnose stays clean, and the explicit tier
-	// apply scales the bootstrap database up.
-	require.Contains(t, statusOut, "deployed single, available asynchronous")
+	// The target revision reconciles the database once after membership,
+	// so there is no separate tier command or intermediate drift.
+	require.Contains(t, statusOut, "database healthy (asynchronous)")
 	diagnoseOut, code := h.vm("sudo", "/tmp/skali", "cluster", "diagnose")
 	require.Equal(t, 0, code, diagnoseOut)
 	require.Contains(t, diagnoseOut, "k3s service: active")
 	require.Contains(t, diagnoseOut, "kubernetes api: reachable")
 	require.Contains(t, diagnoseOut, "nodes 2/2 ready")
-
-	tierOut, code := h.vm("sudo", "/tmp/skali", "cluster", "tier", "--yes")
-	require.Equal(t, 0, code, tierOut)
-	require.Contains(t, tierOut, "deployed tier     single")
-	require.Contains(t, tierOut, "available tier    asynchronous")
-	require.Contains(t, tierOut, "Scale bootstrap database to 2 instance(s)")
-	require.Contains(t, tierOut, "bootstrap database tier: asynchronous")
-
-	repeatTier, code := h.vm("sudo", "/tmp/skali", "cluster", "tier", "--yes")
-	require.Equal(t, 0, code, repeatTier)
-	require.Contains(t, repeatTier, "nothing to do")
-
-	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
-	require.Equal(t, 0, code, statusOut)
-	require.Contains(t, statusOut, "database healthy (asynchronous)")
 	require.Contains(t, statusOut, "0.0.0-dev (current)",
-		"the tier apply must restamp the bundle hash")
+		"the topology apply must restamp the bundle hash")
 
 	// A repeat join with the same identity is a successful no-op.
 	repeatJoin, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
-		"--server", "https://"+serverIP+":6443", "--token-file", tokenFile,
+		"--server", serverIP, "--token-file", tokenFile,
 		"--role", "agent", "--capabilities", "database", "--cluster", "e2e")
 	require.Equal(t, 0, code, repeatJoin)
 
-	// Simulate process interruption after service startup by preserving
-	// the complete host artifacts while moving the durable transaction
-	// back to starting/failed. A repeated join resumes, retains its
-	// installation ID, and returns to complete.
-	agentInstallationID := strings.TrimSpace(h.vmOKOn(e2eAgentVM, "sudo", "sh", "-c",
-		"sed -n 's/^installationId: //p' /var/lib/skali/installation.yaml"))
-	h.vmOKOn(e2eAgentVM, "sudo", "sed", "-i",
-		"s/status: complete/status: failed/; s/phase: complete/phase: starting/",
-		installer.RecordPath)
-	h.vmOKOn(e2eAgentVM, "sudo", "systemctl", "stop", "k3s-agent")
-	interruptedStatus, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "status")
-	require.NotEqual(t, 0, code, interruptedStatus)
-	require.Contains(t, interruptedStatus, "interrupted Skali installation")
-	resumeOut, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
-		"--token-file", tokenFile, "--capabilities", "database")
-	require.Equal(t, 0, code, resumeOut)
-	resumedRecord := h.vmOKOn(e2eAgentVM, "sudo", "cat", installer.RecordPath)
-	require.Contains(t, resumedRecord, "installationId: "+agentInstallationID)
-	require.Contains(t, resumedRecord, "status: complete")
-
-	// The agent host reports itself without the kube API by design.
+	// The agent host reports itself from local state without requiring the
+	// Kubernetes API.
 	agentStatus, code = h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, agentStatus)
 	require.Contains(t, agentStatus, "Skali agent")
 
-	// Remove both transaction copies to emulate an older failed Skali join
-	// from before lifecycle records. The complete Skali config fingerprint
-	// is classified as orphaned and explicit node uninstall remains
-	// available. The lingering node object is then deleted on the server.
-	h.vmOKOn(e2eAgentVM, "sudo", "rm", "-f", installer.RecordPath, installer.RecordBackupPath)
-	orphanStatus, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "status")
-	require.NotEqual(t, 0, code, orphanStatus)
-	require.Contains(t, orphanStatus, "orphaned Skali installation")
-	agentUninstall, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali",
-		"cluster", "uninstall", "--scope", "node", "--confirm", "e2e")
+	// Declarative removal drains membership, asks the agent to uninstall,
+	// and reconciles the database back to one healthy replica.
+	agentRemove, code := h.vm("sudo", "/tmp/skali", "cluster", "node",
+		"remove", agentName)
+	require.Equal(t, 0, code, agentRemove)
+	agentUninstall, code := h.vm("sudo", "/tmp/skali", "cluster", "apply",
+		"--yes", "--wait")
 	require.Equal(t, 0, code, agentUninstall)
 	_, code = h.vmOn(e2eAgentVM, "test", "-e", "/usr/local/bin/k3s")
 	require.NotEqual(t, 0, code, "k3s must be gone from the agent VM")
@@ -633,17 +624,12 @@ skalid:
 	require.Equal(t, 0, code, agentStatus)
 	require.Contains(t, agentStatus, "fresh")
 
-	h.vmOK("sudo", "k3s", "kubectl", "delete", "node", agentName)
 	nodeCount := strings.TrimSpace(h.vmOK("sh", "-c",
 		"sudo k3s kubectl get nodes --no-headers | wc -l"))
 	require.Equal(t, "1", nodeCount)
-
-	// The database node left with its replica; the explicit downgrade
-	// restores single-instance health (tier changes are never automatic).
-	downgradeOut, code := h.vm("sudo", "/tmp/skali", "cluster", "tier", "--yes")
-	require.Equal(t, 0, code, downgradeOut)
-	require.Contains(t, downgradeOut, "Downgrade the bootstrap database")
-	require.Contains(t, downgradeOut, "bootstrap database tier: single")
+	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
+	require.Equal(t, 0, code, statusOut)
+	require.Contains(t, statusOut, "database healthy (single)")
 
 	// Repair phase: stop k3s, watch diagnose fail with the suggested
 	// action, let repair restart it, and prove the repeat is a no-op.

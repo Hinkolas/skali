@@ -104,8 +104,12 @@ func newClusterInitCmd() *cobra.Command {
 				Progress: progress,
 				Out:      out,
 			}
+			if err := installer.ValidateInitOptions(opts); err != nil {
+				progress.Abort()
+				return err
+			}
 			if imageTarFlag != "" {
-				stagedImage, stagedID, err := stageSkalidImage(ctx, runner(), imageTarFlag, progress)
+				imageTar, stagedImage, stagedID, err := loadImageTar(ctx, imageTarFlag)
 				if err != nil {
 					progress.Abort()
 					return err
@@ -115,10 +119,30 @@ func newClusterInitCmd() *cobra.Command {
 					return fmt.Errorf("the image tar carries %s but the config names %s",
 						stagedImage, config.Skalid.Image)
 				}
+				if err := importImageTar(ctx, runner(), imageTar, stagedImage, progress); err != nil {
+					progress.Abort()
+					return err
+				}
 				opts.SkalidImageID = stagedID
+			}
+			if err := stageReconciledLayout(ctx, detected.Record, asserted); err != nil {
+				progress.Abort()
+				return err
+			}
+			prepared, err := prepareReconciledInit(ctx, detected.Record)
+			if err != nil {
+				progress.Abort()
+				return err
+			}
+			if prepared != nil {
+				opts.RegistryNode = prepared.RegistryNode
 			}
 			result, err := installer.Init(ctx, runner(), detected.Record, opts)
 			if err != nil {
+				progress.Abort()
+				return err
+			}
+			if err := finishReconciledInit(ctx, prepared); err != nil {
 				progress.Abort()
 				return err
 			}

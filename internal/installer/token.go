@@ -108,6 +108,41 @@ func CreateJoinTokenForServer(ctx context.Context, runner host.Runner, record *R
 	}, nil
 }
 
+// JoinCredentials resolves the role-specific k3s credential for an applied
+// version-2 node action without wrapping it into an operator-facing token.
+// The caller must transport it only over the authenticated agent channel.
+func JoinCredentials(ctx context.Context, runner host.Runner, role string) (token, pullSecret string, err error) {
+	switch role {
+	case layout.RoleServer:
+		data, readErr := runner.ReadFile(ctx, K3sServerTokenPath)
+		if readErr != nil {
+			return "", "", fmt.Errorf("read k3s server token: %w", readErr)
+		}
+		token = strings.TrimSpace(string(data))
+		if token == "" {
+			return "", "", fmt.Errorf("k3s server token is empty")
+		}
+	case layout.RoleAgent:
+		result, runErr := runner.Run(ctx, host.Command{
+			Name: "k3s", Args: []string{"token", "create", "--ttl", JoinTokenTTL},
+		})
+		if runErr != nil {
+			return "", "", fmt.Errorf("create k3s agent token: %w", runErr)
+		}
+		if result.ExitCode != 0 {
+			return "", "", fmt.Errorf("create k3s agent token: exit %d: %s",
+				result.ExitCode, strings.TrimSpace(result.Stderr))
+		}
+		token = lastNonEmptyLine(result.Stdout)
+	default:
+		return "", "", fmt.Errorf("unknown k3s role %q", role)
+	}
+	if registries, readErr := runner.ReadFile(ctx, K3sRegistriesPath); readErr == nil {
+		pullSecret = registriesPullSecret(registries)
+	}
+	return token, pullSecret, nil
+}
+
 // CountServers counts control-plane members through the server's own
 // kubectl, for the even-count quorum warning. Zero with an error means
 // the count is unknown.
@@ -159,6 +194,12 @@ func serverJoinHost(ctx context.Context, runner host.Runner, nodeName string) st
 		}
 	}
 	return nodeName
+}
+
+// ServerJoinHost exposes the same InternalIP-first address selection to the
+// version-2 coordinator bootstrap.
+func ServerJoinHost(ctx context.Context, runner host.Runner, nodeName string) string {
+	return serverJoinHost(ctx, runner, nodeName)
 }
 
 // lastNonEmptyLine tolerates log preamble ahead of the token itself.

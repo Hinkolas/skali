@@ -63,6 +63,14 @@ func TestClusterDarwin(t *testing.T) {
 	build.Dir = h.repoRoot
 	buildOut, err := build.CombinedOutput()
 	require.NoError(t, err, "build: %s", buildOut)
+	hostdBinary := filepath.Join(filepath.Dir(binary),
+		"skali-hostd_linux_"+runtime.GOARCH)
+	buildHostd := exec.Command("go", "build", "-o", hostdBinary, "./cmd/skali-hostd")
+	buildHostd.Dir = h.repoRoot
+	buildHostd.Env = append(os.Environ(), "GOOS=linux",
+		"GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	hostdOut, err := buildHostd.CombinedOutput()
+	require.NoError(t, err, "build hostd: %s", hostdOut)
 	run := func(args ...string) (string, int) {
 		t.Helper()
 		return h.hostCommand(binary, append([]string{"cluster", "--vm", darwinE2EVM}, args...)...)

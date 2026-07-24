@@ -79,6 +79,9 @@ type k3sNode struct {
 	// receive it inside the composite join token; empty renders no
 	// credential.
 	PullSecret string
+	// Pending keeps workloads off a newly joined reconciled node until
+	// coordinator activation.
+	Pending bool
 }
 
 func (n k3sNode) role() string {
@@ -126,6 +129,10 @@ func k3sConfigYAML(node k3sNode) string {
 		builder.WriteString("  - " + key + "=" + labels[key] + "\n")
 	}
 	builder.WriteString("  - " + layout.ClusterLabel + "=" + node.Cluster + "\n")
+	if node.Pending {
+		builder.WriteString("node-taint:\n")
+		builder.WriteString("  - " + layout.PendingTaintKey + "=true:NoSchedule\n")
+	}
 	return builder.String()
 }
 

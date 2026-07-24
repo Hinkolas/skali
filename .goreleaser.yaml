@@ -31,12 +31,21 @@ builds:
     ldflags:
       - -s -w -X github.com/Hinkolas/skali/internal/version.Version=v{{ .Version }}
 
+  - id: skali-hostd
+    main: ./cmd/skali-hostd
+    binary: skali-hostd
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/Hinkolas/skali/internal/version.Version=v{{ .Version }}
+
 # Raw binaries, not tarballs: install.sh predicts the asset name and the
 # releases/latest/download URL, and no extraction step is needed on the
 # host. The names carry no version; the release tag does.
 archives:
   - id: binaries
-    ids: [skali]
+    ids: [skali, skali-hostd]
     formats: [binary]
     name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
 

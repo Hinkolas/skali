@@ -135,6 +135,44 @@ func Diagnose(ctx context.Context, runner host.Runner, opts DiagnoseOptions) (*D
 	if detected.State == StateOrphaned {
 		suggest("run skali cluster to reconstruct, resume, or uninstall this fingerprinted older installation")
 	}
+	if detected.Record != nil && detected.Record.Reconciled() {
+		if HostdPresent(ctx, runner) {
+			diagnosis.Checks = append(diagnosis.Checks,
+				Check{Name: "host agent binary", Detail: "installed"})
+		} else {
+			diagnosis.Checks = append(diagnosis.Checks, Check{
+				Name: "host agent binary", Severity: SeverityFail,
+				Detail: HostdBinaryPath + " is missing",
+			})
+			suggest("skali cluster repair")
+		}
+		if probeUnitActive(ctx, runner, HostdAgentUnit) {
+			diagnosis.Checks = append(diagnosis.Checks,
+				Check{Name: "host agent service", Detail: "active"})
+		} else {
+			diagnosis.Checks = append(diagnosis.Checks, Check{
+				Name: "host agent service", Severity: SeverityFail,
+				Detail: HostdAgentUnit + " is not active",
+			})
+			suggest("skali cluster repair")
+		}
+		if detected.Record.Node.Role == layout.RoleServer &&
+			!detected.Record.EnrolledOnly() {
+			if probeUnitActive(ctx, runner, HostdCoordinatorUnit) {
+				diagnosis.Checks = append(diagnosis.Checks,
+					Check{Name: "coordinator service", Detail: "active"})
+			} else {
+				diagnosis.Checks = append(diagnosis.Checks, Check{
+					Name: "coordinator service", Severity: SeverityFail,
+					Detail: HostdCoordinatorUnit + " is not active",
+				})
+				suggest("skali cluster repair")
+			}
+		}
+		if detected.Record.EnrolledOnly() && detected.K3sVersion == "" {
+			return diagnosis, nil
+		}
+	}
 
 	role := layout.RoleServer
 	unit := "k3s.service"

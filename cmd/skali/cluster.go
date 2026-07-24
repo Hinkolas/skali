@@ -42,13 +42,17 @@ func newClusterCommand() *cobra.Command {
 		"name of the Lima VM hosting the skali node (macOS only)")
 	cluster.PersistentFlags().StringVar(&imageTarFlag, "image-tar", "",
 		"docker-save tar of the skalid image, imported into the node during init (source installs)")
+	cluster.PersistentFlags().StringVar(&hostdBinFlag, "hostd-bin", "",
+		"Linux skali-hostd binary to install on managed nodes (source installs)")
 	cluster.PersistentFlags().StringVar(&modeFlag, "mode", "",
 		"installation mode: empty for managed k3s, or existing-cluster to install only the bundle")
 	cluster.PersistentFlags().StringVar(&kubeconfigFlag, "kubeconfig", "",
 		"explicit kubeconfig for existing-cluster mode (never the ambient one)")
-	cluster.AddCommand(newClusterInstallCmd(), newClusterInitCmd(), newClusterStatusCmd(),
+	cluster.AddCommand(newClusterCreateCmd(), newClusterInstallCmd(), newClusterInitCmd(), newClusterStatusCmd(),
 		newClusterUpgradeCmd(), newClusterUninstallCmd(), newClusterTokenCmd(), newClusterJoinCmd(),
-		newClusterTierCmd(), newClusterDiagnoseCmd(), newClusterRepairCmd(), newClusterRestoreCmd())
+		newClusterTierCmd(), newClusterDiagnoseCmd(), newClusterRepairCmd(), newClusterRestoreCmd(),
+		newClusterNodeCmd(), newClusterChangesCmd(), newClusterPlanCmd(), newClusterApplyCmd(),
+		newClusterRebalanceCmd())
 	clusterCmd = cluster
 	return cluster
 }
@@ -66,6 +70,7 @@ func runner() host.Runner {
 var (
 	vmFlag         string
 	imageTarFlag   string
+	hostdBinFlag   string
 	modeFlag       string
 	kubeconfigFlag string
 	clusterCmd     *cobra.Command

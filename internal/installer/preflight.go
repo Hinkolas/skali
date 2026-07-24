@@ -100,6 +100,9 @@ func resolveAndPreflightInstall(ctx context.Context, runner host.Runner, detecte
 		}
 		resolved.K3sToken = decoded.K3s
 		resolved.PullSecret = decoded.Pull
+		if opts.Join.PullSecret != "" {
+			resolved.PullSecret = opts.Join.PullSecret
+		}
 		if decoded.Role != "" && resolved.Role != decoded.Role {
 			return resolved, fmt.Errorf("this join token was minted for role %s, not %s; "+
 				"mint a matching token with skali cluster token --role %s",
@@ -136,11 +139,32 @@ func resolveAndPreflightInstall(ctx context.Context, runner host.Runner, detecte
 }
 
 func validateResolvedInstall(ctx context.Context, runner host.Runner, resolved resolvedInstall, joining bool) error {
-	if resolved.Role != layout.RoleServer && resolved.Role != layout.RoleAgent {
-		return fmt.Errorf("role must be server or agent, got %q", resolved.Role)
+	if err := validateNodeMetadata(ctx, runner, resolved); err != nil {
+		return err
 	}
 	if resolved.Role == layout.RoleAgent && !joining {
 		return errors.New("role agent requires join options pointing at an existing server")
+	}
+	if joining {
+		if resolved.Server == "" {
+			return errors.New("joining requires a server URL (use a current Skali token or --server)")
+		}
+		if resolved.K3sToken == "" {
+			return errors.New("joining requires a token or a token file")
+		}
+		if _, err := normalizeJoinServer(resolved.Server); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNodeMetadata is shared by legacy k3s joins and version-2
+// enrollment. Enrollment deliberately has no k3s endpoint or credential
+// yet, so those legacy-only checks must stay outside this function.
+func validateNodeMetadata(ctx context.Context, runner host.Runner, resolved resolvedInstall) error {
+	if resolved.Role != layout.RoleServer && resolved.Role != layout.RoleAgent {
+		return fmt.Errorf("role must be server or agent, got %q", resolved.Role)
 	}
 	if problems := validation.IsValidLabelValue(resolved.Cluster); len(problems) > 0 {
 		return fmt.Errorf("cluster name %q is not a valid Kubernetes label value: %s",
@@ -149,11 +173,16 @@ func validateResolvedInstall(ctx context.Context, runner host.Runner, resolved r
 	if len(resolved.Capabilities) == 0 {
 		return errors.New("at least one capability is required")
 	}
+	seenCapabilities := make(map[string]bool, len(resolved.Capabilities))
 	for _, capability := range resolved.Capabilities {
 		if !slices.Contains(layout.Capabilities, capability) {
 			return fmt.Errorf("unknown capability %q; expected one of %s",
 				capability, strings.Join(layout.Capabilities, ", "))
 		}
+		if seenCapabilities[capability] {
+			return fmt.Errorf("capability %q is repeated", capability)
+		}
+		seenCapabilities[capability] = true
 	}
 	if strings.TrimSpace(resolved.NodeName) == "" {
 		return errors.New("could not determine the hostname for node naming")
@@ -186,18 +215,18 @@ func validateResolvedInstall(ctx context.Context, runner host.Runner, resolved r
 			return fmt.Errorf("node IP %s is not assigned to this host", resolved.NodeIP)
 		}
 	}
-	if joining {
-		if resolved.Server == "" {
-			return errors.New("joining requires a server URL (use a current Skali token or --server)")
-		}
-		if resolved.K3sToken == "" {
-			return errors.New("joining requires a token or a token file")
-		}
-		if _, err := normalizeJoinServer(resolved.Server); err != nil {
-			return err
-		}
-	}
 	return nil
+}
+
+// ValidateEnrolledHost applies the installer metadata validation without
+// probing or mutating k3s. It is used after the authenticated coordinator
+// preflight and before the first persistent enrollment write.
+func ValidateEnrolledHost(ctx context.Context, runner host.Runner, cluster, role,
+	nodeName, nodeIP string, capabilities []string) error {
+	return validateNodeMetadata(ctx, runner, resolvedInstall{
+		Cluster: cluster, Role: role, Capabilities: append([]string(nil), capabilities...),
+		NodeName: nodeName, NodeIP: nodeIP,
+	})
 }
 
 func validateInstallMetadata(opts InstallOptions) error {

@@ -55,6 +55,16 @@ spec:
           timeoutSeconds: 2
         resources: {}
       terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: hello-world-web
+            skali.dev/application: web
+            skali.dev/managed: "true"
+            skali.dev/project: hello-world
+        maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
 ---
 apiVersion: v1
 kind: Service

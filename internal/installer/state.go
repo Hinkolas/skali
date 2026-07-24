@@ -28,6 +28,9 @@ const (
 	// not a different state.
 	StateServer HostState = "server"
 	StateAgent  HostState = "agent"
+	// StateEnrolled is a version-2 host authenticated with the coordinator
+	// but deliberately awaiting cluster apply before k3s is installed.
+	StateEnrolled HostState = "enrolled"
 	// StateUnmanaged is a host running k3s without a skali record. The
 	// adoption guard applies: it is never adopted or destroyed.
 	StateUnmanaged HostState = "unmanaged"
@@ -119,6 +122,17 @@ func Detect(ctx context.Context, runner host.Runner) (*Host, error) {
 	detected.Record = record
 	detected.RecordRecovered = recordRecovered(ctx, runner)
 
+	if record.EnrolledOnly() && !k3sPresent {
+		if HostdPresent(ctx, runner) {
+			detected.State = StateEnrolled
+		} else {
+			detected.State = StateInterrupted
+			detected.Problems = append(detected.Problems,
+				"the reconciled enrollment record exists but "+HostdBinaryPath+" is missing")
+		}
+		return detected, nil
+	}
+
 	var problems []string
 	if detected.RecordRecovered {
 		problems = append(problems, "the primary installation record is missing or unreadable; using "+
@@ -140,6 +154,19 @@ func Detect(ctx context.Context, runner host.Runner) (*Host, error) {
 		detected.K3sActive = agentUnit.active
 	default:
 		problems = append(problems, fmt.Sprintf("record has unknown node role %q", record.Node.Role))
+	}
+	if record.Reconciled() {
+		if !HostdPresent(ctx, runner) {
+			problems = append(problems, "reconciled installation is missing "+HostdBinaryPath)
+		}
+		if !probeUnit(ctx, runner, HostdAgentUnit).present {
+			problems = append(problems, "reconciled installation is missing "+HostdAgentUnit)
+		}
+		if record.Node.Role == layout.RoleServer &&
+			!probeUnit(ctx, runner, HostdCoordinatorUnit).present {
+			problems = append(problems,
+				"reconciled server is missing "+HostdCoordinatorUnit)
+		}
 	}
 
 	if !record.InstallComplete() {

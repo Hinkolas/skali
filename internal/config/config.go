@@ -127,6 +127,10 @@ type API struct {
 	// renders traefik, the managed k3s edge.
 	IngressClass string `env:"SKALI_INGRESS_CLASS,default="`
 
+	// ManagedCluster enables installer-owned capability placement. Existing
+	// clusters leave it false because their nodes are not labeled by Skali.
+	ManagedCluster bool `env:"SKALI_MANAGED_CLUSTER,default=false"`
+
 	// Capabilities lists what this installation can run, separated by
 	// semicolons; deployments whose revisions require more are rejected
 	// with a clear error instead of stalling. R3 installations serve

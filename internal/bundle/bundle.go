@@ -148,6 +148,10 @@ type Production struct {
 	// volumes (Kubernetes quantities, for example 10Gi).
 	DatabaseStorage string
 	RegistryStorage string
+	// RegistryNode pins the installer-owned local-path volume after the
+	// first reconciled initialization. Empty retains legacy
+	// capability-only placement.
+	RegistryNode string
 	// InstallationRecord is the canonical YAML of the root-owned
 	// installation record; it is published as the skali-installation
 	// ConfigMap. The record must never carry credentials, and its
@@ -478,6 +482,9 @@ func registryYAML(profile Profile) string {
 			// and volume agree on the node.
 			nodeSelector = "\n      nodeSelector:\n        " +
 				layout.CapabilityLabel(layout.CapabilityRegistry) + `: "true"`
+			if production.RegistryNode != "" {
+				nodeSelector += "\n        kubernetes.io/hostname: " + production.RegistryNode
+			}
 		} else if production.External.StorageClassName != "" {
 			storageClass = "\n  storageClassName: " + production.External.StorageClassName
 		}
@@ -684,6 +691,8 @@ func skalidYAML(profile Profile) string {
 			// routes it renders.
 			capabilitiesEnv += "\n            - name: SKALI_REGISTRY_PULL_SECRET\n              value: \"true\"" +
 				"\n            - name: SKALI_INGRESS_CLASS\n              value: " + production.External.IngressClassName
+		} else {
+			capabilitiesEnv += "\n            - name: SKALI_MANAGED_CLUSTER\n              value: \"true\""
 		}
 		ingressAnnotations = "\n  annotations:\n    cert-manager.io/cluster-issuer: " + IssuerName
 		ingressTLS = "\n  tls:\n    - hosts:\n        - " + production.IngressHost +
@@ -753,6 +762,13 @@ spec:
         app.kubernetes.io/name: skalid%[5]s
     spec:
       serviceAccountName: skalid
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: skalid
       initContainers:
         - name: migrate
           image: %[2]s

@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/layout"
 )
 
 type Options struct {
@@ -42,6 +43,8 @@ type Options struct {
 	// IngressClassName names the class of rendered routes; empty renders
 	// traefik, the managed k3s edge.
 	IngressClassName string
+	// ManagedCluster enables capability placement on Skali-labeled nodes.
+	ManagedCluster bool
 }
 
 func Render(result *compiler.Result, options Options) ([]runtime.Object, error) {
@@ -166,6 +169,11 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	if options.ImagePullSecretName != "" {
 		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
 			{Name: options.ImagePullSecretName},
+		}
+	}
+	if options.ManagedCluster {
+		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
+			layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 		}
 	}
 	for _, volumeKey := range sortedKeys(application.Volumes) {
@@ -384,9 +392,6 @@ func renderStrategy(rollout compiler.Rollout) appsv1.DeploymentStrategy {
 }
 
 func renderSpread(labels map[string]string, placement compiler.Placement) *corev1.TopologySpreadConstraint {
-	if placement.SpreadAcross == "" {
-		return nil
-	}
 	topologyKey := corev1.LabelHostname
 	if placement.SpreadAcross == "zones" {
 		topologyKey = corev1.LabelTopologyZone

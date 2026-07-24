@@ -5,11 +5,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
 )
@@ -50,7 +52,7 @@ func runUninstallFlow(ctx context.Context, out *os.File, reader *bufio.Reader, s
 	}
 	switch detected.State {
 	case installer.StateServer, installer.StateAgent, installer.StateDamaged,
-		installer.StateInterrupted, installer.StateOrphaned:
+		installer.StateInterrupted, installer.StateOrphaned, installer.StateEnrolled:
 	case installer.StateUnmanaged:
 		return unmanagedError()
 	default:
@@ -109,9 +111,58 @@ func uninstallBundle(ctx context.Context, out *os.File, reader *bufio.Reader,
 
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
+	var reconciledStore *clusterstate.Store
+	if record.Reconciled() {
+		reconciledStore = &clusterstate.Store{Client: client.Clientset}
+		if _, err := reconciledStore.Update(ctx, func(state *clusterstate.State) error {
+			if state.CurrentOperation != "" {
+				return fmt.Errorf("cluster operation %s is active; let it finish before removing the bundle",
+					state.CurrentOperation)
+			}
+			state.ReconciliationPaused = true
+			return nil
+		}); err != nil {
+			progress.Abort()
+			return err
+		}
+		// Every coordinator observes the durable pause before namespace
+		// deletion starts. This is bounded to one reconciliation interval.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(4 * time.Second):
+		}
+	}
 	if err := installer.UninstallBundle(ctx, runner(), client, record, progress); err != nil {
 		progress.Abort()
+		if reconciledStore != nil {
+			return fmt.Errorf("%w; coordinator reconciliation remains paused; run skali cluster repair after diagnosing the removal",
+				err)
+		}
 		return err
+	}
+	if reconciledStore != nil {
+		if _, err := reconciledStore.Update(ctx, func(state *clusterstate.State) error {
+			revision, err := state.EditCandidate(time.Now(),
+				func(_ map[string]clusterstate.RevisionNode,
+					platform *clusterstate.PlatformState) error {
+					platform.Enabled = false
+					platform.RegistryNode = ""
+					return nil
+				})
+			if err != nil {
+				return err
+			}
+			state.ConvergedRevision = revision.ID
+			state.CandidateRevision = revision.ID
+			state.Platform = revision.Platform
+			state.ReconciliationPaused = false
+			return nil
+		}); err != nil {
+			progress.Abort()
+			return fmt.Errorf("bundle was removed but the disabled revision could not be committed: %w; "+
+				"coordinator reconciliation remains paused", err)
+		}
 	}
 	progress.Done("")
 	fmt.Fprintln(out, "\nBare k3s keeps running; `skali cluster init` reinstalls Skali.")
@@ -123,6 +174,10 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 	plan, err := installer.PlanNodeRemoval(ctx, runner(), record)
 	if err != nil {
 		return err
+	}
+	if record.Reconciled() && !record.EnrolledOnly() && plan.Total > 1 {
+		return fmt.Errorf("reconciled nodes are removed declaratively; on a server run "+
+			"`skali cluster node remove %s`, then `skali cluster apply`", record.Node.Name)
 	}
 	leavingServer := record.Node.Role == layout.RoleServer && plan.Total > 1
 	mayLeaveStaleMembership := record.RegistrationMayHaveStarted() &&
@@ -169,13 +224,39 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
+	if record.Reconciled() && record.Node.Role == layout.RoleServer &&
+		plan.Total <= 1 && plan.ClusterReachable {
+		client, err := installer.KubeClient(ctx, runner())
+		if err != nil {
+			progress.Abort()
+			return err
+		}
+		if err := installer.QuiesceReconciledCluster(ctx, runner(), client); err != nil {
+			progress.Abort()
+			return err
+		}
+		if record.Versions.Bundle != "" {
+			if err := installer.UninstallBundle(ctx, runner(), client, record, progress); err != nil {
+				progress.Abort()
+				return err
+			}
+		}
+		if err := installer.RemoveCoordinatorNamespace(ctx, client, progress); err != nil {
+			progress.Abort()
+			return err
+		}
+	}
 	if err := installer.UninstallNode(ctx, runner(), record, plan, progress); err != nil {
 		progress.Abort()
 		return err
 	}
 	progress.Done("")
 	fmt.Fprintln(out, "\nThis host is fresh again.")
-	if mayLeaveStaleMembership && record.Node.Role == layout.RoleAgent {
+	if record.EnrolledOnly() {
+		fmt.Fprintf(out, "The coordinator may still list candidate node %s; from a server run "+
+			"`skali cluster node remove %s` and `skali cluster apply`.\n",
+			record.Node.Name, record.Node.Name)
+	} else if mayLeaveStaleMembership && record.Node.Role == layout.RoleAgent {
 		fmt.Fprintf(out, "The node object %s remains in the cluster; "+
 			"delete it from a server with `k3s kubectl delete node %s`.\n",
 			record.Node.Name, record.Node.Name)

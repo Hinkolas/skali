@@ -25,6 +25,9 @@ tasks:
     cmds:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skalid ./cmd/skalid
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
+      # hostd always runs inside the Linux managed host (directly or in
+      # Lima), even when the CLI itself is built on macOS.
+      - GOOS=linux go build -ldflags "{{.LDFLAGS}}" -o bin/skali-hostd ./cmd/skali-hostd
 
   build:image:
     desc: Build the skalid:dev image from this checkout and save it to .cache/skalid-dev.tar (needs docker)
@@ -38,7 +41,9 @@ tasks:
     cmds:
       # Same destination the installer will use: on PATH, no sudo.
       - mkdir -p "$HOME/.local/bin"
+      - mkdir -p "$HOME/.local/share/skali"
       - go build -ldflags "{{.LDFLAGS}}" -o "$HOME/.local/bin/skali" ./cmd/skali
+      - GOOS=linux go build -ldflags "{{.LDFLAGS}}" -o "$HOME/.local/share/skali/skali-hostd_linux_{{ARCH}}" ./cmd/skali-hostd
       - echo "installed $("$HOME/.local/bin/skali" --version) to ~/.local/bin/skali"
 
   install:server:

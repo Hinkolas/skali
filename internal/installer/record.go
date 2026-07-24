@@ -19,8 +19,15 @@ import (
 // ErrNoRecord reports an absent installation record.
 var ErrNoRecord = errors.New("no installation record")
 
-// RecordVersion is the current record schema version.
-const RecordVersion = "1"
+// RecordVersion remains the legacy imperative schema. New managed clusters
+// use RecordVersionReconciled and are routed through staged enrollment.
+const (
+	RecordVersion           = "1"
+	RecordVersionReconciled = "2"
+
+	ManagementLegacy     = "legacy"
+	ManagementReconciled = "reconciled"
+)
 
 // Record is the root-owned installation record at RecordPath (section
 // 14.1). It identifies the installation and carries versions and
@@ -29,12 +36,16 @@ const RecordVersion = "1"
 // so an older installer can still report status of a newer installation;
 // the operator-authored configs are the strict surfaces.
 type Record struct {
-	Version        string     `yaml:"version"`
-	InstallationID string     `yaml:"installationId"`
-	Provider       string     `yaml:"provider"`
-	Cluster        string     `yaml:"cluster"`
-	Ownership      string     `yaml:"ownership"`
-	Node           NodeRecord `yaml:"node"`
+	Version        string `yaml:"version"`
+	InstallationID string `yaml:"installationId"`
+	Provider       string `yaml:"provider"`
+	Cluster        string `yaml:"cluster"`
+	Ownership      string `yaml:"ownership"`
+	// Management distinguishes existing imperative installations from the
+	// coordinator/agent lifecycle. Version-1 records omit it and are
+	// treated as legacy.
+	Management string     `yaml:"management,omitempty"`
+	Node       NodeRecord `yaml:"node"`
 	// Join keeps which server this agent enrolled against; servers leave
 	// it nil.
 	Join *JoinRecord `yaml:"join,omitempty"`
@@ -47,26 +58,39 @@ type Record struct {
 	// installations. It is a bundle-hash input, so its choices correctly
 	// move the hash.
 	Existing *ExistingClusterRecord `yaml:"existing,omitempty"`
-	Versions Versions               `yaml:"versions"`
+	// RegistryNode pins the installer-owned local registry volume to the
+	// hostname selected by the first reconciled initialization. Legacy
+	// records omit it and retain capability-only scheduling.
+	RegistryNode string   `yaml:"registryNode,omitempty"`
+	Versions     Versions `yaml:"versions"`
 	// Lifecycle is present while a managed host install is in progress or
 	// failed. Records written before lifecycle tracking omit it and are
 	// treated as complete.
-	Lifecycle *InstallLifecycle `yaml:"lifecycle,omitempty"`
-	CreatedAt time.Time         `yaml:"createdAt"`
-	UpdatedAt time.Time         `yaml:"updatedAt"`
+	Lifecycle   *InstallLifecycle  `yaml:"lifecycle,omitempty"`
+	Coordinator *CoordinatorRecord `yaml:"coordinator,omitempty"`
+	CreatedAt   time.Time          `yaml:"createdAt"`
+	UpdatedAt   time.Time          `yaml:"updatedAt"`
 }
 
 const (
 	InstallStatusInstalling = "installing"
+	InstallStatusEnrolled   = "enrolled"
+	InstallStatusRemoving   = "removing"
 	InstallStatusFailed     = "failed"
 	InstallStatusComplete   = "complete"
 
-	InstallPhasePrepared   = "prepared"
-	InstallPhaseConfigured = "configured"
-	InstallPhaseInstalled  = "installed"
-	InstallPhaseStarting   = "starting"
-	InstallPhaseJoined     = "joined"
-	InstallPhaseComplete   = "complete"
+	InstallPhasePrepared      = "prepared"
+	InstallPhaseEnrolled      = "enrolled"
+	InstallPhaseAwaitingApply = "awaiting-apply"
+	InstallPhaseConfigured    = "configured"
+	InstallPhaseInstalled     = "installed"
+	InstallPhaseStarting      = "starting"
+	InstallPhaseJoined        = "joined"
+	InstallPhaseActive        = "active"
+	InstallPhaseDraining      = "draining"
+	InstallPhaseUninstalling  = "uninstalling"
+	InstallPhaseRemoved       = "removed"
+	InstallPhaseComplete      = "complete"
 )
 
 // InstallLifecycle is the durable transaction journal embedded in the
@@ -87,6 +111,18 @@ func (r *Record) InstallComplete() bool {
 	return r != nil && (r.Lifecycle == nil ||
 		r.Lifecycle.Status == InstallStatusComplete ||
 		r.Lifecycle.Phase == InstallPhaseComplete)
+}
+
+func (r *Record) Reconciled() bool {
+	return r != nil && (r.Version == RecordVersionReconciled ||
+		r.Management == ManagementReconciled)
+}
+
+func (r *Record) EnrolledOnly() bool {
+	return r != nil && r.Reconciled() && r.Lifecycle != nil &&
+		(r.Lifecycle.Phase == InstallPhaseEnrolled ||
+			r.Lifecycle.Phase == InstallPhaseAwaitingApply) &&
+		!r.Lifecycle.StartAttempted
 }
 
 // RegistrationMayHaveStarted is deliberately conservative for legacy
@@ -124,9 +160,24 @@ type JoinRecord struct {
 
 // NodeRecord identifies this host within the installation.
 type NodeRecord struct {
+	ID           string   `yaml:"id,omitempty"`
 	Name         string   `yaml:"name"`
+	IP           string   `yaml:"ip,omitempty"`
 	Role         string   `yaml:"role"`
 	Capabilities []string `yaml:"capabilities"`
+}
+
+// CoordinatorRecord contains only non-secret enrollment routing and trust
+// metadata. The agent key and certificate live in separate root-owned files.
+type CoordinatorRecord struct {
+	Endpoints          []string `yaml:"endpoints,omitempty"`
+	CAPin              string   `yaml:"caPin,omitempty"`
+	AgentVersion       string   `yaml:"agentVersion,omitempty"`
+	ConvergedRevision  string   `yaml:"convergedRevision,omitempty"`
+	TargetRevision     string   `yaml:"targetRevision,omitempty"`
+	CandidateRevision  string   `yaml:"candidateRevision,omitempty"`
+	LastOperation      string   `yaml:"lastOperation,omitempty"`
+	LastOperationPhase string   `yaml:"lastOperationPhase,omitempty"`
 }
 
 // Endpoints are the public domains of the installation.
@@ -282,11 +333,13 @@ func (r *Record) CanonicalYAML() (string, error) {
 		Provider       string                 `yaml:"provider"`
 		Cluster        string                 `yaml:"cluster"`
 		Ownership      string                 `yaml:"ownership"`
+		Management     string                 `yaml:"management,omitempty"`
 		Node           NodeRecord             `yaml:"node"`
 		Join           *JoinRecord            `yaml:"join,omitempty"`
 		Endpoints      *Endpoints             `yaml:"endpoints,omitempty"`
 		TLS            *TLSConfig             `yaml:"tls,omitempty"`
 		Existing       *ExistingClusterRecord `yaml:"existing,omitempty"`
+		RegistryNode   string                 `yaml:"registryNode,omitempty"`
 		Versions       Versions               `yaml:"versions"`
 	}
 	data, err := yaml.Marshal(canonicalRecord{
@@ -295,11 +348,13 @@ func (r *Record) CanonicalYAML() (string, error) {
 		Provider:       r.Provider,
 		Cluster:        r.Cluster,
 		Ownership:      r.Ownership,
+		Management:     r.Management,
 		Node:           r.Node,
 		Join:           r.Join,
 		Endpoints:      r.Endpoints,
 		TLS:            r.TLS,
 		Existing:       r.Existing,
+		RegistryNode:   r.RegistryNode,
 		Versions:       r.Versions,
 	})
 	if err != nil {

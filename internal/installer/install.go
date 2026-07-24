@@ -21,11 +21,18 @@ type InstallOptions struct {
 	Cluster      string
 	Role         string
 	Capabilities []string
-	Join         *JoinOptions
-	NodeIP       string
-	Endpoints    *Endpoints
-	TLS          *TLSConfig
-	Progress     Progress
+	// Management selects the version-2 coordinator lifecycle for a new
+	// seed. Empty preserves the legacy path for existing call sites.
+	Management string
+	NodeID     string
+	// Pending taints a newly applied reconciled node until the coordinator
+	// verifies the complete membership batch.
+	Pending   bool
+	Join      *JoinOptions
+	NodeIP    string
+	Endpoints *Endpoints
+	TLS       *TLSConfig
+	Progress  Progress
 	// RecoverOrphan confirms that a recordless host with the complete
 	// Skali-specific fingerprint may be converted into a managed
 	// interrupted transaction.
@@ -38,6 +45,10 @@ type JoinOptions struct {
 	Server    string
 	Token     string
 	TokenFile string
+	// PullSecret is supplied only by the authenticated coordinator agent
+	// protocol. Operator-facing join tokens continue carrying it in their
+	// legacy composite payload.
+	PullSecret string
 }
 
 // Install validates every input and remote join credential before durable
@@ -56,7 +67,7 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 	}
 	recoveringOrphan := false
 	switch detected.State {
-	case StateFresh, StateInterrupted:
+	case StateFresh, StateInterrupted, StateEnrolled:
 	case StateOrphaned:
 		if !opts.RecoverOrphan {
 			return nil, errors.New("an interrupted Skali install from an older version was found; " +
@@ -126,6 +137,7 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 		ServerURL:    resolved.Server,
 		Token:        resolved.K3sToken,
 		PullSecret:   resolved.PullSecret,
+		Pending:      opts.Pending,
 	}
 	if opts.Join == nil {
 		if existingSecret := existingPullSecret(ctx, runner); existingSecret != "" {
@@ -155,6 +167,7 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 			Ownership:      OwnershipManaged,
 			Node: NodeRecord{
 				Name:         resolved.NodeName,
+				IP:           resolved.NodeIP,
 				Role:         resolved.Role,
 				Capabilities: append([]string(nil), resolved.Capabilities...),
 			},
@@ -166,10 +179,27 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 			},
 			CreatedAt: now,
 		}
+		if opts.Management == ManagementReconciled {
+			record.Version = RecordVersionReconciled
+			record.Management = ManagementReconciled
+			record.Node.ID = opts.NodeID
+			if record.Node.ID == "" {
+				record.Node.ID = uuid.NewString()
+			}
+		}
 		if opts.Join != nil {
 			record.Join = &JoinRecord{Server: resolved.Server}
 		}
 	} else {
+		if resolved.NodeIP != "" {
+			record.Node.IP = resolved.NodeIP
+		}
+		if opts.Management != "" {
+			record.Management = opts.Management
+		}
+		if opts.NodeID != "" {
+			record.Node.ID = opts.NodeID
+		}
 		record.Node.Capabilities = append([]string(nil), resolved.Capabilities...)
 		if record.Join != nil {
 			record.Join.Server = resolved.Server

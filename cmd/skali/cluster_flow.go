@@ -20,9 +20,18 @@ import (
 var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
 // runInteractiveFreshFlow drives the transcript's fresh single-node
-// conversation: role and capability prompts, the api/ui domain and TLS
-// issuer email, the k3s install, and the offer to initialize immediately.
+// conversation: seed identity and capabilities, the k3s/coordinator
+// bootstrap, and the offer to initialize immediately. Platform domains,
+// image, TLS, and admin credentials are intentionally deferred to init.
 func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
+	return runInteractiveFreshFlowMode(ctx, out, false)
+}
+
+func runInteractiveCreateFlow(ctx context.Context, out *os.File) error {
+	return runInteractiveFreshFlowMode(ctx, out, true)
+}
+
+func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly bool) error {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprintln(out, "This host is not part of a Skali installation. Install one?")
 	fmt.Fprintln(out)
@@ -30,13 +39,15 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 	if err := runDarwinVMPrompts(ctx, out, reader); err != nil {
 		return err
 	}
-	installation, err := cliprompt.Select(reader, out, "  installation: ",
-		[]string{"create a new cluster", "join an existing cluster"}, 0)
-	if err != nil {
-		return err
-	}
-	if installation == 1 {
-		return runInteractiveJoinFlow(ctx, out, reader)
+	if !seedOnly {
+		installation, err := cliprompt.Select(reader, out, "  installation: ",
+			[]string{"create a new cluster", "join an existing cluster"}, 0)
+		if err != nil {
+			return err
+		}
+		if installation == 1 {
+			return runInteractiveJoinFlow(ctx, out, reader)
+		}
 	}
 
 	cluster, err := cliprompt.LineDefault(reader,
@@ -48,39 +59,21 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 	if err != nil {
 		return err
 	}
-	apiDomain, err := cliprompt.Line(reader, "  api/ui domain (for example skali.example.com): ")
-	if err != nil {
-		return err
-	}
-	registryDomain := ""
-	if apiDomain != "" {
-		defaultRegistry := registryDomainDefault(apiDomain)
-		registryDomain, err = cliprompt.LineDefault(reader,
-			"  registry domain ["+defaultRegistry+"]: ", defaultRegistry)
-		if err != nil {
-			return err
-		}
-	}
-	issuerEmail, err := cliprompt.Line(reader, "  tls issuer email: ")
-	if err != nil {
-		return err
-	}
 	fmt.Fprintln(out)
 
 	opts := installer.InstallOptions{
 		Cluster:      cluster,
 		Capabilities: capabilities,
+		Management:   installer.ManagementReconciled,
 	}
-	if apiDomain != "" {
-		opts.Endpoints = &installer.Endpoints{API: apiDomain, Registry: registryDomain}
-	}
-	if issuerEmail != "" {
-		opts.TLS = &installer.TLSConfig{IssuerEmail: issuerEmail}
-	}
-
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
 	opts.Progress = progress
+	hostdBinary, _, err := loadHostdBinary()
+	if err != nil {
+		progress.Abort()
+		return err
+	}
 	if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
 		progress.Abort()
 		return err
@@ -90,6 +83,12 @@ func runInteractiveFreshFlow(ctx context.Context, out *os.File) error {
 		progress.Abort()
 		return err
 	}
+	progress.Start("Bootstrap cluster coordinator")
+	if err := bootstrapReconciledSeed(ctx, record, hostdBinary); err != nil {
+		progress.Abort()
+		return err
+	}
+	progress.Done("")
 	warnings := finishDarwinInstall(ctx, progress)
 	progress.Done("")
 	printWarnings(out, warnings)
@@ -129,6 +128,29 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 		}
 	}
 	claims, err := installer.InspectJoinToken(token)
+	if reconciledToken(token) {
+		server, promptErr := cliprompt.Line(reader,
+			"  coordinator (host, host:port, or https URL): ")
+		if promptErr != nil {
+			return promptErr
+		}
+		capabilities, promptErr := promptCapabilities(reader)
+		if promptErr != nil {
+			return promptErr
+		}
+		fmt.Fprintln(out)
+		record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
+			Server: server, Token: token, Capabilities: capabilities,
+		})
+		if enrollErr != nil {
+			return enrollErr
+		}
+		fmt.Fprintf(out, "This host is enrolled in cluster %q as %s and is pending apply.\n",
+			record.Cluster, record.Node.Role)
+		fmt.Fprintln(out, "No k3s files or services were installed. Run `skali cluster plan` and")
+		fmt.Fprintln(out, "`skali cluster apply` on an active server.")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -235,27 +257,54 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 	if err := resolveSkalidImage(reader, true, &opts); err != nil {
 		return err
 	}
+	var imageTar []byte
+	if imageTarFlag != "" {
+		var err error
+		imageTar, opts.SkalidImage, opts.SkalidImageID, err =
+			loadImageTar(ctx, imageTarFlag)
+		if err != nil {
+			return err
+		}
+	}
 
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
 	opts.Progress = progress
-	if imageTarFlag != "" {
-		var err error
-		opts.SkalidImage, opts.SkalidImageID, err = stageSkalidImage(ctx, runner(), imageTarFlag, progress)
-		if err != nil {
-			progress.Abort()
-			return err
-		}
-	}
 	// The engine settles every running task before it asks for the admin
 	// account, so prompting here never interleaves with the task printer.
 	opts.Admin = func(ctx context.Context) (string, string, error) {
 		fmt.Fprintln(out)
 		return promptAdmin(reader)
 	}
+	if err := installer.ValidateInitOptions(opts); err != nil {
+		progress.Abort()
+		return err
+	}
+	if len(imageTar) > 0 {
+		if err := importImageTar(ctx, runner(), imageTar, opts.SkalidImage, progress); err != nil {
+			progress.Abort()
+			return err
+		}
+	}
 
+	if err := stageReconciledLayout(ctx, record, asserted); err != nil {
+		progress.Abort()
+		return err
+	}
+	prepared, err := prepareReconciledInit(ctx, record)
+	if err != nil {
+		progress.Abort()
+		return err
+	}
+	if prepared != nil {
+		opts.RegistryNode = prepared.RegistryNode
+	}
 	result, err := installer.Init(ctx, runner(), record, opts)
 	if err != nil {
+		progress.Abort()
+		return err
+	}
+	if err := finishReconciledInit(ctx, prepared); err != nil {
 		progress.Abort()
 		return err
 	}

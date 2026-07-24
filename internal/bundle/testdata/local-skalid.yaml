@@ -62,6 +62,13 @@ spec:
         skali.dev/image-id: sha256:0123456789abcdef
     spec:
       serviceAccountName: skalid
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: skalid
       initContainers:
         - name: migrate
           image: skalid:dev

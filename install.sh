@@ -35,6 +35,7 @@ case "$arch" in
   *) fail "unsupported architecture: $arch" ;;
 esac
 asset="${BINARY}_${os}_${arch}"
+hostd_asset="skali-hostd_linux_${arch}"
 version="${SKALI_VERSION:-latest}"
 
 tmp=$(mktemp -d)
@@ -78,23 +79,31 @@ fetch() {
 
 log "downloading $asset (${version})"
 fetch "$asset" "$tmp/$asset"
+fetch "$hostd_asset" "$tmp/$hostd_asset"
 fetch "checksums.txt" "$tmp/checksums.txt"
 
-expected=$(awk -v name="$asset" '$2 == name { print $1 }' "$tmp/checksums.txt")
-[ -n "$expected" ] || fail "no checksum entry for $asset"
-if command -v sha256sum >/dev/null 2>&1; then
-  actual=$(sha256sum "$tmp/$asset" | awk '{ print $1 }')
-else
-  actual=$(shasum -a 256 "$tmp/$asset" | awk '{ print $1 }')
-fi
-[ "$actual" = "$expected" ] || fail "checksum mismatch for $asset"
+verify() {
+  expected=$(awk -v name="$1" '$2 == name { print $1 }' "$tmp/checksums.txt")
+  [ -n "$expected" ] || fail "no checksum entry for $1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$2" | awk '{ print $1 }')
+  else
+    actual=$(shasum -a 256 "$2" | awk '{ print $1 }')
+  fi
+  [ "$actual" = "$expected" ] || fail "checksum mismatch for $1"
+}
+verify "$asset" "$tmp/$asset"
+verify "$hostd_asset" "$tmp/$hostd_asset"
 
 if [ "$os" = "darwin" ]; then
   # Rootless on macOS: `skali cluster` manages its Lima VM from the user
   # session, so the CLI lives on the user PATH.
   dest="${HOME}/.local/bin"
+  hostd_dest="${HOME}/.local/share/skali"
   mkdir -p "$dest"
+  mkdir -p "$hostd_dest"
   install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
+  install -m 0755 "$tmp/$hostd_asset" "${hostd_dest}/${hostd_asset}"
   log "installed ${dest}/${BINARY}"
   case ":${PATH}:" in
     *":${dest}:"*) ;;
@@ -106,11 +115,16 @@ else
   # secure_path includes /usr/local/bin, so a system path costs nothing
   # extra.
   dest="/usr/local/bin"
+  hostd_dest="/usr/local/libexec"
   if [ "$(id -u)" = "0" ]; then
     install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
+    mkdir -p "$hostd_dest"
+    install -m 0755 "$tmp/$hostd_asset" "${hostd_dest}/skali-hostd"
   else
     log "installing to ${dest} requires sudo"
     sudo install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
+    sudo mkdir -p "$hostd_dest"
+    sudo install -m 0755 "$tmp/$hostd_asset" "${hostd_dest}/skali-hostd"
   fi
   log "installed ${dest}/${BINARY}"
   log "next: run sudo skali cluster to set up Skali on this host"

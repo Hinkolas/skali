@@ -11,6 +11,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
 )
 
@@ -69,6 +70,8 @@ func TestRenderExistingClusterOptions(t *testing.T) {
 	deployment := objects[0].(*appsv1.Deployment)
 	require.Equal(t, []corev1.LocalObjectReference{{Name: PullSecretName}},
 		deployment.Spec.Template.Spec.ImagePullSecrets)
+	require.Nil(t, deployment.Spec.Template.Spec.NodeSelector,
+		"existing clusters do not carry installer-owned capability labels")
 	ingress := objects[2].(*networkingv1.Ingress)
 	require.Equal(t, "nginx", *ingress.Spec.IngressClassName)
 
@@ -81,6 +84,18 @@ func TestRenderExistingClusterOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, managed[0].(*appsv1.Deployment).Spec.Template.Spec.ImagePullSecrets)
 	require.Equal(t, "traefik", *managed[2].(*networkingv1.Ingress).Spec.IngressClassName)
+
+	managed, err = Render(result, Options{
+		Namespace: "skali-hello-world", ManagedCluster: true,
+		Variables: map[string]string{"APP_DOMAIN": "hello.localhost"},
+		BuildImages: map[string]string{
+			"web": "localhost:5510/skali/hello-world/web@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
+	}, managed[0].(*appsv1.Deployment).Spec.Template.Spec.NodeSelector)
 }
 
 func TestBuildApplicationRequiresPreparedArtifact(t *testing.T) {

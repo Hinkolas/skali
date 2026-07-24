@@ -104,6 +104,7 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 			DatabaseTier:       topology.DatabaseTier,
 			DatabaseStorage:    DefaultDatabaseStorage,
 			RegistryStorage:    DefaultRegistryStorage,
+			RegistryNode:       record.RegistryNode,
 			InstallationRecord: canonical,
 		},
 	}

@@ -193,6 +193,7 @@ func runServe() error {
 		RolloutDeadline:  cfg.RolloutDeadline,
 		StaleThreshold:   cfg.StaleThreshold,
 		IngressClassName: cfg.IngressClass,
+		ManagedCluster:   cfg.ManagedCluster,
 	}
 	if cfg.RegistryPullSecret {
 		reconcileCfg.PullSecret = &reconcile.PullSecretConfig{

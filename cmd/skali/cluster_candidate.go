@@ -1,0 +1,479 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/Hinkolas/skali/internal/cliprompt"
+	"github.com/Hinkolas/skali/internal/clusterstate"
+	"github.com/Hinkolas/skali/internal/layout"
+)
+
+func newClusterNodeCmd() *cobra.Command {
+	node := &cobra.Command{
+		Use:   "node",
+		Short: "Stage reconciled-cluster node changes",
+	}
+	node.AddCommand(newClusterNodeCapabilitiesCmd(), newClusterNodeRemoveCmd(),
+		newClusterNodeRestoreCmd(), newClusterNodeForgetCmd())
+	return node
+}
+
+func newClusterNodeCapabilitiesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "capabilities NODE CAPABILITY...",
+		Short: "Stage a node capability set",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			capabilities := append([]string(nil), args[1:]...)
+			slices.Sort(capabilities)
+			capabilities = slices.Compact(capabilities)
+			for _, capability := range capabilities {
+				if !slices.Contains(layout.Capabilities, capability) {
+					return fmt.Errorf("unknown capability %q; expected one of %s",
+						capability, strings.Join(layout.Capabilities, ", "))
+				}
+			}
+			store, _, err := reconciledClusterStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+				_, err := state.EditCandidate(time.Now(),
+					func(nodes map[string]clusterstate.RevisionNode, _ *clusterstate.PlatformState) error {
+						node, ok := clusterstate.FindNodeByName(nodes, args[0])
+						if !ok {
+							return fmt.Errorf("node %q is not in the candidate", args[0])
+						}
+						node.Capabilities = capabilities
+						nodes[node.ID] = node
+						return nil
+					})
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "staged capabilities for %s in candidate revision %s\n",
+				args[0], state.CandidateRevision)
+			printApplyGuidance()
+			return nil
+		},
+	}
+}
+
+func newClusterNodeRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove NODE",
+		Short: "Stage a managed node for drain and removal",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, _, err := reconciledClusterStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			enrolledOnly := false
+			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+				_, err := state.EditCandidate(time.Now(),
+					func(nodes map[string]clusterstate.RevisionNode, platform *clusterstate.PlatformState) error {
+						node, ok := clusterstate.FindNodeByName(nodes, args[0])
+						if !ok {
+							return fmt.Errorf("node %q is not in the candidate", args[0])
+						}
+						if platform.RegistryNode == node.ID {
+							return errors.New("the node holds the registry's local data; registry migration is not implemented")
+						}
+						delete(nodes, node.ID)
+						activeID := state.ConvergedRevision
+						if state.TargetRevision != "" {
+							activeID = state.TargetRevision
+						}
+						active := state.Revisions[activeID]
+						if _, joined := active.Nodes[node.ID]; !joined {
+							enrolledOnly = true
+							observed := state.Nodes[node.ID]
+							observed.Phase = clusterstate.NodePhaseUninstalling
+							observed.LastAction = "cancel-enrollment"
+							observed.LastError = ""
+							observed.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+							state.Nodes[node.ID] = observed
+						}
+						return nil
+					})
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "staged removal of %s in candidate revision %s\n",
+				args[0], state.CandidateRevision)
+			if enrolledOnly {
+				fmt.Fprintln(os.Stdout,
+					"the node was never applied; its agent is cleaning up local enrollment state")
+				return nil
+			}
+			printApplyGuidance()
+			return nil
+		},
+	}
+}
+
+func newClusterNodeRestoreCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "restore NODE",
+		Short: "Cancel a staged node removal",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, _, err := reconciledClusterStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+				baseID := state.ConvergedRevision
+				if state.TargetRevision != "" {
+					baseID = state.TargetRevision
+				}
+				base := state.Revisions[baseID]
+				node, ok := clusterstate.FindNodeByName(base.Nodes, args[0])
+				if !ok {
+					return fmt.Errorf("node %q is not present in the active target", args[0])
+				}
+				_, err := state.EditCandidate(time.Now(),
+					func(nodes map[string]clusterstate.RevisionNode, _ *clusterstate.PlatformState) error {
+						nodes[node.ID] = node
+						return nil
+					})
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "restored %s in candidate revision %s\n",
+				args[0], state.CandidateRevision)
+			return nil
+		},
+	}
+}
+
+func newClusterNodeForgetCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "forget NODE",
+		Short: "Finalize an unreachable removed host without local cleanup",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !force {
+				return errors.New("forgetting an unreachable host requires --force")
+			}
+			store, _, err := reconciledClusterStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			_, err = store.Update(cmd.Context(), func(state *clusterstate.State) error {
+				var nodeID string
+				for id, node := range state.Nodes {
+					if node.Name == args[0] {
+						nodeID = id
+						if node.Phase != clusterstate.NodePhaseFailed &&
+							node.Phase != clusterstate.NodePhaseDraining &&
+							node.Phase != clusterstate.NodePhaseAwaitingCleanup &&
+							node.Phase != clusterstate.NodePhaseUninstalling {
+							return fmt.Errorf("node %s is not awaiting removal cleanup", args[0])
+						}
+						node.Phase = clusterstate.NodePhaseRemoved
+						node.LastError = "local cleanup was not confirmed; stale k3s may remain on the host"
+						node.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+						state.Nodes[id] = node
+						break
+					}
+				}
+				if nodeID == "" {
+					return fmt.Errorf("unknown node %q", args[0])
+				}
+				if state.CurrentOperation != "" {
+					operation := state.Operations[state.CurrentOperation]
+					if step, ok := operation.NodeSteps[nodeID]; ok &&
+						step.Action == clusterstate.NodeActionRemove {
+						step.Phase = clusterstate.StepComplete
+						step.LastError = "forced forget; local cleanup unconfirmed"
+						step.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+						operation.NodeSteps[nodeID] = step
+						state.Operations[operation.ID] = operation
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "forgot %s; local k3s and Skali files may still exist on that host\n", args[0])
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "accept possible stale k3s and agent state on the unreachable host")
+	return cmd
+}
+
+func newClusterChangesCmd() *cobra.Command {
+	changes := &cobra.Command{Use: "changes", Short: "Manage the candidate cluster revision"}
+	changes.AddCommand(newClusterChangesImportCmd(), &cobra.Command{
+		Use:   "discard",
+		Short: "Discard every unapplied candidate change",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, _, err := reconciledClusterStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+				if state.TargetRevision != "" {
+					state.CandidateRevision = state.TargetRevision
+				} else {
+					state.CandidateRevision = state.ConvergedRevision
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "candidate reset to revision %s\n", state.CandidateRevision)
+			return nil
+		},
+	})
+	return changes
+}
+
+func newClusterChangesImportCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "import CLUSTER-LAYOUT",
+		Short: "Replace the candidate using already-enrolled nodes from a layout",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			document, err := layout.ParseFile(args[0])
+			if err != nil {
+				return err
+			}
+			if diagnostics := layout.Validate(document); len(diagnostics) > 0 {
+				return diagnostics
+			}
+			store, _, err := reconciledClusterStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+				_, err := state.ReplaceCandidateLayout(document.Layout, time.Now())
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "candidate replaced from %s at revision %s\n",
+				args[0], state.CandidateRevision)
+			printApplyGuidance()
+			return nil
+		},
+	}
+}
+
+func newClusterPlanCmd() *cobra.Command {
+	var rebalance bool
+	cmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Preview the candidate cluster transition",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, _, err := reconciledClusterStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			state, err := store.Load(cmd.Context())
+			if err != nil {
+				return err
+			}
+			plan, err := candidatePlan(state, rebalance)
+			if err != nil {
+				return err
+			}
+			printClusterPlan(plan)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&rebalance, "rebalance-workloads", false,
+		"include controlled rolling redistribution of healthy managed workloads")
+	return cmd
+}
+
+func newClusterApplyCmd() *cobra.Command {
+	var yes, rebalance, wait bool
+	cmd := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply every pending cluster topology change",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, _, err := reconciledClusterStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			state, err := store.Load(cmd.Context())
+			if err != nil {
+				return err
+			}
+			plan, err := candidatePlan(state, rebalance)
+			if err != nil {
+				return err
+			}
+			printClusterPlan(plan)
+			if plan.Empty() {
+				fmt.Fprintln(os.Stdout, "nothing to apply")
+				return nil
+			}
+			if !yes {
+				if !cliprompt.Interactive() {
+					return errors.New("non-interactive apply requires --yes")
+				}
+				reader := bufio.NewReader(os.Stdin)
+				prompt := "Apply this cluster revision? [y/N] "
+				if plan.Destructive {
+					prompt = "Apply these destructive cluster changes? [y/N] "
+				}
+				if !cliprompt.Confirm(reader, prompt) {
+					return errors.New("cluster apply cancelled; nothing was changed")
+				}
+			}
+			candidateID := state.CandidateRevision
+			var operation clusterstate.Operation
+			_, err = store.Update(cmd.Context(), func(current *clusterstate.State) error {
+				if current.CandidateRevision != candidateID {
+					return errors.New("candidate changed after planning; run cluster plan again")
+				}
+				_, created, err := clusterstate.FreezeCandidate(current, rebalance, time.Now())
+				operation = created
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "cluster operation %s accepted; target revision %s\n",
+				operation.ID, operation.TargetRevision)
+			if wait {
+				return waitClusterOperation(cmd.Context(), store, operation.ID)
+			}
+			fmt.Fprintln(os.Stdout, "Reconciliation continues in the background. Run `skali cluster status`.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "apply without an interactive confirmation")
+	cmd.Flags().BoolVar(&rebalance, "rebalance-workloads", false,
+		"also redistribute eligible healthy managed workloads")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait until the target revision converges")
+	return cmd
+}
+
+func newClusterRebalanceCmd() *cobra.Command {
+	var workloads, yes, wait bool
+	cmd := &cobra.Command{
+		Use:   "rebalance",
+		Short: "Reconcile the current topology and optionally redistribute workloads",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !workloads {
+				return errors.New("the current topology is continuously reconciled; use --workloads to redistribute healthy workloads")
+			}
+			apply := newClusterApplyCmd()
+			args := []string{"--rebalance-workloads"}
+			if yes {
+				args = append(args, "--yes")
+			}
+			if wait {
+				args = append(args, "--wait")
+			}
+			apply.SetArgs(args)
+			apply.SetContext(cmd.Context())
+			return apply.Execute()
+		},
+	}
+	cmd.Flags().BoolVar(&workloads, "workloads", false, "roll eligible managed workloads to use the current topology")
+	cmd.Flags().BoolVar(&yes, "yes", false, "rebalance without an interactive confirmation")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait for rebalancing to complete")
+	return cmd
+}
+
+func candidatePlan(state *clusterstate.State, rebalance bool) (clusterstate.Plan, error) {
+	if state.CurrentOperation != "" {
+		if operation, ok := state.Operations[state.CurrentOperation]; ok &&
+			operation.Phase != clusterstate.OperationComplete {
+			from, fromOK := state.Revisions[operation.FromRevision]
+			target, targetOK := state.Revisions[operation.TargetRevision]
+			if !fromOK || !targetOK {
+				return clusterstate.Plan{}, errors.New(
+					"the active cluster operation references a missing revision")
+			}
+			return clusterstate.BuildPlan(state, from, target,
+				operation.RebalanceWorkloads)
+		}
+	}
+	from, err := state.Converged()
+	if err != nil {
+		return clusterstate.Plan{}, err
+	}
+	target, err := state.Candidate()
+	if err != nil {
+		return clusterstate.Plan{}, err
+	}
+	return clusterstate.BuildPlan(state, from, target, rebalance)
+}
+
+func printClusterPlan(plan clusterstate.Plan) {
+	fmt.Fprintf(os.Stdout, "cluster plan %s -> %s\n", plan.FromRevision, plan.TargetRevision)
+	if plan.Empty() {
+		return
+	}
+	fmt.Fprint(os.Stdout, plan.String())
+	if plan.DatabaseTierFrom != plan.DatabaseTierTo {
+		fmt.Fprintf(os.Stdout, "database tier             %s -> %s\n",
+			plan.DatabaseTierFrom, plan.DatabaseTierTo)
+	}
+	for _, warning := range plan.Warnings {
+		fmt.Fprintf(os.Stdout, "warning: %s\n", warning)
+	}
+}
+
+func waitClusterOperation(ctx context.Context, store *clusterstate.Store, operationID string) error {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		state, err := store.Load(ctx)
+		if err != nil {
+			return err
+		}
+		operation, ok := state.Operations[operationID]
+		if !ok {
+			return errors.New("cluster operation disappeared")
+		}
+		switch operation.Phase {
+		case clusterstate.OperationComplete:
+			fmt.Fprintf(os.Stdout, "cluster converged at revision %s\n", operation.TargetRevision)
+			return nil
+		case clusterstate.OperationFailed:
+			return fmt.Errorf("cluster operation failed: %s", operation.LastError)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func printApplyGuidance() {
+	fmt.Fprintln(os.Stdout, "No cluster services were modified.")
+	fmt.Fprintln(os.Stdout, "Run `skali cluster plan`, then `skali cluster apply`.")
+}

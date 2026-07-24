@@ -30,6 +30,18 @@ func TestNormalizeJoinServer(t *testing.T) {
 	}
 }
 
+func TestValidateEnrolledHostDoesNotRequireK3sJoinInputs(t *testing.T) {
+	t.Parallel()
+	fake := linuxHost()
+
+	err := ValidateEnrolledHost(context.Background(), fake, "e2e", layout.RoleAgent,
+		"worker-1", "", []string{layout.CapabilityApplication})
+
+	require.NoError(t, err)
+	require.Empty(t, fake.Writes)
+	require.Empty(t, fake.Requests)
+}
+
 func TestInstallWrongJoinEndpointMakesNoChanges(t *testing.T) {
 	t.Parallel()
 	fake := linuxHost()

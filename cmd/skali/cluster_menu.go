@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
@@ -127,6 +129,8 @@ func printStatus(out *os.File, status *installer.Status) {
 			label = fmt.Sprintf("interrupted Skali installation (cluster %q)", record.Cluster)
 		case installer.StateOrphaned:
 			label = fmt.Sprintf("orphaned Skali installation (cluster %q)", record.Cluster)
+		case installer.StateEnrolled:
+			label = fmt.Sprintf("enrolled Skali candidate (cluster %q)", record.Cluster)
 		}
 	}
 	if detected.State == installer.StateServer && healthyOverall(status) {
@@ -199,7 +203,100 @@ func printStatus(out *os.File, status *installer.Status) {
 	for _, problem := range detected.Problems {
 		fmt.Fprintf(out, "  problem    %s\n", problem)
 	}
+	if record != nil && record.Reconciled() {
+		printReconciledStatus(out, status)
+	}
 	fmt.Fprintln(out)
+}
+
+func printReconciledStatus(out *os.File, status *installer.Status) {
+	if status.Reconciled == nil {
+		record := status.Host.Record
+		if status.Host.State == installer.StateEnrolled {
+			fmt.Fprintln(out, "  enrollment awaiting cluster apply")
+			if record.Coordinator != nil &&
+				len(record.Coordinator.Endpoints) > 0 {
+				fmt.Fprintf(out, "  coordinator %s\n",
+					record.Coordinator.Endpoints[0])
+			}
+		} else if status.CoordinatorError != "" {
+			fmt.Fprintf(out, "  coordinator unavailable: %s\n", status.CoordinatorError)
+		}
+		if record != nil && record.Coordinator != nil {
+			cache := record.Coordinator
+			if cache.ConvergedRevision != "" {
+				fmt.Fprintf(out, "  cached      converged %s\n",
+					shortRevision(cache.ConvergedRevision))
+			}
+			if cache.TargetRevision != "" {
+				fmt.Fprintf(out, "  cached      target %s\n",
+					shortRevision(cache.TargetRevision))
+			}
+			if cache.CandidateRevision != "" {
+				fmt.Fprintf(out, "  cached      candidate %s\n",
+					shortRevision(cache.CandidateRevision))
+			}
+			if cache.LastOperation != "" {
+				fmt.Fprintf(out, "  cached      operation %s (%s)\n",
+					shortRevision(cache.LastOperation), cache.LastOperationPhase)
+			}
+		}
+		return
+	}
+	state := status.Reconciled
+	if state.ReconciliationPaused {
+		fmt.Fprintln(out, "  reconcile  paused for recovery")
+	}
+	fmt.Fprintf(out, "  revision   converged %s\n", shortRevision(state.ConvergedRevision))
+	if state.TargetRevision != "" {
+		fmt.Fprintf(out, "  target     %s\n", shortRevision(state.TargetRevision))
+	}
+	fmt.Fprintf(out, "  candidate  %s\n", shortRevision(state.CandidateRevision))
+	if plan, err := candidatePlan(state, false); err == nil && !plan.Empty() {
+		fmt.Fprintf(out, "  changes    %d pending action(s); run skali cluster plan\n",
+			len(plan.Actions))
+	}
+	if state.CurrentOperation != "" {
+		if operation, ok := state.Operations[state.CurrentOperation]; ok {
+			fmt.Fprintf(out, "  operation  %s (%s)\n",
+				shortRevision(operation.ID), operation.Phase)
+			for _, node := range clusterstate.SortedNodes(state.Nodes) {
+				step, exists := operation.NodeSteps[node.ID]
+				if !exists {
+					continue
+				}
+				fmt.Fprintf(out, "  progress   %-20s %-12s %s\n",
+					node.Name, step.Action, step.Phase)
+				if step.LastError != "" {
+					fmt.Fprintf(out, "  error      %s: %s\n", node.Name, step.LastError)
+				}
+			}
+			if operation.Phase == clusterstate.OperationFailed {
+				fmt.Fprintln(out, "  recovery   skali cluster diagnose")
+				fmt.Fprintln(out, "  recovery   skali cluster apply --yes")
+			}
+		}
+	}
+	now := time.Now()
+	for _, node := range clusterstate.SortedNodes(state.Nodes) {
+		heartbeat := "never"
+		if !node.LastSeen.IsZero() {
+			heartbeat = now.Sub(node.LastSeen).Round(time.Second).String() + " ago"
+		}
+		fmt.Fprintf(out, "  managed    %-20s %-7s %-22s heartbeat %s\n",
+			node.Name, node.Role, node.Phase, heartbeat)
+		if node.Phase == clusterstate.NodePhaseAwaitingCleanup {
+			fmt.Fprintf(out, "  recovery   skali cluster node forget %s --force  (only if the host is unreachable)\n",
+				node.Name)
+		}
+	}
+}
+
+func shortRevision(value string) string {
+	if len(value) > 8 {
+		return value[:8]
+	}
+	return value
 }
 
 func runRecoveryMenu(ctx context.Context, out *os.File, status *installer.Status) error {
@@ -249,6 +346,56 @@ func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reade
 	record := detected.Record
 	if record == nil {
 		return errors.New("the interrupted installation has no recoverable inputs")
+	}
+	if record.Reconciled() && record.EnrolledOnly() {
+		tokenFile, err := cliprompt.Line(reader,
+			"  enrollment token file path (empty to paste the token): ")
+		if err != nil {
+			return err
+		}
+		token := ""
+		if tokenFile == "" {
+			token, err = cliprompt.Secret(reader, "  enrollment token: ")
+		} else {
+			data, readErr := os.ReadFile(tokenFile)
+			if readErr != nil {
+				return readErr
+			}
+			token = strings.TrimSpace(string(data))
+		}
+		if err != nil {
+			return err
+		}
+		endpoint := ""
+		if record.Coordinator != nil && len(record.Coordinator.Endpoints) > 0 {
+			endpoint = record.Coordinator.Endpoints[0]
+		}
+		endpoint, err = cliprompt.LineDefault(reader,
+			"  coordinator ["+endpoint+"]: ", endpoint)
+		if err != nil {
+			return err
+		}
+		resumed, err := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
+			Server: endpoint, Token: token,
+			Capabilities: append([]string(nil), record.Node.Capabilities...),
+			NodeIP:       record.Node.IP,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "node %s resumed enrollment; pending cluster apply\n", resumed.Node.Name)
+		return nil
+	}
+	if record.Reconciled() && record.Node.Role == layout.RoleServer && record.Join == nil {
+		hostdBinary, _, err := loadHostdBinary()
+		if err != nil {
+			return err
+		}
+		if err := bootstrapReconciledSeed(ctx, record, hostdBinary); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "seed coordinator bootstrap completed")
+		return nil
 	}
 	opts := installer.InstallOptions{
 		Cluster:       record.Cluster,

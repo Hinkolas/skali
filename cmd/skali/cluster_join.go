@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -18,9 +19,9 @@ func newClusterJoinCmd() *cobra.Command {
 	var capabilities []string
 	var assumeYes bool
 	cmd := &cobra.Command{
-		Use:   "join",
+		Use:   "join [coordinator]",
 		Short: "Join this host to an existing cluster",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := os.Stdout
@@ -35,7 +36,13 @@ func newClusterJoinCmd() *cobra.Command {
 			// join never prompts. Interactive enrollment lives in the
 			// fresh-host flow of a bare run.
 			if tokenFile == "" || len(capabilities) == 0 {
-				return fmt.Errorf("join requires --token-file and --capabilities; current Skali tokens supply --server, --role, and --cluster")
+				return fmt.Errorf("join requires --token-file and --capabilities")
+			}
+			if len(args) == 1 {
+				if server != "" {
+					return fmt.Errorf("supply the coordinator as an argument or --server, not both")
+				}
+				server = args[0]
 			}
 
 			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, ""); err != nil {
@@ -56,6 +63,31 @@ func newClusterJoinCmd() *cobra.Command {
 				progress.Abort()
 				return err
 			}
+			tokenData, err := readHostFile(ctx, tokenFile)
+			if err != nil {
+				progress.Abort()
+				return fmt.Errorf("read join token file %s: %w", tokenFile, err)
+			}
+			rawToken := strings.TrimSpace(string(tokenData))
+			if reconciledToken(rawToken) {
+				if server == "" {
+					progress.Abort()
+					return fmt.Errorf("reconciled enrollment requires the coordinator host or --server")
+				}
+				record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
+					Server: server, Token: rawToken, Capabilities: capabilities, NodeIP: nodeIP,
+					RequestedRole: role, RequestedCluster: cluster,
+				})
+				if enrollErr != nil {
+					progress.Abort()
+					return enrollErr
+				}
+				progress.Done("")
+				fmt.Fprintf(out, "node %s enrolled in cluster %q as %s; pending cluster apply\n",
+					record.Node.Name, record.Cluster, record.Node.Role)
+				fmt.Fprintln(out, "No k3s files or services were installed.")
+				return nil
+			}
 			opts := installer.InstallOptions{
 				Cluster:       cluster,
 				Role:          role,
@@ -69,7 +101,7 @@ func newClusterJoinCmd() *cobra.Command {
 				progress.Abort()
 				return err
 			}
-			_, err := installer.Install(ctx, runner(), opts)
+			_, err = installer.Install(ctx, runner(), opts)
 			if err != nil {
 				progress.Abort()
 				return err
@@ -81,11 +113,11 @@ func newClusterJoinCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&server, "server", "", "alternate URL of an existing k3s server (current Skali tokens supply a default)")
+	cmd.Flags().StringVar(&server, "server", "", "coordinator endpoint; legacy composite tokens may supply their k3s endpoint")
 	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to a file holding the join token")
-	cmd.Flags().StringVar(&role, "role", "", "k3s role of this host; must match the token claim")
+	cmd.Flags().StringVar(&role, "role", "", "expected role; must match the invitation or legacy token")
 	cmd.Flags().StringSliceVar(&capabilities, "capabilities", nil, "designated workload capabilities for this node")
-	cmd.Flags().StringVar(&cluster, "cluster", "", "name of the cluster being joined; must match the token claim")
+	cmd.Flags().StringVar(&cluster, "cluster", "", "expected cluster name; required only for raw legacy K10 tokens")
 	cmd.Flags().StringVar(&nodeIP, "node-ip", "", "IP address this node advertises inside the cluster (multi-homed hosts)")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
 	return cmd

@@ -63,6 +63,9 @@ type Config struct {
 	// IngressClassName names the class of rendered routes; empty renders
 	// traefik.
 	IngressClassName string
+	// ManagedCluster pins application pods to application-capable nodes.
+	// Existing-cluster installations leave it false.
+	ManagedCluster bool
 }
 
 // PullSecretConfig is the credential rendered into environment pull

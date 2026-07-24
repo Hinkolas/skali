@@ -40,7 +40,11 @@ Distinct product and operational roles:
   remote state changes. It also carries the privileged, repeatable `skali
   cluster` command group for host-level k3s lifecycle and installer-owned
   Skali system resources; no other command administers production
-  Kubernetes, and nothing here is a continuously running host daemon.
+  Kubernetes.
+- **`skali-hostd`** — the installer-owned Linux host service for reconciled
+  clusters. Every node runs its outbound-polling typed-operation agent;
+  servers also run the TLS enrollment coordinator. It is independent of
+  `skalid` and the product database.
 - **`web/`** — SvelteKit BFF (adapter-node). Owns the browser session cookie
   and proxies `/api/v1/*` to the daemon; the bearer token never reaches
   browser JavaScript.
@@ -49,6 +53,45 @@ Auth is email+password (argon2id) with optional TOTP 2FA and backup codes;
 sessions are opaque bearer tokens (sha256-hashed at rest, 30-day sliding
 expiry, instant revocation). There is no signup endpoint — users are created
 by the operator.
+
+## Reconciled cluster workflow
+
+New managed clusters stage topology changes and apply them as one durable
+revision:
+
+```sh
+# Seed server: creates one-node k3s plus the coordinator, not the platform.
+sudo skali cluster create --config node.yaml
+
+# Seed server: create a one-use, 24-hour invitation.
+sudo skali cluster token --role server
+
+# New host: endpoint accepts host, host:port, or an HTTPS origin.
+# This installs only skali-hostd and enrolls a candidate; k3s stays absent.
+sudo skali cluster join 10.1.0.3 \
+  --token-file /root/skali-invitation \
+  --capabilities database,application
+
+# Repeat enrollment for every planned host, then review and converge once.
+sudo skali cluster plan
+sudo skali cluster apply --wait
+
+# The first init applies every pending node before deploying Skali once.
+sudo skali cluster init --config init.yaml
+```
+
+Invitations use `skali.<base64url-json>`. The payload contains only a
+protocol version, invitation ID, random credential, and coordinator CA pin;
+role, expiry, use, and capability restrictions remain server-side. K3s and
+registry credentials are released only to an enrolled agent over mTLS during
+an accepted apply.
+
+Candidate changes can be accumulated with `cluster node capabilities`,
+`cluster node remove|restore`, and `cluster changes import|discard`.
+`cluster apply --rebalance-workloads` additionally performs safe one-at-a-time
+rolling redistribution; normal reconciliation moves only invalidly placed or
+draining workloads. Existing schema-version-1 clusters keep their imperative
+`skali1.`/K10 join behavior and are never migrated in place.
 
 ## Quickstart: run a project locally
 

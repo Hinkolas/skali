@@ -20,6 +20,10 @@ const (
 	// ClusterLabel records which installation stamped the node.
 	ClusterLabel = "skali.dev/cluster"
 
+	// PendingTaintKey prevents workloads from landing on newly joined
+	// version-2 nodes until the complete membership batch has succeeded.
+	PendingTaintKey = "skali.dev/pending"
+
 	// ControlPlaneLabel is k3s's own role marker. The K3s role is never
 	// duplicated into a skali label because k3s already owns that fact.
 	ControlPlaneLabel = "node-role.kubernetes.io/control-plane"

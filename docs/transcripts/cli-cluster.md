@@ -11,6 +11,99 @@ The root-owned installation record lives at
 that `skalid` imports on first boot. The handoff transfers observation and
 bookkeeping only; mutation authority over bootstrap resources stays here.
 
+## Version 2 staged enrollment and convergence
+
+New managed clusters use installation-record schema 2. The first server is
+the unavoidable k3s seed, but the Skali platform does not need to exist
+before other hosts enroll:
+
+```console
+$ sudo skali cluster create --config node.yaml
+  ok  Install k3s v1.33.3+k3s1 (server)
+  ok  Bootstrap cluster coordinator
+
+$ sudo skali cluster token --role server
+one-time server invitation for cluster "production" (expires 2026-07-25T10:00:00Z):
+  sudo skali cluster join <coordinator> --token-file <file> --capabilities <list>
+
+enrollment token (write it to <file>, mode 0600):
+  skali.eyJ2ZXJzaW9uIjoxLCJpbnZpdGF0aW9uIjoiLi4uIiwiY3JlZGVudGlhbCI6Ii4uLiIsImNhUGluIjoic2hhMjU2Oi4uLiJ9
+
+The token carries authentication only; it contains no endpoint, role,
+cluster name, k3s token, or registry credential.
+```
+
+The joining user supplies the coordinator location. `10.1.0.3`,
+`10.1.0.3:6444`, and `https://10.1.0.3` normalize to the same HTTPS origin;
+explicit HTTP is rejected. Endpoint reachability, the pinned coordinator CA,
+the one-use invitation, role, requested capabilities, hostname, and node IP
+are verified before the host is modified.
+
+```console
+$ sudo skali cluster join 10.1.0.3 \
+    --token-file /root/invitation \
+    --capabilities database,application
+node db-2 enrolled in cluster "production" as server; pending cluster apply
+No k3s files or services were installed.
+```
+
+Several enrollments and edits may be staged before one convergence:
+
+```console
+$ sudo skali cluster node capabilities db-2 database application
+staged capabilities for db-2 in candidate revision ...
+No cluster services were modified.
+
+$ sudo skali cluster plan
+cluster plan ... -> ...
+add-server                db-2 -> application,database
+add-agent                 app-2 -> application
+reconcile-platform         reconcile platform once at database tier asynchronous
+
+$ sudo skali cluster apply --wait
+cluster operation ... accepted; target revision ...
+cluster converged at revision ...
+```
+
+Servers join sequentially, agents with bounded parallelism. New nodes keep a
+`skali.dev/pending` NoSchedule taint until every membership action succeeds.
+The coordinator then writes final capability labels, converges the platform
+once, and only afterward drains removals. A server removal takes an etcd
+snapshot first. Interrupted operations retain their target and step journal;
+repeating `apply` resumes the same operation ID.
+
+`cluster init` is the first platform-enabled apply. It freezes all pending
+nodes, waits for the target topology, collects the one-time admin inputs,
+deploys the bundle, and advances the converged revision only after health
+verification. The registry's local-volume node is recorded at this point and
+cannot be removed or lose its registry capability until an explicit migration
+feature exists.
+
+Useful candidate and recovery commands:
+
+```console
+skali cluster changes import cluster-layout.yaml
+skali cluster changes discard
+skali cluster node remove NODE
+skali cluster node restore NODE
+skali cluster apply --rebalance-workloads
+skali cluster rebalance --workloads
+skali cluster token list
+skali cluster token revoke INVITATION_ID
+skali cluster node forget NODE --force
+```
+
+`status` shows converged, target, and candidate revisions, the durable
+operation phase and node-step progress, agent heartbeats, and local recovery
+state even when the Kubernetes API or coordinator is unavailable.
+
+## Version 1 legacy transcripts
+
+The remaining transcripts describe schema-version-1 clusters. They preserve
+immediate k3s joins, `skali1.` and raw K10 tokens, init-owner behavior, and
+per-host maintenance. New binaries route by record/token version and do not
+migrate these clusters.
+
 ## 1. Interactive fresh single node
 
 ```console
@@ -119,7 +212,7 @@ admin:
 $ sudo skali cluster init --config init.yaml
 ```
 
-Current `skali1` tokens supply the cluster, role, and default server URL.
+Version-1 `skali1` tokens supply the cluster, role, and default server URL.
 Older secure tokens remain usable when `cluster`, `role`, and
 `join.server` are supplied in the config. Conflicting config and token
 claims are rejected before the host is changed.

@@ -12,7 +12,9 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer"
+	"github.com/Hinkolas/skali/internal/layout"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -49,7 +51,59 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 	if err != nil {
 		return err
 	}
+	if status.Reconciled != nil && status.Reconciled.ReconciliationPaused {
+		if !yes {
+			if !cliprompt.Interactive() {
+				return errors.New("coordinator reconciliation is paused; repair requires --yes to resume it")
+			}
+			if !cliprompt.Confirm(reader,
+				"Resume coordinator reconciliation from its durable target? [y/N] ") {
+				return errors.New("coordinator reconciliation remains paused")
+			}
+		}
+		store, _, err := reconciledClusterStore(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := store.Update(ctx, func(state *clusterstate.State) error {
+			state.ReconciliationPaused = false
+			return nil
+		}); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "coordinator reconciliation resumed")
+		status, err = installer.GatherStatus(ctx, runner())
+		if err != nil {
+			return err
+		}
+	}
 	detected := status.Host
+	if detected.State == installer.StateInterrupted && detected.Record != nil &&
+		detected.Record.Reconciled() && detected.Record.Node.Role == layout.RoleServer &&
+		detected.Record.Join == nil {
+		if !yes {
+			if !cliprompt.Interactive() {
+				return errors.New("repairing the interrupted seed coordinator requires --yes")
+			}
+			if !cliprompt.Confirm(reader,
+				"Resume the seed coordinator bootstrap with the same cluster identity? [y/N] ") {
+				return errors.New("seed coordinator repair was not confirmed")
+			}
+		}
+		hostdBinary, _, err := loadHostdBinary()
+		if err != nil {
+			return err
+		}
+		if err := bootstrapReconciledSeed(ctx, detected.Record, hostdBinary); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "seed coordinator bootstrap repaired")
+		status, err = installer.GatherStatus(ctx, runner())
+		if err != nil {
+			return err
+		}
+		detected = status.Host
+	}
 	if detected.State == installer.StateOrphaned {
 		if !yes {
 			if !cliprompt.Interactive() {
@@ -70,7 +124,8 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 		detected = status.Host
 	}
 	switch detected.State {
-	case installer.StateServer, installer.StateAgent, installer.StateDamaged, installer.StateInterrupted:
+	case installer.StateServer, installer.StateAgent, installer.StateDamaged,
+		installer.StateInterrupted, installer.StateEnrolled:
 	case installer.StateUnmanaged:
 		return unmanagedError()
 	default:
@@ -100,9 +155,14 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
+	var hostdBinary []byte
+	if detected.Record != nil && detected.Record.Reconciled() {
+		hostdBinary, _, _ = loadHostdBinary()
+	}
 	actions, refusals := installer.PlanRepairs(diagnosis, installer.RepairDeps{
 		Runner:       runner(),
 		Record:       detected.Record,
+		HostdBinary:  hostdBinary,
 		StampMissing: stampMissing,
 		Progress:     progress,
 	})

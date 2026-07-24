@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/util/retry"
 
 	"github.com/Hinkolas/skali/internal/bundle"
+	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubernetes"
@@ -509,6 +510,14 @@ func UninstallNode(ctx context.Context, runner host.Runner, record *Record, plan
 		}
 	}
 
+	if record.Reconciled() {
+		progress.Start("Remove Skali host services")
+		if err := RemoveHostd(ctx, runner, true); err != nil {
+			return err
+		}
+		progress.Done("")
+	}
+
 	progress.Start("Remove " + StateDir)
 	// Everything under StateDir goes except the record, which goes last.
 	entries := []string{CacheDir, LogDir}
@@ -524,6 +533,41 @@ func UninstallNode(ctx context.Context, runner host.Runner, record *Record, plan
 		return fmt.Errorf("remove %s: %w", StateDir, err)
 	}
 	progress.Done("")
+	return nil
+}
+
+// QuiesceReconciledCluster prevents the coordinator from recreating state
+// while a final seed uninstall removes the platform and coordinator
+// namespace. It is deliberately separate from node removal because a
+// multi-node reconciled cluster must first remove its other nodes through
+// the candidate/apply workflow.
+func QuiesceReconciledCluster(ctx context.Context, runner host.Runner,
+	client *kube.Client) error {
+	store := &clusterstate.Store{Client: client.Clientset}
+	if _, err := store.Update(ctx, func(state *clusterstate.State) error {
+		state.Decommissioning = true
+		return nil
+	}); err != nil {
+		return fmt.Errorf("mark cluster decommissioning: %w", err)
+	}
+	if err := StopHostd(ctx, runner); err != nil {
+		return fmt.Errorf("stop coordinator reconciliation: %w", err)
+	}
+	return nil
+}
+
+func RemoveCoordinatorNamespace(ctx context.Context, client *kube.Client,
+	progress Progress) error {
+	progress.Start("Remove " + clusterstate.Namespace)
+	deleted, err := deleteNamespaces(ctx, client, []string{clusterstate.Namespace}, progress)
+	if err != nil {
+		return err
+	}
+	if deleted == 0 {
+		progress.Skip("already absent")
+	} else {
+		progress.Done("")
+	}
 	return nil
 }
 

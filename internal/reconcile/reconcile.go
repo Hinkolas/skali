@@ -350,6 +350,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		EnvironmentID:    environmentID.String(),
 		RevisionChecksum: rev.Checksum,
 		IngressClassName: k.cfg.IngressClassName,
+		ManagedCluster:   k.cfg.ManagedCluster,
 	}
 	if pullSecret != nil {
 		renderOptions.ImagePullSecretName = pullSecret.Name

@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/bundle"
+	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
@@ -74,6 +75,11 @@ type Status struct {
 	DatabaseNodes []string
 	// DatabaseInstances is the deployed skali-db spec.instances.
 	DatabaseInstances int
+	// Reconciled is the durable version-2 desired/observed state when this
+	// server can read it. CoordinatorError explains why it is unavailable
+	// without making local status fail.
+	Reconciled       *clusterstate.State
+	CoordinatorError string
 }
 
 // TierDrift reports whether the deployed and available tiers are both
@@ -115,7 +121,18 @@ func GatherStatus(ctx context.Context, runner host.Runner) (*Status, error) {
 
 	client, err := KubeClient(ctx, runner)
 	if err != nil {
+		if detected.Record.Reconciled() && detected.Record.Node.Role == layout.RoleServer {
+			status.CoordinatorError = err.Error()
+		}
 		return status, nil
+	}
+	if detected.Record.Reconciled() && detected.Record.Node.Role == layout.RoleServer {
+		state, stateErr := (&clusterstate.Store{Client: client.Clientset}).Load(ctx)
+		if stateErr != nil {
+			status.CoordinatorError = stateErr.Error()
+		} else {
+			status.Reconciled = state
+		}
 	}
 	nodes, err := client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -149,7 +166,8 @@ func GatherStatus(ctx context.Context, runner host.Runner) (*Status, error) {
 	// in-cluster record identifies the init owner: the bundle exists and
 	// is maintained there, so status must not claim it is missing.
 	if record, err := InClusterRecord(ctx, client); err == nil && record != nil {
-		if record.Node.Name != "" && record.Node.Name != detected.Hostname {
+		if !detected.Record.Reconciled() &&
+			record.Node.Name != "" && record.Node.Name != detected.Hostname {
 			status.InitOwner = record.Node.Name
 		}
 		if !status.Initialized && record.Versions.Bundle != "" {

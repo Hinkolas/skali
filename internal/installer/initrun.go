@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/mail"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
@@ -38,6 +41,10 @@ type InitOptions struct {
 	// optionally pins the content identity behind a mutable tag.
 	SkalidImage   string
 	SkalidImageID string
+	// RegistryNode pins the local registry volume to the coordinator's
+	// durable placement choice. Empty retains legacy capability-only
+	// placement.
+	RegistryNode string
 	// Layout optionally asserts the expected membership; init refuses when
 	// the joined nodes do not match it.
 	Layout *layout.Layout
@@ -75,20 +82,8 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if record.Node.Role != layout.RoleServer {
 		return nil, errors.New("init must run on a server node")
 	}
-	if opts.Endpoints.API == "" {
-		return nil, errors.New("init requires the api/ui domain")
-	}
-	if opts.Endpoints.Registry == "" {
-		return nil, errors.New("init requires the registry domain")
-	}
-	if opts.TLS.IssuerEmail == "" {
-		return nil, errors.New("init requires the tls issuer email")
-	}
-	if opts.SkalidImage == "" {
-		return nil, errors.New("init requires a skalid image")
-	}
-	if opts.Admin == nil && !opts.SkipAdmin {
-		return nil, errors.New("init requires admin credentials")
+	if err := ValidateInitOptions(opts); err != nil {
+		return nil, err
 	}
 	out := opts.Out
 	if out == nil {
@@ -126,7 +121,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	// server would churn the published record and hash. The bundle stays
 	// maintained by the node that first initialized it; other servers
 	// upgrade k3s only.
-	if record.Versions.Bundle == "" {
+	if !record.Reconciled() && record.Versions.Bundle == "" {
 		if published, err := InClusterRecord(ctx, client); err == nil && published != nil &&
 			published.Node.Name != "" && published.Node.Name != record.Node.Name {
 			return fail(fmt.Errorf("this cluster was initialized from %s; run init and upgrade there",
@@ -143,7 +138,14 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	}
 
 	topology := live.Topology()
-	registryNode := firstCapableNode(live, layout.CapabilityRegistry)
+	registryNode := opts.RegistryNode
+	if registryNode == "" {
+		registryNode = firstCapableNode(live, layout.CapabilityRegistry)
+	}
+	if node, ok := live.Nodes[registryNode]; !ok ||
+		!slices.Contains(node.Capabilities, layout.CapabilityRegistry) {
+		return fail(fmt.Errorf("registry node %s is not joined and registry-capable", registryNode))
+	}
 	printTopology(out, topology, registryNode)
 	log.line(fmt.Sprintf("derived topology: database tier %s (%d database nodes), registry on %s",
 		topology.DatabaseTier, topology.Capable[layout.CapabilityDatabase], registryNode))
@@ -180,6 +182,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	// hash, and the eventual on-disk record all agree.
 	record.Endpoints = &Endpoints{API: opts.Endpoints.API, Registry: opts.Endpoints.Registry}
 	record.TLS = &TLSConfig{IssuerEmail: opts.TLS.IssuerEmail, ACMEServer: opts.TLS.ACMEServer}
+	record.RegistryNode = opts.RegistryNode
 	record.Versions.Bundle = version.Version
 	record.Versions.Installer = version.Version
 	canonical, err := record.CanonicalYAML()
@@ -204,6 +207,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 			DatabaseTier:       topology.DatabaseTier,
 			DatabaseStorage:    DefaultDatabaseStorage,
 			RegistryStorage:    DefaultRegistryStorage,
+			RegistryNode:       opts.RegistryNode,
 			InstallationRecord: canonical,
 		},
 	}
@@ -246,6 +250,52 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		RegistryURL: "https://" + opts.Endpoints.Registry,
 		LogPath:     log.path,
 	}, nil
+}
+
+// ValidateInitOptions is pure and is called by the CLI before a reconciled
+// candidate is frozen. Invalid platform inputs therefore cannot start a
+// topology operation.
+func ValidateInitOptions(opts InitOptions) error {
+	if opts.Endpoints.API == "" {
+		return errors.New("init requires the api/ui domain")
+	}
+	if opts.Endpoints.Registry == "" {
+		return errors.New("init requires the registry domain")
+	}
+	if opts.TLS.IssuerEmail == "" {
+		return errors.New("init requires the tls issuer email")
+	}
+	if opts.SkalidImage == "" {
+		return errors.New("init requires a skalid image")
+	}
+	if opts.Admin == nil && !opts.SkipAdmin {
+		return errors.New("init requires admin credentials")
+	}
+	for label, domain := range map[string]string{
+		"api/ui": opts.Endpoints.API, "registry": opts.Endpoints.Registry,
+	} {
+		if strings.Contains(domain, "://") {
+			return fmt.Errorf("%s domain %q must be a hostname without a protocol", label, domain)
+		}
+		if problems := validation.IsDNS1123Subdomain(domain); len(problems) > 0 {
+			return fmt.Errorf("%s domain %q is invalid: %s",
+				label, domain, strings.Join(problems, "; "))
+		}
+	}
+	address, err := mail.ParseAddress(opts.TLS.IssuerEmail)
+	if err != nil || address.Address != opts.TLS.IssuerEmail {
+		return fmt.Errorf("tls issuer email %q is not a valid email address",
+			opts.TLS.IssuerEmail)
+	}
+	if opts.TLS.ACMEServer != "" {
+		parsed, err := url.Parse(opts.TLS.ACMEServer)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
+			parsed.User != nil || parsed.Fragment != "" {
+			return fmt.Errorf("acme server %q must be an HTTPS URL without credentials or fragment",
+				opts.TLS.ACMEServer)
+		}
+	}
+	return nil
 }
 
 // LayoutFromNodes rebuilds the installed layout from live node labels;

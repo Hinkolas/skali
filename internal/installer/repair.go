@@ -26,6 +26,9 @@ type RepairAction struct {
 type RepairDeps struct {
 	Runner host.Runner
 	Record *Record
+	// HostdBinary is supplied by the CLI from the verified release/source
+	// companion asset. It is never downloaded by the privileged engine.
+	HostdBinary []byte
 	// StampMissing marks an interrupted converge: the bundle version
 	// matches this installer but the hash stamp is absent.
 	StampMissing bool
@@ -61,6 +64,27 @@ func PlanRepairs(diag *Diagnosis, deps RepairDeps) (actions []RepairAction, refu
 	}
 
 	if diag.Host.State == StateInterrupted && record != nil {
+		if record.Reconciled() && record.EnrolledOnly() &&
+			!record.RegistrationMayHaveStarted() {
+			if len(deps.HostdBinary) == 0 {
+				refusals = append(refusals, "skali-hostd is unavailable; reinstall this release "+
+					"or pass --hostd-bin, then rerun repair")
+				return actions, refusals
+			}
+			actions = append(actions, RepairAction{
+				ID:      "repair-host-agent",
+				Title:   "Repair the Skali host agent",
+				Confirm: "Reinstall and restart the typed Skali host agent, preserving this enrollment identity. Continue? [y/N] ",
+				Run: func(ctx context.Context) error {
+					if err := StageHostd(ctx, deps.Runner, deps.HostdBinary,
+						record.Node.Role == layout.RoleServer); err != nil {
+						return err
+					}
+					return StartHostd(ctx, deps.Runner, false)
+				},
+			})
+			return actions, refusals
+		}
 		actions = append(actions, RepairAction{
 			ID:    "resume-install",
 			Title: "Resume interrupted installation",
@@ -101,14 +125,42 @@ func PlanRepairs(diag *Diagnosis, deps RepairDeps) (actions []RepairAction, refu
 	if record != nil && record.Node.Role == layout.RoleAgent {
 		role = layout.RoleAgent
 	}
+	if record != nil && record.Reconciled() &&
+		(failed["host agent binary"] || failed["host agent service"] ||
+			failed["coordinator service"]) {
+		if len(deps.HostdBinary) == 0 {
+			refusals = append(refusals, "skali-hostd is unavailable; reinstall this release "+
+				"or pass --hostd-bin, then rerun repair")
+		} else {
+			actions = append(actions, RepairAction{
+				ID:      "repair-host-agent",
+				Title:   "Repair the Skali host services",
+				Confirm: "Reinstall and restart the typed Skali host services while preserving this node identity. Continue? [y/N] ",
+				Run: func(ctx context.Context) error {
+					coordinator := record.Node.Role == layout.RoleServer
+					if err := StageHostd(ctx, deps.Runner, deps.HostdBinary,
+						coordinator); err != nil {
+						return err
+					}
+					return StartHostd(ctx, deps.Runner, coordinator)
+				},
+			})
+		}
+	}
 
-	needsK3sReinstall := diag.Host.State == StateDamaged && !diag.Host.RecordRecovered
-	if diag.Host.State == StateDamaged && diag.Host.RecordRecovered {
+	needsK3sReinstall := false
+	if diag.Host.State == StateDamaged {
+		// Synthetic/older diagnoses may not carry problem details; retain
+		// the conservative legacy behavior in that case.
+		needsK3sReinstall = len(diag.Host.Problems) == 0
 		for _, problem := range diag.Host.Problems {
-			if !strings.Contains(problem, RecordBackupPath) {
-				needsK3sReinstall = true
-				break
+			if strings.Contains(problem, RecordBackupPath) ||
+				strings.Contains(problem, "reconciled installation is missing") ||
+				strings.Contains(problem, "reconciled server is missing") {
+				continue
 			}
+			needsK3sReinstall = true
+			break
 		}
 	}
 	if needsK3sReinstall {
