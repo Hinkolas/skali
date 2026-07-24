@@ -355,10 +355,10 @@ func (s *Session) settle(title, value string, secret bool) {
 	accent, answer := settledStyles(s.noColor)
 	fmt.Fprintf(s.out, "%s  %s\n", accent.Render("◆"), title)
 	if secret {
-		fmt.Fprintf(s.out, "%s  %s\n", accent.Render("│"), answer.Render("entered"))
+		fmt.Fprintf(s.out, "%s  %s\n", accent.Render("└"), answer.Render("entered"))
 		return
 	}
-	fmt.Fprintf(s.out, "%s  %s\n", accent.Render("│"), answer.Render(value))
+	fmt.Fprintf(s.out, "%s  %s\n", accent.Render("└"), answer.Render(value))
 }
 
 func promptTitle(title, hint string, noColor bool) string {

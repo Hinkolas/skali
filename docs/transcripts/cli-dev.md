@@ -111,7 +111,7 @@ This destroys the complete local installation:
 Nothing outside this machine is affected.
 
 ◆ Destroy the local installation?
-│ Yes
+└ Yes
   ok    Delete cluster skali-dev and volumes
   ok    Remove local registry storage
   ok    Remove local installation record

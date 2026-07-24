@@ -307,14 +307,14 @@ func TestTextInputPlaceholderKeepsDefaultOutOfEditingBuffer(t *testing.T) {
 	require.Empty(t, textInputPlaceholder(TextOptions{}))
 }
 
-func TestSettledPromptUsesContinuousMutedFlow(t *testing.T) {
+func TestSettledPromptClosesMutedFlow(t *testing.T) {
 	var out strings.Builder
 	session := NewPlain(strings.NewReader(""), &out)
 	session.interactive = true
 
 	session.settle("How should this host join Skali?", "Create a new cluster", false)
 	require.Equal(t,
-		"◆  How should this host join Skali?\n│  Create a new cluster\n",
+		"◆  How should this host join Skali?\n└  Create a new cluster\n",
 		out.String())
 
 	_, answer := settledStyles(false)

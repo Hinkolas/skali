@@ -21,8 +21,7 @@ duration cosmetics, and identifier formats. A behavioral deviation from these
 transcripts is a design change and belongs in REWORK_V2 first.
 
 Interactive examples use the settled prompt shape: `◆` introduces a question,
-and a straight `│` keeps its muted answer in the connected transcript. Secrets
-settle as `entered`.
+and `└` closes the prompt with its muted answer. Secrets settle as `entered`.
 While a prompt is active, `│` connects its rows and a muted hint names the
 keys: arrows navigate and edit, Space toggles a multi-select, and Enter
 submits. Confirmations use the compact inline `○ Yes / ● No` shape and also
