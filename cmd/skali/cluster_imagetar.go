@@ -65,7 +65,11 @@ func importImageTar(ctx context.Context, runner host.Runner, data []byte, image 
 		return fmt.Errorf("k3s ctr images import failed with exit code %d: %s",
 			result.ExitCode, strings.TrimSpace(result.Stderr))
 	}
-	return runner.Remove(ctx, remote)
+	if err := runner.Remove(ctx, remote); err != nil {
+		return err
+	}
+	progress.Done("")
+	return nil
 }
 
 // imageTarManifestEntry is the slice of a docker-save manifest.json this

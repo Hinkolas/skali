@@ -339,7 +339,8 @@ func stageReconciledLayout(ctx context.Context, record *installer.Record,
 // together with platform enablement. The coordinator joins those hosts
 // first, then intentionally waits for the CLI to collect the one-time
 // admin credentials.
-func prepareReconciledInit(ctx context.Context, record *installer.Record) (*reconciledInitOperation, error) {
+func prepareReconciledInit(ctx context.Context, record *installer.Record,
+	progress *taskProgress) (*reconciledInitOperation, error) {
 	if record == nil || !record.Reconciled() {
 		return nil, nil
 	}
@@ -372,7 +373,7 @@ func prepareReconciledInit(ctx context.Context, record *installer.Record) (*reco
 				return nil, err
 			}
 			operation = updated.Operations[updated.CurrentOperation]
-			if err := waitForInitializationGate(ctx, store, operation.ID); err != nil {
+			if err := waitForInitializationGate(ctx, store, operation.ID, progress); err != nil {
 				return nil, err
 			}
 			return &reconciledInitOperation{
@@ -430,7 +431,7 @@ func prepareReconciledInit(ctx context.Context, record *installer.Record) (*reco
 	fmt.Fprintf(os.Stdout, "initialization operation %s accepted; target revision %s\n",
 		operation.ID, operation.TargetRevision)
 	_ = state
-	if err := waitForInitializationGate(ctx, store, operation.ID); err != nil {
+	if err := waitForInitializationGate(ctx, store, operation.ID, progress); err != nil {
 		return nil, err
 	}
 	return &reconciledInitOperation{
@@ -464,9 +465,11 @@ func registryNodeName(revision clusterstate.Revision) (string, error) {
 }
 
 func waitForInitializationGate(ctx context.Context, store *clusterstate.Store,
-	operationID string) error {
+	operationID string, progress *taskProgress) error {
+	progress.Start("Wait for target topology")
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	phase := ""
 	for {
 		state, err := store.Load(ctx)
 		if err != nil {
@@ -476,11 +479,18 @@ func waitForInitializationGate(ctx context.Context, store *clusterstate.Store,
 		if !ok {
 			return errors.New("initialization operation disappeared")
 		}
+		if operation.Phase != phase {
+			phase = operation.Phase
+			progress.Note(fmt.Sprintf("cluster operation %s: %s",
+				shortRevision(operation.ID), phase))
+		}
 		switch operation.Phase {
 		case clusterstate.OperationInitializing:
+			progress.Done("topology ready")
 			fmt.Fprintln(os.Stdout, "target topology is ready; initializing the Skali platform")
 			return nil
 		case clusterstate.OperationComplete:
+			progress.Done("already converged")
 			return nil
 		case clusterstate.OperationFailed:
 			return fmt.Errorf("cluster operation failed before initialization: %s",

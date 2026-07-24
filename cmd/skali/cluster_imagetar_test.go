@@ -125,6 +125,21 @@ func TestStageSkalidImage(t *testing.T) {
 	}, fake.Writes)
 }
 
+func TestImportImageSettlesProgress(t *testing.T) {
+	data := imageTarFixture(t, `[{"Config":"`+imageTarHex+`.json","RepoTags":["skalid:dev"]}]`)
+	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
+		"k3s": func(host.Command) (host.Result, error) {
+			return host.Result{}, nil
+		},
+	}}
+	var out bytes.Buffer
+	progress := newTaskProgress(clirender.NewTasks(&out))
+
+	require.NoError(t, importImageTar(context.Background(), fake, data, "skalid:dev", progress))
+	require.Nil(t, progress.current)
+	require.Contains(t, out.String(), "Import skalid image skalid:dev")
+}
+
 func TestStageSkalidImageImportFailure(t *testing.T) {
 	tarPath := t.TempDir() + "/skalid-dev.tar"
 	data := imageTarFixture(t, `[{"Config":"x.json","RepoTags":["skalid:dev"]}]`)

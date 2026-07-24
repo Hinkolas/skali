@@ -129,7 +129,7 @@ func newClusterInitCmd() *cobra.Command {
 				progress.Abort()
 				return err
 			}
-			prepared, err := prepareReconciledInit(ctx, detected.Record)
+			prepared, err := prepareReconciledInit(ctx, detected.Record, progress)
 			if err != nil {
 				progress.Abort()
 				return err

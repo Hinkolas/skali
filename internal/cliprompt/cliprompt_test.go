@@ -278,7 +278,7 @@ func TestThemeUsesSingleChoiceStates(t *testing.T) {
 
 	require.False(t, styles.Focused.Base.GetBorderLeft())
 	require.Zero(t, styles.Focused.Base.GetPaddingLeft())
-	require.Empty(t, styles.Focused.SelectSelector.String())
+	require.Equal(t, " ", styles.Focused.SelectSelector.String())
 	require.Equal(t,
 		"◆ Question\n│ ○ First \n│ ○ Second",
 		styles.Focused.Base.Render("◆ Question\n○ First\n○ Second"))

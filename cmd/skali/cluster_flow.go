@@ -317,7 +317,7 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 		progress.Abort()
 		return err
 	}
-	prepared, err := prepareReconciledInit(ctx, record)
+	prepared, err := prepareReconciledInit(ctx, record, progress)
 	if err != nil {
 		progress.Abort()
 		return err

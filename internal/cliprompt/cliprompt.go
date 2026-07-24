@@ -435,7 +435,7 @@ func skaliTheme(noColor bool) huh.Theme {
 		theme.Focused.Description = palette.description
 		theme.Focused.ErrorIndicator = palette.danger.SetString("✗ ")
 		theme.Focused.ErrorMessage = palette.danger
-		theme.Focused.SelectSelector = lipgloss.NewStyle()
+		theme.Focused.SelectSelector = lipgloss.NewStyle().SetString(" ")
 		theme.Focused.Option = lipgloss.NewStyle()
 		theme.Focused.MultiSelectSelector = palette.accent.SetString("› ")
 		theme.Focused.SelectedPrefix = palette.success.SetString("■ ")
