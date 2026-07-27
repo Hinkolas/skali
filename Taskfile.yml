@@ -126,11 +126,6 @@ tasks:
     cmds:
       - TEST_SKALI_CLUSTER_DARWIN=1 go test -timeout 40m -count=1 -run 'TestClusterDarwin' ./cmd/skali/...
 
-  test:cluster:existing:
-    desc: Run the existing-cluster end-to-end suite against a throwaway k3d cluster (needs docker and k3d)
-    cmds:
-      - TEST_SKALI_CLUSTER_EXISTING=1 go test -timeout 20m -count=1 -run 'TestClusterExisting' ./cmd/skali/...
-
   # --- Test infrastructure ---
 
   k3d:up:

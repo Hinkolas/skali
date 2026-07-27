@@ -253,23 +253,6 @@ func Diagnose(ctx context.Context, runner host.Runner, opts DiagnoseOptions) (*D
 	return diagnosis, nil
 }
 
-// DiagnoseCluster runs only the Kubernetes-level checks against a client,
-// for existing-cluster mode, where there is no host to probe. The
-// suggested actions never name host-repair operations.
-func DiagnoseCluster(ctx context.Context, client *kube.Client) *Diagnosis {
-	diagnosis := &Diagnosis{}
-	suggest := func(action string) {
-		for _, existing := range diagnosis.Suggestions {
-			if existing == action {
-				return
-			}
-		}
-		diagnosis.Suggestions = append(diagnosis.Suggestions, action)
-	}
-	diagnoseKubernetes(ctx, client, diagnosis, suggest, true)
-	return diagnosis
-}
-
 // diagnoseKubernetes appends the cluster-level checks: node readiness, the
 // bootstrap database, the registry and skalid deployments, and warn-only
 // volume and certificate checks.

@@ -26,10 +26,6 @@ func newClusterRepairCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := os.Stdout
-			if existingClusterMode() {
-				return errors.New("existing-cluster mode has no host to repair; reconverge the bundle with " +
-					"skali cluster upgrade --mode existing-cluster, and diagnose with skali cluster diagnose")
-			}
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
 			return runRepairFlow(cmd.Context(), out, reader, yes)

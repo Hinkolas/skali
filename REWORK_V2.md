@@ -4,6 +4,10 @@ Status: architecture proposal and implementation plan
 
 Date: 2026-07-19
 
+Amended 2026-07-27: mission and host-ownership doctrine (section 2),
+existing-cluster mode removed (sections 14.1, 16, 18, 19), R4 landing notes
+recorded (section 16).
+
 Recommended starting point: `c4eb838` (post-demolition, before the current Kubernetes rework)
 
 ## 1. Executive decision
@@ -61,6 +65,33 @@ the developer-workflow commands, owns host-level K3s creation, node joining,
 Kubernetes upgrades, diagnosis, repair, and removal.
 
 ## 2. Product vision
+
+### Mission (decided 2026-07-27)
+
+Skali is an open-source, self-hostable alternative to hosted application
+platforms such as Vercel, Render, and Railway, and to self-hosted deployment
+tools such as Coolify. Its user brings machines, not a Kubernetes cluster:
+Skali turns those machines into a platform and deploys applications onto it.
+Kubernetes is the execution substrate because it already provides
+battle-tested multi-server container orchestration, but it is an
+implementation detail of the product, never its user-facing interface. The
+measure of the product is that an operator goes from fresh hosts to a
+deployed application without running kubectl or learning Kubernetes
+concepts.
+
+Two consequences are doctrine:
+
+- Skali is deliberately both a cluster manager and an application platform.
+  Host provisioning, node lifecycle, and Kubernetes upgrades are product
+  surface, not clutter around the product.
+- Skali owns its hosts. The only supported substrate is the exact
+  combination Skali provisions and upgrades: one pinned k3s version per
+  release plus the pinned operator bundle, on native Linux hosts or inside
+  the Lima VM Skali manages on macOS. One tested combination replaces a
+  support matrix, and no feature is designed around hosts Skali does not
+  control.
+
+### Product shape
 
 Skali is an opinionated product control plane over Kubernetes. A developer
 declares a project in product-level terms such as applications, databases,
@@ -1726,19 +1757,18 @@ record and host state, not an arbitrary active kubeconfig. Joining a multi-node
 K3s cluster is initiated independently on each host; the first version does not
 store SSH credentials or require a permanent privileged host agent.
 
-For an existing Kubernetes cluster whose hosts are not administered by Skali,
-the installer runs from an administrator workstation with an explicit
-kubeconfig (a Helm chart of the same system bundle remains a possible later
-convenience). In that mode it owns only the Skali installation and must not
-claim node or Kubernetes-version lifecycle. The installation record is
-cluster-resident (the in-cluster ConfigMap), since a workstation keeps no
-host state; install and initialization collapse into one step; and because
-unmanaged nodes carry no containerd registry mirror, application images are
-pulled through the public registry domain with a pull-only credential
-injected into each project namespace. The operator names the cluster's
-ingress class and (optionally) its storage class, may reuse operators the
-cluster already runs, and declares the database tier explicitly. Reported
-platform state is unchanged from the managed path.
+Existing-cluster mode (removed 2026-07-27): R4 additionally delivered an
+installer mode that installed only the Skali bundle into an externally
+managed Kubernetes cluster from an administrator workstation with an
+explicit kubeconfig. The mode worked, but it contradicted the mission
+(section 2): it made every subsequent feature answer "and what if Skali
+does not control the host", splitting registry access, node capabilities,
+addresses, and upgrades into managed and unmanaged variants, and it traded
+the single tested substrate combination for a support matrix Skali cannot
+control. It is removed from the product; Skali supports exactly the hosts
+it provisions. Git history retains the implementation, and installing onto
+externally managed Kubernetes is a possible later product (section 18),
+not a standing constraint on every design.
 
 ### 14.2 Default installation topology
 
@@ -2171,7 +2201,8 @@ Deliver:
 - Privileged installer core with interactive state detection and an explicit
   non-interactive configuration format.
 - Fresh single-node K3s creation, K3s server/agent join, and Skali installation
-  into an explicitly selected existing Kubernetes cluster.
+  into an explicitly selected existing Kubernetes cluster (existing-cluster
+  installation removed 2026-07-27, section 14.1).
 - Repeat-run status, versioned upgrade, diagnosis, repair, restore entry point,
   and scoped uninstall operations.
 - Root-owned installation identity and strict separation between installer-
@@ -2179,7 +2210,10 @@ Deliver:
 - Production managed-registry installation, scoped authentication, and health
   as reported by the installer. Capacity observation moved to R7 (2026-07-23).
 - Remote `skali plan` and `skali deploy` through the headless API.
-- `--env-file` upload and `--use-remote-env` behavior for remote environments.
+- `--env-file` upload and `--use-remote-env` behavior for remote environments
+  (superseded 2026-07-22: `--use-remote-env` was removed, stored remote values
+  are the default, and an upload happens only with an explicit `--env-file`,
+  section 11.3).
 - Local build-and-push to a remote Skali registry.
 - Unified deployment run tree across local executor steps, artifact
   verification, revision preparation, and rollout.
@@ -2201,7 +2235,7 @@ Exit criteria:
   until an explicit maintenance action is selected.
 - A second host can join as a K3s agent through an explicit enrollment flow.
 - Existing-Kubernetes mode installs Skali without claiming node or Kubernetes-
-  version lifecycle.
+  version lifecycle (retired 2026-07-27 with the mode's removal).
 - Installer diagnostics remain available when `skalid` or Skali Postgres is
   unavailable, and uninstall scopes distinguish Skali, the current node, and
   the whole cluster.
@@ -2212,6 +2246,36 @@ Exit criteria:
 - From a supported macOS host, the installer reaches the same healthy
   single-node state inside a Lima-managed VM without sudo on the Mac, and
   node-scope uninstall removes the VM entirely.
+
+Implementation notes (landed through 2026-07-27):
+
+- The standalone `skali-installer` binary was folded into the CLI as the
+  `skali cluster` group on 2026-07-22; the server-side-apply field manager
+  keeps the literal value `skali-installer` (section 14.5).
+- Landed beyond the original deliverable list: highly available server joins
+  (every server runs etcd; one or three servers), availability-tier
+  reporting and explicit tier upgrades, diagnosis and repair, scoped
+  uninstall, a restore entry point, the `skali remote` group replacing the
+  earlier auth/context commands, the per-checkout deploy-target binding
+  (section 6.1), build platforms following the server-reported node
+  architectures, and explicit network declarations for multi-homed hosts
+  (bind address, tls-san entries, and the coordinator address recorded at
+  install time).
+- Registry access landed as normal `docker login` against the public
+  registry domain with short-lived scoped tokens; a stored push-credential
+  approach was rejected and parked on a branch. The composite join token
+  carries both K3s enrollment and Skali registry trust.
+- The plan's pointer-typed installation-record node section was not
+  adopted; `Record.Node` stays a value type.
+- Existing-cluster mode was implemented per the original deliverable and
+  then removed by the 2026-07-27 decision (section 14.1). The removal is
+  complete: the mode flags, config schema, detection states, bundle
+  External profile, and the skalid-side pull-secret and ingress-class
+  knobs that existed only for unmanaged hosts are all deleted.
+- Live end-to-end verification of the final R4 tracks (tier, diagnose,
+  repair, HA join) is still outstanding; unit tests and vet are green, and
+  the Linux and macOS cluster e2e suites pass for install, join, and
+  upgrade.
 
 ### R5 - Shared database substrate
 
@@ -2370,7 +2434,7 @@ Exit criteria:
 - Idempotent repeat execution and explicit non-interactive configuration.
 - Single-server creation and server/agent enrollment flows.
 - Existing-Kubernetes mode never performs host or Kubernetes-version lifecycle
-  operations.
+  operations (retired 2026-07-27 with the mode's removal).
 - Ordered upgrade planning, interrupted upgrade diagnosis, and scoped repair.
 - Separate confirmation and ownership checks for removing Skali, removing the
   current node, and destroying a complete cluster.
@@ -2426,6 +2490,10 @@ Important but layered after the core proves itself:
   domains: init without a TLS issuer email, no cert-manager or ACME issuer,
   api/ui and registry edges without TLS blocks), deferred from R4 on
   2026-07-23 and rescheduled into a later milestone when prioritized.
+- Installation onto an externally managed Kubernetes cluster (the
+  existing-cluster mode removed on 2026-07-27, section 14.1): it may return
+  as a deliberately scoped product once the owned-host platform is complete,
+  but until then no feature is designed around unmanaged hosts.
 - Templates/marketplace and Compose import.
 - More database engines.
 - Multiple application processes, sidecars, and cron jobs.
@@ -2510,6 +2578,19 @@ The following decisions are part of this plan:
 - Release artifacts live under `skali/<project>/<application>` and imported
   content under `cache/<host>/<path>`; transparent registry mirroring stays
   disabled so all external content enters through verified imports.
+
+Added 2026-07-27:
+
+- Skali is an open-source, self-hostable alternative to hosted application
+  platforms and self-hosted deployment tools; Kubernetes is its execution
+  substrate, never its user-facing interface (section 2).
+- Skali is both the cluster manager and the application platform, and it
+  owns its hosts: the only supported substrate is the pinned k3s and bundle
+  combination the installer provisions, on native Linux or inside the
+  managed Lima VM on macOS.
+- Existing-cluster mode is removed. Features are designed for
+  Skali-managed hosts only, and installing onto externally managed
+  Kubernetes is a possible later product, not a standing design constraint.
 
 ## 20. R0 questions and their resolutions
 

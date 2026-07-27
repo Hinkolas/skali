@@ -26,9 +26,6 @@ func runClusterRoot(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	out := os.Stdout
 
-	if existingClusterMode() {
-		return runExistingRoot(ctx, out)
-	}
 	banner(out)
 
 	present, err := darwinPrelude(ctx, out, vmPolicyStatus, "")

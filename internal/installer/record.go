@@ -53,11 +53,6 @@ type Record struct {
 	// empty until known.
 	Endpoints *Endpoints `yaml:"endpoints,omitempty"`
 	TLS       *TLSConfig `yaml:"tls,omitempty"`
-	// Existing carries the shape of an existing-cluster installation (a
-	// cluster whose hosts skali does not administer); nil for managed
-	// installations. It is a bundle-hash input, so its choices correctly
-	// move the hash.
-	Existing *ExistingClusterRecord `yaml:"existing,omitempty"`
 	// RegistryNode pins the installer-owned local registry volume to the
 	// hostname selected by the first reconciled initialization. Legacy
 	// records omit it and retain capability-only scheduling.
@@ -130,27 +125,6 @@ func (r *Record) EnrolledOnly() bool {
 // k3s.
 func (r *Record) RegistrationMayHaveStarted() bool {
 	return r != nil && (r.Lifecycle == nil || r.Lifecycle.StartAttempted)
-}
-
-// ExistingClusterRecord holds the operator's declared shape for an
-// existing-cluster installation: the fields the bundle needs that a
-// managed installation instead derives from node labels and host files.
-type ExistingClusterRecord struct {
-	IngressClassName string          `yaml:"ingressClassName"`
-	StorageClassName string          `yaml:"storageClassName,omitempty"`
-	DatabaseTier     string          `yaml:"databaseTier"`
-	DatabaseStorage  string          `yaml:"databaseStorage"`
-	RegistryStorage  string          `yaml:"registryStorage"`
-	Capabilities     []string        `yaml:"capabilities"`
-	Operators        OperatorsRecord `yaml:"operators"`
-}
-
-// OperatorsRecord records whether the vendored operators were installed
-// or an existing installation was reused, so a bundle uninstall never
-// deletes an operator namespace skali did not create.
-type OperatorsRecord struct {
-	CNPG        string `yaml:"cnpg"`
-	CertManager string `yaml:"certManager"`
 }
 
 // JoinRecord is the enrollment bookkeeping of an agent node.
@@ -360,19 +334,18 @@ func RemoveRecord(ctx context.Context, runner host.Runner) error {
 // them the stamped hash.
 func (r *Record) CanonicalYAML() (string, error) {
 	type canonicalRecord struct {
-		Version        string                 `yaml:"version"`
-		InstallationID string                 `yaml:"installationId"`
-		Provider       string                 `yaml:"provider"`
-		Cluster        string                 `yaml:"cluster"`
-		Ownership      string                 `yaml:"ownership"`
-		Management     string                 `yaml:"management,omitempty"`
-		Node           NodeRecord             `yaml:"node"`
-		Join           *JoinRecord            `yaml:"join,omitempty"`
-		Endpoints      *Endpoints             `yaml:"endpoints,omitempty"`
-		TLS            *TLSConfig             `yaml:"tls,omitempty"`
-		Existing       *ExistingClusterRecord `yaml:"existing,omitempty"`
-		RegistryNode   string                 `yaml:"registryNode,omitempty"`
-		Versions       Versions               `yaml:"versions"`
+		Version        string      `yaml:"version"`
+		InstallationID string      `yaml:"installationId"`
+		Provider       string      `yaml:"provider"`
+		Cluster        string      `yaml:"cluster"`
+		Ownership      string      `yaml:"ownership"`
+		Management     string      `yaml:"management,omitempty"`
+		Node           NodeRecord  `yaml:"node"`
+		Join           *JoinRecord `yaml:"join,omitempty"`
+		Endpoints      *Endpoints  `yaml:"endpoints,omitempty"`
+		TLS            *TLSConfig  `yaml:"tls,omitempty"`
+		RegistryNode   string      `yaml:"registryNode,omitempty"`
+		Versions       Versions    `yaml:"versions"`
 	}
 	data, err := yaml.Marshal(canonicalRecord{
 		Version:        r.Version,
@@ -385,7 +358,6 @@ func (r *Record) CanonicalYAML() (string, error) {
 		Join:           r.Join,
 		Endpoints:      r.Endpoints,
 		TLS:            r.TLS,
-		Existing:       r.Existing,
 		RegistryNode:   r.RegistryNode,
 		Versions:       r.Versions,
 	})

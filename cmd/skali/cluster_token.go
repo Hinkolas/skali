@@ -25,9 +25,6 @@ func newClusterTokenCmd() *cobra.Command {
 			ctx := cmd.Context()
 			out := os.Stdout
 
-			if existingClusterMode() {
-				return existingModeRefusal("join tokens")
-			}
 			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
 				return err
 			}

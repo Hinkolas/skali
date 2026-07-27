@@ -32,16 +32,11 @@ const (
 	CacheDir = StateDir + "/cache"
 
 	// ProviderK3s marks installations whose Kubernetes lifecycle this
-	// installer owns. ProviderExternal marks existing-cluster
-	// installations, whose hosts skali does not administer.
-	ProviderK3s      = "k3s"
-	ProviderExternal = "external"
+	// installer owns.
+	ProviderK3s = "k3s"
 
 	// OwnershipManaged means the installer owns host-level k3s lifecycle.
-	// OwnershipExistingCluster means the installer owns only the Skali
-	// system bundle in a cluster it does not administer.
-	OwnershipManaged         = "managed"
-	OwnershipExistingCluster = "existing-cluster"
+	OwnershipManaged = "managed"
 
 	// DefaultCluster names the cluster when the operator does not.
 	DefaultCluster = "production"

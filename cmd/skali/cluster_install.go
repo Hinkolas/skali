@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"runtime"
@@ -35,13 +34,6 @@ func newClusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := os.Stdout
-
-			if existingClusterMode() {
-				if seedOnly {
-					return existingModeRefusal("create")
-				}
-				return runExistingInstall(ctx, out, bufio.NewReader(os.Stdin), configPath)
-			}
 
 			if configPath == "" {
 				if !cliprompt.Interactive() {

@@ -35,9 +35,6 @@ func newClusterAddressesCmd() *cobra.Command {
 			out := os.Stdout
 			reader := bufio.NewReader(os.Stdin)
 
-			if existingClusterMode() {
-				return existingModeRefusal("node addresses")
-			}
 			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
 				return err
 			}

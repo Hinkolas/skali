@@ -36,13 +36,6 @@ type Options struct {
 	EnvironmentID    string
 	RevisionChecksum string
 
-	// ImagePullSecretName references the named pull secret from every
-	// rendered pod; empty renders none (managed clusters pull through the
-	// containerd mirror instead).
-	ImagePullSecretName string
-	// IngressClassName names the class of rendered routes; empty renders
-	// traefik, the managed k3s edge.
-	IngressClassName string
 	// ManagedCluster enables capability placement on Skali-labeled nodes.
 	ManagedCluster bool
 }
@@ -166,11 +159,6 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			},
 		},
 	}
-	if options.ImagePullSecretName != "" {
-		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
-			{Name: options.ImagePullSecretName},
-		}
-	}
 	if options.ManagedCluster {
 		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
 			layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
@@ -205,10 +193,8 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		})
 	}
 
-	ingressClass := options.IngressClassName
-	if ingressClass == "" {
-		ingressClass = "traefik"
-	}
+	// Every rendered route uses the managed k3s edge.
+	ingressClass := "traefik"
 	for _, routeKey := range sortedKeys(application.Routes) {
 		route := application.Routes[routeKey]
 		domain, err := compiler.ResolveExpression(route.Domain, options.Variables)

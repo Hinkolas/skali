@@ -19,9 +19,6 @@ func newClusterStatusCmd() *cobra.Command {
 			ctx := cmd.Context()
 			out := os.Stdout
 
-			if existingClusterMode() {
-				return runExistingStatus(ctx, out)
-			}
 			banner(out)
 
 			present, err := darwinPrelude(ctx, out, vmPolicyStatus, "")

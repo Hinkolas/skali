@@ -26,9 +26,6 @@ func newClusterUpgradeCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := os.Stdout
-			if existingClusterMode() {
-				return runExistingUpgrade(cmd.Context(), out)
-			}
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
 			return runUpgradeFlow(cmd.Context(), out, reader, yes)

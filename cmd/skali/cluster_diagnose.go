@@ -19,9 +19,6 @@ func newClusterDiagnoseCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := os.Stdout
-			if existingClusterMode() {
-				return runExistingDiagnose(ctx, out)
-			}
 			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
 				return err
 			}

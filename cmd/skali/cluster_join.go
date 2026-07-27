@@ -27,9 +27,6 @@ func newClusterJoinCmd() *cobra.Command {
 			ctx := cmd.Context()
 			out := os.Stdout
 
-			if existingClusterMode() {
-				return existingModeRefusal("join")
-			}
 			if role != "" && role != layout.RoleAgent && role != layout.RoleServer {
 				return fmt.Errorf("role must be server or agent, got %q", role)
 			}

@@ -183,12 +183,8 @@ func bareKey(dotted string) string {
 type desiredSet struct {
 	namespace *corev1.Namespace
 	secret    *corev1.Secret
-	// pullSecret is rendered only when the kernel is configured for
-	// public-domain pulls (existing clusters); nil otherwise. Secrets are
-	// not observed or prunable, so it needs no prune handling.
-	pullSecret *corev1.Secret
-	services   map[string]serviceObjects
-	refs       []kube.ObjectRef // every desired object, for prune planning
+	services  map[string]serviceObjects
+	refs      []kube.ObjectRef // every desired object, for prune planning
 }
 
 // groupObjects splits the flat rendered object list per service key.

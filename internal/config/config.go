@@ -117,18 +117,9 @@ type API struct {
 	// pull-only tokens. Empty rejects the node user.
 	RegistryNodeSecret string `env:"SKALI_REGISTRY_NODE_SECRET,default="`
 
-	// RegistryPullSecret injects a per-environment dockerconfigjson pull
-	// secret into every project namespace, so pods pull application images
-	// through the public registry domain. Set on existing-cluster
-	// installations, where nodes have no containerd registry mirror.
-	RegistryPullSecret bool `env:"SKALI_REGISTRY_PULL_SECRET,default=false"`
-
-	// IngressClass names the ingress class of rendered routes; empty
-	// renders traefik, the managed k3s edge.
-	IngressClass string `env:"SKALI_INGRESS_CLASS,default="`
-
-	// ManagedCluster enables installer-owned capability placement. Existing
-	// clusters leave it false because their nodes are not labeled by Skali.
+	// ManagedCluster enables installer-owned capability placement. Local
+	// development leaves it false because k3d nodes carry no capability
+	// labels.
 	ManagedCluster bool `env:"SKALI_MANAGED_CLUSTER,default=false"`
 
 	// Capabilities lists what this installation can run, separated by
@@ -170,9 +161,6 @@ func (a *API) Validate() error {
 	}
 	if len(a.Capabilities) == 0 {
 		return fmt.Errorf("SKALI_CAPABILITIES: must name at least one capability")
-	}
-	if a.RegistryPullSecret && (a.RegistryHost == "" || a.RegistryNodeSecret == "") {
-		return fmt.Errorf("SKALI_REGISTRY_PULL_SECRET: requires SKALI_REGISTRY_HOST and SKALI_REGISTRY_NODE_SECRET")
 	}
 	return nil
 }

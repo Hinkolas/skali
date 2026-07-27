@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,11 +24,6 @@ func newClusterInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := os.Stdout
-
-			if existingClusterMode() {
-				return errors.New("existing-cluster mode installs and initializes in one step; " +
-					"run skali cluster install --mode existing-cluster")
-			}
 
 			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
 				return err

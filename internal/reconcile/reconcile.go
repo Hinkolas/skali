@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -92,14 +91,10 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 
-	// Environment-scoping objects first: namespace, then the values Secret
-	// and (on existing clusters) the registry pull secret.
+	// Environment-scoping objects first: namespace, then the values Secret.
 	envOps := []Op{
 		{Kind: OpApply, Object: desired.namespace},
 		{Kind: OpApply, Object: desired.secret},
-	}
-	if desired.pullSecret != nil {
-		envOps = append(envOps, Op{Kind: OpApply, Object: desired.pullSecret})
 	}
 	envChanged, err := k.executeOps(ctx, envOps)
 	if err != nil {
@@ -320,12 +315,6 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	namespace := rendering.RenderNamespace(rev.Project, rev.Environment, environmentID.String())
 	secret := rendering.RenderEnvironmentSecret(rev.Project, rev.Environment,
 		environmentID.String(), rev.Checksum, data)
-	var pullSecret *corev1.Secret
-	if k.cfg.PullSecret != nil {
-		pullSecret = rendering.RenderPullSecret(rev.Project, rev.Environment,
-			environmentID.String(), rev.Checksum,
-			k.cfg.PullSecret.Host, k.cfg.PullSecret.Username, k.cfg.PullSecret.Password)
-	}
 
 	buildImages := map[string]string{}
 	for key, application := range rev.Definition.Applications {
@@ -349,11 +338,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		BuildImages:      buildImages,
 		EnvironmentID:    environmentID.String(),
 		RevisionChecksum: rev.Checksum,
-		IngressClassName: k.cfg.IngressClassName,
 		ManagedCluster:   k.cfg.ManagedCluster,
-	}
-	if pullSecret != nil {
-		renderOptions.ImagePullSecretName = pullSecret.Name
 	}
 	objects, err := rendering.Render(
 		&compiler.Result{Hash: rev.DefinitionHash, Definition: rev.Definition},
@@ -369,12 +354,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		kube.ObjectRef{GVK: namespace.GroupVersionKind(), Name: namespace.Name},
 		kube.ObjectRef{GVK: secret.GroupVersionKind(), Namespace: secret.Namespace, Name: secret.Name},
 	)
-	if pullSecret != nil {
-		refsList = append(refsList, kube.ObjectRef{
-			GVK: pullSecret.GroupVersionKind(), Namespace: pullSecret.Namespace, Name: pullSecret.Name,
-		})
-	}
-	return &desiredSet{namespace: namespace, secret: secret, pullSecret: pullSecret,
+	return &desiredSet{namespace: namespace, secret: secret,
 		services: services, refs: refsList}, nil
 }
 

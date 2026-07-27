@@ -49,33 +49,14 @@ func TestRenderHelloWorldGolden(t *testing.T) {
 	require.Equal(t, string(expected), string(actual))
 }
 
-func TestRenderExistingClusterOptions(t *testing.T) {
+func TestRenderClusterPlacementOptions(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
 	require.NoError(t, err)
 	result, err := compiler.Compile(document)
 	require.NoError(t, err)
 
-	objects, err := Render(result, Options{
-		Namespace: "skali-hello-world",
-		Variables: map[string]string{"APP_DOMAIN": "hello.example.com"},
-		BuildImages: map[string]string{
-			"web": "registry.example.com/skali/hello-world/web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
-		},
-		ImagePullSecretName: PullSecretName,
-		IngressClassName:    "nginx",
-	})
-	require.NoError(t, err)
-
-	deployment := objects[0].(*appsv1.Deployment)
-	require.Equal(t, []corev1.LocalObjectReference{{Name: PullSecretName}},
-		deployment.Spec.Template.Spec.ImagePullSecrets)
-	require.Nil(t, deployment.Spec.Template.Spec.NodeSelector,
-		"existing clusters do not carry installer-owned capability labels")
-	ingress := objects[2].(*networkingv1.Ingress)
-	require.Equal(t, "nginx", *ingress.Spec.IngressClassName)
-
-	// Without the options, no pull secret and the traefik default.
+	// Local dev: no pull secret, no capability placement, traefik routes.
 	managed, err := Render(result, Options{
 		Namespace:   "skali-hello-world",
 		Variables:   map[string]string{"APP_DOMAIN": "hello.localhost"},

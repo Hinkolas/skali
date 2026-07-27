@@ -25,9 +25,6 @@ func newClusterUninstallCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := os.Stdout
-			if existingClusterMode() {
-				return runExistingUninstall(ctx, out, bufio.NewReader(os.Stdin), scope, confirmName)
-			}
 			if scope == "" && !cliprompt.Interactive() {
 				return fmt.Errorf("non-interactive run requires --scope bundle|node and --confirm <cluster>")
 			}

@@ -714,80 +714,11 @@ The command is the entry point only: it states the recovery contract and
 refuses. Record import and database restore land with the backup/restore
 milestones.
 
-## 8. Existing Kubernetes cluster
+## 8. Existing Kubernetes cluster (removed)
 
-For a cluster whose hosts skali does not administer, the installer runs
-from any workstation (macOS included, no VM, no root) with an explicit
-kubeconfig. It owns only the Skali system bundle: install and initialize
-collapse into one step, and node, k3s, and Kubernetes-version lifecycle
-stay with the cluster operator.
-
-```yaml
-# existing.yaml
-endpoints:
-  api: skali.example.com
-  registry: registry.example.com
-tls:
-  issuerEmail: ops@example.com
-admin:
-  email: nicholas@example.com
-  passwordFile: /root/skali-admin-password
-skalid:
-  image: ghcr.io/hinkolas/skalid:v2.0.0
-ingress:
-  className: nginx           # required; k3s's traefik cannot be assumed
-storage:
-  className: fast-ssd        # optional; empty uses the cluster default
-database:
-  tier: single               # explicit here (no node labels to count)
-operators:
-  cnpg: install              # or use-existing to reuse the cluster's operator
-  certManager: install
-```
-
-```console
-$ skali cluster install --mode existing-cluster \
-    --kubeconfig ~/.kube/config --config existing.yaml
-mode: existing cluster (unmanaged hosts)
-  This mode installs and maintains only the Skali system bundle. Node
-  lifecycle, k3s, and Kubernetes upgrades remain yours.
-  ok  Verify cluster version and storage prerequisites
-  ok  Apply blessed operators
-  ...
-  ok  Wait for skalid ready
-  ok  Create admin account
-
-Skali is ready:
-  https://skali.example.com        api/ui
-  https://registry.example.com     managed registry
-
-Application images pull through the registry domain; skalid injects a
-pull secret into each project namespace. The registry domain must be
-publicly resolvable and issuable for pulls to succeed.
-```
-
-Image pulls are the one thing an unmanaged cluster cannot do the managed
-way: its nodes have no containerd mirror for `registry.skali.internal`.
-So artifact references and pulls both travel the public registry domain,
-and `skalid` injects a pull-only credential into every project namespace.
-
-`operators.cnpg: install` refuses when the cluster already runs CNPG (its
-CRD is present); set `use-existing` to reuse it, and the converge skips
-the vendored operator, relying on the bundle's own health proofs instead.
-A default StorageClass is required unless `storage.className` names one,
-and the named IngressClass must exist.
-
-The record lives in the cluster (the `skali-installation` ConfigMap), not
-on the workstation, so repeat installs, status, upgrade, and uninstall
-all read it back. `status`, `upgrade` (reconverge from the record), and
-`diagnose` work through the kubeconfig; `init`, `join`, `token`, node-scope
-uninstall, `tier`, and host `repair` are refused, each naming what applies
-instead. `--mode existing-cluster` requires `--kubeconfig` and refuses
-`--vm` and `--image-tar`; the ambient kubeconfig is never consulted.
-
-Caveat: `skalid` holds cluster-wide RBAC over core workload kinds, so
-installing into a cluster shared with unrelated tenants is not yet
-recommended. Scoping that RBAC is a later slice.
+This mode was removed on 2026-07-27 with the owns-its-hosts decision
+(REWORK_V2.md, section 14.1): Skali installs only onto hosts it
+provisions. The transcript is retained in git history.
 
 ## 9. Scoped uninstall
 
@@ -828,9 +759,7 @@ confirmation.
 Selecting the Skali bundle requires typing the cluster name and lists
 what is destroyed: every project namespace, database, bucket, and the
 registry contents. Destroying a whole cluster is per-host by design; there is
-no single command that reaches into other machines. In existing-cluster mode
-the bundle scope removes only the operator namespaces skali installed: an
-operator marked `use-existing` at install stays untouched.
+no single command that reaches into other machines.
 
 ## 10. macOS host (Lima VM)
 

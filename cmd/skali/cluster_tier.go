@@ -24,10 +24,6 @@ func newClusterTierCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := os.Stdout
-			if existingClusterMode() {
-				return errors.New("existing-cluster mode sets the database tier in its config; " +
-					"change it with skali cluster install --mode existing-cluster --config")
-			}
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
 			return runTierFlow(cmd.Context(), out, reader, yes)
