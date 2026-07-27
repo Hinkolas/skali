@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -8,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
@@ -46,9 +50,24 @@ func newClusterTokenCmd() *cobra.Command {
 					detected.State)
 			}
 
+			// Flags stay authoritative: prompts fire only interactively
+			// and only for what the operator did not already decide.
+			if !cmd.Flags().Changed("role") && cliprompt.Interactive() {
+				role, err = promptTokenRole(ctx, out, detected.Record.Reconciled())
+				if err != nil {
+					return err
+				}
+			}
+
 			if detected.Record.Reconciled() {
 				if server != "" {
 					return fmt.Errorf("--server is not stored in reconciled tokens; supply the coordinator to cluster join")
+				}
+				if !cmd.Flags().Changed("capabilities") && cliprompt.Interactive() {
+					allowedCapabilities, err = promptInvitationCapabilities(ctx, out)
+					if err != nil {
+						return err
+					}
 				}
 				client, err := installer.KubeClient(ctx, runner())
 				if err != nil {
@@ -127,13 +146,76 @@ func newClusterTokenCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&role, "role", layout.RoleAgent, "role the token enrolls: agent or server")
+	cmd.Flags().StringVar(&role, "role", layout.RoleAgent, "role the token enrolls: agent or server (interactive runs ask)")
 	cmd.Flags().StringVar(&server, "server", "", "legacy-only advertised HTTPS k3s endpoint (v2 tokens never contain an address)")
 	cmd.Flags().StringSliceVar(&allowedCapabilities, "capabilities", nil,
 		"optional capabilities this invitation allows (default: all)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "invitation lifetime for reconciled clusters")
 	cmd.AddCommand(newClusterTokenListCmd(), newClusterTokenRevokeCmd())
 	return cmd
+}
+
+// promptTokenRole asks which role the token should enroll and explains the
+// asymmetry: agents add workload capacity with disposable credentials,
+// servers join the control plane and its etcd quorum. What the choice
+// hands out differs by record schema, so the wording does too: reconciled
+// clusters mint one-time invitations for both roles, while a legacy server
+// token is the permanent k3s credential itself.
+func promptTokenRole(ctx context.Context, out *os.File, reconciled bool) (string, error) {
+	description := "Agents run workloads; servers join the Kubernetes control plane and " +
+		"its etcd quorum."
+	server := "control plane and etcd member; can administer the cluster"
+	if reconciled {
+		description += " Both invitations are one-time and expiring: the k3s " +
+			"credential travels only over the authenticated enrollment channel."
+	} else {
+		description += " An agent token expires after " + installer.JoinTokenTTL +
+			". A server token is the cluster's permanent k3s credential: it never " +
+			"expires and grants full administrator access, so delete the token " +
+			"file once the join completes."
+		server = "control plane and etcd member; permanent full-access credential"
+	}
+	return promptSession(out, bufio.NewReader(os.Stdin)).Select(ctx, cliprompt.SelectOptions{
+		Title:       "Which role should the join enroll?",
+		Description: description,
+		Options: []cliprompt.Option{
+			{Label: "Agent", Description: "runs workloads only; disposable expiring credential",
+				Value: layout.RoleAgent},
+			{Label: "Server", Description: server, Value: layout.RoleServer},
+		},
+		DefaultValue: layout.RoleAgent,
+	})
+}
+
+// promptInvitationCapabilities asks what the joining node may run.
+// Selecting the full set returns nil, the unrestricted default, so an
+// invitation minted before a capability exists never restricts by
+// accident.
+func promptInvitationCapabilities(ctx context.Context, out *os.File) ([]string, error) {
+	options := make([]cliprompt.Option, 0, len(layout.Capabilities))
+	for _, capability := range layout.Capabilities {
+		options = append(options, cliprompt.Option{Label: capability, Value: capability})
+	}
+	selected, err := promptSession(out, bufio.NewReader(os.Stdin)).MultiSelect(ctx,
+		cliprompt.MultiSelectOptions{
+			Title:         "What may the joining node run?",
+			Description:   "Enrollment refuses capabilities outside this set.",
+			Options:       options,
+			DefaultValues: append([]string(nil), layout.Capabilities...),
+			Validate: func(values []string) error {
+				if len(values) == 0 {
+					return errors.New("select at least one capability")
+				}
+				return nil
+			},
+		})
+	if err != nil {
+		return nil, err
+	}
+	if len(selected) == len(layout.Capabilities) {
+		return nil, nil
+	}
+	return selected, nil
 }
 
 func newClusterTokenListCmd() *cobra.Command {
