@@ -80,8 +80,10 @@ func runClusterRoot(cmd *cobra.Command) error {
 		if err != nil {
 			return err
 		}
-		printStatus(out, status)
+		// Interactive runs reach the status block through the menu; a
+		// non-interactive run has no menu, so the block is the output.
 		if !cliprompt.Interactive() {
+			printStatus(out, status)
 			return nil
 		}
 		return runMenu(ctx, out, status)
@@ -543,19 +545,27 @@ func healthyOverall(status *installer.Status) bool {
 }
 
 // runMenu is the deliberately dumb maintenance loop: numbered dispatch,
-// re-render, and named refusals for operations of later slices. Tier
-// drift switches the first prompt to the verbose menu naming the pending
-// tier change.
+// re-render, and named refusals for operations of later slices. The status
+// block belongs to the status entry alone, so anything pending arrives
+// here as a one-line description on the first prompt instead.
 func runMenu(ctx context.Context, out *os.File, status *installer.Status) error {
 	reader := bufio.NewReader(os.Stdin)
-	if healthyOverall(status) && status.BundleCurrent && status.K3sCurrent && !status.TierDrift() {
-		fmt.Fprintln(out, "nothing to do")
-	}
 	description := ""
-	if status.TierDrift() {
+	switch {
+	case status.TierDrift():
 		printTierDriftBlock(out, status)
 		description = fmt.Sprintf("Database tier change pending: %s to %s.",
 			status.DeployedTier, status.AvailableTier)
+	case status.Host.State != installer.StateServer:
+		// Agents and candidates read local state alone: they reach no
+		// Kubernetes API and own no bundle, so health and currency are
+		// not theirs to claim.
+	case !healthyOverall(status):
+		description = "This installation is not healthy; show status for details."
+	case !status.K3sCurrent || !status.BundleCurrent:
+		description = "An upgrade is pending; show status for details."
+	default:
+		fmt.Fprintln(out, "nothing to do")
 	}
 	for {
 		answer, err := promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{

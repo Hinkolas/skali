@@ -337,11 +337,10 @@ func runExistingRoot(ctx context.Context, out *os.File) error {
 		return nil
 	}
 
-	if err := runExistingStatus(ctx, out); err != nil {
-		return err
-	}
+	// Interactive runs reach the status block through the menu; a
+	// non-interactive run has no menu, so the block is the output.
 	if !cliprompt.Interactive() {
-		return nil
+		return runExistingStatus(ctx, out)
 	}
 	reader := bufio.NewReader(os.Stdin)
 	for {
