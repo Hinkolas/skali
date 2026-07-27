@@ -52,7 +52,7 @@ type EnrollmentRecordOptions struct {
 	NodeName       string
 	Role           string
 	Capabilities   []string
-	NodeIP         string
+	Network        NodeNetwork
 	Endpoint       string
 	CAPin          string
 	AgentVersion   string
@@ -99,11 +99,8 @@ func PrepareEnrollmentRecord(ctx context.Context, runner host.Runner, opts Enrol
 		Version: RecordVersionReconciled, InstallationID: opts.InstallationID,
 		Provider: ProviderK3s, Cluster: opts.Cluster, Ownership: OwnershipManaged,
 		Management: ManagementReconciled,
-		Node: NodeRecord{
-			ID: opts.NodeID, Name: opts.NodeName, Role: opts.Role,
-			Capabilities: append([]string(nil), opts.Capabilities...),
-		},
-		Join: &JoinRecord{Server: opts.Endpoint},
+		Node:       newEnrollmentNodeRecord(opts),
+		Join:       &JoinRecord{Server: opts.Endpoint},
 		Coordinator: &CoordinatorRecord{
 			Endpoints: []string{opts.Endpoint}, CAPin: opts.CAPin,
 			AgentVersion: opts.AgentVersion,
@@ -119,6 +116,18 @@ func PrepareEnrollmentRecord(ctx context.Context, runner host.Runner, opts Enrol
 		return nil, err
 	}
 	return record, nil
+}
+
+// newEnrollmentNodeRecord carries the operator's address declaration into
+// the enrollment record, where the coordinator-driven install reads it
+// back: the typed action only knows the cluster address.
+func newEnrollmentNodeRecord(opts EnrollmentRecordOptions) NodeRecord {
+	node := NodeRecord{
+		ID: opts.NodeID, Name: opts.NodeName, Role: opts.Role,
+		Capabilities: append([]string(nil), opts.Capabilities...),
+	}
+	node.SetNetwork(opts.Network)
+	return node
 }
 
 func StageHostd(ctx context.Context, runner host.Runner, binary []byte, coordinator bool) error {

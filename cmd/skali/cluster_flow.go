@@ -74,11 +74,16 @@ func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly boo
 	if err != nil {
 		return err
 	}
+	network, err := promptNodeNetwork(ctx, out, reader)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(out)
 
 	opts := installer.InstallOptions{
 		Cluster:      cluster,
 		Capabilities: capabilities,
+		Network:      network,
 		Management:   installer.ManagementReconciled,
 	}
 	tasks := clirender.NewTasks(out)
@@ -160,9 +165,13 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 		if promptErr != nil {
 			return promptErr
 		}
+		network, promptErr := promptNodeNetwork(ctx, out, reader)
+		if promptErr != nil {
+			return promptErr
+		}
 		fmt.Fprintln(out)
 		record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
-			Server: server, Token: token, Capabilities: capabilities,
+			Server: server, Token: token, Capabilities: capabilities, Network: network,
 		})
 		if enrollErr != nil {
 			return enrollErr
@@ -216,6 +225,10 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 	if err != nil {
 		return err
 	}
+	network, err := promptNodeNetwork(ctx, out, reader)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(out)
 
 	tasks := clirender.NewTasks(out)
@@ -224,6 +237,7 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 		Cluster:      cluster,
 		Role:         role,
 		Capabilities: capabilities,
+		Network:      network,
 		Join:         &installer.JoinOptions{Server: server, Token: token},
 		Progress:     progress,
 	}

@@ -24,7 +24,7 @@ $ sudo skali cluster create --config node.yaml
 
 $ sudo skali cluster token --role server
 one-time server invitation for cluster "production" (expires 2026-07-25T10:00:00Z):
-  sudo skali cluster join <coordinator> --token-file <file> --capabilities <list>
+  sudo skali cluster join https://10.1.0.3:6444 --token-file <file> --capabilities <list>
 
 enrollment token (write it to <file>, mode 0600):
   skali.eyJ2ZXJzaW9uIjoxLCJpbnZpdGF0aW9uIjoiLi4uIiwiY3JlZGVudGlhbCI6Ii4uLiIsImNhUGluIjoic2hhMjU2Oi4uLiJ9
@@ -42,10 +42,59 @@ are verified before the host is modified.
 ```console
 $ sudo skali cluster join 10.1.0.3 \
     --token-file /root/invitation \
-    --capabilities database,application
+    --capabilities database,application \
+    --node-ip 10.1.0.4
 node db-2 enrolled in cluster "production" as server; pending cluster apply
 No k3s files or services were installed.
 ```
+
+## Node addresses
+
+Every node declares which of its addresses does what. The declaration
+drives four things that must agree: the k3s `node-ip`, the k3s
+`node-external-ip` and certificate SANs, the addresses the enrollment
+coordinator binds, and the endpoint other nodes are told to join through.
+
+A single-homed host settles this silently. A cloud server with a private
+network and a public interface is asked, because there the default route is
+the public one and taking it implicitly would put cluster traffic,
+enrollment, and the API certificate on the internet-facing address:
+
+```console
+◆ Which address do other cluster nodes reach this node through?
+  Node traffic, enrollment, and the api certificate follow this choice.
+  › 10.0.1.2    enp7s0, private network
+    203.0.113.7 eth0, public, default route
+
+◆ Which addresses are reachable from the internet?
+  They become this node's external address and enter the api certificate.
+  ✓ 203.0.113.7 eth0, public, default route
+```
+
+The same declaration is available non-interactively, in `node.yaml`:
+
+```yaml
+network:
+  clusterIP: 10.0.1.2
+  publicIPs: [203.0.113.7]
+  extraSANs: [cluster.example.com]
+  coordinatorBind: [cluster, public]
+```
+
+`coordinatorBind` defaults to `cluster`, so enrollment stays on the private
+network; adding `public` also serves it on the public addresses, for nodes
+that are not on the private network. Public addresses need not be assigned
+to the host: a floating or NAT-mapped address is declared here, enters the
+certificate, and is never bound. `nodeIP` remains as a deprecated alias for
+`network.clusterIP`.
+
+`diagnose` reports the three ways this can be wrong: a declared address
+that is not on the host, an API certificate that does not cover an address
+the node is reached at, and an advertised coordinator endpoint nothing is
+listening on. `repair` widens the certificate names on a running server and
+rebinds the coordinator. Moving the cluster address of a node that already
+runs k3s is deliberately not a repair: an etcd member's advertised address
+changes only by reinstalling that node.
 
 Several enrollments and edits may be staged before one convergence:
 

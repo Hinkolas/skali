@@ -158,13 +158,45 @@ type JoinRecord struct {
 	Server string `yaml:"server"`
 }
 
-// NodeRecord identifies this host within the installation.
+// NodeRecord identifies this host within the installation. IP is the
+// cluster address: the one other nodes reach this node through, and the
+// one the coordinator endpoint and the k3s node-ip are built from. The
+// remaining address fields are omitted on records written before the node
+// network was declarable, which keeps the canonical record byte-identical
+// for those installations.
 type NodeRecord struct {
-	ID           string   `yaml:"id,omitempty"`
-	Name         string   `yaml:"name"`
-	IP           string   `yaml:"ip,omitempty"`
-	Role         string   `yaml:"role"`
-	Capabilities []string `yaml:"capabilities"`
+	ID        string   `yaml:"id,omitempty"`
+	Name      string   `yaml:"name"`
+	IP        string   `yaml:"ip,omitempty"`
+	PublicIPs []string `yaml:"publicIPs,omitempty"`
+	ExtraSANs []string `yaml:"extraSANs,omitempty"`
+	// CoordinatorBind lists the scopes the enrollment coordinator listens
+	// on; empty means the cluster address only.
+	CoordinatorBind []string `yaml:"coordinatorBind,omitempty"`
+	Role            string   `yaml:"role"`
+	Capabilities    []string `yaml:"capabilities"`
+}
+
+// Network reassembles the address declaration recorded for this node.
+func (n NodeRecord) Network() NodeNetwork {
+	return NodeNetwork{
+		ClusterIP:       n.IP,
+		PublicIPs:       append([]string(nil), n.PublicIPs...),
+		ExtraSANs:       append([]string(nil), n.ExtraSANs...),
+		CoordinatorBind: append([]string(nil), n.CoordinatorBind...),
+	}
+}
+
+// SetNetwork records an address declaration, leaving fields the caller did
+// not resolve untouched.
+func (n *NodeRecord) SetNetwork(network NodeNetwork) {
+	network = network.Normalize()
+	if network.ClusterIP != "" {
+		n.IP = network.ClusterIP
+	}
+	n.PublicIPs = network.PublicIPs
+	n.ExtraSANs = network.ExtraSANs
+	n.CoordinatorBind = network.CoordinatorBind
 }
 
 // CoordinatorRecord contains only non-secret enrollment routing and trust

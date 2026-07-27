@@ -33,6 +33,11 @@ func NodeConfigSchema() (*jsonschema.Schema, error) {
 	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: enum(layout.Capabilities...)}
 	capabilities.UniqueItems = true
 	schema.Properties["vm"].Properties["network"].Enum = enum("bridged", "shared", "user-v2")
+	bind := schema.Properties["network"].Properties["coordinatorBind"]
+	bind.Items = &jsonschema.Schema{
+		Type: "string", Enum: enum(NetworkScopeCluster, NetworkScopePublic),
+	}
+	bind.UniqueItems = true
 	return schema, nil
 }
 

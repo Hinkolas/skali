@@ -262,8 +262,12 @@ func (a *Agent) execute(ctx context.Context, action clusterstate.AgentAction) cl
 		_, err = installer.Install(ctx, a.Runner, installer.InstallOptions{
 			Cluster: action.Cluster, Role: action.Role,
 			Capabilities: append([]string(nil), action.Capabilities...),
-			NodeIP:       action.NodeIP, Management: installer.ManagementReconciled,
-			Pending: true,
+			// Only the cluster address travels in the action; the rest of
+			// this host's address declaration is read back from its own
+			// enrollment record inside Install.
+			Network:    installer.NodeNetwork{ClusterIP: action.NodeIP},
+			Management: installer.ManagementReconciled,
+			Pending:    true,
 			Join: &installer.JoinOptions{
 				Server: action.Server, Token: action.K3sToken,
 				PullSecret: action.PullSecret,

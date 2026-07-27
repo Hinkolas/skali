@@ -9,7 +9,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"net"
 	"net/mail"
 	"net/url"
 	"regexp"
@@ -55,7 +54,7 @@ type resolvedInstall struct {
 	Role         string
 	Capabilities []string
 	NodeName     string
-	NodeIP       string
+	Network      NodeNetwork
 	Server       string
 	K3sToken     string
 	PullSecret   string
@@ -67,8 +66,17 @@ func resolveAndPreflightInstall(ctx context.Context, runner host.Runner, detecte
 		Role:         opts.Role,
 		Capabilities: append([]string(nil), opts.Capabilities...),
 		NodeName:     detected.Hostname,
-		NodeIP:       opts.NodeIP,
+		Network:      opts.Network.Normalize(),
 	}
+	// Resolving before any validation keeps the advertised address
+	// explicit: an operator who declared nothing still gets the
+	// default-route address written into the k3s config, the record, and
+	// therefore the certificate SANs and the coordinator endpoint.
+	network, err := ResolveNodeNetwork(ctx, runner, resolved.Network)
+	if err != nil {
+		return resolved, err
+	}
+	resolved.Network = network
 
 	var decoded decodedJoinToken
 	if opts.Join != nil {
@@ -191,28 +199,12 @@ func validateNodeMetadata(ctx context.Context, runner host.Runner, resolved reso
 		return fmt.Errorf("hostname %q is not a valid Kubernetes node name: %s",
 			resolved.NodeName, strings.Join(problems, "; "))
 	}
-	if resolved.NodeIP != "" {
-		if net.ParseIP(resolved.NodeIP) == nil {
-			return fmt.Errorf("node IP %q is not a valid IP address", resolved.NodeIP)
-		}
-		result, err := runner.Run(ctx, host.Command{Name: "ip", Args: []string{"-o", "addr", "show"}})
-		if err != nil {
-			return fmt.Errorf("verify node IP %s: %w", resolved.NodeIP, err)
-		}
-		if result.ExitCode != 0 {
-			return fmt.Errorf("verify node IP %s: ip exited %d: %s",
-				resolved.NodeIP, result.ExitCode, strings.TrimSpace(result.Stderr))
-		}
-		found := false
-		for _, field := range strings.Fields(result.Stdout) {
-			address, _, _ := strings.Cut(field, "/")
-			if address == resolved.NodeIP {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("node IP %s is not assigned to this host", resolved.NodeIP)
+	if err := resolved.Network.Validate(); err != nil {
+		return err
+	}
+	if resolved.Network.ClusterIP != "" {
+		if _, err := ResolveNodeNetwork(ctx, runner, resolved.Network); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -222,10 +214,10 @@ func validateNodeMetadata(ctx context.Context, runner host.Runner, resolved reso
 // probing or mutating k3s. It is used after the authenticated coordinator
 // preflight and before the first persistent enrollment write.
 func ValidateEnrolledHost(ctx context.Context, runner host.Runner, cluster, role,
-	nodeName, nodeIP string, capabilities []string) error {
+	nodeName string, network NodeNetwork, capabilities []string) error {
 	return validateNodeMetadata(ctx, runner, resolvedInstall{
 		Cluster: cluster, Role: role, Capabilities: append([]string(nil), capabilities...),
-		NodeName: nodeName, NodeIP: nodeIP,
+		NodeName: nodeName, Network: network,
 	})
 }
 

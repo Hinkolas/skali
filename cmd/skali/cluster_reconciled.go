@@ -137,7 +137,7 @@ type reconciledEnrollmentOptions struct {
 	Server           string
 	Token            string
 	Capabilities     []string
-	NodeIP           string
+	Network          installer.NodeNetwork
 	RequestedRole    string
 	RequestedCluster string
 }
@@ -150,6 +150,14 @@ func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptio
 	endpoint, err := clusterstate.NormalizeEndpoint(opts.Server)
 	if err != nil {
 		return nil, err
+	}
+	// The coordinator builds this node's future endpoint from the address
+	// reported here, so it is resolved against the host before enrollment
+	// rather than left to a hostname fallback the other nodes cannot
+	// resolve.
+	network, err := installer.ResolveNodeNetwork(ctx, runner(), opts.Network)
+	if err != nil {
+		return nil, fmt.Errorf("%w\nNo changes were made.", err)
 	}
 	detected, err := installer.Detect(ctx, runner())
 	if err != nil {
@@ -188,7 +196,7 @@ func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptio
 	}
 	hostFacts := clusterstate.HostFacts{
 		InstallationID: installationID, NodeID: nodeID, Name: nodeName,
-		NodeIP: opts.NodeIP, Capabilities: append([]string(nil), opts.Capabilities...),
+		NodeIP: network.ClusterIP, Capabilities: append([]string(nil), opts.Capabilities...),
 		AgentVersion: versionpkg.Version,
 	}
 	client := clusterstate.EnrollmentClient{Endpoint: endpoint, Token: opts.Token}
@@ -205,7 +213,7 @@ func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptio
 			preflight.Cluster, opts.RequestedCluster)
 	}
 	if err := installer.ValidateEnrolledHost(ctx, runner(), preflight.Cluster,
-		preflight.Role, nodeName, opts.NodeIP, opts.Capabilities); err != nil {
+		preflight.Role, nodeName, network, opts.Capabilities); err != nil {
 		return nil, fmt.Errorf("%w\nNo changes were made.", err)
 	}
 	if completedRecord != nil {
@@ -238,7 +246,7 @@ func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptio
 	record, err := installer.PrepareEnrollmentRecord(ctx, runner(), installer.EnrollmentRecordOptions{
 		Cluster: preflight.Cluster, NodeID: nodeID, InstallationID: installationID,
 		NodeName: nodeName, Role: preflight.Role,
-		Capabilities: opts.Capabilities, NodeIP: opts.NodeIP,
+		Capabilities: opts.Capabilities, Network: network,
 		Endpoint: endpoint, CAPin: token.CAPin, AgentVersion: versionpkg.Version,
 	})
 	if err != nil {

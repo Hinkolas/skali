@@ -43,10 +43,12 @@ var errPlatformInitializationRequired = errors.New("platform initialization is r
 
 type CoordinatorDaemon struct {
 	Kubeconfig string
-	Listen     string
-	Logger     *slog.Logger
-	Identity   string
-	Runner     host.Runner
+	// Listen overrides the resolved listener set with explicit
+	// "address:port" entries; empty resolves them from this node.
+	Listen   []string
+	Logger   *slog.Logger
+	Identity string
+	Runner   host.Runner
 }
 
 func (d *CoordinatorDaemon) Run(ctx context.Context) error {
@@ -64,7 +66,7 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if d.Listen == "" {
+	if len(d.Listen) == 0 {
 		agentConfig, err := installer.LoadAgentConfig(ctx, d.Runner)
 		if err != nil {
 			return fmt.Errorf("load coordinator node identity: %w", err)
@@ -74,7 +76,7 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("load coordinator node %s: %w", agentConfig.NodeName, err)
 		}
-		d.Listen, err = coordinatorListenAddress(*node)
+		d.Listen, err = d.resolveListenAddresses(ctx, *node)
 		if err != nil {
 			return err
 		}
@@ -99,23 +101,38 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 		return err
 	}
 	server := &http.Server{
-		Addr: d.Listen, Handler: coordinator.Handler(),
+		Addr: d.Listen[0], Handler: coordinator.Handler(),
 		TLSConfig: tlsConfig, ReadHeaderTimeout: 10 * time.Second,
 	}
-	listener, err := net.Listen("tcp", d.Listen)
-	if err != nil {
-		return fmt.Errorf("listen for coordinator enrollment: %w", err)
-	}
-	tlsListener := tls.NewListener(listener, tlsConfig)
-	d.log("coordinator listening", "address", d.Listen)
-	serverErr := make(chan error, 1)
-	go func() {
-		err := server.Serve(tlsListener)
-		if errors.Is(err, http.ErrServerClosed) {
-			err = nil
+	// One listener per address rather than one wildcard listener: k3s owns
+	// loopback 6444 for local kube-apiserver access, and a multi-homed node
+	// must answer enrollment on its private and its public address at once.
+	var listeners []net.Listener
+	var listenErrs []string
+	for _, address := range d.Listen {
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			listenErrs = append(listenErrs, fmt.Sprintf("%s: %v", address, err))
+			d.log("coordinator address is unavailable", "address", address, "error", err)
+			continue
 		}
-		serverErr <- err
-	}()
+		listeners = append(listeners, listener)
+		d.log("coordinator listening", "address", address)
+	}
+	if len(listeners) == 0 {
+		return fmt.Errorf("listen for coordinator enrollment: %s", strings.Join(listenErrs, "; "))
+	}
+	serverErr := make(chan error, len(listeners))
+	for _, listener := range listeners {
+		tlsListener := tls.NewListener(listener, tlsConfig)
+		go func() {
+			err := server.Serve(tlsListener)
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			serverErr <- err
+		}()
+	}
 	go d.controlLoop(ctx, store, clientset)
 
 	select {
@@ -128,16 +145,43 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 	}
 }
 
-// coordinatorListenAddress deliberately binds the node's routable
-// Kubernetes address instead of all interfaces. k3s owns loopback port
-// 6444 for local kube-apiserver access; binding :6444 would collide with it.
-func coordinatorListenAddress(node corev1.Node) (string, error) {
+// resolveListenAddresses deliberately binds explicit addresses instead of
+// the wildcard: k3s owns loopback port 6444 for local kube-apiserver
+// access, so :6444 would collide with it. The set is the node's declared
+// cluster address, its public addresses when the operator asked the
+// coordinator to serve them, and always the address the running k3s
+// advertises, so agents enrolled against the old single address keep
+// working across an upgrade.
+func (d *CoordinatorDaemon) resolveListenAddresses(ctx context.Context,
+	node corev1.Node) ([]string, error) {
+	advertised := ""
 	for _, address := range node.Status.Addresses {
 		if address.Type == corev1.NodeInternalIP && net.ParseIP(address.Address) != nil {
-			return net.JoinHostPort(address.Address, clusterstate.DefaultCoordinatorPort), nil
+			advertised = address.Address
+			break
 		}
 	}
-	return "", fmt.Errorf("coordinator node %s has no valid InternalIP", node.Name)
+	record, err := installer.LoadRecord(ctx, d.Runner)
+	if err != nil {
+		if advertised == "" {
+			return nil, fmt.Errorf("coordinator node %s has no valid InternalIP", node.Name)
+		}
+		record = nil
+	}
+	plan, err := installer.PlanCoordinatorBind(ctx, d.Runner, record, advertised)
+	if err != nil {
+		return nil, err
+	}
+	for _, skipped := range plan.Skipped {
+		d.log("declared coordinator address is not assigned to this host; not binding it",
+			"address", skipped)
+	}
+	addresses := make([]string, 0, len(plan.Addresses))
+	for _, address := range plan.Addresses {
+		addresses = append(addresses,
+			net.JoinHostPort(address, clusterstate.DefaultCoordinatorPort))
+	}
+	return addresses, nil
 }
 
 func (d *CoordinatorDaemon) controlLoop(ctx context.Context, store *clusterstate.Store,

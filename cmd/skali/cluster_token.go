@@ -65,7 +65,25 @@ func newClusterTokenCmd() *cobra.Command {
 				fmt.Fprintf(out, "one-time %s invitation for cluster %q (expires %s):\n",
 					invitation.Role, detected.Record.Cluster,
 					invitation.ExpiresAt.Format(time.RFC3339))
-				fmt.Fprintf(out, "  sudo skali cluster join <coordinator> --token-file <file> --capabilities <list>\n")
+				// Naming the real endpoint matters on a multi-homed node:
+				// the coordinator answers only on the addresses this node
+				// declared, so a guessed one is refused.
+				coordinator := "<coordinator>"
+				var alternates []string
+				if detected.Record.Coordinator != nil {
+					for index, endpoint := range detected.Record.Coordinator.Endpoints {
+						if index == 0 {
+							coordinator = endpoint
+							continue
+						}
+						alternates = append(alternates, endpoint)
+					}
+				}
+				fmt.Fprintf(out, "  sudo skali cluster join %s --token-file <file> --capabilities <list>\n",
+					coordinator)
+				if len(alternates) > 0 {
+					fmt.Fprintf(out, "  other coordinator endpoints: %s\n", strings.Join(alternates, ", "))
+				}
 				fmt.Fprintln(out)
 				fmt.Fprintln(out, "enrollment token (write it to <file>, mode 0600):")
 				fmt.Fprintf(out, "  %s\n", token)

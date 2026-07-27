@@ -2,7 +2,12 @@ package installer
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -213,6 +218,8 @@ func Diagnose(ctx context.Context, runner host.Runner, opts DiagnoseOptions) (*D
 		suggest("skali cluster repair")
 	}
 
+	diagnoseNodeNetwork(ctx, runner, detected, diagnosis, suggest)
+
 	if detected.K3sVersion != "" && detected.K3sVersion != K3sVersion {
 		diagnosis.Checks = append(diagnosis.Checks, Check{
 			Name: "k3s version", Severity: SeverityWarn,
@@ -320,6 +327,193 @@ func diagnoseKubernetes(ctx context.Context, client *kube.Client, diagnosis *Dia
 		"skalid", "skalid", "app.kubernetes.io/name=skalid", databaseFailed)
 	diagnoseVolumes(ctx, client, diagnosis)
 	diagnoseCertificates(ctx, client, diagnosis)
+}
+
+// diagnoseNodeNetwork covers the failure that looks like nothing else: a
+// multi-homed node whose addresses disagree. The advertised address, the
+// certificate that must cover it, and the coordinator socket that must
+// answer on it are three independent facts, and a join fails when any one
+// of them is off.
+func diagnoseNodeNetwork(ctx context.Context, runner host.Runner, detected *Host,
+	diagnosis *Diagnosis, suggest func(string)) {
+	if detected.Record == nil {
+		return
+	}
+	record := detected.Record
+	network := record.Node.Network()
+	local, err := DetectHostAddresses(ctx, runner)
+	if err != nil {
+		return
+	}
+	switch {
+	case network.ClusterIP == "" && len(local) > 1:
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "node addresses", Severity: SeverityWarn,
+			Detail: "no cluster address is declared, so k3s picked the default route on a " +
+				"multi-homed host; assigned addresses are " + describeAddresses(local),
+		})
+	case network.ClusterIP != "" && !slices.ContainsFunc(local, func(address HostAddress) bool {
+		return address.IP == network.ClusterIP
+	}):
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "node addresses", Severity: SeverityFail,
+			Detail: "declared cluster address " + network.ClusterIP +
+				" is not assigned to this host; assigned addresses are " + describeAddresses(local),
+		})
+	default:
+		detail := "cluster address " + orAuto(network.ClusterIP)
+		if len(network.PublicIPs) > 0 {
+			detail += ", public " + strings.Join(network.PublicIPs, ", ")
+		}
+		check := Check{Name: "node addresses", Detail: detail}
+		// Cluster traffic on the public interface while a private network
+		// sits unused is legal, and almost never what the operator wanted.
+		if unused := unusedPrivateAddresses(local, network); len(unused) > 0 {
+			check.Severity = SeverityWarn
+			check.Detail = detail + "; the private network " + strings.Join(unused, ", ") +
+				" carries no cluster traffic"
+		}
+		diagnosis.Checks = append(diagnosis.Checks, check)
+	}
+
+	if record.Node.Role == layout.RoleServer && !record.EnrolledOnly() {
+		diagnoseAPICertificate(ctx, runner, record, network, diagnosis, suggest)
+		diagnoseCoordinatorEndpoints(ctx, runner, record, diagnosis, suggest)
+	}
+}
+
+// diagnoseAPICertificate proves the API server certificate covers every
+// address this node is reachable at. A missing name does not refuse the
+// connection, it fails the TLS handshake at join time, which is the least
+// obvious way for a multi-homed server to be broken.
+func diagnoseAPICertificate(ctx context.Context, runner host.Runner, record *Record,
+	network NodeNetwork, diagnosis *Diagnosis, suggest func(string)) {
+	data, err := runner.ReadFile(ctx, K3sServingCertPath)
+	if err != nil {
+		return
+	}
+	covered, err := certificateNames(data)
+	if err != nil {
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "api certificate", Severity: SeverityWarn,
+			Detail: "unreadable: " + err.Error(),
+		})
+		return
+	}
+	var missing []string
+	for _, name := range network.APIServerSANs() {
+		if !slices.Contains(covered, name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "api certificate", Detail: "covers " + strings.Join(covered, ", "),
+		})
+		return
+	}
+	diagnosis.Checks = append(diagnosis.Checks, Check{
+		Name: "api certificate", Severity: SeverityFail,
+		Detail: "does not cover " + strings.Join(missing, ", ") +
+			"; joins and kubeconfigs through those addresses fail the TLS handshake",
+	})
+	suggest("skali cluster repair")
+}
+
+// diagnoseCoordinatorEndpoints proves the enrollment endpoints this node
+// hands out are actually served here. An advertised address nothing binds
+// is exactly what a joining node sees as a refused connection.
+func diagnoseCoordinatorEndpoints(ctx context.Context, runner host.Runner, record *Record,
+	diagnosis *Diagnosis, suggest func(string)) {
+	if !record.Reconciled() || record.Coordinator == nil || len(record.Coordinator.Endpoints) == 0 {
+		return
+	}
+	listening, err := ListeningAddresses(ctx, runner)
+	if err != nil {
+		return
+	}
+	var unserved []string
+	for _, endpoint := range record.Coordinator.Endpoints {
+		address, port, err := endpointHostPort(endpoint)
+		if err != nil {
+			continue
+		}
+		if !EndpointServed(listening, address, port) {
+			unserved = append(unserved, endpoint)
+		}
+	}
+	if len(unserved) == 0 {
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "coordinator endpoint", Detail: strings.Join(record.Coordinator.Endpoints, ", "),
+		})
+		return
+	}
+	diagnosis.Checks = append(diagnosis.Checks, Check{
+		Name: "coordinator endpoint", Severity: SeverityFail,
+		Detail: "nothing is listening on " + strings.Join(unserved, ", ") +
+			"; a node joining through that address is refused",
+	})
+	suggest("skali cluster repair")
+}
+
+// unusedPrivateAddresses names private addresses this node has but does
+// not advertise, and only when the address it does advertise is public.
+func unusedPrivateAddresses(local []HostAddress, network NodeNetwork) []string {
+	advertised := ""
+	for _, address := range local {
+		if address.IP == network.ClusterIP {
+			advertised = address.IP
+			if address.Private {
+				return nil
+			}
+		}
+	}
+	if advertised == "" {
+		return nil
+	}
+	var unused []string
+	for _, address := range local {
+		if address.Private && address.IP != network.ClusterIP {
+			unused = append(unused, address.IP+" ("+address.Interface+")")
+		}
+	}
+	return unused
+}
+
+func endpointHostPort(endpoint string) (address, port string, err error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", "", err
+	}
+	port = parsed.Port()
+	if port == "" {
+		port = "443"
+	}
+	return parsed.Hostname(), port, nil
+}
+
+// certificateNames lists the IP and DNS names one PEM certificate covers.
+func certificateNames(data []byte) ([]string, error) {
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, errors.New("no certificate found")
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	names := append([]string(nil), certificate.DNSNames...)
+	for _, ip := range certificate.IPAddresses {
+		names = append(names, ip.String())
+	}
+	return names, nil
+}
+
+func orAuto(value string) string {
+	if value == "" {
+		return "(k3s default)"
+	}
+	return value
 }
 
 func probeUnitActive(ctx context.Context, runner host.Runner, unit string) bool {

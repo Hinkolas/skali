@@ -4,10 +4,14 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/installer/host"
@@ -37,6 +41,13 @@ const (
 	// the host-side join proof on nodes that have no kube API access.
 	k3sAgentKubeletKubeconfig = "/var/lib/rancher/k3s/agent/kubelet.kubeconfig"
 
+	// K3sServingCertPath is the API server's serving certificate. k3s
+	// regenerates it from its CA whenever the configured SAN list no longer
+	// matches, so deleting it is the supported way to widen the SANs of a
+	// running server.
+	K3sServingCertPath = "/var/lib/rancher/k3s/server/tls/serving-kube-apiserver.crt"
+	k3sServingKeyPath  = "/var/lib/rancher/k3s/server/tls/serving-kube-apiserver.key"
+
 	// K3sServerTokenPath is the permanent server token k3s generates on
 	// every server. It is the only credential that can join an additional
 	// server (it doubles as the passphrase for the bootstrap data a joining
@@ -65,9 +76,11 @@ type k3sNode struct {
 	// Role is the k3s role; empty means layout.RoleServer.
 	Role         string
 	Capabilities []string
-	// NodeIP pins the advertised address on multi-homed hosts; empty keeps
-	// the k3s default (the default-route interface).
-	NodeIP string
+	// Network declares the node's addresses. ClusterIP pins the advertised
+	// address on multi-homed hosts; empty keeps the k3s default (the
+	// default-route interface). The public addresses and extra names shape
+	// node-external-ip and the API server certificate.
+	Network NodeNetwork
 	// ServerURL points a joining node at an existing server.
 	ServerURL string
 	// Token is the resolved join token plaintext; written to K3sTokenPath,
@@ -98,13 +111,33 @@ func (n k3sNode) role() string {
 // while the managed registry is down. The first server initializes the
 // embedded etcd cluster (cluster-init) so additional servers can join
 // later without a datastore migration; joining nodes reference the server
-// and the token file. embedded-registry is a server-only flag and would be
-// fatal on an agent.
+// and the token file. embedded-registry and tls-san are server-only flags
+// and would be fatal on an agent.
 func k3sConfigYAML(node k3sNode) string {
 	var builder strings.Builder
 	builder.WriteString("node-name: " + node.Name + "\n")
-	if node.NodeIP != "" {
-		builder.WriteString("node-ip: " + node.NodeIP + "\n")
+	network := node.Network.Normalize()
+	if network.ClusterIP != "" {
+		builder.WriteString("node-ip: " + network.ClusterIP + "\n")
+	}
+	// The external address belongs on every role: it is what the node
+	// object, the edge, and outside clients see.
+	if len(network.PublicIPs) > 0 {
+		builder.WriteString("node-external-ip:\n")
+		for _, address := range network.PublicIPs {
+			builder.WriteString("  - " + address + "\n")
+		}
+	}
+	// Without this, the API certificate covers only the address k3s picked
+	// itself, so joining or talking to the server through any other
+	// address of the same host fails the TLS handshake.
+	if node.role() == layout.RoleServer {
+		if sans := network.APIServerSANs(); len(sans) > 0 {
+			builder.WriteString("tls-san:\n")
+			for _, san := range sans {
+				builder.WriteString("  - " + san + "\n")
+			}
+		}
 	}
 	switch {
 	case node.role() == layout.RoleAgent:
@@ -185,6 +218,87 @@ func configureK3s(ctx context.Context, runner host.Runner, node k3sNode) error {
 		}
 	}
 	return nil
+}
+
+// WidenCertificateNames adds this node's declared addresses to a running
+// server's certificate SANs and external address, in place. It edits the
+// existing config rather than re-rendering it, and deliberately leaves
+// node-ip alone: the advertised address of a live etcd member cannot be
+// moved by a repair, only by reinstalling the node. Deleting the serving
+// certificate is the supported way to widen SANs; k3s reissues it from its
+// own CA on the next start.
+func WidenCertificateNames(ctx context.Context, runner host.Runner, record *Record,
+	progress Progress) error {
+	if record == nil || record.Node.Role != layout.RoleServer {
+		return errors.New("certificate names are widened on a server node")
+	}
+	progress.Start("Widen the api certificate names")
+	data, err := runner.ReadFile(ctx, K3sConfigPath)
+	if err != nil {
+		return fmt.Errorf("read k3s config: %w", err)
+	}
+	var config map[string]any
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("parse k3s config: %w", err)
+	}
+	network := record.Node.Network()
+	sans := stringList(config["tls-san"])
+	for _, name := range network.APIServerSANs() {
+		if !slices.Contains(sans, name) {
+			sans = append(sans, name)
+		}
+	}
+	config["tls-san"] = sans
+	if len(network.PublicIPs) > 0 {
+		config["node-external-ip"] = network.PublicIPs
+	}
+	rendered, err := yaml.Marshal(config)
+	if err != nil {
+		return err
+	}
+	if err := runner.ReplaceFile(ctx, K3sConfigPath, K3sConfigPath+".prev",
+		rendered, 0o600); err != nil {
+		return err
+	}
+	for _, path := range []string{K3sServingCertPath, k3sServingKeyPath} {
+		if err := runner.Remove(ctx, path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	progress.Done("")
+	progress.Start("Restart k3s")
+	result, err := runner.Run(ctx, host.Command{
+		Name: "systemctl", Args: []string{"restart", "k3s"},
+	})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("systemctl restart k3s: exit %d: %s", result.ExitCode,
+			strings.TrimSpace(result.Stderr))
+	}
+	progress.Done("")
+	return waitK3sUpgraded(ctx, runner, layout.RoleServer, progress)
+}
+
+// stringList reads a YAML scalar-or-sequence field as a string slice.
+func stringList(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		var values []string
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				values = append(values, text)
+			}
+		}
+		return values
+	default:
+		return nil
+	}
 }
 
 func stageK3sInstaller(ctx context.Context, runner host.Runner) error {

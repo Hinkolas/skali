@@ -27,9 +27,12 @@ type InstallOptions struct {
 	NodeID     string
 	// Pending taints a newly applied reconciled node until the coordinator
 	// verifies the complete membership batch.
-	Pending   bool
-	Join      *JoinOptions
-	NodeIP    string
+	Pending bool
+	Join    *JoinOptions
+	// Network declares this host's addresses. An empty declaration is
+	// completed from the host itself, so the advertised address is always
+	// explicit rather than whatever k3s happened to pick.
+	Network   NodeNetwork
 	Endpoints *Endpoints
 	TLS       *TLSConfig
 	Progress  Progress
@@ -133,7 +136,7 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 		Cluster:      resolved.Cluster,
 		Role:         resolved.Role,
 		Capabilities: resolved.Capabilities,
-		NodeIP:       resolved.NodeIP,
+		Network:      resolved.Network,
 		ServerURL:    resolved.Server,
 		Token:        resolved.K3sToken,
 		PullSecret:   resolved.PullSecret,
@@ -167,7 +170,6 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 			Ownership:      OwnershipManaged,
 			Node: NodeRecord{
 				Name:         resolved.NodeName,
-				IP:           resolved.NodeIP,
 				Role:         resolved.Role,
 				Capabilities: append([]string(nil), resolved.Capabilities...),
 			},
@@ -187,13 +189,12 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 				record.Node.ID = uuid.NewString()
 			}
 		}
+		record.Node.SetNetwork(resolved.Network)
 		if opts.Join != nil {
 			record.Join = &JoinRecord{Server: resolved.Server}
 		}
 	} else {
-		if resolved.NodeIP != "" {
-			record.Node.IP = resolved.NodeIP
-		}
+		record.Node.SetNetwork(resolved.Network)
 		if opts.Management != "" {
 			record.Management = opts.Management
 		}
@@ -301,6 +302,23 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 func seedResumeOptions(opts *InstallOptions, record *Record) {
 	if opts.Cluster == "" {
 		opts.Cluster = record.Cluster
+	}
+	// The address declaration was made on this host, at enrollment or at
+	// the previous attempt. It outranks anything the caller left empty,
+	// which is what carries a coordinator-driven install (the action knows
+	// only the cluster address) onto the full local declaration.
+	recorded := record.Node.Network()
+	if opts.Network.ClusterIP == "" {
+		opts.Network.ClusterIP = recorded.ClusterIP
+	}
+	if len(opts.Network.PublicIPs) == 0 {
+		opts.Network.PublicIPs = recorded.PublicIPs
+	}
+	if len(opts.Network.ExtraSANs) == 0 {
+		opts.Network.ExtraSANs = recorded.ExtraSANs
+	}
+	if len(opts.Network.CoordinatorBind) == 0 {
+		opts.Network.CoordinatorBind = recorded.CoordinatorBind
 	}
 	if opts.Role == "" {
 		opts.Role = record.Node.Role

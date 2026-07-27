@@ -241,12 +241,12 @@ func applyDarwinInstallOptions(ctx context.Context, opts *installer.InstallOptio
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
-	if opts.NodeIP == "" {
+	if opts.Network.ClusterIP == "" {
 		ip, err := darwinNodeIP(ctx)
 		if err != nil {
 			return err
 		}
-		opts.NodeIP = ip
+		opts.Network.ClusterIP = ip
 	}
 	if opts.Join != nil && opts.Join.TokenFile != "" {
 		data, err := os.ReadFile(opts.Join.TokenFile)

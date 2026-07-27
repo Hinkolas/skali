@@ -91,6 +91,10 @@ func (c *Coordinator) preflight(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusConflict, err.Error())
 		return
 	}
+	if err := validateServerAddress(invitation.Role, request.Host); err != nil {
+		writeProblem(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, PreflightResponse{
 		Cluster: state.Cluster, Role: invitation.Role,
 		Coordinators: coordinatorEndpoints(state),
@@ -131,6 +135,9 @@ func (c *Coordinator) enroll(w http.ResponseWriter, r *http.Request) {
 		if err := validateEnrollmentHost(state, request.Host); err != nil {
 			return err
 		}
+		if err := validateServerAddress(invitation.Role, request.Host); err != nil {
+			return err
+		}
 		node := Node{
 			ID: request.Host.NodeID, InstallationID: request.Host.InstallationID,
 			Name: request.Host.Name, Role: invitation.Role,
@@ -139,11 +146,8 @@ func (c *Coordinator) enroll(w http.ResponseWriter, r *http.Request) {
 			Phase: NodePhaseAwaitingApply, EnrolledAt: now, UpdatedAt: now,
 		}
 		if invitation.Role == "server" {
-			host := request.Host.NodeIP
-			if host == "" {
-				host = request.Host.Name
-			}
-			node.Coordinator = "https://" + net.JoinHostPort(host, DefaultCoordinatorPort)
+			node.Coordinator = "https://" +
+				net.JoinHostPort(request.Host.NodeIP, DefaultCoordinatorPort)
 		}
 		if state.Nodes == nil {
 			state.Nodes = make(map[string]Node)
@@ -296,6 +300,18 @@ func validateEnrollmentHost(state *State, host HostFacts) error {
 		}
 	}
 	return nil
+}
+
+// validateServerAddress refuses a server enrollment that reports no
+// address. Every other node builds this server's coordinator endpoint from
+// it, and the node name it used to fall back to is a hostname the rest of
+// the fleet usually cannot resolve.
+func validateServerAddress(role string, host HostFacts) error {
+	if role != "server" || strings.TrimSpace(host.NodeIP) != "" {
+		return nil
+	}
+	return errors.New("a joining server must report the address other nodes reach it " +
+		"through; pass --node-ip or declare network.clusterIP")
 }
 
 func coordinatorEndpoints(state *State) []string {

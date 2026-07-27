@@ -165,6 +165,12 @@ func printStatus(out *os.File, status *installer.Status) {
 		}
 	}
 
+	// The addresses are worth a line of their own: on a multi-homed host
+	// they decide which network carries cluster traffic and enrollment.
+	if record != nil && record.Node.IP != "" {
+		printStatusRow(out, style, "addresses", describeNetwork(record.Node.Network()))
+	}
+
 	k3sSuffix := style.BrightYellow("(expected " + installer.K3sVersion + ")")
 	if status.K3sCurrent {
 		k3sSuffix = style.BrightGreen("(current)")
@@ -435,7 +441,7 @@ func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reade
 		resumed, err := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
 			Server: endpoint, Token: token,
 			Capabilities: append([]string(nil), record.Node.Capabilities...),
-			NodeIP:       record.Node.IP,
+			Network:      record.Node.Network(),
 		})
 		if err != nil {
 			return err

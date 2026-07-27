@@ -35,7 +35,7 @@ func TestValidateEnrolledHostDoesNotRequireK3sJoinInputs(t *testing.T) {
 	fake := linuxHost()
 
 	err := ValidateEnrolledHost(context.Background(), fake, "e2e", layout.RoleAgent,
-		"worker-1", "", []string{layout.CapabilityApplication})
+		"worker-1", NodeNetwork{}, []string{layout.CapabilityApplication})
 
 	require.NoError(t, err)
 	require.Empty(t, fake.Writes)

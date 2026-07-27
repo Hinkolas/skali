@@ -27,9 +27,14 @@ type NodeConfig struct {
 	// Capabilities designates what this node runs.
 	Capabilities []string `yaml:"capabilities" json:"capabilities" jsonschema:"Designated workload capabilities for this node."`
 	// NodeIP pins the address this node advertises inside the cluster.
-	// Needed on multi-homed hosts where the default-route interface is not
-	// the one other nodes can reach.
-	NodeIP string `yaml:"nodeIP,omitempty" json:"nodeIP,omitempty" jsonschema:"Optional IP address this node advertises inside the cluster; set it on multi-homed hosts."`
+	// Superseded by network.clusterIP, which it is an alias for.
+	NodeIP string `yaml:"nodeIP,omitempty" json:"nodeIP,omitempty" jsonschema:"Deprecated alias for network.clusterIP."`
+	// Network declares how this host is addressed. On a multi-homed host
+	// (a cloud server on a private network plus a public interface) the
+	// default-route address is the public one, so leaving this out puts
+	// cluster traffic, the coordinator listener, and the API certificate
+	// on the public interface.
+	Network *NetworkConfig `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"How this host is addressed: cluster address, public addresses, and certificate names."`
 	// Join enrolls this host into an existing cluster, as an agent or as
 	// an additional server; required for agents, absent for the first
 	// server.
@@ -37,6 +42,32 @@ type NodeConfig struct {
 	// VM shapes the Lima VM that hosts this node on a macOS machine.
 	// Linux installs refuse it.
 	VM *VMConfig `yaml:"vm,omitempty" json:"vm,omitempty" jsonschema:"macOS only: the Lima VM hosting this node."`
+}
+
+// NetworkConfig declares the addresses of one host and what each is for.
+// A cloud server with a private network interface and a public one
+// declares both, so cluster traffic and enrollment stay private while the
+// API certificate still covers the public address.
+type NetworkConfig struct {
+	ClusterIP       string   `yaml:"clusterIP,omitempty" json:"clusterIP,omitempty" jsonschema:"Address other cluster nodes reach this node through. Defaults to the address of the default route."`
+	PublicIPs       []string `yaml:"publicIPs,omitempty" json:"publicIPs,omitempty" jsonschema:"Addresses reachable from outside the cluster network. Floating or NAT-mapped addresses may be declared here without being assigned to the host."`
+	ExtraSANs       []string `yaml:"extraSANs,omitempty" json:"extraSANs,omitempty" jsonschema:"Additional names or addresses to place in the Kubernetes API server certificate, such as a load balancer or a DNS name used in kubeconfigs."`
+	CoordinatorBind []string `yaml:"coordinatorBind,omitempty" json:"coordinatorBind,omitempty" jsonschema:"Scopes the enrollment coordinator listens on: cluster, public, or both. Defaults to cluster."`
+}
+
+// NodeNetwork returns the address declaration, folding the deprecated
+// nodeIP alias into the cluster address.
+func (c *NodeConfig) NodeNetwork() NodeNetwork {
+	network := NodeNetwork{ClusterIP: c.NodeIP}
+	if c.Network != nil {
+		if c.Network.ClusterIP != "" {
+			network.ClusterIP = c.Network.ClusterIP
+		}
+		network.PublicIPs = append([]string(nil), c.Network.PublicIPs...)
+		network.ExtraSANs = append([]string(nil), c.Network.ExtraSANs...)
+		network.CoordinatorBind = append([]string(nil), c.Network.CoordinatorBind...)
+	}
+	return network.Normalize()
 }
 
 // JoinConfig points a joining host at an existing server.
@@ -118,6 +149,15 @@ func ParseNodeConfig(data []byte) (*NodeConfig, error) {
 	}
 	if config.NodeIP != "" && net.ParseIP(config.NodeIP) == nil {
 		return nil, fmt.Errorf("node config: nodeIP %q is not a valid IP address", config.NodeIP)
+	}
+	if config.NodeIP != "" && config.Network != nil && config.Network.ClusterIP != "" &&
+		config.Network.ClusterIP != config.NodeIP {
+		return nil, fmt.Errorf("node config: nodeIP %q and network.clusterIP %q disagree; "+
+			"nodeIP is the deprecated alias, keep only network.clusterIP",
+			config.NodeIP, config.Network.ClusterIP)
+	}
+	if err := config.NodeNetwork().Validate(); err != nil {
+		return nil, fmt.Errorf("node config: network: %w", err)
 	}
 	if config.Role == layout.RoleAgent && config.Join == nil {
 		return nil, errors.New("node config: role agent requires a join block pointing at an existing server")

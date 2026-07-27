@@ -16,6 +16,7 @@ import (
 
 func newClusterJoinCmd() *cobra.Command {
 	var server, tokenFile, role, cluster, nodeIP string
+	var publicIPs, extraSANs, coordinatorBind []string
 	var capabilities []string
 	var assumeYes bool
 	cmd := &cobra.Command{
@@ -43,6 +44,14 @@ func newClusterJoinCmd() *cobra.Command {
 					return fmt.Errorf("supply the coordinator as an argument or --server, not both")
 				}
 				server = args[0]
+			}
+
+			network := installer.NodeNetwork{
+				ClusterIP: nodeIP, PublicIPs: publicIPs, ExtraSANs: extraSANs,
+				CoordinatorBind: coordinatorBind,
+			}
+			if err := network.Validate(); err != nil {
+				return err
 			}
 
 			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, ""); err != nil {
@@ -75,8 +84,8 @@ func newClusterJoinCmd() *cobra.Command {
 					return fmt.Errorf("reconciled enrollment requires the coordinator host or --server")
 				}
 				record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
-					Server: server, Token: rawToken, Capabilities: capabilities, NodeIP: nodeIP,
-					RequestedRole: role, RequestedCluster: cluster,
+					Server: server, Token: rawToken, Capabilities: capabilities,
+					Network: network, RequestedRole: role, RequestedCluster: cluster,
 				})
 				if enrollErr != nil {
 					progress.Abort()
@@ -93,7 +102,7 @@ func newClusterJoinCmd() *cobra.Command {
 				Role:          role,
 				Capabilities:  capabilities,
 				Join:          &installer.JoinOptions{Server: server, TokenFile: tokenFile},
-				NodeIP:        nodeIP,
+				Network:       network,
 				Progress:      progress,
 				RecoverOrphan: true,
 			}
@@ -118,7 +127,11 @@ func newClusterJoinCmd() *cobra.Command {
 	cmd.Flags().StringVar(&role, "role", "", "expected role; must match the invitation or legacy token")
 	cmd.Flags().StringSliceVar(&capabilities, "capabilities", nil, "designated workload capabilities for this node")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "expected cluster name; required only for raw legacy K10 tokens")
-	cmd.Flags().StringVar(&nodeIP, "node-ip", "", "IP address this node advertises inside the cluster (multi-homed hosts)")
+	cmd.Flags().StringVar(&nodeIP, "node-ip", "", "address other cluster nodes reach this node through; defaults to the address of the default route")
+	cmd.Flags().StringSliceVar(&publicIPs, "public-ip", nil, "address reachable from outside the cluster network; repeatable")
+	cmd.Flags().StringSliceVar(&extraSANs, "tls-san", nil, "additional name or address for the kubernetes api certificate; repeatable")
+	cmd.Flags().StringSliceVar(&coordinatorBind, "coordinator-bind", nil,
+		"scopes the enrollment coordinator listens on: cluster, public, or both (servers only)")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
 	return cmd
 }

@@ -32,10 +32,42 @@ func TestK3sConfigYAMLServerNodeIP(t *testing.T) {
 	rendered := k3sConfigYAML(k3sNode{
 		Name: "cp-1", Cluster: "production",
 		Capabilities: []string{layout.CapabilityEdge},
-		NodeIP:       "192.168.64.5",
+		Network:      NodeNetwork{ClusterIP: "192.168.64.5"},
 	})
 	require.Equal(t, `node-name: cp-1
 node-ip: 192.168.64.5
+tls-san:
+  - 192.168.64.5
+cluster-init: true
+embedded-registry: true
+node-label:
+  - skali.dev/capability-edge=true
+  - skali.dev/cluster=production
+`, rendered)
+}
+
+// A multi-homed server must advertise the private address, keep the public
+// one as its external address, and cover both in the certificate; that
+// combination is what makes a join over either network work.
+func TestK3sConfigYAMLServerMultiHomed(t *testing.T) {
+	t.Parallel()
+	rendered := k3sConfigYAML(k3sNode{
+		Name: "cp-1", Cluster: "production",
+		Capabilities: []string{layout.CapabilityEdge},
+		Network: NodeNetwork{
+			ClusterIP: "10.0.1.2",
+			PublicIPs: []string{"203.0.113.7"},
+			ExtraSANs: []string{"cluster.example.com"},
+		},
+	})
+	require.Equal(t, `node-name: cp-1
+node-ip: 10.0.1.2
+node-external-ip:
+  - 203.0.113.7
+tls-san:
+  - 10.0.1.2
+  - 203.0.113.7
+  - cluster.example.com
 cluster-init: true
 embedded-registry: true
 node-label:
@@ -93,18 +125,25 @@ func TestK3sConfigYAMLAgentNodeIP(t *testing.T) {
 		Name: "db-1", Cluster: "e2e",
 		Role:         layout.RoleAgent,
 		Capabilities: []string{layout.CapabilityDatabase},
-		NodeIP:       "192.168.64.6",
-		ServerURL:    "https://192.168.64.5:6443",
-		Token:        "secret",
+		Network: NodeNetwork{
+			ClusterIP: "192.168.64.6", PublicIPs: []string{"203.0.113.8"},
+			ExtraSANs: []string{"agent.example.com"},
+		},
+		ServerURL: "https://192.168.64.5:6443",
+		Token:     "secret",
 	})
 	require.Equal(t, `node-name: db-1
 node-ip: 192.168.64.6
+node-external-ip:
+  - 203.0.113.8
 server: https://192.168.64.5:6443
 token-file: /etc/rancher/k3s/token
 node-label:
   - skali.dev/capability-database=true
   - skali.dev/cluster=e2e
 `, rendered)
+	require.NotContains(t, rendered, "tls-san",
+		"tls-san is a server-only flag and fatal on agents")
 }
 
 func TestK3sRegistriesYAML(t *testing.T) {
@@ -247,4 +286,50 @@ func TestUninstallK3sPicksRoleScript(t *testing.T) {
 		require.NoError(t, uninstallK3s(context.Background(), fake, role), role)
 		require.Equal(t, script, fake.Commands[0].Name, role)
 	}
+}
+
+// Widening names on a live server must be surgical: the advertised address
+// and every other setting survive, because moving node-ip on a running
+// etcd member is not something a repair may do.
+func TestWidenCertificateNamesPreservesAdvertisedAddress(t *testing.T) {
+	t.Parallel()
+	fake := &host.Fake{
+		FS: map[string][]byte{
+			K3sConfigPath: []byte(k3sConfigYAML(k3sNode{
+				Name: "cp-1", Cluster: "production",
+				Capabilities: []string{layout.CapabilityEdge},
+				Network:      NodeNetwork{ClusterIP: "203.0.113.7"},
+			})),
+			K3sServingCertPath: []byte("old certificate"),
+		},
+		Handlers: map[string]func(host.Command) (host.Result, error){
+			"systemctl": func(host.Command) (host.Result, error) { return host.Result{}, nil },
+			"k3s": func(cmd host.Command) (host.Result, error) {
+				if len(cmd.Args) > 0 && cmd.Args[0] == "kubectl" {
+					return host.Result{Stdout: "ok"}, nil
+				}
+				return host.Result{Stdout: "k3s version " + K3sVersion + " (0000)\n"}, nil
+			},
+		},
+	}
+	record := &Record{Node: NodeRecord{Name: "cp-1", Role: layout.RoleServer}}
+	record.Node.SetNetwork(NodeNetwork{
+		ClusterIP: "10.0.1.2", PublicIPs: []string{"203.0.113.7"},
+		ExtraSANs: []string{"cluster.example.com"},
+	})
+
+	require.NoError(t, WidenCertificateNames(context.Background(), fake, record, silentProgress{}))
+
+	config := string(fake.FS[K3sConfigPath])
+	require.Contains(t, config, "node-ip: 203.0.113.7",
+		"the address k3s registered with is left alone")
+	require.Contains(t, config, "cluster-init: true")
+	for _, name := range []string{"10.0.1.2", "203.0.113.7", "cluster.example.com"} {
+		require.Contains(t, config, name)
+	}
+	require.NotContains(t, fake.FS, K3sServingCertPath,
+		"k3s reissues the serving certificate only when the old one is gone")
+	require.Contains(t, fake.Commands, host.Command{
+		Name: "systemctl", Args: []string{"restart", "k3s"},
+	})
 }

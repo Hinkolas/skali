@@ -48,9 +48,49 @@
       },
       "additionalProperties": false
     },
+    "network": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "description": "How this host is addressed: cluster address, public addresses, and certificate names.",
+      "properties": {
+        "clusterIP": {
+          "type": "string",
+          "description": "Address other cluster nodes reach this node through. Defaults to the address of the default route."
+        },
+        "coordinatorBind": {
+          "type": "array",
+          "description": "Scopes the enrollment coordinator listens on: cluster, public, or both. Defaults to cluster.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "cluster",
+              "public"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "extraSANs": {
+          "type": "array",
+          "description": "Additional names or addresses to place in the Kubernetes API server certificate, such as a load balancer or a DNS name used in kubeconfigs.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "publicIPs": {
+          "type": "array",
+          "description": "Addresses reachable from outside the cluster network. Floating or NAT-mapped addresses may be declared here without being assigned to the host.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "nodeIP": {
       "type": "string",
-      "description": "Optional IP address this node advertises inside the cluster; set it on multi-homed hosts."
+      "description": "Deprecated alias for network.clusterIP."
     },
     "role": {
       "type": "string",

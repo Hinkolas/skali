@@ -126,7 +126,7 @@ func newClusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 				Cluster:      config.Cluster,
 				Role:         config.Role,
 				Capabilities: config.Capabilities,
-				NodeIP:       config.NodeIP,
+				Network:      config.NodeNetwork(),
 				Progress:     progress,
 				// A matching config file is full non-interactive consent
 				// to recover the exact Skali fingerprint it describes.
@@ -142,7 +142,7 @@ func newClusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 				if reconciledToken(rawToken) {
 					record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
 						Server: config.Join.Server, Token: rawToken,
-						Capabilities: config.Capabilities, NodeIP: config.NodeIP,
+						Capabilities: config.Capabilities, Network: config.NodeNetwork(),
 						RequestedRole: config.Role, RequestedCluster: config.Cluster,
 					})
 					if enrollErr != nil {

@@ -203,6 +203,43 @@ func PlanRepairs(diag *Diagnosis, deps RepairDeps) (actions []RepairAction, refu
 		})
 	}
 
+	if record != nil && role == layout.RoleServer && failed["api certificate"] {
+		actions = append(actions, RepairAction{
+			ID:    "widen-api-certificate",
+			Title: "Widen the api certificate names",
+			Confirm: "Add this node's declared addresses to the kubernetes api certificate and " +
+				"restart k3s so it reissues the certificate (workload containers keep running). " +
+				"The advertised node address is left untouched. Continue? [y/N] ",
+			Run: func(ctx context.Context) error {
+				return WidenCertificateNames(ctx, deps.Runner, record, progress)
+			},
+		})
+	}
+	if record != nil && record.Reconciled() && role == layout.RoleServer &&
+		failed["coordinator endpoint"] && !failed["coordinator service"] {
+		actions = append(actions, RepairAction{
+			ID:    "rebind-coordinator",
+			Title: "Rebind the cluster coordinator",
+			Confirm: "Restart the coordinator so it binds every address this node declares, " +
+				"including the private one. Enrollment is briefly unavailable. Continue? [y/N] ",
+			Run: func(ctx context.Context) error {
+				progress.Start("Restart " + HostdCoordinatorUnit)
+				result, err := deps.Runner.Run(ctx, host.Command{
+					Name: "systemctl", Args: []string{"restart", HostdCoordinatorUnit},
+				})
+				if err != nil {
+					return err
+				}
+				if result.ExitCode != 0 {
+					return fmt.Errorf("systemctl restart %s: exit %d: %s", HostdCoordinatorUnit,
+						result.ExitCode, strings.TrimSpace(result.Stderr))
+				}
+				progress.Done("")
+				return nil
+			},
+		})
+	}
+
 	needsConverge := deps.StampMissing
 	if failed["registry mirror"] {
 		if role == layout.RoleServer {

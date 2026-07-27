@@ -57,6 +57,23 @@ join:
 	pinned, err := ParseNodeConfig([]byte("role: server\ncapabilities: [edge]\nnodeIP: 192.168.64.5\n"))
 	require.NoError(t, err)
 	require.Equal(t, "192.168.64.5", pinned.NodeIP)
+	require.Equal(t, "192.168.64.5", pinned.NodeNetwork().ClusterIP,
+		"the deprecated alias still resolves to the cluster address")
+
+	multiHomed, err := ParseNodeConfig([]byte(`role: server
+capabilities: [edge]
+network:
+  clusterIP: 10.0.1.2
+  publicIPs: [203.0.113.7]
+  extraSANs: [cluster.example.com]
+  coordinatorBind: [cluster, public]
+`))
+	require.NoError(t, err)
+	require.Equal(t, NodeNetwork{
+		ClusterIP: "10.0.1.2", PublicIPs: []string{"203.0.113.7"},
+		ExtraSANs:       []string{"cluster.example.com"},
+		CoordinatorBind: []string{"cluster", "public"},
+	}, multiHomed.NodeNetwork())
 
 	darwin, err := ParseNodeConfig([]byte(`role: server
 capabilities: [application, database]
@@ -93,6 +110,16 @@ func TestParseNodeConfigRejections(t *testing.T) {
 			"join.tokenFile is required"},
 		"bad node ip": {"role: server\ncapabilities: [edge]\nnodeIP: not-an-ip\n",
 			"nodeIP \"not-an-ip\" is not a valid IP address"},
+		"node ip disagrees with cluster ip": {
+			"role: server\ncapabilities: [edge]\nnodeIP: 10.0.1.2\nnetwork:\n  clusterIP: 10.0.1.3\n",
+			"keep only network.clusterIP"},
+		"bad public ip": {"role: server\ncapabilities: [edge]\nnetwork:\n  publicIPs: [nope]\n",
+			"public address \"nope\" is not a valid IP address"},
+		"bad certificate name": {"role: server\ncapabilities: [edge]\nnetwork:\n  extraSANs: [\"not a name\"]\n",
+			"neither an IP address nor a DNS name"},
+		"public bind without public address": {
+			"role: server\ncapabilities: [edge]\nnetwork:\n  coordinatorBind: [public]\n",
+			"no public addresses are declared"},
 		"multiple documents": {"role: server\ncapabilities: [edge]\n---\nrole: agent\ncapabilities: [edge]\n", "multiple YAML documents"},
 		"bad vm network": {"role: server\ncapabilities: [edge]\nvm:\n  network: nat\n",
 			"vm.network must be bridged, shared, or user-v2, got \"nat\""},
