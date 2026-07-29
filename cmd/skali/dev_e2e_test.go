@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -155,20 +156,28 @@ func (h *e2eHarness) runInterrupt(marker string, wait time.Duration, args ...str
 
 // route fetches the deployed application through the local edge.
 func (h *e2eHarness) route(path string) (int, string) {
+	return h.request(http.MethodGet, path, "")
+}
+
+func (h *e2eHarness) request(method, path, body string) (int, string) {
 	h.t.Helper()
-	request, err := http.NewRequest(http.MethodGet,
-		fmt.Sprintf("http://127.0.0.1:%d%s", e2eHTTPPort, path), nil)
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	request, err := http.NewRequest(method,
+		fmt.Sprintf("http://127.0.0.1:%d%s", e2eHTTPPort, path), reader)
 	require.NoError(h.t, err)
 	request.Host = h.host
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {
 		return 0, ""
 	}
 	defer response.Body.Close()
-	body := make([]byte, 4096)
-	read, _ := response.Body.Read(body)
-	return response.StatusCode, string(body[:read])
+	buffer := make([]byte, 4096)
+	read, _ := response.Body.Read(buffer)
+	return response.StatusCode, string(buffer[:read])
 }
 
 func (h *e2eHarness) waitRoute(contains string, timeout time.Duration) {
@@ -317,34 +326,44 @@ func (h *e2eHarness) stateDir() string {
 	return ""
 }
 
-// TestDevGuestbookDatabase is the R5 prototype path on local dev: a
-// database-bearing project deploys, the application waits for the claim,
-// starts with the injected connection outputs, and reads its own writes
-// through the shared dev pool.
+// TestDevGuestbookDatabase is the R5+R6 prototype path on local dev: a
+// project bearing a database and a bucket deploys, the application waits
+// for both claims, starts with the injected connection outputs, reads its
+// own database writes through the shared dev pool, and stores and reads
+// objects through the dev object store.
 func TestDevGuestbookDatabase(t *testing.T) {
 	h := newE2EHarnessFor(t, "guestbook", "guestbook.localhost")
 
 	out := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
 	require.Contains(t, out, "ready")
-	// First use brings up the dev pool (postgres image pull) before the
-	// application can pass readiness.
-	h.waitRoute("visits: ", 8*time.Minute)
+	// First use brings up the dev pool and the object store (postgres and
+	// seaweed image pulls) before the application can pass readiness.
+	h.waitRoute("visits: ", 10*time.Minute)
 	_, first := h.route("/")
 	_, second := h.route("/")
 	require.NotEqual(t, first, second, "every visit must insert a row")
 
+	// Objects flow through the injected {{buckets.files.*}} outputs.
+	status, body := h.request(http.MethodPut, "/notes/e2e", "stored through skali buckets")
+	require.Equal(t, http.StatusOK, status, "store note: %s", body)
+	status, body = h.route("/notes/e2e")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "stored through skali buckets", body)
+
 	out = h.run(false, "", "dev", "status")
 	require.Contains(t, out, "application.web")
 	require.Contains(t, out, "database.data")
+	require.Contains(t, out, "bucket.files")
 	require.Contains(t, out, "healthy")
 
 	var before int
-	_, body := h.route("/")
+	_, body = h.route("/")
 	_, err := fmt.Sscanf(body, "visits: %d", &before)
 	require.NoError(t, err, "unexpected body %q", body)
 
-	// Down keeps the data and the idle dev pool hibernates: CNPG removes
-	// the postgres pods while the Cluster and its volume stay.
+	// Down keeps the data and the whole platform goes quiet: CNPG removes
+	// the postgres pods, the object store scales to zero, and both keep
+	// their volumes.
 	out = h.run(false, "", "dev", "down")
 	require.Contains(t, out, "is down; its data is retained")
 	kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
@@ -352,15 +371,19 @@ func TestDevGuestbookDatabase(t *testing.T) {
 		pods, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
 			"get", "pods", "-n", "skali-platform", "--no-headers").CombinedOutput()
 		return err == nil && !strings.Contains(string(pods), "Running")
-	}, 3*time.Minute, 3*time.Second, "the dev pool must hibernate after down")
+	}, 4*time.Minute, 3*time.Second, "the dev platform must go quiet after down")
 
-	// The next dev resumes the pool and the data survived hibernation.
+	// The next dev resumes everything and both data planes survived.
 	out = h.run(false, "", "dev", "-d")
 	require.Contains(t, out, "ready")
-	h.waitRoute("visits: ", 8*time.Minute)
+	h.waitRoute("visits: ", 10*time.Minute)
 	var after int
 	_, body = h.route("/")
 	_, err = fmt.Sscanf(body, "visits: %d", &after)
 	require.NoError(t, err, "unexpected body %q", body)
 	require.Greater(t, after, before, "the visit history must survive hibernation")
+	require.Eventually(t, func() bool {
+		status, body := h.route("/notes/e2e")
+		return status == http.StatusOK && body == "stored through skali buckets"
+	}, 2*time.Minute, 3*time.Second, "the stored note must survive the stopped store")
 }

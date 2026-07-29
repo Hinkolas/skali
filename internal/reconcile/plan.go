@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -120,6 +121,14 @@ func planPrune(observed []observe.Object, desired []kube.ObjectRef) []kube.Objec
 	}
 	var prune []kube.ObjectRef
 	for _, obj := range observed {
+		// Platform-scoped objects (database pools, seaweed components) join
+		// environment snapshots through the shared-key mechanism but belong
+		// to the substrate, never to any environment's desired set. Skipping
+		// them here is defense in depth beside the label discipline (they
+		// never carry the managed label).
+		if obj.Environment == uuid.Nil {
+			continue
+		}
 		gk := schema.GroupKind{Group: obj.Ref.GVK.Group, Kind: obj.Ref.GVK.Kind}
 		if !prunableKinds[gk] {
 			continue
@@ -133,18 +142,22 @@ func planPrune(observed []observe.Object, desired []kube.ObjectRef) []kube.Objec
 	return prune
 }
 
-// planBatches orders the revision's reconcilable services (applications and
-// databases) into dependency batches of dotted names. Dependencies on
-// service kinds the reconciler cannot manage yet (buckets, until R6) put
-// the dependent service into the waiting map with a reason instead of
-// failing the whole plan.
+// planBatches orders the revision's reconcilable services (applications,
+// databases, and buckets) into dependency batches of dotted names. A
+// dependency on a service kind the reconciler cannot manage puts the
+// dependent service into the waiting map with a reason instead of failing
+// the whole plan.
 func planBatches(definition compiler.ProjectDefinition) (batches [][]string, waiting map[string]string, err error) {
-	services := make([]string, 0, len(definition.Applications)+len(definition.Databases))
+	services := make([]string, 0,
+		len(definition.Applications)+len(definition.Databases)+len(definition.Buckets))
 	for key := range definition.Applications {
 		services = append(services, "applications."+key)
 	}
 	for key := range definition.Databases {
 		services = append(services, "databases."+key)
+	}
+	for key := range definition.Buckets {
+		services = append(services, "buckets."+key)
 	}
 	sort.Strings(services)
 	included := make(map[string]bool, len(services))

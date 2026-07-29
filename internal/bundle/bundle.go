@@ -121,6 +121,11 @@ type Production struct {
 	// certificate subject, and the host of the token realm the registry
 	// advertises in its 401 challenge.
 	RegistryDomain string
+	// S3Domain is the optional public S3 endpoint domain (endpoints.s3 in
+	// init.yaml). When set, the substrate publishes bucket endpoints on it
+	// and renders the S3 ingress in skali-platform; empty keeps bucket
+	// access in-cluster.
+	S3Domain string
 	// TokenKeyPEM and TokenCertPEM are the registry token signing keypair
 	// the installer generated (or reused) at init: skalid signs with the
 	// key, the registry trusts the certificate offline.
@@ -618,10 +623,11 @@ func skalidYAML(profile Profile) string {
 		}
 	}
 	// Both profiles state the installation's capabilities explicitly. Local
-	// dev is one node carrying application, edge, and database: the substrate
-	// collapses every database claim onto the single dev pool, so the
-	// capability is always present. Object storage joins the set with R6.
-	capabilitiesEnv := "\n            - name: SKALI_CAPABILITIES\n              value: application;edge;database"
+	// dev is one node carrying every service capability: the substrate
+	// collapses every database claim onto the single dev pool and every
+	// bucket onto the single all-in-one dev object store, so the
+	// capabilities are always present.
+	capabilitiesEnv := "\n            - name: SKALI_CAPABILITIES\n              value: application;edge;database;object-storage"
 	ingressAnnotations := ""
 	ingressTLS := ""
 	ingressHost := "skali.localhost"
@@ -637,6 +643,9 @@ func skalidYAML(profile Profile) string {
 			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
 			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
 			"\n            - name: SKALI_REGISTRY_NODE_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: node-secret"
+		if production.S3Domain != "" {
+			capabilitiesEnv += "\n            - name: SKALI_S3_DOMAIN\n              value: " + production.S3Domain
+		}
 		capabilitiesEnv += "\n            - name: SKALI_MANAGED_CLUSTER\n              value: \"true\""
 		ingressAnnotations = "\n  annotations:\n    cert-manager.io/cluster-issuer: " + IssuerName
 		ingressTLS = "\n  tls:\n    - hosts:\n        - " + production.IngressHost +
@@ -656,13 +665,13 @@ metadata:
   name: skalid
 rules:
   - apiGroups: [""]
-    resources: [namespaces, secrets, services, pods, pods/log, events, persistentvolumeclaims, nodes]
+    resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
     verbs: ["*"]
   - apiGroups: [apps]
-    resources: [deployments]
+    resources: [deployments, statefulsets, daemonsets]
     verbs: ["*"]
   - apiGroups: [networking.k8s.io]
-    resources: [ingresses]
+    resources: [ingresses, networkpolicies]
     verbs: ["*"]
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]

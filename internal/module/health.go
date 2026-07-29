@@ -50,6 +50,15 @@ const (
 	// mechanism.
 	KindDatabaseCluster = "database-cluster"
 	KindDatabaseTenant  = "database-tenant"
+	// KindBucketClaim is the substrate's provider observation of one bucket
+	// claim's durable phase, published like KindDatabaseClaim.
+	KindBucketClaim = "bucket-claim"
+	// KindObjectStore/KindBucket project the SeaweedFS system and per-bucket
+	// usage through the poll-based provider observer (REWORK_V2 7.4). Store
+	// projections are platform-scoped and join service snapshots through the
+	// shared-key mechanism.
+	KindObjectStore = "object-store"
+	KindBucket      = "bucket"
 )
 
 // Observation source states. Anything but fresh means the projection may lag
@@ -78,6 +87,8 @@ type ObservedResource struct {
 	Claim           *ClaimStatus
 	DatabaseCluster *DatabaseClusterStatus
 	DatabaseTenant  *DatabaseTenantStatus
+	ObjectStore     *ObjectStoreStatus
+	Bucket          *BucketStatus
 }
 
 // SourceStatus describes the freshness of the observation source itself.
@@ -147,6 +158,29 @@ type DatabaseTenantStatus struct {
 	Pool    string
 }
 
+// ObjectStoreStatus projects the SeaweedFS system: desired and ready
+// component counts, gateway health, and whether the store is stopped (the
+// local-dev idle state, healthy by intent).
+type ObjectStoreStatus struct {
+	MastersDesired       int32
+	MastersReady         int32
+	VolumeServersDesired int32
+	VolumeServersReady   int32
+	FilerReady           bool
+	S3Ready              bool
+	Stopped              bool
+}
+
+// BucketStatus projects one bucket's existence and usage as reported by the
+// provider observer. Usage is approximate by up to one poll interval.
+type BucketStatus struct {
+	Exists      bool
+	UsedBytes   int64
+	ObjectCount int64
+	QuotaBytes  int64
+	ReadOnly    bool
+}
+
 // Condition is one status condition, provider-agnostic.
 type Condition struct {
 	Type    string
@@ -157,7 +191,9 @@ type Condition struct {
 
 // StaleSource returns the leading source pseudo-resource when it reports
 // anything but fresh, so modules share one guard: evaluate nothing on a
-// stale view.
+// stale view. Snapshots order the kubernetes source first, so this guard
+// covers cluster observation; provider sources are opted into by name via
+// SourceNamed.
 func StaleSource(observed []ObservedResource) *SourceStatus {
 	for _, resource := range observed {
 		if resource.Kind != KindSource || resource.Source == nil {
@@ -170,4 +206,17 @@ func StaleSource(observed []ObservedResource) *SourceStatus {
 	}
 	// No source resource at all: the snapshot's provenance is unknown.
 	return &SourceStatus{State: SourceUnknown}
+}
+
+// SourceNamed returns one named source's status from a snapshot, or nil when
+// the source is not registered. Modules that consume a provider observer
+// (e.g. the bucket module and "seaweedfs") select it explicitly so one
+// provider's staleness never blocks another module's evaluation.
+func SourceNamed(observed []ObservedResource, name string) *SourceStatus {
+	for _, resource := range observed {
+		if resource.Kind == KindSource && resource.Name == name {
+			return resource.Source
+		}
+	}
+	return nil
 }

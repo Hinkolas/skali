@@ -35,6 +35,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/app"
+	"github.com/Hinkolas/skali/internal/module/bucket"
 	"github.com/Hinkolas/skali/internal/module/database"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/observe"
@@ -46,6 +47,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
+	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
@@ -163,14 +165,16 @@ func runServe() error {
 		slog.InfoContext(ctx, "no cluster configuration resolved; running API-only")
 	}
 
-	// The production service modules. The object-storage module follows
-	// with its substrate (R6).
+	// The production service modules.
 	registry := module.NewRegistry()
 	if err := registry.Register(app.Module{}); err != nil {
 		return fmt.Errorf("register application module: %w", err)
 	}
 	if err := registry.Register(database.Module{}); err != nil {
 		return fmt.Errorf("register database module: %w", err)
+	}
+	if err := registry.Register(bucket.Module{}); err != nil {
+		return fmt.Errorf("register bucket module: %w", err)
 	}
 
 	observed := observe.NewStore(nil)
@@ -196,20 +200,22 @@ func runServe() error {
 	if kubeClient != nil {
 		kernelDeps.Cluster = kubeClient
 	}
-	// The database substrate controller runs beside the kernel with its own
-	// queue: it owns pools, tenants, and credentials in skali-platform and
-	// pokes the kernel when a claim's outputs become ready. The kernel
-	// records desired claims through it (Deps.Claims).
+	// The platform substrate controller runs beside the kernel with its own
+	// queue: it owns pools, tenants, the object store, and credentials in
+	// skali-platform and pokes the kernel when a claim's outputs become
+	// ready. The kernel records desired claims through it (Deps.Claims).
 	var substrateCtl *substrate.Controller
 	if kubeClient != nil {
 		substrateCtl = substrate.New(substrate.Deps{
 			DB:       dbstore.New(st),
 			Cluster:  substrate.KubeCluster{Client: kubeClient},
 			Observed: observed,
+			Seaweed:  seaweed.NewClient(kubeClient, substrate.Namespace),
 			Enqueue:  func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
 		}, substrate.Config{
 			Managed:      cfg.ManagedCluster,
 			Capabilities: cfg.Capabilities,
+			S3Domain:     cfg.S3Domain,
 			Resync:       cfg.ReconcileResync,
 		})
 		kernelDeps.Claims = substrateCtl
@@ -280,6 +286,19 @@ func runServe() error {
 	}()
 	if substrateCtl != nil {
 		go substrateCtl.Run(loopCtx)
+		// The SeaweedFS provider observer (REWORK_V2 7.4): poll-based, its
+		// own named source, so a seaweed outage degrades bucket health
+		// without touching cluster observation.
+		seaweedPoll := observe.NewPollSource(observed, substrateCtl.SeaweedProbe(), observe.PollOptions{
+			Source:  seaweed.SourceName,
+			Enqueue: func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+		})
+		substrateCtl.SetProbePoke(seaweedPoll.Poke)
+		go func() {
+			if err := seaweedPoll.Run(loopCtx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("seaweed observer stopped", "err", err)
+			}
+		}()
 	}
 
 	// Staged values and pending artifact records are normally closed

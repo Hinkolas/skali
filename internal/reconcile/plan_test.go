@@ -3,6 +3,7 @@ package reconcile
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -111,12 +112,17 @@ func TestPlanScaleOpsAutoscaledToFixed(t *testing.T) {
 
 func TestPlanPruneNeverTouchesStatefulKinds(t *testing.T) {
 	t.Parallel()
+	envID := uuid.New()
 	observed := []observe.Object{
-		{Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, Namespace: "ns", Name: "stale"}},
-		{Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, Namespace: "ns", Name: "data"}},
-		{Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Namespace"}, Name: "ns"}},
-		{Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "autoscaling", Version: "v2", Kind: "HorizontalPodAutoscaler"}, Namespace: "ns", Name: "stale"}},
-		{Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, Namespace: "ns", Name: "kept"}},
+		{Environment: envID, Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, Namespace: "ns", Name: "stale"}},
+		{Environment: envID, Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, Namespace: "ns", Name: "data"}},
+		{Environment: envID, Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Namespace"}, Name: "ns"}},
+		{Environment: envID, Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "autoscaling", Version: "v2", Kind: "HorizontalPodAutoscaler"}, Namespace: "ns", Name: "stale"}},
+		{Environment: envID, Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, Namespace: "ns", Name: "kept"}},
+		// Platform-scoped objects join snapshots through the shared-key
+		// mechanism; even a prunable kind must never be pruned by an
+		// environment's apply pass.
+		{SharedKey: "objectstore/seaweed", Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, Namespace: "skali-platform", Name: "seaweed-filer"}},
 	}
 	desired := []kube.ObjectRef{
 		{GVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, Namespace: "ns", Name: "kept"},
@@ -127,6 +133,7 @@ func TestPlanPruneNeverTouchesStatefulKinds(t *testing.T) {
 		require.NotEqual(t, "PersistentVolumeClaim", ref.GVK.Kind)
 		require.NotEqual(t, "Namespace", ref.GVK.Kind)
 		require.NotEqual(t, "kept", ref.Name)
+		require.NotEqual(t, "seaweed-filer", ref.Name)
 	}
 }
 
@@ -159,7 +166,7 @@ databases:
 	require.Empty(t, waiting, "databases are reconcilable since R5")
 }
 
-func TestPlanBatchesWaitsOnUnsupportedKinds(t *testing.T) {
+func TestPlanBatchesOrdersBucketsBeforeDependents(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`version: "1"
 name: demo
@@ -177,9 +184,11 @@ buckets:
 
 	batches, waiting, err := planBatches(result.Definition)
 	require.NoError(t, err)
-	require.Equal(t, [][]string{{"applications.api"}}, batches)
-	require.Contains(t, waiting, "applications.api")
-	require.Contains(t, waiting["applications.api"], "buckets.assets")
+	require.Equal(t, [][]string{
+		{"buckets.assets"},
+		{"applications.api"},
+	}, batches)
+	require.Empty(t, waiting, "buckets are reconcilable since R6")
 }
 
 func TestGroupObjectsSplitsByService(t *testing.T) {

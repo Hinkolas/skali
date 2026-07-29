@@ -19,6 +19,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -40,8 +43,8 @@ import (
 const (
 	// FieldManagerProject owns every project-scoped object skalid applies.
 	FieldManagerProject = "skalid-project"
-	// FieldManagerPlatform is reserved for skalid-owned platform resources
-	// (shared database and storage substrates); unused until R5.
+	// FieldManagerPlatform owns skalid's platform resources (the shared
+	// database and object-storage substrates in skali-platform).
 	FieldManagerPlatform = "skalid-platform"
 	// FieldManagerInstaller owns the installer-managed system bundle
 	// (skali-system); skalid never reconciles or prunes under it.
@@ -57,6 +60,12 @@ type Client struct {
 	Clientset kubernetes.Interface
 	Dynamic   dynamic.Interface
 	Mapper    meta.RESTMapper
+
+	// Lazily built service-proxy transport (proxy.go).
+	proxyOnce sync.Once
+	proxyHTTP *http.Client
+	proxyBase *url.URL
+	proxyErr  error
 }
 
 // New resolves cluster credentials. A set kubeconfigPath must load or the

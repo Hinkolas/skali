@@ -95,6 +95,7 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 		Production: &bundle.Production{
 			IngressHost:        record.Endpoints.API,
 			RegistryDomain:     record.Endpoints.Registry,
+			S3Domain:           record.Endpoints.S3,
 			TokenKeyPEM:        string(tokenSecret.Data["key.pem"]),
 			TokenCertPEM:       string(tokenSecret.Data["cert.pem"]),
 			NodePullSecret:     pullSecret,

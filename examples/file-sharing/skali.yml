@@ -143,24 +143,18 @@ databases:
     extensions:
       - pg_trgm
 
+# The v1 bucket surface is private visibility with a hard storage quota;
+# public-read, versioning, object-count/size quotas, and lifecycle rules
+# arrive with later policies and are rejected at deploy until then.
 buckets:
   files:
     visibility: private
 
     quotas:
       storage: 20GB
-      objects: 10000
-      maxObjectSize: 100MB
-
-    versioning: enabled
-
-    lifecycle:
-      abortIncompleteUploadsAfter: 7d
-      expireNoncurrentVersionsAfter: 30d
 
 # Project backups coordinate service-specific backup mechanisms into one
-# recovery point. Bucket versioning remains enabled as a separate first line of
-# defense against accidental overwrites and deletions.
+# recovery point.
 backups:
   daily:
     schedule: "0 3 * * *"

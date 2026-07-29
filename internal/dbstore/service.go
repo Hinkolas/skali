@@ -43,6 +43,7 @@ const (
 
 	StateActive     = "active"
 	StateHibernated = "hibernated"
+	StateStopped    = "stopped"
 	StateReleasing  = "releasing"
 	StateReleased   = "released"
 )
@@ -56,6 +57,18 @@ var ClusterStates = lifecycle.Machine[string]{
 		StateActive:     {StateHibernated, StateReleasing},
 		StateHibernated: {StateActive, StateReleasing},
 		StateReleasing:  {StateReleased},
+	},
+}
+
+// StoreStates is the object-store lifecycle machine. Stopped is the
+// local-dev idle state (workloads scaled to zero, volumes and metadata
+// kept); production stores move straight between active and releasing.
+var StoreStates = lifecycle.Machine[string]{
+	States: []string{StateActive, StateStopped, StateReleasing, StateReleased},
+	Transitions: map[string][]string{
+		StateActive:    {StateStopped, StateReleasing},
+		StateStopped:   {StateActive, StateReleasing},
+		StateReleasing: {StateReleased},
 	},
 }
 
@@ -101,6 +114,19 @@ type ClaimSpec struct {
 	StorageBytes int64
 	Extensions   []string
 	PITRSeconds  int64
+}
+
+// BucketSpec is the desired bucket capability. Visibility and Versioning
+// change the bucket's externally observable contract and are immutable on a
+// live claim; the quota and lifecycle fields may drift and fold into it.
+type BucketSpec struct {
+	Visibility                   string
+	StorageQuotaBytes            int64
+	ObjectQuota                  int64
+	MaxObjectBytes               int64
+	Versioning                   string
+	AbortUploadsAfterSeconds     int64
+	ExpireNoncurrentAfterSeconds int64
 }
 
 type Service struct {

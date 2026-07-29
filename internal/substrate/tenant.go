@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/Hinkolas/skali/internal/claim"
@@ -217,7 +217,7 @@ func (c *Controller) ensureOutputMirror(ctx context.Context, row store.DatabaseC
 	if row.OwnerKind != dbstore.OwnerService {
 		return nil
 	}
-	project, environment, service, ok := ownerNames(row)
+	project, environment, service, ok := ownerNames(row.OwnerRef)
 	if !ok {
 		return fmt.Errorf("substrate: malformed owner ref %q", row.OwnerRef)
 	}

@@ -19,16 +19,32 @@ func NewFake() *Fake {
 	return &Fake{Store: NewStore(nil)}
 }
 
-// SetFresh marks the fake synced and fresh, the baseline of most tests.
+// SetFresh marks every registered source synced and fresh, the baseline of
+// most tests.
 func (f *Fake) SetFresh() {
-	f.MarkReady()
+	for _, source := range f.Sources() {
+		f.MarkReady(source.Name)
+	}
 }
 
-// SetStale forces the source stale through the real transition path.
+// SetStale forces the kubernetes source stale through the real transition
+// path.
 func (f *Fake) SetStale() {
-	f.MarkReady()
-	f.MarkFailure()
-	f.EvaluateFreshness(0)
+	f.SetSourceStale(SourceKubernetes)
+}
+
+// SetSourceFresh marks one named source synced and fresh, registering it if
+// needed.
+func (f *Fake) SetSourceFresh(source string) {
+	f.MarkReady(source)
+}
+
+// SetSourceStale forces one named source stale through the real transition
+// path, registering it if needed.
+func (f *Fake) SetSourceStale(source string) {
+	f.MarkReady(source)
+	f.MarkFailure(source)
+	f.EvaluateFreshness(source, 0)
 }
 
 // SetWorkload records a deployment-shaped workload for a service. The
@@ -122,5 +138,45 @@ func (f *Fake) SetDatabasePool(name string, status module.DatabaseClusterStatus)
 		Name:            name,
 		SharedKey:       name,
 		DatabaseCluster: &status,
+	})
+}
+
+// SetBucketClaim records the substrate's claim projection for a bucket
+// service; service uses the dotted "buckets.<key>" form.
+func (f *Fake) SetBucketClaim(environmentID uuid.UUID, service string, claimID uuid.UUID, status module.ClaimStatus) {
+	f.Upsert(BucketClaimObject(environmentID, service, claimID, status))
+}
+
+// SetBucketUsage records the provider observation of one bucket's existence
+// and usage; service uses the dotted form and store links the platform
+// object-store projection.
+func (f *Fake) SetBucketUsage(environmentID uuid.UUID, service, storeKey, bucketName string, status module.BucketStatus) {
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:  schema.GroupVersionKind{Group: "seaweed.skali.dev", Version: "v1", Kind: "Bucket"},
+			Name: bucketName,
+		},
+		Kind:        module.KindBucket,
+		Name:        service,
+		Environment: environmentID,
+		Service:     service,
+		SharedKey:   storeKey,
+		Source:      "seaweedfs",
+		Bucket:      &status,
+	})
+}
+
+// SetObjectStore records the platform-scoped SeaweedFS system projection.
+func (f *Fake) SetObjectStore(name string, status module.ObjectStoreStatus) {
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:  schema.GroupVersionKind{Group: "seaweed.skali.dev", Version: "v1", Kind: "ObjectStore"},
+			Name: name,
+		},
+		Kind:        module.KindObjectStore,
+		Name:        name,
+		SharedKey:   "objectstore/" + name,
+		Source:      "seaweedfs",
+		ObjectStore: &status,
 	})
 }

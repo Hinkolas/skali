@@ -213,8 +213,15 @@ func (c *Controller) createPool(ctx context.Context, plan poolPlan) (*store.Data
 	return pool, nil
 }
 
+// shortID is the collision-resistant fragment of generated identities. It
+// takes the LAST 8 hex characters: a v7 UUID's leading characters are pure
+// timestamp, identical for every id minted in the same window, and two
+// claims created in one deployment pass would collide on their Database CR
+// and Secret names (measured: the guestbook data claim and the seaweed
+// metadata claim rendered the same db-<id8> object).
 func shortID(id uuid.UUID) string {
-	return strings.ReplaceAll(id.String(), "-", "")[:8]
+	hex := strings.ReplaceAll(id.String(), "-", "")
+	return hex[len(hex)-8:]
 }
 
 // tierForNodes maps a node requirement back onto the availability tier.

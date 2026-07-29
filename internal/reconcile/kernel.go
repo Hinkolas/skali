@@ -230,9 +230,13 @@ func (k *Kernel) audit(ctx context.Context) {
 // ObservationInfo is the structural health of the observation plane itself,
 // served by the system observation endpoint.
 type ObservationInfo struct {
-	Mode       string // "connected" or "api-only"
-	Ready      bool
-	Source     module.SourceStatus
+	Mode   string // "connected" or "api-only"
+	Ready  bool
+	Source module.SourceStatus
+	// Sources lists every registered observation source, kubernetes first;
+	// provider observers (seaweedfs) fail independently of the cluster
+	// watch.
+	Sources    []observe.NamedSource
 	Kinds      []observe.KindSync
 	QueueDepth int
 	Workers    int
@@ -249,6 +253,7 @@ func (k *Kernel) Observation() ObservationInfo {
 		Mode:       "api-only",
 		Ready:      k.deps.Observed.Ready(),
 		Source:     k.deps.Observed.Source(),
+		Sources:    k.deps.Observed.Sources(),
 		QueueDepth: k.queue.Len(),
 		Workers:    k.cfg.Workers,
 	}

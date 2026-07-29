@@ -30,10 +30,14 @@ func (c *Controller) Release(ctx context.Context, environmentID uuid.UUID) (bool
 	if err != nil {
 		return false, nil, err
 	}
-	if len(live) == 0 {
+	liveBuckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, environmentID)
+	if err != nil {
+		return false, nil, err
+	}
+	if len(live)+len(liveBuckets) == 0 {
 		return true, nil, nil
 	}
-	detail := make([]string, 0, len(live))
+	detail := make([]string, 0, len(live)+len(liveBuckets))
 	for _, row := range live {
 		released, err := c.deps.DB.ReleaseClaim(ctx, row.ID)
 		if err != nil {
@@ -42,6 +46,15 @@ func (c *Controller) Release(ctx context.Context, environmentID uuid.UUID) (bool
 		c.EnqueueClaim(row.ID)
 		c.publishClaim(*released)
 		detail = append(detail, "releasing databases."+row.ServiceKey)
+	}
+	for _, row := range liveBuckets {
+		released, err := c.deps.DB.ReleaseBucketClaim(ctx, row.ID)
+		if err != nil {
+			return false, nil, err
+		}
+		c.EnqueueBucketClaim(row.ID)
+		c.publishBucketClaim(*released)
+		detail = append(detail, "releasing buckets."+row.ServiceKey)
 	}
 	return false, detail, nil
 }
@@ -63,6 +76,15 @@ func (c *Controller) Suspend(ctx context.Context, environmentID uuid.UUID) error
 			return err
 		}
 		c.EnqueuePool(placement.ClusterID)
+	}
+	// Bucket claims have no per-claim placement; the single store
+	// re-evaluates its stop-when-unused state.
+	liveBuckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, environmentID)
+	if err != nil {
+		return err
+	}
+	if len(liveBuckets) > 0 {
+		c.EnqueueObjectStore()
 	}
 	return nil
 }
@@ -128,7 +150,7 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 		return 0, fmt.Errorf("substrate: delete credential secret: %w", err)
 	}
 	if row.OwnerKind == dbstore.OwnerService {
-		if project, environment, service, ok := ownerNames(row); ok {
+		if project, environment, service, ok := ownerNames(row.OwnerRef); ok {
 			if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
 				GVK:       secretGVK,
 				Namespace: kubernetes.NamespaceName(project, environment),

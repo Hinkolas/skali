@@ -192,6 +192,9 @@ type Endpoints struct {
 	// Registry is the public managed-registry domain; empty on records
 	// written before initialization gathered it.
 	Registry string `yaml:"registry,omitempty"`
+	// S3 is the optional public S3 endpoint domain; empty keeps bucket
+	// access in-cluster.
+	S3 string `yaml:"s3,omitempty"`
 }
 
 // TLSConfig parameterizes certificate issuance.

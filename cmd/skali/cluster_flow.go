@@ -387,6 +387,17 @@ func seedInitInputs(reader *bufio.Reader, promptAllowed bool,
 			return err
 		}
 	}
+	if opts.Endpoints.S3 == "" && record.Endpoints == nil && promptAllowed {
+		// Optional, asked only on a fresh initialization: an empty answer
+		// keeps bucket access in-cluster (a complete record must keep
+		// running silently for headless upgrades). Gaining the endpoint
+		// later goes through the init config's endpoints.s3.
+		opts.Endpoints.S3, err = cliprompt.LineDefault(reader,
+			"  s3 domain (empty keeps buckets in-cluster) []: ", "")
+		if err != nil {
+			return err
+		}
+	}
 	if opts.TLS.IssuerEmail == "" {
 		if !promptAllowed {
 			return missingRecordField("tls issuer email")

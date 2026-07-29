@@ -59,6 +59,40 @@ type BackupCode struct {
 	CreatedAt   time.Time
 }
 
+type BucketAllocation struct {
+	ID                uuid.UUID
+	ClaimID           uuid.UUID
+	StoreID           uuid.UUID
+	BucketName        string
+	AccessKeyID       string
+	CredentialSecret  string
+	CredentialVersion int64
+	Endpoint          string
+	Region            string
+	CreatedAt         time.Time
+	ReleasedAt        *time.Time
+}
+
+type BucketClaim struct {
+	ID                           uuid.UUID
+	OwnerKind                    string
+	ProjectID                    *uuid.UUID
+	EnvironmentID                *uuid.UUID
+	ServiceKey                   string
+	SystemKey                    string
+	OwnerRef                     string
+	Visibility                   string
+	StorageQuotaBytes            int64
+	ObjectQuota                  int64
+	MaxObjectBytes               int64
+	Versioning                   string
+	AbortUploadsAfterSeconds     int64
+	ExpireNoncurrentAfterSeconds int64
+	Phase                        string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
+}
+
 type Build struct {
 	ID             uuid.UUID
 	ProjectID      *uuid.UUID
@@ -224,6 +258,19 @@ type LoginChallenge struct {
 	Attempts  int32
 	ExpiresAt time.Time
 	CreatedAt time.Time
+}
+
+type ObjectStore struct {
+	ID                 uuid.UUID
+	Name               string
+	Masters            int32
+	VolumeServers      int32
+	Replication        string
+	VolumeStorageBytes int64
+	Image              string
+	State              string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type Project struct {

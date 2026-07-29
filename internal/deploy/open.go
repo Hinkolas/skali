@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +45,47 @@ type UnsupportedCapabilitiesError struct{ Missing []string }
 func (e *UnsupportedCapabilitiesError) Error() string {
 	return "deploy: this installation cannot run the definition; missing capabilities: " +
 		strings.Join(e.Missing, ", ")
+}
+
+// UnsupportedBucketPolicyError: an authored bucket field whose policy has
+// not landed yet (REWORK_V2 10.5: public access, versioning, and lifecycle
+// rules remain later policies built on the same substrate). Rejected fast
+// at deploy open, like a missing capability; the authoring schema keeps the
+// field so definitions stay portable.
+type UnsupportedBucketPolicyError struct {
+	Bucket string
+	Field  string
+}
+
+func (e *UnsupportedBucketPolicyError) Error() string {
+	return "deploy: buckets." + e.Bucket + ": " + e.Field +
+		" is not supported yet; it arrives with a later policy"
+}
+
+// validateBucketPolicies enforces the v1 bucket product surface: private
+// visibility, storage quota, versioning disabled.
+func validateBucketPolicies(definition compiler.ProjectDefinition) error {
+	keys := make([]string, 0, len(definition.Buckets))
+	for key := range definition.Buckets {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		bucket := definition.Buckets[key]
+		switch {
+		case bucket.Visibility == "public-read":
+			return &UnsupportedBucketPolicyError{Bucket: key, Field: "visibility: public-read"}
+		case bucket.Versioning == "enabled":
+			return &UnsupportedBucketPolicyError{Bucket: key, Field: "versioning: enabled"}
+		case bucket.ObjectQuota > 0:
+			return &UnsupportedBucketPolicyError{Bucket: key, Field: "quotas.objects"}
+		case bucket.MaxObjectSizeBytes > 0:
+			return &UnsupportedBucketPolicyError{Bucket: key, Field: "quotas.maxObjectSize"}
+		case bucket.AbortIncompleteUploadsAfterSeconds > 0 || bucket.ExpireNoncurrentVersionsAfterSec > 0:
+			return &UnsupportedBucketPolicyError{Bucket: key, Field: "lifecycle"}
+		}
+	}
+	return nil
 }
 
 // MissingBuildInputError: a build-sourced application arrived without its
@@ -180,6 +222,9 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	}
 	if missing := missingCapabilities(revision.RequiredCapabilities(definition), in.Capabilities); len(missing) > 0 {
 		return nil, &UnsupportedCapabilitiesError{Missing: missing}
+	}
+	if err := validateBucketPolicies(definition); err != nil {
+		return nil, err
 	}
 	preview, err := s.preview(ctx, env, definitionVersion, definition, in.CandidateID, in.BuildInputs, in.NodePlatforms)
 	if err != nil {

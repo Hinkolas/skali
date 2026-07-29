@@ -14,8 +14,8 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
-	"github.com/Hinkolas/skali/internal/valuestore"
 	"github.com/Hinkolas/skali/internal/values"
+	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 // valuesHandlers is the environment-values surface. Secrecy is declared by

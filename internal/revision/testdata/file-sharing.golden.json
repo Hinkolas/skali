@@ -3,7 +3,7 @@
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "575e21c1be204369d7d803a9a8c58ad66db2561f9747d110c7989d706657286d",
+  "definitionHash": "8de4a230358ff0940b1e96eb92e8313392fa96e1f00a9f1bcee4e007183a3f65",
   "definition": {
     "version": "1",
     "name": "file-sharing",
@@ -260,11 +260,7 @@
       "files": {
         "visibility": "private",
         "storageQuotaBytes": 20000000000,
-        "objectQuota": 10000,
-        "maxObjectSizeBytes": 100000000,
-        "versioning": "enabled",
-        "abortIncompleteUploadsAfterSeconds": 604800,
-        "expireNoncurrentVersionsAfterSeconds": 2592000
+        "versioning": "disabled"
       }
     },
     "backups": {
@@ -321,5 +317,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "2a91a76be9e54c04a85c2c115e72066b63a07f917fbb633a562305ab3315f035"
+  "checksum": "6496df220c0dc7be56ac4a6a0b3ce57a2e613d8a20d6dee1c5e8f0fa393b83c3"
 }

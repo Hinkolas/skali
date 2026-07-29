@@ -18,8 +18,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/Hinkolas/skali/internal/kube"
-	"github.com/Hinkolas/skali/internal/layout"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
+	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/module"
 )
 
@@ -98,7 +98,7 @@ func NewKubeSource(client *kube.Client, store *Store, opts SourceOptions) *KubeS
 // flips the store fresh, and then keeps evaluating freshness until the
 // context ends. Health is unknown until the sync completes by contract.
 func (k *KubeSource) Run(ctx context.Context) error {
-	defer k.store.MarkUnready()
+	defer k.store.MarkUnready(SourceKubernetes)
 	synced := make([]cache.InformerSynced, 0, len(k.informers))
 	for _, entry := range k.informers {
 		go entry.informer.RunWithContext(ctx)
@@ -107,7 +107,7 @@ func (k *KubeSource) Run(ctx context.Context) error {
 	if !cache.WaitForCacheSync(ctx.Done(), synced...) {
 		return ctx.Err()
 	}
-	k.store.MarkReady()
+	k.store.MarkReady(SourceKubernetes)
 
 	tick := max(time.Second, min(10*time.Second, k.opts.StaleThreshold/3))
 	ticker := time.NewTicker(tick)
@@ -117,7 +117,7 @@ func (k *KubeSource) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			k.store.EvaluateFreshness(k.opts.StaleThreshold)
+			k.store.EvaluateFreshness(SourceKubernetes, k.opts.StaleThreshold)
 		}
 	}
 }
@@ -131,8 +131,12 @@ func (k *KubeSource) register() {
 	managed := rendering.ManagedSelector
 
 	k.addObjectInformer("Pod", &corev1.Pod{}, k.listWatch(
-		func(o metav1.ListOptions) (runtime.Object, error) { return core.Pods(all).List(context.Background(), o) },
-		func(o metav1.ListOptions) (watch.Interface, error) { return core.Pods(all).Watch(context.Background(), o) },
+		func(o metav1.ListOptions) (runtime.Object, error) {
+			return core.Pods(all).List(context.Background(), o)
+		},
+		func(o metav1.ListOptions) (watch.Interface, error) {
+			return core.Pods(all).Watch(context.Background(), o)
+		},
 		managed, ""), convertPod)
 
 	k.addObjectInformer("Deployment", &appsv1.Deployment{}, k.listWatch(
@@ -193,12 +197,16 @@ func (k *KubeSource) register() {
 	// out to the environments with pods placed on it.
 	k.addNodeInformer(k.listWatch(
 		func(o metav1.ListOptions) (runtime.Object, error) { return core.Nodes().List(context.Background(), o) },
-		func(o metav1.ListOptions) (watch.Interface, error) { return core.Nodes().Watch(context.Background(), o) },
+		func(o metav1.ListOptions) (watch.Interface, error) {
+			return core.Nodes().Watch(context.Background(), o)
+		},
 		"", ""))
 
 	// Warning events join to environments through their involved object.
 	k.addEventInformer(k.listWatch(
-		func(o metav1.ListOptions) (runtime.Object, error) { return core.Events(all).List(context.Background(), o) },
+		func(o metav1.ListOptions) (runtime.Object, error) {
+			return core.Events(all).List(context.Background(), o)
+		},
 		func(o metav1.ListOptions) (watch.Interface, error) {
 			return core.Events(all).Watch(context.Background(), o)
 		},
@@ -243,10 +251,10 @@ func (k *KubeSource) listWatch(
 			options.FieldSelector = fieldSelector
 			result, err := list(options)
 			if err != nil {
-				k.store.MarkFailure()
+				k.store.MarkFailure(SourceKubernetes)
 				return nil, err
 			}
-			k.store.MarkContact()
+			k.store.MarkContact(SourceKubernetes)
 			return result, nil
 		},
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
@@ -254,7 +262,7 @@ func (k *KubeSource) listWatch(
 			options.FieldSelector = fieldSelector
 			result, err := watchFn(options)
 			if err != nil {
-				k.store.MarkFailure()
+				k.store.MarkFailure(SourceKubernetes)
 				return nil, err
 			}
 			return k.trackContact(result), nil
@@ -281,12 +289,12 @@ func (k *KubeSource) trackContact(inner watch.Interface) watch.Interface {
 		for event := range inner.ResultChan() {
 			if !delivered && event.Type != watch.Error {
 				delivered = true
-				k.store.MarkContact()
+				k.store.MarkContact(SourceKubernetes)
 			}
 			forwarder.out <- event
 		}
 		if !delivered && time.Since(started) < emptyWatchWindow {
-			k.store.MarkFailure()
+			k.store.MarkFailure(SourceKubernetes)
 		}
 		close(forwarder.out)
 	}()
@@ -434,7 +442,7 @@ func (k *KubeSource) addEventInformer(lw cache.ListerWatcher) {
 
 func (k *KubeSource) watchErrors(informer cache.SharedIndexInformer) {
 	_ = informer.SetWatchErrorHandler(func(_ *cache.Reflector, _ error) {
-		k.store.MarkFailure()
+		k.store.MarkFailure(SourceKubernetes)
 	})
 }
 

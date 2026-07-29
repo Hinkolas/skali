@@ -10,13 +10,13 @@ metadata:
   name: skalid
 rules:
   - apiGroups: [""]
-    resources: [namespaces, secrets, services, pods, pods/log, events, persistentvolumeclaims, nodes]
+    resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
     verbs: ["*"]
   - apiGroups: [apps]
-    resources: [deployments]
+    resources: [deployments, statefulsets, daemonsets]
     verbs: ["*"]
   - apiGroups: [networking.k8s.io]
-    resources: [ingresses]
+    resources: [ingresses, networkpolicies]
     verbs: ["*"]
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]
@@ -107,7 +107,7 @@ spec:
             - name: SKALI_REGISTRY_INSECURE
               value: "true"
             - name: SKALI_CAPABILITIES
-              value: application;edge;database
+              value: application;edge;database;object-storage
           readinessProbe:
             httpGet:
               path: /healthz

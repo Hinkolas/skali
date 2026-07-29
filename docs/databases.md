@@ -58,3 +58,6 @@ Removing a database from the definition is a destructive change: the plan
 marks it, deploy requires explicit confirmation, and teardown drops the
 logical database and its credentials. Dedicated and project pools are
 removed with their last database; the shared pool remains.
+
+Object storage works the same way through the `buckets:` collection; see
+[buckets.md](buckets.md).

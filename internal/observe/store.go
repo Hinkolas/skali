@@ -21,15 +21,15 @@ import (
 // module vocabulary plus the store-internal kinds "namespace" and "node"
 // that never reach module evaluation.
 type Object struct {
-	Ref      kube.ObjectRef
-	Kind     string
-	Name     string // module-facing name: service key for workloads, object name otherwise
-	Labels   map[string]string
+	Ref         kube.ObjectRef
+	Kind        string
+	Name        string // module-facing name: service key for workloads, object name otherwise
+	Labels      map[string]string
 	Environment uuid.UUID // uuid.Nil when the object is not environment-owned
-	Service  string
-	Revision string
-	Node     string // pods only
-	Generation int64
+	Service     string
+	Revision    string
+	Node        string // pods only
+	Generation  int64
 
 	// ManagedFields are retained for workload objects so the scale planner
 	// can decide ownership transitions without a request-time read.
@@ -48,6 +48,13 @@ type Object struct {
 	SharedKey       string
 	DatabaseCluster *module.DatabaseClusterStatus
 	DatabaseTenant  *module.DatabaseTenantStatus
+
+	// Source names the observation source that owns this object; empty means
+	// the kubernetes watch. Poll-based provider sources set their name so
+	// ReplaceSource can reconcile exactly their object set.
+	Source      string
+	ObjectStore *module.ObjectStoreStatus
+	Bucket      *module.BucketStatus
 }
 
 type objectKey struct {
@@ -73,14 +80,15 @@ type Store struct {
 	nodeArch         map[string]string
 	nodeCapabilities map[string]map[string]bool
 	events           map[objectKey][]EventRecord
-	sharedObjects    map[string]objectKey            // shared key -> platform object
-	sharedRefs       map[string]map[uuid.UUID]int    // shared key -> referencing environments
+	sharedObjects    map[string]objectKey              // shared key -> platform object
+	sharedRefs       map[string]map[uuid.UUID]int      // shared key -> referencing environments
+	bySource         map[string]map[objectKey]struct{} // named provider sources only
 
-	state      string // module.SourceUnknown | SourceFresh | SourceStale
-	ready      bool
-	lastSync   time.Time
-	failedAt   time.Time
-	staleSince time.Time
+	// sources is the per-source freshness registry; SourceKubernetes always
+	// exists, provider observers register themselves. Sources fail
+	// independently: one provider's staleness never poisons another's
+	// projections.
+	sources map[string]*sourceRecord
 
 	broadcast *broadcaster
 }
@@ -99,18 +107,31 @@ func NewStore(clock func() time.Time) *Store {
 		events:           make(map[objectKey][]EventRecord),
 		sharedObjects:    make(map[string]objectKey),
 		sharedRefs:       make(map[string]map[uuid.UUID]int),
-		state:            module.SourceUnknown,
-		broadcast:        newBroadcaster(),
+		bySource:         make(map[string]map[objectKey]struct{}),
+		sources: map[string]*sourceRecord{
+			SourceKubernetes: {state: module.SourceUnknown},
+		},
+		broadcast: newBroadcaster(),
 	}
 }
 
 // Upsert records one observed object and publishes an invalidation for its
 // environment; a platform-scoped shared object fans out to every
-// environment referencing it. The write side is the watch source or a test
-// fake.
+// environment referencing it. The write side is a watch source, a provider
+// observer, or a test fake.
 func (s *Store) Upsert(obj Object) {
-	key := keyOf(obj.Ref)
 	s.mu.Lock()
+	affected := s.upsertLocked(obj)
+	s.mu.Unlock()
+	for _, environment := range affected {
+		s.invalidate(environment)
+	}
+}
+
+// upsertLocked stores one object and returns the environments whose
+// projections changed (owner, previous owner, shared-key referencers).
+func (s *Store) upsertLocked(obj Object) []uuid.UUID {
+	key := keyOf(obj.Ref)
 	previous := s.objects[key]
 	if previous != nil {
 		s.unindexLocked(key, previous)
@@ -118,44 +139,91 @@ func (s *Store) Upsert(obj Object) {
 	stored := obj
 	s.objects[key] = &stored
 	s.indexLocked(key, &stored)
-	var fanOut []uuid.UUID
-	if obj.Environment == uuid.Nil && obj.SharedKey != "" {
-		fanOut = s.environmentsForSharedKeyLocked(obj.SharedKey)
-	}
-	s.mu.Unlock()
-
-	s.invalidate(obj.Environment)
+	affected := []uuid.UUID{obj.Environment}
 	if previous != nil && previous.Environment != obj.Environment {
-		s.invalidate(previous.Environment)
+		affected = append(affected, previous.Environment)
 	}
-	for _, environment := range fanOut {
-		s.invalidate(environment)
+	if obj.Environment == uuid.Nil && obj.SharedKey != "" {
+		affected = append(affected, s.environmentsForSharedKeyLocked(obj.SharedKey)...)
 	}
+	return affected
 }
 
 // Remove drops one observed object, if present.
 func (s *Store) Remove(ref kube.ObjectRef) {
-	key := keyOf(ref)
 	s.mu.Lock()
-	previous := s.objects[key]
-	var fanOut []uuid.UUID
-	if previous != nil {
-		s.unindexLocked(key, previous)
-		delete(s.objects, key)
-		if previous.Environment == uuid.Nil && previous.SharedKey != "" {
-			fanOut = s.environmentsForSharedKeyLocked(previous.SharedKey)
-		}
-	}
+	affected := s.removeLocked(keyOf(ref))
 	s.mu.Unlock()
-	if previous != nil {
-		s.invalidate(previous.Environment)
-	}
-	for _, environment := range fanOut {
+	for _, environment := range affected {
 		s.invalidate(environment)
 	}
 }
 
+// removeLocked drops one object and returns the affected environments.
+func (s *Store) removeLocked(key objectKey) []uuid.UUID {
+	previous := s.objects[key]
+	if previous == nil {
+		return nil
+	}
+	s.unindexLocked(key, previous)
+	delete(s.objects, key)
+	affected := []uuid.UUID{previous.Environment}
+	if previous.Environment == uuid.Nil && previous.SharedKey != "" {
+		affected = append(affected, s.environmentsForSharedKeyLocked(previous.SharedKey)...)
+	}
+	return affected
+}
+
+// ReplaceSource reconciles one named source's object set to exactly the
+// given objects: upserts them all and removes anything the source published
+// earlier that vanished from this probe, so a crashed provider leaves no
+// ghosts. It returns the affected environments, deduplicated and sorted,
+// for the caller to enqueue.
+func (s *Store) ReplaceSource(source string, objects []Object) []uuid.UUID {
+	incoming := make(map[objectKey]struct{}, len(objects))
+	var affected []uuid.UUID
+	s.mu.Lock()
+	for _, obj := range objects {
+		obj.Source = source
+		incoming[keyOf(obj.Ref)] = struct{}{}
+		affected = append(affected, s.upsertLocked(obj)...)
+	}
+	for key := range s.bySource[source] {
+		if _, ok := incoming[key]; ok {
+			continue
+		}
+		affected = append(affected, s.removeLocked(key)...)
+	}
+	s.mu.Unlock()
+
+	seen := make(map[uuid.UUID]struct{}, len(affected))
+	environments := make([]uuid.UUID, 0, len(affected))
+	for _, environment := range affected {
+		if environment == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[environment]; ok {
+			continue
+		}
+		seen[environment] = struct{}{}
+		environments = append(environments, environment)
+	}
+	sort.Slice(environments, func(i, j int) bool {
+		return environments[i].String() < environments[j].String()
+	})
+	for _, environment := range environments {
+		s.invalidate(environment)
+	}
+	return environments
+}
+
 func (s *Store) indexLocked(key objectKey, obj *Object) {
+	if obj.Source != "" {
+		if s.bySource[obj.Source] == nil {
+			s.bySource[obj.Source] = make(map[objectKey]struct{})
+		}
+		s.bySource[obj.Source][key] = struct{}{}
+	}
 	if obj.Environment != uuid.Nil {
 		if s.byEnvironment[obj.Environment] == nil {
 			s.byEnvironment[obj.Environment] = make(map[objectKey]struct{})
@@ -181,6 +249,14 @@ func (s *Store) indexLocked(key objectKey, obj *Object) {
 }
 
 func (s *Store) unindexLocked(key objectKey, obj *Object) {
+	if obj.Source != "" {
+		if set := s.bySource[obj.Source]; set != nil {
+			delete(set, key)
+			if len(set) == 0 {
+				delete(s.bySource, obj.Source)
+			}
+		}
+	}
 	if obj.Environment != uuid.Nil {
 		if set := s.byEnvironment[obj.Environment]; set != nil {
 			delete(set, key)
@@ -228,35 +304,90 @@ func (s *Store) environmentsForSharedKeyLocked(sharedKey string) []uuid.UUID {
 	return environments
 }
 
-// Ready reports whether the initial cache synchronization completed. Before
-// readiness every health projection is unknown by contract.
+// Ready reports whether the kubernetes source's initial cache
+// synchronization completed. Before readiness every health projection is
+// unknown by contract. Provider sources have their own readiness, visible
+// through Sources.
 func (s *Store) Ready() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.ready
+	return s.sources[SourceKubernetes].ready
 }
 
-// Source projects the observation source state for module evaluation.
+// Source projects the kubernetes observation source for module evaluation
+// and the kernel's activation gate; provider sources are read by name.
 func (s *Store) Source() module.SourceStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return module.SourceStatus{State: s.state, StaleSince: s.staleSince, LastSync: s.lastSync}
+	return s.sources[SourceKubernetes].status()
 }
 
-// Snapshot is one environment's consistent view: leading source status plus
-// every owned object in deterministic order.
+// SourceNamed projects one named source's status; ok is false when the
+// source is not registered.
+func (s *Store) SourceNamed(name string) (module.SourceStatus, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	record, ok := s.sources[name]
+	if !ok {
+		return module.SourceStatus{}, false
+	}
+	return record.status(), true
+}
+
+// NamedSource is one source's status with its name, kubernetes first in
+// every listing so consumers reading only the leading source keep their
+// meaning.
+type NamedSource struct {
+	Name string
+	module.SourceStatus
+}
+
+func (r *sourceRecord) status() module.SourceStatus {
+	return module.SourceStatus{State: r.state, StaleSince: r.staleSince, LastSync: r.lastSync}
+}
+
+// sourcesLocked lists every registered source, kubernetes first, then
+// sorted by name.
+func (s *Store) sourcesLocked() []NamedSource {
+	out := []NamedSource{{Name: SourceKubernetes, SourceStatus: s.sources[SourceKubernetes].status()}}
+	names := make([]string, 0, len(s.sources))
+	for name := range s.sources {
+		if name != SourceKubernetes {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		out = append(out, NamedSource{Name: name, SourceStatus: s.sources[name].status()})
+	}
+	return out
+}
+
+// Sources lists every registered source's status, kubernetes first.
+func (s *Store) Sources() []NamedSource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sourcesLocked()
+}
+
+// Snapshot is one environment's consistent view: every source's status
+// (kubernetes first) plus every owned object in deterministic order.
 type Snapshot struct {
-	Source  module.SourceStatus
+	Sources []NamedSource
 	Objects []Object
 }
 
-// ForService projects the module-facing resources of one service key:
-// source first, then the service's own objects, then the shared platform
-// objects (database pools) they reference.
+// ForService projects the module-facing resources of one service key: the
+// sources first (kubernetes leading, so StaleSource keeps its meaning),
+// then the service's own objects, then the shared platform objects
+// (database pools, the object store) they reference.
 func (s Snapshot) ForService(key string) []module.ObservedResource {
-	resources := []module.ObservedResource{{
-		Kind: module.KindSource, Name: "kubernetes", Source: &s.Source,
-	}}
+	resources := make([]module.ObservedResource, 0, len(s.Sources))
+	for index := range s.Sources {
+		resources = append(resources, module.ObservedResource{
+			Kind: module.KindSource, Name: s.Sources[index].Name, Source: &s.Sources[index].SourceStatus,
+		})
+	}
 	shared := make(map[string]bool)
 	for index := range s.Objects {
 		obj := &s.Objects[index]
@@ -266,7 +397,8 @@ func (s Snapshot) ForService(key string) []module.ObservedResource {
 		switch obj.Kind {
 		case module.KindWorkload, module.KindPod, module.KindAutoscaler,
 			module.KindService, module.KindIngress, module.KindVolume,
-			module.KindDatabaseClaim, module.KindDatabaseTenant:
+			module.KindDatabaseClaim, module.KindDatabaseTenant,
+			module.KindBucketClaim, module.KindBucket:
 			resources = append(resources, module.ObservedResource{
 				Kind:           obj.Kind,
 				Name:           obj.Name,
@@ -276,6 +408,7 @@ func (s Snapshot) ForService(key string) []module.ObservedResource {
 				Autoscaler:     obj.Autoscaler,
 				Claim:          obj.Claim,
 				DatabaseTenant: obj.DatabaseTenant,
+				Bucket:         obj.Bucket,
 			})
 			if obj.SharedKey != "" {
 				shared[obj.SharedKey] = true
@@ -284,25 +417,30 @@ func (s Snapshot) ForService(key string) []module.ObservedResource {
 	}
 	for index := range s.Objects {
 		obj := &s.Objects[index]
-		if obj.Kind != module.KindDatabaseCluster || !shared[obj.SharedKey] {
+		if obj.Environment != uuid.Nil || !shared[obj.SharedKey] {
 			continue
 		}
-		resources = append(resources, module.ObservedResource{
-			Kind:            obj.Kind,
-			Name:            obj.Name,
-			DatabaseCluster: obj.DatabaseCluster,
-		})
+		switch obj.Kind {
+		case module.KindDatabaseCluster, module.KindObjectStore:
+			resources = append(resources, module.ObservedResource{
+				Kind:            obj.Kind,
+				Name:            obj.Name,
+				DatabaseCluster: obj.DatabaseCluster,
+				ObjectStore:     obj.ObjectStore,
+			})
+		}
 	}
 	return resources
 }
 
 // Snapshot copies the environment's objects under the read lock, plus the
-// platform-scoped shared objects (database pools) its objects reference.
+// platform-scoped shared objects (database pools, the object store) its
+// objects reference.
 func (s *Store) Snapshot(environmentID uuid.UUID) Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	snapshot := Snapshot{
-		Source: module.SourceStatus{State: s.state, StaleSince: s.staleSince, LastSync: s.lastSync},
+		Sources: s.sourcesLocked(),
 	}
 	shared := make(map[string]bool)
 	for key := range s.byEnvironment[environmentID] {

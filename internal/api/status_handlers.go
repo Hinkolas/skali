@@ -47,11 +47,11 @@ type podPayload struct {
 }
 
 type serviceStatusPayload struct {
-	Key         string              `json:"key"`
-	Type        string              `json:"type"`
-	Health      string              `json:"health"`
+	Key         string                    `json:"key"`
+	Type        string                    `json:"type"`
+	Health      string                    `json:"health"`
 	Diagnostics []healthDiagnosticPayload `json:"diagnostics"`
-	Pods        []podPayload        `json:"pods"`
+	Pods        []podPayload              `json:"pods"`
 }
 
 type environmentStatusPayload struct {
@@ -221,13 +221,19 @@ type kindSyncPayload struct {
 	Synced bool   `json:"synced"`
 }
 
+type namedSourcePayload struct {
+	Name string `json:"name"`
+	observationPayload
+}
+
 type systemObservationPayload struct {
-	Mode        string             `json:"mode"`
-	Ready       bool               `json:"ready"`
-	Observation observationPayload `json:"observation"`
-	Kinds       []kindSyncPayload  `json:"kinds"`
-	QueueDepth  int                `json:"queue_depth"`
-	Workers     int                `json:"workers"`
+	Mode        string               `json:"mode"`
+	Ready       bool                 `json:"ready"`
+	Observation observationPayload   `json:"observation"`
+	Sources     []namedSourcePayload `json:"sources"`
+	Kinds       []kindSyncPayload    `json:"kinds"`
+	QueueDepth  int                  `json:"queue_depth"`
+	Workers     int                  `json:"workers"`
 }
 
 func (h *statusHandlers) system(w http.ResponseWriter, r *http.Request) {
@@ -236,9 +242,16 @@ func (h *statusHandlers) system(w http.ResponseWriter, r *http.Request) {
 		Mode:        info.Mode,
 		Ready:       info.Ready,
 		Observation: newObservationPayload(info.Source),
+		Sources:     make([]namedSourcePayload, 0, len(info.Sources)),
 		Kinds:       make([]kindSyncPayload, 0, len(info.Kinds)),
 		QueueDepth:  info.QueueDepth,
 		Workers:     info.Workers,
+	}
+	for _, source := range info.Sources {
+		payload.Sources = append(payload.Sources, namedSourcePayload{
+			Name:               source.Name,
+			observationPayload: newObservationPayload(source.SourceStatus),
+		})
 	}
 	for _, kind := range info.Kinds {
 		payload.Kinds = append(payload.Kinds, kindSyncPayload{Kind: kind.Kind, Synced: kind.Synced})

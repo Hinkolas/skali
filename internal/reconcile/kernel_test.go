@@ -18,6 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/apptest"
+	"github.com/Hinkolas/skali/internal/module/bucket"
 	"github.com/Hinkolas/skali/internal/module/database"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
@@ -122,6 +123,7 @@ func newKernelFixture(t *testing.T, cfg Config) *kernelFixture {
 	registry := module.NewRegistry()
 	require.NoError(t, registry.Register(apptest.Module{}))
 	require.NoError(t, registry.Register(database.Module{}))
+	require.NoError(t, registry.Register(bucket.Module{}))
 	fake := observe.NewFake()
 	cluster := newFakeCluster()
 

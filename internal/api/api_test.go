@@ -135,8 +135,10 @@ func newTestAPI(t *testing.T) *testAPI {
 		Databases:          dbstore.New(st),
 		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
 			return map[string][]byte{
-				"username": []byte("u_" + name),
-				"password": []byte("test-password-" + name),
+				"username":   []byte("u_" + name),
+				"password":   []byte("test-password-" + name),
+				"access_key": []byte("AK" + name),
+				"secret_key": []byte("sk-" + name),
 			}, nil
 		},
 	}))

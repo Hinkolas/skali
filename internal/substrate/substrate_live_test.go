@@ -3,7 +3,6 @@ package substrate
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -112,7 +111,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "off", cluster.GetAnnotations()[cnpg.HibernationAnnotation])
 	database, err := client.Dynamic.Resource(cnpg.DatabaseGVR).Namespace(Namespace).
-		Get(ctx, "db-"+strings.ReplaceAll(created.ID.String(), "-", "")[:8], metav1.GetOptions{})
+		Get(ctx, "db-"+shortID(created.ID), metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, "databases.data", database.GetLabels()[kubernetes.LabelService])
 
@@ -256,7 +255,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 	_, err = client.Dynamic.Resource(cnpg.DatabaseGVR).Namespace(Namespace).
-		Get(ctx, "db-"+strings.ReplaceAll(created.ID.String(), "-", "")[:8], metav1.GetOptions{})
+		Get(ctx, "db-"+shortID(created.ID), metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "the Database object must be gone")
 	_, err = client.Clientset.CoreV1().Secrets(Namespace).
 		Get(ctx, tenant.CredentialSecret, metav1.GetOptions{})
@@ -323,7 +322,11 @@ func deleteNamespace(t *testing.T, client *kube.Client, name string) {
 func waitNamespaceGone(t *testing.T, client *kube.Client, name string) {
 	t.Helper()
 	ctx := context.Background()
-	deadline := time.Now().Add(2 * time.Minute)
+	// The platform namespace drains CNPG finalizers plus the seaweed
+	// workloads and their volumes, and a preceding suite's teardown may
+	// still be finalizing on a loaded machine; ten minutes buys out the
+	// slowest observed sequence.
+	deadline := time.Now().Add(10 * time.Minute)
 	for {
 		_, err := client.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
@@ -340,4 +343,3 @@ func waitNamespaceGone(t *testing.T, client *kube.Client, name string) {
 		time.Sleep(2 * time.Second)
 	}
 }
-

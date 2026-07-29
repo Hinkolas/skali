@@ -40,7 +40,7 @@ func TestDecodeAndContract(t *testing.T) {
 	require.Empty(t, service.Dependencies())
 	require.Empty(t, service.Artifacts())
 	require.Equal(t, []string{"host", "port", "name", "username", "password", "url"}, service.Outputs())
-	require.Equal(t, "claim:data", service.Steps()[0].Key)
+	require.Equal(t, "claim:databases.data", service.Steps()[0].Key)
 	require.True(t, service.Removal().DataLoss)
 
 	_, err := Module{}.Decode(compiler.ProjectDefinition{}, "missing")

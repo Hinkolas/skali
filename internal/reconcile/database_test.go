@@ -78,7 +78,7 @@ func TestReconcileDatabaseClaimGatesApplication(t *testing.T) {
 	tree, err := f.journal.RunTree(ctx, result.RunID)
 	require.NoError(t, err)
 	steps := flattenSteps(tree.Steps)
-	require.Equal(t, "waiting", steps["claim:data"])
+	require.Equal(t, "waiting", steps["claim:databases.data"])
 	require.Equal(t, "waiting", steps["apply:web"])
 
 	// The substrate provisions: readiness, the claim projection, and the
@@ -107,7 +107,7 @@ func TestReconcileDatabaseClaimGatesApplication(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "succeeded", tree.Run.Status)
 	steps = flattenSteps(tree.Steps)
-	require.Equal(t, "succeeded", steps["claim:data"])
+	require.Equal(t, "succeeded", steps["claim:databases.data"])
 	require.Equal(t, "succeeded", steps["apply:web"])
 	require.Equal(t, "succeeded", steps["activate"])
 
@@ -141,7 +141,7 @@ func TestReconcileDatabaseWithoutSubstrateWaits(t *testing.T) {
 	tree, err := f.journal.RunTree(ctx, result.RunID)
 	require.NoError(t, err)
 	steps := flattenSteps(tree.Steps)
-	require.Equal(t, "waiting", steps["claim:data"])
+	require.Equal(t, "waiting", steps["claim:databases.data"])
 }
 
 func flattenSteps(steps []*journal.TreeStep) map[string]string {

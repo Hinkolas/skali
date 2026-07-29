@@ -8,12 +8,15 @@ import (
 	"github.com/Hinkolas/skali/internal/module"
 )
 
-// claimGVK keys the substrate's synthetic claim projections. The group is
-// skali's own: these objects exist in the observed store only, never in
-// Kubernetes.
-var claimGVK = schema.GroupVersionKind{Group: "claims.skali.dev", Version: "v1", Kind: "DatabaseClaim"}
+// claimGVK and bucketClaimGVK key the substrate's synthetic claim
+// projections. The group is skali's own: these objects exist in the
+// observed store only, never in Kubernetes.
+var (
+	claimGVK       = schema.GroupVersionKind{Group: "claims.skali.dev", Version: "v1", Kind: "DatabaseClaim"}
+	bucketClaimGVK = schema.GroupVersionKind{Group: "claims.skali.dev", Version: "v1", Kind: "BucketClaim"}
+)
 
-// ClaimRef addresses one claim's synthetic projection.
+// ClaimRef addresses one database claim's synthetic projection.
 func ClaimRef(claimID uuid.UUID) kube.ObjectRef {
 	return kube.ObjectRef{GVK: claimGVK, Name: "claim-" + claimID.String()}
 }
@@ -25,6 +28,24 @@ func ClaimObject(environmentID uuid.UUID, service string, claimID uuid.UUID, sta
 	return Object{
 		Ref:         ClaimRef(claimID),
 		Kind:        module.KindDatabaseClaim,
+		Name:        service,
+		Environment: environmentID,
+		Service:     service,
+		Claim:       &status,
+	}
+}
+
+// BucketClaimRef addresses one bucket claim's synthetic projection.
+func BucketClaimRef(claimID uuid.UUID) kube.ObjectRef {
+	return kube.ObjectRef{GVK: bucketClaimGVK, Name: "claim-" + claimID.String()}
+}
+
+// BucketClaimObject builds the provider observation of one bucket claim;
+// service carries the dotted "buckets.<key>" form.
+func BucketClaimObject(environmentID uuid.UUID, service string, claimID uuid.UUID, status module.ClaimStatus) Object {
+	return Object{
+		Ref:         BucketClaimRef(claimID),
+		Kind:        module.KindBucketClaim,
 		Name:        service,
 		Environment: environmentID,
 		Service:     service,

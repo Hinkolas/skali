@@ -516,6 +516,7 @@ func parseDeploymentIDs(w http.ResponseWriter, definitionVersion, candidate stri
 // envelope.
 func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	var capabilities *deploy.UnsupportedCapabilitiesError
+	var bucketPolicy *deploy.UnsupportedBucketPolicyError
 	var missingInput *deploy.MissingBuildInputError
 	var incomplete *deploy.ArtifactsIncompleteError
 	var platformMismatch *deploy.PlatformMismatchError
@@ -547,6 +548,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &capabilities):
 		writeError(w, http.StatusUnprocessableEntity, codeUnsupportedCapabilities, trimDeployPrefix(err))
+	case errors.As(err, &bucketPolicy):
+		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &missingInput):
 		writeError(w, http.StatusBadRequest, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &platformMismatch):

@@ -1653,6 +1653,14 @@ explicit:
   reversible: created on first use, hibernated (CNPG hibernation, data
   kept) while no active environment uses databases, resumed by the next
   deployment.
+- The object store runs one local all-in-one SeaweedFS process (decided
+  2026-07-29): no replication, no raft quorum, one volume on one PVC. It
+  is lazy and reversible like the dev pool: created with the first bucket,
+  scaled to zero (data kept) while no active environment uses buckets, and
+  while stopped its metadata system claim releases its hold so the dev
+  database pool can hibernate too (the quiet platform). Bucket endpoints
+  stay in-cluster locally; the public S3 domain and presigned-URL flows
+  are production-only.
 
 `skali dev` should show unsupported guarantees clearly. It must still use the
 same project definition, revision format, Kubernetes objects, operators, health
@@ -2385,6 +2393,61 @@ Exit criteria:
 - Quota, credential rotation, failure, and deletion have structured run steps.
 - A SeaweedFS observation failure becomes stale/degraded without blocking
   unrelated application observation.
+
+Implementation notes (landed through 2026-07-29):
+
+- SeaweedFS needs no operator: `skalid` renders its components directly in
+  `skali-platform` under the platform field manager, pinned to
+  `chrislusf/seaweedfs:4.39`. Production: a master StatefulSet (1 or 3 by
+  capable-node count), a volume-server DaemonSet using each node's disk
+  (`/var/lib/skali/objects`, owned-hosts doctrine), and a filer Deployment
+  with the S3 gateway embedded; volume replication defaults to one copy on
+  a second node when the fleet has one. Dev: one all-in-one `weed server`
+  with one volume. Service names are identical in both shapes.
+- The filer metadata database is `system/object-storage/metadata` through
+  `EnsureSystemClaim`; there is no object-storage database provisioner.
+  The 10.5 chain (metadata tenant -> filer -> gateway -> buckets) is pure
+  level-triggered requeues with visible waiting reasons.
+- Buckets ride the same claim machinery as databases: `bucket_claims` and
+  `bucket_allocations` rows (the allocation is the placement while one
+  live store exists), `claim:buckets.<key>` run steps (step keys carry
+  dotted names now; bare keys collide across collections), the generic
+  `delete:claims` teardown step, and output mirrors with the five-output
+  catalog. Identity administration goes through the filer's admin channel
+  (`s3.configure` via exec; identity-file writes are load-only), buckets
+  map 1:1 to collections, and destructive removal frees volume files
+  immediately (identity, then metadata with chunk deletion skipped, then
+  the collection; the ordering avoids a measured re-announce race).
+- Observation gained per-source freshness: the store keeps one freshness
+  record per named source (kubernetes plus the poll-based `seaweedfs`
+  provider observer per 7.4), snapshots inject every source with
+  kubernetes first, and modules opt into provider sources by name. A
+  SeaweedFS outage therefore degrades bucket health with an explicit stale
+  marker while application observation keeps its meaning. The poller also
+  enforces storage quotas by flipping per-bucket read-only flags
+  (approximate by one poll interval, documented).
+- The v1 bucket surface is private visibility plus the storage quota;
+  `public-read`, `versioning: enabled`, lifecycle rules, and the
+  object-count/object-size quotas stay authored vocabulary rejected at
+  deploy open with a named error until their policies land.
+- The optional public S3 endpoint (`endpoints.s3`) rides the
+  registry-domain pattern: recorded at init/upgrade, reconstructed by the
+  live profile, rendered as an edge Ingress with ACME TLS in
+  `skali-platform`, and published as the bucket `endpoint` output so
+  presigned URLs resolve publicly.
+- The network fence is a security invariant: seaweed pods default-deny
+  ingress except peer traffic, the S3 port, and skalid's service-proxy
+  sources (per-control-plane-node podCIDR /32s). Pod exec now negotiates
+  WebSocket before SPDY (raw SPDY hangs behind proxies that cannot upgrade
+  it). Generated claim identities take the v7 UUID's random tail: the
+  timestamp prefix collides for ids minted in the same window (measured:
+  two claims in one deployment rendered the same object names).
+- Owner decisions (2026-07-29): dev is a fully quiet platform (lazy
+  all-in-one store, stop-when-unused, stopped store releases the metadata
+  claim's hold on the dev pool); production topology derives from the
+  object-storage node count; the public S3 endpoint is part of R6; bucket
+  credential rotation is deferred to the later unified rotation milestone
+  with databases (a recorded deviation from the exit-criteria wording).
 
 ### R7 - Product UI and platform completion
 

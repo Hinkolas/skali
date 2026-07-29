@@ -126,20 +126,22 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		for _, dotted := range batch {
 			collection, service := splitService(dotted)
 			switch collection {
-			case "databases":
+			case "databases", "buckets":
 				// The substrate owns provisioning; the pass only renders
 				// the wait visibly and closes the step once outputs exist.
-				stepKey, title := "claim:"+service, "Provision "+dotted
+				// Step keys carry the dotted name: bare keys would collide
+				// across claim collections.
+				noun := "database"
+				if collection == "buckets" {
+					noun = "bucket"
+				}
+				stepKey, title := "claim:"+dotted, "Provision "+dotted
 				if reason := claimWaiting[dotted]; reason != "" {
 					attachment.waitStep(ctx, stepKey, title, reason)
 				} else if attachment.adopted() {
 					attachment.completeStep(ctx, stepKey, title, journal.StepSucceeded,
-						[]string{"database provisioned; connection outputs published"})
+						[]string{noun + " provisioned; connection outputs published"})
 				}
-				continue
-			case "buckets":
-				// Not reconcilable until R6; planBatches put dependents into
-				// waiting already.
 				continue
 			}
 			if reason, waits := waiting[dotted]; waits {
@@ -386,17 +388,22 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		services: services, refs: refsList}, nil
 }
 
-// ensureClaims records the revision's database claims through the claim
-// manager and returns the dotted-name waiting reasons for every claim that
-// is not provisioned. Without a substrate every database waits visibly.
+// ensureClaims records the revision's infrastructure claims (databases and
+// buckets) through the claim manager and returns the dotted-name waiting
+// reasons for every claim that is not provisioned. Without a substrate
+// every claim-backed service waits visibly.
 func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision) (map[string]string, error) {
-	if len(rev.Definition.Databases) == 0 {
+	total := len(rev.Definition.Databases) + len(rev.Definition.Buckets)
+	if total == 0 {
 		return nil, nil
 	}
-	claimWaiting := make(map[string]string, len(rev.Definition.Databases))
+	claimWaiting := make(map[string]string, total)
 	if k.deps.Claims == nil {
 		for key := range rev.Definition.Databases {
-			claimWaiting["databases."+key] = "the database substrate is not available"
+			claimWaiting["databases."+key] = "the platform substrate is not available"
+		}
+		for key := range rev.Definition.Buckets {
+			claimWaiting["buckets."+key] = "the platform substrate is not available"
 		}
 		return claimWaiting, nil
 	}
@@ -414,7 +421,7 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 		}
 		reason := state.Waiting
 		if reason == "" {
-			reason = "waiting for the database substrate"
+			reason = "waiting for the platform substrate"
 		}
 		claimWaiting[state.Service] = reason
 	}

@@ -128,6 +128,12 @@ type API struct {
 	// applications and edge routes.
 	Capabilities []string `env:"SKALI_CAPABILITIES,delimiter=;,default=application;edge"`
 
+	// S3Domain is the optional public S3 endpoint domain (endpoints.s3 in
+	// the installation record): the substrate publishes bucket endpoints on
+	// it and serves the S3 API through the edge. Empty keeps bucket access
+	// in-cluster.
+	S3Domain string `env:"SKALI_S3_DOMAIN,default="`
+
 	// BuildStaleTimeout bounds how long a local build may go without a
 	// heartbeat before the sweeper fails it and its deployment.
 	BuildStaleTimeout time.Duration `env:"BUILD_STALE_TIMEOUT,default=30m"`

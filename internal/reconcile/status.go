@@ -117,12 +117,16 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 		observedKey string
 		withPods    bool
 	}
-	entries := make([]entry, 0, len(rev.Definition.Applications)+len(rev.Definition.Databases))
+	entries := make([]entry, 0,
+		len(rev.Definition.Applications)+len(rev.Definition.Databases)+len(rev.Definition.Buckets))
 	for key := range rev.Definition.Applications {
 		entries = append(entries, entry{key: key, serviceType: "application", observedKey: key, withPods: true})
 	}
 	for key := range rev.Definition.Databases {
 		entries = append(entries, entry{key: key, serviceType: "database", observedKey: "databases." + key})
+	}
+	for key := range rev.Definition.Buckets {
+		entries = append(entries, entry{key: key, serviceType: "bucket", observedKey: "buckets." + key})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].serviceType != entries[j].serviceType {

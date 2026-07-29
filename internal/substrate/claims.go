@@ -70,6 +70,12 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		states = append(states, state)
 	}
 
+	bucketStates, err := c.ensureBucketClaims(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	states = append(states, bucketStates...)
+
 	// Claims whose service left the promoted revision release now: the
 	// destructive gate already ran at deploy open, and the promoted
 	// revision is the persisted decision.
@@ -87,6 +93,69 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		}
 		c.EnqueueClaim(row.ID)
 		c.publishClaim(*released)
+	}
+	liveBuckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, in.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range liveBuckets {
+		if _, kept := in.Revision.Definition.Buckets[row.ServiceKey]; kept {
+			continue
+		}
+		released, err := c.deps.DB.ReleaseBucketClaim(ctx, row.ID)
+		if err != nil {
+			return nil, err
+		}
+		c.EnqueueBucketClaim(row.ID)
+		c.publishBucketClaim(*released)
+	}
+	return states, nil
+}
+
+// ensureBucketClaims records the revision's bucket claims, mirroring the
+// database loop above.
+func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimEnsureInput) ([]reconcile.ClaimState, error) {
+	keys := make([]string, 0, len(in.Revision.Definition.Buckets))
+	for key := range in.Revision.Definition.Buckets {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	states := make([]reconcile.ClaimState, 0, len(keys))
+	for _, key := range keys {
+		bucket := in.Revision.Definition.Buckets[key]
+		dotted := "buckets." + key
+		owner := dbstore.ServiceOwner(in.ProjectID, in.EnvironmentID,
+			in.Revision.Project, in.Revision.Environment, key)
+		row, err := c.deps.DB.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
+			Visibility:                   bucket.Visibility,
+			StorageQuotaBytes:            bucket.StorageQuotaBytes,
+			ObjectQuota:                  int64(bucket.ObjectQuota),
+			MaxObjectBytes:               bucket.MaxObjectSizeBytes,
+			Versioning:                   bucket.Versioning,
+			AbortUploadsAfterSeconds:     bucket.AbortIncompleteUploadsAfterSeconds,
+			ExpireNoncurrentAfterSeconds: bucket.ExpireNoncurrentVersionsAfterSec,
+		})
+		if errors.Is(err, dbstore.ErrSpecConflict) {
+			states = append(states, reconcile.ClaimState{Service: dotted,
+				Waiting: "the requested visibility or versioning differs from the live bucket; replacing it is a destructive change"})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		c.EnqueueBucketClaim(row.ID)
+		c.publishBucketClaim(*row)
+
+		state := reconcile.ClaimState{Service: dotted,
+			Provisioned: claim.Phase(row.Phase) == claim.PhaseProvisioned}
+		if !state.Provisioned {
+			state.Waiting = c.WaitingReason(row.ID)
+			if state.Waiting == "" {
+				state.Waiting = bucketWait(claim.Phase(row.Phase))
+			}
+		}
+		states = append(states, state)
 	}
 	return states, nil
 }

@@ -182,7 +182,7 @@ func (k *Kernel) teardownClaims(ctx context.Context, attachment *runAttachment, 
 	if released {
 		return
 	}
-	attachment.waitStep(ctx, "delete:databases", "Release database claims",
+	attachment.waitStep(ctx, "delete:claims", "Release infrastructure claims",
 		strings.Join(detail, "; "))
 }
 

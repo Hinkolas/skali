@@ -229,6 +229,9 @@ func validateInstallMetadata(opts InstallOptions) error {
 		if opts.Endpoints.Registry != "" && !validDomain(opts.Endpoints.Registry) {
 			return fmt.Errorf("registry domain %q is not a valid DNS name", opts.Endpoints.Registry)
 		}
+		if opts.Endpoints.S3 != "" && !validDomain(opts.Endpoints.S3) {
+			return fmt.Errorf("s3 domain %q is not a valid DNS name", opts.Endpoints.S3)
+		}
 	}
 	if opts.TLS != nil && opts.TLS.IssuerEmail != "" {
 		address, err := mail.ParseAddress(opts.TLS.IssuerEmail)

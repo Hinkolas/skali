@@ -200,14 +200,18 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/environments/{id}/status", sh.get)
 				r.Get("/system/observation", sh.system)
 
-				// Database connection projections; credential reveal is the
-				// one sanctioned request-time read and needs sudo mode.
+				// Database and bucket connection projections; credential
+				// reveal is the one sanctioned request-time read and needs
+				// sudo mode.
 				if d.Databases != nil {
 					dbh := &databasesHandlers{db: d.Databases, secrets: d.SecretReader}
+					bh := &bucketsHandlers{db: d.Databases, secrets: d.SecretReader}
 					r.Get("/environments/{id}/databases/{key}/connection", dbh.connection)
+					r.Get("/environments/{id}/buckets/{key}/connection", bh.connection)
 					r.Group(func(r chi.Router) {
 						r.Use(RequireFresh(d.Auth))
 						r.Post("/environments/{id}/databases/{key}/credentials/reveal", dbh.reveal)
+						r.Post("/environments/{id}/buckets/{key}/credentials/reveal", bh.reveal)
 					})
 				}
 

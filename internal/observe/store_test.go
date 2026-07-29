@@ -40,7 +40,8 @@ func TestSnapshotAndForService(t *testing.T) {
 	fake.SetWorkload(envID, "ns", "demo-worker", "worker", "abcd", module.WorkloadStatus{Desired: 1, Ready: 0})
 
 	snapshot := fake.Snapshot(envID)
-	require.Equal(t, module.SourceFresh, snapshot.Source.State)
+	require.Equal(t, SourceKubernetes, snapshot.Sources[0].Name)
+	require.Equal(t, module.SourceFresh, snapshot.Sources[0].State)
 	require.Len(t, snapshot.Objects, 4)
 
 	web := snapshot.ForService("web")
@@ -115,31 +116,111 @@ func TestStalenessEvaluation(t *testing.T) {
 	require.Equal(t, module.SourceUnknown, store.Source().State)
 	require.False(t, store.Ready())
 
-	store.MarkReady()
+	store.MarkReady(SourceKubernetes)
 	require.True(t, store.Ready())
 	require.Equal(t, module.SourceFresh, store.Source().State)
 
 	// A failure alone does not flip the state; the threshold decides.
-	store.MarkFailure()
-	store.EvaluateFreshness(30 * time.Second)
+	store.MarkFailure(SourceKubernetes)
+	store.EvaluateFreshness(SourceKubernetes, 30*time.Second)
 	require.Equal(t, module.SourceFresh, store.Source().State)
 
 	now = now.Add(31 * time.Second)
-	store.EvaluateFreshness(30 * time.Second)
+	store.EvaluateFreshness(SourceKubernetes, 30*time.Second)
 	source := store.Source()
 	require.Equal(t, module.SourceStale, source.State)
 	require.Equal(t, time.Unix(1700000000, 0), source.StaleSince)
 
 	// A successful contact recovers.
-	store.MarkContact()
+	store.MarkContact(SourceKubernetes)
 	source = store.Source()
 	require.Equal(t, module.SourceFresh, source.State)
 	require.True(t, source.StaleSince.IsZero())
 
 	// Shutdown returns to unknown, never straight to stale.
-	store.MarkUnready()
+	store.MarkUnready(SourceKubernetes)
 	require.Equal(t, module.SourceUnknown, store.Source().State)
 	require.False(t, store.Ready())
+}
+
+func TestPerSourceFreshnessIsolation(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1700000000, 0)
+	clock := func() time.Time { return now }
+	store := NewStore(clock)
+	store.RegisterSource("seaweedfs")
+	store.MarkReady(SourceKubernetes)
+	store.MarkReady("seaweedfs")
+
+	// A provider failure turns only the provider stale; the cluster view
+	// keeps its meaning (R6 exit criterion).
+	store.MarkFailure("seaweedfs")
+	now = now.Add(time.Minute)
+	store.EvaluateFreshness("seaweedfs", 30*time.Second)
+	require.Equal(t, module.SourceFresh, store.Source().State)
+	seaweed, ok := store.SourceNamed("seaweedfs")
+	require.True(t, ok)
+	require.Equal(t, module.SourceStale, seaweed.State)
+
+	// Listings and snapshots order kubernetes first so StaleSource keeps
+	// examining cluster freshness.
+	sources := store.Sources()
+	require.Equal(t, SourceKubernetes, sources[0].Name)
+	require.Equal(t, "seaweedfs", sources[1].Name)
+	resources := store.Snapshot(uuid.New()).ForService("web")
+	require.Len(t, resources, 2)
+	require.Nil(t, module.StaleSource(resources))
+	require.Equal(t, module.SourceStale, module.SourceNamed(resources, "seaweedfs").State)
+
+	_, ok = store.SourceNamed("registry")
+	require.False(t, ok)
+}
+
+func TestReplaceSourceReconcilesObjectSet(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	envA, envB := uuid.New(), uuid.New()
+	ref := func(name string) kube.ObjectRef {
+		return kube.ObjectRef{
+			GVK:  schema.GroupVersionKind{Group: "seaweed.skali.dev", Version: "v1", Kind: "Bucket"},
+			Name: name,
+		}
+	}
+	bucket := func(name string, env uuid.UUID) Object {
+		return Object{
+			Ref: ref(name), Kind: module.KindBucket, Name: "buckets.files",
+			Environment: env, Service: "buckets.files",
+			Bucket: &module.BucketStatus{Exists: true},
+		}
+	}
+
+	affected := store.ReplaceSource("seaweedfs", []Object{bucket("b-a", envA), bucket("b-b", envB)})
+	require.Len(t, affected, 2)
+	require.Len(t, store.Snapshot(envA).Objects, 1)
+	require.Len(t, store.Snapshot(envB).Objects, 1)
+
+	// An unchanged probe still reports its environments (statuses may have
+	// changed inside the objects) but leaves the set intact.
+	affected = store.ReplaceSource("seaweedfs", []Object{bucket("b-a", envA), bucket("b-b", envB)})
+	require.Len(t, affected, 2)
+
+	// A vanished object is removed: no ghosts after a provider crash.
+	affected = store.ReplaceSource("seaweedfs", []Object{bucket("b-a", envA)})
+	require.Contains(t, affected, envB)
+	require.Empty(t, store.Snapshot(envB).Objects)
+	require.Len(t, store.Snapshot(envA).Objects, 1)
+
+	// Another source's objects are never touched by the reconcile.
+	store.Upsert(Object{
+		Ref:         kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, Namespace: "ns", Name: "web"},
+		Kind:        module.KindWorkload,
+		Name:        "web",
+		Environment: envB,
+		Service:     "web",
+	})
+	store.ReplaceSource("seaweedfs", nil)
+	require.Len(t, store.Snapshot(envB).Objects, 1, "kubernetes objects survive a provider reconcile")
+	require.Empty(t, store.Snapshot(envA).Objects)
 }
 
 func TestSubscribeInvalidations(t *testing.T) {

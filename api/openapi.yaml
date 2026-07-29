@@ -1198,6 +1198,83 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /v1/environments/{id}/buckets/{key}/connection:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getBucketConnection
+      summary: Get a bucket service's non-secret connection projection
+      description: |
+        Claim phase, visibility, storage quota, and, once provisioned, the
+        endpoint, bucket name, region, and credential version. Served from
+        durable substrate rows; credential values never appear here.
+      responses:
+        "200":
+          description: The connection projection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service, phase, visibility]
+                properties:
+                  service: { type: string }
+                  phase: { type: string, enum: [pending, bound, provisioned, releasing, released] }
+                  visibility: { type: string }
+                  storage_quota_bytes: { type: integer }
+                  endpoint: { type: string }
+                  bucket: { type: string }
+                  region: { type: string }
+                  credential_version: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/buckets/{key}/credentials/reveal:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: revealBucketCredentials
+      summary: Reveal a bucket's S3 keypair once
+      description: |
+        The sanctioned request-time cluster read for buckets: returns the
+        access key and secret key from the credential Secret. Requires
+        fresh authentication (sudo mode); values are never cached,
+        journaled, or logged.
+      responses:
+        "200":
+          description: The revealed credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_key, secret_key]
+                properties:
+                  access_key: { type: string }
+                  secret_key: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /v1/system/observation:
     get:
       operationId: getSystemObservation

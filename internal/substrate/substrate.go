@@ -33,7 +33,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/observe"
-	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
 
 // Namespace is the skalid-owned platform namespace holding every substrate
@@ -66,6 +66,9 @@ type Cluster interface {
 	Delete(ctx context.Context, ref kube.ObjectRef) (bool, error)
 	GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error)
 	GetObject(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error)
+	// ProxyCIDRs derives the /32 source addresses skalid's service-proxy
+	// traffic presents to pods, the object-store fence's admit list.
+	ProxyCIDRs(ctx context.Context) ([]string, error)
 }
 
 // KubeCluster adapts *kube.Client to the Cluster interface.
@@ -89,10 +92,17 @@ func (k KubeCluster) GetObject(ctx context.Context, gvr schema.GroupVersionResou
 	return k.Client.Dynamic.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
+func (k KubeCluster) ProxyCIDRs(ctx context.Context) ([]string, error) {
+	return k.Client.NodeProxyCIDRs(ctx)
+}
+
 type Deps struct {
 	DB       *dbstore.Service
 	Cluster  Cluster
 	Observed *observe.Store
+	// Seaweed is the object store's admin client; nil disables bucket
+	// provisioning with a visible waiting reason.
+	Seaweed *seaweed.Client
 	// Enqueue pokes the environment reconciler when a claim's outputs become
 	// ready or its health-relevant state changes. Optional until the kernel
 	// consumes claims.
@@ -108,6 +118,10 @@ type Config struct {
 	// Capabilities is the installation's declared capability set; the eager
 	// boot ensure runs only when it includes the database capability.
 	Capabilities []string
+	// S3Domain is the optional public S3 endpoint domain: bucket endpoints
+	// publish on it and the substrate renders the S3 ingress. Empty keeps
+	// bucket access in-cluster.
+	S3Domain string
 	// Resync re-enqueues unsettled claims and live pools periodically as the
 	// audit backstop.
 	Resync  time.Duration
@@ -117,9 +131,11 @@ type Config struct {
 type workKind string
 
 const (
-	workClaim workKind = "claim"
-	workPool  workKind = "pool"
-	workBoot  workKind = "boot"
+	workClaim  workKind = "claim"
+	workPool   workKind = "pool"
+	workBoot   workKind = "boot"
+	workBucket workKind = "bucket-claim"
+	workStore  workKind = "object-store"
 )
 
 type workKey struct {
@@ -133,8 +149,27 @@ type Controller struct {
 	cfg   Config
 	queue workqueue.TypedRateLimitingInterface[workKey]
 
-	mu      sync.Mutex
-	waiting map[uuid.UUID]string // claim id -> current waiting reason
+	mu        sync.Mutex
+	waiting   map[uuid.UUID]string // claim id -> current waiting reason
+	probePoke func()               // provider observer re-poll, set by SetProbePoke
+}
+
+// SetProbePoke wires the provider observer's coalesced re-poll; the
+// controller pokes it after every bucket mutation so usage and existence
+// converge without waiting a full poll interval.
+func (c *Controller) SetProbePoke(poke func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.probePoke = poke
+}
+
+func (c *Controller) pokeProbe() {
+	c.mu.Lock()
+	poke := c.probePoke
+	c.mu.Unlock()
+	if poke != nil {
+		poke()
+	}
 }
 
 func New(deps Deps, cfg Config) *Controller {
@@ -160,6 +195,17 @@ func (c *Controller) EnqueueClaim(id uuid.UUID) {
 // EnqueuePool schedules one pool's reconciliation.
 func (c *Controller) EnqueuePool(id uuid.UUID) {
 	c.queue.Add(workKey{kind: workPool, id: id})
+}
+
+// EnqueueBucketClaim schedules one bucket claim's reconciliation.
+func (c *Controller) EnqueueBucketClaim(id uuid.UUID) {
+	c.queue.Add(workKey{kind: workBucket, id: id})
+}
+
+// EnqueueObjectStore schedules the physical system's reconciliation; with
+// one live store per installation the key carries no id.
+func (c *Controller) EnqueueObjectStore() {
+	c.queue.Add(workKey{kind: workStore})
 }
 
 // WaitingReason reports why a claim is not progressing, empty when it is.
@@ -239,6 +285,10 @@ func (c *Controller) process(ctx context.Context, key workKey) (time.Duration, e
 		return c.reconcileClaim(ctx, key.id)
 	case workPool:
 		return c.reconcilePool(ctx, key.id)
+	case workBucket:
+		return c.reconcileBucketClaim(ctx, key.id)
+	case workStore:
+		return c.reconcileObjectStore(ctx)
 	}
 	return 0, nil
 }
@@ -260,6 +310,14 @@ func (c *Controller) boot(ctx context.Context) (time.Duration, error) {
 			return requeue, err
 		}
 	}
+	// Production brings the object store up eagerly; dev creates it lazily
+	// with the first bucket claim (the quiet platform). Either way an
+	// existing store row resumes its reconciliation here.
+	if c.cfg.Managed && hasCapability(c.cfg.Capabilities, layout.CapabilityObjectStorage) {
+		c.EnqueueObjectStore()
+	} else if _, err := c.deps.DB.LiveObjectStore(ctx); err == nil {
+		c.EnqueueObjectStore()
+	}
 	return 0, nil
 }
 
@@ -277,6 +335,18 @@ func (c *Controller) resyncEnqueue(ctx context.Context) {
 	}
 	for _, pool := range pools {
 		c.EnqueuePool(pool.ID)
+	}
+	buckets, err := c.deps.DB.ListUnsettledBucketClaims(ctx)
+	if err != nil {
+		slog.Warn("substrate: list unsettled bucket claims", "error", err)
+	}
+	for _, row := range buckets {
+		c.EnqueueBucketClaim(row.ID)
+	}
+	if _, err := c.deps.DB.LiveObjectStore(ctx); err == nil {
+		c.EnqueueObjectStore()
+	} else if !errors.Is(err, dbstore.ErrNotFound) {
+		slog.Warn("substrate: live object store", "error", err)
 	}
 }
 
@@ -363,11 +433,10 @@ func hasCapability(capabilities []string, capability string) bool {
 // ("project/<p>/environment/<e>/service/<k>"; names cannot contain slashes)
 // back into the names that address its environment namespace and output
 // Secret.
-func ownerNames(row store.DatabaseClaim) (project, environment, service string, ok bool) {
-	parts := strings.Split(row.OwnerRef, "/")
+func ownerNames(ownerRef string) (project, environment, service string, ok bool) {
+	parts := strings.Split(ownerRef, "/")
 	if len(parts) != 6 || parts[0] != "project" || parts[2] != "environment" || parts[4] != "service" {
 		return "", "", "", false
 	}
 	return parts[1], parts[3], parts[5], true
 }
-

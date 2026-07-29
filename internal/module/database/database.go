@@ -45,8 +45,10 @@ func (s *service) Outputs() []string {
 func (s *service) Artifacts() []module.ArtifactRequirement { return nil }
 
 func (s *service) Steps() []module.Step {
+	// The step key carries the dotted name: bare keys would collide across
+	// claim collections.
 	return []module.Step{
-		{Key: "claim:" + s.key, Title: "Provision databases." + s.key},
+		{Key: "claim:databases." + s.key, Title: "Provision databases." + s.key},
 	}
 }
 

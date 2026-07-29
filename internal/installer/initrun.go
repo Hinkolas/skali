@@ -180,7 +180,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	// The record published in-cluster carries the initialization inputs;
 	// mutate the in-memory record first so the canonical text, the bundle
 	// hash, and the eventual on-disk record all agree.
-	record.Endpoints = &Endpoints{API: opts.Endpoints.API, Registry: opts.Endpoints.Registry}
+	record.Endpoints = &Endpoints{API: opts.Endpoints.API, Registry: opts.Endpoints.Registry, S3: opts.Endpoints.S3}
 	record.TLS = &TLSConfig{IssuerEmail: opts.TLS.IssuerEmail, ACMEServer: opts.TLS.ACMEServer}
 	record.RegistryNode = opts.RegistryNode
 	record.Versions.Bundle = version.Version
@@ -198,6 +198,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		Production: &bundle.Production{
 			IngressHost:        opts.Endpoints.API,
 			RegistryDomain:     opts.Endpoints.Registry,
+			S3Domain:           opts.Endpoints.S3,
 			TokenKeyPEM:        tokenKeyPEM,
 			TokenCertPEM:       tokenCertPEM,
 			NodePullSecret:     pullSecret,
@@ -271,9 +272,13 @@ func ValidateInitOptions(opts InitOptions) error {
 	if opts.Admin == nil && !opts.SkipAdmin {
 		return errors.New("init requires admin credentials")
 	}
-	for label, domain := range map[string]string{
+	domains := map[string]string{
 		"api/ui": opts.Endpoints.API, "registry": opts.Endpoints.Registry,
-	} {
+	}
+	if opts.Endpoints.S3 != "" {
+		domains["s3"] = opts.Endpoints.S3
+	}
+	for label, domain := range domains {
 		if strings.Contains(domain, "://") {
 			return fmt.Errorf("%s domain %q must be a hostname without a protocol", label, domain)
 		}
