@@ -117,11 +117,13 @@ Notes pinned by this transcript:
   `skali remote add`.
 - Staged values are promoted atomically with the target change, after
   artifacts verify.
-- The push to `registry.example.com` uses the ambient docker credentials;
-  log in once with `skali remote token | docker login registry.example.com
-  -u you@example.com --password-stdin`. Grants are scoped server-side: a
-  session may push only project release repositories and the import cache,
-  never arbitrary ones.
+- The push to `registry.example.com` authenticates with the remote's
+  session token automatically: builds export the image locally and skali
+  uploads it in-process, the same way imports copy upstream images, so
+  docker never contacts the managed registry and nothing is written to the
+  docker config or keychain; no docker login is needed. Grants are scoped
+  server-side: a session may push only project release repositories and the
+  import cache, never arbitrary ones.
 - The CLI streams the run tree, but the run is server-owned: every step
   survives the terminal.
 

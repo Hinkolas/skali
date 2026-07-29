@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -492,13 +493,21 @@ func (t *teeSink) Line(level, message string) {
 	t.task.Note(message)
 }
 
+// registryUsername is the Basic username presented to the registry token
+// endpoint. It is cosmetic: the endpoint authenticates the password (a
+// session token) and derives the subject from the session, ignoring the
+// username entirely.
+const registryUsername = "skali-session"
+
 // executeActions performs the client side of the artifact window: builds
 // and imports with journaled steps, heartbeats, and server verification.
+// registryAuth authenticates every managed-registry push in-process; nil
+// pushes anonymously (the local registry never challenges).
 func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 	opened *client.OpenedDeployment, project *localProject, contexts map[string]*build.Context,
-	variables map[string]string) error {
+	variables map[string]string, registryAuth authn.Authenticator) error {
 
-	engine := &build.Docker{}
+	engine := &build.Docker{Auth: registryAuth}
 	tasks := clirender.NewTasks(out)
 	runID := opened.Deployment.RunID
 	for _, action := range opened.Actions {
@@ -565,7 +574,8 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 			}
 			task := tasks.Start("Import " + action.Upstream)
 			sink := &stepLogSink{ctx: ctx, api: api, stepID: importStep.ID}
-			result, err := build.Import(ctx, action.Upstream, action.PushRef, false, &teeSink{inner: sink, task: task})
+			result, err := build.Import(ctx, action.Upstream, action.PushRef,
+				build.ImportOptions{TargetAuth: registryAuth}, &teeSink{inner: sink, task: task})
 			sink.Flush()
 			if err != nil {
 				task.Fail()
@@ -715,6 +725,10 @@ type deployTarget struct {
 	api           *client.Client
 	projectID     string
 	environmentID string
+	// sessionToken doubles as the managed-registry push credential: the
+	// registry token endpoint accepts it as the Basic password, so builds
+	// and imports authenticate without any docker login.
+	sessionToken string
 }
 
 // resolveDeployTarget resolves remote, project, and environment, creating
@@ -902,6 +916,7 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		api:           api,
 		projectID:     projectID,
 		environmentID: environmentID,
+		sessionToken:  remote.Token,
 	}, nil
 }
 
@@ -1042,7 +1057,16 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	fmt.Fprintf(out, "\n%s %s  deploy %s to %s\n", style.Dim("run"),
 		style.Bold(opened.Deployment.RunID), project.Result.Definition.Name, opts.Environment)
 
-	if err := executeActions(ctx, out, api, opened, project, contexts, localValues); err != nil {
+	// The remote session doubles as the registry push credential; builds
+	// and imports push in-process with it, so docker never talks to the
+	// managed registry and no credential touches its config or keychain.
+	var registryAuth authn.Authenticator
+	if target.sessionToken != "" {
+		registryAuth = authn.FromConfig(authn.AuthConfig{
+			Username: registryUsername, Password: target.sessionToken,
+		})
+	}
+	if err := executeActions(ctx, out, api, opened, project, contexts, localValues, registryAuth); err != nil {
 		fmt.Fprintf(out, "\n%srun %s %s: %v\n", style.Cross(),
 			opened.Deployment.RunID, style.Red("failed"), err)
 		fmt.Fprintln(out, "\n"+style.Dim("The environment is unchanged: staged values discarded, target and active revision untouched."))

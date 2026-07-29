@@ -24,3 +24,18 @@ func TestCrossBuildHint(t *testing.T) {
 	require.Contains(t, hint, "emulation")
 	require.Contains(t, hint, "tonistiigi/binfmt")
 }
+
+// The fallback trigger must recognize buildx refusing the OCI exporter
+// (classic-store docker driver) without firing on ordinary build failures.
+func TestOCIUnsupportedSink(t *testing.T) {
+	for line, matches := range map[string]bool{
+		"ERROR: OCI exporter is not supported for the docker driver": true,
+		"error: oci exporter is currently unsupported":               true,
+		"ERROR: process \"/bin/sh -c false\" did not complete":       false,
+		"#10 pushing layers": false,
+	} {
+		sink := &ociUnsupportedSink{inner: DiscardSink{}}
+		sink.Line("info", line)
+		require.Equal(t, matches, sink.matched, "line: %s", line)
+	}
+}

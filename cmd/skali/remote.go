@@ -283,9 +283,12 @@ func newRemoteStatusCmd() *cobra.Command {
 func newRemoteTokenCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "token",
-		Short: "Print the stored session token (docker login password for the managed registry)",
+		Short: "Print the stored session token (for scripting API requests)",
 		Long: "Print the current remote's session token to stdout, for example:\n\n" +
-			"  skali remote token | docker login registry.example.com -u you@example.com --password-stdin",
+			"  curl -H \"Authorization: Bearer $(skali remote token)\" https://skali.example.com/v1/projects\n\n" +
+			"Deploys authenticate to the managed registry automatically with this\n" +
+			"session; docker login is only needed for third-party OCI tooling, with\n" +
+			"any username and the token as the password.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := cliconfig.Load()

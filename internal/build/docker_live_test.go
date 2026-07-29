@@ -78,24 +78,36 @@ func TestDockerBuildPushAndVerify(t *testing.T) {
 	dockerGate(t)
 	ctx := context.Background()
 	addr := startRegistry(t)
-	contextDir, dockerfile := scratchContext(t)
 
-	sink := &collectSink{}
-	engine := &Docker{}
-	result, err := engine.Build(ctx, BuildRequest{
-		ContextDir: contextDir,
-		Dockerfile: dockerfile,
-		PushRef:    addr + "/skali/demo/web:test",
-	}, sink)
-	require.NoError(t, err, "build output:\n%s", strings.Join(sink.lines, "\n"))
-	require.Regexp(t, regexp.MustCompile(`^sha256:[0-9a-f]{64}$`), result.Digest)
-	require.NotEmpty(t, sink.lines, "progress must stream")
+	// Both export paths must land a verifiable manifest: the OCI layout
+	// primary and the daemon-save fallback for builders without the OCI
+	// exporter.
+	for _, mode := range []struct {
+		name  string
+		force bool
+	}{{"oci-layout", false}, {"daemon-save", true}} {
+		t.Run(mode.name, func(t *testing.T) {
+			contextDir, dockerfile := scratchContext(t)
+			sink := &collectSink{}
+			engine := &Docker{forceDaemonExport: mode.force}
+			result, err := engine.Build(ctx, BuildRequest{
+				ContextDir: contextDir,
+				Dockerfile: dockerfile,
+				PushRef:    addr + "/skali/demo/web:" + mode.name,
+			}, sink)
+			require.NoError(t, err, "build output:\n%s", strings.Join(sink.lines, "\n"))
+			require.Regexp(t, regexp.MustCompile(`^sha256:[0-9a-f]{64}$`), result.Digest)
+			require.NotEmpty(t, sink.lines, "progress must stream")
+			require.Contains(t, string(result.Provenance), `"export":"`+mode.name+`"`)
 
-	// The registry itself confirms the digest; a wrong digest is refused.
-	client := &registry.Client{Host: addr}
-	require.NoError(t, client.VerifyManifest(ctx, "skali/demo/web", result.Digest))
-	missing := "sha256:" + strings.Repeat("0", 64)
-	require.ErrorIs(t, client.VerifyManifest(ctx, "skali/demo/web", missing), registry.ErrManifestNotFound)
+			// The registry itself confirms the digest; a wrong digest is
+			// refused.
+			client := &registry.Client{Host: addr}
+			require.NoError(t, client.VerifyManifest(ctx, "skali/demo/web", result.Digest))
+			missing := "sha256:" + strings.Repeat("0", 64)
+			require.ErrorIs(t, client.VerifyManifest(ctx, "skali/demo/web", missing), registry.ErrManifestNotFound)
+		})
+	}
 }
 
 // Secret build inputs pass through BuildKit secret mounts and must be
@@ -158,7 +170,7 @@ func TestImportPreservesDigest(t *testing.T) {
 	require.NoError(t, err)
 
 	sink := &collectSink{}
-	imported, err := Import(ctx, addr+"/upstream/app:v1", addr+"/cache/local/app:imported", false, sink)
+	imported, err := Import(ctx, addr+"/upstream/app:v1", addr+"/cache/local/app:imported", ImportOptions{}, sink)
 	require.NoError(t, err, "import output:\n%s", strings.Join(sink.lines, "\n"))
 	require.Equal(t, seeded.Digest, imported.Digest, "import must not change the digest")
 

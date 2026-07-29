@@ -88,15 +88,20 @@ logged in to https://skali.example.com as dana@example.com (remote "skali.exampl
 success. Login never creates a remote; an unknown name points at
 `skali remote add <url>`.
 
-## 6. Registry login
+## 6. Registry access
+
+Deploys authenticate to the managed registry automatically: builds export
+the image locally and skali uploads it in-process with the remote's session
+token, the same way imports copy upstream images, so docker never contacts
+the managed registry, no docker login exists to go stale, and nothing is
+written to the docker config or keychain. Grants are scoped server-side.
+
+For third-party OCI tooling the token still works as a registry password
+(any username):
 
 ```console
-$ skali remote token | docker login registry.example.com -u dana@example.com --password-stdin
-Login Succeeded
+$ skali remote token | crane auth login registry.example.com -u token --password-stdin
 ```
-
-The session token doubles as the docker password for the managed registry;
-grants are scoped server-side.
 
 ## 7. Remove, and the reserved local remote
 

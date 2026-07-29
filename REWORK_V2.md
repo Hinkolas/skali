@@ -2277,9 +2277,16 @@ Implementation notes (landed through 2026-07-27):
   architectures, and explicit network declarations for multi-homed hosts
   (bind address, tls-san entries, and the coordinator address recorded at
   install time).
-- Registry access landed as normal `docker login` against the public
-  registry domain with short-lived scoped tokens; a stored push-credential
-  approach was rejected and parked on a branch. The composite join token
+- Registry access landed on the token protocol against the public registry
+  domain with short-lived scoped tokens; a server-minted push-credential
+  approach was rejected and parked on a branch. Deploy pushes (builds and
+  imports) self-authenticate with the remote's session token in-process:
+  builds export an OCI layout locally (daemon-save fallback for builders
+  without the OCI exporter) and skali uploads it the same way imports copy
+  upstream images, so docker never contacts the managed registry,
+  `skali remote add`/`remove` is the whole credential lifecycle, and
+  nothing touches the docker config or keychain; manual docker login
+  remains only for third-party OCI tooling. The composite join token
   carries both K3s enrollment and Skali registry trust.
 - The plan's pointer-typed installation-record node section was not
   adopted; `Record.Node` stays a value type.
