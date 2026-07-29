@@ -38,6 +38,16 @@ type Object struct {
 	Workload   *module.WorkloadStatus
 	Pod        *module.PodStatus
 	Autoscaler *module.AutoscalerStatus
+	Claim      *module.ClaimStatus
+
+	// SharedKey links platform-scoped objects (Environment == uuid.Nil,
+	// e.g. a database pool) to the environment-owned objects that reference
+	// them. Snapshots include the shared objects their environment
+	// references, and shared-object changes fan out to every referencing
+	// environment.
+	SharedKey       string
+	DatabaseCluster *module.DatabaseClusterStatus
+	DatabaseTenant  *module.DatabaseTenantStatus
 }
 
 type objectKey struct {
@@ -57,11 +67,14 @@ type Store struct {
 	mu    sync.RWMutex
 	clock func() time.Time
 
-	objects       map[objectKey]*Object
-	byEnvironment map[uuid.UUID]map[objectKey]struct{}
-	podsByNode    map[string]map[uuid.UUID]int
-	nodeArch      map[string]string
-	events        map[objectKey][]EventRecord
+	objects          map[objectKey]*Object
+	byEnvironment    map[uuid.UUID]map[objectKey]struct{}
+	podsByNode       map[string]map[uuid.UUID]int
+	nodeArch         map[string]string
+	nodeCapabilities map[string]map[string]bool
+	events           map[objectKey][]EventRecord
+	sharedObjects    map[string]objectKey            // shared key -> platform object
+	sharedRefs       map[string]map[uuid.UUID]int    // shared key -> referencing environments
 
 	state      string // module.SourceUnknown | SourceFresh | SourceStale
 	ready      bool
@@ -77,19 +90,24 @@ func NewStore(clock func() time.Time) *Store {
 		clock = time.Now
 	}
 	return &Store{
-		clock:         clock,
-		objects:       make(map[objectKey]*Object),
-		byEnvironment: make(map[uuid.UUID]map[objectKey]struct{}),
-		podsByNode:    make(map[string]map[uuid.UUID]int),
-		nodeArch:      make(map[string]string),
-		events:        make(map[objectKey][]EventRecord),
-		state:         module.SourceUnknown,
-		broadcast:     newBroadcaster(),
+		clock:            clock,
+		objects:          make(map[objectKey]*Object),
+		byEnvironment:    make(map[uuid.UUID]map[objectKey]struct{}),
+		podsByNode:       make(map[string]map[uuid.UUID]int),
+		nodeArch:         make(map[string]string),
+		nodeCapabilities: make(map[string]map[string]bool),
+		events:           make(map[objectKey][]EventRecord),
+		sharedObjects:    make(map[string]objectKey),
+		sharedRefs:       make(map[string]map[uuid.UUID]int),
+		state:            module.SourceUnknown,
+		broadcast:        newBroadcaster(),
 	}
 }
 
 // Upsert records one observed object and publishes an invalidation for its
-// environment. The write side is the watch source or a test fake.
+// environment; a platform-scoped shared object fans out to every
+// environment referencing it. The write side is the watch source or a test
+// fake.
 func (s *Store) Upsert(obj Object) {
 	key := keyOf(obj.Ref)
 	s.mu.Lock()
@@ -100,11 +118,18 @@ func (s *Store) Upsert(obj Object) {
 	stored := obj
 	s.objects[key] = &stored
 	s.indexLocked(key, &stored)
+	var fanOut []uuid.UUID
+	if obj.Environment == uuid.Nil && obj.SharedKey != "" {
+		fanOut = s.environmentsForSharedKeyLocked(obj.SharedKey)
+	}
 	s.mu.Unlock()
 
 	s.invalidate(obj.Environment)
 	if previous != nil && previous.Environment != obj.Environment {
 		s.invalidate(previous.Environment)
+	}
+	for _, environment := range fanOut {
+		s.invalidate(environment)
 	}
 }
 
@@ -113,13 +138,20 @@ func (s *Store) Remove(ref kube.ObjectRef) {
 	key := keyOf(ref)
 	s.mu.Lock()
 	previous := s.objects[key]
+	var fanOut []uuid.UUID
 	if previous != nil {
 		s.unindexLocked(key, previous)
 		delete(s.objects, key)
+		if previous.Environment == uuid.Nil && previous.SharedKey != "" {
+			fanOut = s.environmentsForSharedKeyLocked(previous.SharedKey)
+		}
 	}
 	s.mu.Unlock()
 	if previous != nil {
 		s.invalidate(previous.Environment)
+	}
+	for _, environment := range fanOut {
+		s.invalidate(environment)
 	}
 }
 
@@ -135,6 +167,16 @@ func (s *Store) indexLocked(key objectKey, obj *Object) {
 			}
 			s.podsByNode[obj.Node][obj.Environment]++
 		}
+		if obj.SharedKey != "" {
+			if s.sharedRefs[obj.SharedKey] == nil {
+				s.sharedRefs[obj.SharedKey] = make(map[uuid.UUID]int)
+			}
+			s.sharedRefs[obj.SharedKey][obj.Environment]++
+		}
+		return
+	}
+	if obj.SharedKey != "" {
+		s.sharedObjects[obj.SharedKey] = key
 	}
 }
 
@@ -157,7 +199,33 @@ func (s *Store) unindexLocked(key objectKey, obj *Object) {
 				}
 			}
 		}
+		if obj.SharedKey != "" {
+			if refs := s.sharedRefs[obj.SharedKey]; refs != nil {
+				refs[obj.Environment]--
+				if refs[obj.Environment] <= 0 {
+					delete(refs, obj.Environment)
+				}
+				if len(refs) == 0 {
+					delete(s.sharedRefs, obj.SharedKey)
+				}
+			}
+		}
+		return
 	}
+	if obj.SharedKey != "" && s.sharedObjects[obj.SharedKey] == key {
+		delete(s.sharedObjects, obj.SharedKey)
+	}
+}
+
+// environmentsForSharedKeyLocked lists the environments referencing one
+// shared object, for fan-out invalidation.
+func (s *Store) environmentsForSharedKeyLocked(sharedKey string) []uuid.UUID {
+	refs := s.sharedRefs[sharedKey]
+	environments := make([]uuid.UUID, 0, len(refs))
+	for environment := range refs {
+		environments = append(environments, environment)
+	}
+	return environments
 }
 
 // Ready reports whether the initial cache synchronization completed. Before
@@ -183,11 +251,13 @@ type Snapshot struct {
 }
 
 // ForService projects the module-facing resources of one service key:
-// source first, then its workload, autoscaler, and pods.
+// source first, then the service's own objects, then the shared platform
+// objects (database pools) they reference.
 func (s Snapshot) ForService(key string) []module.ObservedResource {
 	resources := []module.ObservedResource{{
 		Kind: module.KindSource, Name: "kubernetes", Source: &s.Source,
 	}}
+	shared := make(map[string]bool)
 	for index := range s.Objects {
 		obj := &s.Objects[index]
 		if obj.Service != key {
@@ -195,30 +265,57 @@ func (s Snapshot) ForService(key string) []module.ObservedResource {
 		}
 		switch obj.Kind {
 		case module.KindWorkload, module.KindPod, module.KindAutoscaler,
-			module.KindService, module.KindIngress, module.KindVolume:
+			module.KindService, module.KindIngress, module.KindVolume,
+			module.KindDatabaseClaim, module.KindDatabaseTenant:
 			resources = append(resources, module.ObservedResource{
-				Kind:       obj.Kind,
-				Name:       obj.Name,
-				Revision:   obj.Revision,
-				Workload:   obj.Workload,
-				Pod:        obj.Pod,
-				Autoscaler: obj.Autoscaler,
+				Kind:           obj.Kind,
+				Name:           obj.Name,
+				Revision:       obj.Revision,
+				Workload:       obj.Workload,
+				Pod:            obj.Pod,
+				Autoscaler:     obj.Autoscaler,
+				Claim:          obj.Claim,
+				DatabaseTenant: obj.DatabaseTenant,
 			})
+			if obj.SharedKey != "" {
+				shared[obj.SharedKey] = true
+			}
 		}
+	}
+	for index := range s.Objects {
+		obj := &s.Objects[index]
+		if obj.Kind != module.KindDatabaseCluster || !shared[obj.SharedKey] {
+			continue
+		}
+		resources = append(resources, module.ObservedResource{
+			Kind:            obj.Kind,
+			Name:            obj.Name,
+			DatabaseCluster: obj.DatabaseCluster,
+		})
 	}
 	return resources
 }
 
-// Snapshot copies the environment's objects under the read lock.
+// Snapshot copies the environment's objects under the read lock, plus the
+// platform-scoped shared objects (database pools) its objects reference.
 func (s *Store) Snapshot(environmentID uuid.UUID) Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	snapshot := Snapshot{
 		Source: module.SourceStatus{State: s.state, StaleSince: s.staleSince, LastSync: s.lastSync},
 	}
+	shared := make(map[string]bool)
 	for key := range s.byEnvironment[environmentID] {
 		if obj := s.objects[key]; obj != nil {
 			snapshot.Objects = append(snapshot.Objects, *obj)
+			if obj.SharedKey != "" && !shared[obj.SharedKey] {
+				shared[obj.SharedKey] = true
+				if sharedKey, ok := s.sharedObjects[obj.SharedKey]; ok {
+					if sharedObj := s.objects[sharedKey]; sharedObj != nil {
+						snapshot.Objects = append(snapshot.Objects, *sharedObj)
+					}
+				}
+			}
 		}
 	}
 	sort.Slice(snapshot.Objects, func(i, j int) bool {
@@ -261,11 +358,51 @@ func (s *Store) SetNodeArch(name, arch string) {
 	s.nodeArch[name] = arch
 }
 
-// RemoveNode drops a deleted node's architecture record.
+// EnvironmentsForSharedKey lists the environments referencing one shared
+// platform object, for watch fan-out.
+func (s *Store) EnvironmentsForSharedKey(sharedKey string) []uuid.UUID {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.environmentsForSharedKeyLocked(sharedKey)
+}
+
+// SetNodeCapabilities records one node's installed capability labels. An
+// empty list removes the entry.
+func (s *Store) SetNodeCapabilities(name string, capabilities []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(capabilities) == 0 {
+		delete(s.nodeCapabilities, name)
+		return
+	}
+	set := make(map[string]bool, len(capabilities))
+	for _, capability := range capabilities {
+		set[capability] = true
+	}
+	s.nodeCapabilities[name] = set
+}
+
+// CapableNodes lists the nodes carrying a capability, sorted by name. The
+// substrate derives availability-tier satisfiability from the count.
+func (s *Store) CapableNodes(capability string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var nodes []string
+	for name, set := range s.nodeCapabilities {
+		if set[capability] {
+			nodes = append(nodes, name)
+		}
+	}
+	sort.Strings(nodes)
+	return nodes
+}
+
+// RemoveNode drops a deleted node's architecture and capability records.
 func (s *Store) RemoveNode(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.nodeArch, name)
+	delete(s.nodeCapabilities, name)
 }
 
 // NodePlatforms lists the platforms images must target to run on the

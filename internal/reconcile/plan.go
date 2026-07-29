@@ -133,19 +133,24 @@ func planPrune(observed []observe.Object, desired []kube.ObjectRef) []kube.Objec
 	return prune
 }
 
-// planBatches orders the revision's application services into dependency
-// batches. Dependencies on service kinds the reconciler cannot manage yet
-// (databases, buckets) put the dependent service into the waiting map with
-// a reason instead of failing the whole plan.
+// planBatches orders the revision's reconcilable services (applications and
+// databases) into dependency batches of dotted names. Dependencies on
+// service kinds the reconciler cannot manage yet (buckets, until R6) put
+// the dependent service into the waiting map with a reason instead of
+// failing the whole plan.
 func planBatches(definition compiler.ProjectDefinition) (batches [][]string, waiting map[string]string, err error) {
-	included := make(map[string]bool, len(definition.Applications))
-	services := make([]string, 0, len(definition.Applications))
+	services := make([]string, 0, len(definition.Applications)+len(definition.Databases))
 	for key := range definition.Applications {
-		dotted := "applications." + key
-		included[dotted] = true
-		services = append(services, dotted)
+		services = append(services, "applications."+key)
+	}
+	for key := range definition.Databases {
+		services = append(services, "databases."+key)
 	}
 	sort.Strings(services)
+	included := make(map[string]bool, len(services))
+	for _, dotted := range services {
+		included[dotted] = true
+	}
 
 	waiting = make(map[string]string)
 	dependencies := make(map[string][]string, len(services))
@@ -155,28 +160,26 @@ func planBatches(definition compiler.ProjectDefinition) (batches [][]string, wai
 				dependencies[dotted] = append(dependencies[dotted], dependency)
 				continue
 			}
-			waiting[bareKey(dotted)] = "waiting for " + dependency + ": service kind is not reconciled yet"
+			waiting[dotted] = "waiting for " + dependency + ": service kind is not reconciled yet"
 		}
 	}
 	ordered, err := module.Order(services, dependencies)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile: order services: %w", err)
 	}
-	batches = make([][]string, len(ordered))
-	for i, batch := range ordered {
-		for _, dotted := range batch {
-			batches[i] = append(batches[i], bareKey(dotted))
-		}
-		sort.Strings(batches[i])
+	for i := range ordered {
+		sort.Strings(ordered[i])
 	}
-	return batches, waiting, nil
+	return ordered, waiting, nil
 }
 
-func bareKey(dotted string) string {
+// splitService separates a dotted service name into its collection and bare
+// key.
+func splitService(dotted string) (collection, key string) {
 	if index := strings.IndexByte(dotted, '.'); index >= 0 {
-		return dotted[index+1:]
+		return dotted[:index], dotted[index+1:]
 	}
-	return dotted
+	return "", dotted
 }
 
 // desiredSet is one revision's rendered desired state.

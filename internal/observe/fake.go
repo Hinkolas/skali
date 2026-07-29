@@ -84,3 +84,43 @@ func (f *Fake) SetAutoscaler(environmentID uuid.UUID, namespace, objectName, ser
 		Autoscaler:  &status,
 	})
 }
+
+// SetDatabaseClaim records the substrate's claim projection for a database
+// service; service uses the dotted "databases.<key>" form.
+func (f *Fake) SetDatabaseClaim(environmentID uuid.UUID, service string, claimID uuid.UUID, status module.ClaimStatus) {
+	f.Upsert(ClaimObject(environmentID, service, claimID, status))
+}
+
+// SetDatabaseTenant records the CNPG Database projection of one service's
+// tenant; service uses the dotted form and pool links the shared pool.
+func (f *Fake) SetDatabaseTenant(environmentID uuid.UUID, service, pool, databaseName string, status module.DatabaseTenantStatus) {
+	status.Pool = pool
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"},
+			Namespace: "skali-platform",
+			Name:      databaseName,
+		},
+		Kind:           module.KindDatabaseTenant,
+		Name:           databaseName,
+		Environment:    environmentID,
+		Service:        service,
+		SharedKey:      pool,
+		DatabaseTenant: &status,
+	})
+}
+
+// SetDatabasePool records the platform-scoped CNPG Cluster projection.
+func (f *Fake) SetDatabasePool(name string, status module.DatabaseClusterStatus) {
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"},
+			Namespace: "skali-platform",
+			Name:      name,
+		},
+		Kind:            module.KindDatabaseCluster,
+		Name:            name,
+		SharedKey:       name,
+		DatabaseCluster: &status,
+	})
+}

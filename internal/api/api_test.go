@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/buildstore"
+	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/module"
@@ -129,7 +131,14 @@ func newTestAPI(t *testing.T) *testAPI {
 		RegistryToken:      tokenSigner,
 		RegistryNodeSecret: "node-secret",
 		RuntimeLogs:        &runtimelogs.Streamer{Observed: observed.Store, Store: st},
-		Capabilities:       []string{"application", "edge"},
+		Capabilities:       []string{"application", "edge", "database"},
+		Databases:          dbstore.New(st),
+		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
+			return map[string][]byte{
+				"username": []byte("u_" + name),
+				"password": []byte("test-password-" + name),
+			}, nil
+		},
 	}))
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc,

@@ -18,6 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/apptest"
+	"github.com/Hinkolas/skali/internal/module/database"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
@@ -120,6 +121,7 @@ func newKernelFixture(t *testing.T, cfg Config) *kernelFixture {
 	journalSvc := journal.NewService(st, "kernel-test-boot-1")
 	registry := module.NewRegistry()
 	require.NoError(t, registry.Register(apptest.Module{}))
+	require.NoError(t, registry.Register(database.Module{}))
 	fake := observe.NewFake()
 	cluster := newFakeCluster()
 
@@ -151,10 +153,15 @@ func newKernelFixture(t *testing.T, cfg Config) *kernelFixture {
 // running with a pending rollout step (the kernel is wired as enqueuer).
 func (f *kernelFixture) executeDeployment(t *testing.T) *deploy.ExecuteResult {
 	t.Helper()
+	return f.executeDeploymentManifest(t, kernelManifest)
+}
+
+func (f *kernelFixture) executeDeploymentManifest(t *testing.T, manifestSource string) *deploy.ExecuteResult {
+	t.Helper()
 	ctx := context.Background()
 	projects := project.New(f.st)
 	draft, err := projects.SubmitDraft(ctx, f.projectID, project.DraftSubmission{
-		Source: []byte(kernelManifest), Format: "yaml", ExpectedVersion: 0,
+		Source: []byte(manifestSource), Format: "yaml", ExpectedVersion: 0,
 	})
 	require.NoError(t, err)
 	row, err := f.st.GetDefinitionVersionByHash(ctx, store.GetDefinitionVersionByHashParams{

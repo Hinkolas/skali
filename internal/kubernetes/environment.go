@@ -30,6 +30,36 @@ func RenderNamespace(project, environment, environmentID string) *corev1.Namespa
 	}
 }
 
+// OutputSecretName is the deterministic name of the connection-output Secret
+// one service publishes into the environment namespace; rendered containers
+// reference it through the secretKeyRef bindings emitted for
+// {{<collection>.<service>.<output>}} expressions.
+func OutputSecretName(collection, service string) string {
+	return objectName("skali-output", collection, service)
+}
+
+// RenderOutputSecret renders one service's connection-output mirror in the
+// environment namespace. The caller supplies the output values (including
+// secret ones read from the substrate's credential Secret); like the values
+// Secret, this function never logs.
+func RenderOutputSecret(project, environment, environmentID, collection, service string, data map[string][]byte) *corev1.Secret {
+	return &corev1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      OutputSecretName(collection, service),
+			Namespace: NamespaceName(project, environment),
+			Labels: map[string]string{
+				LabelManaged:     "true",
+				LabelProject:     project,
+				LabelEnvironment: environmentID,
+				LabelService:     collection + "." + service,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
+	}
+}
+
 // RenderEnvironmentSecret renders the values Secret of one environment. The
 // caller supplies the merged plain and decrypted secret data; this function
 // deliberately never logs and Render itself never sees plaintext.

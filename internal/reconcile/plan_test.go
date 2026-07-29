@@ -130,7 +130,7 @@ func TestPlanPruneNeverTouchesStatefulKinds(t *testing.T) {
 	}
 }
 
-func TestPlanBatchesWaitsOnUnsupportedKinds(t *testing.T) {
+func TestPlanBatchesOrdersDatabasesBeforeDependents(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`version: "1"
 name: demo
@@ -152,10 +152,34 @@ databases:
 
 	batches, waiting, err := planBatches(result.Definition)
 	require.NoError(t, err)
-	require.Equal(t, [][]string{{"api", "worker"}}, batches)
-	require.Contains(t, waiting, "api")
-	require.Contains(t, waiting["api"], "databases.main")
-	require.NotContains(t, waiting, "worker")
+	require.Equal(t, [][]string{
+		{"applications.worker", "databases.main"},
+		{"applications.api"},
+	}, batches)
+	require.Empty(t, waiting, "databases are reconcilable since R5")
+}
+
+func TestPlanBatchesWaitsOnUnsupportedKinds(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`version: "1"
+name: demo
+applications:
+  api:
+    image: ghcr.io/example/api:1.0.0
+    environment:
+      ASSETS_ENDPOINT: "{{ buckets.assets.endpoint }}"
+buckets:
+  assets: {}
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	batches, waiting, err := planBatches(result.Definition)
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{"applications.api"}}, batches)
+	require.Contains(t, waiting, "applications.api")
+	require.Contains(t, waiting["applications.api"], "buckets.assets")
 }
 
 func TestGroupObjectsSplitsByService(t *testing.T) {

@@ -285,7 +285,7 @@ func renderEnvironment(environment map[string]compiler.Expression, environmentSe
 			}}
 		case "service_output":
 			variable.ValueFrom = &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: objectName("skali-output", part.Collection, part.Service)},
+				LocalObjectReference: corev1.LocalObjectReference{Name: OutputSecretName(part.Collection, part.Service)},
 				Key:                  part.Output,
 			}}
 		}

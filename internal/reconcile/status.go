@@ -105,29 +105,49 @@ func (k *Kernel) SubscribeStatus(environmentID uuid.UUID) (<-chan observe.Invali
 }
 
 // evaluateServices projects per-service health through the registered
-// modules; a missing module (the application module ships in R3) reports
-// unknown with a diagnostic rather than guessing.
+// modules, dispatching by service type; a missing module reports unknown
+// with a diagnostic rather than guessing. Application objects index the
+// observed store by bare key (the immutable label contract); database
+// projections use the dotted form so keys can never collide across
+// collections.
 func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snapshot) []ServiceStatus {
-	keys := make([]string, 0, len(rev.Definition.Applications))
-	for key := range rev.Definition.Applications {
-		keys = append(keys, key)
+	type entry struct {
+		key         string
+		serviceType string
+		observedKey string
+		withPods    bool
 	}
-	sort.Strings(keys)
+	entries := make([]entry, 0, len(rev.Definition.Applications)+len(rev.Definition.Databases))
+	for key := range rev.Definition.Applications {
+		entries = append(entries, entry{key: key, serviceType: "application", observedKey: key, withPods: true})
+	}
+	for key := range rev.Definition.Databases {
+		entries = append(entries, entry{key: key, serviceType: "database", observedKey: "databases." + key})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].serviceType != entries[j].serviceType {
+			return entries[i].serviceType < entries[j].serviceType
+		}
+		return entries[i].key < entries[j].key
+	})
 
-	statuses := make([]ServiceStatus, 0, len(keys))
-	for _, key := range keys {
-		status := ServiceStatus{Key: key, Type: "application", Pods: podsFor(snapshot, key)}
-		mod, registered := k.deps.Registry.Get("application")
+	statuses := make([]ServiceStatus, 0, len(entries))
+	for _, item := range entries {
+		status := ServiceStatus{Key: item.key, Type: item.serviceType}
+		if item.withPods {
+			status.Pods = podsFor(snapshot, item.key)
+		}
+		mod, registered := k.deps.Registry.Get(item.serviceType)
 		if !registered {
 			status.Health = module.HealthUnknown
 			status.Diagnostics = []module.Diagnostic{{
 				Severity: "warning", Code: "module-unavailable",
-				Message: "no module registered for service type application",
+				Message: "no module registered for service type " + item.serviceType,
 			}}
 			statuses = append(statuses, status)
 			continue
 		}
-		service, err := mod.Decode(rev.Definition, key)
+		service, err := mod.Decode(rev.Definition, item.key)
 		if err != nil {
 			status.Health = module.HealthUnknown
 			status.Diagnostics = []module.Diagnostic{{
@@ -137,7 +157,7 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 			statuses = append(statuses, status)
 			continue
 		}
-		evaluation := service.Evaluate(snapshot.ForService(key))
+		evaluation := service.Evaluate(snapshot.ForService(item.observedKey))
 		status.Health = evaluation.Health
 		status.Diagnostics = evaluation.Diagnostics
 		statuses = append(statuses, status)

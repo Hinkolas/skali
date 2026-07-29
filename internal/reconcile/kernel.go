@@ -23,6 +23,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
@@ -37,6 +38,41 @@ type Cluster interface {
 	DisownFields(ctx context.Context, ref kube.ObjectRef, manager string, paths ...string) error
 }
 
+// ClaimManager is the kernel's generic seam to infrastructure-claim
+// subsystems (the database substrate now, buckets with R6): the environment
+// pass records desired claims and consumes readiness, never claim
+// mechanics. The kernel stays free of service-type fields; per-service
+// health still flows through module evaluation over observed claim
+// projections.
+type ClaimManager interface {
+	// Ensure records the revision's claims, releases the ones the promoted
+	// revision no longer contains, and reports each kept claim's readiness
+	// keyed by dotted service name ("databases.data").
+	Ensure(ctx context.Context, in ClaimEnsureInput) ([]ClaimState, error)
+	// Release starts (and re-drives) the teardown of every claim of a
+	// purging environment, reporting completion and, while unfinished, what
+	// is still going.
+	Release(ctx context.Context, environmentID uuid.UUID) (released bool, detail []string, err error)
+	// Suspend tells the substrate an environment went down while keeping
+	// its data, so idle pools may hibernate (local dev).
+	Suspend(ctx context.Context, environmentID uuid.UUID) error
+}
+
+// ClaimEnsureInput carries the environment identity the portable revision
+// deliberately does not.
+type ClaimEnsureInput struct {
+	ProjectID     uuid.UUID
+	EnvironmentID uuid.UUID
+	Revision      *revision.Revision
+}
+
+// ClaimState is one claim's readiness for batch gating and wait steps.
+type ClaimState struct {
+	Service     string // dotted form, e.g. "databases.data"
+	Provisioned bool
+	Waiting     string // human reason while not provisioned
+}
+
 // Deps wires the kernel. Cluster and Source are nil in API-only mode (no
 // cluster resolved): the kernel then idles and reports observation unknown.
 type Deps struct {
@@ -48,6 +84,9 @@ type Deps struct {
 	Observed *observe.Store
 	Source   *observe.KubeSource
 	Cluster  Cluster
+	// Claims is nil without a substrate (API-only mode); database services
+	// then wait visibly instead of provisioning.
+	Claims ClaimManager
 }
 
 type Config struct {

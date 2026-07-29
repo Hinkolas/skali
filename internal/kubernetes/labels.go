@@ -13,6 +13,12 @@ const (
 	LabelEnvironment = "skali.dev/environment"
 	LabelService     = "skali.dev/service"
 	LabelRevision    = "skali.dev/revision"
+	// LabelPool marks platform-scoped substrate objects (database pools and
+	// their tenants) with the owning pool's name. Pool objects carry no
+	// environment identity; tenant objects carry both.
+	LabelPool = "skali.dev/pool"
+	// LabelClaim marks substrate objects belonging to one claim.
+	LabelClaim = "skali.dev/claim"
 )
 
 // ManagedSelector is the informer-level list/watch selector: every object

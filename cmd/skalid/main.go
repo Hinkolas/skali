@@ -22,17 +22,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/api"
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/config"
+	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/app"
+	"github.com/Hinkolas/skali/internal/module/database"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
@@ -41,6 +44,8 @@ import (
 	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate"
+	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
@@ -158,11 +163,14 @@ func runServe() error {
 		slog.InfoContext(ctx, "no cluster configuration resolved; running API-only")
 	}
 
-	// The production service modules. R3 registers applications; database
-	// and object-storage modules follow with their substrates (R5/R6).
+	// The production service modules. The object-storage module follows
+	// with its substrate (R6).
 	registry := module.NewRegistry()
 	if err := registry.Register(app.Module{}); err != nil {
 		return fmt.Errorf("register application module: %w", err)
+	}
+	if err := registry.Register(database.Module{}); err != nil {
+		return fmt.Errorf("register database module: %w", err)
 	}
 
 	observed := observe.NewStore(nil)
@@ -173,6 +181,7 @@ func runServe() error {
 			Resync:         cfg.ReconcileResync,
 			StaleThreshold: cfg.StaleThreshold,
 			Enqueue:        func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+			Dynamic:        cnpg.ObserveKinds(),
 		})
 	}
 	kernelDeps := reconcile.Deps{
@@ -187,6 +196,24 @@ func runServe() error {
 	if kubeClient != nil {
 		kernelDeps.Cluster = kubeClient
 	}
+	// The database substrate controller runs beside the kernel with its own
+	// queue: it owns pools, tenants, and credentials in skali-platform and
+	// pokes the kernel when a claim's outputs become ready. The kernel
+	// records desired claims through it (Deps.Claims).
+	var substrateCtl *substrate.Controller
+	if kubeClient != nil {
+		substrateCtl = substrate.New(substrate.Deps{
+			DB:       dbstore.New(st),
+			Cluster:  substrate.KubeCluster{Client: kubeClient},
+			Observed: observed,
+			Enqueue:  func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+		}, substrate.Config{
+			Managed:      cfg.ManagedCluster,
+			Capabilities: cfg.Capabilities,
+			Resync:       cfg.ReconcileResync,
+		})
+		kernelDeps.Claims = substrateCtl
+	}
 	reconcileCfg := reconcile.Config{
 		Resync:          cfg.ReconcileResync,
 		Audit:           cfg.ReconcileAudit,
@@ -198,8 +225,17 @@ func runServe() error {
 	deploySvc.SetEnqueuer(kernel)
 
 	runtimeLogs := &runtimelogs.Streamer{Observed: observed, Store: st}
+	// The sanctioned request-time Secret read behind credential reveal.
+	var secretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	if kubeClient != nil {
 		runtimeLogs.Clientset = kubeClient.Clientset
+		secretReader = func(ctx context.Context, namespace, name string) (map[string][]byte, error) {
+			secret, err := kubeClient.Clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return nil, err
+			}
+			return secret.Data, nil
+		}
 	}
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
@@ -219,6 +255,8 @@ func runServe() error {
 			RegistryNodeSecret: cfg.RegistryNodeSecret,
 			RuntimeLogs:        runtimeLogs,
 			Capabilities:       cfg.Capabilities,
+			Databases:          dbstore.New(st),
+			SecretReader:       secretReader,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -240,6 +278,9 @@ func runServe() error {
 			slog.Error("reconcile kernel stopped", "err", err)
 		}
 	}()
+	if substrateCtl != nil {
+		go substrateCtl.Run(loopCtx)
+	}
 
 	// Staged values and pending artifact records are normally closed
 	// explicitly; the sweeps are the safety net for abandoned candidates

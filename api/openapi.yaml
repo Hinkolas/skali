@@ -1118,6 +1118,86 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/environments/{id}/databases/{key}/connection:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getDatabaseConnection
+      summary: Get a database service's non-secret connection projection
+      description: |
+        Claim phase, engine identity, and, once provisioned, the internal
+        host, port, database name, and credential version. Served from
+        durable substrate rows; credential values never appear here.
+      responses:
+        "200":
+          description: The connection projection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service, phase, engine, major, isolation, availability]
+                properties:
+                  service: { type: string }
+                  phase: { type: string, enum: [pending, bound, provisioned, releasing, released] }
+                  engine: { type: string }
+                  major: { type: integer }
+                  isolation: { type: string }
+                  availability: { type: string }
+                  host: { type: string }
+                  port: { type: integer }
+                  database: { type: string }
+                  credential_version: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/databases/{key}/credentials/reveal:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: revealDatabaseCredentials
+      summary: Reveal a database's credentials once
+      description: |
+        The one sanctioned request-time cluster read: returns the managed
+        role's username, password, and connection URL from the credential
+        Secret. Requires fresh authentication (sudo mode); values are never
+        cached, journaled, or logged.
+      responses:
+        "200":
+          description: The revealed credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [username, password, url]
+                properties:
+                  username: { type: string }
+                  password: { type: string }
+                  url: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /v1/system/observation:
     get:
       operationId: getSystemObservation

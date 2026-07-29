@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/buildstore"
+	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/project"
@@ -53,6 +55,12 @@ type Deps struct {
 	// Capabilities is the installation's declared capability set for the
 	// deployment gate.
 	Capabilities []string
+	// Databases serves database connection projections; nil hides the
+	// routes (no substrate wired).
+	Databases *dbstore.Service
+	// SecretReader is the sanctioned request-time Secret read behind
+	// credential reveal; nil (API-only mode) disables reveal.
+	SecretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -191,6 +199,17 @@ func NewRouter(d Deps) http.Handler {
 				// database pointers, never a request-time cluster call.
 				r.Get("/environments/{id}/status", sh.get)
 				r.Get("/system/observation", sh.system)
+
+				// Database connection projections; credential reveal is the
+				// one sanctioned request-time read and needs sudo mode.
+				if d.Databases != nil {
+					dbh := &databasesHandlers{db: d.Databases, secrets: d.SecretReader}
+					r.Get("/environments/{id}/databases/{key}/connection", dbh.connection)
+					r.Group(func(r chi.Router) {
+						r.Use(RequireFresh(d.Auth))
+						r.Post("/environments/{id}/databases/{key}/credentials/reveal", dbh.reveal)
+					})
+				}
 
 				// Run journal reads; the SSE stream lives outside this group.
 				r.Get("/environments/{id}/runs", jh.list)

@@ -21,6 +21,9 @@ rules:
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]
     verbs: ["*"]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, databases]
+    verbs: ["*"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -103,6 +106,8 @@ spec:
               value: skali-registry.skali-system.svc:5000
             - name: SKALI_REGISTRY_INSECURE
               value: "true"
+            - name: SKALI_CAPABILITIES
+              value: application;edge;database
           readinessProbe:
             httpGet:
               path: /healthz

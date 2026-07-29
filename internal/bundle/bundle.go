@@ -30,7 +30,7 @@ import (
 // production installation.
 const (
 	Namespace   = "skali-system"
-	CNPGVersion = "1.25.1"
+	CNPGVersion = "1.29.2"
 	// CertManagerVersion pins the vendored cert-manager release. The asset
 	// is embedded even though the local profile never applies it; roughly
 	// one megabyte of CLI weight buys one shared bundle package.
@@ -69,7 +69,7 @@ const (
 // production installations; deleting an absent namespace is a no-op.
 var OperatorNamespaces = []string{"cnpg-system", "cert-manager"}
 
-//go:embed assets/cnpg-1.25.1.yaml
+//go:embed assets/cnpg-1.29.2.yaml
 var cnpgManifest []byte
 
 // CNPGManifest is the pinned operator install manifest.
@@ -617,14 +617,17 @@ func skalidYAML(profile Profile) string {
 			podAnnotations += "\n        " + line
 		}
 	}
-	capabilitiesEnv := ""
+	// Both profiles state the installation's capabilities explicitly. Local
+	// dev is one node carrying application, edge, and database: the substrate
+	// collapses every database claim onto the single dev pool, so the
+	// capability is always present. Object storage joins the set with R6.
+	capabilitiesEnv := "\n            - name: SKALI_CAPABILITIES\n              value: application;edge;database"
 	ingressAnnotations := ""
 	ingressTLS := ""
 	ingressHost := "skali.localhost"
 	ingressClass := "traefik"
 	if production := profile.Production; production != nil {
-		// Local dev omits the env and rides the config default; production
-		// states the installation's capability union explicitly. The token
+		// Production states the installation's capability union. The token
 		// signing key and node pull secret ride the same production block:
 		// with them set, skalid serves the registry token realm. The push
 		// host is the public registry domain: build clients push through the
@@ -663,6 +666,9 @@ rules:
     verbs: ["*"]
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]
+    verbs: ["*"]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, databases]
     verbs: ["*"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

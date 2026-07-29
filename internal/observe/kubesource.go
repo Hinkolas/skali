@@ -2,6 +2,7 @@ package observe
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,12 +11,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/layout"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 )
@@ -31,14 +34,26 @@ type SourceOptions struct {
 	// Enqueue receives the affected environment of every cache change; nil
 	// disables enqueueing (observation-only tests).
 	Enqueue func(uuid.UUID)
+	// Dynamic adds label-selected dynamic informers for blessed operator
+	// CRDs (CNPG). The CRDs must exist on the cluster: skali-managed
+	// installations always install the operators before skalid, and a
+	// missing CRD keeps the source from ever reporting fresh.
+	Dynamic []DynamicKind
+}
+
+// DynamicKind is one dynamically watched CRD with its projection.
+type DynamicKind struct {
+	Kind    string
+	GVR     schema.GroupVersionResource
+	Convert func(*unstructured.Unstructured) (Object, bool)
 }
 
 // KubeSource feeds the observed store from Kubernetes LIST/WATCH caches:
 // initial LIST per kind, wait for cache sync, WATCH from the returned
 // resource versions, convert every change into a store write plus an
-// affected-owner enqueue. Watched kinds are the R2 core set; a dynamic
-// CRD source (CNPG and friends) is a new constructor over the same store,
-// not a redesign, and arrives with R5.
+// affected-owner enqueue. Watched kinds are the R2 core set plus the
+// dynamic operator CRDs registered through SourceOptions.Dynamic (CNPG
+// since R5).
 type KubeSource struct {
 	client    *kube.Client
 	store     *Store
@@ -188,6 +203,27 @@ func (k *KubeSource) register() {
 			return core.Events(all).Watch(context.Background(), o)
 		},
 		"", "type=Warning"))
+
+	// Blessed operator CRDs through the dynamic client, same selector, same
+	// store contract.
+	for _, dynamicKind := range k.opts.Dynamic {
+		gvr := dynamicKind.GVR
+		convert := dynamicKind.Convert
+		k.addObjectInformer(dynamicKind.Kind, &unstructured.Unstructured{}, k.listWatch(
+			func(o metav1.ListOptions) (runtime.Object, error) {
+				return k.client.Dynamic.Resource(gvr).Namespace(all).List(context.Background(), o)
+			},
+			func(o metav1.ListOptions) (watch.Interface, error) {
+				return k.client.Dynamic.Resource(gvr).Namespace(all).Watch(context.Background(), o)
+			},
+			managed, ""), func(raw any) (Object, bool) {
+			object, ok := raw.(*unstructured.Unstructured)
+			if !ok {
+				return Object{}, false
+			}
+			return convert(object)
+		})
+	}
 }
 
 // listWatch builds a contact-tracking ListerWatcher. A successful LIST is
@@ -275,13 +311,13 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 		AddFunc: func(raw any) {
 			if obj, ok := convert(raw); ok {
 				k.store.Upsert(obj)
-				k.enqueue(obj.Environment)
+				k.enqueueAffected(obj)
 			}
 		},
 		UpdateFunc: func(_, raw any) {
 			if obj, ok := convert(raw); ok {
 				k.store.Upsert(obj)
-				k.enqueue(obj.Environment)
+				k.enqueueAffected(obj)
 			}
 		},
 		DeleteFunc: func(raw any) {
@@ -290,11 +326,23 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 			}
 			if obj, ok := convert(raw); ok {
 				k.store.Remove(obj.Ref)
-				k.enqueue(obj.Environment)
+				k.enqueueAffected(obj)
 			}
 		},
 	})
 	k.informers = append(k.informers, namedInformer{kind: kind, informer: informer})
+}
+
+// enqueueAffected pokes the object's environment; a platform-scoped shared
+// object (a database pool) fans out to every environment referencing it.
+func (k *KubeSource) enqueueAffected(obj Object) {
+	if obj.Environment != uuid.Nil || obj.SharedKey == "" {
+		k.enqueue(obj.Environment)
+		return
+	}
+	for _, environment := range k.store.EnvironmentsForSharedKey(obj.SharedKey) {
+		k.enqueue(environment)
+	}
 }
 
 func (k *KubeSource) addNodeInformer(lw cache.ListerWatcher) {
@@ -315,6 +363,7 @@ func (k *KubeSource) addNodeInformer(lw cache.ListerWatcher) {
 	upsert := func(raw any) {
 		if node, ok := asNode(raw); ok {
 			k.store.SetNodeArch(node.Name, nodeArch(node))
+			k.store.SetNodeCapabilities(node.Name, nodeCapabilities(node))
 			fanOut(node)
 		}
 	}
@@ -338,6 +387,20 @@ func nodeArch(node *corev1.Node) string {
 		return arch
 	}
 	return node.Labels["kubernetes.io/arch"]
+}
+
+// nodeCapabilities reads the installer-stamped capability labels.
+func nodeCapabilities(node *corev1.Node) []string {
+	var capabilities []string
+	for label, value := range node.Labels {
+		if value != layout.CapabilityLabelValue {
+			continue
+		}
+		if capability, ok := strings.CutPrefix(label, layout.CapabilityLabelPrefix); ok {
+			capabilities = append(capabilities, capability)
+		}
+	}
+	return capabilities
 }
 
 func (k *KubeSource) addEventInformer(lw cache.ListerWatcher) {

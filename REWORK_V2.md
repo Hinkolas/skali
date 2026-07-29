@@ -1645,6 +1645,14 @@ explicit:
 - Storage classes and failure domains differ.
 - A single-node local database cannot demonstrate real failover.
 - Local capacity is smaller.
+- The database substrate runs exactly one local pool (decided 2026-07-29):
+  shared, project, and dedicated isolation intents are honored logically
+  (separate databases, roles, and credentials) but all place onto the
+  single single-instance dev pool, and `asynchronous`/`synchronous`
+  availability stays visibly pending on one node. The dev pool is lazy and
+  reversible: created on first use, hibernated (CNPG hibernation, data
+  kept) while no active environment uses databases, resumed by the next
+  deployment.
 
 `skali dev` should show unsupported guarantees clearly. It must still use the
 same project definition, revision format, Kubernetes objects, operators, health
@@ -2301,6 +2309,58 @@ Exit criteria:
   reads.
 - Credential values never enter definitions, revisions, activity, or run logs.
 - Database deletion requires an explicit destructive plan.
+
+Implementation notes (landed through 2026-07-29):
+
+- The vendored CNPG operator moved from 1.25.1 to 1.29.2: declarative
+  extension management (Database CR `spec.extensions`) landed upstream in
+  1.26 and the substrate provisions tenants purely declaratively (credential
+  Secret, managed role on the pool Cluster, Database CR; no SQL from
+  `skalid`). The bundle hash rolled once with this bump plus the `skalid`
+  ClusterRole's CNPG permissions and the local profile's explicit
+  `SKALI_CAPABILITIES=application;edge;database`.
+- New packages: `internal/dbstore` (claims, clusters, placements, tenants,
+  backup rows; every transition guarded by `internal/claim` and the pool
+  state machine), `internal/substrate` (the controller: own queue and
+  workers beside the kernel, placement, pool/tenant ensure, output mirrors,
+  teardown, dev hibernation, pool GC, and the Go-internal system-claim API
+  `EnsureSystemClaim`/`ReleaseSystemClaim`), and `internal/substrate/cnpg`
+  (image catalog and pure rendering; stock `-system` images, contrib
+  extensions only; pgvector/postgis wait for a blessed image and reject at
+  validation).
+- The kernel consumes claims through the `reconcile.ClaimManager` seam
+  (`Ensure`/`Release`/`Suspend`); `planBatches` orders all reconcilable
+  collections by dotted name, `evaluateServices` dispatches through the
+  module registry, and claim/tenant/pool truth reaches evaluation as
+  observed input: the substrate publishes claim-phase projections, and a
+  dynamic label-selected CRD source watches CNPG Clusters and Databases.
+  Platform-scoped pool objects join environment snapshots through a
+  shared-key index with watch fan-out to every referencing environment.
+- Owner decisions (2026-07-29): the production shared pool is ensured
+  eagerly at boot on database-capable installations; local dev collapses
+  shared, project, and dedicated isolation onto one single-instance pool
+  (documented parity boundary, section 11.7) that hibernates via
+  `cnpg.io/hibernation` when no active environment uses databases and
+  resumes with data intact on the next deployment; the backup/restore run
+  skeleton and credential rotation are deferred tail work and may follow
+  R6.
+- Pool packing v1: shared per (engine, major); `project` isolation maps to
+  per-environment pools; dedicated pools per claim; empty non-shared pools
+  are collected on release, the shared pool persists. Names:
+  `pg17-shared`, `pg17-env-<id8>`, `pg17-ded-<id8>` in `skali-platform`
+  under the `skalid-platform` field manager.
+- Headless API: `GET .../databases/{key}/connection` (row projection) and
+  `POST .../databases/{key}/credentials/reveal` behind fresh auth, the one
+  sanctioned request-time Secret read. A live leak audit scans every
+  durable text column for the generated password.
+- Verified live: claim provisioning, topology propagation on primary kill
+  (no request-time reads), destructive removal, hibernation, and the
+  synthetic system claim traversing the exact user-claim path with
+  `skali-system` untouched; the `examples/guestbook` dev e2e covers deploy,
+  visible database wait, connect-through-outputs, down/hibernate/resume
+  with surviving data. Availability-tier verification on a multi-node
+  cluster (asynchronous/synchronous) has not run live yet and rides the
+  next production rollout.
 
 ### R6 - Object-storage substrate and service
 

@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=../../schemas/skali.schema.json
+
+version: "1"
+
+name: guestbook
+description: Build-sourced application connected to a managed PostgreSQL database
+
+applications:
+  web:
+    build:
+      context: .
+
+    ports:
+      http:
+        port: 8080
+        protocol: http
+
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        path: /
+        port: http
+        tls: automatic
+
+    environment:
+      # Typed output references: the application waits for the database and
+      # starts with the substrate's injected connection outputs.
+      DATABASE_URL: "{{ databases.data.url }}"
+
+    health:
+      readiness:
+        http:
+          port: http
+          path: /healthz
+        interval: 5s
+        timeout: 2s
+      liveness:
+        http:
+          port: http
+          path: /healthz
+        interval: 30s
+        timeout: 2s
+
+databases:
+  data:
+    engine: postgres
+    version: 17

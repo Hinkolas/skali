@@ -33,10 +33,16 @@ type e2eHarness struct {
 	t          *testing.T
 	binary     string
 	projectDir string
+	host       string
 	env        []string
 }
 
 func newE2EHarness(t *testing.T) *e2eHarness {
+	t.Helper()
+	return newE2EHarnessFor(t, "hello-world", "hello-world.localhost")
+}
+
+func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 	t.Helper()
 	if os.Getenv("TEST_SKALI_DEV") == "" {
 		t.Skip("set TEST_SKALI_DEV=1 to run the skali dev end-to-end suite")
@@ -63,17 +69,18 @@ func newE2EHarness(t *testing.T) *e2eHarness {
 	// The example project in a scratch copy so source edits are safe. A
 	// checkout binding left behind by real deploys of the example must not
 	// travel along: the suite asserts bare dev never creates one.
-	projectDir := filepath.Join(t.TempDir(), "hello-world")
+	projectDir := filepath.Join(t.TempDir(), example)
 	require.NoError(t, exec.Command("cp", "-R",
-		filepath.Join(repoRoot, "examples", "hello-world"), projectDir).Run())
+		filepath.Join(repoRoot, "examples", example), projectDir).Run())
 	require.NoError(t, os.RemoveAll(filepath.Join(projectDir, ".skali")))
 	require.NoError(t, os.WriteFile(filepath.Join(projectDir, ".env"),
-		[]byte("APP_DOMAIN=hello-world.localhost\n"), 0o644))
+		[]byte("APP_DOMAIN="+host+"\n"), 0o644))
 
 	harness := &e2eHarness{
 		t:          t,
 		binary:     binary,
 		projectDir: projectDir,
+		host:       host,
 		env: append(os.Environ(),
 			"SKALI_DEV_CLUSTER="+e2eCluster,
 			fmt.Sprintf("SKALI_DEV_HTTP_PORT=%d", e2eHTTPPort),
@@ -152,7 +159,7 @@ func (h *e2eHarness) route(path string) (int, string) {
 	request, err := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("http://127.0.0.1:%d%s", e2eHTTPPort, path), nil)
 	require.NoError(h.t, err)
-	request.Host = "hello-world.localhost"
+	request.Host = h.host
 	client := &http.Client{Timeout: 5 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {
@@ -308,4 +315,52 @@ func (h *e2eHarness) stateDir() string {
 		}
 	}
 	return ""
+}
+
+// TestDevGuestbookDatabase is the R5 prototype path on local dev: a
+// database-bearing project deploys, the application waits for the claim,
+// starts with the injected connection outputs, and reads its own writes
+// through the shared dev pool.
+func TestDevGuestbookDatabase(t *testing.T) {
+	h := newE2EHarnessFor(t, "guestbook", "guestbook.localhost")
+
+	out := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
+	require.Contains(t, out, "ready")
+	// First use brings up the dev pool (postgres image pull) before the
+	// application can pass readiness.
+	h.waitRoute("visits: ", 8*time.Minute)
+	_, first := h.route("/")
+	_, second := h.route("/")
+	require.NotEqual(t, first, second, "every visit must insert a row")
+
+	out = h.run(false, "", "dev", "status")
+	require.Contains(t, out, "application.web")
+	require.Contains(t, out, "database.data")
+	require.Contains(t, out, "healthy")
+
+	var before int
+	_, body := h.route("/")
+	_, err := fmt.Sscanf(body, "visits: %d", &before)
+	require.NoError(t, err, "unexpected body %q", body)
+
+	// Down keeps the data and the idle dev pool hibernates: CNPG removes
+	// the postgres pods while the Cluster and its volume stay.
+	out = h.run(false, "", "dev", "down")
+	require.Contains(t, out, "is down; its data is retained")
+	kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+	require.Eventually(t, func() bool {
+		pods, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
+			"get", "pods", "-n", "skali-platform", "--no-headers").CombinedOutput()
+		return err == nil && !strings.Contains(string(pods), "Running")
+	}, 3*time.Minute, 3*time.Second, "the dev pool must hibernate after down")
+
+	// The next dev resumes the pool and the data survived hibernation.
+	out = h.run(false, "", "dev", "-d")
+	require.Contains(t, out, "ready")
+	h.waitRoute("visits: ", 8*time.Minute)
+	var after int
+	_, body = h.route("/")
+	_, err = fmt.Sscanf(body, "visits: %d", &after)
+	require.NoError(t, err, "unexpected body %q", body)
+	require.Greater(t, after, before, "the visit history must survive hibernation")
 }

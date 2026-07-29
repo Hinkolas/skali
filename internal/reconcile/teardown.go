@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +51,14 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 	releasing := target.State == deploy.EnvironmentStateReleasing
 	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID))
 	attachment.ensureKind = "teardown"
+
+	// A down environment keeps its claims and data; the substrate may
+	// hibernate pools nothing active uses anymore (local dev).
+	if !releasing && k.deps.Claims != nil {
+		if err := k.deps.Claims.Suspend(ctx, environmentID); err != nil {
+			slog.Warn("reconcile: suspend claims", "environment", environmentID, "error", err)
+		}
+	}
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 	if teardownSettled(snapshot, releasing) {
@@ -113,9 +123,7 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 	}
 
 	if releasing {
-		// Claim teardown slots in here once databases and buckets render
-		// cluster state (R5/R6); today there is nothing to release.
-		k.teardownClaims(ctx, environmentID)
+		k.teardownClaims(ctx, attachment, environmentID)
 
 		var volumes []string
 		for _, obj := range snapshot.Objects {
@@ -159,12 +167,23 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 	return requeueHealthCheck, nil
 }
 
-// teardownClaims is the seam for service-specific claim teardown (databases,
-// buckets). Nothing renders cluster state for claims yet, so releasing them
-// is a no-op until the R5/R6 drivers arrive.
-func (k *Kernel) teardownClaims(ctx context.Context, environmentID uuid.UUID) {
-	_ = ctx
-	_ = environmentID
+// teardownClaims drives claim teardown through the claim manager. The
+// snapshot-settled gate above already guarantees the purge cannot conclude
+// while claim projections remain; this renders the wait visibly.
+func (k *Kernel) teardownClaims(ctx context.Context, attachment *runAttachment, environmentID uuid.UUID) {
+	if k.deps.Claims == nil {
+		return
+	}
+	released, detail, err := k.deps.Claims.Release(ctx, environmentID)
+	if err != nil {
+		slog.Warn("reconcile: release claims", "environment", environmentID, "error", err)
+		return
+	}
+	if released {
+		return
+	}
+	attachment.waitStep(ctx, "delete:databases", "Release database claims",
+		strings.Join(detail, "; "))
 }
 
 // teardownSettled reports whether the destructive decision has been fully

@@ -89,6 +89,16 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		return 0, nil
 	}
 
+	// Desired claims are recorded before health is read, so the projections
+	// the evaluation sees are at least as fresh as this pass's intent. The
+	// substrate provisions asynchronously; states carry readiness and the
+	// visible waiting reasons.
+	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev)
+	if err != nil {
+		k.journalOpFailure(ctx, attachment, "claims", "Record database claims", nil, err)
+		return 0, err
+	}
+
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 
 	// Environment-scoping objects first: namespace, then the values Secret.
@@ -113,8 +123,26 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	var unhealthyEarlier []string
 	for _, batch := range batches {
 		blockedOn := strings.Join(unhealthyEarlier, ", ")
-		for _, service := range batch {
-			if reason, waits := waiting[service]; waits {
+		for _, dotted := range batch {
+			collection, service := splitService(dotted)
+			switch collection {
+			case "databases":
+				// The substrate owns provisioning; the pass only renders
+				// the wait visibly and closes the step once outputs exist.
+				stepKey, title := "claim:"+service, "Provision "+dotted
+				if reason := claimWaiting[dotted]; reason != "" {
+					attachment.waitStep(ctx, stepKey, title, reason)
+				} else if attachment.adopted() {
+					attachment.completeStep(ctx, stepKey, title, journal.StepSucceeded,
+						[]string{"database provisioned; connection outputs published"})
+				}
+				continue
+			case "buckets":
+				// Not reconcilable until R6; planBatches put dependents into
+				// waiting already.
+				continue
+			}
+			if reason, waits := waiting[dotted]; waits {
 				attachment.waitStep(ctx, "apply:"+service, "Apply "+service, reason)
 				continue
 			}
@@ -136,9 +164,9 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 					journal.StepSucceeded, serviceChanged)
 			}
 		}
-		for _, service := range batch {
-			if _, waits := waiting[service]; waits || !preHealth[service] {
-				unhealthyEarlier = append(unhealthyEarlier, service)
+		for _, dotted := range batch {
+			if _, waits := waiting[dotted]; waits || claimWaiting[dotted] != "" || !preHealth[dotted] {
+				unhealthyEarlier = append(unhealthyEarlier, dotted)
 			}
 		}
 	}
@@ -358,6 +386,41 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		services: services, refs: refsList}, nil
 }
 
+// ensureClaims records the revision's database claims through the claim
+// manager and returns the dotted-name waiting reasons for every claim that
+// is not provisioned. Without a substrate every database waits visibly.
+func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision) (map[string]string, error) {
+	if len(rev.Definition.Databases) == 0 {
+		return nil, nil
+	}
+	claimWaiting := make(map[string]string, len(rev.Definition.Databases))
+	if k.deps.Claims == nil {
+		for key := range rev.Definition.Databases {
+			claimWaiting["databases."+key] = "the database substrate is not available"
+		}
+		return claimWaiting, nil
+	}
+	states, err := k.deps.Claims.Ensure(ctx, ClaimEnsureInput{
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Revision:      rev,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reconcile: ensure claims: %w", err)
+	}
+	for _, state := range states {
+		if state.Provisioned {
+			continue
+		}
+		reason := state.Waiting
+		if reason == "" {
+			reason = "waiting for the database substrate"
+		}
+		claimWaiting[state.Service] = reason
+	}
+	return claimWaiting, nil
+}
+
 // redactor covers the environment's current secrets; kernel log lines carry
 // no values, so this is defense in depth, not the only barrier.
 func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID) *redact.Redactor {
@@ -379,12 +442,26 @@ func liveObject(snapshot observe.Snapshot, service, kind string) *observe.Object
 	return nil
 }
 
+// healthByService keys health by dotted service name; bare keys may repeat
+// across collections.
 func healthByService(statuses []ServiceStatus) map[string]bool {
 	health := make(map[string]bool, len(statuses))
 	for _, status := range statuses {
-		health[status.Key] = status.Health == module.HealthHealthy
+		health[dottedName(status.Type, status.Key)] = status.Health == module.HealthHealthy
 	}
 	return health
+}
+
+func dottedName(serviceType, key string) string {
+	switch serviceType {
+	case "application":
+		return "applications." + key
+	case "database":
+		return "databases." + key
+	case "bucket":
+		return "buckets." + key
+	}
+	return serviceType + "." + key
 }
 
 func healthSummary(statuses []ServiceStatus) []string {

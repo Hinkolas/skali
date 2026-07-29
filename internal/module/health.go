@@ -39,6 +39,17 @@ const (
 	KindService    = "service"
 	KindIngress    = "ingress"
 	KindVolume     = "volume"
+	// KindDatabaseClaim is the substrate's provider observation of one
+	// claim's durable phase (REWORK_V2 7.4): published by the substrate
+	// controller, not by a Kubernetes watch, so evaluation stays pure over
+	// observed input.
+	KindDatabaseClaim = "database-claim"
+	// KindDatabaseCluster/KindDatabaseTenant project the CNPG Cluster and
+	// Database objects through the dynamic CRD watch. Cluster projections
+	// are platform-scoped and join service snapshots through the shared-key
+	// mechanism.
+	KindDatabaseCluster = "database-cluster"
+	KindDatabaseTenant  = "database-tenant"
 )
 
 // Observation source states. Anything but fresh means the projection may lag
@@ -60,10 +71,13 @@ type ObservedResource struct {
 	Name     string
 	Revision string // skali.dev/revision label value, empty when absent
 
-	Source     *SourceStatus
-	Workload   *WorkloadStatus
-	Pod        *PodStatus
-	Autoscaler *AutoscalerStatus
+	Source          *SourceStatus
+	Workload        *WorkloadStatus
+	Pod             *PodStatus
+	Autoscaler      *AutoscalerStatus
+	Claim           *ClaimStatus
+	DatabaseCluster *DatabaseClusterStatus
+	DatabaseTenant  *DatabaseTenantStatus
 }
 
 // SourceStatus describes the freshness of the observation source itself.
@@ -103,6 +117,34 @@ type AutoscalerStatus struct {
 	Max             int32
 	Current         int32
 	DesiredReplicas int32
+}
+
+// ClaimStatus projects one infrastructure claim's durable phase plus the
+// current waiting reason while it is not provisioned. Phases follow
+// internal/claim.
+type ClaimStatus struct {
+	Phase   string
+	Waiting string
+}
+
+// DatabaseClusterStatus projects one CNPG pool: desired and ready
+// instances, the operator's phase, the current primary, and whether the
+// pool is hibernated (the local-dev idle state, healthy by intent).
+type DatabaseClusterStatus struct {
+	Instances      int32
+	ReadyInstances int32
+	Phase          string
+	Primary        string
+	Hibernated     bool
+}
+
+// DatabaseTenantStatus projects one CNPG Database object: whether the
+// operator reconciled it, its message when it did not, and the pool it
+// lives on (matching the pool projection's Name).
+type DatabaseTenantStatus struct {
+	Applied bool
+	Message string
+	Pool    string
 }
 
 // Condition is one status condition, provider-agnostic.

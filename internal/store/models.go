@@ -82,6 +82,75 @@ type Build struct {
 	FinishedAt     *time.Time
 }
 
+type DatabaseBackup struct {
+	ID         uuid.UUID
+	ClaimID    *uuid.UUID
+	ClusterID  *uuid.UUID
+	Kind       string
+	Status     string
+	RunID      *uuid.UUID
+	CreatedAt  time.Time
+	FinishedAt *time.Time
+}
+
+type DatabaseClaim struct {
+	ID            uuid.UUID
+	OwnerKind     string
+	ProjectID     *uuid.UUID
+	EnvironmentID *uuid.UUID
+	ServiceKey    string
+	SystemKey     string
+	OwnerRef      string
+	Engine        string
+	Major         int32
+	Isolation     string
+	Availability  string
+	StorageBytes  int64
+	Extensions    []byte
+	PitrSeconds   int64
+	Phase         string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type DatabaseCluster struct {
+	ID            uuid.UUID
+	Name          string
+	Engine        string
+	Major         int32
+	Class         string
+	EnvironmentID *uuid.UUID
+	ClaimID       *uuid.UUID
+	Instances     int32
+	StorageBytes  int64
+	Image         string
+	State         string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type DatabasePlacement struct {
+	ID           uuid.UUID
+	ClaimID      uuid.UUID
+	ClusterID    uuid.UUID
+	CreatedAt    time.Time
+	SupersededAt *time.Time
+}
+
+type DatabaseTenant struct {
+	ID                uuid.UUID
+	ClaimID           uuid.UUID
+	ClusterID         uuid.UUID
+	DatabaseName      string
+	RoleName          string
+	CredentialSecret  string
+	CredentialVersion int64
+	Host              string
+	Port              int32
+	CreatedAt         time.Time
+	ReleasedAt        *time.Time
+}
+
 type DefinitionVersion struct {
 	ID              uuid.UUID
 	ProjectID       uuid.UUID
