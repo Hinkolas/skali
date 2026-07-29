@@ -2342,8 +2342,10 @@ Implementation notes (landed through 2026-07-29):
   (documented parity boundary, section 11.7) that hibernates via
   `cnpg.io/hibernation` when no active environment uses databases and
   resumes with data intact on the next deployment; the backup/restore run
-  skeleton and credential rotation are deferred tail work and may follow
-  R6.
+  skeleton and credential rotation are deferred to a later milestone: they
+  wait for R6 to land so backups are designed once as a unified,
+  project-level system covering databases and object storage together
+  rather than a database-only mechanism now.
 - Pool packing v1: shared per (engine, major); `project` isolation maps to
   per-environment pools; dedicated pools per claim; empty non-shared pools
   are collected on release, the shared pool persists. Names:
