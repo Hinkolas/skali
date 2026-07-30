@@ -22,7 +22,7 @@ linked to remote skali.example.com, project file-sharing, environment production
 .env.production: 1 plain, 1 secret value (values are validated, not shown)
 
 plan against active revision 2a91a76b
-  update  applications.web   artifact sha256:9f2c41d8... replaces sha256:11ba90c2...
+  update  applications.web   artifact 9f2c41d8b1c7 replaces 11ba90c2f4e9
   value   SESSION_SECRET     update (secret)
 
 no destructive changes
@@ -54,7 +54,8 @@ linked to remote skali.example.com, project file-sharing, environment production
 values       .env.production (1 plain, 1 secret)
 
 plan against active revision 2a91a76b
-  update  applications.web   artifact will be rebuilt from ./web
+  update  applications.web   a new artifact replaces 11ba90c2f4e9
+                             artifact will be rebuilt
   value   SESSION_SECRET     update (secret)
 
 ◆ Continue with this deployment?

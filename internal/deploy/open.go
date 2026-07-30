@@ -24,11 +24,6 @@ import (
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
-// placeholderDigest stands in for a not-yet-built artifact when a candidate
-// revision is constructed only to compute a plan; it never enters a stored
-// revision.
-const placeholderDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-
 var (
 	// ErrDestructiveChange: the plan removes or destroys service state and
 	// the caller did not explicitly allow it.
@@ -627,7 +622,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 					Application: key, Action: "import", Kind: revision.KindImport, Upstream: source.Image,
 				})
 				artifacts[key] = revision.Artifact{
-					Reference: "pending", Digest: placeholderDigest,
+					Reference: "pending", Digest: revision.PendingDigest,
 					Kind: revision.KindImport, Upstream: source.Image,
 				}
 			default:
@@ -671,7 +666,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 				InputHash: input.InputHash, Platform: input.Platform,
 			})
 			artifacts[key] = revision.Artifact{
-				Reference: "pending", Digest: placeholderDigest,
+				Reference: "pending", Digest: revision.PendingDigest,
 				Kind: revision.KindBuildLocal, ContextHash: input.InputHash,
 			}
 		default:

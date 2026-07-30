@@ -109,8 +109,7 @@ func (p *Plan) diffApplications(active, candidate *revision.Revision) {
 				}
 			}
 			if active.Artifacts[key] != candidate.Artifacts[key] {
-				reasons = append(reasons, fmt.Sprintf("artifact %s replaces %s",
-					candidate.Artifacts[key].Digest, active.Artifacts[key].Digest))
+				reasons = append(reasons, artifactReason(active.Artifacts[key], candidate.Artifacts[key]))
 			}
 			if len(reasons) == 0 {
 				continue
@@ -182,6 +181,25 @@ func (p *Plan) diffValues(active, candidate *revision.Revision) {
 		}
 	}
 	sort.SliceStable(p.Values, func(i, j int) bool { return p.Values[i].Name < p.Values[j].Name })
+}
+
+// artifactReason explains an artifact swap with git-style short digests. A
+// candidate whose build or import has not run yet carries the pending
+// sentinel instead of a digest, so there is no hash to show.
+func artifactReason(active, candidate revision.Artifact) string {
+	if candidate.Digest == revision.PendingDigest {
+		return "a new artifact replaces " + shortDigest(active.Digest)
+	}
+	return fmt.Sprintf("artifact %s replaces %s",
+		shortDigest(candidate.Digest), shortDigest(active.Digest))
+}
+
+func shortDigest(digest string) string {
+	digest = strings.TrimPrefix(digest, "sha256:")
+	if len(digest) > 12 {
+		digest = digest[:12]
+	}
+	return digest
 }
 
 func removedVolumes(active, candidate *revision.Revision, key string) []string {

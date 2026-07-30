@@ -400,19 +400,29 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 		rebuilt[action.Application] = action.Action
 	}
 	for _, change := range plan.Changes {
-		detail := change.Detail
-		if change.Destructive {
-			detail = style.BoldRed("DESTRUCTIVE:") + " " + detail
+		var reasons []string
+		if change.Detail != "" {
+			reasons = strings.Split(change.Detail, "; ")
 		}
 		if action, ok := rebuilt[strings.TrimPrefix(change.Service, "applications.")]; ok && change.Action != "remove" {
 			switch action {
 			case "build":
-				detail = strings.TrimSuffix(detail+"; artifact will be rebuilt", "; ")
+				reasons = append(reasons, "artifact will be rebuilt")
 			case "import":
-				detail = strings.TrimSuffix(detail+"; image will be imported", "; ")
+				reasons = append(reasons, "image will be imported")
 			}
 		}
-		fmt.Fprintf(out, "  %s %-24s %s\n", actionColor(style, change.Action), change.Service, detail)
+		first, rest := "", []string(nil)
+		if len(reasons) > 0 {
+			first, rest = reasons[0], reasons[1:]
+		}
+		if change.Destructive {
+			first = style.BoldRed("DESTRUCTIVE:") + " " + first
+		}
+		fmt.Fprintf(out, "  %s %-24s %s\n", actionColor(style, change.Action), change.Service, first)
+		for _, reason := range rest {
+			fmt.Fprintf(out, "  %7s %-24s %s\n", "", "", reason)
+		}
 	}
 	for _, value := range plan.Values {
 		kind := ""

@@ -63,6 +63,12 @@ type Artifact struct {
 	ContextHash string `json:"contextHash,omitempty"`
 }
 
+// PendingDigest stands in for an artifact whose build or import has not run
+// yet, so a candidate revision can be constructed to compute a plan. It never
+// enters a stored revision, and plans must describe it as pending work rather
+// than print it as a hash.
+const PendingDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
 type Input struct {
 	Result      *compiler.Result
 	Environment string

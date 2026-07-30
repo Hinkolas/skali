@@ -504,4 +504,19 @@ func TestPrintPlanShape(t *testing.T) {
 	require.Contains(t, rendered, "DESTRUCTIVE: deletes the logical database")
 	require.Contains(t, rendered, "SESSION_SECRET")
 	require.NotContains(t, rendered, "no destructive changes")
+
+	// Each reason renders on its own line: the change row carries the first
+	// reason, later ones continue aligned under the detail column.
+	lines := strings.Split(rendered, "\n")
+	web := -1
+	for i, line := range lines {
+		if strings.Contains(line, "applications.web") {
+			web = i
+		}
+	}
+	require.NotEqual(t, -1, web)
+	require.Contains(t, lines[web], "configuration changed")
+	require.NotContains(t, lines[web], "artifact will be rebuilt")
+	require.Contains(t, lines[web+1], "artifact will be rebuilt")
+	require.NotContains(t, lines[web+1], "applications.web")
 }

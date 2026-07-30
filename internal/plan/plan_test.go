@@ -117,7 +117,22 @@ func TestArtifactChangeUpdatesTheApplication(t *testing.T) {
 	updated := changeFor(t, result, "applications.web")
 	require.Equal(t, ActionUpdate, updated.Action)
 	require.False(t, updated.Destructive)
-	require.Contains(t, updated.Detail, "artifact "+digest("2"))
+	require.Equal(t, "artifact "+strings.Repeat("2", 12)+" replaces "+strings.Repeat("1", 12), updated.Detail)
+}
+
+func TestPendingArtifactPlansWithoutAHash(t *testing.T) {
+	t.Parallel()
+	active := buildRevision(t, baseManifest, nil)
+	candidate := buildRevision(t, baseManifest, func(input *revision.Input) {
+		input.Artifacts["web"] = revision.Artifact{
+			Reference: "pending", Digest: revision.PendingDigest, Kind: revision.KindImport,
+		}
+	})
+
+	result := Diff(active, candidate)
+	updated := changeFor(t, result, "applications.web")
+	require.Equal(t, ActionUpdate, updated.Action)
+	require.Equal(t, "a new artifact replaces "+strings.Repeat("1", 12), updated.Detail)
 }
 
 func TestSecretVersionBumpIsAValueUpdate(t *testing.T) {
