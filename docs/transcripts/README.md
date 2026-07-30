@@ -49,6 +49,9 @@ Files:
   upgrade, version upgrade (k3s and bundle), repeat execution, degraded
   diagnosis, existing Kubernetes, scoped uninstall, and macOS host
   management (Lima VM with self-provisioned dependencies).
+- `cli-skill.md`: the `skali skill` group: installing the embedded
+  coding-agent skill user-level, interactive agent selection,
+  non-interactive flags, and the unmanaged-directory refusal.
 
 The example project throughout is `examples/file-sharing` (application `web`,
 database `data`, bucket `files`, values `APP_DOMAIN` and secret
