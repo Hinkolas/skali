@@ -3,7 +3,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"runtime"
 	"slices"
@@ -13,17 +16,26 @@ import (
 	"github.com/Hinkolas/skali/internal/installer"
 )
 
-// promptNodeNetwork settles how this host is addressed. It asks only when
-// the answer is not obvious: a single-homed host has nothing to decide, and
-// a Mac-hosted node takes the managed VM's address. On a multi-homed cloud
-// server the default-route address is the public one, so leaving this
-// implicit is what puts cluster traffic, the enrollment listener, and the
-// api certificate on the public interface.
+// manualAddressValue marks the option that switches a prompt from picking
+// a detected address to typing one. No IP address can collide with it.
+const manualAddressValue = "manual"
+
+// promptNodeNetwork settles how this host is addressed. The cluster
+// address is chosen among the detected ones: a single-homed host has
+// nothing to decide, and a Mac-hosted node takes the managed VM's address.
+// The public addresses are always asked, because the addresses a router
+// maps onto this host (floating, NAT, port forwarding) are assigned to no
+// interface and can only be typed.
 func promptNodeNetwork(ctx context.Context, out *os.File, reader *bufio.Reader) (installer.NodeNetwork, error) {
+	session := promptSession(out, reader)
 	if runtime.GOOS == "darwin" {
 		// The Lima path pins the VM's own address on the network the fleet
-		// reaches it through; there is no second interface to choose.
-		return installer.NodeNetwork{}, nil
+		// reaches it through; only the public declaration is left to ask.
+		public, err := promptTypedPublicIPs(ctx, session)
+		if err != nil {
+			return installer.NodeNetwork{}, err
+		}
+		return installer.NodeNetwork{PublicIPs: public}.Normalize(), nil
 	}
 	addresses, err := installer.DetectHostAddresses(ctx, runner())
 	if err != nil || len(addresses) == 0 {
@@ -31,53 +43,132 @@ func promptNodeNetwork(ctx context.Context, out *os.File, reader *bufio.Reader) 
 		// the k3s default rather than refusing.
 		return installer.NodeNetwork{}, nil
 	}
+	return promptDetectedNodeNetwork(ctx, out, session, addresses)
+}
+
+// promptDetectedNodeNetwork drives the address conversation over one
+// detected list. Both questions also take a typed address: the cluster
+// question for an address on an interface the detection filters, the
+// public question for addresses that are mapped onto this host without
+// being assigned to it.
+func promptDetectedNodeNetwork(ctx context.Context, out io.Writer, session *cliprompt.Session,
+	addresses []installer.HostAddress) (installer.NodeNetwork, error) {
+	network := installer.NodeNetwork{}
 	if len(addresses) == 1 {
 		fmt.Fprintf(out, "  node address: %s\n", addresses[0].Label())
-		return installer.NodeNetwork{ClusterIP: addresses[0].IP}, nil
+		network.ClusterIP = addresses[0].IP
+	} else {
+		clusterIP, err := session.Select(ctx, cliprompt.SelectOptions{
+			Title:       "Which address do other cluster nodes reach this node through?",
+			Description: "Node traffic, enrollment, and the api certificate follow this choice.",
+			Options: append(addressOptions(addresses), cliprompt.Option{
+				Label:       "another address",
+				Description: "type an address the detection missed",
+				Value:       manualAddressValue,
+			}),
+			DefaultValue: defaultClusterAddress(addresses),
+		})
+		if err != nil {
+			return installer.NodeNetwork{}, err
+		}
+		if clusterIP == manualAddressValue {
+			clusterIP, err = session.Text(ctx, cliprompt.TextOptions{
+				Title:       "Cluster address",
+				Description: "Other nodes reach this node through it; it must be assigned to one of this host's interfaces.",
+				Validate:    validateRequiredIP,
+			})
+			if err != nil {
+				return installer.NodeNetwork{}, err
+			}
+		}
+		network.ClusterIP = strings.TrimSpace(clusterIP)
 	}
 
-	session := promptSession(out, reader)
-	options := make([]cliprompt.Option, 0, len(addresses))
+	selected, err := session.MultiSelect(ctx, cliprompt.MultiSelectOptions{
+		Title:       "Which addresses are reachable from the internet?",
+		Description: "They become this node's external address and enter the api certificate.",
+		Options: append(addressOptions(addresses), cliprompt.Option{
+			Label:       "another address",
+			Description: "NAT or port-forwarded, not assigned to this host",
+			Value:       manualAddressValue,
+		}),
+		DefaultValues: publicAddresses(addresses),
+	})
+	if err != nil {
+		return installer.NodeNetwork{}, err
+	}
+	if slices.Contains(selected, manualAddressValue) {
+		selected = slices.DeleteFunc(selected, func(value string) bool {
+			return value == manualAddressValue
+		})
+		typed, typedErr := promptTypedPublicIPs(ctx, session)
+		if typedErr != nil {
+			return installer.NodeNetwork{}, typedErr
+		}
+		selected = append(selected, typed...)
+	}
+	network.PublicIPs = selected
+	if len(selected) > 0 && !slices.Contains(selected, network.ClusterIP) {
+		fmt.Fprintln(out, "  enrollment stays on the cluster address; pass "+
+			"--coordinator-bind cluster,public to also serve it publicly.")
+	}
+	return network.Normalize(), nil
+}
+
+// promptTypedPublicIPs asks for the addresses a router maps onto this
+// host. They are declared, never bound, so no detection can offer them.
+func promptTypedPublicIPs(ctx context.Context, session *cliprompt.Session) ([]string, error) {
+	value, err := session.Text(ctx, cliprompt.TextOptions{
+		Title:       "Public addresses reachable from the internet",
+		Description: "NAT-mapped or port-forwarded addresses that reach this node. Comma separated, empty for none.",
+		Placeholder: "203.0.113.7, 203.0.113.8",
+		Validate:    validateIPList,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return splitIPList(value), nil
+}
+
+func validateRequiredIP(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("an address is required")
+	}
+	if net.ParseIP(value) == nil {
+		return fmt.Errorf("%q is not a valid IP address", value)
+	}
+	return nil
+}
+
+func validateIPList(value string) error {
+	for _, address := range splitIPList(value) {
+		if net.ParseIP(address) == nil {
+			return fmt.Errorf("%q is not a valid IP address", address)
+		}
+	}
+	return nil
+}
+
+func splitIPList(value string) []string {
+	var result []string
+	for part := range strings.SplitSeq(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func addressOptions(addresses []installer.HostAddress) []cliprompt.Option {
+	options := make([]cliprompt.Option, 0, len(addresses)+1)
 	for _, address := range addresses {
 		options = append(options, cliprompt.Option{
 			Label: address.IP, Description: addressDescription(address), Value: address.IP,
 		})
 	}
-	clusterIP, err := session.Select(ctx, cliprompt.SelectOptions{
-		Title:        "Which address do other cluster nodes reach this node through?",
-		Description:  "Node traffic, enrollment, and the api certificate follow this choice.",
-		Options:      options,
-		DefaultValue: defaultClusterAddress(addresses),
-	})
-	if err != nil {
-		return installer.NodeNetwork{}, err
-	}
-	network := installer.NodeNetwork{ClusterIP: clusterIP}
-
-	public := publicAddresses(addresses)
-	if len(public) == 0 {
-		return network, nil
-	}
-	publicOptions := make([]cliprompt.Option, 0, len(addresses))
-	for _, address := range addresses {
-		publicOptions = append(publicOptions, cliprompt.Option{
-			Label: address.IP, Description: addressDescription(address), Value: address.IP,
-		})
-	}
-	selected, err := session.MultiSelect(ctx, cliprompt.MultiSelectOptions{
-		Title:       "Which addresses are reachable from the internet?",
-		Description: "They become this node's external address and enter the api certificate.",
-		Options:     publicOptions, DefaultValues: public,
-	})
-	if err != nil {
-		return installer.NodeNetwork{}, err
-	}
-	network.PublicIPs = selected
-	if len(selected) > 0 && !slices.Contains(selected, clusterIP) {
-		fmt.Fprintln(out, "  enrollment stays on the cluster address; pass "+
-			"--coordinator-bind cluster,public to also serve it publicly.")
-	}
-	return network.Normalize(), nil
+	return options
 }
 
 func addressDescription(address installer.HostAddress) string {

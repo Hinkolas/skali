@@ -55,20 +55,30 @@ drives four things that must agree: the k3s `node-ip`, the k3s
 `node-external-ip` and certificate SANs, the addresses the enrollment
 coordinator binds, and the endpoint other nodes are told to join through.
 
-A single-homed host settles this silently. A cloud server with a private
-network and a public interface is asked, because there the default route is
-the public one and taking it implicitly would put cluster traffic,
-enrollment, and the API certificate on the internet-facing address:
+A single-homed host settles the cluster address silently. A cloud server
+with a private network and a public interface is asked, because there the
+default route is the public one and taking it implicitly would put cluster
+traffic, enrollment, and the API certificate on the internet-facing
+address. Both questions also take a typed address through "another
+address": the cluster question for an address the detection cannot see,
+the internet question for NAT-mapped or port-forwarded addresses, which
+reach the node without being assigned to it and therefore never appear in
+a detected list. The internet question is asked even when every detected
+address is private, because a router mapping is invisible to detection. On
+macOS the managed VM's own address is pinned automatically and only the
+public addresses are asked.
 
 ```console
 ◆ Which address do other cluster nodes reach this node through?
   Node traffic, enrollment, and the api certificate follow this choice.
-  › 10.0.1.2    enp7s0, private network
-    203.0.113.7 eth0, public, default route
+  › 10.0.1.2        enp7s0, private network
+    203.0.113.7     eth0, public, default route
+    another address type an address the detection missed
 
 ◆ Which addresses are reachable from the internet?
   They become this node's external address and enter the api certificate.
-  ✓ 203.0.113.7 eth0, public, default route
+  ✓ 203.0.113.7     eth0, public, default route
+    another address NAT or port-forwarded, not assigned to this host
 ```
 
 The same declaration is available non-interactively, in `node.yaml`:

@@ -63,9 +63,11 @@ func newClusterAddressesCmd() *cobra.Command {
 				if declared.IsZero() {
 					return errors.New("no addresses were declared")
 				}
-			} else if declared.ClusterIP == "" {
-				// Flag runs that only add public names keep the recorded
-				// cluster address rather than silently re-resolving it.
+			}
+			if declared.ClusterIP == "" {
+				// Declarations that only add public names keep the recorded
+				// cluster address rather than silently re-resolving it; on a
+				// Mac the prompt never asks because the VM address is pinned.
 				declared.ClusterIP = record.Node.IP
 			}
 			resolved, err := installer.ResolveNodeNetwork(ctx, runner(), declared)
