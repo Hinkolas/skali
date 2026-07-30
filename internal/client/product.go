@@ -275,6 +275,12 @@ type DeployRequest struct {
 	BuildExecutor       string                `json:"build_executor,omitempty"`
 	AllowDestructive    bool                  `json:"allow_destructive,omitempty"`
 	Builds              map[string]BuildInput `json:"builds,omitempty"`
+	// Force deploys even when the environment is up to date; application
+	// workloads restart at promotion.
+	Force bool `json:"force,omitempty"`
+	// Rebuild ignores artifact reuse: builds run again and images
+	// re-import, picking up moved upstream tags and refreshed bases.
+	Rebuild bool `json:"rebuild,omitempty"`
 }
 
 func (c *Client) Plan(ctx context.Context, environmentID string, req DeployRequest) (*PlanResult, error) {
@@ -285,6 +291,9 @@ func (c *Client) Plan(ctx context.Context, environmentID string, req DeployReque
 	}
 	if len(req.Builds) > 0 {
 		body["builds"] = req.Builds
+	}
+	if req.Rebuild {
+		body["rebuild"] = true
 	}
 	if err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/plan", body, &res); err != nil {
 		return nil, err

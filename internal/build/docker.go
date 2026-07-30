@@ -133,6 +133,9 @@ func (d *Docker) runBuildx(ctx context.Context, req BuildRequest, output []strin
 		"--file", req.Dockerfile,
 	}
 	args = append(args, output...)
+	if req.Rebuild {
+		args = append(args, "--pull", "--no-cache")
+	}
 	if req.Target != "" {
 		args = append(args, "--target", req.Target)
 	}

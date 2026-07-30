@@ -284,6 +284,38 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	require.True(t, body["up_to_date"].(bool))
 
+	// A forced deployment bypasses up to date: the unchanged revision is
+	// re-promoted with everything reused, and promotion stamps a workload
+	// restart on the target.
+	require.Nil(t, a.targetOf(t, envID).RestartedAt)
+	status, body = a.do("POST", "/v1/environments/"+envID+"/deployments", token, map[string]any{
+		"definition_version_id": definitionVersion,
+		"builds":                buildsPayload(),
+		"force":                 true,
+	})
+	require.Equal(t, http.StatusCreated, status, "%v", body)
+	require.False(t, body["up_to_date"].(bool))
+	require.Equal(t, "reuse", body["actions"].([]any)[0].(map[string]any)["action"])
+	forcedDeployment := body["deployment"].(map[string]any)["id"].(string)
+	forcedRun := body["deployment"].(map[string]any)["run_id"].(string)
+	status, body = a.do("POST", "/v1/deployments/"+forcedDeployment+"/complete", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, revisionID, body["revision_id"], "the unchanged revision is re-promoted")
+	require.NotNil(t, a.targetOf(t, envID).RestartedAt)
+	a.finishRun(t, forcedRun)
+	a.activate(t, envID)
+
+	// Rebuild discards artifact reuse: the plan wants the build again even
+	// though a verified artifact matches the inputs.
+	status, body = a.do("POST", "/v1/environments/"+envID+"/plan", token, map[string]any{
+		"definition_version_id": definitionVersion,
+		"builds":                buildsPayload(),
+		"rebuild":               true,
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.False(t, body["up_to_date"].(bool))
+	require.Equal(t, "build", body["actions"].([]any)[0].(map[string]any)["action"])
+
 	// A values-only deploy reuses the artifact and completes with no
 	// artifact window work.
 	candidate = a.stageValues(t, token, envID, definitionVersion, "rotated-plant-value")

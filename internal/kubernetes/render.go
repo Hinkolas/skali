@@ -36,6 +36,12 @@ type Options struct {
 	EnvironmentID    string
 	RevisionChecksum string
 
+	// RestartedAt is the environment target's restart stamp (RFC3339);
+	// non-empty values become a pod-template annotation on application
+	// workloads so a forced deployment rolls them even when the revision is
+	// unchanged. Stateful services never carry it.
+	RestartedAt string
+
 	// ManagedCluster enables capability placement on Skali-labeled nodes.
 	ManagedCluster bool
 }
@@ -151,7 +157,10 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			Selector: &metav1.LabelSelector{MatchLabels: cloneMap(selectorLabels)},
 			Strategy: renderStrategy(application.Deployment.Rollout),
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: cloneMap(labels)},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      cloneMap(labels),
+					Annotations: restartAnnotations(options),
+				},
 				Spec: corev1.PodSpec{
 					TerminationGracePeriodSeconds: &graceSeconds,
 					Containers:                    []corev1.Container{container},
@@ -456,6 +465,16 @@ func cloneMap(source map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
+}
+
+// restartAnnotations carries the target's restart stamp into application pod
+// templates; nil (no annotations at all) when no restart was ever forced, so
+// existing objects do not change shape.
+func restartAnnotations(options Options) map[string]string {
+	if options.RestartedAt == "" {
+		return nil
+	}
+	return map[string]string{AnnotationRestartedAt: options.RestartedAt}
 }
 
 func stringPointer(value string) *string                              { return &value }

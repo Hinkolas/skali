@@ -22,6 +22,15 @@ UPDATE environment_targets
 SET active_revision_id = $2, updated_at = now()
 WHERE environment_id = $1 AND target_revision_id = $2;
 
+-- Force redeployments stamp a restart inside the promotion transaction; the
+-- reconciler renders the stamp as a pod-template annotation so every
+-- application workload rolls even when the revision is unchanged. Stateful
+-- services never read it.
+-- name: StampEnvironmentRestart :execrows
+UPDATE environment_targets
+SET restarted_at = now(), updated_at = now()
+WHERE environment_id = $1 AND state <> 'releasing';
+
 -- name: ListEnvironmentTargets :many
 SELECT * FROM environment_targets;
 

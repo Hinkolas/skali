@@ -79,6 +79,32 @@ func TestRenderClusterPlacementOptions(t *testing.T) {
 	}, managed[0].(*appsv1.Deployment).Spec.Template.Spec.NodeSelector)
 }
 
+// A forced deployment's restart stamp becomes a pod-template annotation so
+// the workload rolls; without a stamp the template carries no annotations at
+// all, so existing objects do not change shape.
+func TestRenderRestartStampAnnotation(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+	options := Options{
+		Namespace:   "skali-hello-world",
+		Variables:   map[string]string{"APP_DOMAIN": "hello.localhost"},
+		BuildImages: map[string]string{"web": "localhost:5510/skali/hello-world/web@sha256:4444444444444444444444444444444444444444444444444444444444444444"},
+	}
+
+	objects, err := Render(result, options)
+	require.NoError(t, err)
+	require.Nil(t, objects[0].(*appsv1.Deployment).Spec.Template.Annotations)
+
+	options.RestartedAt = "2026-07-29T12:00:00Z"
+	objects, err = Render(result, options)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{AnnotationRestartedAt: "2026-07-29T12:00:00Z"},
+		objects[0].(*appsv1.Deployment).Spec.Template.Annotations)
+}
+
 func TestBuildApplicationRequiresPreparedArtifact(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "file-sharing", "skali.yml"))

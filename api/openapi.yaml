@@ -1470,8 +1470,10 @@ paths:
         coordination row, one journaled run, pending artifact records, and
         running build records for the client's work list. A destructive
         plan requires `allow_destructive`; an up-to-date environment
-        returns `up_to_date` with nothing created. One deployment prepares
-        per environment at a time (`deployment_in_flight`).
+        returns `up_to_date` with nothing created unless `force` is set,
+        which redeploys the unchanged revision and restarts the
+        application workloads. One deployment prepares per environment at
+        a time (`deployment_in_flight`).
       tags: [deployments]
       requestBody:
         required: true
@@ -2575,6 +2577,11 @@ components:
         builds:
           type: object
           additionalProperties: { $ref: "#/components/schemas/BuildInput" }
+        rebuild:
+          type: boolean
+          description: |
+            Plan as if artifact reuse were disabled: every build-sourced
+            application builds again and every image source re-imports.
 
     PlanResponse:
       type: object
@@ -2605,6 +2612,17 @@ components:
         builds:
           type: object
           additionalProperties: { $ref: "#/components/schemas/BuildInput" }
+        force:
+          type: boolean
+          description: |
+            Open the deployment even when the environment is up to date;
+            promotion stamps a workload restart so every application pod
+            is recreated. Stateful services are untouched.
+        rebuild:
+          type: boolean
+          description: |
+            Ignore artifact reuse: builds run again and images re-import,
+            picking up moved upstream tags and refreshed base images.
 
     Deployment:
       type: object

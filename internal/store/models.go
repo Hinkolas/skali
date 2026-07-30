@@ -211,6 +211,7 @@ type Deployment struct {
 	Actions             []byte
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	Restart             bool
 }
 
 type Environment struct {
@@ -238,6 +239,7 @@ type EnvironmentTarget struct {
 	ActiveRevisionID *uuid.UUID
 	UpdatedAt        time.Time
 	State            string
+	RestartedAt      *time.Time
 }
 
 type EnvironmentValue struct {

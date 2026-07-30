@@ -86,6 +86,9 @@ type Prepared struct {
 	DefinitionVersionID uuid.UUID
 	CandidateID         uuid.UUID
 	ArtifactIDs         []uuid.UUID
+	// Restart makes Promote stamp a workload restart on the target (a
+	// forced deployment); Prepare never sets it, the caller does.
+	Restart bool
 }
 
 // Prepare loads and re-validates the inputs, resolves artifacts outside any
@@ -208,6 +211,11 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 		}
 		if rows == 0 {
 			return ErrEnvironmentNotFound
+		}
+		if p.Restart {
+			if _, err := q.StampEnvironmentRestart(ctx, p.EnvironmentID); err != nil {
+				return fmt.Errorf("deploy: stamp restart: %w", err)
+			}
 		}
 		if err := s.values.PromoteTx(ctx, q, p.EnvironmentID, p.CandidateID); err != nil {
 			return err

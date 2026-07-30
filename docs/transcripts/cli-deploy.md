@@ -212,6 +212,31 @@ $ echo $?
 1
 ```
 
+## 5.1 Force and rebuild
+
+An unchanged project answers `nothing to deploy`. `--force` deploys anyway:
+the unchanged revision is re-promoted and every application workload is
+restarted with fresh pods (the promotion stamps a restart the reconciler
+renders as a pod-template annotation, like kubectl rollout restart).
+Databases, buckets, and volumes are never touched: force recreates pods,
+never data.
+
+```console
+$ skali deploy --yes --force
+
+nothing changed; deploying anyway (--force restarts the application workloads)
+
+run 01J9V3AB  deploy hello-world to production
+  ok    Validate project definition
+  ...
+```
+
+`--rebuild` (implies `--force`) additionally ignores artifact reuse: builds
+run again with `--pull --no-cache` and image sources re-import, so a moved
+base tag or upstream image is picked up even though the build inputs hash
+the same. `skali plan --rebuild` previews the resulting actions. The same
+flags exist on `skali dev` for the local platform.
+
 ## 6. Failure leaves the environment untouched
 
 ```console

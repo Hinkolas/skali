@@ -18,6 +18,8 @@ func newPlanCommand() *cobra.Command {
 		},
 	}
 	addDeployFlags(command, opts)
+	command.Flags().BoolVar(&opts.Rebuild, "rebuild", false,
+		"plan as if artifacts were rebuilt and re-imported without reuse")
 	return command
 }
 
@@ -36,6 +38,9 @@ func newDeployCommand() *cobra.Command {
 			if opts.BuildMode != "" && opts.BuildMode != "local" && opts.BuildMode != "auto" {
 				return errors.New("--build must be local or auto (cloud builders arrive with R4)")
 			}
+			if opts.Rebuild {
+				opts.Force = true
+			}
 			_, err := runDeployFlow(command, opts, false)
 			return err
 		},
@@ -47,6 +52,10 @@ func newDeployCommand() *cobra.Command {
 	command.Flags().BoolVar(&opts.AllowDestructive, "allow-destructive", false,
 		"approve a destructive plan (non-interactive)")
 	command.Flags().BoolVar(&opts.Detach, "detach", false, "do not attach to the run after completion")
+	command.Flags().BoolVar(&opts.Force, "force", false,
+		"deploy even when nothing changed; application workloads are restarted (data is untouched)")
+	command.Flags().BoolVar(&opts.Rebuild, "rebuild", false,
+		"rebuild and re-import artifacts without caches, picking up moved base images (implies --force)")
 	return command
 }
 

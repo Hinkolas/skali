@@ -21,6 +21,12 @@ const (
 	LabelClaim = "skali.dev/claim"
 )
 
+// AnnotationRestartedAt marks application pod templates with the target's
+// restart stamp (kubectl rollout restart semantics): a forced deployment
+// updates the stamp, the template changes, and the workload rolls even when
+// the revision is unchanged.
+const AnnotationRestartedAt = "skali.dev/restarted-at"
+
 // ManagedSelector is the informer-level list/watch selector: every object
 // skalid owns carries it, nothing else does.
 const ManagedSelector = LabelManaged + "=true"

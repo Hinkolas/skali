@@ -47,7 +47,7 @@ func (q *Queries) FallbackEnvironmentTarget(ctx context.Context, arg FallbackEnv
 }
 
 const getEnvironmentTarget = `-- name: GetEnvironmentTarget :one
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state FROM environment_targets WHERE environment_id = $1
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at FROM environment_targets WHERE environment_id = $1
 `
 
 func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.UUID) (EnvironmentTarget, error) {
@@ -59,12 +59,13 @@ func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.U
 		&i.ActiveRevisionID,
 		&i.UpdatedAt,
 		&i.State,
+		&i.RestartedAt,
 	)
 	return i, err
 }
 
 const listEnvironmentTargets = `-- name: ListEnvironmentTargets :many
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state FROM environment_targets
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at FROM environment_targets
 `
 
 func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarget, error) {
@@ -82,6 +83,7 @@ func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarg
 			&i.ActiveRevisionID,
 			&i.UpdatedAt,
 			&i.State,
+			&i.RestartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -94,7 +96,7 @@ func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarg
 }
 
 const listEnvironmentsOutOfSync = `-- name: ListEnvironmentsOutOfSync :many
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state FROM environment_targets
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at FROM environment_targets
 WHERE target_revision_id IS DISTINCT FROM active_revision_id
 `
 
@@ -115,6 +117,7 @@ func (q *Queries) ListEnvironmentsOutOfSync(ctx context.Context) ([]EnvironmentT
 			&i.ActiveRevisionID,
 			&i.UpdatedAt,
 			&i.State,
+			&i.RestartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -200,6 +203,24 @@ type SetEnvironmentTargetParams struct {
 // so a promote racing a purge fails on the 0-row result.
 func (q *Queries) SetEnvironmentTarget(ctx context.Context, arg SetEnvironmentTargetParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setEnvironmentTarget, arg.EnvironmentID, arg.TargetRevisionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const stampEnvironmentRestart = `-- name: StampEnvironmentRestart :execrows
+UPDATE environment_targets
+SET restarted_at = now(), updated_at = now()
+WHERE environment_id = $1 AND state <> 'releasing'
+`
+
+// Force redeployments stamp a restart inside the promotion transaction; the
+// reconciler renders the stamp as a pod-template annotation so every
+// application workload rolls even when the revision is unchanged. Stateful
+// services never read it.
+func (q *Queries) StampEnvironmentRestart(ctx context.Context, environmentID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, stampEnvironmentRestart, environmentID)
 	if err != nil {
 		return 0, err
 	}

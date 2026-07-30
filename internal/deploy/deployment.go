@@ -57,6 +57,9 @@ type NewDeployment struct {
 	Actor               string
 	BuildExecutor       string
 	Actions             json.RawMessage
+	// Restart records a forced deployment: promotion stamps a workload
+	// restart even when the revision is unchanged.
+	Restart bool
 }
 
 // CreateDeployment inserts the coordination row in preparing. The partial
@@ -85,6 +88,7 @@ func (s *Service) CreateDeployment(ctx context.Context, in NewDeployment) (*stor
 		Actor:               in.Actor,
 		BuildExecutor:       executor,
 		Actions:             actions,
+		Restart:             in.Restart,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {

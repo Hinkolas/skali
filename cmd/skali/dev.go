@@ -23,7 +23,7 @@ const localEnvironmentName = "local"
 
 func newDevCommand() *cobra.Command {
 	var envFile, skalidImage, platform string
-	var detach bool
+	var detach, force, rebuild bool
 	command := &cobra.Command{
 		Use:   "dev",
 		Short: "Run the project on the local skali platform",
@@ -46,6 +46,8 @@ func newDevCommand() *cobra.Command {
 				Yes:           true,
 				CreateMissing: true,
 				Platform:      platform,
+				Force:         force || rebuild,
+				Rebuild:       rebuild,
 			}
 			outcome, err := runDeployFlow(command, opts, false)
 			if err != nil {
@@ -75,6 +77,10 @@ func newDevCommand() *cobra.Command {
 		"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
 	command.Flags().BoolVarP(&detach, "detach", "d", false,
 		"exit once the rollout settles instead of following runtime logs")
+	command.Flags().BoolVar(&force, "force", false,
+		"deploy even when nothing changed; application workloads are restarted (data is untouched)")
+	command.Flags().BoolVar(&rebuild, "rebuild", false,
+		"rebuild and re-import artifacts without caches, picking up moved base images (implies --force)")
 
 	up := &cobra.Command{
 		Use:   "up",

@@ -41,6 +41,12 @@ type deployOptions struct {
 	Yes              bool
 	AllowDestructive bool
 	Detach           bool
+	// Force deploys even when the environment is up to date; application
+	// workloads restart at promotion. Data is never touched.
+	Force bool
+	// Rebuild ignores artifact reuse and disables build caches so moved
+	// upstream tags and refreshed base images are picked up.
+	Rebuild bool
 	// Platform overrides the build platform(s); empty follows the
 	// server-reported cluster architecture.
 	Platform string
@@ -505,7 +511,7 @@ const registryUsername = "skali-session"
 // pushes anonymously (the local registry never challenges).
 func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 	opened *client.OpenedDeployment, project *localProject, contexts map[string]*build.Context,
-	variables map[string]string, registryAuth authn.Authenticator) error {
+	variables map[string]string, registryAuth authn.Authenticator, rebuild bool) error {
 
 	engine := &build.Docker{Auth: registryAuth}
 	tasks := clirender.NewTasks(out)
@@ -545,6 +551,7 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				Arguments:  arguments,
 				Platform:   action.Platform,
 				PushRef:    action.PushRef,
+				Rebuild:    rebuild,
 			}, &teeSink{inner: sink, task: task})
 			sink.Flush()
 			stopHeartbeat()
@@ -995,6 +1002,8 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		CandidateID:         candidateID,
 		BuildExecutor:       "local",
 		Builds:              inputs,
+		Force:               opts.Force,
+		Rebuild:             opts.Rebuild,
 	}
 
 	activeChecksum := ""
@@ -1009,9 +1018,12 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	if planOnly {
 		return deployOutcomePlanned, nil
 	}
-	if planned.UpToDate {
+	if planned.UpToDate && !opts.Force {
 		fmt.Fprintln(out, "\nnothing to deploy")
 		return deployOutcomeUpToDate, nil
+	}
+	if planned.UpToDate {
+		fmt.Fprintln(out, "\nnothing changed; deploying anyway (--force restarts the application workloads)")
 	}
 
 	// Confirmation: destructive plans demand the typed environment name or
@@ -1066,7 +1078,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 			Username: registryUsername, Password: target.sessionToken,
 		})
 	}
-	if err := executeActions(ctx, out, api, opened, project, contexts, localValues, registryAuth); err != nil {
+	if err := executeActions(ctx, out, api, opened, project, contexts, localValues, registryAuth, opts.Rebuild); err != nil {
 		fmt.Fprintf(out, "\n%srun %s %s: %v\n", style.Cross(),
 			opened.Deployment.RunID, style.Red("failed"), err)
 		fmt.Fprintln(out, "\n"+style.Dim("The environment is unchanged: staged values discarded, target and active revision untouched."))

@@ -37,6 +37,10 @@ type BuildRequest struct {
 	// PushRef is the full managed-registry reference the result is pushed
 	// to.
 	PushRef string
+	// Rebuild disables layer caches and re-pulls base images (--pull
+	// --no-cache), so a moved base tag is picked up even though the build
+	// inputs hash the same.
+	Rebuild bool
 }
 
 // Result reports one verified-pushable build output.

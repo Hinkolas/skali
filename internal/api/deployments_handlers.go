@@ -129,6 +129,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		DefinitionVersionID string                       `json:"definition_version_id"`
 		CandidateID         string                       `json:"candidate_id"`
 		Builds              map[string]buildInputPayload `json:"builds"`
+		Rebuild             bool                         `json:"rebuild"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -153,6 +154,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		CandidateID:         candidateID,
 		BuildInputs:         decodeBuildInputs(req.Builds),
 		NodePlatforms:       h.reconcile.NodePlatforms(),
+		Rebuild:             req.Rebuild,
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)
@@ -177,6 +179,8 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		BuildExecutor       string                       `json:"build_executor"`
 		AllowDestructive    bool                         `json:"allow_destructive"`
 		Builds              map[string]buildInputPayload `json:"builds"`
+		Force               bool                         `json:"force"`
+		Rebuild             bool                         `json:"rebuild"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -199,6 +203,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 			CandidateID:         candidateID,
 			BuildInputs:         decodeBuildInputs(req.Builds),
 			NodePlatforms:       h.reconcile.NodePlatforms(),
+			Rebuild:             req.Rebuild,
 		},
 		Actor:              user.ID.String(),
 		BuildExecutor:      req.BuildExecutor,
@@ -206,6 +211,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		Capabilities:       h.capabilities,
 		RegistryConfigured: !h.registry.Disabled(),
 		Journal:            h.journal,
+		Force:              req.Force,
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)

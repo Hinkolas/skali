@@ -65,7 +65,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID))
 
-	desired, err := k.desiredSet(ctx, environmentID, rev)
+	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt)
 	if err != nil {
 		// An unrenderable revision is permanent for this target: journal the
 		// diagnostic, never prune (compiler-error absence must not delete
@@ -320,7 +320,10 @@ func (k *Kernel) executeOps(ctx context.Context, ops []Op) ([]string, error) {
 
 // desiredSet renders one revision into its full desired state. Secret
 // plaintexts are decrypted for the values Secret only and never logged.
-func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision) (*desiredSet, error) {
+// restartedAt is the target's restart stamp; nil means no restart was ever
+// forced for this environment.
+func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
+	restartedAt *time.Time) (*desiredSet, error) {
 	refs := make(map[string]int, len(rev.Secrets))
 	for name, secret := range rev.Secrets {
 		refs[name] = secret.Version
@@ -369,6 +372,9 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		EnvironmentID:    environmentID.String(),
 		RevisionChecksum: rev.Checksum,
 		ManagedCluster:   k.cfg.ManagedCluster,
+	}
+	if restartedAt != nil {
+		renderOptions.RestartedAt = restartedAt.UTC().Format(time.RFC3339)
 	}
 	objects, err := rendering.Render(
 		&compiler.Result{Hash: rev.DefinitionHash, Definition: rev.Definition},

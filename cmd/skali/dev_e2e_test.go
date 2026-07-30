@@ -215,6 +215,37 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "unchanged since last import")
 	})
 
+	t.Run("ForceRedeploysUnchanged", func(t *testing.T) {
+		out := h.run(false, "", "dev", "-d", "--force")
+		require.Contains(t, out, "nothing changed; deploying anyway")
+		require.NotContains(t, out, "nothing to deploy")
+		require.Contains(t, out, "ready")
+		// The restart stamp reached the cluster: the pod template carries
+		// the annotation, so the workload rolled to fresh pods.
+		kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+		workloads, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
+			"get", "deployment", "-A", "-l", "skali.dev/managed=true", "-o", "yaml").CombinedOutput()
+		require.NoError(t, err, string(workloads))
+		require.Contains(t, string(workloads), "skali.dev/restarted-at")
+		// Wait for the roll to fully settle (surge pod promoted, old pod
+		// gone) before handing off: the next subtest's single-shot route
+		// check must not land in the traffic switchover window.
+		names, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
+			"get", "deployment", "-A", "-l", "skali.dev/managed=true",
+			"-o", `jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}`).CombinedOutput()
+		require.NoError(t, err, string(names))
+		for line := range strings.SplitSeq(strings.TrimSpace(string(names)), "\n") {
+			parts := strings.Fields(line)
+			if len(parts) != 2 {
+				continue
+			}
+			status, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
+				"rollout", "status", "deployment", parts[1], "-n", parts[0], "--timeout=120s").CombinedOutput()
+			require.NoError(t, err, string(status))
+		}
+		h.waitRoute("hello from skali", 2*time.Minute)
+	})
+
 	t.Run("DevStatusShowsHealth", func(t *testing.T) {
 		out := h.run(false, "", "dev", "status")
 		require.Contains(t, out, "running")
@@ -227,8 +258,11 @@ func TestDevEndToEnd(t *testing.T) {
 		// Ctrl-C detaches cleanly and the project keeps serving.
 		out := h.runInterrupt("following logs", 2*time.Minute, "dev")
 		require.Contains(t, out, "detached; the project keeps running")
-		status, _ := h.route("/")
-		require.Equal(t, http.StatusOK, status, "detaching must not stop the project")
+		// Polled rather than single-shot: k3d's apiserver and ingress can
+		// blip for a few seconds under load, and the assertion here is that
+		// detaching did not stop the project, not that one instant GET
+		// succeeds.
+		h.waitRoute("hello from skali", time.Minute)
 	})
 
 	t.Run("DownKeepsData", func(t *testing.T) {

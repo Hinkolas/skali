@@ -24,6 +24,9 @@ type ExecuteInput struct {
 	Resolver            ArtifactResolver
 	Journal             *journal.Service
 	Actor               string
+	// Restart stamps a workload restart at promotion (a forced deployment):
+	// application pods are recreated even when the revision is unchanged.
+	Restart bool
 }
 
 type ExecuteResult struct {
@@ -120,6 +123,10 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		return result, s.fail(ctx, in, runID, nil, err)
 	}
 	promoteWriter := in.Journal.Writer(promoteAttempt.ID, redactor)
+	prepared.Restart = in.Restart
+	if in.Restart {
+		_ = promoteWriter.Info(ctx, "forced deployment: application workloads will restart")
+	}
 	if err := s.Promote(ctx, prepared); err != nil {
 		_ = promoteWriter.Error(ctx, "promotion failed: "+err.Error())
 		_ = in.Journal.FinishAttempt(ctx, promoteAttempt.ID, journal.AttemptFailed)

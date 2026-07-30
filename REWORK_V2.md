@@ -2288,6 +2288,13 @@ Implementation notes (landed through 2026-07-27):
   nothing touches the docker config or keychain; manual docker login
   remains only for third-party OCI tooling. The composite join token
   carries both K3s enrollment and Skali registry trust.
+- Force redeployments landed 2026-07-29: `skali deploy --force` (also on
+  `skali dev`) bypasses up-to-date, re-promotes the unchanged revision, and
+  stamps a restart on the environment target that renders as the
+  `skali.dev/restarted-at` pod-template annotation, rolling every
+  application workload; stateful services are never touched. `--rebuild`
+  (implies `--force`) disables artifact reuse and build caches so moved
+  upstream tags and refreshed base images are picked up.
 - The plan's pointer-typed installation-record node section was not
   adopted; `Record.Node` stays a value type.
 - Existing-cluster mode was implemented per the original deliverable and

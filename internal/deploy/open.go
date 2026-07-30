@@ -155,6 +155,10 @@ type PlanInput struct {
 	// NodePlatforms are the observed cluster platforms; empty skips the
 	// platform guard (observation not synced, or an api-only server).
 	NodePlatforms []string
+	// Rebuild ignores artifact reuse entirely: every build-sourced
+	// application builds again and every image source re-imports, so moved
+	// upstream tags and refreshed base images are picked up.
+	Rebuild bool
 }
 
 // Preview is a computed plan with its artifact decisions; nothing is
@@ -178,6 +182,10 @@ type OpenInput struct {
 	Capabilities       []string
 	RegistryConfigured bool
 	Journal            *journal.Service
+	// Force opens the deployment even when it is up to date; promotion then
+	// stamps a workload restart so every application pod is recreated.
+	// Stateful services are untouched: force recreates pods, never data.
+	Force bool
 }
 
 // Opened is one accepted deployment: the coordination row, its run, and
@@ -199,7 +207,7 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 	if err != nil {
 		return nil, err
 	}
-	return s.preview(ctx, env, definitionVersion, definition, in.CandidateID, in.BuildInputs, in.NodePlatforms)
+	return s.preview(ctx, env, definitionVersion, definition, in)
 }
 
 // Open starts one deployment: it re-runs the plan gate, creates the run
@@ -226,14 +234,14 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	if err := validateBucketPolicies(definition); err != nil {
 		return nil, err
 	}
-	preview, err := s.preview(ctx, env, definitionVersion, definition, in.CandidateID, in.BuildInputs, in.NodePlatforms)
+	preview, err := s.preview(ctx, env, definitionVersion, definition, in.PlanInput)
 	if err != nil {
 		return nil, err
 	}
 	if preview.Plan.Destructive() && !in.AllowDestructive {
 		return nil, ErrDestructiveChange
 	}
-	if preview.UpToDate {
+	if preview.UpToDate && !in.Force {
 		return &Opened{Plan: preview.Plan, Actions: preview.Actions, UpToDate: true}, nil
 	}
 	needsArtifactWork := false
@@ -316,6 +324,7 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 		Actor:               in.Actor,
 		BuildExecutor:       in.BuildExecutor,
 		Actions:             encodedActions,
+		Restart:             in.Force,
 	})
 	if err != nil {
 		return nil, err
@@ -445,6 +454,7 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 		Resolver:            &artifactstore.RecordResolver{Store: s.artifacts, IDs: ids},
 		Journal:             jsvc,
 		Actor:               deployment.Actor,
+		Restart:             deployment.Restart,
 	})
 	if err != nil {
 		if statusErr := s.setDeploymentStatus(ctx, deploymentID, DeploymentFailed, uuid.Nil); statusErr != nil {
@@ -583,10 +593,9 @@ func platformsOverlap(submitted string, cluster []string) bool {
 // preview computes the plan and per-application artifact decisions without
 // creating anything.
 func (s *Service) preview(ctx context.Context, env store.Environment, definitionVersion store.DefinitionVersion,
-	definition compiler.ProjectDefinition, candidateID uuid.UUID, buildInputs map[string]BuildInput,
-	nodePlatforms []string) (*Preview, error) {
+	definition compiler.ProjectDefinition, in PlanInput) (*Preview, error) {
 
-	resolvedValues, secretVersions, err := s.resolveValues(ctx, env.ID, candidateID)
+	resolvedValues, secretVersions, err := s.resolveValues(ctx, env.ID, in.CandidateID)
 	if err != nil {
 		return nil, err
 	}
@@ -598,6 +607,11 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 		source := definition.Applications[key].Source
 		if source.Kind == "image" {
 			row, err := s.st.GetVerifiedArtifactByUpstream(ctx, source.Image)
+			if in.Rebuild && err == nil {
+				// Rebuild discards the reusable row: the upstream is
+				// resolved and imported again, picking up a moved tag.
+				err = pgx.ErrNoRows
+			}
 			switch {
 			case err == nil:
 				actions = append(actions, ArtifactAction{
@@ -622,12 +636,12 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 			continue
 		}
 
-		input, ok := buildInputs[key]
+		input, ok := in.BuildInputs[key]
 		if !ok || input.InputHash == "" {
 			return nil, &MissingBuildInputError{Application: key}
 		}
-		if !platformsOverlap(input.Platform, nodePlatforms) {
-			return nil, &PlatformMismatchError{Application: key, Submitted: input.Platform, Cluster: nodePlatforms}
+		if !platformsOverlap(input.Platform, in.NodePlatforms) {
+			return nil, &PlatformMismatchError{Application: key, Submitted: input.Platform, Cluster: in.NodePlatforms}
 		}
 		row, err := s.st.GetReusableArtifact(ctx, store.GetReusableArtifactParams{
 			ProjectID:   &env.ProjectID,
@@ -635,6 +649,11 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 			Kind:        revision.KindBuildLocal,
 			ContextHash: input.InputHash,
 		})
+		if in.Rebuild && err == nil {
+			// Rebuild discards the reusable row: the application builds
+			// again even though a verified artifact matches the inputs.
+			err = pgx.ErrNoRows
+		}
 		switch {
 		case err == nil:
 			actions = append(actions, ArtifactAction{
