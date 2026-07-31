@@ -2,6 +2,7 @@ package revision
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,6 +153,9 @@ func TestBuildRejectsInvalidInput(t *testing.T) {
 	cases := map[string]struct {
 		mutate  func(*Input)
 		message string
+		// values marks violations of the values contract, which are typed
+		// so the API can surface them as the deployer's mistake.
+		values bool
 	}{
 		"invalid environment": {
 			mutate:  func(input *Input) { input.Environment = "Production" },
@@ -197,18 +201,22 @@ func TestBuildRejectsInvalidInput(t *testing.T) {
 				input.Values.Plain["SESSION_SECRET"] = "oops"
 			},
 			message: "secret value SESSION_SECRET must not appear in the plain value set",
+			values:  true,
 		},
 		"missing secret": {
 			mutate:  func(input *Input) { delete(input.Values.Secret, "SESSION_SECRET") },
 			message: "missing secret value SESSION_SECRET",
+			values:  true,
 		},
 		"missing required value": {
 			mutate:  func(input *Input) { delete(input.Values.Plain, "APP_DOMAIN") },
 			message: "missing required value APP_DOMAIN",
+			values:  true,
 		},
 		"unknown value": {
 			mutate:  func(input *Input) { input.Values.Plain["EXTRA"] = "x" },
 			message: "value EXTRA is not required by the definition",
+			values:  true,
 		},
 	}
 	for name, testCase := range cases {
@@ -218,6 +226,8 @@ func TestBuildRejectsInvalidInput(t *testing.T) {
 			testCase.mutate(&input)
 			_, err := Build(input)
 			require.ErrorContains(t, err, testCase.message)
+			var valuesErr *ValuesError
+			require.Equal(t, testCase.values, errors.As(err, &valuesErr))
 		})
 	}
 }

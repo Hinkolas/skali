@@ -50,7 +50,8 @@ type deployOptions struct {
 	// Platform overrides the build platform(s); empty follows the
 	// server-reported cluster architecture.
 	Platform string
-	// AutoEnvFile uses ./.env automatically when present (bare dev).
+	// AutoEnvFile uses ./.env automatically when present and offers the
+	// discovered env files otherwise (bare dev).
 	AutoEnvFile bool
 	// CreateMissing provisions the project and environment through the API
 	// when absent (local dev); remote deploys create only interactively,
@@ -184,15 +185,21 @@ func lookupRemoteByMaster(cfg *cliconfig.Config, master string) (string, *clicon
 func selectValues(out io.Writer, project *localProject, opts *deployOptions) (*values.File, error) {
 	path := opts.EnvFile
 	if path == "" {
-		switch {
-		case opts.AutoEnvFile:
+		prompt := cliprompt.Interactive() && !opts.Yes
+		if opts.AutoEnvFile {
 			candidate := filepath.Join(project.Root, ".env")
-			info, err := os.Stat(candidate)
-			if err != nil || info.IsDir() {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				path = candidate
+			}
+			// Without a ./.env to default to, dev offers the discovered env
+			// files like deploy does instead of silently falling back to
+			// the stored values; its implied --yes only skips confirmations.
+			prompt = path == "" && cliprompt.Interactive()
+		}
+		if path == "" {
+			if !prompt {
 				return nil, nil
 			}
-			path = candidate
-		case cliprompt.Interactive() && !opts.Yes:
 			selected, err := chooseEnvFile(out, bufio.NewReader(os.Stdin), project.Root, opts.Environment)
 			if err != nil {
 				return nil, err
@@ -201,8 +208,6 @@ func selectValues(out io.Writer, project *localProject, opts *deployOptions) (*v
 				return nil, nil
 			}
 			path = selected
-		default:
-			return nil, nil
 		}
 	}
 	parsed, err := values.ParseFile(path)

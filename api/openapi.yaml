@@ -1453,6 +1453,13 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: |
+            `invalid_values`: the environment's values do not satisfy the
+            definition (for example a missing required value).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/environments/{id}/deployments:
     parameters:
@@ -1509,7 +1516,8 @@ paths:
         "422":
           description: |
             `unsupported_capabilities`: the definition needs more than this
-            installation declares.
+            installation declares. `invalid_values`: the environment's
+            values do not satisfy the definition.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

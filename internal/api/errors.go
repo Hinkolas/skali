@@ -45,6 +45,7 @@ const (
 	codeArtifactsIncomplete     = "artifacts_incomplete"
 	codeUnsupportedCapabilities = "unsupported_capabilities"
 	codePlatformMismatch        = "platform_mismatch"
+	codeInvalidValues           = "invalid_values"
 )
 
 // writeInternalError logs the real error and reports an opaque 500.

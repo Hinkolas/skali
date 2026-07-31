@@ -526,6 +526,7 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	var missingInput *deploy.MissingBuildInputError
 	var incomplete *deploy.ArtifactsIncompleteError
 	var platformMismatch *deploy.PlatformMismatchError
+	var invalidValues *revision.ValuesError
 	switch {
 	case errors.Is(err, deploy.ErrEnvironmentNotFound),
 		errors.Is(err, deploy.ErrRevisionNotFound),
@@ -560,6 +561,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &platformMismatch):
 		writeError(w, http.StatusUnprocessableEntity, codePlatformMismatch, trimDeployPrefix(err))
+	case errors.As(err, &invalidValues):
+		writeError(w, http.StatusUnprocessableEntity, codeInvalidValues, invalidValues.Message)
 	case errors.As(err, &incomplete):
 		writeError(w, http.StatusConflict, codeArtifactsIncomplete, trimDeployPrefix(err))
 	default:

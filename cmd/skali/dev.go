@@ -72,7 +72,7 @@ func newDevCommand() *cobra.Command {
 	}
 	command.PersistentFlags().StringVar(&skalidImage, "skalid-image", "",
 		"control-plane image for the local platform (defaults to the recorded or task dev:image build)")
-	command.Flags().StringVar(&envFile, "env-file", "", "explicit local env file (defaults to ./.env when present)")
+	command.Flags().StringVar(&envFile, "env-file", "", "explicit local env file (defaults to ./.env; otherwise discovered env files are offered)")
 	command.Flags().StringVar(&platform, "platform", "",
 		"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
 	command.Flags().BoolVarP(&detach, "detach", "d", false,

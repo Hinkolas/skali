@@ -635,6 +635,24 @@ func TestDeploymentPlatformGuard(t *testing.T) {
 	require.Equal(t, "platform_mismatch", errCode(body))
 }
 
+// A fresh environment whose values do not satisfy the definition fails the
+// plan with the violation itself, not an opaque internal error.
+func TestPlanReportsValuesViolation(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("values@example.com", "hunter2hunter2")
+	token := a.login("values@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+
+	definitionVersion := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	status, body := a.do("POST", "/v1/environments/"+envID+"/plan", token, map[string]any{
+		"definition_version_id": definitionVersion,
+		"builds":                buildsPayload(),
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, status, "%v", body)
+	require.Equal(t, "invalid_values", errCode(body))
+	require.Equal(t, "missing secret value SESSION_SECRET", errMessage(body))
+}
+
 func errCode(body map[string]any) string {
 	detail, _ := body["error"].(map[string]any)
 	code, _ := detail["code"].(string)

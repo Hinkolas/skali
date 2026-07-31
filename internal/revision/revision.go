@@ -129,6 +129,19 @@ func Build(input Input) (*Revision, error) {
 	return revision, nil
 }
 
+// ValuesError reports that the environment's values do not satisfy the
+// definition's requirements. It is the deployer's mistake, not an internal
+// failure, so callers may surface the message verbatim.
+type ValuesError struct {
+	Message string
+}
+
+func (e *ValuesError) Error() string { return e.Message }
+
+func valuesErrorf(format string, args ...any) error {
+	return &ValuesError{Message: fmt.Sprintf(format, args...)}
+}
+
 // checkValues enforces the separation contract between the compiled
 // requirements and the imported values: secrets only in the secret set, plain
 // values only in the plain set, required values present, nothing unknown.
@@ -140,28 +153,28 @@ func checkValues(definition compiler.ProjectDefinition, resolved values.Resolved
 		_, secret := resolved.Secret[requirement.Name]
 		if requirement.Secret {
 			if plain {
-				return fmt.Errorf("secret value %s must not appear in the plain value set", requirement.Name)
+				return valuesErrorf("secret value %s must not appear in the plain value set", requirement.Name)
 			}
 			if !secret {
-				return fmt.Errorf("missing secret value %s", requirement.Name)
+				return valuesErrorf("missing secret value %s", requirement.Name)
 			}
 			continue
 		}
 		if secret {
-			return fmt.Errorf("value %s is not declared secret but was imported as secret", requirement.Name)
+			return valuesErrorf("value %s is not declared secret but was imported as secret", requirement.Name)
 		}
 		if !plain && requirement.Required {
-			return fmt.Errorf("missing required value %s", requirement.Name)
+			return valuesErrorf("missing required value %s", requirement.Name)
 		}
 	}
 	for _, name := range sortedKeys(resolved.Plain) {
 		if !known[name] {
-			return fmt.Errorf("value %s is not required by the definition", name)
+			return valuesErrorf("value %s is not required by the definition", name)
 		}
 	}
 	for _, name := range sortedKeys(resolved.Secret) {
 		if !known[name] {
-			return fmt.Errorf("secret value %s is not required by the definition", name)
+			return valuesErrorf("secret value %s is not required by the definition", name)
 		}
 	}
 	return nil
