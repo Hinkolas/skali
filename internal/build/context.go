@@ -16,9 +16,9 @@ import (
 	"github.com/moby/patternmatcher/ignorefile"
 )
 
-// IgnoreFile is the explicit ignore file honored in the context root; it
-// uses the dockerignore pattern syntax.
-const IgnoreFile = ".skaliignore"
+// IgnoreFile is the explicit ignore file honored in the context root, so
+// collection excludes what a plain docker build would exclude.
+const IgnoreFile = ".dockerignore"
 
 // ErrContextEscape: a context path or symlink reaches outside its allowed
 // root. The compiler already rejects escaping manifest paths; this guards

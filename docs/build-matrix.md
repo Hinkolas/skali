@@ -13,7 +13,7 @@ matrix documents what the R3 build schema and engine support.
 | Multi-stage targets | `build.target` | Passed as `--target`; part of the build configuration hash. |
 | Plain build arguments | `build.arguments` | Passed as `--build-arg`; values may reference non-secret project values (`${NAME}`). Part of the configuration hash. |
 | Target platform | (derived) | `linux/<host arch>` in R3; recorded on the build and part of the input hash. Cross-platform selection is an R4 surface. |
-| Ignore rules | `.skaliignore` in the context root | dockerignore pattern syntax, including `!` exceptions. Patterns are rooted: use `**/*.log` to reach subdirectories. |
+| Ignore rules | `.dockerignore` in the context root | dockerignore pattern syntax, including `!` exceptions. Patterns are rooted: use `**/*.log` to reach subdirectories. |
 | Layer caching | (automatic) | The engine uses the local BuildKit cache; an unchanged input hash skips the build entirely and reuses the verified artifact. |
 | Push and digest capture | (automatic) | `--push` with `--metadata-file`; attestations are disabled (`--provenance=false --sbom=false`) so the pushed digest is the plain manifest digest, verified server-side before the artifact enters a revision. |
 

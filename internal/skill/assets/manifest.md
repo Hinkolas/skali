@@ -105,8 +105,8 @@ applications:
 
 `image` references are imported into the managed registry and pinned by
 digest. Build contexts may not be absolute paths and may not escape the
-project root; `.skaliignore` in the context root filters files with
-dockerignore syntax, and `.git/`, `.skali/`, `.env`, and `.env.*` are
+project root; `.dockerignore` in the context root filters files exactly
+as docker build would, and `.git/`, `.skali/`, `.env`, and `.env.*` are
 always excluded.
 
 ### Ports and routes

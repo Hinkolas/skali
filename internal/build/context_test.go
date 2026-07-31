@@ -57,7 +57,7 @@ func TestCollectIgnoreAndSafetyExclusions(t *testing.T) {
 	write(t, root, "web/keep/dropped.log", "drop")
 	// The keep directory is ignored wholesale, but the exception pattern
 	// re-includes one child, so the walk may not skip the directory.
-	write(t, root, "web/.skaliignore", "node_modules\nkeep\n!keep/generated.txt\n")
+	write(t, root, "web/.dockerignore", "node_modules\nkeep\n!keep/generated.txt\n")
 
 	// Hard exclusions apply with or without an ignore file.
 	write(t, root, "web/.git/HEAD", "ref")
@@ -68,7 +68,7 @@ func TestCollectIgnoreAndSafetyExclusions(t *testing.T) {
 	selected := write(t, root, "web/values.env", "SECRET=4")
 
 	collected := collect(t, root, "web", CollectOptions{ExcludeFiles: []string{selected}})
-	require.Equal(t, []string{".skaliignore", "keep/generated.txt", "main.go"}, collected.Files)
+	require.Equal(t, []string{".dockerignore", "keep/generated.txt", "main.go"}, collected.Files)
 }
 
 func TestCollectRejectsEscapes(t *testing.T) {
