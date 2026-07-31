@@ -266,6 +266,29 @@ func Status(ctx context.Context) (ClusterStatus, error) {
 	return ClusterAbsent, nil
 }
 
+// nodeContainer is the docker name of the cluster's only node: the bare
+// cluster name, so the docker surface shows one obviously named
+// container. Create renames it from k3d's generated k3d-<cluster>-server-0;
+// k3d itself finds nodes by docker labels, so its lifecycle commands keep
+// working with the renamed container (verified on k3d 5.9.0).
+func nodeContainer() string { return ClusterName() }
+
+// removeToolsNode deletes the idle k3d-tools helper container that
+// cluster create and start leave behind. It only exists to assist those
+// commands; k3d recreates it on demand (image import) and cleans that
+// one up itself.
+func removeToolsNode(ctx context.Context) {
+	_ = exec.CommandContext(ctx, "docker", "rm", "-f", "k3d-"+ClusterName()+"-tools").Run()
+}
+
+// legacyLayout reports a cluster from before the single-container layout:
+// its node still has k3d's generated name, with a serverlb next to it.
+// The node cannot be renamed in place, because the load balancer reaches
+// it by its docker DNS name; those clusters are recreated instead.
+func legacyLayout(ctx context.Context) bool {
+	return exec.CommandContext(ctx, "docker", "container", "inspect", "k3d-"+ClusterName()+"-server-0").Run() == nil
+}
+
 // registriesConfig lets containerd on the nodes resolve the artifact
 // reference host through the node-local NodePort.
 func registriesConfig() string {
@@ -278,6 +301,9 @@ func registriesConfig() string {
 
 // Create provisions the pinned dev cluster with its port mappings and
 // registry mirror, and writes the kubeconfig into the state directory.
+// The cluster is one docker container named after itself: the single
+// server needs no k3d load balancer (--no-lb, direct port mappings), and
+// the node container drops its generated k3d name.
 func Create(ctx context.Context) error {
 	dir, err := StateDir()
 	if err != nil {
@@ -293,16 +319,22 @@ func Create(ctx context.Context) error {
 	args := []string{
 		"cluster", "create", ClusterName(),
 		"--image", K3sImage,
+		"--no-lb",
 		"--kubeconfig-update-default=false",
 		"--kubeconfig-switch-context=false",
 		"--registry-config", registries,
-		"-p", fmt.Sprintf("127.0.0.1:%d:80@loadbalancer", HTTPPort()),
-		"-p", fmt.Sprintf("127.0.0.1:%d:30500@server:0", RegistryPort()),
+		"-p", fmt.Sprintf("127.0.0.1:%d:80@server:0:direct", HTTPPort()),
+		"-p", fmt.Sprintf("127.0.0.1:%d:30500@server:0:direct", RegistryPort()),
 		"--wait",
 	}
 	if out, err := exec.CommandContext(ctx, "k3d", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster create: %w\n%s", err, out)
 	}
+	if out, err := exec.CommandContext(ctx, "docker", "rename",
+		"k3d-"+ClusterName()+"-server-0", nodeContainer()).CombinedOutput(); err != nil {
+		return fmt.Errorf("localdev: rename node container: %w\n%s", err, out)
+	}
+	removeToolsNode(ctx)
 	return WriteKubeconfig(ctx)
 }
 
@@ -329,6 +361,7 @@ func Start(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "k3d", "cluster", "start", ClusterName()).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster start: %w\n%s", err, out)
 	}
+	removeToolsNode(ctx)
 	return WriteKubeconfig(ctx)
 }
 
@@ -395,7 +428,7 @@ func ImportImages(ctx context.Context, images ...string) error {
 // without the containerd store (no --platform on save) fall back to k3d's
 // import, which handles their classic tars fine.
 func importImage(ctx context.Context, image string) error {
-	node := "k3d-" + ClusterName() + "-server-0"
+	node := nodeContainer()
 	if platform, err := hostPlatform(ctx); err == nil {
 		if err := streamImage(ctx, node, platform, image); err == nil {
 			return nil
@@ -454,8 +487,7 @@ func hostPlatform(ctx context.Context) (string, error) {
 // imageInCluster reports the image's presence in the server node's
 // containerd, the ground truth the pods resolve against.
 func imageInCluster(ctx context.Context, image string) bool {
-	node := "k3d-" + ClusterName() + "-server-0"
-	return exec.CommandContext(ctx, "docker", "exec", node, "crictl", "inspecti", "-q", image).Run() == nil
+	return exec.CommandContext(ctx, "docker", "exec", nodeContainer(), "crictl", "inspecti", "-q", image).Run() == nil
 }
 
 // BuildSkalidImage builds the control-plane image from the working tree;

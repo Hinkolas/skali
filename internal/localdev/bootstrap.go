@@ -83,6 +83,13 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 			"remove it with `k3d cluster delete %s`, or pick another name via SKALI_DEV_CLUSTER",
 			ClusterName(), ClusterName())
 	}
+	// A cluster from before the single-container layout cannot be reshaped
+	// in place (its load balancer resolves the node by the old name); the
+	// platform is disposable by design, so recreation is the migration.
+	if status != ClusterAbsent && legacyLayout(ctx) {
+		return nil, fmt.Errorf("the %s cluster predates the single-container layout: "+
+			"recreate it with `skali dev reset`, then run `skali dev` again", ClusterName())
+	}
 
 	// Public platform images pre-pull on the host in parallel with the
 	// cluster work below and land in one batched import, so a cold cluster

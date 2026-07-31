@@ -131,7 +131,13 @@ tasks:
   k3d:up:
     desc: Create the pinned k3d test cluster and write .k3d/kubeconfig
     cmds:
-      - k3d cluster create skali-test --image rancher/k3s:v1.33.3-k3s1 --kubeconfig-update-default=false --wait || true
+      - k3d cluster create skali-test --image rancher/k3s:v1.33.3-k3s1 --no-lb --kubeconfig-update-default=false --wait || true
+      # Single-container layout: rename the node to the bare cluster name and
+      # drop the idle k3d-tools helper. The rename skips legacy clusters (a
+      # present serverlb resolves the node by its old name); recreate those
+      # with task k3d:down first.
+      - if docker container inspect k3d-skali-test-server-0 >/dev/null 2>&1 && ! docker container inspect k3d-skali-test-serverlb >/dev/null 2>&1; then docker rename k3d-skali-test-server-0 skali-test; fi
+      - docker rm -f k3d-skali-test-tools >/dev/null 2>&1 || true
       - mkdir -p .k3d
       - k3d kubeconfig get skali-test > .k3d/kubeconfig
 

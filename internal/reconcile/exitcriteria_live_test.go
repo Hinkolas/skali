@@ -359,13 +359,13 @@ func restartKernel(t *testing.T, f *liveFixture) *liveFixture {
 
 func clusterContainer(t *testing.T, action string) {
 	t.Helper()
-	if output, err := exec.Command("docker", action, "k3d-skali-test-server-0").CombinedOutput(); err != nil {
+	if output, err := exec.Command("docker", action, "skali-test").CombinedOutput(); err != nil {
 		t.Fatalf("docker %s: %v: %s", action, err, output)
 	}
 	if action == "stop" {
 		// If the test dies mid-outage, leave the shared cluster running.
 		t.Cleanup(func() {
-			_ = exec.Command("docker", "start", "k3d-skali-test-server-0").Run()
+			_ = exec.Command("docker", "start", "skali-test").Run()
 		})
 	}
 }
