@@ -54,33 +54,6 @@ SET availability = $2, storage_bytes = $3, extensions = $4,
     pitr_seconds = $5, updated_at = now()
 WHERE id = $1;
 
--- The local-dev pool lifecycle input (owner decisions 2026-07-29): a pool may
--- hibernate when no live claim on it belongs to an environment whose target
--- state is active. System claims have no environment and count as active,
--- with one exception: a system claim owned by the object-storage subsystem
--- stops counting while the live object store is stopped (the quiet dev
--- platform: a stopped SeaweedFS releases its hold so the dev pool can
--- hibernate too). Counts bound and provisioned claims: a claim
--- mid-provisioning must keep the pool awake.
--- name: CountActiveDatabaseClaimsByCluster :one
-SELECT count(*) FROM database_claims c
-JOIN database_placements p ON p.claim_id = c.id AND p.superseded_at IS NULL
-LEFT JOIN environment_targets t ON t.environment_id = c.environment_id
-WHERE p.cluster_id = $1
-  AND c.phase IN ('bound', 'provisioned')
-  AND (
-    t.state = 'active'
-    OR (
-      c.owner_kind = 'system'
-      AND NOT (
-        c.system_key LIKE 'object-storage/%'
-        AND EXISTS (
-          SELECT 1 FROM object_stores os WHERE os.state = 'stopped'
-        )
-      )
-    )
-  );
-
 -- Live claims placed on a cluster, for managed-role rendering and GC checks.
 -- name: ListLiveDatabaseClaimsByCluster :many
 SELECT c.* FROM database_claims c

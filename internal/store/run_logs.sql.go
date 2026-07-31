@@ -63,6 +63,24 @@ func (q *Queries) GetMaxRunLogSeq(ctx context.Context, attemptID uuid.UUID) (int
 	return column_1, err
 }
 
+const latestStepLog = `-- name: LatestStepLog :one
+SELECT run_logs.message
+FROM run_logs
+JOIN attempts ON attempts.id = run_logs.attempt_id
+WHERE attempts.step_id = $1
+ORDER BY attempts.number DESC, run_logs.seq DESC
+LIMIT 1
+`
+
+// The most recent line of a step across attempts; waiting steps append a
+// fresh reason only when it changed, so this is the dedupe read.
+func (q *Queries) LatestStepLog(ctx context.Context, stepID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, latestStepLog, stepID)
+	var message string
+	err := row.Scan(&message)
+	return message, err
+}
+
 const listStepLogs = `-- name: ListStepLogs :many
 SELECT run_logs.id, run_logs.attempt_id, attempts.number AS attempt_number,
        run_logs.seq, run_logs.ts, run_logs.level, run_logs.message, run_logs.fields

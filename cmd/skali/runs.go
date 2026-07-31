@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -202,20 +201,20 @@ func streamRuntimeLogs(command *cobra.Command, api *client.Client, environmentID
 }
 
 // followRuntimeLogs is the compose-like attach: it tails the runtime log
-// stream and Ctrl-C only detaches, leaving the project running. The server
-// closes the stream on overflow and replays a bounded tail per fresh
-// subscription, so the follow reconnects and suppresses replayed lines by
-// their kubelet timestamps.
+// stream until the session context ends (the dev session decides what
+// happens next, normally the pause-on-exit). The server closes the stream
+// on overflow and replays a bounded tail per fresh subscription, so the
+// follow reconnects and suppresses replayed lines by their kubelet
+// timestamps.
 func followRuntimeLogs(command *cobra.Command, api *client.Client, environmentID, service string) error {
-	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt)
-	defer stop()
+	ctx := command.Context()
 	out := command.OutOrStdout()
 	lastSeen := map[string]time.Time{}
 	for ctx.Err() == nil {
 		events, err := api.Stream(ctx, runtimeLogsPath(environmentID, service), "")
 		if err != nil {
 			if ctx.Err() != nil {
-				break
+				return nil
 			}
 			return err
 		}
@@ -227,9 +226,6 @@ func followRuntimeLogs(command *cobra.Command, api *client.Client, environmentID
 		case <-time.After(time.Second):
 		}
 	}
-	fmt.Fprintln(out, "\ndetached; the project keeps running")
-	fmt.Fprintln(out, "  follow logs  skali dev logs")
-	fmt.Fprintln(out, "  take down    skali dev down")
 	return nil
 }
 

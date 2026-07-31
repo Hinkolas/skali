@@ -83,7 +83,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	for {
 		require.False(t, time.Now().After(deadline),
 			"claim not provisioned before deadline; last wait: %s", controller.WaitingReason(created.ID))
-		_, err := controller.reconcileClaim(ctx, created.ID)
+		requeue, err := controller.reconcileClaim(ctx, created.ID)
 		if err != nil {
 			t.Logf("reconcile (retrying): %v", err)
 		}
@@ -92,6 +92,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
 			break
 		}
+		stepClaim(t, "claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
 		time.Sleep(2 * time.Second)
 	}
 
@@ -235,7 +236,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 
 	// Destructive removal: releasing drops the logical database, removes
 	// the substrate objects and credentials, and closes the claim; the
-	// shared dev pool survives and hibernates once idle.
+	// shared dev pool survives its tenants and keeps running.
 	phased, err := dbSvc.ReleaseClaim(ctx, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, string(claim.PhaseReleasing), phased.Phase)
@@ -243,7 +244,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	for {
 		require.False(t, time.Now().After(teardownDeadline),
 			"claim not released before deadline; last wait: %s", controller.WaitingReason(created.ID))
-		_, err := controller.reconcileClaim(ctx, created.ID)
+		requeue, err := controller.reconcileClaim(ctx, created.ID)
 		if err != nil {
 			t.Logf("teardown (retrying): %v", err)
 		}
@@ -252,6 +253,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 		if claim.Phase(current.Phase) == claim.PhaseReleased {
 			break
 		}
+		stepClaim(t, "teardown", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
 		time.Sleep(2 * time.Second)
 	}
 	_, err = client.Dynamic.Resource(cnpg.DatabaseGVR).Namespace(Namespace).
@@ -266,14 +268,32 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	survivor, err := dbSvc.LiveSharedCluster(ctx, "postgres", 17)
 	require.NoError(t, err, "the shared dev pool survives its tenants")
 
-	// The idle dev pool hibernates on its next pass, keeping the Cluster
-	// and its volumes.
+	// The idle dev pool stays up: the dev substrate is always on (owner
+	// decision 2026-07-31); the hibernation annotation remains an explicit
+	// off so previously hibernated pools wake on their next converge.
 	_, err = controller.reconcilePool(ctx, survivor.ID)
 	require.NoError(t, err)
+	require.Equal(t, dbstore.StateActive, survivor.State)
 	cluster, err = client.Dynamic.Resource(cnpg.ClusterGVR).Namespace(Namespace).
 		Get(ctx, survivor.Name, metav1.GetOptions{})
 	require.NoError(t, err)
-	require.Equal(t, "on", cluster.GetAnnotations()[cnpg.HibernationAnnotation])
+	require.Equal(t, "off", cluster.GetAnnotations()[cnpg.HibernationAnnotation])
+}
+
+// stepClaim enforces the worker-queue invariant on one live reconcile pass:
+// a pass that returns neither an error nor a requeue must have settled the
+// claim in a terminal phase, otherwise the controller abandoned live work and
+// only an external resync would ever revive it.
+func stepClaim(t *testing.T, name string, requeue time.Duration, err error, phase claim.Phase, waiting string) {
+	t.Helper()
+	if err != nil || requeue > 0 {
+		return
+	}
+	switch phase {
+	case claim.PhaseProvisioned, claim.PhaseReleased:
+	default:
+		t.Fatalf("%s abandoned unsettled claim: phase=%s wait=%q", name, phase, waiting)
+	}
 }
 
 func requireEventually(t *testing.T, timeout time.Duration, condition func() bool, message string) {

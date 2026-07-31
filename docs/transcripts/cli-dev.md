@@ -41,7 +41,7 @@ ready
   http://files.localhost:8080   ->  applications.web
   dashboard                     http://skali.localhost:8080
 
-watching health and logs (ctrl-c detaches, local services keep running)
+following logs; Ctrl-C pauses the project (skali dev -d keeps it running)
   web-6d9f7b-1  listening on :8080
 ```
 
@@ -92,14 +92,20 @@ web-6d9f7b-2  GET / 200
 
 $ skali dev stop
 stopped local platform; state is retained
-$ skali dev
+$ skali dev start
 ...
   ok  Start k3d cluster skali-dev (state retained)
-...
+  ok  Import skalid:dev (unchanged since last import)
+  ok  Converge platform (unchanged since last converge)
+local platform running; state is retained
 ```
 
-Stopping retains volumes and control-plane state. After a restart, health is
-reported only once observation has resynchronized.
+Stopping retains volumes and control-plane state; starting hits the fast
+path (no bundle converge) once skalid answers through the edge again. After
+a restart, health is reported only once observation has resynchronized.
+Ending an attached `skali dev` session (Ctrl-C, closing the terminal)
+pauses the project like `skali dev down`; `skali dev -d` leaves it running
+in the background instead.
 
 ## 4. Reset is explicit and total
 

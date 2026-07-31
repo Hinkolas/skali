@@ -41,33 +41,28 @@ const (
 	ClassEnvironment = "environment"
 	ClassDedicated   = "dedicated"
 
-	StateActive     = "active"
-	StateHibernated = "hibernated"
-	StateStopped    = "stopped"
-	StateReleasing  = "releasing"
-	StateReleased   = "released"
+	StateActive    = "active"
+	StateReleasing = "releasing"
+	StateReleased  = "released"
 )
 
-// ClusterStates is the pool lifecycle machine. Hibernated is the local-dev
-// idle state (workloads stopped, data kept); production pools move straight
-// between active and releasing.
+// ClusterStates is the pool lifecycle machine. The hibernated dev idle
+// state was retired 2026-07-31 (the dev substrate is always on); migration
+// 00013 folds surviving rows back to active.
 var ClusterStates = lifecycle.Machine[string]{
-	States: []string{StateActive, StateHibernated, StateReleasing, StateReleased},
+	States: []string{StateActive, StateReleasing, StateReleased},
 	Transitions: map[string][]string{
-		StateActive:     {StateHibernated, StateReleasing},
-		StateHibernated: {StateActive, StateReleasing},
-		StateReleasing:  {StateReleased},
+		StateActive:    {StateReleasing},
+		StateReleasing: {StateReleased},
 	},
 }
 
-// StoreStates is the object-store lifecycle machine. Stopped is the
-// local-dev idle state (workloads scaled to zero, volumes and metadata
-// kept); production stores move straight between active and releasing.
+// StoreStates is the object-store lifecycle machine. The stopped dev idle
+// state was retired 2026-07-31 alongside pool hibernation.
 var StoreStates = lifecycle.Machine[string]{
-	States: []string{StateActive, StateStopped, StateReleasing, StateReleased},
+	States: []string{StateActive, StateReleasing, StateReleased},
 	Transitions: map[string][]string{
-		StateActive:    {StateStopped, StateReleasing},
-		StateStopped:   {StateActive, StateReleasing},
+		StateActive:    {StateReleasing},
 		StateReleasing: {StateReleased},
 	},
 }

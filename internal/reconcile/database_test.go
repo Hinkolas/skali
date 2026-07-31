@@ -50,8 +50,6 @@ func (f *fakeClaims) Release(_ context.Context, _ uuid.UUID) (bool, []string, er
 	return true, nil, nil
 }
 
-func (f *fakeClaims) Suspend(_ context.Context, _ uuid.UUID) error { return nil }
-
 // A database-bearing revision: the application waits visibly on the claim,
 // provisioning unblocks it, and activation requires both healthy.
 func TestReconcileDatabaseClaimGatesApplication(t *testing.T) {
@@ -123,6 +121,45 @@ func TestReconcileDatabaseClaimGatesApplication(t *testing.T) {
 	require.Equal(t, "database", types["database.data"])
 	require.Equal(t, module.HealthHealthy, health["database.data"])
 	require.Equal(t, module.HealthHealthy, health["application.web"])
+}
+
+// TestReconcileClaimProvisionAppliesWithoutProjections pins the incident
+// regression (2026-07-31): once the substrate reports a claim provisioned,
+// the dependent application applies on the next pass even when every
+// observed projection lags behind (informer or poll delivery); activation
+// still waits for real observed health.
+func TestReconcileClaimProvisionAppliesWithoutProjections(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	claims := &fakeClaims{states: []ClaimState{{
+		Service: "databases.data", Waiting: "waiting for placement",
+	}}}
+	f.kernel.deps.Claims = claims
+
+	f.executeDeploymentManifest(t, databaseManifest)
+	f.fake.SetFresh()
+
+	// Pass 1: blocked on the claim, and the pass arms its own requeue so
+	// progress never depends on an informer event arriving.
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, requeueHealthCheck, requeue)
+	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web")
+
+	// The substrate flips ONLY the fresh claim state; the observed claim,
+	// tenant, and pool projections all stay stale.
+	claims.states = []ClaimState{{Service: "databases.data", Provisioned: true}}
+
+	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web",
+		"a provisioned claim must not withhold the workload on projection lag")
+	require.Equal(t, requeueHealthCheck, requeue, "the pass keeps its cadence until healthy")
+
+	// Activation still requires observed health, which has not arrived.
+	target := f.target(t)
+	require.Nil(t, target.ActiveRevisionID)
 }
 
 // Without a substrate (API-only mode) database services wait visibly

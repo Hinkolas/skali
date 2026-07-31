@@ -63,8 +63,17 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 		return 0, err
 	}
 	c.publishClaim(*current)
-	if transitioned && c.deps.Enqueue != nil && current.EnvironmentID != nil {
+	if (transitioned || current.Phase != row.Phase) && c.deps.Enqueue != nil && current.EnvironmentID != nil {
 		c.deps.Enqueue(*current.EnvironmentID)
+	}
+	// A non-terminal claim must never leave the queue: a pass that ends
+	// without an error or a wait still owes the next step a wakeup.
+	if requeue == 0 {
+		switch claim.Phase(current.Phase) {
+		case claim.PhaseProvisioned, claim.PhaseReleased:
+		default:
+			requeue = requeueWait
+		}
 	}
 	return requeue, nil
 }
@@ -80,13 +89,6 @@ func (c *Controller) provision(ctx context.Context, row store.DatabaseClaim) (bo
 	}
 	if err := c.ensureNamespace(ctx); err != nil {
 		return false, err
-	}
-	// A hibernated dev pool resumes before any tenant work; the annotation
-	// flip happens in the ensurePool below.
-	if pool.State == dbstore.StateHibernated {
-		if pool, err = c.deps.DB.TransitionCluster(ctx, pool.ID, dbstore.StateActive); err != nil {
-			return false, err
-		}
 	}
 
 	tenant, err := c.ensureTenantRecord(ctx, row, pool)
@@ -121,7 +123,13 @@ func (c *Controller) provision(ctx context.Context, row store.DatabaseClaim) (bo
 		return false, err
 	}
 
-	if claim.Phase(row.Phase) == claim.PhaseBound {
+	// place may have bound the claim mid-pass; the transition test needs the
+	// fresh phase or the pass that binds and completes can never settle.
+	current, err := c.deps.DB.GetClaim(ctx, row.ID)
+	if err != nil {
+		return false, err
+	}
+	if claim.Phase(current.Phase) == claim.PhaseBound {
 		if _, err := c.deps.DB.TransitionClaim(ctx, row.ID, claim.PhaseProvisioned); err != nil {
 			return false, err
 		}

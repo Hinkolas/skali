@@ -579,3 +579,8 @@ func (p *loggingProgress) Skip(detail string) {
 	p.log.flush(context.Background())
 	p.inner.Skip(detail)
 }
+
+func (p *loggingProgress) Note(line string) {
+	p.log.line("note: " + line)
+	p.inner.Note(line)
+}

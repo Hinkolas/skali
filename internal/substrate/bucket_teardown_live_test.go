@@ -25,8 +25,8 @@ import (
 // TestLiveBucketDestructiveRemoval executes the persisted destructive
 // decision against a real cluster: identity gone, bucket metadata gone,
 // collection data freed, Secrets deleted, claim released; the store itself
-// survives and, with no remaining demand, stops (the quiet dev platform).
-// Requires TEST_KUBECONFIG and TEST_DATABASE_URL.
+// survives and keeps running (the always-on dev substrate). Requires
+// TEST_KUBECONFIG and TEST_DATABASE_URL.
 func TestLiveBucketDestructiveRemoval(t *testing.T) {
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
@@ -72,7 +72,7 @@ func TestLiveBucketDestructiveRemoval(t *testing.T) {
 		for {
 			require.False(t, time.Now().After(limit),
 				"claim never reached %s; last wait: %s", target, controller.WaitingReason(created.ID))
-			_, _ = controller.reconcileBucketClaim(ctx, created.ID)
+			requeue, err := controller.reconcileBucketClaim(ctx, created.ID)
 			if withStore {
 				_, _ = controller.reconcileObjectStore(ctx)
 			}
@@ -84,6 +84,7 @@ func TestLiveBucketDestructiveRemoval(t *testing.T) {
 			if claim.Phase(current.Phase) == target {
 				return
 			}
+			stepClaim(t, "bucket claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
 			time.Sleep(2 * time.Second)
 		}
 	}
@@ -95,9 +96,7 @@ func TestLiveBucketDestructiveRemoval(t *testing.T) {
 	// Write one object so the collection holds real volume data.
 	writeFilerObject(t, client, allocation.BucketName, "doomed.txt", "bytes that must die")
 
-	// The destructive decision, then teardown to released. The store
-	// reconcile stays out of this loop so the absence checks below can run
-	// against the still-running store before the quiet lifecycle stops it.
+	// The destructive decision, then teardown to released.
 	_, err = dbSvc.ReleaseBucketClaim(ctx, created.ID)
 	require.NoError(t, err)
 	drive(claim.PhaseReleased, 5*time.Minute, false)
@@ -116,14 +115,15 @@ func TestLiveBucketDestructiveRemoval(t *testing.T) {
 		Get(ctx, kubernetes.OutputSecretName("buckets", "files"), metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "the output mirror must be gone")
 
-	// The store survives the bucket's death and, with no remaining demand,
-	// the dev lifecycle stops it.
+	// The store survives the bucket's death and keeps running: the dev
+	// substrate is always on (owner decision 2026-07-31).
 	sw, err := dbSvc.LiveObjectStore(ctx)
 	require.NoError(t, err)
-	require.NotEqual(t, dbstore.StateReleased, sw.State)
-	requireEventually(t, 3*time.Minute, func() bool {
-		_, _ = controller.reconcileObjectStore(ctx)
-		current, err := dbSvc.LiveObjectStore(ctx)
-		return err == nil && current.State == dbstore.StateStopped
-	}, "the dev store never stopped after the last bucket released")
+	require.Equal(t, dbstore.StateActive, sw.State)
+	_, err = controller.reconcileObjectStore(ctx)
+	require.NoError(t, err)
+	current, err := dbSvc.LiveObjectStore(ctx)
+	require.NoError(t, err)
+	require.Equal(t, dbstore.StateActive, current.State,
+		"an idle store must stay active, never stop")
 }

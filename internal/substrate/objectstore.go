@@ -90,12 +90,11 @@ func (c *Controller) reconcileObjectStore(ctx context.Context) (time.Duration, e
 	row, err := c.deps.DB.LiveObjectStore(ctx)
 	if err != nil {
 		if errors.Is(err, dbstore.ErrNotFound) {
-			// Production boots the store eagerly; dev creates it lazily with
-			// the first bucket claim. No row, no work.
-			if c.cfg.Managed && hasCapability(c.cfg.Capabilities, layout.CapabilityObjectStorage) {
+			// The store comes up eagerly wherever the capability exists; no
+			// capability, no work.
+			if hasCapability(c.cfg.Capabilities, layout.CapabilityObjectStorage) {
 				if row, err = c.ensureObjectStoreRow(ctx); err != nil {
-					var wait errWaiting
-					if errors.As(err, &wait) {
+					if wait, ok := errors.AsType[errWaiting](err); ok {
 						slog.Info("substrate: object store pending", "reason", wait.reason)
 						return requeueWait, nil
 					}
@@ -121,43 +120,33 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 	if err := c.ensureNamespace(ctx); err != nil {
 		return 0, err
 	}
-	if updated, err := c.reconcileStoreLifecycle(ctx, row); err != nil {
+
+	// The metadata database is an ordinary system claim; until it
+	// provisions, the store visibly waits (fresh bootstrap's first gate).
+	outputs, err := c.EnsureSystemClaim(ctx, MetadataClaimKey, metadataClaimSpec())
+	if err != nil {
 		return 0, err
-	} else if updated != nil {
-		row = *updated
+	}
+	if !outputs.Provisioned {
+		slog.Info("substrate: object store waiting for metadata database", "reason", outputs.Waiting)
+		return requeueWait, nil
 	}
 
-	if row.State != dbstore.StateStopped {
-		// The metadata database is an ordinary system claim; until it
-		// provisions, the store visibly waits (fresh bootstrap's first
-		// gate). A stopped store deliberately skips this: re-ensuring the
-		// claim would resume the hibernated dev pool, defeating the quiet
-		// platform.
-		outputs, err := c.EnsureSystemClaim(ctx, MetadataClaimKey, metadataClaimSpec())
-		if err != nil {
-			return 0, err
-		}
-		if !outputs.Provisioned {
-			slog.Info("substrate: object store waiting for metadata database", "reason", outputs.Waiting)
-			return requeueWait, nil
-		}
-
-		// The filer's store config is Secret-to-Secret: the password is
-		// read from the claim's credential Secret and lands only in the
-		// filer store Secret.
-		credential, err := c.deps.Cluster.GetSecret(ctx, Namespace, outputs.CredentialSecret)
-		if err != nil {
-			return 0, fmt.Errorf("substrate: read metadata credential: %w", err)
-		}
-		password := string(credential.Data[corev1.BasicAuthPasswordKey])
-		if password == "" {
-			return requeueWait, nil
-		}
-		storeSecret := seaweed.RenderFilerStoreSecret(Namespace,
-			outputs.Host, outputs.Port, outputs.Username, password, outputs.Database)
-		if _, err := c.deps.Cluster.ApplyAs(ctx, storeSecret, kube.FieldManagerPlatform, false); err != nil {
-			return 0, fmt.Errorf("substrate: ensure filer store secret: %w", err)
-		}
+	// The filer's store config is Secret-to-Secret: the password is read
+	// from the claim's credential Secret and lands only in the filer store
+	// Secret.
+	credential, err := c.deps.Cluster.GetSecret(ctx, Namespace, outputs.CredentialSecret)
+	if err != nil {
+		return 0, fmt.Errorf("substrate: read metadata credential: %w", err)
+	}
+	password := string(credential.Data[corev1.BasicAuthPasswordKey])
+	if password == "" {
+		return requeueWait, nil
+	}
+	storeSecret := seaweed.RenderFilerStoreSecret(Namespace,
+		outputs.Host, outputs.Port, outputs.Username, password, outputs.Database)
+	if _, err := c.deps.Cluster.ApplyAs(ctx, storeSecret, kube.FieldManagerPlatform, false); err != nil {
+		return 0, fmt.Errorf("substrate: ensure filer store secret: %w", err)
 	}
 
 	spec := seaweed.StoreSpec{
@@ -165,7 +154,6 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		Masters:     int(row.Masters),
 		Replication: row.Replication,
 		Managed:     c.cfg.Managed,
-		Stopped:     row.State == dbstore.StateStopped,
 	}
 	objects := seaweed.RenderDev(spec)
 	if c.cfg.Managed {
@@ -195,14 +183,12 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		}
 	}
 
-	if spec.Stopped {
-		return 0, nil
-	}
-	ready, err := c.objectStoreReady(ctx, row)
+	ready, reason, err := c.objectStoreReady(ctx, row)
 	if err != nil {
 		return 0, err
 	}
 	if !ready {
+		slog.Debug("substrate: object store not ready", "reason", reason)
 		return requeueWait, nil
 	}
 	// Keep the inert deny identity in the credential store forever so the
@@ -222,56 +208,20 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 	return 0, nil
 }
 
-// reconcileStoreLifecycle stops the dev store while no active environment
-// uses buckets (the quiet platform, owner decision 2026-07-29) and resumes
-// it when one does; production stores never stop. Returns the updated row
-// on a transition. Stopping nudges every live pool: the metadata system
-// claim just released its hold, so the dev pool may hibernate too.
-func (c *Controller) reconcileStoreLifecycle(ctx context.Context, row store.ObjectStore) (*store.ObjectStore, error) {
-	if c.cfg.Managed {
-		return nil, nil
-	}
-	count, err := c.deps.DB.ActiveBucketClaimCount(ctx)
-	if err != nil {
-		return nil, err
-	}
-	switch {
-	case count == 0 && row.State == dbstore.StateActive:
-		updated, err := c.deps.DB.TransitionObjectStore(ctx, row.ID, dbstore.StateStopped)
-		if err != nil {
-			return nil, err
-		}
-		slog.Info("substrate: object store stopped; no active environment uses buckets")
-		if pools, err := c.deps.DB.ListLiveClusters(ctx); err == nil {
-			for _, pool := range pools {
-				c.EnqueuePool(pool.ID)
-			}
-		}
-		return updated, nil
-	case count > 0 && row.State == dbstore.StateStopped:
-		updated, err := c.deps.DB.TransitionObjectStore(ctx, row.ID, dbstore.StateActive)
-		if err != nil {
-			return nil, err
-		}
-		slog.Info("substrate: object store resumed")
-		return updated, nil
-	}
-	return nil, nil
-}
-
 // objectStoreReady reads component rollout status at reconcile time (the
-// poolReady pattern); continuous health is the provider observer's job.
-func (c *Controller) objectStoreReady(ctx context.Context, row store.ObjectStore) (bool, error) {
+// poolReady pattern), with a human reason while it is not ready; continuous
+// health is the provider observer's job.
+func (c *Controller) objectStoreReady(ctx context.Context, row store.ObjectStore) (bool, string, error) {
 	if c.cfg.Managed {
 		masters, err := c.deps.Cluster.GetObject(ctx, statefulSetsGVR, Namespace, seaweed.MasterService)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				return false, nil
+				return false, "object store masters not created yet", nil
 			}
-			return false, err
+			return false, "", err
 		}
-		if !workloadReady(masters.Object, int64(row.Masters)) {
-			return false, nil
+		if ready := workloadReadyCount(masters.Object); ready < int64(row.Masters) {
+			return false, fmt.Sprintf("object store masters %d/%d ready", ready, row.Masters), nil
 		}
 	}
 	name := seaweed.AllInOneApp
@@ -281,22 +231,25 @@ func (c *Controller) objectStoreReady(ctx context.Context, row store.ObjectStore
 	filer, err := c.deps.Cluster.GetObject(ctx, deploymentsGVR, Namespace, name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			return false, "object store components not created yet", nil
 		}
-		return false, err
+		return false, "", err
 	}
-	return workloadReady(filer.Object, 1), nil
+	if workloadReadyCount(filer.Object) < 1 {
+		return false, "object store rollout in progress", nil
+	}
+	return true, "", nil
 }
 
-// workloadReady reads readyReplicas >= minimum from a Deployment or
-// StatefulSet status object.
-func workloadReady(object map[string]any, minimum int64) bool {
+// workloadReadyCount reads readyReplicas from a Deployment or StatefulSet
+// status object.
+func workloadReadyCount(object map[string]any) int64 {
 	status, ok := object["status"].(map[string]any)
 	if !ok {
-		return false
+		return 0
 	}
 	ready, _ := status["readyReplicas"].(int64)
-	return ready >= minimum
+	return ready
 }
 
 // releaseObjectStore tears the components down; volumes on owned hosts

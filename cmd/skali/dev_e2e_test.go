@@ -135,7 +135,8 @@ func (b *syncBuffer) String() string {
 }
 
 // runInterrupt starts the CLI, waits until its output contains marker, sends
-// SIGINT, and requires a clean exit: the compose-like detach contract.
+// SIGINT, and requires a clean exit AFTER the session epilogue (the
+// compose-like pause-on-exit contract).
 func (h *e2eHarness) runInterrupt(marker string, wait time.Duration, args ...string) string {
 	h.t.Helper()
 	command := exec.Command(h.binary, args...)
@@ -199,6 +200,9 @@ func TestDevEndToEnd(t *testing.T) {
 	t.Run("FirstRunReachesHealthyRoute", func(t *testing.T) {
 		out := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
 		require.Contains(t, out, "Create k3d cluster "+e2eCluster)
+		// Every public platform image lands via the host cache and one
+		// batched import; nothing pulls from the internet mid-deploy.
+		require.Contains(t, out, "Pull platform images")
 		require.Contains(t, out, "run ")
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 2*time.Minute)
@@ -211,8 +215,10 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "nothing to deploy")
 		require.NotContains(t, out, "Build locally")
 		// The control-plane image is unchanged, so the repeat run must not
-		// pay for a k3d import again.
+		// pay for a k3d import again, and the recorded platform images must
+		// not re-probe or re-pull.
 		require.Contains(t, out, "unchanged since last import")
+		require.NotContains(t, out, "Pull platform images")
 	})
 
 	t.Run("ForceRedeploysUnchanged", func(t *testing.T) {
@@ -253,16 +259,24 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "healthy")
 	})
 
-	t.Run("FollowLogsAndDetach", func(t *testing.T) {
+	t.Run("AttachedExitPausesProject", func(t *testing.T) {
 		// Bare dev on an up-to-date project attaches to the runtime logs;
-		// Ctrl-C detaches cleanly and the project keeps serving.
+		// ending the session pauses the project (compose semantics): the
+		// route stops serving, the data survives, and the next dev brings
+		// it back.
 		out := h.runInterrupt("following logs", 2*time.Minute, "dev")
-		require.Contains(t, out, "detached; the project keeps running")
-		// Polled rather than single-shot: k3d's apiserver and ingress can
-		// blip for a few seconds under load, and the assertion here is that
-		// detaching did not stop the project, not that one instant GET
-		// succeeds.
-		h.waitRoute("hello from skali", time.Minute)
+		require.Contains(t, out, "is paused; its data is retained")
+		require.Eventually(t, func() bool {
+			status, _ := h.route("/")
+			return status != http.StatusOK
+		}, 2*time.Minute, 2*time.Second, "the route must stop serving after the session ends")
+		out = h.run(false, "", "dev", "ls")
+		require.Contains(t, out, "down")
+
+		// A background project (-d) is not paused by its session ending.
+		out = h.run(false, "", "dev", "-d")
+		require.Contains(t, out, "ready")
+		h.waitRoute("hello from skali", 2*time.Minute)
 	})
 
 	t.Run("DownKeepsData", func(t *testing.T) {
@@ -311,15 +325,48 @@ func TestDevEndToEnd(t *testing.T) {
 		h.waitRoute("hello again from skali", 5*time.Minute)
 	})
 
+	t.Run("InterruptDuringBuildClosesWindow", func(t *testing.T) {
+		// A session signaled mid-build must fail its open artifact window
+		// on the way out: an immediate explicit down must not be refused
+		// with an in-flight deployment (the stale-build sweeper would
+		// otherwise hold the window for BUILD_STALE_TIMEOUT).
+		source := filepath.Join(h.projectDir, "main.go")
+		content, err := os.ReadFile(source)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(source,
+			[]byte(strings.Replace(string(content), "hello again from skali", "hello three from skali", 1)), 0o644))
+
+		out := h.runInterrupt("Build ", 3*time.Minute, "dev")
+		require.Contains(t, out, "is paused; its data is retained")
+		out = h.run(false, "", "dev", "down")
+		require.NotContains(t, out, "in flight",
+			"the interrupted window must be closed before the pause")
+
+		// Restore the previous source and bring the project back so the
+		// following subtests see the hello-again revision.
+		require.NoError(t, os.WriteFile(source, content, 0o644))
+		out = h.run(false, "", "dev", "-d")
+		require.Contains(t, out, "ready")
+		h.waitRoute("hello again from skali", 5*time.Minute)
+	})
+
 	t.Run("StopAndStartRetainsState", func(t *testing.T) {
 		out := h.run(false, "", "dev", "stop")
 		require.Contains(t, out, "state is retained")
-		out = h.run(false, "", "dev", "up")
+		// A stop/start cycle must hit the fast path: no re-import (the node
+		// volumes keep containerd's imported image) and no bundle converge,
+		// just the restart plus the edge probe window.
+		out = h.run(false, "", "dev", "start")
 		require.Contains(t, out, "state retained")
-		// Stop/start keeps the node volumes, so containerd still holds the
-		// imported image and the skip survives the restart.
 		require.Contains(t, out, "unchanged since last import")
+		require.Contains(t, out, "unchanged since last converge")
+		require.NotContains(t, out, "Bootstrap database",
+			"a restart must not pay the full converge")
 		h.waitRoute("hello again from skali", 3*time.Minute)
+
+		// dev up stays the explicit full converge.
+		out = h.run(false, "", "dev", "up")
+		require.Contains(t, out, "Bootstrap database")
 	})
 
 	t.Run("PurgeRemovesEverything", func(t *testing.T) {
@@ -395,29 +442,35 @@ func TestDevGuestbookDatabase(t *testing.T) {
 	_, err := fmt.Sscanf(body, "visits: %d", &before)
 	require.NoError(t, err, "unexpected body %q", body)
 
-	// Down keeps the data and the whole platform goes quiet: CNPG removes
-	// the postgres pods, the object store scales to zero, and both keep
-	// their volumes.
+	// Down keeps the data AND the substrate: the project's workloads leave,
+	// but the platform postgres and object store keep running (the always-on
+	// dev substrate), so the next dev is a fast re-apply, not a cold start.
 	out = h.run(false, "", "dev", "down")
 	require.Contains(t, out, "is down; its data is retained")
 	kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
-	require.Eventually(t, func() bool {
+	platformRunning := func() bool {
 		pods, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
 			"get", "pods", "-n", "skali-platform", "--no-headers").CombinedOutput()
-		return err == nil && !strings.Contains(string(pods), "Running")
-	}, 4*time.Minute, 3*time.Second, "the dev platform must go quiet after down")
+		return err == nil && strings.Contains(string(pods), "Running")
+	}
+	require.True(t, platformRunning(), "the substrate must keep running after down")
+	for range 10 {
+		time.Sleep(3 * time.Second)
+		require.True(t, platformRunning(), "the substrate must never quiesce after down")
+	}
 
-	// The next dev resumes everything and both data planes survived.
+	// The next dev re-applies onto the warm substrate and both data planes
+	// survived.
 	out = h.run(false, "", "dev", "-d")
 	require.Contains(t, out, "ready")
-	h.waitRoute("visits: ", 10*time.Minute)
+	h.waitRoute("visits: ", 4*time.Minute)
 	var after int
 	_, body = h.route("/")
 	_, err = fmt.Sscanf(body, "visits: %d", &after)
 	require.NoError(t, err, "unexpected body %q", body)
-	require.Greater(t, after, before, "the visit history must survive hibernation")
+	require.Greater(t, after, before, "the visit history must survive down")
 	require.Eventually(t, func() bool {
 		status, body := h.route("/notes/e2e")
 		return status == http.StatusOK && body == "stored through skali buckets"
-	}, 2*time.Minute, 3*time.Second, "the stored note must survive the stopped store")
+	}, 2*time.Minute, 3*time.Second, "the stored note must survive down")
 }

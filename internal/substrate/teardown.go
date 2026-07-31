@@ -59,36 +59,6 @@ func (c *Controller) Release(ctx context.Context, environmentID uuid.UUID) (bool
 	return false, detail, nil
 }
 
-// Suspend implements the down side of reconcile.ClaimManager: the
-// environment keeps its claims and data, but its pools may hibernate when
-// nothing active uses them (local dev). Re-evaluation is a pool nudge.
-func (c *Controller) Suspend(ctx context.Context, environmentID uuid.UUID) error {
-	live, err := c.deps.DB.ListEnvironmentClaims(ctx, environmentID)
-	if err != nil {
-		return err
-	}
-	for _, row := range live {
-		placement, err := c.deps.DB.ActivePlacement(ctx, row.ID)
-		if err != nil {
-			if errors.Is(err, dbstore.ErrNotFound) {
-				continue
-			}
-			return err
-		}
-		c.EnqueuePool(placement.ClusterID)
-	}
-	// Bucket claims have no per-claim placement; the single store
-	// re-evaluates its stop-when-unused state.
-	liveBuckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, environmentID)
-	if err != nil {
-		return err
-	}
-	if len(liveBuckets) > 0 {
-		c.EnqueueObjectStore()
-	}
-	return nil
-}
-
 // teardownClaim walks a releasing claim to released: the logical database
 // is dropped declaratively, the substrate objects and credentials are
 // removed, the tenant and placement close, and empty non-shared pools are
@@ -105,16 +75,6 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 	pool, err := c.deps.DB.GetCluster(ctx, tenant.ClusterID)
 	if err != nil {
 		return 0, err
-	}
-
-	// A hibernated dev pool cannot process the drop; wake it first.
-	if pool.State == dbstore.StateHibernated {
-		if pool, err = c.deps.DB.TransitionCluster(ctx, pool.ID, dbstore.StateActive); err != nil {
-			return 0, err
-		}
-		if err := c.ensurePool(ctx, *pool); err != nil {
-			return 0, err
-		}
 	}
 
 	// Drop the logical database declaratively (ensure: absent, reclaim
@@ -190,7 +150,7 @@ func (c *Controller) finishClaimRelease(ctx context.Context, row store.DatabaseC
 		return c.releasePool(ctx, *pool)
 	}
 	// The shared pool survives its tenants; re-apply so the role list
-	// shrinks, and let pool work re-evaluate hibernation.
+	// shrinks.
 	if err := c.ensurePool(ctx, *pool); err != nil {
 		return err
 	}
@@ -215,35 +175,5 @@ func (c *Controller) releasePool(ctx context.Context, pool store.DatabaseCluster
 		return err
 	}
 	slog.Info("substrate: pool released", "pool", pool.Name)
-	return nil
-}
-
-// reconcilePoolLifecycle drives local-dev hibernation: the single dev pool
-// stops when no active environment uses databases and resumes when one
-// does. Production pools never hibernate.
-func (c *Controller) reconcilePoolLifecycle(ctx context.Context, pool *store.DatabaseCluster) error {
-	if c.cfg.Managed || pool.Class != dbstore.ClassShared {
-		return nil
-	}
-	count, err := c.deps.DB.ActiveClaimCount(ctx, pool.ID)
-	if err != nil {
-		return err
-	}
-	switch {
-	case pool.State == dbstore.StateActive && count == 0:
-		updated, err := c.deps.DB.TransitionCluster(ctx, pool.ID, dbstore.StateHibernated)
-		if err != nil {
-			return err
-		}
-		*pool = *updated
-		slog.Info("substrate: dev pool hibernated", "pool", pool.Name)
-	case pool.State == dbstore.StateHibernated && count > 0:
-		updated, err := c.deps.DB.TransitionCluster(ctx, pool.ID, dbstore.StateActive)
-		if err != nil {
-			return err
-		}
-		*pool = *updated
-		slog.Info("substrate: dev pool resumed", "pool", pool.Name)
-	}
 	return nil
 }

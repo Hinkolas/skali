@@ -9,6 +9,16 @@ RETURNING *;
 -- name: GetMaxRunLogSeq :one
 SELECT COALESCE(MAX(seq), 0)::bigint FROM run_logs WHERE attempt_id = $1;
 
+-- The most recent line of a step across attempts; waiting steps append a
+-- fresh reason only when it changed, so this is the dedupe read.
+-- name: LatestStepLog :one
+SELECT run_logs.message
+FROM run_logs
+JOIN attempts ON attempts.id = run_logs.attempt_id
+WHERE attempts.step_id = $1
+ORDER BY attempts.number DESC, run_logs.seq DESC
+LIMIT 1;
+
 -- Step logs across attempts, ordered by (attempt number, seq). The cursor
 -- is the same composite, so pagination and SSE resume share one shape.
 -- name: ListStepLogs :many

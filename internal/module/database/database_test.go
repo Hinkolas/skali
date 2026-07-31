@@ -116,12 +116,6 @@ func TestEvaluate(t *testing.T) {
 		pool(module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 0})})
 	require.Equal(t, module.HealthUnhealthy, down.Health)
 
-	hibernated := service.Evaluate([]module.ObservedResource{fresh(), provisionedClaim(),
-		tenant(module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"}),
-		pool(module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 0, Hibernated: true})})
-	require.Equal(t, module.HealthProgressing, hibernated.Health)
-	require.Equal(t, "pool-hibernated", hibernated.Diagnostics[0].Code)
-
 	releasing := service.Evaluate([]module.ObservedResource{fresh(), {
 		Kind:  module.KindDatabaseClaim,
 		Claim: &module.ClaimStatus{Phase: "releasing"},

@@ -113,14 +113,6 @@ func TestEvaluate(t *testing.T) {
 		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), down, usage})
 	require.Equal(t, module.HealthUnhealthy, unhealthy.Health)
 
-	// A stopped store is healthy by intent: the quiet dev platform.
-	stopped := module.ObservedResource{Kind: module.KindObjectStore,
-		ObjectStore: &module.ObjectStoreStatus{Stopped: true}}
-	idle := service.Evaluate([]module.ObservedResource{fresh(),
-		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), stopped})
-	require.Equal(t, module.HealthProgressing, idle.Health)
-	require.Equal(t, "store-stopped", idle.Diagnostics[0].Code)
-
 	// Releasing reflects the persisted destructive decision.
 	releasing := service.Evaluate([]module.ObservedResource{fresh(), claimResource("releasing", "")})
 	require.Equal(t, module.HealthProgressing, releasing.Health)

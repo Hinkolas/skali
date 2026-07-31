@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 )
 
 func TestRenderBundleObjects(t *testing.T) {
@@ -67,6 +69,37 @@ func TestRenderBundleObjects(t *testing.T) {
 	cnpg, err := ParseManifest(CNPGManifest())
 	require.NoError(t, err)
 	require.NotEmpty(t, cnpg)
+}
+
+// TestImagePins pins the bundle's image discipline: skali-db renders with
+// an explicit imageName (frozen against operator-default drift, and never
+// pinned below a previously running major), and the operator manifest is
+// rewritten to IfNotPresent so pre-pulled images are honored on every pod
+// start.
+func TestImagePins(t *testing.T) {
+	t.Parallel()
+	objects, err := Render(Profile{
+		SkalidImage:   "skalid:dev",
+		AuthSecret:    strings.Repeat("a", 32),
+		AdminEmail:    "dev@skali.localhost",
+		AdminPassword: "generated-password",
+		RegistryHost:  "localhost:5510",
+	})
+	require.NoError(t, err)
+	raw, err := objects.Database[0].MarshalJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"imageName":"`+BootstrapPostgresImage+`"`)
+
+	image, ok := cnpg.Lookup("postgres", 18)
+	require.True(t, ok)
+	require.Equal(t, image.Ref, BootstrapPostgresImage,
+		"skali-db and the substrate catalog must agree on the postgres 18 image")
+
+	manifest := string(CNPGManifest())
+	require.NotContains(t, manifest, "imagePullPolicy: Always")
+	require.Contains(t, manifest, "imagePullPolicy: IfNotPresent")
+	require.Contains(t, manifest, CNPGOperatorImage,
+		"the exported operator image must match the vendored manifest")
 }
 
 func TestHashTracksProfile(t *testing.T) {

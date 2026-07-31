@@ -47,10 +47,8 @@ func TestLiveObjectStoreBoot(t *testing.T) {
 
 	cleanupPlatform(t, client)
 
-	// The dev store is lazy AND demand-driven: without a live bucket claim
-	// the quiet lifecycle stops it immediately, so the boot walk holds one
-	// pending claim as demand (it is never driven; the store alone is under
-	// test).
+	// One pending bucket claim exists alongside the store (it is never
+	// driven; the store alone is under test).
 	suffix := uuid.Must(uuid.NewV7()).String()[24:]
 	proj, err := projects.Create(ctx, "demo"+suffix, "")
 	require.NoError(t, err)
@@ -82,8 +80,12 @@ func TestLiveObjectStoreBoot(t *testing.T) {
 	for {
 		require.False(t, time.Now().After(deadline),
 			"object store not ready before deadline; metadata wait: %s", controller.WaitingReason(metadata.ID))
-		if _, err := controller.reconcileClaim(ctx, metadata.ID); err != nil {
-			t.Logf("metadata claim (retrying): %v", err)
+		mRequeue, mErr := controller.reconcileClaim(ctx, metadata.ID)
+		if mErr != nil {
+			t.Logf("metadata claim (retrying): %v", mErr)
+		} else if fresh, freshErr := dbSvc.GetClaim(ctx, metadata.ID); freshErr == nil {
+			stepClaim(t, "metadata claim", mRequeue, mErr,
+				claim.Phase(fresh.Phase), controller.WaitingReason(metadata.ID))
 		}
 		requeue, err := controller.reconcileObjectStore(ctx)
 		if err != nil {

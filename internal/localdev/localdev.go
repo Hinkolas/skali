@@ -7,6 +7,7 @@
 package localdev
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -79,6 +80,11 @@ type State struct {
 	// cluster: the content identity behind the mutable SkalidImage tag.
 	// While it matches the daemon's current ID the import is skipped.
 	ImportedImageID string `json:"imported_image_id,omitempty"`
+	// ImportedImages records the public platform images already imported
+	// into the cluster's containerd. Version-pinned tags never move, so
+	// presence in the record is presence in the cluster while its node
+	// volumes live.
+	ImportedImages []string `json:"imported_images,omitempty"`
 }
 
 // StateDir is $XDG_STATE_HOME/skali, defaulting to ~/.local/state/skali on
@@ -351,12 +357,105 @@ func ImageID(ctx context.Context, image string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ImportImage loads a local docker image into the cluster's containerd.
-func ImportImage(ctx context.Context, image string) error {
+// ImportImages loads local docker images into the cluster's containerd,
+// one image per call through k3d's proven tools-node path. Direct mode is
+// deliberately not used: measured on k3d 5.9.0 it fails mid-stream yet
+// exits zero. k3d's exit code is not trusted either way; every import is
+// verified against the node's own image store and retried once, so a
+// silent import failure surfaces here instead of as an ImagePullBackOff
+// five minutes later.
+func ImportImages(ctx context.Context, images ...string) error {
+	for _, image := range images {
+		if imageInCluster(ctx, image) {
+			continue
+		}
+		if err := importImage(ctx, image); err != nil {
+			return err
+		}
+		if imageInCluster(ctx, image) {
+			continue
+		}
+		if err := importImage(ctx, image); err != nil {
+			return err
+		}
+		if !imageInCluster(ctx, image) {
+			return fmt.Errorf("localdev: image %s did not arrive in the cluster after import; "+
+				"try `k3d image import -c %s %s` manually", image, ClusterName(), image)
+		}
+	}
+	return nil
+}
+
+// importImage moves one host-daemon image into the node's containerd. The
+// primary path exports a single-platform tar and streams it into the
+// node's ctr: Docker's containerd store keeps pulled images as multi-arch
+// indexes whose full docker-save tars reference never-pulled platform
+// manifests, which the node's ctr rejects ("content digest not found") and
+// k3d then reports as success anyway (measured on k3d 5.9.0). Hosts
+// without the containerd store (no --platform on save) fall back to k3d's
+// import, which handles their classic tars fine.
+func importImage(ctx context.Context, image string) error {
+	node := "k3d-" + ClusterName() + "-server-0"
+	if platform, err := hostPlatform(ctx); err == nil {
+		if err := streamImage(ctx, node, platform, image); err == nil {
+			return nil
+		}
+	}
 	if out, err := exec.CommandContext(ctx, "k3d", "image", "import", "-c", ClusterName(), image).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d image import %s: %w\n%s", image, err, out)
 	}
 	return nil
+}
+
+// streamImage pipes a single-platform docker save straight into the node's
+// containerd, no tools node and no tar on disk.
+func streamImage(ctx context.Context, node, platform, image string) error {
+	save := exec.CommandContext(ctx, "docker", "image", "save", "--platform", platform, image)
+	load := exec.CommandContext(ctx, "docker", "exec", "-i", node, "ctr", "-n", "k8s.io", "images", "import", "-")
+	pipe, err := save.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	load.Stdin = pipe
+	var saveErr, loadErr bytes.Buffer
+	save.Stderr, load.Stderr = &saveErr, &loadErr
+	if err := load.Start(); err != nil {
+		return err
+	}
+	if err := save.Start(); err != nil {
+		_ = load.Wait()
+		return err
+	}
+	saveResult := save.Wait()
+	loadResult := load.Wait()
+	if saveResult != nil {
+		return fmt.Errorf("localdev: docker image save %s: %w\n%s", image, saveResult, saveErr.String())
+	}
+	if loadResult != nil {
+		return fmt.Errorf("localdev: import %s into %s: %w\n%s", image, node, loadResult, loadErr.String())
+	}
+	return nil
+}
+
+// hostPlatform is the docker server's os/arch, which is also every k3d
+// node's platform.
+func hostPlatform(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}").Output()
+	if err != nil {
+		return "", err
+	}
+	platform := strings.TrimSpace(string(out))
+	if platform == "" || strings.Contains(platform, "<no value>") {
+		return "", errors.New("localdev: docker server platform unavailable")
+	}
+	return platform, nil
+}
+
+// imageInCluster reports the image's presence in the server node's
+// containerd, the ground truth the pods resolve against.
+func imageInCluster(ctx context.Context, image string) bool {
+	node := "k3d-" + ClusterName() + "-server-0"
+	return exec.CommandContext(ctx, "docker", "exec", node, "crictl", "inspecti", "-q", image).Run() == nil
 }
 
 // BuildSkalidImage builds the control-plane image from the working tree;

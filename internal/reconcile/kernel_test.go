@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/workqueue"
 
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/deploy"
@@ -314,7 +315,8 @@ func TestReconcileDeadlineFailsRunKeepsTarget(t *testing.T) {
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Zero(t, requeue)
+	require.Equal(t, requeueHealthCheck, requeue,
+		"a first deployment past its deadline keeps the reconcile cadence; late recovery must not wait for the audit")
 
 	run, err := f.st.GetRunByID(ctx, result.RunID)
 	require.NoError(t, err)
@@ -335,6 +337,87 @@ func TestReconcileDeadlineFailsRunKeepsTarget(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "reconcile", runs[0].Kind)
 	require.Equal(t, "succeeded", runs[0].Status)
+}
+
+// TestResyncEnqueuesOutOfSyncEnvironments pins the environment-level floor:
+// the resync ticker re-enqueues every environment whose active revision has
+// not reached the promoted target, and leaves settled environments alone.
+func TestResyncEnqueuesOutOfSyncEnvironments(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	f.executeDeployment(t)
+	f.fake.SetFresh()
+
+	drain := func() {
+		for f.kernel.queue.Len() > 0 {
+			id, _ := f.kernel.queue.Get()
+			f.kernel.queue.Done(id)
+			f.kernel.queue.Forget(id)
+		}
+	}
+
+	// Promoted but not yet active: out of sync, the resync re-enqueues.
+	drain()
+	f.kernel.resync(ctx)
+	require.Equal(t, 1, f.kernel.queue.Len(), "an out-of-sync environment re-enters the queue")
+
+	// Converged to active: in sync, the resync stays quiet.
+	drain()
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	drain()
+	f.kernel.resync(ctx)
+	require.Zero(t, f.kernel.queue.Len(), "a settled environment is not re-enqueued")
+}
+
+// The worker's failure backoff is capped at the health-check cadence: this
+// pins the exact limiter construction New uses, so a persistently erroring
+// environment retries within requeueHealthCheck instead of the exponential
+// tail that once parked in-flight rollouts for many minutes.
+func TestFailureBackoffCapped(t *testing.T) {
+	t.Parallel()
+	limiter := workqueue.NewTypedWithMaxWaitRateLimiter(
+		workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck)
+	id := uuid.New()
+	for range 30 {
+		require.LessOrEqual(t, limiter.When(id), requeueHealthCheck)
+	}
+}
+
+// TestWaitStepReasonUpdates pins the truthful-wait contract: a waiting
+// step's reason appends as a fresh log line when it changes across passes,
+// stays silent when it repeats, and the step itself stays waiting.
+func TestWaitStepReasonUpdates(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{})
+	ctx := context.Background()
+
+	run, err := f.journal.CreateRun(ctx, journal.RunInput{
+		Kind: "reconcile", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "test",
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.journal.StartRun(ctx, run.ID))
+	attachment := &runAttachment{journal: f.journal, run: run}
+
+	attachment.waitStep(ctx, "claim:databases.data", "Provision databases.data", "pool starting")
+	attachment.waitStep(ctx, "claim:databases.data", "Provision databases.data", "pool starting")
+	attachment.waitStep(ctx, "claim:databases.data", "Provision databases.data", "database applying")
+
+	tree, err := f.journal.RunTree(ctx, run.ID)
+	require.NoError(t, err)
+	require.Len(t, tree.Steps, 1)
+	step := tree.Steps[0].Step
+	require.Equal(t, "waiting", step.Status)
+
+	logs, err := f.journal.StepLogs(ctx, step.ID, journal.Cursor{}, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 2, "a repeated reason must not append a line")
+	require.Equal(t, "pool starting", logs[0].Message)
+	require.Equal(t, "database applying", logs[1].Message)
 }
 
 // The activation guard: activating a revision that is no longer the target

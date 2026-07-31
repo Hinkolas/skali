@@ -141,8 +141,6 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 	switch {
 	case pool == nil:
 		return progressing("pool-unobserved", "waiting for the pool observation to catch up")
-	case pool.Hibernated:
-		return progressing("pool-hibernated", "the pool is hibernated and resumes with the next deployment")
 	case pool.ReadyInstances == 0:
 		return module.Evaluation{Health: module.HealthUnhealthy, Diagnostics: []module.Diagnostic{{
 			Severity: "error", Code: "pool-unavailable",

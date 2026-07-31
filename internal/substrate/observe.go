@@ -21,8 +21,7 @@ var (
 // SeaweedProbe returns the provider observation probe (REWORK_V2 7.4): one
 // pass reports the platform-scoped store status plus per-bucket existence
 // and usage, and enforces storage quotas by flipping per-bucket read-only
-// flags on the same cadence. A stopped store reports by intent without
-// contacting seaweed, so dev idleness never reads as staleness.
+// flags on the same cadence.
 func (c *Controller) SeaweedProbe() observe.Probe {
 	return func(ctx context.Context) ([]observe.Object, error) {
 		row, err := c.deps.DB.LiveObjectStore(ctx)
@@ -44,11 +43,7 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 			ObjectStore: &module.ObjectStoreStatus{
 				MastersDesired:       row.Masters,
 				VolumeServersDesired: row.VolumeServers,
-				Stopped:              row.State == dbstore.StateStopped,
 			},
-		}
-		if row.State == dbstore.StateStopped {
-			return []observe.Object{storeObj}, nil
 		}
 		if c.deps.Seaweed == nil {
 			return nil, errors.New("substrate: no seaweed client configured")

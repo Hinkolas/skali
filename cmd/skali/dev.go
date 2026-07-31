@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -30,34 +34,53 @@ func newDevCommand() *cobra.Command {
 		Long: "Bare skali dev is the complete paved path: it ensures the disposable\n" +
 			"local platform (k3d cluster with in-cluster skalid, Postgres, and\n" +
 			"registry), builds and deploys the current project, attaches to the\n" +
-			"rollout, and follows the runtime logs; Ctrl-C detaches and leaves\n" +
-			"the project running. Use -d to skip the log follow, skali dev down\n" +
-			"to remove the project again, and skali dev ls to see everything on\n" +
-			"the local platform. Local values never leave this machine.",
+			"rollout, and follows the runtime logs. Like docker compose, ending\n" +
+			"the session (Ctrl-C, closing the terminal) pauses the project; its\n" +
+			"data is retained and the next skali dev brings it back. Use -d for\n" +
+			"a background project that keeps running, skali dev down to pause it\n" +
+			"explicitly, and skali dev ls to see everything on the local\n" +
+			"platform. Local values never leave this machine.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			// The whole session runs on one signal-scoped context: INT,
+			// TERM, and HUP (a closed terminal) all end it, and the
+			// epilogue pauses the project unless -d asked for a background
+			// project.
+			sessionCtx, stopSignals := signal.NotifyContext(command.Context(),
+				os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+			defer stopSignals()
+			command.SetContext(sessionCtx)
+
+			var window atomic.Value // open artifact window's deployment ID
+			window.Store("")
 			if _, err := ensureLocalPlatform(command, skalidImage, false); err != nil {
+				if sessionCtx.Err() != nil {
+					return errors.New("interrupted")
+				}
 				return err
 			}
 			opts := &deployOptions{
-				Environment:   localEnvironmentName,
-				EnvFile:       envFile,
-				AutoEnvFile:   true,
-				Yes:           true,
-				CreateMissing: true,
-				Platform:      platform,
-				Force:         force || rebuild,
-				Rebuild:       rebuild,
+				Environment:        localEnvironmentName,
+				EnvFile:            envFile,
+				AutoEnvFile:        true,
+				Yes:                true,
+				CreateMissing:      true,
+				Platform:           platform,
+				Force:              force || rebuild,
+				Rebuild:            rebuild,
+				OnDeploymentOpened: func(id string) { window.Store(id) },
+				OnDeploymentClosed: func() { window.Store("") },
 			}
 			outcome, err := runDeployFlow(command, opts, false)
+			if sessionCtx.Err() != nil {
+				return finishInterrupted(command, window.Load().(string), detach)
+			}
 			if err != nil {
 				return err
 			}
 			if err := printDevReady(command); err != nil {
 				return err
 			}
-			// A user who already detached from the rollout with Ctrl-C is
-			// not asking for more output.
 			if detach || outcome == deployOutcomeDetached {
 				return nil
 			}
@@ -66,8 +89,11 @@ func newDevCommand() *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(command.OutOrStdout(),
-				"\nfollowing logs; Ctrl-C detaches and leaves the project running")
-			return followRuntimeLogs(command, api, environmentID, "")
+				"\nfollowing logs; Ctrl-C pauses the project (skali dev -d keeps it running)")
+			if err := followRuntimeLogs(command, api, environmentID, ""); err != nil {
+				return err
+			}
+			return finishInterrupted(command, window.Load().(string), false)
 		},
 	}
 	command.PersistentFlags().StringVar(&skalidImage, "skalid-image", "",
@@ -157,6 +183,28 @@ func newDevCommand() *cobra.Command {
 		},
 	}
 
+	start := &cobra.Command{
+		Use:   "start",
+		Short: "Start the stopped local platform; state is retained",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, args []string) error {
+			clusterStatus, err := localdev.Status(command.Context())
+			if err != nil {
+				return err
+			}
+			if clusterStatus == localdev.ClusterAbsent {
+				return errors.New("the local platform is not installed; run skali dev up first")
+			}
+			if _, err := ensureLocalPlatform(command, skalidImage, false); err != nil {
+				return err
+			}
+			out := command.OutOrStdout()
+			fmt.Fprintf(out, "%slocal platform running; state is retained\n",
+				clirender.StyleFor(out).Check())
+			return nil
+		},
+	}
+
 	var resetYes bool
 	reset := &cobra.Command{
 		Use:   "reset",
@@ -168,7 +216,7 @@ func newDevCommand() *cobra.Command {
 	}
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
-	command.AddCommand(up, status, logs, down, ls, stop, reset)
+	command.AddCommand(up, status, logs, down, ls, stop, start, reset)
 	return command
 }
 
@@ -205,15 +253,42 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 		}
 	}
 
+	status, err := teardownLocalEnvironment(ctx, out, api, environmentID, name, purge)
+	if err != nil {
+		return err
+	}
+	if status == "detached" {
+		return nil
+	}
+
+	if purge {
+		if err := waitEnvironmentGone(ctx, api, environmentID); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "\n%s%s is purged from the local platform; nothing of it remains\n",
+			style.Check(), name)
+		return nil
+	}
+	fmt.Fprintf(out, "\n%s%s is down; its data is retained\n", style.Check(), name)
+	fmt.Fprintf(out, "  %s  skali dev\n", style.Dim("bring it back"))
+	return nil
+}
+
+// teardownLocalEnvironment issues the teardown (with the recorded-password
+// reauth retry) and attaches to its run; shared by skali dev down and the
+// session's pause-on-exit.
+func teardownLocalEnvironment(ctx context.Context, out io.Writer, api *client.Client,
+	environmentID, name string, purge bool) (string, error) {
+	style := clirender.StyleFor(out)
 	runID, err := api.TeardownEnvironment(ctx, environmentID, purge)
 	if isReauthRequired(err) {
 		if err := reauthLocal(ctx, api); err != nil {
-			return err
+			return "", err
 		}
 		runID, err = api.TeardownEnvironment(ctx, environmentID, purge)
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	verb := "take down"
@@ -226,27 +301,64 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 		// The purge epilogue deletes the environment row and every run
 		// with it; losing the run mid-poll means the purge finished.
 		if !purge || !isNotFound(err) {
-			return err
+			return "", err
 		}
 		status = "succeeded"
 	}
 	switch status {
-	case "succeeded":
-	case "detached":
-		return nil
+	case "succeeded", "detached":
+		return status, nil
 	default:
-		return fmt.Errorf("run %s %s", runID, status)
+		return "", fmt.Errorf("run %s %s", runID, status)
 	}
+}
 
-	if purge {
-		if err := waitEnvironmentGone(ctx, api, environmentID); err != nil {
-			return err
+// finishInterrupted is the signaled session's epilogue, on a fresh context
+// (the session context is already dead and on SIGHUP the terminal may be
+// gone, so prints are best-effort): close an interrupted artifact window so
+// the pause is not refused as an in-flight deployment, then pause the
+// project unless -d asked for a background one.
+func finishInterrupted(command *cobra.Command, window string, keepRunning bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	out := command.OutOrStdout()
+	style := clirender.StyleFor(out)
+
+	project, projectErr := loadLocalProject("")
+	cfg, cfgErr := cliconfig.Load()
+	if projectErr != nil || cfgErr != nil || cfg.Remotes[localRemoteName] == nil {
+		return errors.New("interrupted")
+	}
+	localRemote := cfg.Remotes[localRemoteName]
+	api := client.New(localRemote.Master, localRemote.Token, userAgent())
+
+	if window != "" {
+		// The interrupted build client owns the open window; failing it
+		// discards the staged values and unblocks the pause immediately
+		// instead of after the stale-build sweep.
+		if err := api.FailDeployment(ctx, window); err != nil {
+			fmt.Fprintf(out, "%s\n", style.Dim("close interrupted deployment: "+err.Error()))
 		}
-		fmt.Fprintf(out, "\n%s%s is purged from the local platform; nothing of it remains\n",
-			style.Check(), name)
+	}
+	if keepRunning {
+		return errors.New("interrupted")
+	}
+	name := project.Result.Definition.Name
+	_, environmentID, err := resolveEnvironmentIDs(ctx, api, name, localEnvironmentName)
+	if err != nil {
+		// Nothing deployed yet, nothing to pause.
+		return errors.New("interrupted")
+	}
+	fmt.Fprintf(out, "\npausing %s\n", name)
+	status, err := teardownLocalEnvironment(ctx, out, api, environmentID, name, false)
+	if err != nil {
+		return err
+	}
+	if status == "detached" {
+		fmt.Fprintln(out, "the pause continues on the server; check skali dev ls")
 		return nil
 	}
-	fmt.Fprintf(out, "\n%s%s is down; its data is retained\n", style.Check(), name)
+	fmt.Fprintf(out, "\n%s%s is paused; its data is retained\n", style.Check(), name)
 	fmt.Fprintf(out, "  %s  skali dev\n", style.Dim("bring it back"))
 	return nil
 }

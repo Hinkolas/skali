@@ -174,6 +174,20 @@ func (s *Service) SetStepProgress(ctx context.Context, stepID uuid.UUID, current
 	return nil
 }
 
+// LatestStepMessage returns a step's most recent log line across attempts,
+// empty when none exist; waiting steps use it to append a fresh reason only
+// when it changed.
+func (s *Service) LatestStepMessage(ctx context.Context, stepID uuid.UUID) (string, error) {
+	message, err := s.st.LatestStepLog(ctx, stepID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("journal: latest step log: %w", err)
+	}
+	return message, nil
+}
+
 // StartAttempt opens the next attempt of a running step. The partial unique
 // index rejects a second running attempt; retries stay inside one step.
 func (s *Service) StartAttempt(ctx context.Context, stepID uuid.UUID) (*store.Attempt, error) {

@@ -172,17 +172,6 @@ func (s *Service) SetClusterShape(ctx context.Context, id uuid.UUID, instances i
 	return nil
 }
 
-// ActiveClaimCount reports how many live claims on the cluster belong to an
-// active environment (system claims always count); the local-dev hibernation
-// input.
-func (s *Service) ActiveClaimCount(ctx context.Context, clusterID uuid.UUID) (int64, error) {
-	count, err := s.st.CountActiveDatabaseClaimsByCluster(ctx, clusterID)
-	if err != nil {
-		return 0, fmt.Errorf("dbstore: active claim count: %w", err)
-	}
-	return count, nil
-}
-
 // ListClusterClaims returns the live claims placed on a cluster.
 func (s *Service) ListClusterClaims(ctx context.Context, clusterID uuid.UUID) ([]store.DatabaseClaim, error) {
 	rows, err := s.st.ListLiveDatabaseClaimsByCluster(ctx, clusterID)

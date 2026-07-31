@@ -52,3 +52,4 @@ type silentProgress struct{}
 func (silentProgress) Start(string) {}
 func (silentProgress) Done(string)  {}
 func (silentProgress) Skip(string)  {}
+func (silentProgress) Note(string)  {}

@@ -40,10 +40,6 @@ type StoreSpec struct {
 	// Managed pins components to object-storage-capable nodes; local dev
 	// renders the all-in-one shape instead.
 	Managed bool
-	// Stopped scales every workload to zero (the dev idle state; data
-	// kept). Rendered explicitly in both states so server-side apply owns
-	// the replica fields.
-	Stopped bool
 }
 
 func componentLabels(app string) map[string]string {
@@ -70,10 +66,7 @@ func masterPeers(namespace string, masters int) string {
 	return strings.Join(peers, ",")
 }
 
-func replicas(spec StoreSpec, desired int32) *int32 {
-	if spec.Stopped {
-		desired = 0
-	}
+func replicas(desired int32) *int32 {
 	return &desired
 }
 
@@ -236,7 +229,7 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 		ObjectMeta: objectMeta(spec.Namespace, MasterService, MasterService),
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName: MasterService,
-			Replicas:    replicas(spec, int32(spec.Masters)),
+			Replicas:    replicas(int32(spec.Masters)),
 			Selector:    &metav1.LabelSelector{MatchLabels: map[string]string{"app": MasterService}},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
@@ -319,12 +312,6 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 func renderVolumes(spec StoreSpec) *appsv1.DaemonSet {
 	labels := componentLabels(VolumeApp)
 	nodeSelector := capabilitySelector()
-	if spec.Stopped {
-		// DaemonSets have no replica count; parking the selector on a label
-		// no node carries drains every volume server while the data stays
-		// on the hosts.
-		nodeSelector = map[string]string{SystemLabel + "-stopped": "true"}
-	}
 	directoryOrCreate := corev1.HostPathDirectoryOrCreate
 	return &appsv1.DaemonSet{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DaemonSet"},
@@ -409,7 +396,7 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: objectMeta(spec.Namespace, FilerService, FilerService),
 		Spec: appsv1.DeploymentSpec{
-			Replicas: replicas(spec, 2),
+			Replicas: replicas(2),
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": FilerService}},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
@@ -503,7 +490,7 @@ func renderAllInOne(spec StoreSpec) *appsv1.Deployment {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: objectMeta(spec.Namespace, AllInOneApp, AllInOneApp),
 		Spec: appsv1.DeploymentSpec{
-			Replicas: replicas(spec, 1),
+			Replicas: replicas(1),
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": AllInOneApp}},
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Template: corev1.PodTemplateSpec{

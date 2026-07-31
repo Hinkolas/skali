@@ -53,9 +53,6 @@ type ClaimManager interface {
 	// purging environment, reporting completion and, while unfinished, what
 	// is still going.
 	Release(ctx context.Context, environmentID uuid.UUID) (released bool, detail []string, err error)
-	// Suspend tells the substrate an environment went down while keeping
-	// its data, so idle pools may hibernate (local dev).
-	Suspend(ctx context.Context, environmentID uuid.UUID) error
 }
 
 // ClaimEnsureInput carries the environment identity the portable revision
@@ -110,16 +107,23 @@ func New(deps Deps, cfg Config) *Kernel {
 	if cfg.Workers <= 0 {
 		cfg.Workers = 2
 	}
+	if cfg.Resync <= 0 {
+		cfg.Resync = 5 * time.Minute
+	}
 	if cfg.Audit <= 0 {
 		cfg.Audit = 30 * time.Minute
 	}
 	if cfg.RolloutDeadline <= 0 {
 		cfg.RolloutDeadline = 10 * time.Minute
 	}
+	// The failure backoff is capped at the health-check cadence: a transient
+	// error must never park an in-flight rollout longer than an ordinary
+	// waiting pass.
 	return &Kernel{
-		deps:  deps,
-		cfg:   cfg,
-		queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[uuid.UUID]()),
+		deps: deps,
+		cfg:  cfg,
+		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
+			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck)),
 	}
 }
 
@@ -167,17 +171,36 @@ func (k *Kernel) Run(ctx context.Context) error {
 	}
 	k.audit(ctx)
 
-	ticker := time.NewTicker(k.cfg.Audit)
-	defer ticker.Stop()
+	auditTicker := time.NewTicker(k.cfg.Audit)
+	defer auditTicker.Stop()
+	resyncTicker := time.NewTicker(k.cfg.Resync)
+	defer resyncTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			k.queue.ShutDown()
 			workers.Wait()
 			return nil
-		case <-ticker.C:
+		case <-auditTicker.C:
 			k.audit(ctx)
+		case <-resyncTicker.C:
+			k.resync(ctx)
 		}
+	}
+}
+
+// resync is the environment-level floor between audits: every environment
+// whose cluster state has not reached its promoted target re-enters the
+// queue, so a lost watch event or a dropped requeue delays convergence by at
+// most one interval instead of until the audit.
+func (k *Kernel) resync(ctx context.Context) {
+	targets, err := k.deps.Store.ListEnvironmentsOutOfSync(ctx)
+	if err != nil {
+		slog.Warn("resync: list environments out of sync", "error", err)
+		return
+	}
+	for _, target := range targets {
+		k.queue.Add(target.EnvironmentID)
 	}
 }
 
@@ -189,6 +212,8 @@ func (k *Kernel) worker(ctx context.Context) {
 		}
 		requeue, err := k.reconcileEnvironment(ctx, environmentID)
 		k.queue.Done(environmentID)
+		slog.Debug("reconcile: dequeue", "environment", environmentID,
+			"requeue", requeue, "error", err != nil)
 		switch {
 		case ctx.Err() != nil:
 			return

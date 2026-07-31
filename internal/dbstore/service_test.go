@@ -254,13 +254,12 @@ func TestClusterLifecycleAndPacking(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, pool.ID, found.ID)
 
-	hibernated, err := f.svc.TransitionCluster(ctx, pool.ID, StateHibernated)
-	require.NoError(t, err)
-	require.Equal(t, StateHibernated, hibernated.State)
+	// The retired hibernated state is rejected outright; release is the
+	// only way out of active.
+	_, err = f.svc.TransitionCluster(ctx, pool.ID, "hibernated")
+	require.Error(t, err)
 	_, err = f.svc.TransitionCluster(ctx, pool.ID, StateReleased)
 	require.ErrorIs(t, err, ErrInvalidTransition)
-	_, err = f.svc.TransitionCluster(ctx, pool.ID, StateActive)
-	require.NoError(t, err)
 	_, err = f.svc.TransitionCluster(ctx, pool.ID, StateReleasing)
 	require.NoError(t, err)
 	_, err = f.svc.TransitionCluster(ctx, pool.ID, StateReleased)
@@ -271,41 +270,6 @@ func TestClusterLifecycleAndPacking(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	replacement := f.cluster(t, "pg17-shared")
 	require.NotEqual(t, pool.ID, replacement.ID)
-}
-
-func TestActiveClaimCountFollowsEnvironmentState(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	ctx := context.Background()
-
-	pool := f.cluster(t, "pg17-shared")
-	created, err := f.svc.EnsureClaim(ctx, f.owner("data"), spec())
-	require.NoError(t, err)
-	_, err = f.svc.BindClaim(ctx, created.ID, pool.ID)
-	require.NoError(t, err)
-
-	count, err := f.svc.ActiveClaimCount(ctx, pool.ID)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, count)
-
-	// Taking the environment down removes its claims from the active count:
-	// the local-dev pool may hibernate.
-	rows, err := f.st.MarkEnvironmentDown(ctx, f.environmentID)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, rows)
-	count, err = f.svc.ActiveClaimCount(ctx, pool.ID)
-	require.NoError(t, err)
-	require.Zero(t, count)
-
-	// System claims have no environment and always count as active.
-	system, err := f.svc.EnsureClaim(ctx, SystemOwner("object-storage/metadata"), spec())
-	require.NoError(t, err)
-	require.Equal(t, "system/object-storage/metadata", system.OwnerRef)
-	_, err = f.svc.BindClaim(ctx, system.ID, pool.ID)
-	require.NoError(t, err)
-	count, err = f.svc.ActiveClaimCount(ctx, pool.ID)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, count)
 }
 
 func TestClaimHistorySurvivesEnvironmentPurge(t *testing.T) {

@@ -52,14 +52,6 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID))
 	attachment.ensureKind = "teardown"
 
-	// A down environment keeps its claims and data; the substrate may
-	// hibernate pools nothing active uses anymore (local dev).
-	if !releasing && k.deps.Claims != nil {
-		if err := k.deps.Claims.Suspend(ctx, environmentID); err != nil {
-			slog.Warn("reconcile: suspend claims", "environment", environmentID, "error", err)
-		}
-	}
-
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 	if teardownSettled(snapshot, releasing) {
 		if !releasing {

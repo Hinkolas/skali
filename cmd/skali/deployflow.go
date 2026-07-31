@@ -61,6 +61,11 @@ type deployOptions struct {
 	// plan and deploy. dev force-selects the local remote and never
 	// touches the binding.
 	UseBinding bool
+	// OnDeploymentOpened and OnDeploymentClosed observe the artifact
+	// window so a signaled dev session can fail an interrupted window on a
+	// fresh context (pause-on-exit); both optional.
+	OnDeploymentOpened func(deploymentID string)
+	OnDeploymentClosed func()
 }
 
 // project bundles everything the flow knows about the local checkout.
@@ -1081,6 +1086,9 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		fmt.Fprintln(out, "\nnothing to deploy")
 		return deployOutcomeUpToDate, nil
 	}
+	if opts.OnDeploymentOpened != nil {
+		opts.OnDeploymentOpened(opened.Deployment.ID)
+	}
 	fmt.Fprintf(out, "\n%s %s  deploy %s to %s\n", style.Dim("run"),
 		style.Bold(opened.Deployment.RunID), project.Result.Definition.Name, opts.Environment)
 
@@ -1101,6 +1109,9 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	}
 	if _, err := api.CompleteDeployment(ctx, opened.Deployment.ID); err != nil {
 		return "", err
+	}
+	if opts.OnDeploymentClosed != nil {
+		opts.OnDeploymentClosed()
 	}
 	if opts.Detach {
 		fmt.Fprintf(out, "deployment continues on the server; attach with: skali run attach %s\n", opened.Deployment.RunID)

@@ -42,7 +42,6 @@ func ConvertCluster(object *unstructured.Unstructured) (observe.Object, bool) {
 			ReadyInstances: int32(ready),
 			Phase:          phase,
 			Primary:        primary,
-			Hibernated:     object.GetAnnotations()[HibernationAnnotation] == "on",
 		},
 	}, true
 }

@@ -7,7 +7,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
@@ -36,7 +35,6 @@ func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster)
 		StorageBytes: pool.StorageBytes,
 		Synchronous:  pool.Instances >= 3,
 		Managed:      c.cfg.Managed,
-		Hibernated:   pool.State == dbstore.StateHibernated,
 		Roles:        roles,
 	})
 	if _, err := c.deps.Cluster.ApplyAs(ctx, object, kube.FieldManagerPlatform, false); err != nil {
@@ -64,7 +62,30 @@ func (c *Controller) poolReady(ctx context.Context, pool store.DatabaseCluster) 
 		if reason == "" {
 			reason = "cluster starting"
 		}
-		return false, fmt.Sprintf("pool %s: %s (%d ready)", pool.Name, reason, ready), nil
+		if detail := poolConditionDetail(object); detail != "" {
+			reason += "; " + detail
+		}
+		return false, fmt.Sprintf("pool %s: %s (%d/%d ready)", pool.Name, reason, ready, pool.Instances), nil
 	}
 	return true, "", nil
+}
+
+// poolConditionDetail extracts the first failing CNPG condition's message:
+// free detail on the already-fetched object (image pulls, volume binding,
+// and similar stalls surface here).
+func poolConditionDetail(object *unstructured.Unstructured) string {
+	conditions, _, _ := unstructured.NestedSlice(object.Object, "status", "conditions")
+	for _, entry := range conditions {
+		condition, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if status, _ := condition["status"].(string); status != "False" {
+			continue
+		}
+		if message, _ := condition["message"].(string); message != "" {
+			return message
+		}
+	}
+	return ""
 }

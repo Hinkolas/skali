@@ -31,7 +31,8 @@ func TestRenderClusterSingle(t *testing.T) {
 	size, _, _ := unstructured.NestedString(object, "spec", "storage", "size")
 	require.Equal(t, "10Gi", size)
 	hibernation, _, _ := unstructured.NestedString(object, "metadata", "annotations", HibernationAnnotation)
-	require.Equal(t, "off", hibernation, "hibernation is explicit in both states so SSA owns the field")
+	require.Equal(t, "off", hibernation,
+		"the annotation stays an explicit off for one release so SSA wakes previously hibernated pools")
 
 	// Single instance renders no synchronous block; local shape renders no
 	// node selector.
@@ -66,15 +67,6 @@ func TestRenderClusterSynchronousManaged(t *testing.T) {
 	require.EqualValues(t, 1, number)
 	selector, _, _ := unstructured.NestedStringMap(object, "spec", "affinity", "nodeSelector")
 	require.Equal(t, map[string]string{"skali.dev/capability-database": "true"}, selector)
-}
-
-func TestRenderClusterHibernated(t *testing.T) {
-	t.Parallel()
-	spec := clusterSpec()
-	spec.Hibernated = true
-	object := RenderCluster(spec).Object
-	hibernation, _, _ := unstructured.NestedString(object, "metadata", "annotations", HibernationAnnotation)
-	require.Equal(t, "on", hibernation)
 }
 
 func TestRenderDatabase(t *testing.T) {

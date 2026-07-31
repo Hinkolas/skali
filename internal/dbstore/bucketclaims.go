@@ -163,18 +163,6 @@ func (s *Service) ListStoreBucketClaims(ctx context.Context, storeID uuid.UUID) 
 	return rows, nil
 }
 
-// ActiveBucketClaimCount is the local-dev store lifecycle input: live
-// claims that demand the store. Pending claims count (a first claim must be
-// able to bring the store up) and releasing claims count regardless of
-// environment state (teardown needs the store running).
-func (s *Service) ActiveBucketClaimCount(ctx context.Context) (int64, error) {
-	count, err := s.st.CountActiveBucketClaims(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("dbstore: count active bucket claims: %w", err)
-	}
-	return count, nil
-}
-
 // TransitionBucketClaim applies one guarded phase change under a row lock
 // and returns the updated claim.
 func (s *Service) TransitionBucketClaim(ctx context.Context, id uuid.UUID, to claim.Phase) (*store.BucketClaim, error) {

@@ -48,9 +48,9 @@ database with `extensions: [pg_trgm, ...]`. Available today: `btree_gin`,
   changes are explicit operations.
 
 Local development (`skali dev`) runs exactly one single-instance pool:
-isolation intents are honored logically but share it, higher availability
-stays pending, and the pool hibernates with data retained while no running
-project uses databases.
+isolation intents are honored logically but share it, and higher
+availability stays pending. The pool comes up with the platform and stays
+running; `skali dev stop` stops the whole platform with data retained.
 
 ## Deleting a database
 

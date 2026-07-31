@@ -102,7 +102,7 @@ func TestLiveSeaweedObservation(t *testing.T) {
 	for {
 		require.False(t, time.Now().After(deadline), "bucket not provisioned; last wait: %s",
 			controller.WaitingReason(created.ID))
-		_, _ = controller.reconcileBucketClaim(ctx, created.ID)
+		requeue, err := controller.reconcileBucketClaim(ctx, created.ID)
 		_, _ = controller.reconcileObjectStore(ctx)
 		if metadata, err := dbSvc.LiveSystemClaim(ctx, MetadataClaimKey); err == nil {
 			_, _ = controller.reconcileClaim(ctx, metadata.ID)
@@ -112,6 +112,7 @@ func TestLiveSeaweedObservation(t *testing.T) {
 		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
 			break
 		}
+		stepClaim(t, "bucket claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
 		time.Sleep(2 * time.Second)
 	}
 

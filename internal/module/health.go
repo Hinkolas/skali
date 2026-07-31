@@ -139,14 +139,12 @@ type ClaimStatus struct {
 }
 
 // DatabaseClusterStatus projects one CNPG pool: desired and ready
-// instances, the operator's phase, the current primary, and whether the
-// pool is hibernated (the local-dev idle state, healthy by intent).
+// instances, the operator's phase, and the current primary.
 type DatabaseClusterStatus struct {
 	Instances      int32
 	ReadyInstances int32
 	Phase          string
 	Primary        string
-	Hibernated     bool
 }
 
 // DatabaseTenantStatus projects one CNPG Database object: whether the
@@ -159,8 +157,7 @@ type DatabaseTenantStatus struct {
 }
 
 // ObjectStoreStatus projects the SeaweedFS system: desired and ready
-// component counts, gateway health, and whether the store is stopped (the
-// local-dev idle state, healthy by intent).
+// component counts plus gateway health.
 type ObjectStoreStatus struct {
 	MastersDesired       int32
 	MastersReady         int32
@@ -168,7 +165,6 @@ type ObjectStoreStatus struct {
 	VolumeServersReady   int32
 	FilerReady           bool
 	S3Ready              bool
-	Stopped              bool
 }
 
 // BucketStatus projects one bucket's existence and usage as reported by the

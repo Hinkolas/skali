@@ -14,12 +14,15 @@ import (
 
 // Progress narrates converge stages: Start begins a stage, Done concludes
 // the running one with optional detail, Skip concludes it as not needed
-// with the reason. A stage that errors is never concluded; the caller
-// settles it from the returned error. A nil Progress is silent.
+// with the reason, and Note publishes transient detail inside a running
+// stage (what a long wait is actually doing). A stage that errors is never
+// concluded; the caller settles it from the returned error. A nil Progress
+// is silent.
 type Progress interface {
 	Start(title string)
 	Done(detail string)
 	Skip(detail string)
+	Note(line string)
 }
 
 type silentProgress struct{}
@@ -27,6 +30,7 @@ type silentProgress struct{}
 func (silentProgress) Start(string) {}
 func (silentProgress) Done(string)  {}
 func (silentProgress) Skip(string)  {}
+func (silentProgress) Note(string)  {}
 
 // Converge applies the profile's bundle in dependency order with readiness
 // waits: namespace, blessed operators (CNPG, plus cert-manager under a

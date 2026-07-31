@@ -1,6 +1,7 @@
 package observe
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/Hinkolas/skali/internal/lifecycle"
@@ -94,6 +95,7 @@ func (s *Store) MarkReady(source string) {
 	record.staleSince = time.Time{}
 	s.mu.Unlock()
 	if changed {
+		slog.Info("observe: source fresh", "source", source)
 		s.invalidateAll()
 	}
 }
@@ -107,6 +109,7 @@ func (s *Store) MarkUnready(source string) {
 	changed := record.transition(module.SourceUnknown)
 	s.mu.Unlock()
 	if changed {
+		slog.Info("observe: source unknown", "source", source)
 		s.invalidateAll()
 	}
 }
@@ -120,12 +123,17 @@ func (s *Store) MarkContact(source string) {
 	record.lastSync = now
 	record.failedAt = time.Time{}
 	changed := false
+	var staleFor time.Duration
 	if record.state == module.SourceStale {
 		changed = record.transition(module.SourceFresh)
+		if !record.staleSince.IsZero() {
+			staleFor = now.Sub(record.staleSince)
+		}
 		record.staleSince = time.Time{}
 	}
 	s.mu.Unlock()
 	if changed {
+		slog.Info("observe: source recovered", "source", source, "stale_for", staleFor)
 		s.invalidateAll()
 	}
 }
@@ -158,8 +166,12 @@ func (s *Store) EvaluateFreshness(source string, threshold time.Duration) {
 			record.staleSince = record.failedAt
 		}
 	}
+	failedAt := record.failedAt
 	s.mu.Unlock()
 	if changed {
+		// A stale source turns every module health unknown: applies of
+		// dependent services and activations block until recovery.
+		slog.Warn("observe: source stale", "source", source, "failed_at", failedAt)
 		s.invalidateAll()
 	}
 }

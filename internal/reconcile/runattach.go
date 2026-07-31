@@ -170,8 +170,10 @@ func (a *runAttachment) completeStep(ctx context.Context, key, title string, sta
 }
 
 // waitStep journals a visible waiting step: a dependency that is not ready
-// names what it waits for instead of retrying opaquely (section 8.3). Only
-// an in-flight run carries waiting steps; idle drift passes stay silent.
+// names what it waits for instead of retrying opaquely (section 8.3), and a
+// reason that changed across passes appends as a fresh line so the wait
+// narrates its actual progress. Only an in-flight run carries waiting
+// steps; idle drift passes stay silent.
 func (a *runAttachment) waitStep(ctx context.Context, key, title, reason string) {
 	if a.run == nil {
 		return
@@ -181,12 +183,18 @@ func (a *runAttachment) waitStep(ctx context.Context, key, title, reason string)
 		warn("ensure waiting step", err, "key", key)
 		return
 	}
-	current := journal.StepStatus(step.Status)
-	if current != journal.StepPending {
-		return // already waiting, running, or terminal: no repeat journaling
+	switch journal.StepStatus(step.Status) {
+	case journal.StepPending:
+		if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepWaiting); err != nil {
+			warn("mark step waiting", err, "key", key)
+			return
+		}
+	case journal.StepWaiting:
+		// Still waiting; only a changed reason journals below.
+	default:
+		return // running or terminal: no repeat journaling
 	}
-	if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepWaiting); err != nil {
-		warn("mark step waiting", err, "key", key)
+	if last, err := a.journal.LatestStepMessage(ctx, step.ID); err != nil || last == reason {
 		return
 	}
 	attempt, err := a.journal.StartAttempt(ctx, step.ID)

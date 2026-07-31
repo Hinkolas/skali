@@ -11,29 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const countActiveBucketClaims = `-- name: CountActiveBucketClaims :one
-SELECT count(*) FROM bucket_claims c
-LEFT JOIN environment_targets t ON t.environment_id = c.environment_id
-WHERE c.phase <> 'released'
-  AND (
-    c.phase = 'releasing'
-    OR c.owner_kind = 'system'
-    OR t.state = 'active'
-  )
-`
-
-// The local-dev store lifecycle input (owner decision 2026-07-29): the store
-// may stop when no live claim demands it. With one live store per
-// installation every bucket claim is its demand: pending claims count (a
-// first claim must be able to bring the store up), and releasing claims
-// count regardless of environment state (teardown needs the store running).
-func (q *Queries) CountActiveBucketClaims(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveBucketClaims)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createBucketClaim = `-- name: CreateBucketClaim :one
 INSERT INTO bucket_claims (
     id, owner_kind, project_id, environment_id, service_key, system_key,

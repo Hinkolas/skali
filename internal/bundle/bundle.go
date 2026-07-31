@@ -9,6 +9,7 @@
 package bundle
 
 import (
+	"bytes"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
@@ -31,6 +32,14 @@ import (
 const (
 	Namespace   = "skali-system"
 	CNPGVersion = "1.29.2"
+	// CNPGOperatorImage is the operator image the vendored manifest
+	// deploys, exported so local dev can pre-pull it into the cluster.
+	CNPGOperatorImage = "ghcr.io/cloudnative-pg/cloudnative-pg:" + CNPGVersion
+	// BootstrapPostgresImage pins skali-db's postgres image to what the
+	// 1.29 operator would default to anyway, frozen against operator
+	// default drift and pre-pullable. Never pin below a previously running
+	// major: CNPG refuses downgrades.
+	BootstrapPostgresImage = "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie"
 	// CertManagerVersion pins the vendored cert-manager release. The asset
 	// is embedded even though the local profile never applies it; roughly
 	// one megabyte of CLI weight buys one shared bundle package.
@@ -72,8 +81,16 @@ var OperatorNamespaces = []string{"cnpg-system", "cert-manager"}
 //go:embed assets/cnpg-1.29.2.yaml
 var cnpgManifest []byte
 
-// CNPGManifest is the pinned operator install manifest.
-func CNPGManifest() []byte { return cnpgManifest }
+// CNPGManifest is the pinned operator install manifest. The upstream
+// operator Deployment ships imagePullPolicy Always; the bundle rewrites it
+// to IfNotPresent so a pre-pulled, version-pinned operator image never
+// re-contacts the registry on pod start (the same image also runs as the
+// bootstrap-controller initContainer in every CNPG postgres pod).
+func CNPGManifest() []byte {
+	return bytes.Replace(cnpgManifest,
+		[]byte("imagePullPolicy: Always"),
+		[]byte("imagePullPolicy: IfNotPresent"), 1)
+}
 
 //go:embed assets/cert-manager-1.20.1.yaml
 var certManagerManifest []byte
@@ -299,7 +316,9 @@ func Render(profile Profile) (*Objects, error) {
 // stage).
 func Hash(profile Profile) string {
 	digest := sha256.New()
-	digest.Write(cnpgManifest)
+	// The patched manifest, exactly what ApplyManifest applies: a rewrite
+	// there must move the hash and yield a converge.
+	digest.Write(CNPGManifest())
 	sources := stageSources(profile)
 	if profile.Production != nil {
 		digest.Write(certManagerManifest)
@@ -393,6 +412,7 @@ metadata:
   name: skali-db
   namespace: %[1]s
 spec:
+  imageName: %[6]s
   instances: %[2]d
   storage:
     size: %[3]s%[4]s%[5]s
@@ -400,7 +420,7 @@ spec:
     initdb:
       database: skali
       owner: skali
-`, Namespace, instances, storage, affinity, synchronous)
+`, Namespace, instances, storage, affinity, synchronous, BootstrapPostgresImage)
 }
 
 // recordYAML publishes the canonical installation record for skalid to

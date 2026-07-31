@@ -75,15 +75,20 @@ func TestLiveBucketClaimProvisioning(t *testing.T) {
 	for {
 		require.False(t, time.Now().After(deadline),
 			"bucket claim not provisioned before deadline; last wait: %s", controller.WaitingReason(created.ID))
-		if _, err := controller.reconcileBucketClaim(ctx, created.ID); err != nil {
+		requeue, err := controller.reconcileBucketClaim(ctx, created.ID)
+		if err != nil {
 			t.Logf("bucket claim (retrying): %v", err)
 		}
 		if _, err := controller.reconcileObjectStore(ctx); err != nil {
 			t.Logf("object store (retrying): %v", err)
 		}
 		if metadata, err := dbSvc.LiveSystemClaim(ctx, MetadataClaimKey); err == nil {
-			if _, err := controller.reconcileClaim(ctx, metadata.ID); err != nil {
-				t.Logf("metadata claim (retrying): %v", err)
+			mRequeue, mErr := controller.reconcileClaim(ctx, metadata.ID)
+			if mErr != nil {
+				t.Logf("metadata claim (retrying): %v", mErr)
+			} else if fresh, freshErr := dbSvc.GetClaim(ctx, metadata.ID); freshErr == nil {
+				stepClaim(t, "metadata claim", mRequeue, mErr,
+					claim.Phase(fresh.Phase), controller.WaitingReason(metadata.ID))
 			}
 		}
 		current, getErr := dbSvc.GetBucketClaim(ctx, created.ID)
@@ -91,6 +96,7 @@ func TestLiveBucketClaimProvisioning(t *testing.T) {
 		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
 			break
 		}
+		stepClaim(t, "bucket claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
 		time.Sleep(2 * time.Second)
 	}
 

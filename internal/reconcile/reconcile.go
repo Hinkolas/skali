@@ -69,7 +69,9 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if err != nil {
 		// An unrenderable revision is permanent for this target: journal the
 		// diagnostic, never prune (compiler-error absence must not delete
-		// anything), and wait for a new target instead of spinning.
+		// anything), and wait for a new target instead of spinning. The
+		// kernel's resync ticker re-picks the environment while target and
+		// active disagree, so a later fix lands within one interval.
 		slog.Warn("reconcile: desired state failed", "environment", environmentID, "error", err)
 		attachment.completeStep(ctx, "render", "Render desired state", journal.StepFailed,
 			[]string{"rendering the desired state failed: " + err.Error()})
@@ -167,8 +169,20 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			}
 		}
 		for _, dotted := range batch {
-			if _, waits := waiting[dotted]; waits || claimWaiting[dotted] != "" || !preHealth[dotted] {
-				unhealthyEarlier = append(unhealthyEarlier, dotted)
+			collection, _ := splitService(dotted)
+			switch collection {
+			case "databases", "buckets":
+				// Claim readiness is fresh Postgres truth from ensureClaims;
+				// the projection-backed health view governs activation, not
+				// this gate. A provisioned claim must never withhold a
+				// dependent workload on informer or poll lag.
+				if claimWaiting[dotted] != "" {
+					unhealthyEarlier = append(unhealthyEarlier, dotted)
+				}
+			default:
+				if _, waits := waiting[dotted]; waits || !preHealth[dotted] {
+					unhealthyEarlier = append(unhealthyEarlier, dotted)
+				}
 			}
 		}
 	}
@@ -199,6 +213,22 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		if status.Health != module.HealthHealthy {
 			healthy = false
 		}
+	}
+	if !healthy {
+		blocked := make([]string, 0, len(unhealthyEarlier))
+		for _, dotted := range unhealthyEarlier {
+			reason := claimWaiting[dotted]
+			if reason == "" {
+				reason = waiting[dotted]
+			}
+			if reason == "" {
+				reason = "health pending"
+			}
+			blocked = append(blocked, dotted+": "+reason)
+		}
+		slog.Debug("reconcile: pass not healthy", "environment", environmentID,
+			"source", k.deps.Observed.Source().State,
+			"blocked", strings.Join(blocked, "; "))
 	}
 
 	if healthy {
@@ -232,8 +262,13 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 				slog.WarnContext(ctx, "rollout deadline exceeded; target returned to the active revision",
 					"environment_id", environmentID)
 				k.Enqueue(environmentID)
+				return 0, nil
 			}
-			return 0, nil
+			// A first deployment has nothing to fall back to; level-triggered
+			// reconciliation continues on the ordinary cadence so a late
+			// recovery still activates, instead of the environment silently
+			// leaving the queue until the audit.
+			return requeueHealthCheck, nil
 		}
 		attachment.waitStep(ctx, "verify", "Verify health",
 			strings.Join(healthSummary(statuses), "; "))

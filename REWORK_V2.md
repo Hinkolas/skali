@@ -1560,14 +1560,20 @@ Bare `skali dev` is the paved path. Supporting lifecycle commands should include
 approximately:
 
 ```text
-skali dev                 ensure, build, deploy, and attach current project
+skali dev                 ensure, build, deploy, and attach current project;
+                          ending the session (Ctrl-C, closed terminal) pauses
+                          the project, data retained (decided 2026-07-31)
+skali dev -d              background project: exit after the rollout settles,
+                          keep it running (compose-like detach)
 skali dev --env-file PATH deploy with an explicitly selected local env file
-skali dev up              ensure the local platform only
+skali dev up              fully converge the local platform
 skali dev status          show platform and current-project state
 skali dev logs [service]  stream runtime logs
 skali dev exec <service>  execute in a selected application member
 skali dev open [service]  open a local route
-skali dev stop            stop local services but retain state
+skali dev down [--purge]  pause the project (data retained); purge destroys it
+skali dev stop            stop the local platform but retain state
+skali dev start           start the stopped platform (fast path, no converge)
 skali dev reset           destructively recreate local state and cluster
 ```
 
@@ -1649,18 +1655,18 @@ explicit:
   shared, project, and dedicated isolation intents are honored logically
   (separate databases, roles, and credentials) but all place onto the
   single single-instance dev pool, and `asynchronous`/`synchronous`
-  availability stays visibly pending on one node. The dev pool is lazy and
-  reversible: created on first use, hibernated (CNPG hibernation, data
-  kept) while no active environment uses databases, resumed by the next
-  deployment.
+  availability stays visibly pending on one node. The dev pool is eager
+  and always on (decided 2026-07-31, superseding the 2026-07-29 lazy and
+  hibernating design): created at platform bring-up and running while the
+  platform runs, so the first deploy and every resume land on a warm pool.
+  Idleness is handled at the platform level (`skali dev stop` stops the
+  whole cluster, data retained), never per component.
 - The object store runs one local all-in-one SeaweedFS process (decided
-  2026-07-29): no replication, no raft quorum, one volume on one PVC. It
-  is lazy and reversible like the dev pool: created with the first bucket,
-  scaled to zero (data kept) while no active environment uses buckets, and
-  while stopped its metadata system claim releases its hold so the dev
-  database pool can hibernate too (the quiet platform). Bucket endpoints
-  stay in-cluster locally; the public S3 domain and presigned-URL flows
-  are production-only.
+  2026-07-29): no replication, no raft quorum, one volume on one PVC. Like
+  the dev pool it is eager and always on (decided 2026-07-31, superseding
+  the quiet-platform stop-when-unused design). Bucket endpoints stay
+  in-cluster locally; the public S3 domain and presigned-URL flows are
+  production-only.
 
 `skali dev` should show unsupported guarantees clearly. It must still use the
 same project definition, revision format, Kubernetes objects, operators, health
@@ -2345,13 +2351,14 @@ Implementation notes (landed through 2026-07-29):
   backup rows; every transition guarded by `internal/claim` and the pool
   state machine), `internal/substrate` (the controller: own queue and
   workers beside the kernel, placement, pool/tenant ensure, output mirrors,
-  teardown, dev hibernation, pool GC, and the Go-internal system-claim API
+  teardown, pool GC, and the Go-internal system-claim API
   `EnsureSystemClaim`/`ReleaseSystemClaim`), and `internal/substrate/cnpg`
   (image catalog and pure rendering; stock `-system` images, contrib
   extensions only; pgvector/postgis wait for a blessed image and reject at
   validation).
 - The kernel consumes claims through the `reconcile.ClaimManager` seam
-  (`Ensure`/`Release`/`Suspend`); `planBatches` orders all reconcilable
+  (`Ensure`/`Release`; `Suspend` was removed 2026-07-31 with the dev
+  quiescing states); `planBatches` orders all reconcilable
   collections by dotted name, `evaluateServices` dispatches through the
   module registry, and claim/tenant/pool truth reaches evaluation as
   observed input: the substrate publishes claim-phase projections, and a
@@ -2361,9 +2368,10 @@ Implementation notes (landed through 2026-07-29):
 - Owner decisions (2026-07-29): the production shared pool is ensured
   eagerly at boot on database-capable installations; local dev collapses
   shared, project, and dedicated isolation onto one single-instance pool
-  (documented parity boundary, section 11.7) that hibernates via
-  `cnpg.io/hibernation` when no active environment uses databases and
-  resumes with data intact on the next deployment; the backup/restore run
+  (documented parity boundary, section 11.7). Amended 2026-07-31: the dev
+  pool no longer hibernates; it is ensured eagerly at boot like production
+  and stays up while the platform runs (states retired by migration
+  00013). The backup/restore run
   skeleton and credential rotation are deferred to a later milestone: they
   wait for R6 to land so backups are designed once as a unified,
   project-level system covering databases and object storage together
@@ -2378,13 +2386,14 @@ Implementation notes (landed through 2026-07-29):
   sanctioned request-time Secret read. A live leak audit scans every
   durable text column for the generated password.
 - Verified live: claim provisioning, topology propagation on primary kill
-  (no request-time reads), destructive removal, hibernation, and the
-  synthetic system claim traversing the exact user-claim path with
-  `skali-system` untouched; the `examples/guestbook` dev e2e covers deploy,
-  visible database wait, connect-through-outputs, down/hibernate/resume
-  with surviving data. Availability-tier verification on a multi-node
-  cluster (asynchronous/synchronous) has not run live yet and rides the
-  next production rollout.
+  (no request-time reads), destructive removal, and the synthetic system
+  claim traversing the exact user-claim path with `skali-system`
+  untouched; the `examples/guestbook` dev e2e covers deploy, visible
+  database wait, connect-through-outputs, and down/resume with surviving
+  data on the always-on substrate (hibernation was verified live before
+  its 2026-07-31 retirement). Availability-tier verification on a
+  multi-node cluster (asynchronous/synchronous) has not run live yet and
+  rides the next production rollout.
 
 ### R6 - Object-storage substrate and service
 
@@ -2456,12 +2465,14 @@ Implementation notes (landed through 2026-07-29):
   it). Generated claim identities take the v7 UUID's random tail: the
   timestamp prefix collides for ids minted in the same window (measured:
   two claims in one deployment rendered the same object names).
-- Owner decisions (2026-07-29): dev is a fully quiet platform (lazy
-  all-in-one store, stop-when-unused, stopped store releases the metadata
-  claim's hold on the dev pool); production topology derives from the
+- Owner decisions (2026-07-29): production topology derives from the
   object-storage node count; the public S3 endpoint is part of R6; bucket
   credential rotation is deferred to the later unified rotation milestone
   with databases (a recorded deviation from the exit-criteria wording).
+  The 2026-07-29 quiet-platform decision (lazy all-in-one store,
+  stop-when-unused, stopped store releasing the metadata claim's hold) was
+  superseded 2026-07-31: the dev store is eager and always on, and the
+  quiescing machinery was removed.
 
 ### R7 - Product UI and platform completion
 

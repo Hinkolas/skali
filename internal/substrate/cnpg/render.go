@@ -13,10 +13,12 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-// HibernationAnnotation is CNPG's declarative hibernation switch: "on"
-// deletes the cluster's pods while keeping volumes and the resource itself.
-// It is rendered explicitly in both states so server-side apply owns the
-// field and flipping it back wakes the pool.
+// HibernationAnnotation is CNPG's declarative hibernation switch. Pools no
+// longer hibernate (owner decision 2026-07-31: the dev substrate is always
+// on), but the annotation stays rendered as an explicit "off" for one more
+// release: server-side apply keeps sole ownership, so an existing
+// hibernated dev pool is guaranteed to wake on its next converge. Dropping
+// the annotation entirely is the later cleanup.
 const HibernationAnnotation = "cnpg.io/hibernation"
 
 var (
@@ -46,17 +48,12 @@ type ClusterSpec struct {
 	Synchronous bool
 	// Managed pins the pool to database-capable nodes; local dev renders no
 	// selector because its nodes carry no capability labels.
-	Managed    bool
-	Hibernated bool
-	Roles      []Role
+	Managed bool
+	Roles   []Role
 }
 
 // RenderCluster renders the CNPG Cluster object for one pool.
 func RenderCluster(spec ClusterSpec) *unstructured.Unstructured {
-	hibernation := "off"
-	if spec.Hibernated {
-		hibernation = "on"
-	}
 	roles := make([]any, 0, len(spec.Roles))
 	for _, role := range spec.Roles {
 		roles = append(roles, map[string]any{
@@ -77,7 +74,7 @@ func RenderCluster(spec ClusterSpec) *unstructured.Unstructured {
 				kubernetes.LabelPool:    spec.Name,
 			},
 			"annotations": map[string]any{
-				HibernationAnnotation: hibernation,
+				HibernationAnnotation: "off",
 			},
 		},
 		"spec": map[string]any{

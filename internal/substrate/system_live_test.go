@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubetest"
@@ -56,8 +57,12 @@ func TestLiveSystemClaimSameSubstrate(t *testing.T) {
 	for !outputs.Provisioned {
 		require.False(t, time.Now().After(deadline),
 			"system claim not provisioned; last wait: %s", outputs.Waiting)
-		if _, err := controller.reconcileClaim(ctx, row.ID); err != nil {
+		requeue, err := controller.reconcileClaim(ctx, row.ID)
+		if err != nil {
 			t.Logf("reconcile (retrying): %v", err)
+		} else if fresh, freshErr := dbSvc.GetClaim(ctx, row.ID); freshErr == nil {
+			stepClaim(t, "system claim", requeue, err,
+				claim.Phase(fresh.Phase), controller.WaitingReason(row.ID))
 		}
 		outputs, err = controller.EnsureSystemClaim(ctx, "synthetic/exit-criteria", spec)
 		require.NoError(t, err)
@@ -89,12 +94,19 @@ func TestLiveSystemClaimSameSubstrate(t *testing.T) {
 	releaseDeadline := time.Now().Add(3 * time.Minute)
 	for {
 		require.False(t, time.Now().After(releaseDeadline), "system claim never released")
-		if _, err := controller.reconcileClaim(ctx, row.ID); err != nil {
+		requeue, err := controller.reconcileClaim(ctx, row.ID)
+		if err != nil {
 			t.Logf("teardown (retrying): %v", err)
 		}
-		if _, err := dbSvc.LiveSystemClaim(ctx, "synthetic/exit-criteria"); err != nil {
-			require.ErrorIs(t, err, dbstore.ErrNotFound)
+		if _, liveErr := dbSvc.LiveSystemClaim(ctx, "synthetic/exit-criteria"); liveErr != nil {
+			require.ErrorIs(t, liveErr, dbstore.ErrNotFound)
 			break
+		}
+		if err == nil {
+			if fresh, freshErr := dbSvc.GetClaim(ctx, row.ID); freshErr == nil {
+				stepClaim(t, "system teardown", requeue, err,
+					claim.Phase(fresh.Phase), controller.WaitingReason(row.ID))
+			}
 		}
 		time.Sleep(2 * time.Second)
 	}

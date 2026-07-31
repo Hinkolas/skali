@@ -114,9 +114,8 @@ func (s *service) Evaluate(observed []module.ObservedResource) module.Evaluation
 }
 
 // evaluateProvisioned composes a provisioned claim with the observed store
-// and per-bucket usage. A stopped store is healthy by intent (the quiet dev
-// platform); a stale provider source degrades with the last known state
-// retained.
+// and per-bucket usage. A stale provider source degrades with the last
+// known state retained.
 func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 	var objectStore *module.ObjectStoreStatus
 	for _, resource := range observed {
@@ -124,9 +123,6 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 			objectStore = resource.ObjectStore
 			break
 		}
-	}
-	if objectStore != nil && objectStore.Stopped {
-		return progressing("store-stopped", "the object store is stopped and resumes with the next deployment")
 	}
 
 	source := module.SourceNamed(observed, sourceName)

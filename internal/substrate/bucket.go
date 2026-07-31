@@ -62,8 +62,17 @@ func (c *Controller) reconcileBucketClaim(ctx context.Context, id uuid.UUID) (ti
 		return 0, err
 	}
 	c.publishBucketClaim(*current)
-	if transitioned && c.deps.Enqueue != nil && current.EnvironmentID != nil {
+	if (transitioned || current.Phase != row.Phase) && c.deps.Enqueue != nil && current.EnvironmentID != nil {
 		c.deps.Enqueue(*current.EnvironmentID)
+	}
+	// A non-terminal claim must never leave the queue: a pass that ends
+	// without an error or a wait still owes the next step a wakeup.
+	if requeue == 0 {
+		switch claim.Phase(current.Phase) {
+		case claim.PhaseProvisioned, claim.PhaseReleased:
+		default:
+			requeue = requeueWait
+		}
 	}
 	return requeue, nil
 }
@@ -78,20 +87,16 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if err != nil {
 		return false, err
 	}
-	// A stopped dev store resumes before any bucket work; the workload
-	// scale-up happens in the store reconcile below.
-	if sw.State == dbstore.StateStopped {
-		if sw, err = c.deps.DB.TransitionObjectStore(ctx, sw.ID, dbstore.StateActive); err != nil {
-			return false, err
-		}
-	}
 	c.EnqueueObjectStore()
-	ready, err := c.objectStoreReady(ctx, *sw)
+	ready, reason, err := c.objectStoreReady(ctx, *sw)
 	if err != nil {
 		return false, err
 	}
 	if !ready {
-		return false, errWaiting{reason: "waiting for the object store"}
+		if reason == "" {
+			reason = "waiting for the object store"
+		}
+		return false, errWaiting{reason: reason}
 	}
 	if c.deps.Seaweed == nil {
 		return false, errWaiting{reason: "the object-storage substrate is not available"}
@@ -128,7 +133,14 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 		return false, err
 	}
 
-	if claim.Phase(row.Phase) == claim.PhaseBound {
+	// The allocation may have bound the claim mid-pass; the transition test
+	// needs the fresh phase or the pass that binds and completes can never
+	// settle.
+	current, err := c.deps.DB.GetBucketClaim(ctx, row.ID)
+	if err != nil {
+		return false, err
+	}
+	if claim.Phase(current.Phase) == claim.PhaseBound {
 		if _, err := c.deps.DB.TransitionBucketClaim(ctx, row.ID, claim.PhaseProvisioned); err != nil {
 			return false, err
 		}
@@ -247,18 +259,15 @@ func (c *Controller) teardownBucketClaim(ctx context.Context, row store.BucketCl
 	// data with it.
 	sw, err := c.deps.DB.LiveObjectStore(ctx)
 	if err == nil && sw.State != dbstore.StateReleasing {
-		if sw.State == dbstore.StateStopped {
-			if _, err := c.deps.DB.TransitionObjectStore(ctx, sw.ID, dbstore.StateActive); err != nil {
-				return 0, err
-			}
-			c.EnqueueObjectStore()
-		}
-		ready, err := c.objectStoreReady(ctx, *sw)
+		ready, reason, err := c.objectStoreReady(ctx, *sw)
 		if err != nil {
 			return 0, err
 		}
 		if !ready {
-			c.setWaiting(row.ID, "waiting for the object store to release the bucket")
+			if reason == "" {
+				reason = "waiting for the object store"
+			}
+			c.setWaiting(row.ID, reason+"; the bucket releases once it serves")
 			return requeueWait, nil
 		}
 		if c.deps.Seaweed == nil {

@@ -4,6 +4,7 @@ metadata:
   name: skali-db
   namespace: skali-system
 spec:
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
   instances: 3
   storage:
     size: 10Gi

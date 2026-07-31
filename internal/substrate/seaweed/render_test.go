@@ -64,29 +64,6 @@ func TestRenderProductionShape(t *testing.T) {
 	require.Equal(t, map[string]string{"app": FilerService}, services[S3Service].Spec.Selector)
 }
 
-func TestRenderStoppedScalesToZero(t *testing.T) {
-	t.Parallel()
-	spec := StoreSpec{Namespace: "skali-platform", Masters: 1, Replication: "000", Stopped: true}
-	for _, object := range RenderDev(spec) {
-		if deployment, ok := object.(*appsv1.Deployment); ok {
-			require.EqualValues(t, 0, *deployment.Spec.Replicas)
-		}
-	}
-	spec.Managed = true
-	for _, object := range RenderProduction(spec) {
-		switch typed := object.(type) {
-		case *appsv1.Deployment:
-			require.EqualValues(t, 0, *typed.Spec.Replicas)
-		case *appsv1.StatefulSet:
-			require.EqualValues(t, 0, *typed.Spec.Replicas)
-		case *appsv1.DaemonSet:
-			require.NotContains(t, typed.Spec.Template.Spec.NodeSelector,
-				"skali.dev/capability-object-storage",
-				"a stopped DaemonSet parks its selector on a label no node carries")
-		}
-	}
-}
-
 func TestRenderDevServicesSelectAllInOne(t *testing.T) {
 	t.Parallel()
 	spec := StoreSpec{Namespace: "skali-platform", Masters: 1, Replication: "000"}

@@ -217,13 +217,12 @@ func TestObjectStoreLifecycle(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	stopped, err := f.svc.TransitionObjectStore(ctx, sw.ID, StateStopped)
-	require.NoError(t, err)
-	require.Equal(t, StateStopped, stopped.State)
+	// The retired stopped state is rejected outright; release is the only
+	// way out of active.
+	_, err = f.svc.TransitionObjectStore(ctx, sw.ID, "stopped")
+	require.Error(t, err)
 	_, err = f.svc.TransitionObjectStore(ctx, sw.ID, StateReleased)
 	require.ErrorIs(t, err, ErrInvalidTransition)
-	_, err = f.svc.TransitionObjectStore(ctx, sw.ID, StateActive)
-	require.NoError(t, err)
 	_, err = f.svc.TransitionObjectStore(ctx, sw.ID, StateReleasing)
 	require.NoError(t, err)
 	_, err = f.svc.TransitionObjectStore(ctx, sw.ID, StateReleased)
@@ -236,82 +235,3 @@ func TestObjectStoreLifecycle(t *testing.T) {
 	require.NotEqual(t, sw.ID, replacement.ID)
 }
 
-func TestActiveBucketClaimCountFollowsEnvironmentState(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	ctx := context.Background()
-
-	sw := f.objectStore(t)
-	created, err := f.svc.EnsureBucketClaim(ctx, f.owner("files"), bucketSpec())
-	require.NoError(t, err)
-
-	// A pending claim already counts: the first claim must be able to bring
-	// the store up before any allocation exists.
-	count, err := f.svc.ActiveBucketClaimCount(ctx)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, count)
-	f.allocate(t, created.ID, sw.ID)
-
-	// Taking the environment down removes its claims from the active count:
-	// the local-dev store may stop.
-	rows, err := f.st.MarkEnvironmentDown(ctx, f.environmentID)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, rows)
-	count, err = f.svc.ActiveBucketClaimCount(ctx)
-	require.NoError(t, err)
-	require.Zero(t, count)
-
-	// A releasing claim counts regardless of environment state: teardown
-	// needs the store running.
-	_, err = f.svc.ReleaseBucketClaim(ctx, created.ID)
-	require.NoError(t, err)
-	count, err = f.svc.ActiveBucketClaimCount(ctx)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, count)
-	require.NoError(t, f.svc.CompleteBucketClaimRelease(ctx, created.ID))
-	count, err = f.svc.ActiveBucketClaimCount(ctx)
-	require.NoError(t, err)
-	require.Zero(t, count)
-}
-
-func TestSystemDatabaseClaimIgnoredWhileStoreStopped(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	ctx := context.Background()
-
-	// The seaweed metadata claim keeps the dev pool awake while the store
-	// runs, and releases its hold while the store is stopped (the quiet dev
-	// platform, owner decision 2026-07-29).
-	pool := f.cluster(t, "pg17-shared")
-	metadata, err := f.svc.EnsureClaim(ctx, SystemOwner("object-storage/metadata"), spec())
-	require.NoError(t, err)
-	_, err = f.svc.BindClaim(ctx, metadata.ID, pool.ID)
-	require.NoError(t, err)
-
-	count, err := f.svc.ActiveClaimCount(ctx, pool.ID)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, count, "a running store holds the pool awake")
-
-	sw := f.objectStore(t)
-	_, err = f.svc.TransitionObjectStore(ctx, sw.ID, StateStopped)
-	require.NoError(t, err)
-	count, err = f.svc.ActiveClaimCount(ctx, pool.ID)
-	require.NoError(t, err)
-	require.Zero(t, count, "a stopped store releases its hold on the pool")
-
-	// Other system claims are unaffected by the store state.
-	other, err := f.svc.EnsureClaim(ctx, SystemOwner("synthetic/other"), spec())
-	require.NoError(t, err)
-	_, err = f.svc.BindClaim(ctx, other.ID, pool.ID)
-	require.NoError(t, err)
-	count, err = f.svc.ActiveClaimCount(ctx, pool.ID)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, count)
-
-	// Resuming the store restores the metadata claim's hold.
-	_, err = f.svc.TransitionObjectStore(ctx, sw.ID, StateActive)
-	require.NoError(t, err)
-	count, err = f.svc.ActiveClaimCount(ctx, pool.ID)
-	require.NoError(t, err)
-	require.EqualValues(t, 2, count)
-}

@@ -179,10 +179,14 @@ func New(deps Deps, cfg Config) *Controller {
 	if cfg.Resync <= 0 {
 		cfg.Resync = 5 * time.Minute
 	}
+	// The failure backoff is capped at the waiting cadence: a transient
+	// error must never park in-flight claim work longer than an ordinary
+	// waiting pass.
 	return &Controller{
-		deps:    deps,
-		cfg:     cfg,
-		queue:   workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[workKey]()),
+		deps: deps,
+		cfg:  cfg,
+		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
+			workqueue.DefaultTypedControllerRateLimiter[workKey](), requeueWait)),
 		waiting: make(map[uuid.UUID]string),
 	}
 }
@@ -305,15 +309,15 @@ func (c *Controller) boot(ctx context.Context) (time.Duration, error) {
 	if err := c.publishLiveClaims(ctx); err != nil {
 		return 0, err
 	}
-	if c.cfg.Managed && hasCapability(c.cfg.Capabilities, layout.CapabilityDatabase) {
+	if hasCapability(c.cfg.Capabilities, layout.CapabilityDatabase) {
 		if requeue, err := c.ensureDefaultSharedPool(ctx); err != nil || requeue > 0 {
 			return requeue, err
 		}
 	}
-	// Production brings the object store up eagerly; dev creates it lazily
-	// with the first bucket claim (the quiet platform). Either way an
-	// existing store row resumes its reconciliation here.
-	if c.cfg.Managed && hasCapability(c.cfg.Capabilities, layout.CapabilityObjectStorage) {
+	// The object store comes up eagerly wherever the capability exists
+	// (owner decision 2026-07-31: the dev substrate is always on); an
+	// existing store row resumes its reconciliation here either way.
+	if hasCapability(c.cfg.Capabilities, layout.CapabilityObjectStorage) {
 		c.EnqueueObjectStore()
 	} else if _, err := c.deps.DB.LiveObjectStore(ctx); err == nil {
 		c.EnqueueObjectStore()
@@ -379,18 +383,24 @@ func (c *Controller) ensureDefaultSharedPool(ctx context.Context) (time.Duration
 	if !errors.Is(err, dbstore.ErrNotFound) {
 		return 0, err
 	}
-	capable := len(c.deps.Observed.CapableNodes(layout.CapabilityDatabase))
+	// Dev counts its single node without capability labels (the same
+	// derivation claims use); managed installations size from observation.
+	capable := c.capableNodes()
 	if capable == 0 {
 		// Observation has not synced yet (or no database nodes joined);
 		// retry rather than sizing the pool wrong.
 		return requeueWait, nil
+	}
+	tier := layout.DeriveTier(capable)
+	if !c.cfg.Managed {
+		tier = layout.TierSingle
 	}
 	pool, err := c.createPool(ctx, poolPlan{
 		engine: DefaultEngine,
 		major:  DefaultMajor,
 		class:  dbstore.ClassShared,
 		name:   sharedPoolName(DefaultEngine, DefaultMajor),
-		tier:   layout.DeriveTier(capable),
+		tier:   tier,
 	})
 	if err != nil {
 		return 0, err
@@ -415,9 +425,6 @@ func (c *Controller) reconcilePool(ctx context.Context, id uuid.UUID) (time.Dura
 		return 0, nil
 	case dbstore.StateReleasing:
 		return 0, c.releasePool(ctx, *pool)
-	}
-	if err := c.reconcilePoolLifecycle(ctx, pool); err != nil {
-		return 0, err
 	}
 	if err := c.ensurePool(ctx, *pool); err != nil {
 		return 0, err

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Hinkolas/skali/internal/bundle"
@@ -33,6 +34,7 @@ type silentProgress struct{}
 func (silentProgress) Start(string) {}
 func (silentProgress) Done(string)  {}
 func (silentProgress) Skip(string)  {}
+func (silentProgress) Note(string)  {}
 
 // Ensure brings the local platform up, idempotently: prerequisites, the
 // k3d cluster (created or restarted with state retained), the skali-system
@@ -81,6 +83,31 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 			"remove it with `k3d cluster delete %s`, or pick another name via SKALI_DEV_CLUSTER",
 			ClusterName(), ClusterName())
 	}
+
+	// Public platform images pre-pull on the host in parallel with the
+	// cluster work below and land in one batched import, so a cold cluster
+	// never pulls from the internet mid-deploy. The record only counts on a
+	// cluster that exists; fresh containerd starts empty.
+	if status == ClusterAbsent {
+		state.ImportedImages = nil
+	}
+	imported := make(map[string]bool, len(state.ImportedImages))
+	for _, image := range state.ImportedImages {
+		imported[image] = true
+	}
+	var missing []string
+	for _, image := range RequiredImages() {
+		if !imported[image] {
+			missing = append(missing, image)
+		}
+	}
+	var pulled chan error
+	if len(missing) > 0 {
+		pulled = make(chan error, 1)
+		go func() { pulled <- ensureHostImages(ctx, missing) }()
+	}
+
+	justStarted := false
 	switch status {
 	case ClusterAbsent:
 		progress.Start("Create k3d cluster " + ClusterName())
@@ -93,6 +120,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		if err := Start(ctx); err != nil {
 			return nil, err
 		}
+		status, justStarted = ClusterRunning, true
 		progress.Done("state retained")
 	case ClusterRunning:
 		if err := WriteKubeconfig(ctx); err != nil {
@@ -111,12 +139,32 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		return nil, err
 	}
 	importNeeded := status == ClusterAbsent || state.SkalidImage != importedTag || imageID != state.ImportedImageID
-	progress.Start("Import " + state.SkalidImage)
+	var batch []string
 	if importNeeded {
-		if err := ImportImage(ctx, state.SkalidImage); err != nil {
+		batch = append(batch, state.SkalidImage)
+	}
+	if len(missing) > 0 {
+		progress.Start("Pull platform images")
+		progress.Note(strings.Join(missing, ", "))
+		if err := <-pulled; err != nil {
+			return nil, err
+		}
+		progress.Done(fmt.Sprintf("%d cached on the host", len(missing)))
+		batch = append(batch, missing...)
+	}
+	progress.Start("Import " + state.SkalidImage)
+	if len(batch) > 0 {
+		if err := ImportImages(ctx, batch...); err != nil {
 			return nil, err
 		}
 		state.ImportedImageID = imageID
+		state.ImportedImages = append(state.ImportedImages, missing...)
+		// Persist immediately: the fast path below returns before the
+		// converge-time save, and a re-import of already-present images is
+		// the cost of losing this record.
+		if err := SaveState(state); err != nil {
+			return nil, err
+		}
 		progress.Done("")
 	} else {
 		progress.Skip("unchanged since last import")
@@ -131,17 +179,32 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		return nil, err
 	}
 
-	// The fast path: on an already-running cluster with an unchanged image,
-	// a bundle hash matching the stamp of the last completed converge plus
-	// one live health probe through the edge prove the platform current for
-	// the price of two round trips instead of a full no-op apply pass.
-	// Anything off (a rebuilt CLI, a changed profile, a missing stamp, an
-	// unhealthy skalid) falls through to the converge.
+	// The fast path: on a running cluster with an unchanged image, a bundle
+	// hash matching the stamp of the last completed converge plus one live
+	// health probe through the edge prove the platform current for the
+	// price of two round trips instead of a full no-op apply pass. A
+	// cluster that just restarted gets the full probe window instead of a
+	// single attempt: skalid is still coming back, and one failed probe
+	// would silently buy the whole converge. Anything off (a rebuilt CLI,
+	// a changed profile, a missing stamp, an unhealthy skalid) falls
+	// through to the converge.
 	if !opts.ForceConverge && status == ClusterRunning && !importNeeded &&
-		bundle.StampedHash(ctx, client) == bundle.Hash(bundleProfile(state)) && probeEdge(ctx) {
-		progress.Start("Converge platform")
-		progress.Skip("unchanged since last converge")
-		return state, nil
+		bundle.StampedHash(ctx, client) == bundle.Hash(bundleProfile(state)) {
+		healthy := probeEdge(ctx)
+		if !healthy && justStarted {
+			progress.Start("Wait for skalid")
+			if err := waitEdgeHealthy(ctx); err == nil {
+				healthy = true
+				progress.Done("answering through the edge")
+			} else {
+				progress.Skip("not ready, running full converge")
+			}
+		}
+		if healthy {
+			progress.Start("Converge platform")
+			progress.Skip("unchanged since last converge")
+			return state, nil
+		}
 	}
 
 	if err := applyBundle(ctx, client, state, progress); err != nil {
