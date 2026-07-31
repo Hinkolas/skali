@@ -39,6 +39,7 @@ type Object struct {
 	Pod        *module.PodStatus
 	Autoscaler *module.AutoscalerStatus
 	Claim      *module.ClaimStatus
+	Job        *JobStatus
 
 	// SharedKey links platform-scoped objects (Environment == uuid.Nil,
 	// e.g. a database pool) to the environment-owned objects that reference
@@ -55,6 +56,20 @@ type Object struct {
 	Source      string
 	ObjectStore *module.ObjectStoreStatus
 	Bucket      *module.BucketStatus
+}
+
+// KindReleaseJob projects release-command Jobs for the reconciler's release
+// gate. Like the store-internal kinds it never reaches module evaluation:
+// Snapshot.ForService whitelists the module vocabulary.
+const KindReleaseJob = "release-job"
+
+// JobStatus projects one release Job's progress toward its terminal state.
+type JobStatus struct {
+	Succeeded bool
+	Failed    bool
+	Reason    string // terminal failure reason, e.g. BackoffLimitExceeded, DeadlineExceeded
+	Message   string
+	Created   time.Time
 }
 
 type objectKey struct {

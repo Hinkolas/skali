@@ -103,6 +103,13 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 
+	// Release commands run only while a rollout is in flight (the target is
+	// not the active revision). A converged environment never re-creates a
+	// release Job: drift healing that re-ran migrations spontaneously would
+	// turn an explanatory pass into a mutation nobody asked for.
+	rolloutInFlight := target.ActiveRevisionID == nil || *target.ActiveRevisionID != *target.TargetRevisionID
+	releaseWaiting := make(map[string]string)
+
 	// Environment-scoping objects first: namespace, then the values Secret.
 	envOps := []Op{
 		{Kind: OpApply, Object: desired.namespace},
@@ -154,7 +161,40 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 				attachment.waitStep(ctx, "apply:"+service, "Apply "+service, "waiting for "+blockedOn)
 				continue
 			}
-			ops := planServiceOps(desired.services[service],
+			objs := desired.services[service]
+			if rolloutInFlight && objs.releaseJob != nil {
+				state, reason, err := k.ensureRelease(ctx, attachment, target, service, objs.releaseJob, snapshot)
+				if err != nil {
+					return 0, err
+				}
+				switch state {
+				case releaseRunning:
+					releaseWaiting[dotted] = reason
+					continue
+				case releaseFailed:
+					// The promoted revision's release command failed
+					// terminally: the rollout cannot proceed. Same policy as
+					// an exceeded deadline: the run fails with diagnostics
+					// and the target returns to the last active revision
+					// when one exists; a first deployment keeps its target
+					// so a redeploy retries the release.
+					attachment.finish(ctx, journal.RunFailed)
+					rows, err := k.deps.Store.FallbackEnvironmentTarget(ctx, store.FallbackEnvironmentTargetParams{
+						EnvironmentID:    environmentID,
+						TargetRevisionID: target.TargetRevisionID,
+					})
+					if err != nil {
+						return 0, fmt.Errorf("reconcile: fall back target: %w", err)
+					}
+					if rows > 0 {
+						slog.WarnContext(ctx, "release command failed; target returned to the active revision",
+							"environment_id", environmentID, "service", service)
+						k.Enqueue(environmentID)
+					}
+					return 0, nil
+				}
+			}
+			ops := planServiceOps(objs,
 				liveObject(snapshot, service, module.KindWorkload),
 				liveObject(snapshot, service, module.KindAutoscaler))
 			serviceChanged, err := k.executeOps(ctx, ops)
@@ -180,7 +220,10 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 					unhealthyEarlier = append(unhealthyEarlier, dotted)
 				}
 			default:
-				if _, waits := waiting[dotted]; waits || !preHealth[dotted] {
+				// A pending release also blocks later batches: the service's
+				// old members may look healthy, but its new revision has
+				// deliberately not been applied yet.
+				if _, waits := waiting[dotted]; waits || releaseWaiting[dotted] != "" || !preHealth[dotted] {
 					unhealthyEarlier = append(unhealthyEarlier, dotted)
 				}
 			}
@@ -214,12 +257,21 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			healthy = false
 		}
 	}
+	if len(releaseWaiting) > 0 {
+		// A pending release command means the target revision's workload was
+		// deliberately not applied; the previous revision reporting healthy
+		// must not activate the new one.
+		healthy = false
+	}
 	if !healthy {
 		blocked := make([]string, 0, len(unhealthyEarlier))
 		for _, dotted := range unhealthyEarlier {
 			reason := claimWaiting[dotted]
 			if reason == "" {
 				reason = waiting[dotted]
+			}
+			if reason == "" {
+				reason = releaseWaiting[dotted]
 			}
 			if reason == "" {
 				reason = "health pending"
@@ -240,7 +292,10 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		attachment.finish(ctx, journal.RunSucceeded)
 	}
 	if attachment.adopted() && attachment.run.Kind == "deployment" {
-		if time.Since(target.UpdatedAt) > k.cfg.RolloutDeadline {
+		// Release commands extend the deadline by their own budget: their
+		// Jobs enforce the manifest timeouts, so the rollout deadline only
+		// needs to cover everything after them.
+		if time.Since(target.UpdatedAt) > k.cfg.RolloutDeadline+releaseBudget(rev.Definition) {
 			// Section 8.4 product policy: past the deadline the run fails
 			// with diagnostics and the target returns to the last active
 			// revision when one exists. The guarded compare-and-swap makes

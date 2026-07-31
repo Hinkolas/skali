@@ -85,6 +85,25 @@ func (f *Fake) SetPod(environmentID uuid.UUID, namespace, service, podName, node
 	})
 }
 
+// SetReleaseJob records one application's release Job projection. The
+// object name must match the rendered per-revision Job name; service is the
+// application's bare key (the Job object carries the service identity, its
+// pods do not).
+func (f *Fake) SetReleaseJob(environmentID uuid.UUID, namespace, objectName, service string, status JobStatus) {
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "Job"},
+			Namespace: namespace,
+			Name:      objectName,
+		},
+		Kind:        KindReleaseJob,
+		Name:        objectName,
+		Environment: environmentID,
+		Service:     service,
+		Job:         &status,
+	})
+}
+
 // SetAutoscaler records the autoscaler of a service.
 func (f *Fake) SetAutoscaler(environmentID uuid.UUID, namespace, objectName, service string, status module.AutoscalerStatus) {
 	f.Upsert(Object{

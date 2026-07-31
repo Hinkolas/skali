@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -125,6 +126,7 @@ func (k *KubeSource) Run(ctx context.Context) error {
 func (k *KubeSource) register() {
 	core := k.client.Clientset.CoreV1()
 	apps := k.client.Clientset.AppsV1()
+	batch := k.client.Clientset.BatchV1()
 	networking := k.client.Clientset.NetworkingV1()
 	autoscaling := k.client.Clientset.AutoscalingV2()
 	all := metav1.NamespaceAll
@@ -147,6 +149,18 @@ func (k *KubeSource) register() {
 			return apps.Deployments(all).Watch(context.Background(), o)
 		},
 		managed, ""), convertDeployment)
+
+	// Release-command Jobs: the reconciler's release gate reads their
+	// terminal state, and a completing Job must poke its environment instead
+	// of waiting out the requeue interval.
+	k.addObjectInformer("Job", &batchv1.Job{}, k.listWatch(
+		func(o metav1.ListOptions) (runtime.Object, error) {
+			return batch.Jobs(all).List(context.Background(), o)
+		},
+		func(o metav1.ListOptions) (watch.Interface, error) {
+			return batch.Jobs(all).Watch(context.Background(), o)
+		},
+		managed, ""), convertJob)
 
 	k.addObjectInformer("Service", &corev1.Service{}, k.listWatch(
 		func(o metav1.ListOptions) (runtime.Object, error) {
@@ -511,6 +525,42 @@ func convertDeployment(raw any) (Object, bool) {
 			ObservedGeneration: deployment.Status.ObservedGeneration,
 			Conditions:         conditions,
 		},
+	}, true
+}
+
+func convertJob(raw any) (Object, bool) {
+	job, ok := raw.(*batchv1.Job)
+	if !ok {
+		return Object{}, false
+	}
+	environment, service, revision := identity(job)
+	status := &JobStatus{
+		Succeeded: job.Status.Succeeded > 0,
+		Created:   job.CreationTimestamp.Time,
+	}
+	for _, condition := range job.Status.Conditions {
+		if condition.Status != corev1.ConditionTrue {
+			continue
+		}
+		switch condition.Type {
+		case batchv1.JobComplete:
+			status.Succeeded = true
+		case batchv1.JobFailed:
+			status.Failed = true
+			status.Reason = condition.Reason
+			status.Message = condition.Message
+		}
+	}
+	return Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "Job"},
+			Namespace: job.Namespace, Name: job.Name, UID: job.UID,
+		},
+		Kind: KindReleaseJob, Name: job.Name,
+		Labels:      job.Labels,
+		Environment: environment, Service: service, Revision: revision,
+		Generation: job.Generation,
+		Job:        status,
 	}, true
 }
 

@@ -183,7 +183,11 @@ func (c *Client) Delete(ctx context.Context, ref ObjectRef) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	options := metav1.DeleteOptions{}
+	// Background propagation is explicit because batch/v1 Jobs still default
+	// to orphaning their pods at the API level; every other managed kind
+	// already cascades in the background, so this only pins the behavior.
+	propagation := metav1.DeletePropagationBackground
+	options := metav1.DeleteOptions{PropagationPolicy: &propagation}
 	if ref.UID != "" {
 		options.Preconditions = &metav1.Preconditions{UID: &ref.UID}
 	}

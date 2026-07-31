@@ -84,6 +84,9 @@ type Deps struct {
 	// Claims is nil without a substrate (API-only mode); database services
 	// then wait visibly instead of provisioning.
 	Claims ClaimManager
+	// JobLogs reads the log tail of one Job's newest pod for release-command
+	// failure diagnostics; nil (API-only mode, tests) skips log retrieval.
+	JobLogs func(ctx context.Context, namespace, jobName string, tail int64) ([]string, error)
 }
 
 type Config struct {

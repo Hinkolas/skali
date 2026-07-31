@@ -13,6 +13,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -137,6 +138,10 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				}},
 			},
 		})
+	}
+
+	if len(application.Deployment.ReleaseCommand.Command) > 0 {
+		objects = append(objects, renderReleaseJob(project, key, name, image, labels, options))
 	}
 
 	autoscalingEnabled := application.Scaling.MaxReplicas > application.Scaling.MinReplicas
@@ -276,6 +281,84 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		})
 	}
 	return objects, nil
+}
+
+// DefaultReleaseTimeout bounds a release command whose manifest declares no
+// explicit timeout.
+const DefaultReleaseTimeout = 10 * time.Minute
+
+// ReleaseJobName names one application's release Job for one revision. The
+// revision in the name makes a new release create a fresh Job while a
+// re-converging pass finds the completed one; Jobs are immutable, so the
+// name is the release identity.
+func ReleaseJobName(projectName, key, revisionChecksum string) string {
+	return objectName(projectName, key, "release", RevisionLabelValue(revisionChecksum))
+}
+
+// ReleaseServiceIdentity is the LabelService value of release-command pods:
+// distinct from the application's bare key so release members never match
+// the application's immutable selectors, health evaluation, or member
+// listings.
+func ReleaseServiceIdentity(key string) string { return "release." + key }
+
+// renderReleaseJob renders the application's release command as a
+// single-attempt Job: the reconciler runs it to completion before the
+// workload of a new release rolls forward. One attempt only (no backoff):
+// a failed release fails the deployment instead of retrying a command
+// whose partial effects are unknown. The Job's own deadline enforces the
+// manifest timeout, so a hung command fails visibly rather than pending
+// forever.
+func renderReleaseJob(project compiler.ProjectDefinition, key, name, image string,
+	labels map[string]string, options Options) *batchv1.Job {
+	application := project.Applications[key]
+	timeout := time.Duration(application.Deployment.ReleaseCommand.TimeoutMillis) * time.Millisecond
+	if timeout <= 0 {
+		timeout = DefaultReleaseTimeout
+	}
+	deadlineSeconds := int64(timeout / time.Second)
+
+	// The Job object carries the service identity like every other object of
+	// the application; the pod template does not. Release pods with the
+	// application's bare key and name label would match its immutable
+	// Service/Deployment selectors and join its health evaluation and member
+	// listings.
+	podLabels := cloneMap(labels)
+	podLabels["app.kubernetes.io/name"] = name + "-release"
+	podLabels[LabelService] = ReleaseServiceIdentity(key)
+
+	container := corev1.Container{
+		Name:            "release",
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            append([]string(nil), application.Deployment.ReleaseCommand.Command...),
+		Env:             renderEnvironment(application.Environment, options.EnvironmentSecretName),
+		Resources:       renderResources(application.Resources),
+	}
+	job := &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ReleaseJobName(project.Name, key, options.RevisionChecksum),
+			Namespace: options.Namespace,
+			Labels:    cloneMap(labels),
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:          int32Pointer(0),
+			ActiveDeadlineSeconds: &deadlineSeconds,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: podLabels},
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers:    []corev1.Container{container},
+				},
+			},
+		},
+	}
+	if options.ManagedCluster {
+		job.Spec.Template.Spec.NodeSelector = map[string]string{
+			layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
+		}
+	}
+	return job
 }
 
 func renderEnvironment(environment map[string]compiler.Expression, environmentSecret string) []corev1.EnvVar {

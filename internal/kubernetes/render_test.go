@@ -4,11 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
@@ -138,8 +141,12 @@ func TestRenderBuildApplicationWithManagedOutputs(t *testing.T) {
 		BuildImages: map[string]string{"web": "registry.local/web@sha256:test"},
 	})
 	require.NoError(t, err)
-	require.Len(t, objects, 4)
-	deployment, ok := objects[0].(*appsv1.Deployment)
+	require.Len(t, objects, 5)
+	release, ok := objects[0].(*batchv1.Job)
+	require.True(t, ok, "the example's releaseCommand renders a Job ahead of the workload")
+	require.Equal(t, []string{"/app/file-sharing", "migrate", "up"},
+		release.Spec.Template.Spec.Containers[0].Args)
+	deployment, ok := objects[1].(*appsv1.Deployment)
 	require.True(t, ok)
 	require.Nil(t, deployment.Spec.Replicas, "the HPA must exclusively own Deployment.spec.replicas")
 	require.Len(t, deployment.Spec.Template.Spec.TopologySpreadConstraints, 1)
@@ -221,6 +228,94 @@ applications:
 	require.True(t, ok)
 	require.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
 	require.Nil(t, deployment.Spec.Strategy.RollingUpdate)
+}
+
+// A release command renders as a per-revision single-attempt Job with the
+// manifest timeout as its deadline, and its pods must never match the
+// application's immutable selectors: a migration pod receiving route
+// traffic would be a production incident.
+func TestRenderReleaseJob(t *testing.T) {
+	t.Parallel()
+	render := func(t *testing.T, releaseYAML string) []runtime.Object {
+		t.Helper()
+		document, err := manifest.Parse([]byte(`
+version: "1"
+name: shop
+applications:
+  web:
+    image: example.invalid/web:1
+    ports:
+      http:
+        port: 3000
+    deployment:
+      releaseCommand:
+`+releaseYAML), "skali.yml")
+		require.NoError(t, err)
+		result, err := compiler.Compile(document)
+		require.NoError(t, err)
+		objects, err := Render(result, Options{
+			Namespace:        "skali-shop-production",
+			EnvironmentID:    "0198f2f4-0000-7000-8000-000000000002",
+			RevisionChecksum: "6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2",
+		})
+		require.NoError(t, err)
+		return objects
+	}
+
+	objects := render(t, `
+        command: ["bun", "scripts/migrate.ts"]
+        timeout: 30m
+`)
+	var job *batchv1.Job
+	var deployment *appsv1.Deployment
+	var service *corev1.Service
+	for _, obj := range objects {
+		switch typed := obj.(type) {
+		case *batchv1.Job:
+			job = typed
+		case *appsv1.Deployment:
+			deployment = typed
+		case *corev1.Service:
+			service = typed
+		}
+	}
+	require.NotNil(t, job)
+	require.NotNil(t, deployment)
+	require.NotNil(t, service)
+
+	require.Equal(t, ReleaseJobName("shop", "web",
+		"6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2"), job.Name)
+	require.Equal(t, "shop-web-release-6ee3b68d021fb92e", job.Name)
+	require.Equal(t, []string{"bun", "scripts/migrate.ts"}, job.Spec.Template.Spec.Containers[0].Args)
+	require.Equal(t, deployment.Spec.Template.Spec.Containers[0].Image, job.Spec.Template.Spec.Containers[0].Image)
+	require.Equal(t, deployment.Spec.Template.Spec.Containers[0].Env, job.Spec.Template.Spec.Containers[0].Env)
+	require.Equal(t, int32(0), *job.Spec.BackoffLimit)
+	require.Equal(t, int64(1800), *job.Spec.ActiveDeadlineSeconds)
+	require.Equal(t, corev1.RestartPolicyNever, job.Spec.Template.Spec.RestartPolicy)
+
+	// The Job object belongs to the application's service; its pods carry a
+	// distinct identity for observation.
+	require.Equal(t, "web", job.Labels[LabelService])
+	require.Equal(t, ReleaseServiceIdentity("web"), job.Spec.Template.Labels[LabelService])
+	require.Equal(t, "true", job.Spec.Template.Labels[LabelManaged])
+	require.Equal(t, "0198f2f4-0000-7000-8000-000000000002", job.Spec.Template.Labels[LabelEnvironment])
+	matchesSelector := true
+	for name, value := range service.Spec.Selector {
+		if job.Spec.Template.Labels[name] != value {
+			matchesSelector = false
+		}
+	}
+	require.False(t, matchesSelector, "release pods must not match the application's Service selector")
+
+	// Without an explicit timeout the default bounds the Job.
+	objects = render(t, `
+        command: ["/bin/migrate"]
+`)
+	for _, obj := range objects {
+		if typed, ok := obj.(*batchv1.Job); ok {
+			require.Equal(t, int64(DefaultReleaseTimeout/time.Second), *typed.Spec.ActiveDeadlineSeconds)
+		}
+	}
 }
 
 func environmentVariableFromSecret(variable, secret, key string) corev1.EnvVar {

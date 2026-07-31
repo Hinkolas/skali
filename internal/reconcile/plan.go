@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,9 +41,12 @@ type Op struct {
 	Paths  []string       // OpDisown
 }
 
-// serviceObjects groups one service's rendered objects by role.
+// serviceObjects groups one service's rendered objects by role. The release
+// Job is held apart from the appliable set: the environment pass runs it to
+// completion before the workload of a new release is applied.
 type serviceObjects struct {
 	pvcs       []runtime.Object
+	releaseJob *batchv1.Job
 	deployment *appsv1.Deployment
 	autoscaler *autoscalingv2.HorizontalPodAutoscaler
 	rest       []runtime.Object // services, ingresses
@@ -105,6 +109,10 @@ var prunableKinds = map[schema.GroupKind]bool{
 	{Group: "", Kind: "Service"}:                            true,
 	{Group: "networking.k8s.io", Kind: "Ingress"}:           true,
 	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}: true,
+	// Completed release Jobs of superseded revisions; the current revision's
+	// Job is always in the desired set, so a finished release is never
+	// pruned into a re-run.
+	{Group: "batch", Kind: "Job"}: true,
 }
 
 // planPrune lists observed objects of the environment that are prunable and
@@ -224,6 +232,8 @@ func groupObjects(objects []runtime.Object) (map[string]serviceObjects, []kube.O
 			grouped.deployment = typed
 		case *autoscalingv2.HorizontalPodAutoscaler:
 			grouped.autoscaler = typed
+		case *batchv1.Job:
+			grouped.releaseJob = typed
 		case *corev1.PersistentVolumeClaim:
 			grouped.pvcs = append(grouped.pvcs, typed)
 		default:

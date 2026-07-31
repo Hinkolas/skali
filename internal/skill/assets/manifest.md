@@ -212,7 +212,9 @@ spreading lets the same manifest run on a single-node dev cluster.
 ```
 
 The release command runs once with the new image and resolved service
-outputs before replicas roll forward; it is the migration hook. Under
+outputs before replicas roll forward; it is the migration hook. Its
+`timeout` (default 10m) bounds the run; a failed or timed-out release
+command fails the deployment before any replica rolls. Under
 `rolling`, `maxUnavailable` and `maxSurge` cannot both be zero; under
 `recreate`, setting either is an error. Replicas receive SIGTERM and have
 the grace period to finish before being killed.
