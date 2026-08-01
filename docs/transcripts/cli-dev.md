@@ -75,7 +75,37 @@ An unchanged deploy reuses the artifact and creates no meaningless revision.
 A source change rebuilds only the affected image and prepares a new local
 revision.
 
-## 3. Status, logs, stop, restart
+## 3. Repeat run while a rollout is in flight
+
+```console
+$ skali dev
+local platform is running (cluster skali-dev)
+
+a deployment is already in flight; attaching to run 01J9W2R4
+  ok  Apply applications
+        ok  web: 2/2 ready
+  ok  Activate revision
+
+ready
+  dashboard  http://skali.localhost:8080
+
+following logs; Ctrl-C pauses the project (skali dev -d keeps it running)
+  web-6d9f7b-1  listening on :8080
+```
+
+Pinned by this transcript:
+
+- Bare `skali dev` never fails with `deployment_in_flight`: a run already
+  holding the environment (a rollout still settling, a pause finishing) is
+  adopted and attached to instead.
+- The attach path skips the env-file prompt and the plan entirely; the
+  in-flight run already decided what is being deployed.
+- `skali dev --force` (and `--rebuild`) cancels the in-flight run and
+  deploys fresh instead of attaching.
+- `skali deploy` keeps its explicit `deployment_in_flight` error; adopting
+  a running rollout is a dev-only convenience.
+
+## 4. Status, logs, stop, restart
 
 ```console
 $ skali dev status
@@ -107,7 +137,7 @@ Ending an attached `skali dev` session (Ctrl-C, closing the terminal)
 pauses the project like `skali dev down`; `skali dev -d` leaves it running
 in the background instead.
 
-## 4. Reset is explicit and total
+## 5. Reset is explicit and total
 
 ```console
 $ skali dev reset

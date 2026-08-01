@@ -36,10 +36,12 @@ func newDevCommand() *cobra.Command {
 			"registry), builds and deploys the current project, attaches to the\n" +
 			"rollout, and follows the runtime logs. Like docker compose, ending\n" +
 			"the session (Ctrl-C, closing the terminal) pauses the project; its\n" +
-			"data is retained and the next skali dev brings it back. Use -d for\n" +
-			"a background project that keeps running, skali dev down to pause it\n" +
-			"explicitly, and skali dev ls to see everything on the local\n" +
-			"platform. Local values never leave this machine.",
+			"data is retained and the next skali dev brings it back. A rollout\n" +
+			"already in flight is adopted: dev attaches to it instead of\n" +
+			"failing; --force cancels it and redeploys. Use -d for a background\n" +
+			"project that keeps running, skali dev down to pause it explicitly,\n" +
+			"and skali dev ls to see everything on the local platform. Local\n" +
+			"values never leave this machine.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			// The whole session runs on one signal-scoped context: INT,
@@ -59,6 +61,36 @@ func newDevCommand() *cobra.Command {
 				}
 				return err
 			}
+			// A run already holding the environment's slot (a rollout still
+			// settling, a pause finishing) is resolved before the deploy
+			// flow: adopt it instead of failing with deployment_in_flight,
+			// or cancel it when --force asked for a fresh deploy. A failed
+			// environment lookup means nothing is deployed yet.
+			attachToRunning := func(api *client.Client, environmentID string) error {
+				if err := printDevReady(command); err != nil {
+					return err
+				}
+				if detach {
+					return nil
+				}
+				return devFollowLogs(command, api, environmentID, &window)
+			}
+			if api, environmentID, err := localProjectEnvironment(command); err == nil {
+				action, err := devResolveInFlight(sessionCtx, command.OutOrStdout(),
+					api, environmentID, force || rebuild)
+				if sessionCtx.Err() != nil {
+					return finishInterrupted(command, window.Load().(string), detach)
+				}
+				if err != nil {
+					return err
+				}
+				switch action {
+				case devInFlightDetached:
+					return nil
+				case devInFlightAttached:
+					return attachToRunning(api, environmentID)
+				}
+			}
 			opts := &deployOptions{
 				Environment:        localEnvironmentName,
 				EnvFile:            envFile,
@@ -71,12 +103,42 @@ func newDevCommand() *cobra.Command {
 				OnDeploymentOpened: func(id string) { window.Store(id) },
 				OnDeploymentClosed: func() { window.Store("") },
 			}
-			outcome, err := runDeployFlow(command, opts, false)
-			if sessionCtx.Err() != nil {
-				return finishInterrupted(command, window.Load().(string), detach)
-			}
-			if err != nil {
-				return err
+			var outcome string
+			for attempt := 0; ; attempt++ {
+				var err error
+				outcome, err = runDeployFlow(command, opts, false)
+				if sessionCtx.Err() != nil {
+					return finishInterrupted(command, window.Load().(string), detach)
+				}
+				if err == nil {
+					break
+				}
+				// A run can still take the slot between the up-front check
+				// and the open (a cancelled deployment's fallback reconcile,
+				// a concurrent session); resolve it the same way instead of
+				// surfacing the 409, with a cap so a pathological server
+				// cannot loop us forever.
+				if !isDeploymentInFlight(err) || attempt >= 2 {
+					return err
+				}
+				api, environmentID, lookupErr := localProjectEnvironment(command)
+				if lookupErr != nil {
+					return err
+				}
+				action, resolveErr := devResolveInFlight(sessionCtx, command.OutOrStdout(),
+					api, environmentID, force || rebuild)
+				if sessionCtx.Err() != nil {
+					return finishInterrupted(command, window.Load().(string), detach)
+				}
+				if resolveErr != nil {
+					return resolveErr
+				}
+				switch action {
+				case devInFlightDetached:
+					return nil
+				case devInFlightAttached:
+					return attachToRunning(api, environmentID)
+				}
 			}
 			if err := printDevReady(command); err != nil {
 				return err
@@ -88,12 +150,7 @@ func newDevCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(command.OutOrStdout(),
-				"\nfollowing logs; Ctrl-C pauses the project (skali dev -d keeps it running)")
-			if err := followRuntimeLogs(command, api, environmentID, ""); err != nil {
-				return err
-			}
-			return finishInterrupted(command, window.Load().(string), false)
+			return devFollowLogs(command, api, environmentID, &window)
 		},
 	}
 	command.PersistentFlags().StringVar(&skalidImage, "skalid-image", "",
@@ -104,7 +161,7 @@ func newDevCommand() *cobra.Command {
 	command.Flags().BoolVarP(&detach, "detach", "d", false,
 		"exit once the rollout settles instead of following runtime logs")
 	command.Flags().BoolVar(&force, "force", false,
-		"deploy even when nothing changed; application workloads are restarted (data is untouched)")
+		"deploy even when nothing changed, cancelling any in-flight run first; application workloads are restarted (data is untouched)")
 	command.Flags().BoolVar(&rebuild, "rebuild", false,
 		"rebuild and re-import artifacts without caches, picking up moved base images (implies --force)")
 
@@ -363,6 +420,95 @@ func finishInterrupted(command *cobra.Command, window string, keepRunning bool) 
 	return nil
 }
 
+// dev in-flight resolutions: what devResolveInFlight decided about a run
+// already holding the environment's slot.
+const (
+	devInFlightProceed  = "proceed"  // slot free (or freed): run the deploy flow
+	devInFlightAttached = "attached" // adopted a deployment run to success: skip the deploy flow
+	devInFlightDetached = "detached" // the user detached during the attach; the session epilogue decides
+)
+
+// devResolveInFlight inspects the local environment's run slot before the
+// deploy flow. A running deployment run is adopted (attach instead of the
+// deployment_in_flight error) and --force cancels it for a fresh deploy. A
+// running teardown or reconcile is waited out but never cancelled without
+// --force: their journal rows do not drive the underlying work, so
+// cancelling would only misreport it.
+func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
+	environmentID string, force bool) (string, error) {
+	running, err := findRunningRun(ctx, api, environmentID)
+	if err != nil || running == nil {
+		// Lookup errors resurface in the deploy flow with full context.
+		return devInFlightProceed, nil
+	}
+	style := clirender.StyleFor(out)
+	if force {
+		fmt.Fprintf(out, "cancelling in-flight %s run %s (--force)\n",
+			running.Kind, style.Bold(running.ID))
+		if _, err := api.CancelRun(ctx, running.ID); err != nil && !isRunAlreadyFinished(err) {
+			return "", err
+		}
+		return devInFlightProceed, nil
+	}
+	if running.Kind != "deployment" {
+		fmt.Fprintf(out, "a %s is in flight; waiting for run %s to finish\n",
+			running.Kind, style.Bold(running.ID))
+		status, err := attachRun(ctx, out, api, running.ID)
+		if err != nil {
+			return "", err
+		}
+		if status == "detached" {
+			return devInFlightDetached, nil
+		}
+		return devInFlightProceed, nil
+	}
+	fmt.Fprintf(out, "a deployment is already in flight; attaching to run %s\n",
+		style.Bold(running.ID))
+	status, err := attachRun(ctx, out, api, running.ID)
+	if err != nil {
+		return "", err
+	}
+	switch status {
+	case "succeeded":
+		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
+		return devInFlightAttached, nil
+	case "failed":
+		return "", fmt.Errorf("run %s failed", running.ID)
+	case "cancelled":
+		return "", fmt.Errorf("run %s was cancelled", running.ID)
+	default:
+		return devInFlightDetached, nil
+	}
+}
+
+// findRunningRun returns the environment's running run, or nil. At most one
+// can exist (the journal's unique running-run index); pending runs never
+// hold the slot.
+func findRunningRun(ctx context.Context, api *client.Client, environmentID string) (*client.Run, error) {
+	runs, err := api.ListRuns(ctx, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	for index := range runs {
+		if runs[index].Status == "running" {
+			return &runs[index], nil
+		}
+	}
+	return nil, nil
+}
+
+// devFollowLogs hands the rest of the session to the runtime logs; when
+// they end the epilogue pauses the project.
+func devFollowLogs(command *cobra.Command, api *client.Client, environmentID string,
+	window *atomic.Value) error {
+	fmt.Fprintln(command.OutOrStdout(),
+		"\nfollowing logs; Ctrl-C pauses the project (skali dev -d keeps it running)")
+	if err := followRuntimeLogs(command, api, environmentID, ""); err != nil {
+		return err
+	}
+	return finishInterrupted(command, window.Load().(string), false)
+}
+
 // waitEnvironmentGone polls until the purged environment's row is deleted;
 // the 404 is the authoritative completion signal.
 func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID string) error {
@@ -408,6 +554,18 @@ func isReauthRequired(err error) bool {
 func isNotFound(err error) bool {
 	var apiErr *client.APIError
 	return errors.As(err, &apiErr) && apiErr.Status == 404
+}
+
+func isDeploymentInFlight(err error) bool {
+	var apiErr *client.APIError
+	return errors.As(err, &apiErr) && apiErr.Code == "deployment_in_flight"
+}
+
+// isRunAlreadyFinished matches the cancel endpoint's refusal to cancel a
+// terminal run; for --force the slot is free either way.
+func isRunAlreadyFinished(err error) bool {
+	var apiErr *client.APIError
+	return errors.As(err, &apiErr) && apiErr.Status == 409 && apiErr.Code == "conflict"
 }
 
 // runDevLs lists every project on the local platform with the state of its

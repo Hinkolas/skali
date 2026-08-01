@@ -279,6 +279,57 @@ func TestDevEndToEnd(t *testing.T) {
 		h.waitRoute("hello from skali", 2*time.Minute)
 	})
 
+	t.Run("DevWhileRolloutInFlightAttaches", func(t *testing.T) {
+		// A dev session started while a rollout is already in flight must
+		// adopt the running deployment instead of failing with
+		// deployment_in_flight: no prompt, no plan, straight to the rollout
+		// tree and then the runtime logs. The slow-start source keeps pods
+		// unready for the sleep window, so the run is reliably still
+		// running when dev looks.
+		source := filepath.Join(h.projectDir, "main.go")
+		content, err := os.ReadFile(source)
+		require.NoError(t, err)
+		slow := strings.Replace(string(content), "\"os\"\n)", "\"os\"\n\t\"time\"\n)", 1)
+		slow = strings.Replace(slow, "log.Println(\"listening on :8080\")",
+			"time.Sleep(20 * time.Second)\n\tlog.Println(\"listening on :8080\")", 1)
+		require.NotEqual(t, string(content), slow, "slow-start edit did not apply")
+		require.NoError(t, os.WriteFile(source, []byte(slow), 0o644))
+
+		out := h.run(false, "", "deploy", "--environment", "local", "--yes", "--detach")
+		require.Contains(t, out, "deployment continues on the server")
+
+		out = h.runInterrupt("following logs", 8*time.Minute, "dev")
+		require.Contains(t, out, "a deployment is already in flight; attaching to run")
+		require.Contains(t, out, "ready")
+		require.NotContains(t, out, "deployment_in_flight")
+		require.NotContains(t, out, "plan for")
+		require.Contains(t, out, "is paused; its data is retained")
+	})
+
+	t.Run("DevForceCancelsInFlightRun", func(t *testing.T) {
+		// --force takes the slot instead of adopting it: the in-flight run
+		// is cancelled and the fresh forced deploy proceeds to ready.
+		out := h.run(false, "", "deploy", "--environment", "local", "--yes", "--detach")
+		require.Contains(t, out, "deployment continues on the server")
+
+		out = h.run(false, "", "dev", "-d", "--force")
+		require.Contains(t, out, "cancelling in-flight deployment run")
+		require.Contains(t, out, "ready")
+
+		// Restore the fast source and settle back on it so the following
+		// subtests see the expected revision.
+		source := filepath.Join(h.projectDir, "main.go")
+		content, err := os.ReadFile(source)
+		require.NoError(t, err)
+		fast := strings.Replace(string(content), "time.Sleep(20 * time.Second)\n\t", "", 1)
+		fast = strings.Replace(fast, "\"os\"\n\t\"time\"\n)", "\"os\"\n)", 1)
+		require.NotEqual(t, string(content), fast, "slow-start edit did not revert")
+		require.NoError(t, os.WriteFile(source, []byte(fast), 0o644))
+		out = h.run(false, "", "dev", "-d")
+		require.Contains(t, out, "ready")
+		h.waitRoute("hello from skali", 5*time.Minute)
+	})
+
 	t.Run("DownKeepsData", func(t *testing.T) {
 		out := h.run(false, "", "dev", "down")
 		require.Contains(t, out, "is down; its data is retained")
