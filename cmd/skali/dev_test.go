@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -182,4 +183,19 @@ func TestDevResolveInFlight(t *testing.T) {
 		_, _, err := resolve(f, false)
 		require.EqualError(t, err, "run r1 failed")
 	})
+}
+
+func TestAttachRunInterruptedByParentDeadline(t *testing.T) {
+	// A parent context dying under the wait (the pause epilogue's deadline)
+	// is not a user detach: attachRun must report "interrupted" and never
+	// claim the user detached from a run they were still waiting on.
+	f := newFakeRuns(t)
+	f.seed(nil, map[string]client.Run{"r1": {ID: "r1", Kind: "teardown", Status: "running"}})
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	var out strings.Builder
+	status, err := attachRun(ctx, &out, f.client(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "interrupted", status)
+	require.NotContains(t, out.String(), "detached from run")
 }

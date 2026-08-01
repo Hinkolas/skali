@@ -180,7 +180,11 @@ func (k *Kernel) teardownClaims(ctx context.Context, attachment *runAttachment, 
 
 // teardownSettled reports whether the destructive decision has been fully
 // executed on the cluster: for down no runtime object remains, for
-// releasing nothing remains at all.
+// releasing nothing remains at all. The release plane is the one exception
+// on down: the completed release Job is the per-revision already-ran
+// marker, kept on purpose (with its terminal pod) so a resurrect does not
+// re-run the release command. A release pod still running keeps blocking:
+// down must not conclude while release work is mutating state.
 func teardownSettled(snapshot observe.Snapshot, releasing bool) bool {
 	if releasing {
 		return len(snapshot.Objects) == 0
@@ -193,9 +197,14 @@ func teardownSettled(snapshot observe.Snapshot, releasing bool) bool {
 		module.KindPod:        true,
 	}
 	for _, obj := range snapshot.Objects {
-		if runtime[obj.Kind] {
-			return false
+		if !runtime[obj.Kind] {
+			continue
 		}
+		if obj.Kind == module.KindPod && rendering.IsReleaseServiceIdentity(obj.Service) &&
+			obj.Pod != nil && (obj.Pod.Phase == "Succeeded" || obj.Pod.Phase == "Failed") {
+			continue
+		}
+		return false
 	}
 	return true
 }

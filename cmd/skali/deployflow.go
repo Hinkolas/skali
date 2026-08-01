@@ -669,7 +669,9 @@ func startHeartbeat(ctx context.Context, api *client.Client, buildID string) (st
 }
 
 // attachRun renders the run tree until it settles or the user detaches
-// with an interrupt (detaching never cancels).
+// with an interrupt (detaching never cancels). A parent context dying under
+// the wait (a deadline, a lost session) is not a detach: nobody asked for
+// one, so it returns "interrupted" without claiming anything.
 func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID string) (string, error) {
 	attachCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
@@ -706,10 +708,17 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID str
 		spin.Stop()
 	}
 
+	kind := "run"
 	for {
 		tree, err := api.GetRun(ctx, runID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "interrupted", nil
+			}
 			return "", err
+		}
+		if tree.Run.Kind != "" {
+			kind = tree.Run.Kind
 		}
 		renderer.Render(tree)
 		switch tree.Run.Status {
@@ -720,7 +729,10 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID str
 			select {
 			case <-attachCtx.Done():
 				renderer.Detach()
-				fmt.Fprintf(out, "\ndetached from run %s; the deployment continues on the server\n", runID)
+				if ctx.Err() != nil {
+					return "interrupted", nil
+				}
+				fmt.Fprintf(out, "\ndetached from run %s; the %s continues on the server\n", runID, kind)
 				fmt.Fprintf(out, "  reattach  skali run attach %s\n", runID)
 				return "detached", nil
 			case <-spin.C:

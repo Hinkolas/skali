@@ -12,6 +12,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/kube"
+	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/store"
@@ -122,6 +123,55 @@ func TestTeardownDownRemovesWorkloadsAndKeepsData(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, rows, "a promote resurrects a down environment")
 	require.Equal(t, deploy.EnvironmentStateActive, f.target(t).State)
+}
+
+// A completed release Job outlives the workloads on purpose (it is the
+// per-revision already-ran marker), so its terminal pod must not hold a
+// plain down open; a release pod still running must.
+func TestTeardownDownIgnoresTerminalReleasePod(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	serviceRef, _, _ := f.deployedAndActive(t)
+
+	f.fake.SetReleaseJob(f.environmentID, f.namespace, "demo-web-release-abc123", "web",
+		observe.JobStatus{Succeeded: true, Created: time.Now()})
+	f.fake.SetPod(f.environmentID, f.namespace, rendering.ReleaseServiceIdentity("web"),
+		"demo-web-release-abc123-x9", "node-a", module.PodStatus{Phase: "Running"})
+
+	run, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
+	require.NoError(t, err)
+
+	f.cluster.ops = nil
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, requeueHealthCheck, requeue)
+	for _, op := range f.cluster.recorded() {
+		require.NotContains(t, op, "release", "down never touches the release plane")
+	}
+
+	// The application objects disappear, but the release command is still
+	// running: the down must keep waiting for it.
+	f.fake.Remove(f.workloadRef())
+	f.fake.Remove(f.podRef())
+	f.fake.Remove(serviceRef)
+	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, requeueHealthCheck, requeue, "a running release pod holds the down open")
+	row, err := f.st.GetRunByID(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", row.Status)
+
+	// The release pod reaching a terminal phase settles the down; the pod
+	// itself stays observed as part of the kept release plane.
+	f.fake.SetPod(f.environmentID, f.namespace, rendering.ReleaseServiceIdentity("web"),
+		"demo-web-release-abc123-x9", "node-a", module.PodStatus{Phase: "Succeeded"})
+	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Zero(t, requeue)
+	row, err = f.st.GetRunByID(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", row.Status)
 }
 
 func TestTeardownPurgeRemovesEverything(t *testing.T) {

@@ -314,7 +314,7 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 	if err != nil {
 		return err
 	}
-	if status == "detached" {
+	if status == "detached" || status == "interrupted" {
 		return nil
 	}
 
@@ -363,7 +363,7 @@ func teardownLocalEnvironment(ctx context.Context, out io.Writer, api *client.Cl
 		status = "succeeded"
 	}
 	switch status {
-	case "succeeded", "detached":
+	case "succeeded", "detached", "interrupted":
 		return status, nil
 	default:
 		return "", fmt.Errorf("run %s %s", runID, status)
@@ -411,8 +411,14 @@ func finishInterrupted(command *cobra.Command, window string, keepRunning bool) 
 	if err != nil {
 		return err
 	}
-	if status == "detached" {
+	switch status {
+	case "detached":
 		fmt.Fprintln(out, "the pause continues on the server; check skali dev ls")
+		return nil
+	case "interrupted":
+		// The epilogue's own deadline expired while the server was still
+		// finishing; claiming a completed pause here would be a guess.
+		fmt.Fprintln(out, "the pause is still finishing on the server; check skali dev ls")
 		return nil
 	}
 	fmt.Fprintf(out, "\n%s%s is paused; its data is retained\n", style.Check(), name)
@@ -457,7 +463,7 @@ func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
 		if err != nil {
 			return "", err
 		}
-		if status == "detached" {
+		if status == "detached" || status == "interrupted" {
 			return devInFlightDetached, nil
 		}
 		return devInFlightProceed, nil

@@ -301,6 +301,10 @@ func ReleaseJobName(projectName, key, revisionChecksum string) string {
 // listings.
 func ReleaseServiceIdentity(key string) string { return "release." + key }
 
+// IsReleaseServiceIdentity reports whether a LabelService value names the
+// release plane rather than an application service.
+func IsReleaseServiceIdentity(service string) bool { return strings.HasPrefix(service, "release.") }
+
 // renderReleaseJob renders the application's release command as a
 // single-attempt Job: the reconciler runs it to completion before the
 // workload of a new release rolls forward. One attempt only (no backoff):
