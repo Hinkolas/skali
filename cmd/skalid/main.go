@@ -200,6 +200,7 @@ func runServe() error {
 	if kubeClient != nil {
 		kernelDeps.Cluster = kubeClient
 		kernelDeps.JobLogs = kubeClient.TailJobLogs
+		kernelDeps.RefreshObservation = source.Refresh
 	}
 	// The platform substrate controller runs beside the kernel with its own
 	// queue: it owns pools, tenants, the object store, and credentials in

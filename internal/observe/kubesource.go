@@ -2,7 +2,9 @@ package observe
 
 import (
 	"context"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,6 +62,10 @@ type KubeSource struct {
 	store     *Store
 	opts      SourceOptions
 	informers []namedInformer
+
+	mu          sync.Mutex
+	current     map[string]watch.Interface // kind -> live watch connection
+	lastRefresh time.Time
 }
 
 type namedInformer struct {
@@ -132,7 +138,7 @@ func (k *KubeSource) register() {
 	all := metav1.NamespaceAll
 	managed := rendering.ManagedSelector
 
-	k.addObjectInformer("Pod", &corev1.Pod{}, k.listWatch(
+	k.addObjectInformer("Pod", &corev1.Pod{}, k.listWatch("Pod",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return core.Pods(all).List(context.Background(), o)
 		},
@@ -141,7 +147,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertPod)
 
-	k.addObjectInformer("Deployment", &appsv1.Deployment{}, k.listWatch(
+	k.addObjectInformer("Deployment", &appsv1.Deployment{}, k.listWatch("Deployment",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return apps.Deployments(all).List(context.Background(), o)
 		},
@@ -153,7 +159,7 @@ func (k *KubeSource) register() {
 	// Release-command Jobs: the reconciler's release gate reads their
 	// terminal state, and a completing Job must poke its environment instead
 	// of waiting out the requeue interval.
-	k.addObjectInformer("Job", &batchv1.Job{}, k.listWatch(
+	k.addObjectInformer("Job", &batchv1.Job{}, k.listWatch("Job",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return batch.Jobs(all).List(context.Background(), o)
 		},
@@ -162,7 +168,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertJob)
 
-	k.addObjectInformer("Service", &corev1.Service{}, k.listWatch(
+	k.addObjectInformer("Service", &corev1.Service{}, k.listWatch("Service",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return core.Services(all).List(context.Background(), o)
 		},
@@ -171,7 +177,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertPlain(schema.GroupVersionKind{Version: "v1", Kind: "Service"}, module.KindService))
 
-	k.addObjectInformer("Ingress", &networkingv1.Ingress{}, k.listWatch(
+	k.addObjectInformer("Ingress", &networkingv1.Ingress{}, k.listWatch("Ingress",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return networking.Ingresses(all).List(context.Background(), o)
 		},
@@ -180,7 +186,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertPlain(schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"}, module.KindIngress))
 
-	k.addObjectInformer("PersistentVolumeClaim", &corev1.PersistentVolumeClaim{}, k.listWatch(
+	k.addObjectInformer("PersistentVolumeClaim", &corev1.PersistentVolumeClaim{}, k.listWatch("PersistentVolumeClaim",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return core.PersistentVolumeClaims(all).List(context.Background(), o)
 		},
@@ -189,7 +195,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertPlain(schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, module.KindVolume))
 
-	k.addObjectInformer("HorizontalPodAutoscaler", &autoscalingv2.HorizontalPodAutoscaler{}, k.listWatch(
+	k.addObjectInformer("HorizontalPodAutoscaler", &autoscalingv2.HorizontalPodAutoscaler{}, k.listWatch("HorizontalPodAutoscaler",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return autoscaling.HorizontalPodAutoscalers(all).List(context.Background(), o)
 		},
@@ -198,7 +204,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertAutoscaler)
 
-	k.addObjectInformer("Namespace", &corev1.Namespace{}, k.listWatch(
+	k.addObjectInformer("Namespace", &corev1.Namespace{}, k.listWatch("Namespace",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return core.Namespaces().List(context.Background(), o)
 		},
@@ -209,7 +215,7 @@ func (k *KubeSource) register() {
 
 	// Nodes are unlabeled infrastructure: observed only to fan a node change
 	// out to the environments with pods placed on it.
-	k.addNodeInformer(k.listWatch(
+	k.addNodeInformer(k.listWatch("Node",
 		func(o metav1.ListOptions) (runtime.Object, error) { return core.Nodes().List(context.Background(), o) },
 		func(o metav1.ListOptions) (watch.Interface, error) {
 			return core.Nodes().Watch(context.Background(), o)
@@ -217,7 +223,7 @@ func (k *KubeSource) register() {
 		"", ""))
 
 	// Warning events join to environments through their involved object.
-	k.addEventInformer(k.listWatch(
+	k.addEventInformer(k.listWatch("Event",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return core.Events(all).List(context.Background(), o)
 		},
@@ -231,7 +237,7 @@ func (k *KubeSource) register() {
 	for _, dynamicKind := range k.opts.Dynamic {
 		gvr := dynamicKind.GVR
 		convert := dynamicKind.Convert
-		k.addObjectInformer(dynamicKind.Kind, &unstructured.Unstructured{}, k.listWatch(
+		k.addObjectInformer(dynamicKind.Kind, &unstructured.Unstructured{}, k.listWatch(dynamicKind.Kind,
 			func(o metav1.ListOptions) (runtime.Object, error) {
 				return k.client.Dynamic.Resource(gvr).Namespace(all).List(context.Background(), o)
 			},
@@ -255,6 +261,7 @@ func (k *KubeSource) register() {
 // delivered watch event (initial or bookmark events count), and an
 // immediately closing zero-event watcher is recorded as a failure.
 func (k *KubeSource) listWatch(
+	kind string,
 	list func(metav1.ListOptions) (runtime.Object, error),
 	watchFn func(metav1.ListOptions) (watch.Interface, error),
 	labelSelector, fieldSelector string,
@@ -279,7 +286,7 @@ func (k *KubeSource) listWatch(
 				k.store.MarkFailure(SourceKubernetes)
 				return nil, err
 			}
-			return k.trackContact(result), nil
+			return k.trackContact(kind, result), nil
 		},
 	}
 }
@@ -295,7 +302,11 @@ const emptyWatchWindow = 2 * time.Second
 // booting or degraded API server answers watch requests with error statuses
 // long before it can serve a fresh view, and treating those as contact
 // would keep resetting the staleness clock through a real outage.
-func (k *KubeSource) trackContact(inner watch.Interface) watch.Interface {
+//
+// Each connection also registers as its kind's current watcher, the handle
+// Refresh uses to force a re-establishment on demand.
+func (k *KubeSource) trackContact(kind string, inner watch.Interface) watch.Interface {
+	k.setCurrent(kind, inner)
 	forwarder := &contactWatcher{inner: inner, out: make(chan watch.Event)}
 	go func() {
 		started := time.Now()
@@ -310,9 +321,58 @@ func (k *KubeSource) trackContact(inner watch.Interface) watch.Interface {
 		if !delivered && time.Since(started) < emptyWatchWindow {
 			k.store.MarkFailure(SourceKubernetes)
 		}
+		k.clearCurrent(kind, inner)
 		close(forwarder.out)
 	}()
 	return forwarder
+}
+
+// refreshMinInterval rate-limits Refresh: the kernel asks on every stalled
+// health pass, the reflectors need only one bounce to re-list.
+const refreshMinInterval = 30 * time.Second
+
+// Refresh forces every kind's current watch connection to re-establish.
+// This is the level-triggered recovery for observation gaps no event will
+// ever heal: an object created while the informers were still establishing
+// can be missing from a perfectly live watch (the initial list served a
+// stale view and the creation event was never replayed), and it stays
+// invisible until something touches it. Stopping the current connections
+// makes every reflector re-list or replay from its last resource version,
+// restoring the missing objects within seconds. Rate-limited internally;
+// repeated and concurrent calls are cheap no-ops.
+func (k *KubeSource) Refresh() {
+	k.mu.Lock()
+	if time.Since(k.lastRefresh) < refreshMinInterval {
+		k.mu.Unlock()
+		return
+	}
+	k.lastRefresh = time.Now()
+	watchers := make([]watch.Interface, 0, len(k.current))
+	for _, watcher := range k.current {
+		watchers = append(watchers, watcher)
+	}
+	k.mu.Unlock()
+	slog.Info("observe: refreshing watch connections", "connections", len(watchers))
+	for _, watcher := range watchers {
+		watcher.Stop()
+	}
+}
+
+func (k *KubeSource) setCurrent(kind string, watcher watch.Interface) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.current == nil {
+		k.current = make(map[string]watch.Interface)
+	}
+	k.current[kind] = watcher
+}
+
+func (k *KubeSource) clearCurrent(kind string, watcher watch.Interface) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.current[kind] == watcher {
+		delete(k.current, kind)
+	}
 }
 
 type contactWatcher struct {

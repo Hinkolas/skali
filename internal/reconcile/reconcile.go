@@ -251,6 +251,15 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
 	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID))
+	// A service blocked on a projection the observation never delivered
+	// cannot be healed by waiting: the object exists on the cluster but its
+	// creation fell into an informer-establishment gap, and no further
+	// event will ever arrive for it. Bouncing the watch connections (rate
+	// limited inside) makes the reflectors re-list, and the requeue below
+	// sees the restored objects.
+	if k.deps.RefreshObservation != nil && unobservedDiagnostics(statuses) {
+		k.deps.RefreshObservation()
+	}
 	healthy := k.deps.Observed.Source().State == module.SourceFresh
 	for _, status := range statuses {
 		if status.Health != module.HealthHealthy {
@@ -547,6 +556,25 @@ func liveObject(snapshot observe.Snapshot, service, kind string) *observe.Object
 
 // healthByService keys health by dotted service name; bare keys may repeat
 // across collections.
+// unobservedDiagnostics reports whether any service is blocked on a
+// projection the observation plane has not delivered: the modules'
+// *-unobserved codes (pool, tenant, bucket), which only fire after the
+// substrate confirmed the object exists, so a missing projection is an
+// observation gap rather than propagation delay. The app module's
+// missing-resource is deliberately excluded: it appears transiently on
+// every normal apply until the watch delivers the new workload, and
+// bouncing the connections for that would churn on every deploy.
+func unobservedDiagnostics(statuses []ServiceStatus) bool {
+	for _, status := range statuses {
+		for _, diagnostic := range status.Diagnostics {
+			if strings.HasSuffix(diagnostic.Code, "-unobserved") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func healthByService(statuses []ServiceStatus) map[string]bool {
 	health := make(map[string]bool, len(statuses))
 	for _, status := range statuses {

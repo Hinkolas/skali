@@ -87,6 +87,12 @@ type Deps struct {
 	// JobLogs reads the log tail of one Job's newest pod for release-command
 	// failure diagnostics; nil (API-only mode, tests) skips log retrieval.
 	JobLogs func(ctx context.Context, namespace, jobName string, tail int64) ([]string, error)
+	// RefreshObservation bounces the observation watch connections (see
+	// observe.KubeSource.Refresh). The kernel calls it when a health pass is
+	// blocked on a projection the observation never delivered, the gap no
+	// watch event will ever heal. Nil disables the recovery (API-only mode,
+	// tests).
+	RefreshObservation func()
 }
 
 type Config struct {

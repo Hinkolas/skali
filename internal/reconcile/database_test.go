@@ -52,6 +52,45 @@ func (f *fakeClaims) Release(_ context.Context, _ uuid.UUID) (bool, []string, er
 
 // A database-bearing revision: the application waits visibly on the claim,
 // provisioning unblocks it, and activation requires both healthy.
+// A provisioned claim whose pool never appeared in the observation (its
+// creation fell into an informer-establishment gap) must trigger the
+// observation refresh: no watch event will ever heal that gap on its own.
+func TestReconcileUnobservedPoolRefreshesObservation(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	claims := &fakeClaims{states: []ClaimState{{Service: "databases.data", Provisioned: true}}}
+	f.kernel.deps.Claims = claims
+	refreshes := 0
+	f.kernel.deps.RefreshObservation = func() { refreshes++ }
+
+	f.executeDeploymentManifest(t, databaseManifest)
+	f.fake.SetFresh()
+	claimID := uuid.Must(uuid.NewV7())
+	f.fake.SetDatabaseClaim(f.environmentID, "databases.data", claimID,
+		module.ClaimStatus{Phase: "provisioned"})
+	f.fake.SetDatabaseTenant(f.environmentID, "databases.data", "pg17-shared", "db_data",
+		module.DatabaseTenantStatus{Applied: true})
+	// The pool is deliberately absent: the tenant references pg17-shared
+	// but the observation never saw it.
+
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, 1, refreshes, "a pool-unobserved pass must ask for an observation refresh")
+
+	// The refresh restores the pool; the following passes proceed to
+	// activation without asking again.
+	f.fake.SetDatabasePool("pg17-shared",
+		module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 1, Primary: "pg17-shared-1"})
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, 1, refreshes, "a healed observation must not refresh again")
+	require.NotNil(t, f.target(t).ActiveRevisionID)
+}
+
 func TestReconcileDatabaseClaimGatesApplication(t *testing.T) {
 	t.Parallel()
 	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
