@@ -861,7 +861,10 @@ paths:
       description: |
         Points the target at a previous revision of this environment.
         Rollback re-deploys the stored revision exactly; it never creates
-        a new revision.
+        a new revision. It starts a journaled run of kind `rollback` that
+        the client can attach to, and reconciliation is enqueued
+        immediately; the rollout deadline and automatic fallback apply as
+        for a deployment.
       tags: [revisions]
       requestBody:
         required: true
@@ -876,14 +879,29 @@ paths:
                   format: uuid
       responses:
         "200":
-          description: Target moved.
+          description: Target moved; the rollout continues under the run.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TargetResponse" }
+              schema:
+                type: object
+                required: [target, run_id]
+                properties:
+                  target: { $ref: "#/components/schemas/Target" }
+                  run_id:
+                    type: string
+                    format: uuid
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: |
+            `conflict`: the environment already targets this revision, or
+            the revision belongs to another environment.
+            `deployment_in_flight`: another deployment or run is in
+            flight.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/environments/{id}/runs:
     parameters:
@@ -1453,6 +1471,13 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            `conflict`: the promotion source environment has no active
+            revision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "422":
           description: |
             `invalid_values`: the environment's values do not satisfy the
@@ -1509,7 +1534,8 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
-            `deployment_in_flight` or `destructive_change`.
+            `deployment_in_flight` or `destructive_change`, or `conflict`
+            when the promotion source environment has no active revision.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2158,6 +2184,7 @@ components:
           format: uuid
         kind:
           type: string
+          description: "deployment, rollback, reconcile, or teardown."
         project_id:
           type: [string, "null"]
           format: uuid
@@ -2261,8 +2288,9 @@ components:
 
     RevisionSummary:
       type: object
-      required: [id, project_id, environment_id, schema_version, checksum,
-                 definition_hash, values_hash, compiler_version, created_at]
+      required: [id, project_id, environment_id, definition_version_id,
+                 schema_version, checksum, definition_hash, values_hash,
+                 compiler_version, created_at]
       properties:
         id:
           type: string
@@ -2271,6 +2299,9 @@ components:
           type: string
           format: uuid
         environment_id:
+          type: string
+          format: uuid
+        definition_version_id:
           type: string
           format: uuid
         schema_version:
@@ -2287,23 +2318,25 @@ components:
           type: string
           format: date-time
 
+    Target:
+      type: object
+      required: [target_revision_id, active_revision_id, updated_at]
+      properties:
+        target_revision_id:
+          type: [string, "null"]
+          format: uuid
+        active_revision_id:
+          type: [string, "null"]
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+
     TargetResponse:
       type: object
       required: [target]
       properties:
-        target:
-          type: object
-          required: [target_revision_id, active_revision_id, updated_at]
-          properties:
-            target_revision_id:
-              type: [string, "null"]
-              format: uuid
-            active_revision_id:
-              type: [string, "null"]
-              format: uuid
-            updated_at:
-              type: string
-              format: date-time
+        target: { $ref: "#/components/schemas/Target" }
 
     Observation:
       type: object
@@ -2573,11 +2606,23 @@ components:
 
     PlanRequest:
       type: object
-      required: [definition_version_id]
+      description: |
+        Exactly one of `definition_version_id` or `from_environment_id`
+        must be present.
       properties:
         definition_version_id:
           type: string
           format: uuid
+        from_environment_id:
+          type: string
+          format: uuid
+          description: |
+            Promote the source environment's active revision (same
+            project) into this environment: its definition version and
+            artifact set are reused verbatim, every artifact action is
+            `reuse`, and values resolve for this environment. Cannot be
+            combined with `definition_version_id`, `builds`, or
+            `rebuild`.
         candidate_id:
           type: string
           format: uuid
@@ -2604,11 +2649,22 @@ components:
 
     OpenDeploymentRequest:
       type: object
-      required: [definition_version_id]
+      description: |
+        Exactly one of `definition_version_id` or `from_environment_id`
+        must be present.
       properties:
         definition_version_id:
           type: string
           format: uuid
+        from_environment_id:
+          type: string
+          format: uuid
+          description: |
+            Promote the source environment's active revision (same
+            project) into this environment. Every artifact action is
+            `reuse`, so completion follows immediately; there is no
+            artifact window. Cannot be combined with
+            `definition_version_id`, `builds`, or `rebuild`.
         candidate_id:
           type: string
           format: uuid

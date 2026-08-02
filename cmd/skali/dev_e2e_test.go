@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -328,6 +329,46 @@ func TestDevEndToEnd(t *testing.T) {
 		out = h.run(false, "", "dev", "-d")
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 5*time.Minute)
+	})
+
+	t.Run("RollbackRestoresPreviousRevision", func(t *testing.T) {
+		// Ship a v2 response, then roll back to the previous revision by
+		// its checksum prefix: the stored revision re-applies exactly (same
+		// image, same values) and the old response returns without any
+		// rebuild.
+		source := filepath.Join(h.projectDir, "main.go")
+		content, err := os.ReadFile(source)
+		require.NoError(t, err)
+		v2 := strings.Replace(string(content), "hello from skali", "hello from v2", 1)
+		require.NotEqual(t, string(content), v2, "v2 edit did not apply")
+		require.NoError(t, os.WriteFile(source, []byte(v2), 0o644))
+
+		out := h.run(false, "", "deploy", "--environment", "local", "--yes")
+		require.Contains(t, out, "ready")
+		match := regexp.MustCompile(`plan against active revision ([0-9a-f]+)`).FindStringSubmatch(out)
+		require.NotNil(t, match, "the deploy must print the active revision, got: %s", out)
+		previous := match[1]
+		h.waitRoute("hello from v2", 2*time.Minute)
+
+		out = h.run(false, "", "rollback", "--environment", "local",
+			"--revision", previous, "--yes")
+		require.Contains(t, out, "roll back local to "+previous)
+		require.Contains(t, out, "ready")
+		h.waitRoute("hello from skali", 2*time.Minute)
+
+		// The rollback ran as its own journaled run kind.
+		out = h.run(false, "", "run", "list", "--environment", "local")
+		require.Contains(t, out, "rollback")
+
+		// Rolling back to the revision the target already points at is
+		// refused with a plain error.
+		out = h.run(true, "", "rollback", "--environment", "local",
+			"--revision", previous, "--yes")
+		require.Contains(t, out, "already targets")
+
+		// Restore the original source so the following subtests converge on
+		// the revision the cluster is now serving again.
+		require.NoError(t, os.WriteFile(source, content, 0o644))
 	})
 
 	t.Run("DownKeepsData", func(t *testing.T) {

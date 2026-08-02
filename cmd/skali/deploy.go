@@ -13,6 +13,13 @@ func newPlanCommand() *cobra.Command {
 		Short: "Compute and print the deployment plan without changing anything",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if err := validateFromFlags(command, opts); err != nil {
+				return err
+			}
+			if opts.From != "" {
+				_, err := runPromoteFlow(command, opts, true)
+				return err
+			}
 			_, err := runDeployFlow(command, opts, true)
 			return err
 		},
@@ -38,8 +45,15 @@ func newDeployCommand() *cobra.Command {
 			if opts.BuildMode != "" && opts.BuildMode != "local" && opts.BuildMode != "auto" {
 				return errors.New("--build must be local or auto (cloud builders arrive with R4)")
 			}
+			if err := validateFromFlags(command, opts); err != nil {
+				return err
+			}
 			if opts.Rebuild {
 				opts.Force = true
+			}
+			if opts.From != "" {
+				_, err := runPromoteFlow(command, opts, false)
+				return err
 			}
 			_, err := runDeployFlow(command, opts, false)
 			return err
@@ -67,4 +81,18 @@ func addDeployFlags(command *cobra.Command, opts *deployOptions) {
 		"dotenv file to stage as candidate values (default: the environment's stored values)")
 	command.Flags().StringVar(&opts.Platform, "platform", "",
 		"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
+	command.Flags().StringVar(&opts.From, "from", "",
+		"promote the active revision of another environment of this project; nothing builds and no manifest is read")
+}
+
+// validateFromFlags rejects build machinery combined with a promotion:
+// --from re-deploys what the source environment already runs.
+func validateFromFlags(command *cobra.Command, opts *deployOptions) error {
+	if opts.From == "" {
+		return nil
+	}
+	if opts.Rebuild || opts.Platform != "" || opts.Manifest != "" || command.Flags().Changed("build") {
+		return errors.New("--from cannot be combined with --build, --platform, --rebuild, or --manifest")
+	}
+	return nil
 }

@@ -126,13 +126,19 @@ func TestReconcileReleaseFailureFailsRun(t *testing.T) {
 	require.NoError(t, err)
 
 	// The Job of this attempt (created after the promote) fails terminally.
+	// A first deployment has nothing to fall back to: the run fails, the
+	// target survives for a redeploy, and nothing requeues or re-enters the
+	// queue (resync picks the environment up again).
 	f.fake.SetReleaseJob(f.environmentID, f.namespace, jobName, "web",
 		observe.JobStatus{Failed: true, Reason: "BackoffLimitExceeded",
 			Message: "Job has reached the specified backoff limit",
 			Created: time.Now().Add(time.Minute)})
+	f.drainQueue(t)
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Zero(t, requeue)
+	require.Zero(t, f.kernel.queue.Len(),
+		"a first deployment has nothing to fall back to and must not requeue")
 
 	run, err := f.st.GetRunByID(ctx, result.RunID)
 	require.NoError(t, err)

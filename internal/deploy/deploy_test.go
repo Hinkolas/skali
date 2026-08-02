@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/artifactstore"
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
@@ -359,19 +360,104 @@ func TestRollback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, second.RevisionID, *target.TargetRevisionID)
 
-	// Roll back to the first revision; no new revision appears.
-	require.NoError(t, f.deploy.Rollback(ctx, f.environmentID, first.RevisionID))
+	// Roll back to the first revision; no new revision appears, and without
+	// a kernel the run concludes at the target move.
+	jsvc := journal.NewService(f.st, "test")
+	result, err := f.deploy.Rollback(ctx, RollbackInput{
+		EnvironmentID: f.environmentID, RevisionID: first.RevisionID,
+		Actor: "test", Journal: jsvc,
+	})
+	require.NoError(t, err)
 	target, err = f.deploy.Target(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Equal(t, first.RevisionID, *target.TargetRevisionID)
 	rows, err := f.deploy.ListRevisions(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
+	run, err := jsvc.Run(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "rollback", run.Kind)
+	require.Equal(t, string(journal.RunSucceeded), run.Status)
+
+	// Rolling back to the current target is refused.
+	_, err = f.deploy.Rollback(ctx, RollbackInput{
+		EnvironmentID: f.environmentID, RevisionID: first.RevisionID,
+		Actor: "test", Journal: jsvc,
+	})
+	require.ErrorIs(t, err, ErrAlreadyTargeted)
 
 	// A revision of another environment is refused.
 	other, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging")
 	require.NoError(t, err)
-	require.ErrorIs(t, f.deploy.Rollback(ctx, other.ID, first.RevisionID), ErrRevisionMismatch)
+	_, err = f.deploy.Rollback(ctx, RollbackInput{
+		EnvironmentID: other.ID, RevisionID: first.RevisionID,
+		Actor: "test", Journal: jsvc,
+	})
+	require.ErrorIs(t, err, ErrRevisionMismatch)
+}
+
+// recordingEnqueuer captures kernel handoffs.
+type recordingEnqueuer struct{ enqueued []uuid.UUID }
+
+func (r *recordingEnqueuer) Enqueue(environmentID uuid.UUID) {
+	r.enqueued = append(r.enqueued, environmentID)
+}
+
+func TestRollbackCreatesRunAndEnqueues(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	definitionVersion := f.submit(t, testManifest, 0)
+	candidate := f.stage(t,
+		map[string]string{"APP_DOMAIN": "demo.example.com"},
+		map[string]string{"SESSION_SECRET": "rollback-enqueue-value"})
+	resolver := &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID}
+	first, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
+		CandidateID: candidate.ID, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.deploy.Promote(ctx, first))
+	changedVersion, _, err := f.projects.SubmitCandidate(ctx, f.projectID, []byte(changedManifest), "yaml")
+	require.NoError(t, err)
+	second, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: changedVersion,
+		CandidateID: uuid.Nil, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.deploy.Promote(ctx, second))
+
+	enqueuer := &recordingEnqueuer{}
+	f.deploy.SetEnqueuer(enqueuer)
+	jsvc := journal.NewService(f.st, "test")
+	result, err := f.deploy.Rollback(ctx, RollbackInput{
+		EnvironmentID: f.environmentID, RevisionID: first.RevisionID,
+		Actor: "test", Journal: jsvc,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{f.environmentID}, enqueuer.enqueued)
+
+	// The run stays running for the kernel with the rollout step ensured.
+	run, err := jsvc.Run(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "rollback", run.Kind)
+	require.Equal(t, string(journal.RunRunning), run.Status)
+	tree, err := jsvc.RunTree(ctx, result.RunID)
+	require.NoError(t, err)
+	keys := make(map[string]bool, len(tree.Steps))
+	for _, step := range tree.Steps {
+		keys[step.Step.Key] = true
+	}
+	require.True(t, keys["promote"], "the promote step journals the target move")
+	require.True(t, keys["rollout"], "the rollout step hands over to the kernel")
+
+	// A second rollback while the run is in flight is refused.
+	_, err = f.deploy.Rollback(ctx, RollbackInput{
+		EnvironmentID: f.environmentID, RevisionID: second.RevisionID,
+		Actor: "test", Journal: jsvc,
+	})
+	require.ErrorIs(t, err, ErrDeploymentInFlight)
 }
 
 func TestPlatformsOverlap(t *testing.T) {
@@ -395,4 +481,62 @@ func TestPlatformsOverlap(t *testing.T) {
 			require.Equal(t, tc.want, platformsOverlap(tc.submitted, tc.cluster))
 		})
 	}
+}
+
+// A promotion source pins exactly the artifact rows the source revision
+// leases, matched by reference and digest, never re-decided by context
+// hash; every action is a reuse.
+func TestLoadPromotionSource(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	definitionVersion := f.submit(t, testManifest, 0)
+	candidate := f.stage(t,
+		map[string]string{"APP_DOMAIN": "demo.example.com"},
+		map[string]string{"SESSION_SECRET": "promotion-plant-value"})
+	prepared, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
+		CandidateID: candidate.ID, Resolver: &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.deploy.Promote(ctx, prepared))
+	rows, err := f.st.SetEnvironmentActiveRevision(ctx, store.SetEnvironmentActiveRevisionParams{
+		EnvironmentID: f.environmentID, ActiveRevisionID: &prepared.RevisionID,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+
+	staging, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging")
+	require.NoError(t, err)
+
+	source, err := f.deploy.loadPromotionSource(ctx, staging.ID, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, prepared.DefinitionVersionID, source.DefinitionVersionID)
+	require.Len(t, source.Actions, 1)
+	require.Equal(t, "reuse", source.Actions[0].Action)
+
+	leases, err := f.st.ListArtifactLeasesByRevision(ctx, prepared.RevisionID)
+	require.NoError(t, err)
+	require.Len(t, leases, 1)
+	require.Equal(t, leases[0].ArtifactID, source.Actions[0].ArtifactID,
+		"the promotion pins the leased artifact row")
+	require.Equal(t, prepared.Revision.Artifacts, source.Artifacts)
+
+	// Guards: same environment, unknown source, no active revision, and a
+	// source in another project.
+	_, err = f.deploy.loadPromotionSource(ctx, staging.ID, staging.ID)
+	require.ErrorIs(t, err, ErrSameEnvironment)
+	_, err = f.deploy.loadPromotionSource(ctx, staging.ID, uuid.New())
+	require.ErrorIs(t, err, ErrSourceEnvironmentNotFound)
+	empty, err := f.projects.CreateEnvironment(ctx, f.projectID, "empty")
+	require.NoError(t, err)
+	_, err = f.deploy.loadPromotionSource(ctx, staging.ID, empty.ID)
+	require.ErrorIs(t, err, ErrNoActiveRevision)
+	otherProject, err := f.projects.Create(ctx, "other", "")
+	require.NoError(t, err)
+	otherEnv, err := f.projects.CreateEnvironment(ctx, otherProject.ID, "production")
+	require.NoError(t, err)
+	_, err = f.deploy.loadPromotionSource(ctx, otherEnv.ID, f.environmentID)
+	require.ErrorIs(t, err, ErrSourceProjectMismatch)
 }

@@ -34,10 +34,13 @@ import (
 
 // deployOptions are the shared knobs of skali plan, deploy, and dev.
 type deployOptions struct {
-	Environment      string
-	Manifest         string
-	EnvFile          string
-	BuildMode        string
+	Environment string
+	Manifest    string
+	EnvFile     string
+	BuildMode   string
+	// From promotes another environment's active revision instead of the
+	// local checkout; no manifest is read and nothing builds.
+	From             string
 	Yes              bool
 	AllowDestructive bool
 	Detach           bool
@@ -420,6 +423,8 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 				reasons = append(reasons, "artifact will be rebuilt")
 			case "import":
 				reasons = append(reasons, "image will be imported")
+			case "reuse":
+				reasons = append(reasons, "artifact reused")
 			}
 		}
 		first, rest := "", []string(nil)
@@ -448,6 +453,42 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 	}
 }
 
+// healthHints names the applications whose compiled definition declares no
+// readiness probe: their rollouts can only verify that pods run, so the
+// rollout health guarantee is weak. Advisory only, never an error.
+func healthHints(result *compiler.Result) []string {
+	var hints []string
+	for _, key := range sortedApplicationKeys(result.Definition.Applications) {
+		if result.Definition.Applications[key].Health.Readiness.HTTP.Path == "" {
+			hints = append(hints,
+				"hint: application "+key+" declares no health check; rollouts cannot verify readiness")
+		}
+	}
+	return hints
+}
+
+func sortedApplicationKeys(applications map[string]compiler.Application) []string {
+	keys := make([]string, 0, len(applications))
+	for key := range applications {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// printHealthHints renders the advisory block after a plan.
+func printHealthHints(out io.Writer, result *compiler.Result) {
+	hints := healthHints(result)
+	if len(hints) == 0 {
+		return
+	}
+	style := clirender.StyleFor(out)
+	fmt.Fprintln(out)
+	for _, hint := range hints {
+		fmt.Fprintln(out, "  "+style.Dim(hint))
+	}
+}
+
 // actionColor paints a plan action word in its own column: additions
 // green, removals red, everything else neutral.
 func actionColor(style *clirender.Style, action string) string {
@@ -471,6 +512,43 @@ func confirmDestructive(ctx context.Context, out io.Writer, environment string) 
 		"This plan is destructive",
 		fmt.Sprintf("Type %q exactly to continue.", environment),
 		environment)
+}
+
+// confirmPlan applies the deploy confirmation policy: destructive plans
+// demand the typed environment name or the explicit flag, ordinary plans a
+// simple yes. It flips request.AllowDestructive once confirmed.
+func confirmPlan(ctx context.Context, out io.Writer, opts *deployOptions,
+	planned *client.PlanResult, request *client.DeployRequest) error {
+	if planned.Plan.Destructive() && !opts.AllowDestructive {
+		if cliprompt.Interactive() && !opts.Yes {
+			confirmed, err := confirmDestructive(ctx, out, opts.Environment)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				return errors.New("aborted")
+			}
+			request.AllowDestructive = true
+		} else {
+			return errors.New("plan is destructive; review it and re-run with --allow-destructive")
+		}
+	} else if planned.Plan.Destructive() {
+		request.AllowDestructive = true
+	} else if !opts.Yes {
+		if !cliprompt.Interactive() {
+			return errors.New("non-interactive use requires --yes")
+		}
+		confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: "Continue with this deployment?",
+		})
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return errors.New("aborted")
+		}
+	}
+	return nil
 }
 
 // stepLogSink batches engine progress into the journal's client surface;
@@ -862,77 +940,11 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		projectID = created.ID
 	}
 
-	environments, err := api.ListEnvironments(ctx, projectID)
+	environmentID, err := resolveEnvironmentTarget(ctx, out, in, api,
+		projectID, projectName, remote.Master, opts, planOnly, prompts)
 	if err != nil {
 		return nil, err
 	}
-	if opts.Environment == "" {
-		switch {
-		case !prompts:
-			return nil, errors.New("--environment is required")
-		case len(environments) == 0 && planOnly:
-			return nil, fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
-				projectName, remote.Master)
-		case len(environments) == 0:
-			opts.Environment, err = promptSession(out, in).Text(ctx, cliprompt.TextOptions{
-				Title:   "Environment name",
-				Default: "production",
-				Validate: func(value string) error {
-					if value == "" {
-						return errors.New("environment name is required")
-					}
-					return nil
-				},
-			})
-			if err != nil {
-				return nil, err
-			}
-		default:
-			environment, err := chooseEnvironment(out, in, environments)
-			if err != nil {
-				return nil, err
-			}
-			opts.Environment = environment
-		}
-	}
-
-	environment := findEnvironment(environments, opts.Environment)
-	environmentID := ""
-	switch {
-	case environment != nil:
-		environmentID = environment.ID
-	case planOnly:
-		return nil, fmt.Errorf("environment %s does not exist in project %s on %s; "+
-			"skali plan never changes the installation, run skali deploy to create it",
-			opts.Environment, projectName, remote.Master)
-	case opts.CreateMissing:
-		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
-		if err != nil {
-			return nil, err
-		}
-		environmentID = created.ID
-	case !prompts:
-		return nil, fmt.Errorf("environment %s does not exist in project %s on %s; "+
-			"run skali deploy interactively to create it", opts.Environment, projectName, remote.Master)
-	default:
-		confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
-			Title: fmt.Sprintf("Create environment %s in project %s?",
-				opts.Environment, projectName),
-		})
-		if err != nil {
-			return nil, err
-		}
-		if !confirmed {
-			return nil, errors.New("aborted")
-		}
-		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
-		if err != nil {
-			return nil, err
-		}
-		environmentID = created.ID
-	}
-
-	fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), opts.Environment)
 
 	// Link the checkout on first contact. The dev-owned local remote is
 	// disposable and never bound.
@@ -957,6 +969,89 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		environmentID: environmentID,
 		sessionToken:  remote.Token,
 	}, nil
+}
+
+// resolveEnvironmentTarget resolves or creates (per the same policy as the
+// project: interactive deploy behind explicit confirmation, dev silently,
+// plan and non-interactive never) the environment named by opts.Environment,
+// prompting for a name when empty. It prints the environment line and
+// returns the environment id.
+func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Reader, api *client.Client,
+	projectID, projectName, master string, opts *deployOptions, planOnly, prompts bool) (string, error) {
+
+	style := clirender.StyleFor(out)
+	environments, err := api.ListEnvironments(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	if opts.Environment == "" {
+		switch {
+		case !prompts:
+			return "", errors.New("--environment is required")
+		case len(environments) == 0 && planOnly:
+			return "", fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
+				projectName, master)
+		case len(environments) == 0:
+			opts.Environment, err = promptSession(out, in).Text(ctx, cliprompt.TextOptions{
+				Title:   "Environment name",
+				Default: "production",
+				Validate: func(value string) error {
+					if value == "" {
+						return errors.New("environment name is required")
+					}
+					return nil
+				},
+			})
+			if err != nil {
+				return "", err
+			}
+		default:
+			environment, err := chooseEnvironment(out, in, environments)
+			if err != nil {
+				return "", err
+			}
+			opts.Environment = environment
+		}
+	}
+
+	environment := findEnvironment(environments, opts.Environment)
+	environmentID := ""
+	switch {
+	case environment != nil:
+		environmentID = environment.ID
+	case planOnly:
+		return "", fmt.Errorf("environment %s does not exist in project %s on %s; "+
+			"skali plan never changes the installation, run skali deploy to create it",
+			opts.Environment, projectName, master)
+	case opts.CreateMissing:
+		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
+		if err != nil {
+			return "", err
+		}
+		environmentID = created.ID
+	case !prompts:
+		return "", fmt.Errorf("environment %s does not exist in project %s on %s; "+
+			"run skali deploy interactively to create it", opts.Environment, projectName, master)
+	default:
+		confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
+			Title: fmt.Sprintf("Create environment %s in project %s?",
+				opts.Environment, projectName),
+		})
+		if err != nil {
+			return "", err
+		}
+		if !confirmed {
+			return "", errors.New("aborted")
+		}
+		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
+		if err != nil {
+			return "", err
+		}
+		environmentID = created.ID
+	}
+
+	fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), opts.Environment)
+	return environmentID, nil
 }
 
 func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (string, error) {
@@ -1047,6 +1142,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
+	printHealthHints(out, project.Result)
 	if planOnly {
 		return deployOutcomePlanned, nil
 	}
@@ -1058,36 +1154,8 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		fmt.Fprintln(out, "\nnothing changed; deploying anyway (--force restarts the application workloads)")
 	}
 
-	// Confirmation: destructive plans demand the typed environment name or
-	// the explicit flag; ordinary plans a simple yes.
-	if planned.Plan.Destructive() && !opts.AllowDestructive {
-		if cliprompt.Interactive() && !opts.Yes {
-			confirmed, err := confirmDestructive(ctx, out, opts.Environment)
-			if err != nil {
-				return "", err
-			}
-			if !confirmed {
-				return "", errors.New("aborted")
-			}
-			request.AllowDestructive = true
-		} else {
-			return "", errors.New("plan is destructive; review it and re-run with --allow-destructive")
-		}
-	} else if planned.Plan.Destructive() {
-		request.AllowDestructive = true
-	} else if !opts.Yes {
-		if !cliprompt.Interactive() {
-			return "", errors.New("non-interactive use requires --yes")
-		}
-		confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{
-			Title: "Continue with this deployment?",
-		})
-		if err != nil {
-			return "", err
-		}
-		if !confirmed {
-			return "", errors.New("aborted")
-		}
+	if err := confirmPlan(ctx, out, opts, planned, &request); err != nil {
+		return "", err
 	}
 
 	opened, err := api.OpenDeployment(ctx, environmentID, request)

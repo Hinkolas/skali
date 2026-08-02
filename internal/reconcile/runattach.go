@@ -24,6 +24,10 @@ func warn(message string, err error, args ...any) {
 
 const actorReconcile = "system:reconcile"
 
+// rolloutRun reports whether an adopted run of this kind owns the rollout:
+// it carries the rollout parent step and the rollout deadline applies.
+func rolloutRun(kind string) bool { return kind == "deployment" || kind == "rollback" }
+
 // runAttachment is the pass's explanatory journal handle. It adopts the
 // environment's running deployment run when one is in flight (reattaching
 // through deterministic step keys after a restart) and lazily creates a run
@@ -74,7 +78,7 @@ func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UU
 		}
 	}
 	attachment.run = &run
-	if run.Kind == "deployment" {
+	if rolloutRun(run.Kind) {
 		step, err := attachment.journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision")
 		if err != nil {
 			warn("ensure rollout step", err, "run", run.ID)

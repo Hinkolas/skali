@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/values"
@@ -34,6 +35,9 @@ var (
 	ErrDefinitionMismatch = errors.New("deploy: definition version does not belong to the project")
 	// ErrRevisionMismatch: the revision belongs to another environment.
 	ErrRevisionMismatch = errors.New("deploy: revision does not belong to the environment")
+	// ErrAlreadyTargeted: the environment already targets the requested
+	// revision.
+	ErrAlreadyTargeted = errors.New("deploy: the environment already targets this revision")
 )
 
 // ArtifactResolver turns one application source into a verified artifact.
@@ -230,22 +234,73 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 	})
 }
 
-// Rollback points the target at an existing revision of this environment.
-func (s *Service) Rollback(ctx context.Context, environmentID, revisionID uuid.UUID) error {
-	row, err := s.st.GetRevisionByID(ctx, revisionID)
+// RollbackInput describes one rollback: re-point the target at an existing
+// revision of the environment under a journaled run of kind "rollback".
+type RollbackInput struct {
+	EnvironmentID uuid.UUID
+	RevisionID    uuid.UUID
+	Actor         string
+	Journal       *journal.Service
+}
+
+type RollbackResult struct {
+	RunID uuid.UUID
+}
+
+// Rollback points the target at an existing revision of this environment and
+// hands rollout to the kernel exactly like a promotion. The run is created
+// before the target moves so a failed move leaves a failed run and an
+// untouched target; the unique running-run index serializes rollbacks
+// against deployments.
+func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResult, error) {
+	row, err := s.st.GetRevisionByID(ctx, in.RevisionID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrRevisionNotFound
+			return nil, ErrRevisionNotFound
 		}
-		return fmt.Errorf("deploy: get revision: %w", err)
+		return nil, fmt.Errorf("deploy: get revision: %w", err)
 	}
-	if row.EnvironmentID != environmentID {
-		return ErrRevisionMismatch
+	if row.EnvironmentID != in.EnvironmentID {
+		return nil, ErrRevisionMismatch
 	}
-	return s.st.WithTx(ctx, func(q *store.Queries) error {
+	target, err := s.st.GetEnvironmentTarget(ctx, in.EnvironmentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrEnvironmentNotFound
+		}
+		return nil, fmt.Errorf("deploy: get target: %w", err)
+	}
+	// Rolling back to the active revision while the target moved ahead stays
+	// allowed: that aborts an in-flight rollout.
+	if target.TargetRevisionID != nil && *target.TargetRevisionID == in.RevisionID {
+		return nil, ErrAlreadyTargeted
+	}
+	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
+		return nil, ErrDeploymentInFlight
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
+	}
+
+	run, err := in.Journal.CreateRun(ctx, journal.RunInput{
+		Kind:          "rollback",
+		ProjectID:     row.ProjectID,
+		EnvironmentID: in.EnvironmentID,
+		Actor:         in.Actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
+		if errors.Is(err, journal.ErrRunConflict) {
+			return nil, ErrDeploymentInFlight
+		}
+		return nil, err
+	}
+
+	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		rows, err := q.SetEnvironmentTarget(ctx, store.SetEnvironmentTargetParams{
-			EnvironmentID:    environmentID,
-			TargetRevisionID: &revisionID,
+			EnvironmentID:    in.EnvironmentID,
+			TargetRevisionID: &in.RevisionID,
 		})
 		if err != nil {
 			return fmt.Errorf("deploy: set target: %w", err)
@@ -255,6 +310,39 @@ func (s *Service) Rollback(ctx context.Context, environmentID, revisionID uuid.U
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+	}
+
+	redactor, err := s.values.Redactor(ctx, in.EnvironmentID, uuid.Nil)
+	if err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+	}
+	if err := s.instantStep(ctx, in.Journal, run.ID, redactor, "promote", "Promote revision",
+		"target set to revision "+row.Checksum); err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+	}
+	if s.enqueuer != nil {
+		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); err != nil {
+			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+		}
+		s.enqueuer.Enqueue(in.EnvironmentID)
+		return &RollbackResult{RunID: run.ID}, nil
+	}
+	if err := in.Journal.FinishRun(ctx, run.ID, journal.RunSucceeded); err != nil {
+		return nil, err
+	}
+	return &RollbackResult{RunID: run.ID}, nil
+}
+
+// finishRunFailed concludes a run after a failure and returns the original
+// error.
+func finishRunFailed(ctx context.Context, jsvc *journal.Service, runID uuid.UUID, cause error) error {
+	if err := jsvc.FinishRun(ctx, runID, journal.RunFailed); err != nil &&
+		!errors.Is(err, journal.ErrInvalidTransition) {
+		return fmt.Errorf("deploy: finish run after failure: %w (original: %w)", err, cause)
+	}
+	return cause
 }
 
 func (s *Service) Target(ctx context.Context, environmentID uuid.UUID) (*store.EnvironmentTarget, error) {

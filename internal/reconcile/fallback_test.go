@@ -13,20 +13,21 @@ import (
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/module"
+	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// deployChanged promotes a second revision (different image tag) on top of
-// whatever the fixture deployed before.
-func (f *kernelFixture) deployChanged(t *testing.T) *deploy.ExecuteResult {
+// deployChanged promotes a second revision (different image tag) of the
+// given manifest on top of whatever the fixture deployed before.
+func (f *kernelFixture) deployChanged(t *testing.T, base string) *deploy.ExecuteResult {
 	t.Helper()
 	ctx := context.Background()
 	projects := project.New(f.st)
 	draft, err := projects.GetDraft(ctx, f.projectID)
 	require.NoError(t, err)
 	submitted, err := projects.SubmitDraft(ctx, f.projectID, project.DraftSubmission{
-		Source:          []byte(strings.Replace(kernelManifest, ":1.0.0", ":2.0.0", 1)),
+		Source:          []byte(strings.Replace(base, ":1.0.0", ":2.0.0", 1)),
 		Format:          "yaml",
 		ExpectedVersion: draft.Version,
 	})
@@ -135,7 +136,7 @@ func TestDeadlineFallbackToActive(t *testing.T) {
 
 	// Revision B promotes but never becomes healthy; the deadline is
 	// effectively immediate.
-	second := f.deployChanged(t)
+	second := f.deployChanged(t, kernelManifest)
 	require.NotEqual(t, first.RevisionID, second.RevisionID)
 	f.kernel.cfg.RolloutDeadline = time.Nanosecond
 	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", "",
@@ -160,4 +161,209 @@ func TestDeadlineFallbackToActive(t *testing.T) {
 	require.NoError(t, err)
 	target = f.target(t)
 	require.Equal(t, first.RevisionID, *target.ActiveRevisionID)
+}
+
+// drainQueue empties the kernel queue so a test can assert exactly what the
+// next pass enqueues. The workqueue dedupes keys, so counting deltas would
+// not work.
+func (f *kernelFixture) drainQueue(t *testing.T) {
+	t.Helper()
+	for f.kernel.queue.Len() > 0 {
+		item, shutdown := f.kernel.queue.Get()
+		require.False(t, shutdown)
+		f.kernel.queue.Done(item)
+		f.kernel.queue.Forget(item)
+	}
+}
+
+// countOps counts the recorded cluster operations equal to op, including
+// its forced-apply variant.
+func countOps(ops []string, op string) int {
+	count := 0
+	for _, recorded := range ops {
+		if recorded == op || recorded == op+" (forced)" {
+			count++
+		}
+	}
+	return count
+}
+
+// A release command failing with an active revision behind it: the run
+// fails, the target returns to the active revision, and the fallback
+// re-enters the queue so the next pass promptly re-renders the old
+// revision (restoring its values Secret) instead of waiting for resync.
+func TestReleaseFailureFallbackToActive(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+
+	// Revision A (with a release command) rolls out and activates.
+	first := f.executeDeploymentManifest(t, releaseManifest)
+	f.fake.SetFresh()
+	aJob := f.releaseJobName(t)
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.fake.SetReleaseJob(f.environmentID, f.namespace, aJob, "web",
+		observe.JobStatus{Succeeded: true, Created: time.Now()})
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	target := f.target(t)
+	require.NotNil(t, target.ActiveRevisionID)
+	require.Equal(t, first.RevisionID, *target.ActiveRevisionID)
+
+	// Revision B promotes; its release Job fails terminally for the
+	// current attempt.
+	second := f.deployChanged(t, releaseManifest)
+	require.NotEqual(t, first.RevisionID, second.RevisionID)
+	bJob := f.releaseJobName(t)
+	require.NotEqual(t, aJob, bJob)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Contains(t, f.cluster.recorded(), "apply Job/"+f.namespace+"/"+bJob)
+	f.fake.SetReleaseJob(f.environmentID, f.namespace, bJob, "web",
+		observe.JobStatus{Failed: true, Reason: "BackoffLimitExceeded",
+			Message: "Job has reached the specified backoff limit",
+			Created: time.Now().Add(time.Minute)})
+
+	f.drainQueue(t)
+	secretApplies := countOps(f.cluster.recorded(), "apply Secret/"+f.namespace+"/skali-environment")
+	workloadApplies := countOps(f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web")
+
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Zero(t, requeue)
+	require.Equal(t, 1, f.kernel.queue.Len(),
+		"the fallback must re-enter the queue for the prompt re-render")
+
+	run, err := f.st.GetRunByID(ctx, second.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", run.Status)
+	target = f.target(t)
+	require.Equal(t, first.RevisionID, *target.TargetRevisionID, "the target returns to the active revision")
+	require.Equal(t, first.RevisionID, *target.ActiveRevisionID)
+
+	// The recovery pass re-renders revision A: its Secret and workload
+	// re-apply, B's failed Job prunes, and no release Job re-runs (the
+	// environment is no longer in flight).
+	jobApplies := countOps(f.cluster.recorded(), "apply Job/"+f.namespace+"/"+aJob) +
+		countOps(f.cluster.recorded(), "apply Job/"+f.namespace+"/"+bJob)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	ops := f.cluster.recorded()
+	require.Greater(t, countOps(ops, "apply Secret/"+f.namespace+"/skali-environment"), secretApplies,
+		"the old revision's values Secret must re-apply promptly")
+	require.Greater(t, countOps(ops, "apply Deployment/"+f.namespace+"/demo-web"), workloadApplies)
+	require.Contains(t, ops, "delete Job/"+f.namespace+"/"+bJob)
+	require.Equal(t, jobApplies,
+		countOps(ops, "apply Job/"+f.namespace+"/"+aJob)+countOps(ops, "apply Job/"+f.namespace+"/"+bJob),
+		"a converged environment never re-creates release Jobs")
+
+	// Health recovers on revision A and the environment settles.
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, first.RevisionID, *f.target(t).ActiveRevisionID)
+}
+
+// A rollback run is adopted exactly like a deployment run: it owns the
+// rollout parent step, the kernel rolls the stored revision out under it,
+// and activation finishes it.
+func TestRollbackRunAdoptedAndActivates(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+
+	// Revision A activates, then revision B activates on top.
+	first := f.executeDeployment(t)
+	f.fake.SetFresh()
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	second := f.deployChanged(t, kernelManifest)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, second.RevisionID, *f.target(t).ActiveRevisionID)
+
+	// Roll back to revision A: the run stays running for the kernel.
+	result, err := f.deploy.Rollback(ctx, deploy.RollbackInput{
+		EnvironmentID: f.environmentID, RevisionID: first.RevisionID,
+		Actor: "tester", Journal: f.journal,
+	})
+	require.NoError(t, err)
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "rollback", run.Kind)
+	require.Equal(t, "running", run.Status)
+
+	// The kernel adopts the run, re-applies revision A, and activation on
+	// health concludes it.
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	run, err = f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", run.Status)
+	target := f.target(t)
+	require.Equal(t, first.RevisionID, *target.ActiveRevisionID)
+	keys := f.runStepStatuses(t, result.RunID)
+	require.Equal(t, "succeeded", keys["promote"])
+	require.Equal(t, "succeeded", keys["rollout"])
+	require.Equal(t, "succeeded", keys["activate"])
+}
+
+// A rollback missing its deadline gets the same safety net as a deployment:
+// the run fails and the target returns to the still-active revision it
+// rolled back from.
+func TestRollbackDeadlineFallbackToActive(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+
+	first := f.executeDeployment(t)
+	f.fake.SetFresh()
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	second := f.deployChanged(t, kernelManifest)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, second.RevisionID, *f.target(t).ActiveRevisionID)
+
+	// Roll back to A, which never becomes healthy; the deadline is
+	// effectively immediate.
+	result, err := f.deploy.Rollback(ctx, deploy.RollbackInput{
+		EnvironmentID: f.environmentID, RevisionID: first.RevisionID,
+		Actor: "tester", Journal: f.journal,
+	})
+	require.NoError(t, err)
+	f.kernel.cfg.RolloutDeadline = time.Nanosecond
+	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", "",
+		module.WorkloadStatus{Desired: 1, Ready: 0})
+
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Zero(t, requeue)
+
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", run.Status)
+	target := f.target(t)
+	require.Equal(t, second.RevisionID, *target.TargetRevisionID,
+		"the target returns to the revision the rollback left")
+	require.Equal(t, second.RevisionID, *target.ActiveRevisionID)
 }

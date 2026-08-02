@@ -27,6 +27,12 @@ const (
 // the revision is unchanged.
 const AnnotationRestartedAt = "skali.dev/restarted-at"
 
+// AnnotationValuesHash stamps application pod templates with the identity
+// of the project variables the application references, so changing a
+// referenced value rolls exactly the referencing workloads. Secret
+// variables contribute their stored version, never plaintext.
+const AnnotationValuesHash = "skali.dev/values-hash"
+
 // ManagedSelector is the informer-level list/watch selector: every object
 // skalid owns carries it, nothing else does.
 const ManagedSelector = LabelManaged + "=true"

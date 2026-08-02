@@ -300,7 +300,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		// events and, if needed, the requeue below.
 		attachment.finish(ctx, journal.RunSucceeded)
 	}
-	if attachment.adopted() && attachment.run.Kind == "deployment" {
+	if attachment.adopted() && rolloutRun(attachment.run.Kind) {
 		// Release commands extend the deadline by their own budget: their
 		// Jobs enforce the manifest timeouts, so the rollout deadline only
 		// needs to cover everything after them.
@@ -465,12 +465,14 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	}
 
 	renderOptions := rendering.Options{
-		Namespace:        namespace.Name,
-		Variables:        variables,
-		BuildImages:      buildImages,
-		EnvironmentID:    environmentID.String(),
-		RevisionChecksum: rev.Checksum,
-		ManagedCluster:   k.cfg.ManagedCluster,
+		Namespace:               namespace.Name,
+		Variables:               variables,
+		BuildImages:             buildImages,
+		EnvironmentID:           environmentID.String(),
+		RevisionChecksum:        rev.Checksum,
+		SecretVersions:          refs,
+		ProgressDeadlineSeconds: int64(k.cfg.RolloutDeadline / time.Second),
+		ManagedCluster:          k.cfg.ManagedCluster,
 	}
 	if restartedAt != nil {
 		renderOptions.RestartedAt = restartedAt.UTC().Format(time.RFC3339)

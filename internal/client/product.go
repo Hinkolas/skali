@@ -166,9 +166,22 @@ type LogEntry struct {
 }
 
 type Target struct {
-	EnvironmentID    string  `json:"environment_id"`
-	TargetRevisionID *string `json:"target_revision_id"`
-	ActiveRevisionID *string `json:"active_revision_id"`
+	TargetRevisionID *string   `json:"target_revision_id"`
+	ActiveRevisionID *string   `json:"active_revision_id"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type RevisionSummary struct {
+	ID                  string    `json:"id"`
+	ProjectID           string    `json:"project_id"`
+	EnvironmentID       string    `json:"environment_id"`
+	DefinitionVersionID string    `json:"definition_version_id"`
+	SchemaVersion       string    `json:"schema_version"`
+	Checksum            string    `json:"checksum"`
+	DefinitionHash      string    `json:"definition_hash"`
+	ValuesHash          string    `json:"values_hash"`
+	CompilerVersion     string    `json:"compiler_version"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // --- projects and environments ---
@@ -270,11 +283,14 @@ func (c *Client) StageValues(ctx context.Context, environmentID string, values m
 }
 
 type DeployRequest struct {
-	DefinitionVersionID string                `json:"definition_version_id"`
-	CandidateID         string                `json:"candidate_id,omitempty"`
-	BuildExecutor       string                `json:"build_executor,omitempty"`
-	AllowDestructive    bool                  `json:"allow_destructive,omitempty"`
-	Builds              map[string]BuildInput `json:"builds,omitempty"`
+	DefinitionVersionID string `json:"definition_version_id,omitempty"`
+	// FromEnvironmentID promotes the source environment's active revision
+	// instead of a submitted definition; exactly one of the two is set.
+	FromEnvironmentID string                `json:"from_environment_id,omitempty"`
+	CandidateID       string                `json:"candidate_id,omitempty"`
+	BuildExecutor     string                `json:"build_executor,omitempty"`
+	AllowDestructive  bool                  `json:"allow_destructive,omitempty"`
+	Builds            map[string]BuildInput `json:"builds,omitempty"`
 	// Force deploys even when the environment is up to date; application
 	// workloads restart at promotion.
 	Force bool `json:"force,omitempty"`
@@ -285,7 +301,13 @@ type DeployRequest struct {
 
 func (c *Client) Plan(ctx context.Context, environmentID string, req DeployRequest) (*PlanResult, error) {
 	var res PlanResult
-	body := map[string]any{"definition_version_id": req.DefinitionVersionID}
+	body := map[string]any{}
+	if req.DefinitionVersionID != "" {
+		body["definition_version_id"] = req.DefinitionVersionID
+	}
+	if req.FromEnvironmentID != "" {
+		body["from_environment_id"] = req.FromEnvironmentID
+	}
 	if req.CandidateID != "" {
 		body["candidate_id"] = req.CandidateID
 	}
@@ -420,8 +442,38 @@ func (c *Client) StepLogs(ctx context.Context, stepID, after string, limit int) 
 }
 
 func (c *Client) Target(ctx context.Context, environmentID string) (*Target, error) {
-	var res Target
+	var res struct {
+		Target Target `json:"target"`
+	}
 	if err := c.do(ctx, http.MethodGet, "/v1/environments/"+environmentID+"/target", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res.Target, nil
+}
+
+func (c *Client) ListRevisions(ctx context.Context, environmentID string) ([]RevisionSummary, error) {
+	var res struct {
+		Revisions []RevisionSummary `json:"revisions"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/environments/"+environmentID+"/revisions", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Revisions, nil
+}
+
+// SetTargetResult is the rollback response: the moved pointer pair and the
+// run that carries the rollout.
+type SetTargetResult struct {
+	Target Target `json:"target"`
+	RunID  string `json:"run_id"`
+}
+
+// SetTarget rolls the environment back to an existing revision.
+func (c *Client) SetTarget(ctx context.Context, environmentID, revisionID string) (*SetTargetResult, error) {
+	var res SetTargetResult
+	err := c.do(ctx, http.MethodPut, "/v1/environments/"+environmentID+"/target",
+		map[string]string{"revision_id": revisionID}, &res)
+	if err != nil {
 		return nil, err
 	}
 	return &res, nil

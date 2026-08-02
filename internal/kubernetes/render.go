@@ -43,9 +43,24 @@ type Options struct {
 	// unchanged. Stateful services never carry it.
 	RestartedAt string
 
+	// SecretVersions carries the stored generation per secret variable for
+	// the per-application values identity; optional so offline rendering
+	// stays possible.
+	SecretVersions map[string]int
+
+	// ProgressDeadlineSeconds mirrors the kernel rollout deadline onto
+	// rendered Deployments; zero omits the field (offline rendering, the
+	// Kubernetes default applies).
+	ProgressDeadlineSeconds int64
+
 	// ManagedCluster enables capability placement on Skali-labeled nodes.
 	ManagedCluster bool
 }
+
+// revisionHistoryLimit bounds retained ReplicaSets. Rollback re-renders old
+// revisions from storage, never kubectl rollout undo, so history is only
+// for manual inspection of recent rollouts.
+const revisionHistoryLimit = 3
 
 func Render(result *compiler.Result, options Options) ([]runtime.Object, error) {
 	if options.Namespace == "" {
@@ -150,6 +165,12 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		replicas = int32Pointer(int32(application.Scaling.MinReplicas))
 	}
 	graceSeconds := int64(time.Duration(application.Shutdown.GracePeriodMillis) * time.Millisecond / time.Second)
+	// The revision label stays off the pod template: it would roll every
+	// application on every revision. The template instead carries a values
+	// identity so exactly the applications whose referenced values changed
+	// roll, and everything else rolls only on a real spec change.
+	templateLabels := cloneMap(labels)
+	delete(templateLabels, LabelRevision)
 	deployment := &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -158,13 +179,14 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			Labels:    cloneMap(labels),
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: cloneMap(selectorLabels)},
-			Strategy: renderStrategy(application.Deployment.Rollout),
+			Replicas:             replicas,
+			RevisionHistoryLimit: int32Pointer(revisionHistoryLimit),
+			Selector:             &metav1.LabelSelector{MatchLabels: cloneMap(selectorLabels)},
+			Strategy:             renderStrategy(application.Deployment.Rollout),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels:      cloneMap(labels),
-					Annotations: restartAnnotations(options),
+					Labels:      templateLabels,
+					Annotations: templateAnnotations(options, valuesIdentity(project, application, options)),
 				},
 				Spec: corev1.PodSpec{
 					TerminationGracePeriodSeconds: &graceSeconds,
@@ -172,6 +194,9 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				},
 			},
 		},
+	}
+	if options.ProgressDeadlineSeconds > 0 {
+		deployment.Spec.ProgressDeadlineSeconds = int32Pointer(int32(options.ProgressDeadlineSeconds))
 	}
 	if options.ManagedCluster {
 		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
@@ -554,14 +579,57 @@ func cloneMap(source map[string]string) map[string]string {
 	return result
 }
 
-// restartAnnotations carries the target's restart stamp into application pod
-// templates; nil (no annotations at all) when no restart was ever forced, so
-// existing objects do not change shape.
-func restartAnnotations(options Options) map[string]string {
-	if options.RestartedAt == "" {
+// valuesIdentity hashes the resolved values of exactly the project
+// variables this application's runtime environment references: plain
+// variables contribute their value, secret variables their stored version,
+// never plaintext (pod-read access is commonly broader than secret-read).
+// Empty when the application references no project variables. Excluded by
+// design: service outputs (their Secrets rotate through their own
+// lifecycle), route domains (Ingress-only), and build arguments (they flow
+// into the image digest).
+func valuesIdentity(project compiler.ProjectDefinition, application compiler.Application, options Options) string {
+	secret := make(map[string]bool, len(project.RequiredVariables))
+	for _, requirement := range project.RequiredVariables {
+		secret[requirement.Name] = requirement.Secret
+	}
+	referenced := map[string]bool{}
+	for _, expression := range application.Environment {
+		for _, part := range expression.Parts {
+			if part.Kind == "project_variable" {
+				referenced[part.Name] = true
+			}
+		}
+	}
+	if len(referenced) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(referenced))
+	for _, name := range sortedKeys(referenced) {
+		if secret[name] {
+			lines = append(lines, fmt.Sprintf("%s=v%d", name, options.SecretVersions[name]))
+		} else {
+			lines = append(lines, name+"="+options.Variables[name])
+		}
+	}
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// templateAnnotations carries the restart stamp and the values identity
+// into application pod templates; nil (no annotations at all) when neither
+// applies, so existing objects do not change shape.
+func templateAnnotations(options Options, valuesHash string) map[string]string {
+	if options.RestartedAt == "" && valuesHash == "" {
 		return nil
 	}
-	return map[string]string{AnnotationRestartedAt: options.RestartedAt}
+	annotations := map[string]string{}
+	if options.RestartedAt != "" {
+		annotations[AnnotationRestartedAt] = options.RestartedAt
+	}
+	if valuesHash != "" {
+		annotations[AnnotationValuesHash] = valuesHash
+	}
+	return annotations
 }
 
 func stringPointer(value string) *string                              { return &value }

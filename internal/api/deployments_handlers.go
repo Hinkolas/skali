@@ -127,6 +127,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		DefinitionVersionID string                       `json:"definition_version_id"`
+		FromEnvironmentID   string                       `json:"from_environment_id"`
 		CandidateID         string                       `json:"candidate_id"`
 		Builds              map[string]buildInputPayload `json:"builds"`
 		Rebuild             bool                         `json:"rebuild"`
@@ -135,7 +136,8 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
 		return
 	}
-	definitionVersionID, candidateID, ok := parseDeploymentIDs(w, req.DefinitionVersionID, req.CandidateID)
+	definitionVersionID, fromEnvironmentID, candidateID, ok := parseDeploymentSelector(w,
+		req.DefinitionVersionID, req.FromEnvironmentID, req.CandidateID, len(req.Builds), req.Rebuild)
 	if !ok {
 		return
 	}
@@ -151,6 +153,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 	preview, err := h.deploy.PlanPreview(r.Context(), deploy.PlanInput{
 		EnvironmentID:       id,
 		DefinitionVersionID: definitionVersionID,
+		FromEnvironmentID:   fromEnvironmentID,
 		CandidateID:         candidateID,
 		BuildInputs:         decodeBuildInputs(req.Builds),
 		NodePlatforms:       h.reconcile.NodePlatforms(),
@@ -175,6 +178,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		DefinitionVersionID string                       `json:"definition_version_id"`
+		FromEnvironmentID   string                       `json:"from_environment_id"`
 		CandidateID         string                       `json:"candidate_id"`
 		BuildExecutor       string                       `json:"build_executor"`
 		AllowDestructive    bool                         `json:"allow_destructive"`
@@ -186,7 +190,8 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
 		return
 	}
-	definitionVersionID, candidateID, ok := parseDeploymentIDs(w, req.DefinitionVersionID, req.CandidateID)
+	definitionVersionID, fromEnvironmentID, candidateID, ok := parseDeploymentSelector(w,
+		req.DefinitionVersionID, req.FromEnvironmentID, req.CandidateID, len(req.Builds), req.Rebuild)
 	if !ok {
 		return
 	}
@@ -200,6 +205,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		PlanInput: deploy.PlanInput{
 			EnvironmentID:       id,
 			DefinitionVersionID: definitionVersionID,
+			FromEnvironmentID:   fromEnvironmentID,
 			CandidateID:         candidateID,
 			BuildInputs:         decodeBuildInputs(req.Builds),
 			NodePlatforms:       h.reconcile.NodePlatforms(),
@@ -466,12 +472,35 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	case err == nil || errors.Is(err, pgx.ErrNoRows):
-		// Runs without a deployment row (reconcile runs, pre-R3 rows):
-		// cancellation is purely a journal affair.
+		// Runs without a deployment row (reconcile runs, rollback runs,
+		// pre-R3 rows): the journal is cancelled, and a rollback additionally
+		// returns the target to the prior active revision like a cancelled
+		// promotion.
 		if err := h.journal.FinishRun(r.Context(), id, journal.RunCancelled); err != nil &&
 			!errors.Is(err, journal.ErrInvalidTransition) {
 			writeInternalError(r.Context(), w, "cancel run", err)
 			return
+		}
+		if run.Kind == "rollback" && run.EnvironmentID != nil {
+			target, err := h.st.GetEnvironmentTarget(r.Context(), *run.EnvironmentID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				writeInternalError(r.Context(), w, "get environment target", err)
+				return
+			}
+			if err == nil && target.TargetRevisionID != nil {
+				rows, err := h.st.FallbackEnvironmentTarget(r.Context(), store.FallbackEnvironmentTargetParams{
+					EnvironmentID:    *run.EnvironmentID,
+					TargetRevisionID: target.TargetRevisionID,
+				})
+				if err != nil {
+					writeInternalError(r.Context(), w, "fall back target", err)
+					return
+				}
+				if rows > 0 {
+					fallback = true
+					h.reconcile.Enqueue(*run.EnvironmentID)
+				}
+			}
 		}
 	default:
 		writeInternalError(r.Context(), w, "get deployment for run", err)
@@ -507,15 +536,49 @@ func parseDeploymentIDs(w http.ResponseWriter, definitionVersion, candidate stri
 		writeError(w, http.StatusBadRequest, codeBadRequest, "definition_version_id must be a UUID")
 		return uuid.Nil, uuid.Nil, false
 	}
-	candidateID := uuid.Nil
-	if candidate != "" {
-		candidateID, err = uuid.Parse(candidate)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, codeBadRequest, "candidate_id must be a UUID")
-			return uuid.Nil, uuid.Nil, false
-		}
+	candidateID, ok := parseCandidateID(w, candidate)
+	if !ok {
+		return uuid.Nil, uuid.Nil, false
 	}
 	return definitionVersionID, candidateID, true
+}
+
+func parseCandidateID(w http.ResponseWriter, candidate string) (uuid.UUID, bool) {
+	if candidate == "" {
+		return uuid.Nil, true
+	}
+	candidateID, err := uuid.Parse(candidate)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "candidate_id must be a UUID")
+		return uuid.Nil, false
+	}
+	return candidateID, true
+}
+
+// parseDeploymentSelector parses the revision selector shared by plan and
+// open: exactly one of definition_version_id (an ordinary deployment) or
+// from_environment_id (a promotion), plus the optional candidate.
+func parseDeploymentSelector(w http.ResponseWriter, definitionVersion, from, candidate string,
+	buildCount int, rebuild bool) (definitionVersionID, fromEnvironmentID, candidateID uuid.UUID, ok bool) {
+	if from == "" {
+		definitionVersionID, candidateID, ok = parseDeploymentIDs(w, definitionVersion, candidate)
+		return definitionVersionID, uuid.Nil, candidateID, ok
+	}
+	if definitionVersion != "" || buildCount > 0 || rebuild {
+		writeError(w, http.StatusBadRequest, codeBadRequest,
+			"from_environment_id cannot be combined with definition_version_id, builds, or rebuild")
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	fromEnvironmentID, err := uuid.Parse(from)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "from_environment_id must be a UUID")
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	candidateID, ok = parseCandidateID(w, candidate)
+	if !ok {
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	return uuid.Nil, fromEnvironmentID, candidateID, true
 }
 
 // writeDeployError maps deploy and registry sentinel errors onto the
@@ -549,6 +612,16 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 			"the managed registry did not answer")
 	case errors.Is(err, deploy.ErrRevisionMismatch):
 		writeError(w, http.StatusConflict, codeConflict, "the revision belongs to another environment")
+	case errors.Is(err, deploy.ErrAlreadyTargeted):
+		writeError(w, http.StatusConflict, codeConflict, "the environment already targets this revision")
+	case errors.Is(err, deploy.ErrSourceEnvironmentNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "source environment not found")
+	case errors.Is(err, deploy.ErrSameEnvironment):
+		writeError(w, http.StatusBadRequest, codeBadRequest, trimDeployPrefix(err))
+	case errors.Is(err, deploy.ErrSourceProjectMismatch):
+		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
+	case errors.Is(err, deploy.ErrNoActiveRevision):
+		writeError(w, http.StatusConflict, codeConflict, "source environment has no active revision")
 	case errors.Is(err, deploy.ErrInvalidDeploymentTransition):
 		writeError(w, http.StatusConflict, codeConflict, trimDeployPrefix(err))
 	case errors.Is(err, deploy.ErrDefinitionMismatch):

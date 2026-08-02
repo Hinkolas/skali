@@ -50,6 +50,9 @@ func newValidateCmd() *cobra.Command {
 				fmt.Fprintf(command.OutOrStdout(), "  values %s: %d plain, %d secret\n",
 					path, len(resolved.Plain), len(resolved.Secret))
 			}
+			for _, hint := range healthHints(result) {
+				fmt.Fprintln(command.OutOrStdout(), "  "+hint)
+			}
 			return nil
 		},
 	}

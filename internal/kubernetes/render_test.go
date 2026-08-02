@@ -195,12 +195,16 @@ func TestRenderSelectorStableAcrossRevisions(t *testing.T) {
 	require.Equal(t, "6ee3b68d021fb92e", first.Labels[LabelRevision])
 	require.Equal(t, "2a91a76be9e54c04", second.Labels[LabelRevision])
 
-	// Pod template labels must satisfy the selector and carry the identity.
+	// Pod template labels must satisfy the selector but never carry the
+	// revision: a template that changes with the checksum would roll every
+	// application on every revision. Two renders differing only in checksum
+	// must therefore produce identical templates.
 	for name, value := range first.Spec.Selector.MatchLabels {
 		require.Equal(t, value, first.Spec.Template.Labels[name])
 	}
-	require.Equal(t, first.Labels[LabelRevision], first.Spec.Template.Labels[LabelRevision])
+	require.NotContains(t, first.Spec.Template.Labels, LabelRevision)
 	require.Equal(t, first.Labels[LabelEnvironment], first.Spec.Template.Labels[LabelEnvironment])
+	require.Equal(t, first.Spec.Template, second.Spec.Template)
 }
 
 func TestRenderVolumeBackedApplicationUsesRecreate(t *testing.T) {
@@ -326,4 +330,150 @@ func environmentVariableFromSecret(variable, secret, key string) corev1.EnvVar {
 			Key:                  key,
 		}},
 	}
+}
+
+// The pod template carries a values identity instead of the revision label:
+// changing a referenced value rolls exactly the referencing applications,
+// secret variables contribute their stored version rather than plaintext,
+// and release Jobs (immutable, per-revision named) never carry it.
+func TestRenderValuesIdentity(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+version: "1"
+name: identity
+values:
+  SESSION_SECRET:
+    secret: true
+applications:
+  web:
+    image: example.invalid/web:1
+    ports:
+      http:
+        port: 3000
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      SESSION_SECRET: ${SESSION_SECRET}
+    deployment:
+      releaseCommand:
+        command: ["/bin/migrate"]
+  worker:
+    image: example.invalid/worker:1
+    environment:
+      UNUSED: ${UNUSED}
+  cron:
+    image: example.invalid/cron:1
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	deployments := map[string]*appsv1.Deployment{}
+	var release *batchv1.Job
+	render := func(t *testing.T, options Options) {
+		t.Helper()
+		options.Namespace = "skali-identity"
+		options.EnvironmentID = "0198f2f4-0000-7000-8000-000000000003"
+		options.RevisionChecksum = "6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2"
+		objects, err := Render(result, options)
+		require.NoError(t, err)
+		deployments = map[string]*appsv1.Deployment{}
+		release = nil
+		for _, obj := range objects {
+			switch typed := obj.(type) {
+			case *appsv1.Deployment:
+				deployments[typed.Labels[LabelApplication]] = typed
+			case *batchv1.Job:
+				release = typed
+			}
+		}
+		require.Len(t, deployments, 3)
+		require.NotNil(t, release)
+	}
+	valuesHash := func(application string) string {
+		return deployments[application].Spec.Template.Annotations[AnnotationValuesHash]
+	}
+
+	base := Options{
+		Variables:      map[string]string{"APP_DOMAIN": "id.localhost", "SESSION_SECRET": "plaintext-one", "UNUSED": "0"},
+		SecretVersions: map[string]int{"SESSION_SECRET": 1},
+	}
+	render(t, base)
+
+	// An application referencing no project variables renders without any
+	// template annotations at all.
+	require.Nil(t, deployments["cron"].Spec.Template.Annotations)
+
+	webHash, workerHash := valuesHash("web"), valuesHash("worker")
+	require.Len(t, webHash, 16)
+	require.Len(t, workerHash, 16)
+	releaseTemplate := release.Spec.Template
+
+	// A changed value rolls exactly the applications referencing it.
+	changed := base
+	changed.Variables = map[string]string{"APP_DOMAIN": "id.localhost", "SESSION_SECRET": "plaintext-one", "UNUSED": "1"}
+	render(t, changed)
+	require.Equal(t, webHash, valuesHash("web"))
+	require.NotEqual(t, workerHash, valuesHash("worker"))
+
+	// Secret rotation (a new version) changes the identity; a different
+	// plaintext at the same version does not enter the hash.
+	rotated := base
+	rotated.SecretVersions = map[string]int{"SESSION_SECRET": 2}
+	render(t, rotated)
+	require.NotEqual(t, webHash, valuesHash("web"))
+	replaintexted := base
+	replaintexted.Variables = map[string]string{"APP_DOMAIN": "id.localhost", "SESSION_SECRET": "plaintext-two", "UNUSED": "0"}
+	render(t, replaintexted)
+	require.Equal(t, webHash, valuesHash("web"))
+
+	// The restart stamp and the values identity share one annotations map.
+	stamped := base
+	stamped.RestartedAt = "2026-08-02T00:00:00Z"
+	render(t, stamped)
+	require.Equal(t, webHash, valuesHash("web"))
+	require.Equal(t, "2026-08-02T00:00:00Z",
+		deployments["web"].Spec.Template.Annotations[AnnotationRestartedAt])
+	require.Equal(t, map[string]string{AnnotationRestartedAt: "2026-08-02T00:00:00Z"},
+		deployments["cron"].Spec.Template.Annotations)
+
+	// Release Job pods keep the revision label (the Job is per-revision and
+	// immutable) and never carry the values identity.
+	require.NotContains(t, releaseTemplate.Annotations, AnnotationValuesHash)
+	require.Equal(t, "6ee3b68d021fb92e", releaseTemplate.Labels[LabelRevision])
+
+	// Application pod templates never carry the revision label.
+	render(t, base)
+	for _, deployment := range deployments {
+		require.NotContains(t, deployment.Spec.Template.Labels, LabelRevision)
+	}
+}
+
+// The rollout deadline mirrors onto rendered Deployments and ReplicaSet
+// history stays bounded; offline rendering leaves the deadline to the
+// Kubernetes default.
+func TestRenderProgressDeadlineAndHistoryLimit(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+version: "1"
+name: deadline
+applications:
+  api:
+    image: example.invalid/api:1
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	objects, err := Render(result, Options{Namespace: "skali-deadline"})
+	require.NoError(t, err)
+	deployment, ok := objects[0].(*appsv1.Deployment)
+	require.True(t, ok)
+	require.Nil(t, deployment.Spec.ProgressDeadlineSeconds)
+	require.Equal(t, int32(3), *deployment.Spec.RevisionHistoryLimit)
+
+	objects, err = Render(result, Options{Namespace: "skali-deadline", ProgressDeadlineSeconds: 600})
+	require.NoError(t, err)
+	deployment, ok = objects[0].(*appsv1.Deployment)
+	require.True(t, ok)
+	require.Equal(t, int32(600), *deployment.Spec.ProgressDeadlineSeconds)
 }

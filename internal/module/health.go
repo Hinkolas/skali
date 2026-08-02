@@ -76,9 +76,12 @@ const (
 // HealthUnknown with an observation_stale_since diagnostic instead of
 // evaluating stale counts as truth.
 type ObservedResource struct {
-	Kind     string
-	Name     string
-	Revision string // skali.dev/revision label value, empty when absent
+	Kind string
+	Name string
+	// Revision is the skali.dev/revision label value, empty when absent.
+	// Pods never carry it: the label stays off pod templates so a new
+	// revision does not roll every application.
+	Revision string
 
 	Source          *SourceStatus
 	Workload        *WorkloadStatus

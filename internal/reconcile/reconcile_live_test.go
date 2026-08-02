@@ -2,12 +2,14 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -181,10 +183,13 @@ func (f *liveFixture) waitActive(t *testing.T, revisionID uuid.UUID, timeout tim
 	t.Helper()
 	require.Eventually(t, func() bool {
 		target, err := f.st.GetEnvironmentTarget(context.Background(), f.environmentID)
-		if err != nil || target.ActiveRevisionID == nil {
+		if err != nil || target.ActiveRevisionID == nil || *target.ActiveRevisionID != revisionID {
 			return false
 		}
-		return *target.ActiveRevisionID == revisionID
+		// Activation writes the pointer before concluding the run; a next
+		// deployment needs the running-run slot free, so wait for both.
+		_, err = f.st.GetRunningRunByEnvironment(context.Background(), &f.environmentID)
+		return errors.Is(err, pgx.ErrNoRows)
 	}, timeout, 500*time.Millisecond, "revision must activate once health passes")
 }
 

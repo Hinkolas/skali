@@ -86,3 +86,55 @@ func TestNonEnvelopeErrorBody(t *testing.T) {
 	require.Equal(t, "internal", apiErr.Code)
 	require.Equal(t, "upstream exploded", apiErr.Message)
 }
+
+// The target endpoint wraps its payload; the client must unwrap it
+// (regression: the original method decoded the bare object and returned
+// zero values for every field).
+func TestTargetDecodesWrapper(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "GET", r.Method)
+		require.Equal(t, "/v1/environments/env-1/target", r.URL.Path)
+		_, _ = w.Write([]byte(`{"target":{"target_revision_id":"rev-2","active_revision_id":"rev-1","updated_at":"2026-08-01T00:00:00Z"}}`))
+	}))
+	defer srv.Close()
+
+	target, err := New(srv.URL, "tok", "").Target(context.Background(), "env-1")
+	require.NoError(t, err)
+	require.NotNil(t, target.TargetRevisionID)
+	require.Equal(t, "rev-2", *target.TargetRevisionID)
+	require.NotNil(t, target.ActiveRevisionID)
+	require.Equal(t, "rev-1", *target.ActiveRevisionID)
+	require.False(t, target.UpdatedAt.IsZero())
+}
+
+func TestListRevisionsDecodes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "GET", r.Method)
+		require.Equal(t, "/v1/environments/env-1/revisions", r.URL.Path)
+		_, _ = w.Write([]byte(`{"revisions":[{"id":"rev-2","definition_version_id":"dv-1","checksum":"cafe","created_at":"2026-08-01T00:00:00Z"}]}`))
+	}))
+	defer srv.Close()
+
+	revisions, err := New(srv.URL, "tok", "").ListRevisions(context.Background(), "env-1")
+	require.NoError(t, err)
+	require.Len(t, revisions, 1)
+	require.Equal(t, "rev-2", revisions[0].ID)
+	require.Equal(t, "dv-1", revisions[0].DefinitionVersionID)
+}
+
+func TestSetTargetSendsRevisionAndDecodesRun(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "PUT", r.Method)
+		require.Equal(t, "/v1/environments/env-1/target", r.URL.Path)
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, "rev-1", body["revision_id"])
+		_, _ = w.Write([]byte(`{"target":{"target_revision_id":"rev-1","active_revision_id":"rev-2","updated_at":"2026-08-01T00:00:00Z"},"run_id":"run-9"}`))
+	}))
+	defer srv.Close()
+
+	result, err := New(srv.URL, "tok", "").SetTarget(context.Background(), "env-1", "rev-1")
+	require.NoError(t, err)
+	require.Equal(t, "run-9", result.RunID)
+	require.Equal(t, "rev-1", *result.Target.TargetRevisionID)
+}

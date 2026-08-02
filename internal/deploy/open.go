@@ -31,6 +31,11 @@ var (
 	// ErrRegistryDisabled: artifact work is required but no managed
 	// registry is configured.
 	ErrRegistryDisabled = errors.New("deploy: no managed registry configured")
+	// Promotion source guards.
+	ErrSourceEnvironmentNotFound = errors.New("deploy: source environment not found")
+	ErrSameEnvironment           = errors.New("deploy: source and target environments are the same")
+	ErrSourceProjectMismatch     = errors.New("deploy: source environment belongs to another project")
+	ErrNoActiveRevision          = errors.New("deploy: source environment has no active revision")
 )
 
 // UnsupportedCapabilitiesError: the revision needs capabilities this
@@ -143,6 +148,11 @@ type ArtifactAction struct {
 type PlanInput struct {
 	EnvironmentID       uuid.UUID
 	DefinitionVersionID uuid.UUID
+	// FromEnvironmentID promotes the source environment's active revision:
+	// its definition version and artifact set are reused verbatim while
+	// values resolve for the target environment. Mutually exclusive with
+	// DefinitionVersionID and BuildInputs.
+	FromEnvironmentID uuid.UUID
 	// CandidateID selects a staged values batch; uuid.Nil plans against
 	// current values.
 	CandidateID uuid.UUID
@@ -198,6 +208,18 @@ type Opened struct {
 // and destructive plan without mutating anything (transcript: planning
 // never stores values, never moves targets).
 func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, error) {
+	if in.FromEnvironmentID != uuid.Nil {
+		src, err := s.loadPromotionSource(ctx, in.EnvironmentID, in.FromEnvironmentID)
+		if err != nil {
+			return nil, err
+		}
+		in.DefinitionVersionID = src.DefinitionVersionID
+		env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
+		if err != nil {
+			return nil, err
+		}
+		return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true)
+	}
 	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 	if err != nil {
 		return nil, err
@@ -211,6 +233,14 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 // list. The environment's values, target, and active revision stay
 // untouched until completion.
 func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
+	var src *promotionSource
+	if in.FromEnvironmentID != uuid.Nil {
+		var err error
+		if src, err = s.loadPromotionSource(ctx, in.EnvironmentID, in.FromEnvironmentID); err != nil {
+			return nil, err
+		}
+		in.DefinitionVersionID = src.DefinitionVersionID
+	}
 	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 	if err != nil {
 		return nil, err
@@ -229,7 +259,12 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	if err := validateBucketPolicies(definition); err != nil {
 		return nil, err
 	}
-	preview, err := s.preview(ctx, env, definitionVersion, definition, in.PlanInput)
+	var preview *Preview
+	if src != nil {
+		preview, err = s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true)
+	} else {
+		preview, err = s.preview(ctx, env, definitionVersion, definition, in.PlanInput)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -590,11 +625,6 @@ func platformsOverlap(submitted string, cluster []string) bool {
 func (s *Service) preview(ctx context.Context, env store.Environment, definitionVersion store.DefinitionVersion,
 	definition compiler.ProjectDefinition, in PlanInput) (*Preview, error) {
 
-	resolvedValues, secretVersions, err := s.resolveValues(ctx, env.ID, in.CandidateID)
-	if err != nil {
-		return nil, err
-	}
-
 	actions := make([]ArtifactAction, 0, len(definition.Applications))
 	artifacts := make(map[string]revision.Artifact, len(definition.Applications))
 	allReuse := true
@@ -674,6 +704,22 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 		}
 	}
 
+	return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, actions, artifacts, allReuse)
+}
+
+// finishPreview resolves the target environment's values, builds the
+// candidate revision over the decided artifact set, and diffs it against
+// the active revision. Shared by the ordinary preview and the promotion
+// path, which substitutes a source revision's artifact set.
+func (s *Service) finishPreview(ctx context.Context, env store.Environment,
+	definitionVersion store.DefinitionVersion, definition compiler.ProjectDefinition,
+	candidateID uuid.UUID, actions []ArtifactAction,
+	artifacts map[string]revision.Artifact, allReuse bool) (*Preview, error) {
+
+	resolvedValues, secretVersions, err := s.resolveValues(ctx, env.ID, candidateID)
+	if err != nil {
+		return nil, err
+	}
 	candidate, err := revision.Build(revision.Input{
 		Result:          &compiler.Result{Hash: definitionVersion.DefinitionHash, Definition: definition},
 		Environment:     env.Name,
@@ -705,6 +751,94 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 		Actions:   actions,
 		UpToDate:  allReuse && active != nil && candidate.Checksum == activeChecksum,
 		Candidate: candidate,
+	}, nil
+}
+
+// promotionSource is a source environment's active revision prepared for
+// re-deployment into another environment of the same project: the stored
+// definition version, the verbatim artifact set, and all-reuse actions over
+// the revision's leased artifact rows.
+type promotionSource struct {
+	DefinitionVersionID uuid.UUID
+	Actions             []ArtifactAction
+	Artifacts           map[string]revision.Artifact
+}
+
+// loadPromotionSource resolves the source environment and its active
+// revision. Artifact rows are recovered through the revision's leases and
+// matched by reference and digest; reuse queries by context hash are never
+// consulted, so the promotion pins exactly what the source runs.
+func (s *Service) loadPromotionSource(ctx context.Context, environmentID, fromEnvironmentID uuid.UUID) (*promotionSource, error) {
+	if fromEnvironmentID == environmentID {
+		return nil, ErrSameEnvironment
+	}
+	env, err := s.st.GetEnvironmentByID(ctx, environmentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrEnvironmentNotFound
+		}
+		return nil, fmt.Errorf("deploy: get environment: %w", err)
+	}
+	source, err := s.st.GetEnvironmentByID(ctx, fromEnvironmentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrSourceEnvironmentNotFound
+		}
+		return nil, fmt.Errorf("deploy: get source environment: %w", err)
+	}
+	if source.ProjectID != env.ProjectID {
+		return nil, ErrSourceProjectMismatch
+	}
+	target, err := s.st.GetEnvironmentTarget(ctx, source.ID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNoActiveRevision
+		}
+		return nil, fmt.Errorf("deploy: get source target: %w", err)
+	}
+	if target.ActiveRevisionID == nil {
+		return nil, ErrNoActiveRevision
+	}
+	row, err := s.st.GetRevisionByID(ctx, *target.ActiveRevisionID)
+	if err != nil {
+		return nil, fmt.Errorf("deploy: get source revision: %w", err)
+	}
+	var document revision.Revision
+	if err := json.Unmarshal(row.Document, &document); err != nil {
+		return nil, fmt.Errorf("deploy: decode source revision: %w", err)
+	}
+
+	leases, err := s.st.ListArtifactLeasesByRevision(ctx, row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("deploy: list source artifact leases: %w", err)
+	}
+	byIdentity := make(map[string]store.Artifact, len(leases))
+	for _, lease := range leases {
+		art, err := s.st.GetArtifactByID(ctx, lease.ArtifactID)
+		if err != nil {
+			return nil, fmt.Errorf("deploy: get leased artifact: %w", err)
+		}
+		if art.Digest != nil {
+			byIdentity[art.Reference+"@"+*art.Digest] = art
+		}
+	}
+	actions := make([]ArtifactAction, 0, len(document.Artifacts))
+	for _, key := range sortedKeys(document.Artifacts) {
+		art := document.Artifacts[key]
+		artRow, ok := byIdentity[art.Reference+"@"+art.Digest]
+		if !ok {
+			return nil, fmt.Errorf("deploy: no leased artifact matches application %s of the source revision", key)
+		}
+		actions = append(actions, ArtifactAction{
+			Application: key, Action: "reuse", Kind: art.Kind, ArtifactID: artRow.ID,
+			Upstream: art.Upstream, InputHash: art.ContextHash,
+			Reference: art.Reference, Digest: art.Digest,
+		})
+	}
+	return &promotionSource{
+		DefinitionVersionID: row.DefinitionVersionID,
+		Actions:             actions,
+		Artifacts:           document.Artifacts,
 	}, nil
 }
 

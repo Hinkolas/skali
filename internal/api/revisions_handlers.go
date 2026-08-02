@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -15,32 +16,35 @@ import (
 // environment target pointer, plus rollback (pointing the target at an
 // existing revision).
 type revisionsHandlers struct {
-	deploy *deploy.Service
+	deploy  *deploy.Service
+	journal *journal.Service
 }
 
 type revisionSummaryPayload struct {
-	ID              string    `json:"id"`
-	ProjectID       string    `json:"project_id"`
-	EnvironmentID   string    `json:"environment_id"`
-	SchemaVersion   string    `json:"schema_version"`
-	Checksum        string    `json:"checksum"`
-	DefinitionHash  string    `json:"definition_hash"`
-	ValuesHash      string    `json:"values_hash"`
-	CompilerVersion string    `json:"compiler_version"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID                  string    `json:"id"`
+	ProjectID           string    `json:"project_id"`
+	EnvironmentID       string    `json:"environment_id"`
+	DefinitionVersionID string    `json:"definition_version_id"`
+	SchemaVersion       string    `json:"schema_version"`
+	Checksum            string    `json:"checksum"`
+	DefinitionHash      string    `json:"definition_hash"`
+	ValuesHash          string    `json:"values_hash"`
+	CompilerVersion     string    `json:"compiler_version"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 func newRevisionSummaryPayload(r *store.ListRevisionsRow) revisionSummaryPayload {
 	return revisionSummaryPayload{
-		ID:              r.ID.String(),
-		ProjectID:       r.ProjectID.String(),
-		EnvironmentID:   r.EnvironmentID.String(),
-		SchemaVersion:   r.SchemaVersion,
-		Checksum:        r.Checksum,
-		DefinitionHash:  r.DefinitionHash,
-		ValuesHash:      r.ValuesHash,
-		CompilerVersion: r.CompilerVersion,
-		CreatedAt:       r.CreatedAt,
+		ID:                  r.ID.String(),
+		ProjectID:           r.ProjectID.String(),
+		EnvironmentID:       r.EnvironmentID.String(),
+		DefinitionVersionID: r.DefinitionVersionID.String(),
+		SchemaVersion:       r.SchemaVersion,
+		Checksum:            r.Checksum,
+		DefinitionHash:      r.DefinitionHash,
+		ValuesHash:          r.ValuesHash,
+		CompilerVersion:     r.CompilerVersion,
+		CreatedAt:           r.CreatedAt,
 	}
 }
 
@@ -139,7 +143,14 @@ func (h *revisionsHandlers) putTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeBadRequest, "revision_id must be a UUID")
 		return
 	}
-	if err := h.deploy.Rollback(r.Context(), id, revisionID); err != nil {
+	user := UserFrom(r.Context())
+	result, err := h.deploy.Rollback(r.Context(), deploy.RollbackInput{
+		EnvironmentID: id,
+		RevisionID:    revisionID,
+		Actor:         user.ID.String(),
+		Journal:       h.journal,
+	})
+	if err != nil {
 		writeDeployError(r.Context(), w, err)
 		return
 	}
@@ -150,5 +161,6 @@ func (h *revisionsHandlers) putTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Target targetPayload `json:"target"`
-	}{newTargetPayload(target)})
+		RunID  string        `json:"run_id"`
+	}{newTargetPayload(target), result.RunID.String()})
 }
