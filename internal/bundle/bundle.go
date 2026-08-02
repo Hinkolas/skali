@@ -250,6 +250,9 @@ type Objects struct {
 	// Issuer is the ACME ClusterIssuer named skali (requires
 	// cert-manager); empty under the local profile.
 	Issuer []unstructured.Unstructured
+	// Edge is the strict-SNI TLS policy on the Traefik edge; empty under
+	// the local profile.
+	Edge []unstructured.Unstructured
 	// Database is the CNPG cluster (requires the operator).
 	Database []unstructured.Unstructured
 	// Registry is the managed OCI registry.
@@ -271,6 +274,7 @@ func stageSources(profile Profile) []string {
 	return []string{
 		namespaceYAML(),
 		issuerYAML(profile),
+		edgeYAML(profile),
 		databaseYAML(profile),
 		registryYAML(profile),
 		skalidYAML(profile),
@@ -290,6 +294,7 @@ func Render(profile Profile) (*Objects, error) {
 	targets := []*[]unstructured.Unstructured{
 		&objects.Namespace,
 		&objects.Issuer,
+		&objects.Edge,
 		&objects.Database,
 		&objects.Registry,
 		&objects.Skalid,
@@ -386,6 +391,29 @@ spec:
           ingress:
             ingressClassName: %[4]s
 `, IssuerName, profile.Production.ACMEEmail, server, profile.Production.ingressClassName())
+}
+
+// edgeYAML renders the edge-wide TLS policy: with strict SNI, Traefik
+// refuses the TLS handshake for any hostname it holds no certificate for
+// (wildcard DNS pointing spare subdomains at the cluster gets a closed
+// connection, not the self-signed default certificate, which HSTS-preloaded
+// TLDs like .dev escalate into a non-bypassable browser error). The object
+// must be named "default" to bind as the entrypoint default, and Traefik
+// tolerates only one such object cluster-wide; it lives in skali-system so
+// uninstall removes it with the namespace. Production only: the local edge
+// is HTTP-only.
+func edgeYAML(profile Profile) string {
+	if profile.Production == nil {
+		return ""
+	}
+	return `apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: default
+  namespace: ` + Namespace + `
+spec:
+  sniStrict: true
+`
 }
 
 func databaseYAML(profile Profile) string {

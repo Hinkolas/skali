@@ -34,14 +34,15 @@ func (silentProgress) Note(string)  {}
 
 // Converge applies the profile's bundle in dependency order with readiness
 // waits: namespace, blessed operators (CNPG, plus cert-manager under a
-// production profile), the skali cluster issuer, the bootstrap database
-// sized to its tier, the managed registry, and skalid with the in-cluster
-// installation record. It never applies the bootstrap-user stage (see
-// EnsureAdminUser) and never waits on TLS issuance: certificates converge
-// asynchronously while the edge serves its default certificate, so health
-// proofs must go through skalid readiness, not chain validity. Converge
-// does not stamp the bundle hash; the caller stamps via StampHash after
-// its own end-to-end health proof.
+// production profile), the skali cluster issuer and strict-SNI edge
+// policy, the bootstrap database sized to its tier, the managed registry,
+// and skalid with the in-cluster installation record. It never applies the
+// bootstrap-user stage (see EnsureAdminUser) and never waits on TLS
+// issuance: certificates converge asynchronously while the edge refuses
+// handshakes for hosts without an issued certificate (strict SNI), so
+// health proofs must go through skalid readiness, not chain validity.
+// Converge does not stamp the bundle hash; the caller stamps via StampHash
+// after its own end-to-end health proof.
 func Converge(ctx context.Context, client *kube.Client, profile Profile, progress Progress) error {
 	if progress == nil {
 		progress = silentProgress{}
@@ -92,6 +93,15 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 			server = ACMEProductionServer
 		}
 		progress.Done("acme " + server)
+
+		// The retry rides out a fresh cluster where the traefik-crd chart
+		// has not established the TLSOption CRD yet, mirroring the issuer
+		// retry over cert-manager's CRDs.
+		progress.Start("Apply edge TLS policy")
+		if err := applier.ApplyObjectsRetry(ctx, objects.Edge, 2*time.Minute); err != nil {
+			return err
+		}
+		progress.Done("strict SNI")
 	}
 
 	progress.Start("Apply bootstrap database")

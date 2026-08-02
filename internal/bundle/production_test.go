@@ -51,14 +51,14 @@ func TestLocalRenderFrozen(t *testing.T) {
 	t.Parallel()
 	profile := localProfile()
 	sources := stageSources(profile)
-	require.Len(t, sources, 7)
+	require.Len(t, sources, 8)
 
 	frozen := map[string]int{
 		"local-namespace.yaml": 0,
-		"local-database.yaml":  2,
-		"local-registry.yaml":  3,
-		"local-skalid.yaml":    4,
-		"local-bootstrap.yaml": 6,
+		"local-database.yaml":  3,
+		"local-registry.yaml":  4,
+		"local-skalid.yaml":    5,
+		"local-bootstrap.yaml": 7,
 	}
 	for name, index := range frozen {
 		golden, err := os.ReadFile(filepath.Join("testdata", name))
@@ -67,7 +67,8 @@ func TestLocalRenderFrozen(t *testing.T) {
 	}
 	// Production-only stages contribute zero bytes locally.
 	require.Empty(t, sources[1], "issuer stage must be empty locally")
-	require.Empty(t, sources[5], "record stage must be empty locally")
+	require.Empty(t, sources[2], "edge stage must be empty locally")
+	require.Empty(t, sources[6], "record stage must be empty locally")
 
 	// The full hash including the vendored operator manifests is frozen
 	// too: cert-manager must not leak into the local fingerprint.
@@ -118,6 +119,16 @@ func TestRenderProductionObjects(t *testing.T) {
 	staged := productionProfile()
 	staged.Production.ACMEServer = "https://acme-staging-v02.api.letsencrypt.org/directory"
 	require.Contains(t, issuerYAML(staged), "acme-staging-v02")
+
+	// Edge: the default TLSOption enforces strict SNI so unknown hosts get
+	// a refused handshake, not the self-signed default certificate.
+	require.Len(t, objects.Edge, 1)
+	edge := objects.Edge[0]
+	require.Equal(t, "TLSOption", edge.GetKind())
+	require.Equal(t, "default", edge.GetName())
+	require.Equal(t, Namespace, edge.GetNamespace())
+	strict, _, _ := unstructured.NestedBool(edge.Object, "spec", "sniStrict")
+	require.True(t, strict)
 
 	// Skalid: capabilities env, TLS ingress on the api domain.
 	deployment := objects.Skalid[4]
