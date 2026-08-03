@@ -2,7 +2,6 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import { modal } from '$lib/stores/modal.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import SearchButton from '$lib/components/shell/SearchButton.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
 	import ProjectCard from '$lib/components/project/ProjectCard.svelte';
@@ -26,7 +25,6 @@
 		{data.org.project_count} projects across {data.org.node_count} nodes
 	{/snippet}
 	{#snippet actions()}
-		<SearchButton />
 		<Button
 			variant="primary"
 			onclick={() => modal.open(NewProjectModal, {}, newProjectModalOptions)}

@@ -6,12 +6,12 @@
 	import SidebarProjectNav from './SidebarProjectNav.svelte';
 	import SidebarServiceNav from './SidebarServiceNav.svelte';
 	import SidebarStatus from './SidebarStatus.svelte';
-	import UserCard from './UserCard.svelte';
 
 	// Context-switching sidebar. The variant derives from merged `page.data`
 	// keys set by nested layouts: `service` (+`project`) => service nav,
-	// `project` => project nav, otherwise org nav. Loads that introduce
-	// colliding `project`/`service` keys would break this contract.
+	// `project` => project nav, otherwise org nav. Breadcrumbs reads the same
+	// contract; loads that introduce colliding `project`/`service` keys would
+	// break both.
 	const data = $derived(
 		page.data as {
 			org: Org;
@@ -35,10 +35,9 @@
 	});
 </script>
 
-<aside
-	class="bg-surface-raised border-border-default flex w-[250px] flex-none flex-col overflow-y-auto rounded-2xl border"
->
-	<div class="flex items-center gap-2.5 p-4 pb-3">
+<aside class="flex w-[250px] flex-none flex-col overflow-y-auto">
+	<!-- Same height as the Topbar so both read as one aligned band. -->
+	<div class="flex h-14 flex-none items-center gap-2.5 px-4">
 		<div
 			class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135 text-[14px] font-bold"
 		>
@@ -66,5 +65,4 @@
 	<div class="flex-1"></div>
 
 	<SidebarStatus text={statusText} />
-	<UserCard />
 </aside>

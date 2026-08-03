@@ -20,9 +20,12 @@
 	<div class="flex items-center gap-2.5">
 		<div class="text-text-primary text-[15.5px] font-semibold">{project.name}</div>
 		<Pill
-			text={project.environment}
-			tone={project.environment === 'production' ? 'success' : 'neutral'}
+			text={project.environments[0].name}
+			tone={project.environments[0].name === 'production' ? 'success' : 'neutral'}
 		/>
+		{#if project.environments.length > 1}
+			<Pill text="+{project.environments.length - 1}" tone="neutral" />
+		{/if}
 		<span class="ml-auto size-[7px] flex-none rounded-full {statusDot[project.status]}"></span>
 	</div>
 	<div class="flex gap-1.5">

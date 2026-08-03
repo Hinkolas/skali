@@ -11,7 +11,6 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import type { AuthUser } from '$lib/types/auth';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import SearchButton from '$lib/components/shell/SearchButton.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
 	import NewUserModal, {
@@ -97,7 +96,6 @@
 			: 's'}
 	{/snippet}
 	{#snippet actions()}
-		<SearchButton />
 		<Button variant="primary" onclick={newUser}>
 			<Plus size={15} strokeWidth={2.5} />
 			New user

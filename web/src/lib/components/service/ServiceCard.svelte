@@ -1,18 +1,27 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import type { Service } from '$lib/mock/types';
+	import { currentEnv, withEnv } from '$lib/urls';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
 	import StatusPill from '$lib/components/ui/StatusPill.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
 	let { service }: { service: Service } = $props();
+
+	// Only rendered in project scope, so page.data.project is present.
+	const env = $derived(currentEnv(page.data.project, page.url));
 </script>
 
+<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
 <a
-	href={resolve('/(app)/projects/[project]/services/[service]', {
-		project: service.project_slug,
-		service: service.slug
-	})}
+	href={withEnv(
+		resolve('/(app)/projects/[project]/services/[service]', {
+			project: service.project_slug,
+			service: service.slug
+		}),
+		env
+	)}
 	class="bg-surface-raised border-border-default hover:border-accent/35 flex flex-col gap-3 rounded-[14px] border px-4.5 py-4 transition-colors"
 >
 	<div class="flex items-center gap-2.5">

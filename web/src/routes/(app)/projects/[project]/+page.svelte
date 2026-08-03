@@ -3,7 +3,6 @@
 	import { modal } from '$lib/stores/modal.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import SearchButton from '$lib/components/shell/SearchButton.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import ServiceCard from '$lib/components/service/ServiceCard.svelte';
@@ -31,7 +30,6 @@
 		{data.project.subtitle}
 	{/snippet}
 	{#snippet actions()}
-		<SearchButton />
 		<Button
 			variant="primary"
 			onclick={() =>

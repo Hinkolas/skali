@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { fly } from 'svelte/transition';
 	import X from '@lucide/svelte/icons/x';
 	import type { GraphNodeData } from '$lib/mock/types';
+	import { currentEnv, withEnv } from '$lib/urls';
 
 	let {
 		node,
@@ -13,6 +15,9 @@
 		projectSlug: string;
 		onclose: () => void;
 	} = $props();
+
+	// Only rendered in project scope, so page.data.project is present.
+	const env = $derived(currentEnv(page.data.project, page.url));
 </script>
 
 <div
@@ -52,14 +57,19 @@
 	<div class="flex-1"></div>
 
 	{#if node.service_slug}
+		<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
 		<a
-			href={resolve('/(app)/projects/[project]/services/[service]', {
-				project: projectSlug,
-				service: node.service_slug
-			})}
+			href={withEnv(
+				resolve('/(app)/projects/[project]/services/[service]', {
+					project: projectSlug,
+					service: node.service_slug
+				}),
+				env
+			)}
 			class="border-accent/40 text-accent-nav hover:bg-accent/10 rounded-[10px] border p-2.5 text-center text-[13px] font-medium transition-colors"
 		>
 			Open service →
 		</a>
+		<!-- eslint-enable svelte/no-navigation-without-resolve -->
 	{/if}
 </div>

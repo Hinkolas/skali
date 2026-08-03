@@ -10,44 +10,27 @@
 	import NewServiceModal, {
 		modalOptions as newServiceModalOptions
 	} from '$lib/components/service/NewServiceModal.svelte';
-	import BackLink from './BackLink.svelte';
+	import { currentEnv, withEnv } from '$lib/urls';
 	import NavItem from './NavItem.svelte';
 	import NavSection from './NavSection.svelte';
-	import SwitcherCard from './SwitcherCard.svelte';
 
 	let { project, services }: { project: Project; services: Service[] } = $props();
 
 	const pathname = $derived(page.url.pathname);
 	const base = $derived(`/projects/${project.slug}`);
-
-	const projectDot: Record<Project['status'], string> = {
-		healthy: 'bg-status-success',
-		building: 'bg-status-warning',
-		degraded: 'bg-status-danger'
-	};
+	const env = $derived(currentEnv(project, page.url));
 </script>
 
-<div class="px-3">
-	<BackLink href={resolve('/(app)/projects')} label="Back to all projects" />
-	<SwitcherCard
-		title={project.name}
-		subtitle="{project.environment} · {project.service_count} services"
-	>
-		{#snippet leading()}
-			<span class="size-2 flex-none rounded-full {projectDot[project.status]}"></span>
-		{/snippet}
-	</SwitcherCard>
-</div>
-
 <NavSection label="Project" />
-<div class="flex flex-col gap-0.5 px-3">
+<div class="flex flex-col gap-0.5 px-2">
 	{#each PROJECT_TABS as tab (tab.slug)}
-		{@const href = tab.slug ? `${base}/${tab.slug}` : base}
+		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
+		<!-- Active check matches the bare path; the href carries ?env=. -->
 		<NavItem
-			{href}
+			href={withEnv(path, env)}
 			label={tab.label}
 			icon={tab.icon}
-			active={tab.slug ? pathname.startsWith(href) : pathname === base}
+			active={tab.slug ? pathname.startsWith(path) : pathname === base}
 		/>
 	{/each}
 </div>
@@ -57,13 +40,17 @@
 		<span class="font-mono text-accent ml-1.5 text-[10px]">{services.length}</span>
 	{/snippet}
 </NavSection>
-<div class="flex flex-col gap-0.5 px-3">
+<div class="flex flex-col gap-0.5 px-2">
 	{#each services as service (service.slug)}
+		<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
 		<a
-			href={resolve('/(app)/projects/[project]/services/[service]', {
-				project: project.slug,
-				service: service.slug
-			})}
+			href={withEnv(
+				resolve('/(app)/projects/[project]/services/[service]', {
+					project: project.slug,
+					service: service.slug
+				}),
+				env
+			)}
 			class="text-text-secondary flex items-center gap-2.5 rounded-[10px] px-3 py-1.75 text-[13px] transition-colors hover:bg-white/4"
 		>
 			<TypeBadge kind={service.type} />
@@ -72,6 +59,7 @@
 				<StatusDot status={service.status} />
 			</span>
 		</a>
+		<!-- eslint-enable svelte/no-navigation-without-resolve -->
 	{/each}
 	<button
 		type="button"

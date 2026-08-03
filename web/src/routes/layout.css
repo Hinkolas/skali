@@ -77,13 +77,14 @@
 }
 
 /* Page-level radial glows. Both originate from the skali logo tile: the app
-   shell anchors it at the sidebar logo's viewport position (~43px from the
-   top-left corner); the login page positions a bg-glow-halo element centered
-   on its logo. */
+   shell anchors it at the sidebar logo's viewport position (10px outer padding
+   + 16px row padding + half the 26px tile = 39px in, centered in the 56px
+   logo/topbar band = 28px down); the login page positions a bg-glow-halo
+   element centered on its logo. */
 @utility bg-glow-app {
 	background: #0b0b0f
 		radial-gradient(
-			900px 600px at 43px 43px,
+			900px 600px at 39px 28px,
 			rgb(124 98 242 / 0.09) 0%,
 			rgb(124 98 242 / 0.055) 20%,
 			rgb(124 98 242 / 0.029) 40%,

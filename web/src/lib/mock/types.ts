@@ -29,11 +29,17 @@ export interface StatCardData {
 	progress?: { pct: number; class: string };
 }
 
+/** An environment of a project (backend: environments table, unique name per project). */
+export interface ProjectEnvironment {
+	name: string;
+}
+
 export interface Project {
 	id: string;
 	slug: string;
 	name: string;
-	environment: 'production' | 'staging';
+	/** Production-first ordering; the first entry is the default environment. */
+	environments: ProjectEnvironment[];
 	status: 'healthy' | 'building' | 'degraded';
 	service_count: number;
 	/** Type badges on the org project card, e.g. AP ×2, DB, CA, ST. */

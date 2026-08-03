@@ -25,6 +25,8 @@
 		input?.focus();
 	});
 
+	// Palette results are deliberately env-free: targets open at the
+	// project's default environment.
 	type Result = { href: string; title: string; meta: string; kind?: ServiceKind };
 
 	const results = $derived.by(() => {
@@ -33,7 +35,7 @@
 			...PROJECTS.map((p) => ({
 				href: resolve('/(app)/projects/[project]', { project: p.slug }),
 				title: p.name,
-				meta: `project · ${p.environment}`
+				meta: `project · ${p.environments.length} env${p.environments.length === 1 ? '' : 's'}`
 			})),
 			...SERVICES.map((s) => ({
 				href: resolve('/(app)/projects/[project]/services/[service]', {
