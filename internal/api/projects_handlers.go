@@ -12,15 +12,19 @@ import (
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
 // projectsHandlers is the definition-plane surface: projects and their draft
 // documents. Every route sits behind RequireAuth; members have full project
-// access.
+// access. The reconcile kernel is only consulted for the optional list
+// summary rollup.
 type projectsHandlers struct {
-	projects *project.Service
+	projects  *project.Service
+	reconcile *reconcile.Kernel
 }
 
 // pathID parses the {id} route param, writing a 404 on malformed ids so they
@@ -37,12 +41,31 @@ func pathID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 // --- payloads (shapes mirror api/openapi.yaml exactly) ---
 
 type projectPayload struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	DisplayName string    `json:"display_name"`
-	SourceMode  string    `json:"source_mode"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	DisplayName string                 `json:"display_name"`
+	SourceMode  string                 `json:"source_mode"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	Summary     *projectSummaryPayload `json:"summary,omitempty"`
+}
+
+type projectSummaryPayload struct {
+	Environments  []summaryEnvironmentPayload `json:"environments"`
+	ServiceCounts serviceCountsPayload        `json:"service_counts"`
+}
+
+type summaryEnvironmentPayload struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Health string `json:"health"`
+}
+
+type serviceCountsPayload struct {
+	Applications int `json:"applications"`
+	Databases    int `json:"databases"`
+	Buckets      int `json:"buckets"`
 }
 
 func newProjectPayload(p *store.Project) projectPayload {
@@ -169,9 +192,76 @@ func (h *projectsHandlers) list(w http.ResponseWriter, r *http.Request) {
 	for i := range projects {
 		payload[i] = newProjectPayload(&projects[i])
 	}
+	if r.URL.Query().Get("include") == "summary" {
+		if err := h.attachSummaries(r.Context(), payload); err != nil {
+			writeProjectError(r.Context(), w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Projects []projectPayload `json:"projects"`
 	}{payload})
+}
+
+// healthRank orders service healths for the rollup: anything mixed with
+// healthy pulls the badge toward the worse state, and unknown outranks
+// healthy so a half-observed environment never reads as fine.
+var healthRank = map[module.Health]int{
+	module.HealthHealthy:     1,
+	module.HealthUnknown:     2,
+	module.HealthProgressing: 3,
+	module.HealthDegraded:    4,
+	module.HealthUnhealthy:   5,
+}
+
+// attachSummaries decorates the list payload with environments, states,
+// health rollups, and draft service counts.
+func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projectPayload) error {
+	summaries, err := h.projects.ListSummaries(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range payload {
+		id, err := uuid.Parse(payload[i].ID)
+		if err != nil {
+			continue
+		}
+		summary := summaries[id]
+		entry := &projectSummaryPayload{
+			Environments: make([]summaryEnvironmentPayload, 0, len(summary.Environments)),
+			ServiceCounts: serviceCountsPayload{
+				Applications: summary.ServiceCounts.Applications,
+				Databases:    summary.ServiceCounts.Databases,
+				Buckets:      summary.ServiceCounts.Buckets,
+			},
+		}
+		for _, env := range summary.Environments {
+			entry.Environments = append(entry.Environments, summaryEnvironmentPayload{
+				ID:     env.ID.String(),
+				Name:   env.Name,
+				State:  env.State,
+				Health: string(h.environmentHealth(ctx, env.ID)),
+			})
+		}
+		payload[i].Summary = entry
+	}
+	return nil
+}
+
+// environmentHealth is the worst service health of one environment; unknown
+// when there is nothing to evaluate or the status read fails.
+func (h *projectsHandlers) environmentHealth(ctx context.Context, environmentID uuid.UUID) module.Health {
+	status, err := h.reconcile.Status(ctx, environmentID)
+	if err != nil || len(status.Services) == 0 {
+		return module.HealthUnknown
+	}
+	worst := module.HealthHealthy
+	for _, service := range status.Services {
+		if healthRank[service.Health] > healthRank[worst] {
+			worst = service.Health
+		}
+	}
+	return worst
 }
 
 // GET /v1/projects/{id}

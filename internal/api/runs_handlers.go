@@ -237,6 +237,178 @@ func (h *runsHandlers) stepLogs(w http.ResponseWriter, r *http.Request) {
 	}{payload, next})
 }
 
+// GET /v1/runs/{id}/stream (SSE)
+//
+// Re-sends the full run document ({run, steps}), coalesced, on every change
+// signal from the journal. The stream ends after a snapshot with a terminal
+// run status: nothing can change afterwards, so clients stop reconnecting.
+// Mounted outside the request-timeout middleware.
+func (h *runsHandlers) streamRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, codeInternal, "streaming unsupported")
+		return
+	}
+	// Subscribe before the initial read so no change slips between them.
+	signals, cancel := h.journal.SubscribeRunTree(id)
+	defer cancel()
+	tree, err := h.journal.RunTree(r.Context(), id)
+	if err != nil {
+		writeJournalError(r, w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	// send returns whether the stream should continue: false on a write
+	// error or after a terminal snapshot.
+	send := func(tree *journal.Tree) bool {
+		steps := make([]stepPayload, len(tree.Steps))
+		for i, node := range tree.Steps {
+			steps[i] = newStepPayload(node)
+		}
+		data, err := json.Marshal(struct {
+			Run   runPayload    `json:"run"`
+			Steps []stepPayload `json:"steps"`
+		}{newRunPayload(&tree.Run), steps})
+		if err != nil {
+			return false
+		}
+		fmt.Fprintf(w, "event: run\ndata: %s\n\n", data)
+		flusher.Flush()
+		return !journal.Runs.Terminal(journal.RunStatus(tree.Run.Status))
+	}
+	if !send(tree) {
+		return
+	}
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case _, open := <-signals:
+			if !open {
+				// Fell behind; the client reconnects and re-reads.
+				return
+			}
+			for {
+				select {
+				case _, more := <-signals:
+					if !more {
+						return
+					}
+					continue
+				default:
+				}
+				break
+			}
+			tree, err := h.journal.RunTree(r.Context(), id)
+			if err != nil {
+				// Retention pruning can delete the run mid-stream; that is a
+				// normal end, not an error worth reporting inside SSE.
+				return
+			}
+			if !send(tree) {
+				return
+			}
+		}
+	}
+}
+
+// GET /v1/environments/{id}/runs/stream (SSE)
+//
+// Re-sends the environment's run list ({runs}), coalesced, whenever a run
+// is created, started, finished, or pruned. Mounted outside the
+// request-timeout middleware.
+func (h *runsHandlers) streamRuns(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, codeInternal, "streaming unsupported")
+		return
+	}
+	signals, cancel := h.journal.SubscribeEnvironmentRuns(id)
+	defer cancel()
+	runs, err := h.journal.ListRuns(r.Context(), id)
+	if err != nil {
+		writeJournalError(r, w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	send := func(runs []store.Run) bool {
+		payload := make([]runPayload, len(runs))
+		for i := range runs {
+			payload[i] = newRunPayload(&runs[i])
+		}
+		data, err := json.Marshal(struct {
+			Runs []runPayload `json:"runs"`
+		}{payload})
+		if err != nil {
+			return false
+		}
+		fmt.Fprintf(w, "event: runs\ndata: %s\n\n", data)
+		flusher.Flush()
+		return true
+	}
+	if !send(runs) {
+		return
+	}
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case _, open := <-signals:
+			if !open {
+				return
+			}
+			for {
+				select {
+				case _, more := <-signals:
+					if !more {
+						return
+					}
+					continue
+				default:
+				}
+				break
+			}
+			runs, err := h.journal.ListRuns(r.Context(), id)
+			if err != nil {
+				return
+			}
+			if !send(runs) {
+				return
+			}
+		}
+	}
+}
+
 // GET /v1/steps/{id}/logs/stream (SSE)
 //
 // Streams step-log entries as they are committed. The event id is the

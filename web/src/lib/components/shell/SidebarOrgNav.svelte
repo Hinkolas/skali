@@ -1,11 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import type { Org } from '$lib/mock/types';
 	import { ORG_NAV } from '$lib/navigation';
 	import NavItem from './NavItem.svelte';
 	import NavSection from './NavSection.svelte';
-
-	let { org }: { org: Org } = $props();
 
 	const pathname = $derived(page.url.pathname);
 
@@ -25,13 +22,7 @@
 	<div class="flex flex-col gap-0.5 px-1">
 		{#each group.items as item (item.slug)}
 			{@const href = `/${item.slug}`}
-			<NavItem
-				{href}
-				label={item.label}
-				icon={item.icon}
-				active={pathname === href}
-				badge={item.slug === 'alerts' && org.alert_count > 0 ? org.alert_count : undefined}
-			/>
+			<NavItem {href} label={item.label} icon={item.icon} active={pathname === href} />
 		{/each}
 	</div>
 {/each}

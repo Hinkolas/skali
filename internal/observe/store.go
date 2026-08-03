@@ -94,6 +94,7 @@ type Store struct {
 	podsByNode       map[string]map[uuid.UUID]int
 	nodeArch         map[string]string
 	nodeCapabilities map[string]map[string]bool
+	nodeRecords      map[string]NodeRecord
 	events           map[objectKey][]EventRecord
 	sharedObjects    map[string]objectKey              // shared key -> platform object
 	sharedRefs       map[string]map[uuid.UUID]int      // shared key -> referencing environments
@@ -119,6 +120,7 @@ func NewStore(clock func() time.Time) *Store {
 		podsByNode:       make(map[string]map[uuid.UUID]int),
 		nodeArch:         make(map[string]string),
 		nodeCapabilities: make(map[string]map[string]bool),
+		nodeRecords:      make(map[string]NodeRecord),
 		events:           make(map[objectKey][]EventRecord),
 		sharedObjects:    make(map[string]objectKey),
 		sharedRefs:       make(map[string]map[uuid.UUID]int),
@@ -550,12 +552,51 @@ func (s *Store) CapableNodes(capability string) []string {
 	return nodes
 }
 
-// RemoveNode drops a deleted node's architecture and capability records.
+// RemoveNode drops a deleted node's architecture, capability, and record
+// entries.
 func (s *Store) RemoveNode(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.nodeArch, name)
 	delete(s.nodeCapabilities, name)
+	delete(s.nodeRecords, name)
+}
+
+// NodeRecord is the member-visible projection of one cluster node, fed by
+// the node informer and served on /v1/nodes. It intentionally carries only
+// kube-observed facts; per-node agent versions live with the installer, not
+// here.
+type NodeRecord struct {
+	Name           string
+	Role           string // layout.RoleServer or layout.RoleAgent
+	Capabilities   []string
+	Arch           string
+	OS             string
+	KubeletVersion string
+	Ready          bool
+	Schedulable    bool
+	InternalIP     string
+	ExternalIP     string
+	LastHeartbeat  time.Time
+}
+
+// SetNodeRecord stores one node's projection, keyed by name.
+func (s *Store) SetNodeRecord(record NodeRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nodeRecords[record.Name] = record
+}
+
+// Nodes lists the observed node records sorted by name.
+func (s *Store) Nodes() []NodeRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	nodes := make([]NodeRecord, 0, len(s.nodeRecords))
+	for _, record := range s.nodeRecords {
+		nodes = append(nodes, record)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
+	return nodes
 }
 
 // NodePlatforms lists the platforms images must target to run on the

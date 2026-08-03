@@ -91,6 +91,51 @@ func TestProjectLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
+func TestProjectListSummary(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("nick@example.com", "hunter2hunter2")
+	token := a.login("nick@example.com", "hunter2hunter2")
+
+	status, body := a.do("POST", "/v1/projects", token, map[string]any{"name": "demo"})
+	require.Equal(t, http.StatusCreated, status)
+	projectID := body["project"].(map[string]any)["id"].(string)
+
+	// Without the include the payload stays lean.
+	status, body = a.do("GET", "/v1/projects", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.NotContains(t, body["projects"].([]any)[0].(map[string]any), "summary")
+
+	// A bare project: empty environments, zero counts.
+	status, body = a.do("GET", "/v1/projects?include=summary", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	summary := body["projects"].([]any)[0].(map[string]any)["summary"].(map[string]any)
+	require.Empty(t, summary["environments"])
+	counts := summary["service_counts"].(map[string]any)
+	require.Equal(t, float64(0), counts["applications"])
+
+	// With an environment and a draft the rollup fills in.
+	status, body = a.do("POST", "/v1/projects/"+projectID+"/environments", token, map[string]any{"name": "production"})
+	require.Equal(t, http.StatusCreated, status)
+	envID := body["environment"].(map[string]any)["id"].(string)
+	status, _ = a.do("PUT", "/v1/projects/"+projectID+"/draft", token, map[string]any{"source": testManifest})
+	require.Equal(t, http.StatusOK, status)
+
+	status, body = a.do("GET", "/v1/projects?include=summary", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	summary = body["projects"].([]any)[0].(map[string]any)["summary"].(map[string]any)
+	environments := summary["environments"].([]any)
+	require.Len(t, environments, 1)
+	env := environments[0].(map[string]any)
+	require.Equal(t, envID, env["id"])
+	require.Equal(t, "production", env["name"])
+	require.Equal(t, "active", env["state"])
+	require.Equal(t, "unknown", env["health"], "no services deployed yet")
+	counts = summary["service_counts"].(map[string]any)
+	require.Equal(t, float64(1), counts["applications"])
+	require.Equal(t, float64(0), counts["databases"])
+	require.Equal(t, float64(0), counts["buckets"])
+}
+
 func TestDraftSubmitAndConflicts(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")

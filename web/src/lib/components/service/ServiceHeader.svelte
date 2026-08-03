@@ -1,67 +1,70 @@
 <script lang="ts">
 	import ExternalLink from '@lucide/svelte/icons/external-link';
-	import type { Service } from '$lib/mock/types';
-	import { toast } from '$lib/stores/toast.svelte';
+	import type { ServiceView } from '$lib/models/service';
+	import { renderExpression } from '$lib/types/definition';
+	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import StatusPill from '$lib/components/ui/StatusPill.svelte';
 
 	// Shared header for every service page: rendered by the service layout so
 	// name, status and actions persist while the tabs below switch content.
-	let { service }: { service: Service } = $props();
+	let { service }: { service: ServiceView } = $props();
 
-	function backupNow() {
-		if (service.type !== 'database') return;
-		const size = service.storage_used;
-		void toast.promise(new Promise((resolve) => setTimeout(resolve, 1800)), {
-			loading: `Creating snapshot of ${service.name}…`,
-			success: {
-				title: 'Backup complete',
-				description: `${size}G snapshot stored — mock only.`
-			},
-			error: 'Backup failed'
-		});
-	}
+	const health = $derived(envStatus.service(service.type, service.key)?.health ?? 'unknown');
+
+	// The first route whose domain renders to a plain literal becomes the
+	// "Open app" target; expression-typed domains cannot be resolved here.
+	const appDomain = $derived.by(() => {
+		if (service.type !== 'application') return null;
+		for (const route of Object.values(service.config.routes ?? {})) {
+			const domain = renderExpression(route.domain);
+			if (domain && !domain.includes('${')) return domain;
+		}
+		return null;
+	});
+
+	const subtitleText = $derived.by(() => {
+		switch (service.type) {
+			case 'application': {
+				const source =
+					service.config.source.kind === 'image'
+						? service.config.source.image
+						: `build ${service.config.source.build?.context ?? '.'}`;
+				return [source, appDomain].filter(Boolean).join(' · ');
+			}
+			case 'database':
+				return `${service.config.engine} ${service.config.version} · ${service.config.isolation} · ${service.config.availability}`;
+			case 'bucket':
+				return `bucket · ${service.config.visibility} · versioning ${service.config.versioning}`;
+		}
+	});
 </script>
 
 <PageHeader title={service.name}>
 	{#snippet titleTrailing()}
-		<StatusPill status={service.status} pill />
+		<StatusPill status={health} pill />
 	{/snippet}
 	{#snippet subtitle()}
-		<span class="font-mono text-text-faint text-md">
-			{#if service.type === 'application'}
-				{service.repo} · {service.branch} · {service.domain ?? service.endpoint}
-			{:else if service.type === 'database'}
-				{service.engine}
-				{service.version} · created {service.created_at} · id {service.short_id}
-			{:else}
-				{service.kind_label} · on {service.node}
-			{/if}
-		</span>
+		<span class="font-mono text-text-faint text-md">{subtitleText}</span>
 	{/snippet}
 	{#snippet actions()}
 		{#if service.type === 'application'}
-			{#if service.domain}
-				<Button
-					onclick={() =>
-						toast.info(`This would open ${service.domain}`, {
-							description: 'Mock only — the domain does not resolve.'
-						})}
-				>
+			{#if appDomain}
+				<Button href="https://{appDomain}">
 					Open app <ExternalLink size={14} />
 				</Button>
 			{/if}
-			<Button
-				variant="primary"
-				onclick={() =>
-					toast.info('Deploy triggered', { description: 'Mock only — nothing was deployed.' })}
-			>
-				Deploy
-			</Button>
+			<span title="Deploys run from the CLI for now: skali deploy">
+				<Button variant="primary" disabled>Deploy</Button>
+			</span>
 		{:else if service.type === 'database'}
-			<Button onclick={() => toast.info('The database studio is coming soon')}>Open studio</Button>
-			<Button onclick={backupNow}>Back up now</Button>
+			<span title="The database studio is coming soon">
+				<Button disabled>Open studio</Button>
+			</span>
+			<span title="On-demand backups are coming soon">
+				<Button disabled>Back up now</Button>
+			</span>
 		{/if}
 	{/snippet}
 </PageHeader>

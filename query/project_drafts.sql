@@ -6,6 +6,13 @@ RETURNING *;
 -- name: GetProjectDraft :one
 SELECT * FROM project_drafts WHERE project_id = $1;
 
+-- Every project's current draft definition, for service-count summaries on
+-- the project list.
+-- name: ListDraftDefinitions :many
+SELECT d.project_id, v.definition
+FROM project_drafts d
+JOIN definition_versions v ON v.id = d.definition_version_id;
+
 -- Optimistic compare-and-swap: zero rows updated means the caller's expected
 -- version is stale and the submission must be rejected, not merged.
 -- name: UpdateProjectDraft :execrows

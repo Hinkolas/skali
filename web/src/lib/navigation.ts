@@ -4,7 +4,7 @@
 
 import type { Component } from 'svelte';
 import type { IconProps } from '@lucide/svelte';
-import type { ServiceType } from '$lib/mock/types';
+import type { ServiceType } from '$lib/service-types';
 
 import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
@@ -42,9 +42,7 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 		items: [
 			{ label: 'Dashboard', slug: 'dashboard', icon: LayoutDashboard, stub: true },
 			{ label: 'Projects', slug: 'projects', icon: FolderKanban },
-			// The kube-backed read-only nodes page returns in M1
-			// (see .plan/07-roadmap.md); stubbed during the rearchitecture.
-			{ label: 'Nodes', slug: 'nodes', icon: Server, stub: true, adminOnly: true },
+			{ label: 'Nodes', slug: 'nodes', icon: Server, adminOnly: true },
 			{ label: 'Domains', slug: 'domains', icon: Globe, stub: true }
 		]
 	},
@@ -69,18 +67,18 @@ export const PROJECT_TABS: NavItemDef[] = [
 	{ label: 'Service graph', slug: 'graph', icon: Workflow },
 	{ label: 'Activity', slug: 'activity', icon: Activity, stub: true },
 	{ label: 'Logs', slug: 'logs', icon: ScrollText, stub: true },
-	{ label: 'Settings', slug: 'settings', icon: Settings2, stub: true }
+	{ label: 'Settings', slug: 'settings', icon: Settings2 }
 ];
 
 export const SERVICE_TABS: Record<ServiceType, NavItemDef[]> = {
 	application: [
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },
-		{ label: 'Deployments', slug: 'deployments', icon: Rocket, stub: true },
+		{ label: 'Deployments', slug: 'deployments', icon: Rocket },
 		{ label: 'Logs', slug: 'logs', icon: ScrollText, stub: true },
 		{ label: 'Environment', slug: 'environment', icon: KeyRound, stub: true },
 		{ label: 'Domains', slug: 'domains', icon: Globe, stub: true },
 		{ label: 'Scaling', slug: 'scaling', icon: Scaling, stub: true },
-		{ label: 'Settings', slug: 'settings', icon: Settings2, stub: true }
+		{ label: 'Settings', slug: 'settings', icon: Settings2 }
 	],
 	database: [
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },
@@ -88,7 +86,12 @@ export const SERVICE_TABS: Record<ServiceType, NavItemDef[]> = {
 		{ label: 'Backups', slug: 'backups', icon: Archive, stub: true },
 		{ label: 'Metrics', slug: 'metrics', icon: Gauge, stub: true },
 		{ label: 'Access', slug: 'access', icon: KeyRound, stub: true },
-		{ label: 'Settings', slug: 'settings', icon: Settings2, stub: true }
+		{ label: 'Settings', slug: 'settings', icon: Settings2 }
+	],
+	bucket: [
+		{ label: 'Overview', slug: '', icon: LayoutDashboard },
+		{ label: 'Metrics', slug: 'metrics', icon: Gauge, stub: true },
+		{ label: 'Settings', slug: 'settings', icon: Settings2 }
 	],
 	cache: [
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },

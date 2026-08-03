@@ -1,31 +1,15 @@
 <script lang="ts">
-	import type { DatabaseService } from '$lib/mock/types';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
-
-	let { service }: { service: DatabaseService } = $props();
-
-	function enablePublicAccess() {
-		dialog.confirm({
-			title: 'Enable public access?',
-			description: `${service.name} would be reachable from the internet through a TLS endpoint. You can disable this at any time.`,
-			confirmLabel: 'Enable',
-			onConfirm: () => {
-				toast.success('Public access enabled', {
-					description: 'Mock only — the database stays private.'
-				});
-			}
-		});
-	}
 </script>
 
 <Card class="flex flex-col p-5">
 	<div class="mb-4 flex items-center">
 		<h3 class="text-text-primary text-xl font-semibold">External connection</h3>
 		<div class="ml-auto">
-			<Button size="sm" onclick={enablePublicAccess}>Enable public access</Button>
+			<span title="Public database access is coming soon">
+				<Button size="sm" disabled>Enable public access</Button>
+			</span>
 		</div>
 	</div>
 	<div

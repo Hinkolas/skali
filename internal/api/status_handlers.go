@@ -216,6 +216,53 @@ func (h *statusHandlers) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type nodePayload struct {
+	Name           string     `json:"name"`
+	Role           string     `json:"role"`
+	Capabilities   []string   `json:"capabilities"`
+	Arch           string     `json:"arch,omitempty"`
+	OS             string     `json:"os,omitempty"`
+	KubeletVersion string     `json:"kubelet_version,omitempty"`
+	Ready          bool       `json:"ready"`
+	Schedulable    bool       `json:"schedulable"`
+	InternalIP     string     `json:"internal_ip,omitempty"`
+	ExternalIP     string     `json:"external_ip,omitempty"`
+	LastHeartbeat  *time.Time `json:"last_heartbeat"`
+}
+
+// nodes serves the member-visible node projection. The observation payload
+// rides along so clients can tell "no nodes" from "not synced yet".
+func (h *statusHandlers) nodes(w http.ResponseWriter, r *http.Request) {
+	records := h.reconcile.Nodes()
+	payload := struct {
+		Nodes       []nodePayload      `json:"nodes"`
+		Observation observationPayload `json:"observation"`
+	}{
+		Nodes:       make([]nodePayload, 0, len(records)),
+		Observation: newObservationPayload(h.reconcile.Observation().Source),
+	}
+	for _, record := range records {
+		entry := nodePayload{
+			Name:           record.Name,
+			Role:           record.Role,
+			Capabilities:   append([]string{}, record.Capabilities...),
+			Arch:           record.Arch,
+			OS:             record.OS,
+			KubeletVersion: record.KubeletVersion,
+			Ready:          record.Ready,
+			Schedulable:    record.Schedulable,
+			InternalIP:     record.InternalIP,
+			ExternalIP:     record.ExternalIP,
+		}
+		if !record.LastHeartbeat.IsZero() {
+			heartbeat := record.LastHeartbeat
+			entry.LastHeartbeat = &heartbeat
+		}
+		payload.Nodes = append(payload.Nodes, entry)
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 type kindSyncPayload struct {
 	Kind   string `json:"kind"`
 	Synced bool   `json:"synced"`

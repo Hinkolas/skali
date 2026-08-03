@@ -500,6 +500,16 @@ paths:
       operationId: listProjects
       summary: List projects
       tags: [projects]
+      parameters:
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [summary]
+          description: |
+            With `summary`, each project carries its environments (state
+            plus worst service health) and draft service counts.
       responses:
         "200":
           description: All projects, sorted by name.
@@ -1136,6 +1146,64 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/runs/{id}/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: streamRun
+      summary: Stream a run's document (SSE)
+      description: |
+        Server-sent events (`event: run`) carrying the full run document
+        (`{run, steps}` as served by `GET /v1/runs/{id}`), re-sent
+        (coalesced) whenever the run's tree changes. A comment ping is sent
+        every 15 seconds. The stream ends after a snapshot with a terminal
+        run status; clients should not reconnect then. This route is exempt
+        from the request timeout.
+      tags: [runs]
+      responses:
+        "200":
+          description: An event stream (`text/event-stream`).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/runs/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: streamEnvironmentRuns
+      summary: Stream an environment's run list (SSE)
+      description: |
+        Server-sent events (`event: runs`) carrying the environment's run
+        list (`{runs}` as served by `GET /v1/environments/{id}/runs`),
+        re-sent (coalesced) whenever a run is created, started, finished,
+        or pruned. A comment ping is sent every 15 seconds. The stream
+        closes when the subscriber falls behind; clients simply reconnect.
+        This route is exempt from the request timeout.
+      tags: [runs]
+      responses:
+        "200":
+          description: An event stream (`text/event-stream`).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/environments/{id}/databases/{key}/connection:
     parameters:
       - name: id
@@ -1308,6 +1376,47 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SystemObservation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/system/meta:
+    get:
+      operationId: getSystemMeta
+      summary: Get instance version and name
+      description: |
+        Instance facts that are configuration, not observation: the daemon
+        build version and the operator-chosen installation name.
+      tags: [status]
+      responses:
+        "200":
+          description: Instance meta.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/nodes:
+    get:
+      operationId: listNodes
+      summary: List observed cluster nodes
+      description: |
+        The member-visible node projection from the observed store: name,
+        role, capabilities, architecture, readiness, and addresses. The
+        observation block rides along so clients can tell an empty cluster
+        from an unsynced cache. Empty in API-only mode.
+      tags: [status]
+      responses:
+        "200":
+          description: Observed nodes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes, observation]
+                properties:
+                  nodes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Node" }
+                  observation: { $ref: "#/components/schemas/Observation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /v1/environments/{id}:
@@ -2115,6 +2224,44 @@ components:
         updated_at:
           type: string
           format: date-time
+        summary:
+          $ref: "#/components/schemas/ProjectSummary"
+
+    ProjectSummary:
+      type: object
+      description: |
+        List rollup attached by `?include=summary`: environments with their
+        pointer state and worst service health, plus the draft's per-type
+        service counts (zeros without a draft).
+      required: [environments, service_counts]
+      properties:
+        environments:
+          type: array
+          items:
+            type: object
+            required: [id, name, state, health]
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              state:
+                type: string
+                enum: [active, down, releasing]
+              health:
+                type: string
+                enum: [unknown, progressing, healthy, degraded, unhealthy]
+        service_counts:
+          type: object
+          required: [applications, databases, buckets]
+          properties:
+            applications:
+              type: integer
+            databases:
+              type: integer
+            buckets:
+              type: integer
 
     ProjectResponse:
       type: object
@@ -2477,6 +2624,55 @@ components:
           type: integer
         workers:
           type: integer
+
+    SystemMeta:
+      type: object
+      description: |
+        Instance facts that are configuration, not observation: the daemon
+        build version and the operator-chosen installation name (absent
+        when unset).
+      required: [version]
+      properties:
+        version:
+          type: string
+        name:
+          type: string
+
+    Node:
+      type: object
+      description: |
+        One observed cluster node. Only kube-observed facts appear here;
+        per-node agent versions are installer state and intentionally
+        absent. last_heartbeat is the Ready condition's heartbeat time,
+        null until observed.
+      required: [name, role, capabilities, ready, schedulable, last_heartbeat]
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+          enum: [server, agent]
+        capabilities:
+          type: array
+          items:
+            type: string
+        arch:
+          type: string
+        os:
+          type: string
+        kubelet_version:
+          type: string
+        ready:
+          type: boolean
+        schedulable:
+          type: boolean
+        internal_ip:
+          type: string
+        external_ip:
+          type: string
+        last_heartbeat:
+          type: [string, "null"]
+          format: date-time
 
     ValueEntry:
       type: object

@@ -1,44 +1,76 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { Project } from '$lib/mock/types';
+	import type { Project, ServiceHealth } from '$lib/types/project';
+	import { relativeTime } from '$lib/format';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
 	let { project }: { project: Project } = $props();
 
-	const statusDot: Record<Project['status'], string> = {
+	const environments = $derived(project.summary?.environments ?? []);
+	const counts = $derived(project.summary?.service_counts);
+	const serviceCount = $derived(
+		(counts?.applications ?? 0) + (counts?.databases ?? 0) + (counts?.buckets ?? 0)
+	);
+
+	const healthDot: Record<ServiceHealth, string> = {
 		healthy: 'bg-status-success',
-		building: 'bg-status-warning',
-		degraded: 'bg-status-danger'
+		progressing: 'bg-status-warning',
+		degraded: 'bg-status-warning',
+		unhealthy: 'bg-status-danger',
+		unknown: 'bg-text-ghost'
 	};
+	// The card dot shows the worst environment health.
+	const rank: Record<ServiceHealth, number> = {
+		healthy: 1,
+		unknown: 2,
+		progressing: 3,
+		degraded: 4,
+		unhealthy: 5
+	};
+	const worst = $derived(
+		environments.reduce<ServiceHealth>(
+			(acc, e) => (rank[e.health] > rank[acc] ? e.health : acc),
+			environments.length ? 'healthy' : 'unknown'
+		)
+	);
 </script>
 
 <a
-	href={resolve('/(app)/projects/[project]', { project: project.slug })}
+	href={resolve('/(app)/projects/[project]', { project: project.name })}
 	class="bg-surface-raised border-border-default hover:border-accent/35 flex flex-col gap-3.5 rounded-[15px] border px-5 py-4.5 transition-colors"
 >
 	<div class="flex items-center gap-2.5">
-		<div class="text-text-primary text-xl font-semibold">{project.name}</div>
-		<Pill
-			text={project.environments[0].name}
-			tone={project.environments[0].name === 'production' ? 'success' : 'neutral'}
-		/>
-		{#if project.environments.length > 1}
-			<Pill text="+{project.environments.length - 1}" tone="neutral" />
+		<div class="text-text-primary truncate text-xl font-semibold">
+			{project.display_name || project.name}
+		</div>
+		{#if environments.length > 0}
+			<Pill
+				text={environments[0].name}
+				tone={environments[0].name === 'production' ? 'success' : 'neutral'}
+			/>
+			{#if environments.length > 1}
+				<Pill text="+{environments.length - 1}" tone="neutral" />
+			{/if}
 		{/if}
-		<span class="ml-auto size-[8px] flex-none rounded-full {statusDot[project.status]}"></span>
+		<span class="ml-auto size-[8px] flex-none rounded-full {healthDot[worst]}"></span>
 	</div>
 	<div class="flex gap-1.5">
-		{#each project.service_badges as badge (badge.kind)}
-			<TypeBadge kind={badge.kind} count={badge.count} />
-		{/each}
+		{#if counts?.applications}
+			<TypeBadge kind="application" count={counts.applications} />
+		{/if}
+		{#if counts?.databases}
+			<TypeBadge kind="database" count={counts.databases} />
+		{/if}
+		{#if counts?.buckets}
+			<TypeBadge kind="bucket" count={counts.buckets} />
+		{/if}
+		{#if serviceCount === 0}
+			<span class="font-mono text-text-ghost text-xs">no services defined yet</span>
+		{/if}
 	</div>
 	<div class="font-mono text-text-faint border-border-subtle flex gap-3.5 border-t pt-3 text-xs">
-		<span>{project.service_count} services</span>
-		{#if project.building_note}
-			<span class="text-status-warning">{project.building_note}</span>
-		{:else if project.deploy_note}
-			<span>deploy <span class="text-text-secondary">{project.deploy_note}</span></span>
-		{/if}
+		<span>{serviceCount} service{serviceCount === 1 ? '' : 's'}</span>
+		<span>updated <span class="text-text-secondary">{relativeTime(project.updated_at)}</span></span>
 	</div>
 </a>

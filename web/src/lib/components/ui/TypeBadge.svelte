@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ServiceKind } from '$lib/mock/types';
+	import type { ServiceKind } from '$lib/service-types';
 	import { SERVICE_KIND_META } from '$lib/service-types';
 
 	// Two forms: 'chip' is the inline icon ×2 pill (project card kind counts);

@@ -1,45 +1,59 @@
 <script lang="ts">
-	import type { ApplicationService } from '$lib/mock/types';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
+	import type { ApplicationView } from '$lib/models/service';
+	import { envStatus } from '$lib/stores/envstatus.svelte';
+	import { HEALTH_META } from '$lib/service-types';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
 
-	let { service }: { service: ApplicationService } = $props();
+	let { service }: { service: ApplicationView } = $props();
 
-	function restart() {
-		dialog.confirm({
-			title: `Restart ${service.name}?`,
-			description: 'Instances are restarted one by one so the service stays reachable.',
-			confirmLabel: 'Restart',
-			onConfirm: () => {
-				void toast.promise(new Promise((resolve) => setTimeout(resolve, 1400)), {
-					loading: `Restarting ${service.name}…`,
-					success: `${service.name} restarted`,
-					error: 'Restart failed'
-				});
-			}
-		});
-	}
+	const live = $derived(envStatus.service('application', service.key));
+	const health = $derived(live?.health ?? 'unknown');
+	const meta = $derived(HEALTH_META[health]);
+
+	const source = $derived(
+		service.config.source.kind === 'image'
+			? (service.config.source.image ?? 'image')
+			: `build ${service.config.source.build?.context ?? '.'}`
+	);
+	const command = $derived(service.config.command?.join(' ') ?? 'image default');
+	const ports = $derived(
+		Object.entries(service.config.ports ?? {})
+			.map(([name, p]) => `${name} ${p.port}/${p.protocol}`)
+			.join(' · ') || 'none'
+	);
+	const readyPods = $derived(live?.pods.filter((p) => p.ready).length ?? 0);
+	const scaling = $derived(service.config.scaling);
+	const replicas = $derived(
+		`${readyPods} ready · scale ${scaling.minReplicas}-${scaling.maxReplicas}`
+	);
+	const healthCheck = $derived.by(() => {
+		const probe = service.config.health?.readiness ?? service.config.health?.liveness;
+		return probe?.http ? `http ${probe.http.path}` : 'none configured';
+	});
 </script>
 
 <Card class="p-5">
 	<div class="mb-3.5 flex items-center gap-2.5">
 		<h3 class="text-text-primary text-xl font-semibold">Web process</h3>
-		<span class="text-status-success flex items-center gap-1.5 text-md">
-			<span class="bg-status-success size-[8px] rounded-full"></span>healthy
+		<span class="flex items-center gap-1.5 text-md {meta.text}">
+			<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
 		</span>
 		<div class="ml-auto flex gap-2">
-			<Button size="sm" onclick={restart}>Restart</Button>
-			<Button size="sm" onclick={() => toast.info('Shell access is coming soon')}>Shell</Button>
+			<span title="Restarts from the UI are coming soon; use skali deploy --force">
+				<Button size="sm" disabled>Restart</Button>
+			</span>
+			<span title="Shell access is coming soon">
+				<Button size="sm" disabled>Shell</Button>
+			</span>
 		</div>
 	</div>
 	<div class="flex flex-col">
-		<KeyValueRow k="Image" v={service.image} />
-		<KeyValueRow k="Start command" v={service.start_command} />
-		<KeyValueRow k="Port" v={service.port} />
-		<KeyValueRow k="Instances" v="{service.instances} · {service.instance_nodes}" />
-		<KeyValueRow k="Health check" v={service.health_check} />
+		<KeyValueRow k="Source" v={source} />
+		<KeyValueRow k="Start command" v={command} />
+		<KeyValueRow k="Ports" v={ports} />
+		<KeyValueRow k="Replicas" v={replicas} />
+		<KeyValueRow k="Health check" v={healthCheck} />
 	</div>
 </Card>

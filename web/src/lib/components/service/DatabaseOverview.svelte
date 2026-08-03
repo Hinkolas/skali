@@ -1,41 +1,50 @@
 <script lang="ts">
-	import type { DatabaseService, StatCardData } from '$lib/mock/types';
+	import type { DatabaseView, ServiceView } from '$lib/models/service';
+	import type { StatCardData } from '$lib/models/view';
+	import type { DatabaseConnection } from '$lib/types/connections';
+	import { formatBytes } from '$lib/format';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
 	import DbConnectionPanel from './DbConnectionPanel.svelte';
 	import DbExternalPanel from './DbExternalPanel.svelte';
 
-	let { service }: { service: DatabaseService } = $props();
+	let {
+		service,
+		services,
+		connection,
+		envId
+	}: {
+		service: DatabaseView;
+		services: ServiceView[];
+		connection: DatabaseConnection | null;
+		envId: string | null;
+	} = $props();
 
-	const stats = $derived.by((): StatCardData[] => {
-		const [computeValue, ...computeRest] = service.compute.split(' ');
-		return [
-			{
-				label: 'STORAGE',
-				value: service.storage_used,
-				unit: `/ ${service.storage_total} GB`,
-				progress: { pct: service.storage_pct, class: 'bg-service-db' }
-			},
-			{
-				label: 'CONNECTIONS',
-				value: String(service.connections),
-				unit: `/ ${service.max_connections}`,
-				chip: { text: `${service.connected_apps.length} apps`, tone: 'neutral' }
-			},
-			{
-				label: 'COMPUTE',
-				value: computeValue,
-				unit: computeRest.join(' '),
-				chip: { text: service.node, tone: 'neutral' }
-			},
-			{
-				label: 'LAST BACKUP',
-				value: service.last_backup.time,
-				unit: 'today',
-				chip: { text: service.last_backup.note, tone: 'success' }
-			}
-		];
-	});
+	const stats = $derived.by((): StatCardData[] => [
+		{
+			label: 'STORAGE',
+			value: service.config.storageBytes ? formatBytes(service.config.storageBytes) : 'default',
+			note: 'requested in skali.yaml'
+		},
+		{
+			label: 'ENGINE',
+			value: service.config.engine,
+			unit: connection ? `v${connection.major}` : service.config.version
+		},
+		{
+			label: 'ISOLATION',
+			value: service.config.isolation,
+			chip: { text: service.config.availability, tone: 'neutral' }
+		},
+		{
+			label: 'PHASE',
+			value: connection?.phase ?? 'unknown',
+			chip:
+				connection?.phase === 'provisioned'
+					? { text: 'ready', tone: 'success' }
+					: { text: 'settling', tone: 'neutral' }
+		}
+	]);
 </script>
 
 <div class="mb-6 grid grid-cols-4 gap-3.5">
@@ -45,15 +54,15 @@
 </div>
 
 <div class="mb-6 grid grid-cols-2 gap-3.5">
-	<DbConnectionPanel {service} />
-	<DbExternalPanel {service} />
+	<DbConnectionPanel {service} {connection} {envId} />
+	<DbExternalPanel />
 </div>
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
 	<h2 class="text-text-primary text-xl font-semibold">Connected applications</h2>
-	<div class="text-text-ghost text-md">via private network · zero-latency</div>
+	<div class="text-text-ghost text-md">via private network</div>
 </div>
 
 <div class="pb-6">
-	<ConnectedAppsList {service} />
+	<ConnectedAppsList {service} {services} />
 </div>

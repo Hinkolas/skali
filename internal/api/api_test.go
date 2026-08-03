@@ -133,6 +133,8 @@ func newTestAPI(t *testing.T) *testAPI {
 		RuntimeLogs:        &runtimelogs.Streamer{Observed: observed.Store, Store: st},
 		Capabilities:       []string{"application", "edge", "database"},
 		Databases:          dbstore.New(st),
+		Version:            "test",
+		InstanceName:       "Test Instance",
 		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
 			return map[string][]byte{
 				"username":   []byte("u_" + name),
@@ -608,5 +610,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 55, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 59, routes, "route count changed; update the OpenAPI spec and this number")
 }

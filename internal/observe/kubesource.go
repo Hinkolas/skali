@@ -3,6 +3,7 @@ package observe
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -446,6 +447,7 @@ func (k *KubeSource) addNodeInformer(lw cache.ListerWatcher) {
 		if node, ok := asNode(raw); ok {
 			k.store.SetNodeArch(node.Name, nodeArch(node))
 			k.store.SetNodeCapabilities(node.Name, nodeCapabilities(node))
+			k.store.SetNodeRecord(nodeRecord(node))
 			fanOut(node)
 		}
 	}
@@ -483,6 +485,40 @@ func nodeCapabilities(node *corev1.Node) []string {
 		}
 	}
 	return capabilities
+}
+
+// nodeRecord projects the member-visible node facts out of the full object.
+func nodeRecord(node *corev1.Node) NodeRecord {
+	record := NodeRecord{
+		Name:           node.Name,
+		Role:           layout.RoleFromLabels(node.Labels),
+		Capabilities:   nodeCapabilities(node),
+		Arch:           nodeArch(node),
+		OS:             node.Status.NodeInfo.OSImage,
+		KubeletVersion: node.Status.NodeInfo.KubeletVersion,
+		Schedulable:    !node.Spec.Unschedulable,
+	}
+	sort.Strings(record.Capabilities)
+	for _, condition := range node.Status.Conditions {
+		if condition.Type != corev1.NodeReady {
+			continue
+		}
+		record.Ready = condition.Status == corev1.ConditionTrue
+		record.LastHeartbeat = condition.LastHeartbeatTime.Time
+	}
+	for _, address := range node.Status.Addresses {
+		switch address.Type {
+		case corev1.NodeInternalIP:
+			if record.InternalIP == "" {
+				record.InternalIP = address.Address
+			}
+		case corev1.NodeExternalIP:
+			if record.ExternalIP == "" {
+				record.ExternalIP = address.Address
+			}
+		}
+	}
+	return record
 }
 
 func (k *KubeSource) addEventInformer(lw cache.ListerWatcher) {

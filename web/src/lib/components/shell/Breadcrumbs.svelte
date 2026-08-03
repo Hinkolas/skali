@@ -4,10 +4,11 @@
 	import { page } from '$app/state';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Plus from '@lucide/svelte/icons/plus';
-	import type { Org, Project, Service } from '$lib/mock/types';
-	import { currentEnv, withEnv } from '$lib/urls';
+	import type { OrgView } from '$lib/models/org';
+	import type { ServiceView } from '$lib/models/service';
+	import type { Environment, Project } from '$lib/types/project';
+	import { withEnv } from '$lib/urls';
 	import { modal } from '$lib/stores/modal.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
 	import Menu from '$lib/components/ui/Menu.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuSeparator from '$lib/components/ui/MenuSeparator.svelte';
@@ -15,21 +16,26 @@
 	import NewProjectModal, {
 		modalOptions as newProjectModalOptions
 	} from '$lib/components/project/NewProjectModal.svelte';
+	import NewEnvironmentModal, {
+		modalOptions as newEnvironmentModalOptions
+	} from '$lib/components/project/NewEnvironmentModal.svelte';
 
 	// Same merged `page.data` contract the Sidebar reads: nested layouts set
-	// `project`/`services`/`service`; loads that introduce colliding keys
-	// would break both consumers.
+	// `project`/`environments`/`env`/`services`/`service`; loads that
+	// introduce colliding keys would break both consumers.
 	const data = $derived(
 		page.data as {
-			org: Org;
+			org: OrgView;
 			projects: Project[];
 			project?: Project;
-			services?: Service[];
-			service?: Service;
+			environments?: Environment[];
+			env?: Environment | null;
+			services?: ServiceView[];
+			service?: ServiceView;
 		}
 	);
 
-	const env = $derived(currentEnv(data.project, page.url));
+	const env = $derived(data.env?.name ?? null);
 
 	const crumbTrigger =
 		'flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-base font-medium transition-colors hover:bg-white/4';
@@ -55,18 +61,18 @@
 		<span class="text-text-ghost text-md">/</span>
 		<Menu label="Switch project" triggerClass="{crumbTrigger} text-text-primary">
 			{#snippet trigger({ open })}
-				{project.name}
+				{project.display_name || project.name}
 				<ChevronDown
 					size={13}
 					class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
 				/>
 			{/snippet}
-			{#each data.projects as p (p.slug)}
+			{#each data.projects as p (p.id)}
 				<MenuItem
-					href={resolve('/(app)/projects/[project]', { project: p.slug })}
-					selected={p.slug === project.slug}
+					href={resolve('/(app)/projects/[project]', { project: p.name })}
+					selected={p.id === project.id}
 				>
-					<span class="truncate">{p.name}</span>
+					<span class="truncate">{p.display_name || p.name}</span>
 				</MenuItem>
 			{/each}
 			<MenuSeparator />
@@ -78,25 +84,30 @@
 			</MenuItem>
 		</Menu>
 
-		<span class="text-text-ghost text-md">/</span>
-		<Menu label="Switch environment" triggerClass="{crumbTrigger} text-text-secondary">
-			{#snippet trigger({ open })}
-				<span class="font-mono text-md">{env}</span>
-				<ChevronDown
-					size={13}
-					class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
-				/>
-			{/snippet}
-			{#each project.environments as e (e.name)}
-				<MenuItem selected={e.name === env} onselect={() => switchEnv(e.name)}>
-					<span class="font-mono text-md">{e.name}</span>
+		{#if env}
+			<span class="text-text-ghost text-md">/</span>
+			<Menu label="Switch environment" triggerClass="{crumbTrigger} text-text-secondary">
+				{#snippet trigger({ open })}
+					<span class="font-mono text-md">{env}</span>
+					<ChevronDown
+						size={13}
+						class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
+					/>
+				{/snippet}
+				{#each data.environments ?? [] as e (e.id)}
+					<MenuItem selected={e.name === env} onselect={() => switchEnv(e.name)}>
+						<span class="font-mono text-md">{e.name}</span>
+					</MenuItem>
+				{/each}
+				<MenuSeparator />
+				<MenuItem
+					icon={Plus}
+					onselect={() => modal.open(NewEnvironmentModal, { project }, newEnvironmentModalOptions)}
+				>
+					New environment
 				</MenuItem>
-			{/each}
-			<MenuSeparator />
-			<MenuItem icon={Plus} onselect={() => toast.info('Environments are coming soon')}>
-				New environment
-			</MenuItem>
-		</Menu>
+			</Menu>
+		{/if}
 	{/if}
 
 	{#if data.project && data.service}
@@ -111,16 +122,16 @@
 					class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
 				/>
 			{/snippet}
-			{#each data.services ?? [] as s (s.slug)}
+			{#each data.services ?? [] as s (`${s.type}:${s.key}`)}
 				<MenuItem
 					href={withEnv(
 						resolve('/(app)/projects/[project]/services/[service]', {
-							project: project.slug,
-							service: s.slug
+							project: project.name,
+							service: s.key
 						}),
 						env
 					)}
-					selected={s.slug === service.slug}
+					selected={s.key === service.key && s.type === service.type}
 				>
 					<TypeBadge kind={s.type} form="tile" />
 					<span class="truncate">{s.name}</span>

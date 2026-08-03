@@ -58,6 +58,11 @@ type API struct {
 	// secrets); rotating it forces users to re-enroll 2FA.
 	AuthSecret string `env:"AUTH_SECRET,required"`
 
+	// InstanceName is the operator-chosen display name for this installation,
+	// shown by clients (the web shell's org slot); empty leaves naming to the
+	// client.
+	InstanceName string `env:"SKALI_INSTANCE_NAME,default="`
+
 	// ReauthWindow is how long a session stays "fresh" for sudo-gated
 	// endpoints after login or an explicit reauthentication.
 	ReauthWindow time.Duration `env:"REAUTH_WINDOW,default=15m"`

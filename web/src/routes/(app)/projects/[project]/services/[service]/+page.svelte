@@ -1,22 +1,23 @@
 <script lang="ts">
 	import ApplicationOverview from '$lib/components/service/ApplicationOverview.svelte';
+	import BucketOverview from '$lib/components/service/BucketOverview.svelte';
 	import DatabaseOverview from '$lib/components/service/DatabaseOverview.svelte';
-	import GenericServiceOverview from '$lib/components/service/GenericServiceOverview.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
 	const service = $derived(data.service);
+	const envId = $derived(data.env?.id ?? null);
 </script>
 
 <svelte:head>
-	<title>{service.name} · {data.project.name} — skali</title>
+	<title>{service.name} · {data.project.display_name || data.project.name} — skali</title>
 </svelte:head>
 
 {#if service.type === 'application'}
-	<ApplicationOverview {service} services={data.services} />
+	<ApplicationOverview {service} services={data.services} {envId} runs={data.runs} />
 {:else if service.type === 'database'}
-	<DatabaseOverview {service} />
+	<DatabaseOverview {service} services={data.services} connection={data.connection} {envId} />
 {:else}
-	<GenericServiceOverview {service} />
+	<BucketOverview {service} services={data.services} connection={data.bucketConnection} {envId} />
 {/if}

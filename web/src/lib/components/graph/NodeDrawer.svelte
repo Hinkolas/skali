@@ -4,7 +4,7 @@
 	import { fly } from 'svelte/transition';
 	import X from '@lucide/svelte/icons/x';
 	import type { GraphNodeData } from '$lib/mock/types';
-	import { currentEnv, withEnv } from '$lib/urls';
+	import { withEnv } from '$lib/urls';
 
 	let {
 		node,
@@ -16,8 +16,8 @@
 		onclose: () => void;
 	} = $props();
 
-	// Only rendered in project scope, so page.data.project is present.
-	const env = $derived(currentEnv(page.data.project, page.url));
+	// Only rendered in project scope, so the layout load resolved the env.
+	const env = $derived((page.data.env as { name: string } | null)?.name ?? null);
 </script>
 
 <div

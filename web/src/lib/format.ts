@@ -37,3 +37,26 @@ export function relativeTime(iso: string | null): string {
 	if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
 	return `${Math.floor(secs / 86400)}d ago`;
 }
+
+/** "42s" / "3m 12s" between two instants; a missing end means "until now". */
+export function formatDuration(startIso: string | null, endIso: string | null): string {
+	if (!startIso) return '';
+	const end = endIso ? new Date(endIso).getTime() : Date.now();
+	const secs = Math.max(0, Math.round((end - new Date(startIso).getTime()) / 1000));
+	if (secs < 60) return `${secs}s`;
+	const mins = Math.floor(secs / 60);
+	if (mins < 60) return `${mins}m ${secs % 60}s`;
+	return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+/** "Jul 6, 2026, 14:32" — absolute timestamps in tables and settings. */
+export function formatDateTime(iso: string | null): string {
+	if (!iso) return '';
+	return new Date(iso).toLocaleString(undefined, {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit'
+	});
+}

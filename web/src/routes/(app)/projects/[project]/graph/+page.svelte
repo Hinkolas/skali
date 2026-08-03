@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Workflow from '@lucide/svelte/icons/workflow';
-	import { toast } from '$lib/stores/toast.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
@@ -10,27 +9,25 @@
 
 	let { data }: { data: PageData } = $props();
 
+	const title = $derived(data.project.display_name || data.project.name);
+
 	// Selection is page-local; no store needed.
 	let selected = $state<string | null>(null);
 	const selectedNode = $derived(data.graph?.nodes.find((n) => n.slug === selected) ?? null);
 </script>
 
 <svelte:head>
-	<title>Service graph · {data.project.name} — skali</title>
+	<title>Service graph · {title} — skali</title>
 </svelte:head>
 
 <PageHeader title="Service graph">
 	{#snippet subtitle()}
-		How traffic and connections flow through {data.project.name} · click a node for details
+		How traffic and connections flow through {title} · click a node for details
 	{/snippet}
 	{#snippet actions()}
-		<Button
-			variant="primary"
-			onclick={() =>
-				toast.info('Deploy triggered', { description: 'Mock only — nothing was deployed.' })}
-		>
-			Deploy
-		</Button>
+		<span title="Deploys run from the CLI for now: skali deploy">
+			<Button variant="primary" disabled>Deploy</Button>
+		</span>
 	{/snippet}
 </PageHeader>
 
@@ -78,7 +75,7 @@
 			{#if selectedNode}
 				<NodeDrawer
 					node={selectedNode}
-					projectSlug={data.project.slug}
+					projectSlug={data.project.name}
 					onclose={() => (selected = null)}
 				/>
 			{/if}
@@ -87,7 +84,7 @@
 {:else}
 	<EmptyState
 		icon={Workflow}
-		title="No service graph for {data.project.name} yet"
+		title="No service graph for {title} yet"
 		description="the graph is only mocked for the storefront project"
 	/>
 {/if}

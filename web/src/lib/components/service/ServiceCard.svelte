@@ -1,24 +1,40 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import type { Service } from '$lib/mock/types';
-	import { currentEnv, withEnv } from '$lib/urls';
-	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
+	import type { ServiceView } from '$lib/models/service';
+	import type { Project } from '$lib/types/project';
+	import { envStatus } from '$lib/stores/envstatus.svelte';
+	import { formatBytes } from '$lib/format';
+	import { withEnv } from '$lib/urls';
 	import StatusPill from '$lib/components/ui/StatusPill.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
-	let { service }: { service: Service } = $props();
+	let { project, service }: { project: Project; service: ServiceView } = $props();
 
-	// Only rendered in project scope, so page.data.project is present.
-	const env = $derived(currentEnv(page.data.project, page.url));
+	const env = $derived((page.data.env as { name: string } | null)?.name ?? null);
+	const live = $derived(envStatus.service(service.type, service.key));
+	const health = $derived(live?.health ?? 'unknown');
+
+	const kindLabel = $derived.by(() => {
+		switch (service.type) {
+			case 'application':
+				return service.config.source.kind === 'image'
+					? 'application · image'
+					: 'application · build';
+			case 'database':
+				return `database · ${service.config.engine} ${service.config.version}`;
+			case 'bucket':
+				return `bucket · ${service.config.visibility}`;
+		}
+	});
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
 <a
 	href={withEnv(
 		resolve('/(app)/projects/[project]/services/[service]', {
-			project: service.project_slug,
-			service: service.slug
+			project: project.name,
+			service: service.key
 		}),
 		env
 	)}
@@ -28,45 +44,51 @@
 		<TypeBadge kind={service.type} form="tile" size="md" />
 		<div class="min-w-0">
 			<div class="text-text-primary truncate text-lg font-semibold">{service.name}</div>
-			<div class="font-mono text-text-faint truncate text-xs">{service.kind_label}</div>
+			<div class="font-mono text-text-faint truncate text-xs">{kindLabel}</div>
 		</div>
 		<span class="ml-auto flex-none">
-			<StatusPill status={service.status} />
+			<StatusPill status={health} />
 		</span>
 	</div>
 
 	{#if service.type === 'application'}
 		<div class="font-mono text-text-muted truncate text-sm">
-			{service.domain ?? service.endpoint}
+			{service.config.source.image ?? service.config.source.build?.context ?? 'source'}
 		</div>
 		<div class="font-mono text-text-faint border-border-subtle flex gap-3 border-t pt-2.75 text-xs">
-			<span>cpu <span class="text-text-secondary">{service.cpu_pct}</span></span>
-			<span>mem <span class="text-text-secondary">{service.mem}</span></span>
-			<span>×<span class="text-text-secondary">{service.instances}</span></span>
+			<span>
+				replicas
+				<span class="text-text-secondary">
+					{live?.pods.filter((p) => p.ready).length ?? 0}/{service.config.scaling.maxReplicas}
+				</span>
+			</span>
+			<span>
+				ports
+				<span class="text-text-secondary">
+					{Object.keys(service.config.ports ?? {}).length}
+				</span>
+			</span>
+			{#if Object.keys(service.config.routes ?? {}).length > 0}
+				<span>routed</span>
+			{/if}
 		</div>
 	{:else if service.type === 'database'}
-		<div class="flex flex-col gap-1.5">
-			<div class="font-mono text-text-muted text-sm">
-				{service.storage_used}G / {service.storage_total}G
-			</div>
-			<ProgressBar pct={service.storage_pct} class="bg-service-db" />
+		<div class="font-mono text-text-muted truncate text-sm">
+			{service.config.storageBytes ? formatBytes(service.config.storageBytes) : 'default storage'}
 		</div>
 		<div class="font-mono text-text-faint border-border-subtle flex gap-3 border-t pt-2.75 text-xs">
-			<span>conns <span class="text-text-secondary">{service.connections}</span></span>
-			<span>mem <span class="text-text-secondary">{service.mem}</span></span>
-		</div>
-	{:else if service.type === 'cache'}
-		<div class="font-mono text-text-muted truncate text-sm">{service.endpoint}</div>
-		<div class="font-mono text-text-faint border-border-subtle flex gap-3 border-t pt-2.75 text-xs">
-			<span>hits <span class="text-text-secondary">{service.hit_rate}</span></span>
-			<span>keys <span class="text-text-secondary">{service.keys}</span></span>
+			<span>isolation <span class="text-text-secondary">{service.config.isolation}</span></span>
+			<span>tier <span class="text-text-secondary">{service.config.availability}</span></span>
 		</div>
 	{:else}
 		<div class="font-mono text-text-muted truncate text-sm">
-			{service.size} · {service.objects} objects
+			{service.config.storageQuotaBytes
+				? `${formatBytes(service.config.storageQuotaBytes)} quota`
+				: 'no quota'}
 		</div>
 		<div class="font-mono text-text-faint border-border-subtle flex gap-3 border-t pt-2.75 text-xs">
-			<span>egress <span class="text-text-secondary">{service.egress_per_day}</span></span>
+			<span>visibility <span class="text-text-secondary">{service.config.visibility}</span></span>
+			<span>versioning <span class="text-text-secondary">{service.config.versioning}</span></span>
 		</div>
 	{/if}
 </a>

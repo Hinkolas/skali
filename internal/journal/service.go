@@ -34,13 +34,20 @@ type Service struct {
 	st         *store.Store
 	executorID string
 	broadcast  *broadcaster
+	// runWatch and envRunsWatch are the payload-free invalidation planes
+	// behind the run-tree and run-list SSE streams (runstream.go).
+	runWatch     *signalBroadcaster
+	envRunsWatch *signalBroadcaster
 }
 
 // NewService binds the journal to this boot's executor identity (a fresh
 // UUID per daemon start); attempts record it so recovery can tell which
 // executors no longer exist.
 func NewService(st *store.Store, executorID string) *Service {
-	return &Service{st: st, executorID: executorID, broadcast: newBroadcaster()}
+	return &Service{
+		st: st, executorID: executorID, broadcast: newBroadcaster(),
+		runWatch: newSignalBroadcaster(), envRunsWatch: newSignalBroadcaster(),
+	}
 }
 
 func (s *Service) ExecutorID() string { return s.executorID }
@@ -68,12 +75,14 @@ func (s *Service) CreateRun(ctx context.Context, in RunInput) (*store.Run, error
 	if err != nil {
 		return nil, fmt.Errorf("journal: create run: %w", err)
 	}
+	s.notifyEnvironment(params.EnvironmentID)
 	return &run, nil
 }
 
 // StartRun moves pending -> running. The partial unique index turns a
 // concurrent second start for the same environment into ErrRunConflict.
 func (s *Service) StartRun(ctx context.Context, id uuid.UUID) error {
+	var environmentID *uuid.UUID
 	err := s.st.WithTx(ctx, func(q *store.Queries) error {
 		run, err := q.GetRunForUpdate(ctx, id)
 		if err != nil {
@@ -82,12 +91,18 @@ func (s *Service) StartRun(ctx context.Context, id uuid.UUID) error {
 		if err := guard(Runs, RunStatus(run.Status), RunRunning); err != nil {
 			return err
 		}
+		environmentID = run.EnvironmentID
 		return q.MarkRunRunning(ctx, id)
 	})
 	if isUniqueViolation(err) {
 		return ErrRunConflict
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	s.notifyRun(id)
+	s.notifyEnvironment(environmentID)
+	return nil
 }
 
 // FinishRun moves the run to a terminal status and forces every non-terminal
@@ -130,7 +145,10 @@ func (s *Service) FinishRun(ctx context.Context, id uuid.UUID, to RunStatus) err
 	if err != nil {
 		return err
 	}
-	return s.prune(ctx, environmentID)
+	err = s.prune(ctx, environmentID)
+	s.notifyRun(id)
+	s.notifyEnvironment(environmentID)
+	return err
 }
 
 // EnsureStep is idempotent on (run_id, key): after a restart the controller
@@ -149,11 +167,13 @@ func (s *Service) EnsureStep(ctx context.Context, runID uuid.UUID, parentID *uui
 	if err != nil {
 		return nil, fmt.Errorf("journal: read step: %w", err)
 	}
+	s.notifyRun(runID)
 	return &step, nil
 }
 
 func (s *Service) SetStepStatus(ctx context.Context, stepID uuid.UUID, to StepStatus) error {
-	return s.st.WithTx(ctx, func(q *store.Queries) error {
+	var runID uuid.UUID
+	err := s.st.WithTx(ctx, func(q *store.Queries) error {
 		step, err := q.GetStepForUpdate(ctx, stepID)
 		if err != nil {
 			return notFoundOr(err, "lock step")
@@ -161,8 +181,14 @@ func (s *Service) SetStepStatus(ctx context.Context, stepID uuid.UUID, to StepSt
 		if err := guard(Steps, StepStatus(step.Status), to); err != nil {
 			return err
 		}
+		runID = step.RunID
 		return q.SetStepStatus(ctx, store.SetStepStatusParams{ID: stepID, Status: string(to)})
 	})
+	if err != nil {
+		return err
+	}
+	s.notifyRun(runID)
+	return nil
 }
 
 func (s *Service) SetStepProgress(ctx context.Context, stepID uuid.UUID, current, total int64) error {
@@ -171,6 +197,7 @@ func (s *Service) SetStepProgress(ctx context.Context, stepID uuid.UUID, current
 	}); err != nil {
 		return fmt.Errorf("journal: set progress: %w", err)
 	}
+	s.notifyRunOfStep(ctx, stepID)
 	return nil
 }
 
@@ -204,11 +231,13 @@ func (s *Service) StartAttempt(ctx context.Context, stepID uuid.UUID) (*store.At
 		}
 		return nil, fmt.Errorf("journal: create attempt: %w", err)
 	}
+	s.notifyRunOfStep(ctx, stepID)
 	return &attempt, nil
 }
 
 func (s *Service) FinishAttempt(ctx context.Context, attemptID uuid.UUID, to AttemptStatus) error {
-	return s.st.WithTx(ctx, func(q *store.Queries) error {
+	var stepID uuid.UUID
+	err := s.st.WithTx(ctx, func(q *store.Queries) error {
 		attempt, err := q.GetAttemptForUpdate(ctx, attemptID)
 		if err != nil {
 			return notFoundOr(err, "lock attempt")
@@ -216,8 +245,14 @@ func (s *Service) FinishAttempt(ctx context.Context, attemptID uuid.UUID, to Att
 		if err := guard(Attempts, AttemptStatus(attempt.Status), to); err != nil {
 			return err
 		}
+		stepID = attempt.StepID
 		return q.MarkAttemptFinished(ctx, store.MarkAttemptFinishedParams{ID: attemptID, Status: string(to)})
 	})
+	if err != nil {
+		return err
+	}
+	s.notifyRunOfStep(ctx, stepID)
+	return nil
 }
 
 // Run reads one run row; cancellation and run-scoped authorization need

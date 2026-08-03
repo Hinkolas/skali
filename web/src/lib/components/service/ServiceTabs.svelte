@@ -1,22 +1,22 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import type { Project, Service, ServiceType } from '$lib/mock/types';
+	import type { ServiceView } from '$lib/models/service';
+	import type { Project } from '$lib/types/project';
 	import { SERVICE_TABS } from '$lib/navigation';
-	import { currentEnv, withEnv } from '$lib/urls';
+	import { withEnv } from '$lib/urls';
 
-	let { project, service }: { project: Project; service: Service } = $props();
+	let { project, service }: { project: Project; service: ServiceView } = $props();
 
 	const pathname = $derived(page.url.pathname);
-	const base = $derived(`/projects/${project.slug}/services/${service.slug}`);
-	const env = $derived(currentEnv(project, page.url));
+	const base = $derived(`/projects/${project.name}/services/${service.key}`);
+	const env = $derived((page.data.env as { name: string } | null)?.name ?? null);
 
 	// Active underline follows the service type, matching the row tints in
 	// the sidebar's services list.
-	const underlineClass: Record<ServiceType, string> = {
+	const underlineClass: Record<ServiceView['type'], string> = {
 		application: 'bg-accent',
 		database: 'bg-service-db',
-		cache: 'bg-service-cache',
-		storage: 'bg-service-storage'
+		bucket: 'bg-service-storage'
 	};
 </script>
 

@@ -265,6 +265,8 @@ func runServe() error {
 			Capabilities:       cfg.Capabilities,
 			Databases:          dbstore.New(st),
 			SecretReader:       secretReader,
+			Version:            versionpkg.Version,
+			InstanceName:       cfg.InstanceName,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

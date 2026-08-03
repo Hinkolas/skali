@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import type { Node, Org, Project, Service } from '$lib/mock/types';
+	import type { OrgView } from '$lib/models/org';
+	import type { ServiceView } from '$lib/models/service';
+	import type { ClusterNode } from '$lib/types/nodes';
+	import type { Project } from '$lib/types/project';
 	import { toast } from '$lib/stores/toast.svelte';
 	import SidebarOrgNav from './SidebarOrgNav.svelte';
 	import SidebarProjectNav from './SidebarProjectNav.svelte';
@@ -13,17 +16,18 @@
 	// same contract; loads that introduce colliding keys would break both.
 	const data = $derived(
 		page.data as {
-			org: Org;
-			nodes: Node[];
+			org: OrgView;
+			nodes: ClusterNode[];
 			project?: Project;
-			services?: Service[];
+			services?: ServiceView[];
 		}
 	);
 
-	const statusText = $derived.by(() => {
-		const online = data.nodes.filter((n) => n.status === 'online').length;
-		return `${online}/${data.nodes.length} nodes online`;
-	});
+	const online = $derived(data.nodes.filter((n) => n.ready).length);
+	const statusText = $derived(
+		data.nodes.length === 0 ? 'cluster not observed' : `${online}/${data.nodes.length} nodes online`
+	);
+	const statusOk = $derived(data.nodes.length > 0 && online === data.nodes.length);
 </script>
 
 <aside class="flex w-[275px] flex-none flex-col overflow-y-auto">
@@ -50,10 +54,10 @@
 	{#if data.project}
 		<SidebarProjectNav project={data.project} services={data.services ?? []} />
 	{:else}
-		<SidebarOrgNav org={data.org} />
+		<SidebarOrgNav />
 	{/if}
 
 	<div class="flex-1"></div>
 
-	<SidebarStatus text={statusText} />
+	<SidebarStatus text={statusText} ok={statusOk} />
 </aside>

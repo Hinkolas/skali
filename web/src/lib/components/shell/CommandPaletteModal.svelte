@@ -10,10 +10,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import Search from '@lucide/svelte/icons/search';
 	import FolderKanban from '@lucide/svelte/icons/folder-kanban';
-	import type { ServiceKind } from '$lib/mock/types';
-	import { PROJECTS, SERVICES } from '$lib/mock/data';
+	import type { ServiceKind } from '$lib/service-types';
+	import type { ServiceView } from '$lib/models/service';
+	import type { Project } from '$lib/types/project';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
 	let { close }: { close: () => void } = $props();
@@ -25,27 +27,36 @@
 		input?.focus();
 	});
 
-	// Palette results are deliberately env-free: targets open at the
-	// project's default environment.
+	// Palette data comes from the merged page data: projects everywhere, plus
+	// the current project's services when inside a project. Results are
+	// deliberately env-free: targets open at the default environment.
+	const data = $derived(
+		page.data as { projects: Project[]; project?: Project; services?: ServiceView[] }
+	);
+
 	type Result = { href: string; title: string; meta: string; kind?: ServiceKind };
 
 	const results = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		const all: Result[] = [
-			...PROJECTS.map((p) => ({
-				href: resolve('/(app)/projects/[project]', { project: p.slug }),
-				title: p.name,
-				meta: `project · ${p.environments.length} env${p.environments.length === 1 ? '' : 's'}`
+			...data.projects.map((p) => ({
+				href: resolve('/(app)/projects/[project]', { project: p.name }),
+				title: p.display_name || p.name,
+				meta: `project · ${p.summary?.environments.length ?? 0} env${
+					(p.summary?.environments.length ?? 0) === 1 ? '' : 's'
+				}`
 			})),
-			...SERVICES.map((s) => ({
-				href: resolve('/(app)/projects/[project]/services/[service]', {
-					project: s.project_slug,
-					service: s.slug
-				}),
-				title: s.name,
-				meta: s.project_slug,
-				kind: s.type
-			}))
+			...(data.project
+				? (data.services ?? []).map((s) => ({
+						href: resolve('/(app)/projects/[project]/services/[service]', {
+							project: data.project!.name,
+							service: s.key
+						}),
+						title: s.name,
+						meta: data.project!.name,
+						kind: s.type as ServiceKind
+					}))
+				: [])
 		];
 		return q ? all.filter((r) => r.title.toLowerCase().includes(q)) : all;
 	});

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { StatCardData } from '$lib/mock/types';
+	import type { StatCardData } from '$lib/models/view';
 	import Card from './Card.svelte';
 	import ProgressBar from './ProgressBar.svelte';
 	import TrendChip from './TrendChip.svelte';

@@ -94,3 +94,44 @@ func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]
 	}
 	return items, nil
 }
+
+const listEnvironmentsWithTargets = `-- name: ListEnvironmentsWithTargets :many
+SELECT e.id, e.project_id, e.name, t.state
+FROM environments e
+JOIN environment_targets t ON t.environment_id = e.id
+ORDER BY e.project_id, e.name
+`
+
+type ListEnvironmentsWithTargetsRow struct {
+	ID        uuid.UUID
+	ProjectID uuid.UUID
+	Name      string
+	State     string
+}
+
+// Every environment joined with its target pointer state, for the project
+// list summary (one query across all projects, not one per project).
+func (q *Queries) ListEnvironmentsWithTargets(ctx context.Context) ([]ListEnvironmentsWithTargetsRow, error) {
+	rows, err := q.db.Query(ctx, listEnvironmentsWithTargets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEnvironmentsWithTargetsRow
+	for rows.Next() {
+		var i ListEnvironmentsWithTargetsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.State,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

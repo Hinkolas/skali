@@ -282,6 +282,12 @@ func (k *Kernel) NodePlatforms() []string {
 	return k.deps.Observed.NodePlatforms()
 }
 
+// Nodes lists the observed node records for the member-visible node
+// projection, again without leaking the observed store.
+func (k *Kernel) Nodes() []observe.NodeRecord {
+	return k.deps.Observed.Nodes()
+}
+
 func (k *Kernel) Observation() ObservationInfo {
 	info := ObservationInfo{
 		Mode:       "api-only",

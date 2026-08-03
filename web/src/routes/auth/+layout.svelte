@@ -17,13 +17,13 @@
 				s
 			</div>
 			<h1 class="text-text-primary text-2xl font-semibold tracking-[-0.015em]">Sign in to skali</h1>
-			<div class="font-mono text-text-faint text-sm">skali.acme.dev · 3 nodes</div>
+			<div class="font-mono text-text-faint text-sm">self-hosted platform</div>
 		</div>
 
 		{@render children()}
 
 		<div class="font-mono text-text-ghost mt-5.5 text-center text-xs">
-			skali v0.6.1 · self-hosted · <span class="text-text-faint">$ skali login</span>
+			skali · self-hosted · <span class="text-text-faint">$ skali login</span>
 		</div>
 	</div>
 </div>

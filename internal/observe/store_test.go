@@ -107,6 +107,32 @@ func TestNodePlatforms(t *testing.T) {
 	require.Empty(t, store.NodePlatforms())
 }
 
+func TestNodeRecords(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	require.Empty(t, store.Nodes())
+
+	store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: true, Schedulable: true})
+	store.SetNodeRecord(NodeRecord{Name: "a", Role: "server", Arch: "arm64", Ready: true, Schedulable: true})
+
+	nodes := store.Nodes()
+	require.Len(t, nodes, 2)
+	require.Equal(t, "a", nodes[0].Name, "records sort by name")
+	require.Equal(t, "server", nodes[0].Role)
+	require.Equal(t, "b", nodes[1].Name)
+
+	// An update replaces the record in place.
+	store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: false, Schedulable: false})
+	nodes = store.Nodes()
+	require.Len(t, nodes, 2)
+	require.False(t, nodes[1].Ready)
+
+	store.RemoveNode("a")
+	nodes = store.Nodes()
+	require.Len(t, nodes, 1)
+	require.Equal(t, "b", nodes[0].Name)
+}
+
 func TestStalenessEvaluation(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1700000000, 0)

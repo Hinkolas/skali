@@ -1,15 +1,20 @@
 <script lang="ts">
-	import type { ApplicationService, Service } from '$lib/mock/types';
+	import type { ApplicationView, ServiceView } from '$lib/models/service';
+	import type { Run } from '$lib/types/runs';
 	import ConnectedServicesPanel from './ConnectedServicesPanel.svelte';
-	import DeploymentsTable from './DeploymentsTable.svelte';
+	import RunsSection from '$lib/components/run/RunsSection.svelte';
 	import WebProcessPanel from './WebProcessPanel.svelte';
 
 	let {
 		service,
-		services
+		services,
+		envId,
+		runs
 	}: {
-		service: ApplicationService;
-		services: Service[];
+		service: ApplicationView;
+		services: ServiceView[];
+		envId: string | null;
+		runs: Run[] | null;
 	} = $props();
 </script>
 
@@ -19,10 +24,10 @@
 </div>
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
-	<h2 class="text-text-primary text-xl font-semibold">Recent deployments</h2>
-	<div class="text-text-ghost text-md">auto-deploy on push to {service.branch}</div>
+	<h2 class="text-text-primary text-xl font-semibold">Recent runs</h2>
+	<div class="text-text-ghost text-md">deploys land here from the CLI</div>
 </div>
 
 <div class="pb-6">
-	<DeploymentsTable deployments={service.deployments} />
+	<RunsSection {envId} seed={runs} />
 </div>

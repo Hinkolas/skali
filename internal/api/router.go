@@ -61,6 +61,11 @@ type Deps struct {
 	// SecretReader is the sanctioned request-time Secret read behind
 	// credential reveal; nil (API-only mode) disables reveal.
 	SecretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
+	// Version is the daemon build version reported on /v1/system/meta.
+	Version string
+	// InstanceName is the operator-chosen installation name reported on
+	// /v1/system/meta; empty leaves naming to the client.
+	InstanceName string
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -116,6 +121,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(RequireAuth(d.Auth))
 
 			r.Get("/steps/{id}/logs/stream", jh.streamLogs)
+			r.Get("/runs/{id}/stream", jh.streamRun)
+			r.Get("/environments/{id}/runs/stream", jh.streamRuns)
 			r.Get("/environments/{id}/status/stream", sh.stream)
 			r.Get("/environments/{id}/logs/stream", lh.stream)
 		})
@@ -155,7 +162,7 @@ func NewRouter(d Deps) http.Handler {
 
 				// Product surface: projects, environments, drafts. Members have
 				// full access; only destructive deletes need sudo mode.
-				ph := &projectsHandlers{projects: d.Projects}
+				ph := &projectsHandlers{projects: d.Projects, reconcile: d.Reconcile}
 				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal}
 				r.Post("/projects", ph.create)
 				r.Get("/projects", ph.list)
@@ -199,6 +206,11 @@ func NewRouter(d Deps) http.Handler {
 				// database pointers, never a request-time cluster call.
 				r.Get("/environments/{id}/status", sh.get)
 				r.Get("/system/observation", sh.system)
+				r.Get("/nodes", sh.nodes)
+
+				// Instance facts: version and name.
+				mh := &systemHandlers{version: d.Version, instanceName: d.InstanceName}
+				r.Get("/system/meta", mh.meta)
 
 				// Database and bucket connection projections; credential
 				// reveal is the one sanctioned request-time read and needs

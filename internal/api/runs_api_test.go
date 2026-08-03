@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -152,4 +153,144 @@ func TestStepLogStream(t *testing.T) {
 	id, data = readEvent()
 	require.Equal(t, "1:2", id)
 	require.Contains(t, data, "live entry")
+}
+
+// sseReader reads whole SSE events (event name + data) off a stream.
+func sseReader(a *testAPI, reader *bufio.Reader) func() (event, data string) {
+	return func() (event, data string) {
+		a.t.Helper()
+		deadline := time.After(5 * time.Second)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					return
+				}
+				line = strings.TrimRight(line, "\n")
+				switch {
+				case strings.HasPrefix(line, "event: "):
+					event = strings.TrimPrefix(line, "event: ")
+				case strings.HasPrefix(line, "data: "):
+					data = strings.TrimPrefix(line, "data: ")
+				case line == "" && data != "":
+					return
+				}
+			}
+		}()
+		select {
+		case <-done:
+		case <-deadline:
+			a.t.Fatal("timed out waiting for SSE event")
+		}
+		return event, data
+	}
+}
+
+func TestRunStream(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("nick@example.com", "hunter2hunter2")
+	token := a.login("nick@example.com", "hunter2hunter2")
+
+	status, body := a.do("POST", "/v1/projects", token, map[string]any{"name": "demo"})
+	require.Equal(t, http.StatusCreated, status)
+	projectID := body["project"].(map[string]any)["id"].(string)
+	status, body = a.do("POST", "/v1/projects/"+projectID+"/environments", token, map[string]any{"name": "production"})
+	require.Equal(t, http.StatusCreated, status)
+	envID := body["environment"].(map[string]any)["id"].(string)
+
+	runID, stepID, attemptID := a.seedRun(envID)
+	ctx := context.Background()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", a.srv.URL+"/v1/runs/"+runID.String()+"/stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := a.srv.Client().Do(req)
+	require.NoError(t, err)
+	defer res.Body.Close()
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.Equal(t, "text/event-stream", res.Header.Get("Content-Type"))
+
+	reader := bufio.NewReader(res.Body)
+	readEvent := sseReader(a, reader)
+	// runStatus decodes the run's own status out of a snapshot (the steps
+	// carry "status" keys of their own, so substring checks are ambiguous).
+	runStatus := func(data string) string {
+		var doc struct {
+			Run struct {
+				Status string `json:"status"`
+			} `json:"run"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(data), &doc))
+		return doc.Run.Status
+	}
+
+	event, data := readEvent()
+	require.Equal(t, "run", event)
+	require.Equal(t, "running", runStatus(data))
+	require.Contains(t, data, `"apply:web"`)
+
+	// A step change triggers a re-send.
+	require.NoError(t, a.journal.FinishAttempt(ctx, attemptID, journal.AttemptSucceeded))
+	require.NoError(t, a.journal.SetStepStatus(ctx, stepID, journal.StepSucceeded))
+	event, data = readEvent()
+	require.Equal(t, "run", event)
+	require.Contains(t, data, `"succeeded"`)
+
+	// Finishing the run yields a terminal snapshot and ends the stream.
+	require.NoError(t, a.journal.FinishRun(ctx, runID, journal.RunSucceeded))
+	deadline := time.Now().Add(5 * time.Second)
+	sawTerminal := false
+	for time.Now().Before(deadline) && !sawTerminal {
+		event, data = readEvent()
+		require.Equal(t, "run", event)
+		sawTerminal = runStatus(data) == "succeeded"
+	}
+	require.True(t, sawTerminal, "expected a terminal run snapshot")
+	_, err = reader.ReadString('\n')
+	require.Error(t, err, "stream must close after the terminal snapshot")
+
+	// Unknown runs are a 404, not an empty stream.
+	status, _ = a.do("GET", "/v1/runs/"+uuid.NewString()+"/stream", token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+}
+
+func TestEnvironmentRunsStream(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("nick@example.com", "hunter2hunter2")
+	token := a.login("nick@example.com", "hunter2hunter2")
+
+	status, body := a.do("POST", "/v1/projects", token, map[string]any{"name": "demo"})
+	require.Equal(t, http.StatusCreated, status)
+	projectID := body["project"].(map[string]any)["id"].(string)
+	status, body = a.do("POST", "/v1/projects/"+projectID+"/environments", token, map[string]any{"name": "production"})
+	require.Equal(t, http.StatusCreated, status)
+	envID := body["environment"].(map[string]any)["id"].(string)
+
+	ctx := context.Background()
+	req, err := http.NewRequestWithContext(ctx, "GET", a.srv.URL+"/v1/environments/"+envID+"/runs/stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := a.srv.Client().Do(req)
+	require.NoError(t, err)
+	defer res.Body.Close()
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	readEvent := sseReader(a, bufio.NewReader(res.Body))
+
+	event, data := readEvent()
+	require.Equal(t, "runs", event)
+	require.Contains(t, data, `"runs":[]`)
+
+	// A new run shows up live.
+	environmentID := uuid.MustParse(envID)
+	run, err := a.journal.CreateRun(ctx, journal.RunInput{
+		Kind: "deployment", EnvironmentID: environmentID, Actor: "tester",
+	})
+	require.NoError(t, err)
+	event, data = readEvent()
+	require.Equal(t, "runs", event)
+	require.Contains(t, data, run.ID.String())
+	require.Contains(t, data, `"status":"pending"`)
 }

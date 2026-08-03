@@ -71,6 +71,39 @@ func (q *Queries) GetProjectDraft(ctx context.Context, projectID uuid.UUID) (Pro
 	return i, err
 }
 
+const listDraftDefinitions = `-- name: ListDraftDefinitions :many
+SELECT d.project_id, v.definition
+FROM project_drafts d
+JOIN definition_versions v ON v.id = d.definition_version_id
+`
+
+type ListDraftDefinitionsRow struct {
+	ProjectID  uuid.UUID
+	Definition []byte
+}
+
+// Every project's current draft definition, for service-count summaries on
+// the project list.
+func (q *Queries) ListDraftDefinitions(ctx context.Context) ([]ListDraftDefinitionsRow, error) {
+	rows, err := q.db.Query(ctx, listDraftDefinitions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDraftDefinitionsRow
+	for rows.Next() {
+		var i ListDraftDefinitionsRow
+		if err := rows.Scan(&i.ProjectID, &i.Definition); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateProjectDraft = `-- name: UpdateProjectDraft :execrows
 UPDATE project_drafts
 SET version = version + 1, definition_version_id = $3, updated_at = now()
