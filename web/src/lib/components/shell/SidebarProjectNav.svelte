@@ -22,7 +22,7 @@
 </script>
 
 <NavSection label="Project" />
-<div class="flex flex-col gap-0.5 px-2">
+<div class="flex flex-col gap-0.5 px-1">
 	{#each PROJECT_TABS as tab (tab.slug)}
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
 		<!-- Active check matches the bare path; the href carries ?env=. -->
@@ -40,7 +40,7 @@
 		<span class="font-mono text-accent ml-1.5 text-[10px]">{services.length}</span>
 	{/snippet}
 </NavSection>
-<div class="flex flex-col gap-0.5 px-2">
+<div class="flex flex-col gap-0.5 px-1">
 	{#each services as service (service.slug)}
 		<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
 		<a

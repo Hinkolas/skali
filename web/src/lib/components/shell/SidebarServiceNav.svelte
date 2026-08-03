@@ -23,7 +23,7 @@
 </script>
 
 <NavSection label={SERVICE_KIND_META[service.type].label} />
-<div class="flex flex-col gap-0.5 px-2">
+<div class="flex flex-col gap-0.5 px-1">
 	{#each SERVICE_TABS[service.type] as tab (tab.slug)}
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
 		<!-- Active check matches the bare path; the href carries ?env=. -->

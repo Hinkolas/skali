@@ -37,7 +37,9 @@
 
 <aside class="flex w-[250px] flex-none flex-col overflow-y-auto">
 	<!-- Same height as the Topbar so both read as one aligned band. -->
-	<div class="flex h-14 flex-none items-center gap-2.5 px-4">
+	<!-- px-1 lines the logo box up with the nav pill edge (same inset as the
+	     nav item containers), not the item icons. -->
+	<div class="flex h-14 flex-none items-center gap-2.5 px-1">
 		<div
 			class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135 text-[14px] font-bold"
 		>

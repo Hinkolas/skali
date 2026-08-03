@@ -22,7 +22,7 @@
 
 {#each groups as group (group.section)}
 	<NavSection label={group.section} />
-	<div class="flex flex-col gap-0.5 px-2">
+	<div class="flex flex-col gap-0.5 px-1">
 		{#each group.items as item (item.slug)}
 			{@const href = `/${item.slug}`}
 			<NavItem
