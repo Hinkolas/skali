@@ -10,4 +10,4 @@
 	};
 </script>
 
-<span class="font-mono rounded-md px-1.5 py-0.5 text-[10px] {toneClass[tone]}">{text}</span>
+<span class="font-mono rounded-md px-1.5 py-0.5 text-xs {toneClass[tone]}">{text}</span>

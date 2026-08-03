@@ -58,13 +58,13 @@
 </script>
 
 <div class="border-border-subtle flex items-center gap-2.5 border-b px-4 py-3">
-	<Search size={15} class="text-text-ghost flex-none" />
+	<Search size={17} class="text-text-ghost flex-none" />
 	<input
 		bind:this={input}
 		bind:value={query}
 		type="text"
 		placeholder="Jump to a project or service…"
-		class="text-text-primary w-full bg-transparent text-[13.5px] focus:outline-none"
+		class="text-text-primary w-full bg-transparent text-lg focus:outline-none"
 		onkeydown={(e) => {
 			if (e.key === 'Enter' && results.length > 0) {
 				e.preventDefault();
@@ -73,7 +73,7 @@
 		}}
 	/>
 	<kbd
-		class="font-mono border-border-strong text-text-ghost flex-none rounded-[5px] border px-1.25 py-px text-[10px]"
+		class="font-mono border-border-strong text-text-ghost flex-none rounded-[6px] border px-1.25 py-px text-xs"
 	>
 		esc
 	</kbd>
@@ -84,17 +84,17 @@
 		<button
 			type="button"
 			onclick={() => go(result.href)}
-			class="flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] px-3 py-2 text-left transition-colors hover:bg-white/4"
+			class="flex w-full cursor-pointer items-center gap-2.5 rounded-[11px] px-3 py-2 text-left transition-colors hover:bg-white/4"
 		>
 			{#if result.kind}
 				<TypeBadge kind={result.kind} />
 			{:else}
-				<FolderKanban size={14} class="text-text-tertiary flex-none" />
+				<FolderKanban size={15} class="text-text-tertiary flex-none" />
 			{/if}
-			<span class="text-text-secondary truncate text-[13px] font-medium">{result.title}</span>
-			<span class="font-mono text-text-ghost ml-auto flex-none text-[10px]">{result.meta}</span>
+			<span class="text-text-secondary truncate text-base font-medium">{result.title}</span>
+			<span class="font-mono text-text-ghost ml-auto flex-none text-xs">{result.meta}</span>
 		</button>
 	{:else}
-		<div class="text-text-ghost px-3 py-6 text-center text-[12.5px]">No matches</div>
+		<div class="text-text-ghost px-3 py-6 text-center text-base">No matches</div>
 	{/each}
 </div>

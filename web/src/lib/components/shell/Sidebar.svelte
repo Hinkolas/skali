@@ -35,21 +35,21 @@
 	});
 </script>
 
-<aside class="flex w-[250px] flex-none flex-col overflow-y-auto">
+<aside class="flex w-[275px] flex-none flex-col overflow-y-auto">
 	<!-- Same height as the Topbar so both read as one aligned band. -->
 	<!-- px-1 lines the logo box up with the nav pill edge (same inset as the
 	     nav item containers), not the item icons. -->
 	<div class="flex h-14 flex-none items-center gap-2.5 px-1">
 		<div
-			class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135 text-[14px] font-bold"
+			class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135 text-lg font-bold"
 		>
 			s
 		</div>
-		<div class="text-[15.5px] font-semibold tracking-[-0.01em]">skali</div>
+		<div class="text-xl font-semibold tracking-[-0.01em]">skali</div>
 		<button
 			type="button"
 			onclick={() => toast.info('Collapsing the sidebar is coming soon')}
-			class="text-text-ghost hover:text-text-secondary ml-auto cursor-pointer px-1 text-[13px] transition-colors"
+			class="text-text-ghost hover:text-text-secondary ml-auto cursor-pointer px-1 text-base transition-colors"
 			aria-label="Collapse sidebar"
 		>
 			«

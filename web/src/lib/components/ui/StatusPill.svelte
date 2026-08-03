@@ -23,14 +23,14 @@
 
 {#if pill}
 	<span
-		class="flex items-center gap-1.5 rounded-full px-2.75 py-1 text-[12px] {meta.text} {pillBg[
+		class="flex items-center gap-1.5 rounded-full px-2.75 py-1 text-md {meta.text} {pillBg[
 			meta.text
 		]}"
 	>
 		<StatusDot {status} />{meta.label}
 	</span>
 {:else}
-	<span class="flex items-center gap-1.5 text-[11.5px] {meta.text}">
+	<span class="flex items-center gap-1.5 text-md {meta.text}">
 		<StatusDot {status} />{meta.label}
 	</span>
 {/if}

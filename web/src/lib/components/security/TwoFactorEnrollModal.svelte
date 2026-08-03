@@ -68,7 +68,7 @@
 	>
 		<div class="flex justify-center py-1">
 			<!-- White tile regardless of theme: scanners need dark-on-light plus a quiet zone. -->
-			<div class="rounded-[10px] bg-white p-2.5 [&>svg]:size-40">
+			<div class="rounded-[11px] bg-white p-2.5 [&>svg]:size-40">
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -- SVG is generated locally by uqr from the enrollment URI -->
 				{@html qrSvg}
 			</div>
@@ -78,7 +78,7 @@
 		<CopyField label="URI" value={enrollment.otpauth_uri} />
 
 		<label class="mt-1 flex flex-col gap-1.5">
-			<span class="text-text-tertiary text-[12.5px] font-medium">Code</span>
+			<span class="text-text-tertiary text-base font-medium">Code</span>
 			<input
 				bind:this={codeInput}
 				bind:value={code}
@@ -88,13 +88,13 @@
 				autocomplete="one-time-code"
 				spellcheck="false"
 				placeholder="123456"
-				class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 font-mono text-[13.5px] tracking-[0.3em] transition-colors focus:outline-none"
+				class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 font-mono text-lg tracking-[0.3em] transition-colors focus:outline-none"
 			/>
 		</label>
 
 		{#if message}
 			<div
-				class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[10px] border px-3 py-2 text-[13px]"
+				class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[11px] border px-3 py-2 text-base"
 			>
 				{message}
 			</div>

@@ -22,16 +22,14 @@
 <!-- eslint-disable svelte/no-navigation-without-resolve -- pass-through: callers hand in resolved hrefs -->
 <a
 	{href}
-	class="flex items-center gap-2.75 rounded-[10px] px-3 py-2 text-[13.5px] transition-colors {active
+	class="flex items-center gap-2.75 rounded-[11px] px-3 py-2 text-lg transition-colors {active
 		? `font-medium ${activeClass}`
 		: 'text-text-tertiary hover:bg-white/4'}"
 >
-	<Icon size={15} strokeWidth={1.75} class="flex-none opacity-90" />
+	<Icon size={17} strokeWidth={1.75} class="flex-none opacity-90" />
 	{label}
 	{#if badge !== undefined}
-		<span
-			class="font-mono text-text-secondary ml-auto rounded-md bg-white/8 px-1.75 py-px text-[10px]"
-		>
+		<span class="font-mono text-text-secondary ml-auto rounded-md bg-white/8 px-1.75 py-px text-xs">
 			{badge}
 		</span>
 	{/if}

@@ -17,13 +17,13 @@
 
 <Card class="flex items-center gap-4 px-5.5 py-4.5">
 	<div
-		class="bg-surface-input text-text-tertiary grid size-9 flex-none place-items-center rounded-[10px]"
+		class="bg-surface-input text-text-tertiary grid size-9 flex-none place-items-center rounded-[11px]"
 	>
-		<KeyRound size={16} strokeWidth={1.75} />
+		<KeyRound size={18} strokeWidth={1.75} />
 	</div>
 	<div class="min-w-0 flex-1">
-		<h2 class="text-text-primary text-[14px] font-semibold tracking-tight">Password</h2>
-		<p class="text-text-muted mt-0.5 text-[12.5px]">
+		<h2 class="text-text-primary text-lg font-semibold tracking-tight">Password</h2>
+		<p class="text-text-muted mt-0.5 text-base">
 			Changing it signs out every other session; only this one survives.
 		</p>
 	</div>

@@ -25,7 +25,7 @@
 	}}
 />
 
-<!-- No top padding: the 56px logo/topbar band provides the breathing room,
+<!-- No top padding: the 62px logo/topbar band provides the breathing room,
      so its content centers between the window edge and the card. -->
 <div class="bg-glow-app flex h-screen gap-2.5 px-2.5 pb-2.5">
 	<Sidebar />

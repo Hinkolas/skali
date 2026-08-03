@@ -35,8 +35,8 @@
 	};
 
 	const sizeClass: Record<string, string> = {
-		sm: 'rounded-[7px] px-2.5 py-1 text-[11.5px]',
-		md: 'rounded-[10px] px-4.5 py-2.25 text-[13.5px]'
+		sm: 'rounded-[8px] px-2.5 py-1 text-md',
+		md: 'rounded-[11px] px-4.5 py-2.25 text-lg'
 	};
 
 	const classes = $derived(

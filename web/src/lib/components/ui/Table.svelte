@@ -18,7 +18,7 @@
 
 <Card class="overflow-hidden">
 	<div
-		class="border-border-subtle text-text-ghost grid border-b px-4.5 py-2.5 text-[10px] font-semibold tracking-[0.12em] uppercase {grid}"
+		class="border-border-subtle text-text-ghost grid border-b px-4.5 py-2.5 text-xs font-semibold tracking-[0.12em] uppercase {grid}"
 	>
 		<!-- Keyed by position: header labels are positional and may repeat
 		     (e.g. two unlabeled spacer columns). -->

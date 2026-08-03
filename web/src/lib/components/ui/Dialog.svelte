@@ -38,14 +38,14 @@
 	<div>
 		{#if variant === 'danger'}
 			<div
-				class="border-status-danger/25 bg-status-danger/10 text-status-danger mb-3 flex size-9 items-center justify-center rounded-[10px] border"
+				class="border-status-danger/25 bg-status-danger/10 text-status-danger mb-3 flex size-9 items-center justify-center rounded-[11px] border"
 			>
-				<TriangleAlert size={18} strokeWidth={1.75} />
+				<TriangleAlert size={20} strokeWidth={1.75} />
 			</div>
 		{/if}
-		<h2 class="text-text-primary text-[16px] font-semibold tracking-tight">{title}</h2>
+		<h2 class="text-text-primary text-xl font-semibold tracking-tight">{title}</h2>
 		{#if description}
-			<p class="text-text-muted mt-1.5 text-[13px] leading-relaxed">{description}</p>
+			<p class="text-text-muted mt-1.5 text-base leading-relaxed">{description}</p>
 		{/if}
 	</div>
 	<button
@@ -65,7 +65,7 @@
 			type="button"
 			onclick={() => close(false)}
 			disabled={busy}
-			class="text-text-tertiary hover:text-text-primary cursor-pointer rounded-[10px] px-3.5 py-2 text-[13px] font-medium transition hover:bg-white/5 disabled:opacity-50"
+			class="text-text-tertiary hover:text-text-primary cursor-pointer rounded-[11px] px-3.5 py-2 text-lg font-medium transition hover:bg-white/5 disabled:opacity-50"
 		>
 			{cancelLabel}
 		</button>
@@ -74,7 +74,7 @@
 		type="button"
 		onclick={confirm}
 		disabled={busy}
-		class="inline-flex cursor-pointer items-center gap-2 rounded-[10px] px-3.5 py-2 text-[13px] font-semibold transition-[filter] hover:brightness-108 disabled:opacity-60 {variant ===
+		class="inline-flex cursor-pointer items-center gap-2 rounded-[11px] px-3.5 py-2 text-lg font-semibold transition-[filter] hover:brightness-108 disabled:opacity-60 {variant ===
 		'danger'
 			? 'bg-status-danger text-white'
 			: 'from-accent-from to-accent-to text-surface-base shadow-glow bg-linear-135'}"

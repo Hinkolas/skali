@@ -28,7 +28,7 @@
 
 	const adminCount = $derived(data.users.filter((u) => u.role === 'admin').length);
 
-	const userGrid = 'grid-cols-[2.2fr_0.9fr_0.9fr_1.1fr_110px]';
+	const userGrid = 'grid-cols-[2.2fr_0.9fr_0.9fr_1.1fr_121px]';
 
 	function initials(u: AuthUser): string {
 		const base = u.name.trim() || u.email;
@@ -97,7 +97,7 @@
 	{/snippet}
 	{#snippet actions()}
 		<Button variant="primary" onclick={newUser}>
-			<Plus size={15} strokeWidth={2.5} />
+			<Plus size={17} strokeWidth={2.5} />
 			New user
 		</Button>
 	{/snippet}
@@ -112,29 +112,29 @@
 			>
 				<div class="flex min-w-0 items-center gap-3">
 					<span
-						class="text-accent-nav grid size-8 flex-none place-items-center rounded-full bg-linear-135 from-[#37324e] to-[#232030] text-[11px] font-semibold"
+						class="text-accent-nav grid size-8 flex-none place-items-center rounded-full bg-linear-135 from-[#37324e] to-[#232030] text-sm font-semibold"
 					>
 						{initials(user)}
 					</span>
 					<span class="flex min-w-0 flex-col gap-px">
 						<span class="flex items-center gap-2">
-							<span class="text-text-primary truncate text-[13px] font-medium">
+							<span class="text-text-primary truncate text-base font-medium">
 								{user.name.trim() || '—'}
 							</span>
 							{#if self}
 								<span
-									class="font-mono bg-white/6 text-text-muted rounded-full px-2 py-0.5 text-[9.5px]"
+									class="font-mono bg-white/6 text-text-muted rounded-full px-2 py-0.5 text-2xs"
 								>
 									you
 								</span>
 							{/if}
 						</span>
-						<span class="text-text-faint truncate text-[11.5px]">{user.email}</span>
+						<span class="text-text-faint truncate text-md">{user.email}</span>
 					</span>
 				</div>
 				<div>
 					<span
-						class="font-mono rounded-full px-2 py-0.5 text-[9.5px] {user.role === 'admin'
+						class="font-mono rounded-full px-2 py-0.5 text-2xs {user.role === 'admin'
 							? 'text-accent-light bg-accent/15'
 							: 'text-text-muted bg-white/6'}"
 					>
@@ -143,15 +143,15 @@
 				</div>
 				<div>
 					{#if user.two_factor_enabled}
-						<span class="text-status-success flex items-center gap-1.5 text-[11.5px]">
-							<ShieldCheck size={13} />
+						<span class="text-status-success flex items-center gap-1.5 text-md">
+							<ShieldCheck size={14} />
 							enabled
 						</span>
 					{:else}
-						<span class="text-text-ghost text-[11.5px]">—</span>
+						<span class="text-text-ghost text-md">—</span>
 					{/if}
 				</div>
-				<div class="font-mono text-text-muted text-[11px]">{formatDate(user.created_at)}</div>
+				<div class="font-mono text-text-muted text-sm">{formatDate(user.created_at)}</div>
 				<div class="flex items-center justify-end gap-1">
 					<button
 						type="button"
@@ -160,7 +160,7 @@
 						aria-label="Edit {user.email}"
 						title="Edit"
 					>
-						<Pencil size={14} />
+						<Pencil size={15} />
 					</button>
 					<button
 						type="button"
@@ -169,7 +169,7 @@
 						aria-label="Reset password for {user.email}"
 						title="Reset password"
 					>
-						<KeyRound size={14} />
+						<KeyRound size={15} />
 					</button>
 					<button
 						type="button"
@@ -181,7 +181,7 @@
 						aria-label="Delete {user.email}"
 						title={self ? 'You cannot delete your own account' : 'Delete'}
 					>
-						<Trash2 size={14} />
+						<Trash2 size={15} />
 					</button>
 				</div>
 			</div>

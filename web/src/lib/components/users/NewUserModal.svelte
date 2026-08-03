@@ -57,26 +57,26 @@
 	}}
 >
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Email</span>
+		<span class="text-text-tertiary text-base font-medium">Email</span>
 		<input
 			bind:value={email}
 			type="email"
 			required
 			placeholder="dev@example.com"
-			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 		/>
 	</label>
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Name</span>
+		<span class="text-text-tertiary text-base font-medium">Name</span>
 		<input
 			bind:value={name}
 			type="text"
 			placeholder="Ada Lovelace"
-			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 		/>
 	</label>
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Initial password</span>
+		<span class="text-text-tertiary text-base font-medium">Initial password</span>
 		<input
 			bind:value={password}
 			type="password"
@@ -84,17 +84,17 @@
 			minlength={8}
 			placeholder="at least 8 characters"
 			autocomplete="new-password"
-			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 		/>
 	</label>
 	<div class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Role</span>
+		<span class="text-text-tertiary text-base font-medium">Role</span>
 		<div class="flex gap-2">
 			{#each ['member', 'admin'] as const as r (r)}
 				<button
 					type="button"
 					onclick={() => (role = r)}
-					class="flex-1 cursor-pointer rounded-[10px] border px-3 py-2.5 text-[13px] font-medium transition-colors {role ===
+					class="flex-1 cursor-pointer rounded-[11px] border px-3 py-2.5 text-lg font-medium transition-colors {role ===
 					r
 						? 'border-accent/50 bg-accent/10 text-accent-nav'
 						: 'border-border-strong text-text-tertiary hover:bg-white/4'}"
@@ -103,7 +103,7 @@
 				</button>
 			{/each}
 		</div>
-		<p class="text-text-ghost text-[12px] leading-relaxed">
+		<p class="text-text-ghost text-md leading-relaxed">
 			Admins additionally manage users and instance settings.
 		</p>
 	</div>

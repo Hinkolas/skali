@@ -23,20 +23,20 @@
 
 <div class="flex flex-col gap-3">
 	<div
-		class="bg-surface-input border-border-default grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-[10px] border px-4 py-3.5"
+		class="bg-surface-input border-border-default grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-[11px] border px-4 py-3.5"
 	>
 		{#each codes as code (code)}
-			<span class="font-mono text-text-secondary text-[12.5px] tracking-wide">{code}</span>
+			<span class="font-mono text-text-secondary text-base tracking-wide">{code}</span>
 		{/each}
 	</div>
 	<div class="flex items-center justify-between gap-3">
-		<p class="text-text-faint text-[11.5px]">
+		<p class="text-text-faint text-md">
 			Each code signs you in once if you lose your authenticator. They are never shown again.
 		</p>
 		<button
 			type="button"
 			onclick={copyAll}
-			class="text-text-tertiary hover:text-text-primary flex flex-none cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium transition-colors hover:bg-white/5"
+			class="text-text-tertiary hover:text-text-primary flex flex-none cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-md font-medium transition-colors hover:bg-white/5"
 		>
 			{#if copied}
 				<Check class="text-status-success size-3.5" />

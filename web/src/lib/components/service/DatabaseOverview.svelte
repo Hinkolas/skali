@@ -58,7 +58,7 @@
 		<StatusPill status={service.status} pill />
 	{/snippet}
 	{#snippet subtitle()}
-		<span class="font-mono text-text-faint text-[11.5px]">
+		<span class="font-mono text-text-faint text-md">
 			{service.engine}
 			{service.version} · created {service.created_at} · id {service.short_id}
 		</span>
@@ -81,8 +81,8 @@
 </div>
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
-	<h2 class="text-text-primary text-[16px] font-semibold">Connected applications</h2>
-	<div class="text-text-ghost text-[12px]">via private network · zero-latency</div>
+	<h2 class="text-text-primary text-xl font-semibold">Connected applications</h2>
+	<div class="text-text-ghost text-md">via private network · zero-latency</div>
 </div>
 
 <div class="pb-6">

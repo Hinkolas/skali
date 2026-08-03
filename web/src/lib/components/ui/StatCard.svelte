@@ -8,11 +8,11 @@
 </script>
 
 <Card class="px-4.5 py-4">
-	<div class="text-text-ghost mb-3 text-[10px] font-semibold tracking-[0.12em] uppercase">
+	<div class="text-text-ghost mb-3 text-xs font-semibold tracking-[0.12em] uppercase">
 		{stat.label}
 	</div>
-	<div class="text-text-primary text-[24px] font-semibold tracking-[-0.02em]">
-		{stat.value}{#if stat.unit}<span class="text-text-muted ml-1 text-[13px] font-medium"
+	<div class="text-text-primary text-4xl font-semibold tracking-[-0.02em]">
+		{stat.value}{#if stat.unit}<span class="text-text-muted ml-1 text-base font-medium"
 				>{stat.unit}</span
 			>{/if}
 	</div>
@@ -26,7 +26,7 @@
 				<TrendChip text={stat.chip.text} tone={stat.chip.tone} />
 			{/if}
 			{#if stat.note}
-				<span class="text-text-ghost text-[11.5px]">{stat.note}</span>
+				<span class="text-text-ghost text-md">{stat.note}</span>
 			{/if}
 		</div>
 	{/if}

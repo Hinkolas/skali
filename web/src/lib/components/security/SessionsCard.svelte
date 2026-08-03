@@ -13,7 +13,7 @@
 
 	let { sessions }: { sessions: SessionInfo[] } = $props();
 
-	const grid = 'grid-cols-[2.2fr_1fr_1fr_1fr_44px]';
+	const grid = 'grid-cols-[2.2fr_1fr_1fr_1fr_48px]';
 
 	function formatDate(iso: string): string {
 		return new Date(iso).toLocaleDateString(undefined, {
@@ -44,7 +44,7 @@
 </script>
 
 <div>
-	<h2 class="text-text-primary mb-2.5 text-[14px] font-semibold tracking-tight">Active sessions</h2>
+	<h2 class="text-text-primary mb-2.5 text-lg font-semibold tracking-tight">Active sessions</h2>
 	<Table columns={['Device', 'IP address', 'Signed in', 'Expires', '']} {grid}>
 		{#each sessions as session (session.id)}
 			{@const device = describeUserAgent(session.user_agent)}
@@ -56,29 +56,29 @@
 						class="bg-surface-input text-text-tertiary grid size-7 flex-none place-items-center rounded-lg"
 					>
 						{#if device?.mobile}
-							<Smartphone size={13} strokeWidth={1.75} />
+							<Smartphone size={14} strokeWidth={1.75} />
 						{:else}
-							<Monitor size={13} strokeWidth={1.75} />
+							<Monitor size={14} strokeWidth={1.75} />
 						{/if}
 					</div>
-					<span class="text-text-secondary truncate text-[12.5px]" title={session.user_agent}>
+					<span class="text-text-secondary truncate text-base" title={session.user_agent}>
 						{device?.label ?? (session.user_agent || 'Unknown device')}
 					</span>
 					{#if session.current}
 						<span
-							class="font-mono bg-accent/15 text-accent-light flex-none rounded-full px-2 py-0.5 text-[9.5px]"
+							class="font-mono bg-accent/15 text-accent-light flex-none rounded-full px-2 py-0.5 text-2xs"
 						>
 							current
 						</span>
 					{/if}
 				</div>
-				<div class="font-mono text-text-muted truncate text-[11px]">
+				<div class="font-mono text-text-muted truncate text-sm">
 					{session.ip_address || '—'}
 				</div>
-				<div class="font-mono text-text-muted text-[11px]" title={formatDate(session.created_at)}>
+				<div class="font-mono text-text-muted text-sm" title={formatDate(session.created_at)}>
 					{relativeTime(session.created_at)}
 				</div>
-				<div class="font-mono text-text-muted text-[11px]">{formatDate(session.expires_at)}</div>
+				<div class="font-mono text-text-muted text-sm">{formatDate(session.expires_at)}</div>
 				<div class="flex justify-end">
 					{#if !session.current}
 						<button
@@ -88,7 +88,7 @@
 							aria-label="Revoke session"
 							title="Revoke"
 						>
-							<X size={14} />
+							<X size={15} />
 						</button>
 					{/if}
 				</div>

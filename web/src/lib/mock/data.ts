@@ -502,18 +502,22 @@ export const NODES: Node[] = [
 	}
 ];
 
-/* Graph layout: positions/segments copied from the design draft. */
+/* Graph layout: positions/segments copied from the design draft, then scaled
+   110% with the rest of the UI. Connector lengths are derived from scaled
+   endpoints (not scaled independently) so the joints stay closed after
+   rounding. Node cards size themselves from --spacing, so this grid has to
+   move with it or the cards outgrow their gaps. */
 export const GRAPHS: Record<string, ProjectGraph> = {
 	storefront: {
-		width: 1150,
-		height: 640,
+		width: 1265,
+		height: 704,
 		nodes: [
 			{
 				slug: 'ingress',
 				service_slug: null,
-				x: 40,
-				y: 190,
-				w: 250,
+				x: 44,
+				y: 209,
+				w: 275,
 				kind: 'ingress',
 				title: 'edge ingress',
 				subtitle: 'networking · built-in',
@@ -533,9 +537,9 @@ export const GRAPHS: Record<string, ProjectGraph> = {
 			{
 				slug: 'web',
 				service_slug: 'storefront-web',
-				x: 430,
-				y: 100,
-				w: 270,
+				x: 473,
+				y: 110,
+				w: 297,
 				kind: 'application',
 				title: 'storefront-web',
 				subtitle: 'application',
@@ -556,9 +560,9 @@ export const GRAPHS: Record<string, ProjectGraph> = {
 			{
 				slug: 'api',
 				service_slug: 'storefront-api',
-				x: 430,
-				y: 320,
-				w: 270,
+				x: 473,
+				y: 352,
+				w: 297,
 				kind: 'application',
 				title: 'storefront-api',
 				subtitle: 'application',
@@ -579,9 +583,9 @@ export const GRAPHS: Record<string, ProjectGraph> = {
 			{
 				slug: 'db',
 				service_slug: 'postgres-main',
-				x: 860,
-				y: 80,
-				w: 260,
+				x: 946,
+				y: 88,
+				w: 286,
 				kind: 'database',
 				title: 'postgres-main',
 				subtitle: 'database · pg 17',
@@ -601,9 +605,9 @@ export const GRAPHS: Record<string, ProjectGraph> = {
 			{
 				slug: 'cache',
 				service_slug: 'cache',
-				x: 860,
-				y: 260,
-				w: 260,
+				x: 946,
+				y: 286,
+				w: 286,
 				kind: 'cache',
 				title: 'cache',
 				subtitle: 'cache · valkey 8',
@@ -623,9 +627,9 @@ export const GRAPHS: Record<string, ProjectGraph> = {
 			{
 				slug: 'media',
 				service_slug: 'media',
-				x: 860,
-				y: 440,
-				w: 260,
+				x: 946,
+				y: 484,
+				w: 286,
 				kind: 'storage',
 				title: 'media',
 				subtitle: 'storage · s3',
@@ -644,22 +648,22 @@ export const GRAPHS: Record<string, ProjectGraph> = {
 			}
 		],
 		segments: [
-			{ left: 290, top: 260, width: 70 },
-			{ left: 360, top: 175, height: 85 },
-			{ left: 360, top: 175, width: 70 },
-			{ left: 565, top: 250, height: 70 },
-			{ left: 700, top: 395, width: 80 },
-			{ left: 780, top: 150, height: 360 },
-			{ left: 780, top: 150, width: 80 },
-			{ left: 780, top: 330, width: 80 },
-			{ left: 780, top: 510, width: 80 }
+			{ left: 319, top: 286, width: 77 },
+			{ left: 396, top: 193, height: 93 },
+			{ left: 396, top: 193, width: 77 },
+			{ left: 622, top: 275, height: 77 },
+			{ left: 770, top: 435, width: 88 },
+			{ left: 858, top: 165, height: 396 },
+			{ left: 858, top: 165, width: 88 },
+			{ left: 858, top: 363, width: 88 },
+			{ left: 858, top: 561, width: 88 }
 		],
 		labels: [
-			{ text: ':443', left: 296, top: 249 },
-			{ text: ':8080', left: 538, top: 272 },
-			{ text: ':5432', left: 790, top: 138 },
-			{ text: ':6379', left: 790, top: 318 },
-			{ text: ':9000', left: 790, top: 498 }
+			{ text: ':443', left: 326, top: 274 },
+			{ text: ':8080', left: 592, top: 299 },
+			{ text: ':5432', left: 869, top: 152 },
+			{ text: ':6379', left: 869, top: 350 },
+			{ text: ':9000', left: 869, top: 548 }
 		]
 	}
 };

@@ -37,7 +37,7 @@
 
 <NavSection label="Services">
 	{#snippet trailing()}
-		<span class="font-mono text-accent ml-1.5 text-[10px]">{services.length}</span>
+		<span class="font-mono text-accent ml-1.5 text-xs">{services.length}</span>
 	{/snippet}
 </NavSection>
 <div class="flex flex-col gap-0.5 px-1">
@@ -51,7 +51,7 @@
 				}),
 				env
 			)}
-			class="text-text-secondary flex items-center gap-2.5 rounded-[10px] px-3 py-1.75 text-[13px] transition-colors hover:bg-white/4"
+			class="text-text-secondary flex items-center gap-2.5 rounded-[11px] px-3 py-1.75 text-lg transition-colors hover:bg-white/4"
 		>
 			<TypeBadge kind={service.type} />
 			<span class="truncate">{service.name}</span>
@@ -65,9 +65,9 @@
 		type="button"
 		onclick={() =>
 			modal.open(NewServiceModal, { projectName: project.name }, newServiceModalOptions)}
-		class="border-border-strong text-text-faint hover:text-text-secondary mt-1.5 flex cursor-pointer items-center gap-2 rounded-[10px] border border-dashed px-3 py-2 text-[13px] transition-colors hover:border-white/20"
+		class="border-border-strong text-text-faint hover:text-text-secondary mt-1.5 flex cursor-pointer items-center gap-2 rounded-[11px] border border-dashed px-3 py-2 text-lg transition-colors hover:border-white/20"
 	>
-		<Plus size={13} />
+		<Plus size={15} />
 		New service
 	</button>
 </div>

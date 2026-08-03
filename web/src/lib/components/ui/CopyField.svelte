@@ -30,9 +30,9 @@
 </script>
 
 <div class="flex items-center gap-3">
-	<div class="text-text-faint w-19 flex-none text-[12px]">{label}</div>
+	<div class="text-text-faint w-19 flex-none text-md">{label}</div>
 	<div
-		class="font-mono bg-surface-input border-border-default min-w-0 flex-1 overflow-hidden rounded-lg border px-2.75 py-2 text-[11.5px] text-ellipsis whitespace-nowrap {masked
+		class="font-mono bg-surface-input border-border-default min-w-0 flex-1 overflow-hidden rounded-lg border px-2.75 py-2 text-md text-ellipsis whitespace-nowrap {masked
 			? 'text-text-faint tracking-[0.15em]'
 			: 'text-text-secondary'}"
 	>

@@ -29,7 +29,7 @@
 </script>
 
 <div
-	class="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-[min(360px,calc(100vw-2rem))] flex-col-reverse gap-2"
+	class="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-[min(396px,calc(100vw-2rem))] flex-col-reverse gap-2"
 	role="region"
 	aria-label="Notifications"
 >
@@ -41,12 +41,12 @@
 			transition:fly={{ y: 12, duration: 180 }}
 		>
 			<div class="mt-0.5 shrink-0 {iconColor[t.variant]}">
-				<ToastIcon class="size-[18px] {t.variant === 'loading' ? 'animate-spin' : ''}" />
+				<ToastIcon class="size-[20px] {t.variant === 'loading' ? 'animate-spin' : ''}" />
 			</div>
 			<div class="min-w-0 flex-1">
-				<div class="text-text-primary text-[13.5px] font-semibold">{t.title}</div>
+				<div class="text-text-primary text-lg font-semibold">{t.title}</div>
 				{#if t.description}
-					<div class="text-text-muted mt-0.5 text-[12.5px] leading-snug">{t.description}</div>
+					<div class="text-text-muted mt-0.5 text-base leading-snug">{t.description}</div>
 				{/if}
 			</div>
 			<button

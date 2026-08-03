@@ -35,7 +35,7 @@
 		<StatusPill status={service.status} pill />
 	{/snippet}
 	{#snippet subtitle()}
-		<span class="font-mono text-text-faint text-[11.5px]">
+		<span class="font-mono text-text-faint text-md">
 			{service.kind_label} · on {service.node}
 		</span>
 	{/snippet}

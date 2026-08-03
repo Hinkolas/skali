@@ -51,7 +51,7 @@
 	bind:this={listEl}
 	role="tablist"
 	aria-label={label}
-	class="grid w-full auto-cols-fr grid-flow-col gap-0.5 rounded-[10px] bg-white/3 p-0.5"
+	class="grid w-full auto-cols-fr grid-flow-col gap-0.5 rounded-[11px] bg-white/3 p-0.5"
 >
 	{#each tabs as t (t.id)}
 		{@const isActive = t.id === active}
@@ -62,12 +62,12 @@
 			tabindex={isActive ? 0 : -1}
 			{onkeydown}
 			onclick={() => onchange(t.id)}
-			class="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] transition-colors {isActive
+			class="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-sm transition-colors {isActive
 				? 'bg-accent/10 inset-ring inset-ring-accent/25 text-accent-nav font-medium'
 				: 'text-text-faint hover:text-text-secondary hover:bg-white/4'}"
 		>
 			{#if t.icon}
-				<t.icon size={13} strokeWidth={1.75} class="flex-none opacity-90" />
+				<t.icon size={14} strokeWidth={1.75} class="flex-none opacity-90" />
 			{/if}
 			{t.label}
 		</button>

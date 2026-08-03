@@ -10,6 +10,6 @@
 	} = $props();
 </script>
 
-<div class="bg-surface-raised border-border-default rounded-[14px] border {className}">
+<div class="bg-surface-raised border-border-default rounded-[15px] border {className}">
 	{@render children()}
 </div>

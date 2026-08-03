@@ -18,13 +18,13 @@
 <div class="mb-5.5 flex items-start">
 	<div>
 		<div class="flex items-center gap-3">
-			<h1 class="text-text-primary text-[26px] font-semibold tracking-[-0.02em]">{title}</h1>
+			<h1 class="text-text-primary text-5xl font-semibold tracking-[-0.02em]">{title}</h1>
 			{#if titleTrailing}
 				{@render titleTrailing()}
 			{/if}
 		</div>
 		{#if subtitle}
-			<div class="text-text-muted mt-1.5 flex items-center gap-2 text-[13px]">
+			<div class="text-text-muted mt-1.5 flex items-center gap-2 text-base">
 				{@render subtitle()}
 			</div>
 		{/if}

@@ -3,7 +3,7 @@
 	import { SERVICE_KIND_META } from '$lib/service-types';
 
 	// Two forms: 'chip' is the inline AP ×2 pill (project cards, sidebar rows);
-	// 'tile' is the square icon block next to service names (sm 26px, md 30px).
+	// 'tile' is the square icon block next to service names (sm 29px, md 33px).
 	let {
 		kind,
 		form = 'chip',
@@ -22,14 +22,14 @@
 {#if form === 'tile'}
 	<span
 		class="font-mono grid flex-none place-items-center font-semibold {size === 'md'
-			? 'size-7.5 rounded-[9px] text-[9.5px]'
-			: 'size-6.5 rounded-lg text-[9px]'} {meta.text} {meta.bg}"
+			? 'size-7.5 rounded-[10px] text-xs'
+			: 'size-6.5 rounded-lg text-2xs'} {meta.text} {meta.bg}"
 	>
 		{meta.code}
 	</span>
 {:else}
 	<span
-		class="font-mono flex-none rounded-[5px] px-1.5 py-0.5 text-[9px] font-semibold {meta.text} {meta.bg}"
+		class="font-mono flex-none rounded-[6px] px-1.5 py-0.5 text-2xs font-semibold {meta.text} {meta.bg}"
 	>
 		{meta.code}{#if count && count > 1}
 			×{count}{/if}

@@ -26,7 +26,7 @@
 
 <PageHeader title={data.project.name}>
 	{#snippet subtitle()}
-		<span class="size-[7px] flex-none rounded-full {statusDot[data.project.status]}"></span>
+		<span class="size-[8px] flex-none rounded-full {statusDot[data.project.status]}"></span>
 		{data.project.subtitle}
 	{/snippet}
 	{#snippet actions()}
@@ -47,8 +47,8 @@
 </div>
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
-	<h2 class="text-text-primary text-[16px] font-semibold">Services</h2>
-	<div class="text-text-ghost text-[12px]">{data.project.services_summary}</div>
+	<h2 class="text-text-primary text-xl font-semibold">Services</h2>
+	<div class="text-text-ghost text-md">{data.project.services_summary}</div>
 </div>
 
 <div class="grid grid-cols-3 gap-3.5 pb-6">
@@ -59,8 +59,8 @@
 		type="button"
 		onclick={() =>
 			modal.open(NewServiceModal, { projectName: data.project.name }, newServiceModalOptions)}
-		class="border-border-strong text-text-faint hover:text-text-secondary grid min-h-[120px] cursor-pointer place-items-center rounded-[14px] border border-dashed text-[13px] transition-colors hover:border-white/20"
+		class="border-border-strong text-text-faint hover:text-text-secondary grid min-h-[132px] cursor-pointer place-items-center rounded-[15px] border border-dashed text-base transition-colors hover:border-white/20"
 	>
-		<span class="flex items-center gap-1.5"><Plus size={14} /> Add a service</span>
+		<span class="flex items-center gap-1.5"><Plus size={15} /> Add a service</span>
 	</button>
 </div>

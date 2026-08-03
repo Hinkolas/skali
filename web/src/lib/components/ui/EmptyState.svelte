@@ -18,17 +18,17 @@
 </script>
 
 <div
-	class="border-border-strong grid min-h-[220px] place-items-center rounded-[14px] border border-dashed {className}"
+	class="border-border-strong grid min-h-[242px] place-items-center rounded-[15px] border border-dashed {className}"
 >
 	<div class="flex flex-col items-center gap-2.5 p-8 text-center">
 		{#if Icon}
 			<div class="text-text-ghost bg-white/4 mb-1 grid size-10 place-items-center rounded-xl">
-				<Icon size={18} strokeWidth={1.75} />
+				<Icon size={20} strokeWidth={1.75} />
 			</div>
 		{/if}
-		<div class="text-text-muted text-[13.5px] font-medium">{title}</div>
+		<div class="text-text-muted text-lg font-medium">{title}</div>
 		{#if description}
-			<div class="font-mono text-text-ghost text-[10.5px]">{description}</div>
+			<div class="font-mono text-text-ghost text-xs">{description}</div>
 		{/if}
 		{#if action}
 			<div class="mt-2">{@render action()}</div>

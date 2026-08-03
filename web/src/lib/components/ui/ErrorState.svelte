@@ -49,24 +49,22 @@
 	{#if showIcon}
 		{@const Icon = details.icon}
 		<div class="mb-5 grid size-12 place-items-center rounded-2xl {details.tint}">
-			<Icon size={22} strokeWidth={1.75} />
+			<Icon size={24} strokeWidth={1.75} />
 		</div>
 	{/if}
 
-	<div
-		class="font-mono text-text-primary text-[40px] leading-none font-semibold tracking-[-0.02em]"
-	>
+	<div class="font-mono text-text-primary text-6xl leading-none font-semibold tracking-[-0.02em]">
 		{page.status}
 	</div>
-	<h1 class="text-text-primary mt-3 text-[16px] font-semibold">
+	<h1 class="text-text-primary mt-3 text-xl font-semibold">
 		{page.error?.message ?? 'Something went wrong'}
 	</h1>
-	<p class="text-text-muted mt-1.5 max-w-[360px] text-[13px]">{details.text}</p>
+	<p class="text-text-muted mt-1.5 max-w-[396px] text-base">{details.text}</p>
 
 	<div class="mt-6 flex items-center gap-2.5">
 		<Button variant="secondary" onclick={() => history.back()}>Go back</Button>
 		<Button variant="primary" href={resolve('/')}>Go to home</Button>
 	</div>
 
-	<div class="font-mono text-text-ghost mt-7 text-[10.5px]">{page.url.pathname}</div>
+	<div class="font-mono text-text-ghost mt-7 text-xs">{page.url.pathname}</div>
 </div>

@@ -23,7 +23,7 @@
 		<StatusPill status={service.status} pill />
 	{/snippet}
 	{#snippet subtitle()}
-		<span class="font-mono text-text-faint text-[11.5px]">
+		<span class="font-mono text-text-faint text-md">
 			{service.repo} · {service.branch} · {service.domain ?? service.endpoint}
 		</span>
 	{/snippet}
@@ -35,7 +35,7 @@
 						description: 'Mock only — the domain does not resolve.'
 					})}
 			>
-				Open app <ExternalLink size={13} />
+				Open app <ExternalLink size={14} />
 			</Button>
 		{/if}
 		<Button
@@ -54,8 +54,8 @@
 </div>
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
-	<h2 class="text-text-primary text-[16px] font-semibold">Recent deployments</h2>
-	<div class="text-text-ghost text-[12px]">auto-deploy on push to {service.branch}</div>
+	<h2 class="text-text-primary text-xl font-semibold">Recent deployments</h2>
+	<div class="text-text-ghost text-md">auto-deploy on push to {service.branch}</div>
 </div>
 
 <div class="pb-6">

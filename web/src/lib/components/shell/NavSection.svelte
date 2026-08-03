@@ -5,7 +5,7 @@
 </script>
 
 <div
-	class="text-text-ghost flex items-center px-1 pt-4.5 pb-2 text-[10px] font-semibold tracking-[0.13em] uppercase"
+	class="text-text-ghost flex items-center px-1 pt-4.5 pb-2 text-xs font-semibold tracking-[0.13em] uppercase"
 >
 	{label}
 	{#if trailing}

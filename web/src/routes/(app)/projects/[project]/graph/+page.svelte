@@ -36,14 +36,14 @@
 
 {#if data.graph}
 	<div
-		class="bg-surface-canvas border-border-default relative mb-6 h-[640px] overflow-auto rounded-2xl border"
+		class="bg-surface-canvas border-border-default relative mb-6 h-[704px] overflow-auto rounded-2xl border"
 	>
 		<div
 			class="relative h-full"
 			style:min-width="{data.graph.width}px"
 			style:min-height="{data.graph.height}px"
 			style:background-image="radial-gradient(rgb(255 255 255 / 0.05) 1px, transparent 1px)"
-			style:background-size="22px 22px"
+			style:background-size="24px 24px"
 		>
 			{#each data.graph.segments as segment, i (i)}
 				<div
@@ -59,7 +59,7 @@
 
 			{#each data.graph.labels as label (label.text + label.left)}
 				<div
-					class="font-mono text-accent-light border-accent/30 absolute z-2 rounded-md border bg-[#16161d] px-1.5 py-px text-[9.5px]"
+					class="font-mono text-accent-light border-accent/30 absolute z-2 rounded-md border bg-[#16161d] px-1.5 py-px text-2xs"
 					style:left="{label.left}px"
 					style:top="{label.top}px"
 				>

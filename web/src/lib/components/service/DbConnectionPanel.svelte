@@ -8,9 +8,9 @@
 
 <Card class="p-5">
 	<div class="mb-4 flex items-center gap-2.5">
-		<h3 class="text-text-primary text-[15px] font-semibold">Internal connection</h3>
+		<h3 class="text-text-primary text-xl font-semibold">Internal connection</h3>
 		<span
-			class="font-mono text-status-success bg-status-success/10 rounded-full px-2 py-0.5 text-[9.5px]"
+			class="font-mono text-status-success bg-status-success/10 rounded-full px-2 py-0.5 text-2xs"
 		>
 			private network
 		</span>

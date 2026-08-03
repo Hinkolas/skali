@@ -62,7 +62,7 @@
 >
 	{#if twoFactor}
 		<label class="flex flex-col gap-1.5">
-			<span class="text-text-tertiary text-[12.5px] font-medium">Code</span>
+			<span class="text-text-tertiary text-base font-medium">Code</span>
 			<input
 				bind:this={input}
 				bind:value={secret}
@@ -72,12 +72,12 @@
 				autocomplete="one-time-code"
 				spellcheck="false"
 				placeholder="123456"
-				class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 font-mono text-[13.5px] tracking-[0.3em] transition-colors focus:outline-none"
+				class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 font-mono text-lg tracking-[0.3em] transition-colors focus:outline-none"
 			/>
 		</label>
 	{:else}
 		<label class="flex flex-col gap-1.5">
-			<span class="text-text-tertiary text-[12.5px] font-medium">Password</span>
+			<span class="text-text-tertiary text-base font-medium">Password</span>
 			<input
 				bind:this={input}
 				bind:value={secret}
@@ -85,14 +85,14 @@
 				required
 				autocomplete="current-password"
 				placeholder="••••••••••"
-				class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+				class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 			/>
 		</label>
 	{/if}
 
 	{#if message}
 		<div
-			class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[10px] border px-3 py-2 text-[13px]"
+			class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[11px] border px-3 py-2 text-base"
 		>
 			{message}
 		</div>

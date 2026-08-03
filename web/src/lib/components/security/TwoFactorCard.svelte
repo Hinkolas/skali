@@ -78,26 +78,26 @@
 
 <Card class="flex items-center gap-4 px-5.5 py-4.5">
 	<div
-		class="bg-surface-input text-text-tertiary grid size-9 flex-none place-items-center rounded-[10px]"
+		class="bg-surface-input text-text-tertiary grid size-9 flex-none place-items-center rounded-[11px]"
 	>
 		{#if enabled}
-			<ShieldCheck size={16} strokeWidth={1.75} class="text-status-success" />
+			<ShieldCheck size={18} strokeWidth={1.75} class="text-status-success" />
 		{:else}
-			<ShieldOff size={16} strokeWidth={1.75} />
+			<ShieldOff size={18} strokeWidth={1.75} />
 		{/if}
 	</div>
 	<div class="min-w-0 flex-1">
-		<h2 class="flex items-center gap-2 text-[14px] font-semibold tracking-tight">
+		<h2 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
 			<span class="text-text-primary">Two-factor authentication</span>
 			{#if enabled}
 				<span
-					class="font-mono bg-status-success/10 text-status-success rounded-full px-2 py-0.5 text-[9.5px]"
+					class="font-mono bg-status-success/10 text-status-success rounded-full px-2 py-0.5 text-2xs"
 				>
 					enabled
 				</span>
 			{/if}
 		</h2>
-		<p class="text-text-muted mt-0.5 text-[12.5px]">
+		<p class="text-text-muted mt-0.5 text-base">
 			{#if enabled}
 				Signing in requires a code from your authenticator app or a backup code.
 			{:else}

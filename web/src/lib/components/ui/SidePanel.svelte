@@ -33,7 +33,7 @@
 		<!-- Fixed-width inner wrapper: `slide` animates the outer width while
 		     the inner keeps its final width, so content is revealed/clipped
 		     instead of reflowing during the transition. -->
-		<div class="flex h-full flex-col {p.options.width ?? 'w-[380px]'}">
+		<div class="flex h-full flex-col {p.options.width ?? 'w-[418px]'}">
 			<Content {...p.props} close={() => sidepanel.close()} />
 		</div>
 	</aside>

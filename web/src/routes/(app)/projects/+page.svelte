@@ -29,7 +29,7 @@
 			variant="primary"
 			onclick={() => modal.open(NewProjectModal, {}, newProjectModalOptions)}
 		>
-			<Plus size={15} strokeWidth={2.5} />
+			<Plus size={17} strokeWidth={2.5} />
 			New project
 		</Button>
 	{/snippet}
@@ -42,8 +42,8 @@
 </div>
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
-	<h2 class="text-text-primary text-[16px] font-semibold">Nodes</h2>
-	<div class="text-text-ghost text-[12px]">all healthy · daemon {data.org.version}</div>
+	<h2 class="text-text-primary text-xl font-semibold">Nodes</h2>
+	<div class="text-text-ghost text-md">all healthy · daemon {data.org.version}</div>
 </div>
 
 <div class="pb-6">
@@ -53,19 +53,19 @@
 			<div
 				class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {nodeGrid}"
 			>
-				<div class="font-mono text-text-primary text-[12px]">{node.name}</div>
-				<div class="font-mono text-text-faint text-[11px]">{node.advertise_addr}</div>
+				<div class="font-mono text-text-primary text-md">{node.name}</div>
+				<div class="font-mono text-text-faint text-sm">{node.advertise_addr}</div>
 				<div class="flex flex-wrap items-center gap-1">
 					{#each node.roles as role (role)}
 						{@const meta = NODE_ROLE_META[role]}
-						<span class="font-mono rounded-full px-2 py-0.5 text-[9.5px] {meta.text} {meta.bg}">
+						<span class="font-mono rounded-full px-2 py-0.5 text-2xs {meta.text} {meta.bg}">
 							{role}
 						</span>
 					{/each}
 				</div>
-				<div class="font-mono text-text-muted text-[11px]">{node.skalid_version ?? '—'}</div>
-				<div class="flex items-center gap-1.5 text-[11.5px] {state.text}">
-					<span class="size-[7px] rounded-full {state.dot}"></span>
+				<div class="font-mono text-text-muted text-sm">{node.skalid_version ?? '—'}</div>
+				<div class="flex items-center gap-1.5 text-md {state.text}">
+					<span class="size-[8px] rounded-full {state.dot}"></span>
 					{state.label}
 				</div>
 			</div>

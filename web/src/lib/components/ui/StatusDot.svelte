@@ -12,6 +12,6 @@
 </script>
 
 <span
-	class="flex-none rounded-full {size === 'sm' ? 'size-1.5' : 'size-[7px]'} {STATUS_META[status]
+	class="flex-none rounded-full {size === 'sm' ? 'size-1.5' : 'size-[8px]'} {STATUS_META[status]
 		.dot}"
 ></span>

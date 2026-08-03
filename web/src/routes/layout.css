@@ -14,12 +14,41 @@
  */
 
 @import 'tailwindcss';
-@import '@fontsource-variable/instrument-sans';
-@import '@fontsource-variable/jetbrains-mono';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
 
 @theme {
-	--font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', monospace;
+	--font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace;
+
+	/* Base unit behind every numeric spacing/sizing utility (p-4, gap-2,
+	   size-6.5, w-19 ...). Tailwind ships 0.25rem = 4px; this is that grid
+	   scaled 110%, which is the single knob for overall UI density. Text is
+	   scaled to match by the --text-* ramp below, so move both together. */
+	--spacing: 0.275rem;
+
+	/* Type scale. `--text-*: initial` drops Tailwind's stock ramp so the only
+	   sizes available are the twelve below — reach for a token, never
+	   text-[13.5px]. Steps are 1px through the dense UI range (2xs..lg) where
+	   the design genuinely discriminates that finely, then open up for
+	   headings. Note text-base is 14px, not Tailwind's usual 16px.
+
+	   No line-height is paired with any step, so text-* sets font-size only
+	   and leading stays inherited — same as the arbitrary values these
+	   replaced. Set leading-* explicitly where it matters. */
+	--text-*: initial;
+	--text-2xs: 10px; /* micro badges, chart axis ticks */
+	--text-xs: 11px; /* uppercase section headers, kbd, mono meta */
+	--text-sm: 12px; /* dense mono rows, tab labels */
+	--text-md: 13px; /* field labels, helper text, status pills */
+	--text-base: 14px; /* body: form labels, menu items, descriptions */
+	--text-lg: 15px; /* nav items, inputs, buttons, card titles */
+	--text-xl: 17px; /* panel and section headings */
+	--text-2xl: 22px; /* auth page title */
+	--text-3xl: 24px; /* logo tile glyph */
+	--text-4xl: 26px; /* stat card values */
+	--text-5xl: 29px; /* page title */
+	--text-6xl: 44px; /* error code display */
 
 	/* Surfaces */
 	--color-surface-base: #0b0b0f; /* page background */
@@ -77,14 +106,18 @@
 }
 
 /* Page-level radial glows. Both originate from the skali logo tile: the app
-   shell anchors it at the sidebar logo's viewport position (10px outer padding
-   + 16px row padding + half the 26px tile = 39px in, centered in the 56px
-   logo/topbar band = 28px down); the login page positions a bg-glow-halo
-   element centered on its logo. */
+   shell anchors it at the sidebar logo's viewport position; the login page
+   positions a bg-glow-halo element centered on its logo.
+
+   The anchor is stated in --spacing units so it can be recomputed when the UI
+   scale moves: px-2.5 outer padding + px-1 sidebar row padding + half the
+   size-6.5 tile = 6.75 units in, and half the h-14 logo/topbar band = 7 units
+   down. At --spacing 0.275rem that is 30px and 31px. (The previous 39px was
+   stale — it still assumed the px-4 row padding the sidebar rework dropped.) */
 @utility bg-glow-app {
 	background: #0b0b0f
 		radial-gradient(
-			900px 600px at 39px 28px,
+			990px 660px at 30px 31px,
 			rgb(124 98 242 / 0.09) 0%,
 			rgb(124 98 242 / 0.055) 20%,
 			rgb(124 98 242 / 0.029) 40%,

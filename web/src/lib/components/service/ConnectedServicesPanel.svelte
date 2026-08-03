@@ -36,7 +36,7 @@
 </script>
 
 <Card class="flex flex-col p-5">
-	<h3 class="text-text-primary mb-3.5 text-[15px] font-semibold">Connected services</h3>
+	<h3 class="text-text-primary mb-3.5 text-xl font-semibold">Connected services</h3>
 	<div class="flex flex-col gap-2">
 		{#each connected as target (target.slug)}
 			<a
@@ -44,13 +44,13 @@
 					project: target.project_slug,
 					service: target.slug
 				})}
-				class="border-border-default flex items-center gap-2.5 rounded-[10px] border px-3 py-2.5 transition-colors {hoverBorder[
+				class="border-border-default flex items-center gap-2.5 rounded-[11px] border px-3 py-2.5 transition-colors {hoverBorder[
 					target.type
 				]}"
 			>
 				<TypeBadge kind={target.type} form="tile" />
-				<span class="text-text-primary text-[13px] font-medium">{target.name}</span>
-				<span class="font-mono text-text-faint ml-auto text-[9.5px]">
+				<span class="text-text-primary text-base font-medium">{target.name}</span>
+				<span class="font-mono text-text-faint ml-auto text-2xs">
 					{defaultPort[target.type]}
 				</span>
 			</a>
@@ -58,9 +58,9 @@
 		<button
 			type="button"
 			onclick={() => toast.info('Connections are coming soon')}
-			class="border-border-strong text-text-faint hover:text-text-secondary flex cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-dashed py-2.25 text-[12px] transition-colors hover:border-white/20"
+			class="border-border-strong text-text-faint hover:text-text-secondary flex cursor-pointer items-center justify-center gap-1.5 rounded-[11px] border border-dashed py-2.25 text-md transition-colors hover:border-white/20"
 		>
-			<Plus size={12} />
+			<Plus size={13} />
 			Add connection
 		</button>
 	</div>

@@ -18,15 +18,15 @@
 		<div
 			class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {grid}"
 		>
-			<div class="font-mono text-text-primary text-[12px]">{deployment.build}</div>
-			<div class="text-text-secondary truncate pr-4 text-[12.5px]">
+			<div class="font-mono text-text-primary text-md">{deployment.build}</div>
+			<div class="text-text-secondary truncate pr-4 text-base">
 				{deployment.message}
-				<span class="font-mono text-text-faint text-[10px]">{deployment.sha}</span>
+				<span class="font-mono text-text-faint text-xs">{deployment.sha}</span>
 			</div>
-			<div class="text-text-muted text-[11.5px]">{deployment.trigger}</div>
-			<div class="font-mono text-text-muted text-[11px]">{deployment.duration}</div>
-			<div class="flex items-center gap-1.5 text-[11.5px] {statusClass[deployment.status].text}">
-				<span class="size-[7px] rounded-full {statusClass[deployment.status].dot}"></span>
+			<div class="text-text-muted text-md">{deployment.trigger}</div>
+			<div class="font-mono text-text-muted text-sm">{deployment.duration}</div>
+			<div class="flex items-center gap-1.5 text-md {statusClass[deployment.status].text}">
+				<span class="size-[8px] rounded-full {statusClass[deployment.status].dot}"></span>
 				{deployment.status_label}
 			</div>
 		</div>

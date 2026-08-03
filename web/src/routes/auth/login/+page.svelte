@@ -22,7 +22,7 @@
 	});
 
 	const inputClass =
-		'w-full rounded-[10px] border border-border-strong bg-surface-input px-3.25 py-2.75 text-[13.5px] text-text-primary transition-colors focus:border-accent/50 focus:outline-none';
+		'w-full rounded-[11px] border border-border-strong bg-surface-input px-3.25 py-2.75 text-lg text-text-primary transition-colors focus:border-accent/50 focus:outline-none';
 
 	const submitEnhance = () => {
 		submitting = true;
@@ -40,17 +40,17 @@
 <div class="bg-surface-raised border-border-raised flex flex-col gap-3.5 rounded-2xl border p-6.5">
 	{#if totpStep}
 		<div class="flex items-center gap-2.5">
-			<ShieldCheck size={20} strokeWidth={1.75} class="text-accent-light" />
-			<h2 class="text-text-primary text-[16px] font-semibold">Two-factor code</h2>
+			<ShieldCheck size={22} strokeWidth={1.75} class="text-accent-light" />
+			<h2 class="text-text-primary text-xl font-semibold">Two-factor code</h2>
 		</div>
-		<p class="text-text-muted -mt-1.5 text-[13px]">
+		<p class="text-text-muted -mt-1.5 text-base">
 			Enter the 6-digit code from your authenticator app, or one of your backup codes.
 		</p>
 
 		<form method="post" action="?/verify" use:enhance={submitEnhance} class="flex flex-col gap-3.5">
 			<input type="hidden" name="challenge_token" value={form?.challengeToken ?? ''} />
 			<label class="flex flex-col gap-1.5">
-				<span class="text-text-tertiary text-[12.5px] font-medium">Code</span>
+				<span class="text-text-tertiary text-base font-medium">Code</span>
 				<input
 					bind:this={codeInput}
 					type="text"
@@ -66,7 +66,7 @@
 
 			{#if form?.message}
 				<div
-					class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[10px] border px-3 py-2 text-[13px]"
+					class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[11px] border px-3 py-2 text-base"
 				>
 					{form.message}
 				</div>
@@ -75,10 +75,10 @@
 			<button
 				type="submit"
 				disabled={submitting}
-				class="from-accent-from to-accent-to text-surface-base shadow-glow mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-linear-135 p-3 text-[14px] font-semibold transition-[filter] hover:brightness-108 disabled:cursor-default disabled:opacity-70"
+				class="from-accent-from to-accent-to text-surface-base shadow-glow mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[11px] bg-linear-135 p-3 text-lg font-semibold transition-[filter] hover:brightness-108 disabled:cursor-default disabled:opacity-70"
 			>
 				{#if submitting}
-					<LoaderCircle size={16} strokeWidth={2.25} class="animate-spin" />
+					<LoaderCircle size={18} strokeWidth={2.25} class="animate-spin" />
 					<span>Verifying…</span>
 				{:else}
 					<span>Verify</span>
@@ -86,7 +86,7 @@
 			</button>
 		</form>
 
-		<p class="text-center text-[13px]">
+		<p class="text-center text-base">
 			<a
 				href={resolve('/auth/login')}
 				data-sveltekit-reload
@@ -98,7 +98,7 @@
 	{:else}
 		<form method="post" action="?/login" use:enhance={submitEnhance} class="flex flex-col gap-3.5">
 			<label class="flex flex-col gap-1.5">
-				<span class="text-text-tertiary text-[12.5px] font-medium">Email</span>
+				<span class="text-text-tertiary text-base font-medium">Email</span>
 				<input
 					bind:this={emailInput}
 					type="email"
@@ -113,10 +113,9 @@
 			</label>
 
 			<label class="flex flex-col gap-1.5">
-				<span class="text-text-tertiary flex text-[12.5px] font-medium">
+				<span class="text-text-tertiary flex text-base font-medium">
 					Password
-					<span class="text-text-faint ml-auto cursor-pointer text-[12px] font-normal">Forgot?</span
-					>
+					<span class="text-text-faint ml-auto cursor-pointer text-md font-normal">Forgot?</span>
 				</span>
 				<input
 					type="password"
@@ -130,7 +129,7 @@
 
 			{#if form?.message}
 				<div
-					class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[10px] border px-3 py-2 text-[13px]"
+					class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[11px] border px-3 py-2 text-base"
 				>
 					{form.message}
 				</div>
@@ -139,17 +138,17 @@
 			<button
 				type="submit"
 				disabled={submitting}
-				class="from-accent-from to-accent-to text-surface-base shadow-glow mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-linear-135 p-3 text-[14px] font-semibold transition-[filter] hover:brightness-108 disabled:cursor-default disabled:opacity-70"
+				class="from-accent-from to-accent-to text-surface-base shadow-glow mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[11px] bg-linear-135 p-3 text-lg font-semibold transition-[filter] hover:brightness-108 disabled:cursor-default disabled:opacity-70"
 			>
 				{#if submitting}
-					<LoaderCircle size={16} strokeWidth={2.25} class="animate-spin" />
+					<LoaderCircle size={18} strokeWidth={2.25} class="animate-spin" />
 					<span>Signing in…</span>
 				{:else}
 					<span>Sign in</span>
 				{/if}
 			</button>
 
-			<div class="text-text-ghost flex items-center gap-2.5 text-[11px]">
+			<div class="text-text-ghost flex items-center gap-2.5 text-sm">
 				<span class="bg-border-default h-px flex-1"></span>
 				or
 				<span class="bg-border-default h-px flex-1"></span>
@@ -158,7 +157,7 @@
 			<button
 				type="button"
 				onclick={() => toast.info('Access tokens are coming soon')}
-				class="border-border-strong text-text-secondary cursor-pointer rounded-[10px] border p-2.75 text-center text-[13.5px] font-medium transition-colors hover:bg-white/4"
+				class="border-border-strong text-text-secondary cursor-pointer rounded-[11px] border p-2.75 text-center text-lg font-medium transition-colors hover:bg-white/4"
 			>
 				Use access token
 			</button>

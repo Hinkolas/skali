@@ -32,7 +32,7 @@
 	const env = $derived(currentEnv(data.project, page.url));
 
 	const crumbTrigger =
-		'flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-[13px] font-medium transition-colors hover:bg-white/4';
+		'flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-base font-medium transition-colors hover:bg-white/4';
 
 	function switchEnv(name: string) {
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same pathname, env param rewritten in place
@@ -45,19 +45,19 @@
 <nav aria-label="Breadcrumbs" class="-ml-2 flex min-w-0 items-center gap-1">
 	<a
 		href={resolve('/(app)/projects')}
-		class="text-text-tertiary hover:text-text-primary rounded-lg px-2 py-1 text-[13px] font-medium transition-colors"
+		class="text-text-tertiary hover:text-text-primary rounded-lg px-2 py-1 text-base font-medium transition-colors"
 	>
 		{data.org.name}
 	</a>
 
 	{#if data.project}
 		{@const project = data.project}
-		<span class="text-text-ghost text-[12px]">/</span>
+		<span class="text-text-ghost text-md">/</span>
 		<Menu label="Switch project" triggerClass="{crumbTrigger} text-text-primary">
 			{#snippet trigger({ open })}
 				{project.name}
 				<ChevronDown
-					size={12}
+					size={13}
 					class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
 				/>
 			{/snippet}
@@ -78,18 +78,18 @@
 			</MenuItem>
 		</Menu>
 
-		<span class="text-text-ghost text-[12px]">/</span>
+		<span class="text-text-ghost text-md">/</span>
 		<Menu label="Switch environment" triggerClass="{crumbTrigger} text-text-secondary">
 			{#snippet trigger({ open })}
-				<span class="font-mono text-[12px]">{env}</span>
+				<span class="font-mono text-md">{env}</span>
 				<ChevronDown
-					size={12}
+					size={13}
 					class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
 				/>
 			{/snippet}
 			{#each project.environments as e (e.name)}
 				<MenuItem selected={e.name === env} onselect={() => switchEnv(e.name)}>
-					<span class="font-mono text-[12px]">{e.name}</span>
+					<span class="font-mono text-md">{e.name}</span>
 				</MenuItem>
 			{/each}
 			<MenuSeparator />
@@ -102,12 +102,12 @@
 	{#if data.project && data.service}
 		{@const project = data.project}
 		{@const service = data.service}
-		<span class="text-text-ghost text-[12px]">/</span>
+		<span class="text-text-ghost text-md">/</span>
 		<Menu label="Switch service" triggerClass="{crumbTrigger} text-text-primary">
 			{#snippet trigger({ open })}
 				{service.name}
 				<ChevronDown
-					size={12}
+					size={13}
 					class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
 				/>
 			{/snippet}

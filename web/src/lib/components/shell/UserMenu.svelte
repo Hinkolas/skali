@@ -37,21 +37,21 @@
 >
 	{#snippet trigger({ open })}
 		<span
-			class="text-accent-nav grid size-7 flex-none place-items-center rounded-full bg-linear-135 from-[#37324e] to-[#232030] text-[11px] font-semibold"
+			class="text-accent-nav grid size-7 flex-none place-items-center rounded-full bg-linear-135 from-[#37324e] to-[#232030] text-sm font-semibold"
 		>
 			{initials}
 		</span>
 		<ChevronDown
-			size={13}
+			size={14}
 			class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
 		/>
 	{/snippet}
 
 	<div class="px-2.5 pt-2 pb-1.5">
-		<div class="text-text-primary truncate text-[12.5px] font-semibold">
+		<div class="text-text-primary truncate text-base font-semibold">
 			{user?.name || 'Account'}
 		</div>
-		<div class="text-text-faint truncate text-[10.5px]">{user?.email}</div>
+		<div class="text-text-faint truncate text-xs">{user?.email}</div>
 	</div>
 	<MenuSeparator />
 	<MenuItem href={resolve('/account')} icon={KeyRound}>Account security</MenuItem>

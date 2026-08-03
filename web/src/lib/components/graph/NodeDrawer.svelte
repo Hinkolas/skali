@@ -21,13 +21,13 @@
 </script>
 
 <div
-	class="bg-surface-drawer border-border-strong absolute top-3.5 right-3.5 bottom-3.5 z-5 flex w-[290px] flex-col rounded-[14px] border p-4.5 shadow-[0_8px_40px_rgba(0,0,0,0.5)]"
+	class="bg-surface-drawer border-border-strong absolute top-3.5 right-3.5 bottom-3.5 z-5 flex w-[319px] flex-col rounded-[15px] border p-4.5 shadow-[0_8px_40px_rgba(0,0,0,0.5)]"
 	transition:fly={{ x: 12, duration: 160 }}
 >
 	<div class="flex items-start">
 		<div class="min-w-0">
-			<div class="text-text-primary truncate text-[15.5px] font-semibold">{node.title}</div>
-			<div class="font-mono text-text-faint mt-1 text-[10px]">{node.drawer.type_line}</div>
+			<div class="text-text-primary truncate text-xl font-semibold">{node.title}</div>
+			<div class="font-mono text-text-faint mt-1 text-xs">{node.drawer.type_line}</div>
 		</div>
 		<button
 			type="button"
@@ -44,9 +44,9 @@
 	<div class="flex flex-col">
 		{#each node.drawer.rows as row (row.k)}
 			<div class="flex items-baseline gap-3 py-1.75">
-				<div class="text-text-faint w-20.5 flex-none text-[11.5px]">{row.k}</div>
+				<div class="text-text-faint w-20.5 flex-none text-md">{row.k}</div>
 				<div
-					class="font-mono text-text-secondary min-w-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap"
+					class="font-mono text-text-secondary min-w-0 overflow-hidden text-sm text-ellipsis whitespace-nowrap"
 				>
 					{row.v}
 				</div>
@@ -66,7 +66,7 @@
 				}),
 				env
 			)}
-			class="border-accent/40 text-accent-nav hover:bg-accent/10 rounded-[10px] border p-2.5 text-center text-[13px] font-medium transition-colors"
+			class="border-accent/40 text-accent-nav hover:bg-accent/10 rounded-[11px] border p-2.5 text-center text-lg font-medium transition-colors"
 		>
 			Open service →
 		</a>

@@ -23,7 +23,7 @@
 	const valid = $derived(current !== '' && next.length >= 8 && next === confirmNext);
 
 	const inputClass =
-		'w-full rounded-[10px] border border-border-strong bg-surface-input px-3.25 py-2.75 text-[13.5px] text-text-primary transition-colors focus:border-accent/50 focus:outline-none';
+		'w-full rounded-[11px] border border-border-strong bg-surface-input px-3.25 py-2.75 text-lg text-text-primary transition-colors focus:border-accent/50 focus:outline-none';
 
 	// The old password is required even inside sudo mode (it proves knowledge
 	// of the secret being replaced). If the session is additionally stale, the
@@ -60,7 +60,7 @@
 	}}
 >
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Old password</span>
+		<span class="text-text-tertiary text-base font-medium">Old password</span>
 		<input
 			bind:value={current}
 			type="password"
@@ -71,7 +71,7 @@
 		/>
 	</label>
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">New password</span>
+		<span class="text-text-tertiary text-base font-medium">New password</span>
 		<input
 			bind:value={next}
 			type="password"
@@ -83,7 +83,7 @@
 		/>
 	</label>
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Confirm new password</span>
+		<span class="text-text-tertiary text-base font-medium">Confirm new password</span>
 		<input
 			bind:value={confirmNext}
 			type="password"
@@ -96,7 +96,7 @@
 
 	{#if mismatch}
 		<div
-			class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[10px] border px-3 py-2 text-[13px]"
+			class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[11px] border px-3 py-2 text-base"
 		>
 			The new passwords do not match.
 		</div>

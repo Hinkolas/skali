@@ -26,9 +26,9 @@
 
 <Card class="p-5">
 	<div class="mb-3.5 flex items-center gap-2.5">
-		<h3 class="text-text-primary text-[15px] font-semibold">Web process</h3>
-		<span class="text-status-success flex items-center gap-1.5 text-[11.5px]">
-			<span class="bg-status-success size-[7px] rounded-full"></span>healthy
+		<h3 class="text-text-primary text-xl font-semibold">Web process</h3>
+		<span class="text-status-success flex items-center gap-1.5 text-md">
+			<span class="bg-status-success size-[8px] rounded-full"></span>healthy
 		</span>
 		<div class="ml-auto flex gap-2">
 			<Button size="sm" onclick={restart}>Restart</Button>

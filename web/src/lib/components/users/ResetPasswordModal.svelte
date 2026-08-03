@@ -49,7 +49,7 @@
 	}}
 >
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">New password</span>
+		<span class="text-text-tertiary text-base font-medium">New password</span>
 		<input
 			bind:value={password}
 			type="password"
@@ -57,7 +57,7 @@
 			minlength={8}
 			placeholder="at least 8 characters"
 			autocomplete="new-password"
-			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 		/>
 	</label>
 

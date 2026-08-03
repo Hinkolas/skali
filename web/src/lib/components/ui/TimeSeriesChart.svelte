@@ -8,7 +8,7 @@
 	let {
 		series,
 		yDomain,
-		height = 110,
+		height = 121,
 		formatValue = (v: number) => v.toFixed(1),
 		label,
 		class: className = ''
@@ -27,9 +27,11 @@
 	let w = $state(0);
 	let hover = $state<number | null>(null);
 
-	// Left gutter sized for the widest realistic tick ("512 MiB", "1000 B/s")
-	// at 9.5px mono — labels are end-anchored at l-6 and must not clip.
-	const pad = { t: 6, r: 6, b: 18, l: 58 };
+	// SVG-internal geometry, so it does not follow --spacing; these are the
+	// theme's 110% values hand-applied. Left gutter is sized for the widest
+	// realistic tick ("512 MiB", "1000 B/s") at text-2xs mono — labels are
+	// end-anchored at l-7 and must not clip.
+	const pad = { t: 7, r: 7, b: 20, l: 64 };
 
 	const pts0 = $derived(series[0]?.points ?? []);
 	const t0 = $derived(pts0[0]?.t ?? 0);
@@ -42,7 +44,8 @@
 	});
 
 	const px = (t: number) => pad.l + ((t - t0) / Math.max(1, t1 - t0)) * (w - pad.l - pad.r);
-	const py = (v: number) => pad.t + (1 - (v - dom[0]) / (dom[1] - dom[0] || 1)) * (height - pad.t - pad.b);
+	const py = (v: number) =>
+		pad.t + (1 - (v - dom[0]) / (dom[1] - dom[0] || 1)) * (height - pad.t - pad.b);
 
 	// Pen-up on nulls → visible gaps.
 	function linePath(pts: ChartPoint[]): string {
@@ -80,7 +83,9 @@
 		return d;
 	}
 
-	const paths = $derived(series.map((s) => ({ line: linePath(s.points), area: areaPath(s.points) })));
+	const paths = $derived(
+		series.map((s) => ({ line: linePath(s.points), area: areaPath(s.points) }))
+	);
 	const yTicks = $derived([dom[0], (dom[0] + dom[1]) / 2, dom[1]]);
 	const xTicks = $derived([0, 1 / 3, 2 / 3, 1].map((f) => t0 + f * (t1 - t0)));
 
@@ -98,10 +103,10 @@
 			{#each yTicks as tick (tick)}
 				<line x1={pad.l} x2={w - pad.r} y1={py(tick)} y2={py(tick)} class="stroke-border-subtle" />
 				<text
-					x={pad.l - 6}
+					x={pad.l - 7}
 					y={py(tick) + 3}
 					text-anchor="end"
-					class="fill-text-ghost font-mono text-[9.5px]"
+					class="fill-text-ghost font-mono text-2xs"
 				>
 					{formatValue(tick)}
 				</text>
@@ -111,7 +116,7 @@
 					x={px(tick)}
 					y={height - 4}
 					text-anchor={i === 0 ? 'start' : i === xTicks.length - 1 ? 'end' : 'middle'}
-					class="fill-text-ghost font-mono text-[9.5px]"
+					class="fill-text-ghost font-mono text-2xs"
 				>
 					{formatClock(tick)}
 				</text>
@@ -177,18 +182,18 @@
 				style:left={flip ? undefined : `${hx + 10}px`}
 				style:right={flip ? `${w - hx + 10}px` : undefined}
 			>
-				<div class="font-mono text-text-ghost text-[10px] whitespace-nowrap">
+				<div class="font-mono text-text-ghost text-xs whitespace-nowrap">
 					{formatTimestamp(pts0[hover].t)}
 				</div>
 				{#each series as s (s.label)}
 					{@const v = s.points[hover]?.v}
 					<div class="mt-1 flex items-center gap-1.5 whitespace-nowrap">
 						<span class="h-0.5 w-3 flex-none rounded-full" style:background={s.color}></span>
-						<span class="font-mono text-text-primary text-[11px]">
+						<span class="font-mono text-text-primary text-sm">
 							{v == null ? '—' : formatValue(v)}
 						</span>
 						{#if series.length > 1}
-							<span class="text-text-faint text-[10.5px]">{s.label}</span>
+							<span class="text-text-faint text-xs">{s.label}</span>
 						{/if}
 					</div>
 				{/each}
@@ -201,7 +206,7 @@
 				{#each series as s (s.label)}
 					<span class="flex items-center gap-1.5">
 						<span class="h-0.5 w-3 rounded-full" style:background={s.color}></span>
-						<span class="text-text-faint text-[10.5px]">{s.label}</span>
+						<span class="text-text-faint text-xs">{s.label}</span>
 					</span>
 				{/each}
 			</div>

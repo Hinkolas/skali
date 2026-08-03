@@ -4,7 +4,7 @@
 </script>
 
 <span
-	class="font-mono rounded-full px-2 py-0.5 text-[9.5px] {tone === 'success'
+	class="font-mono rounded-full px-2 py-0.5 text-2xs {tone === 'success'
 		? 'text-status-success bg-status-success/10'
 		: 'text-text-muted bg-white/6'}"
 >

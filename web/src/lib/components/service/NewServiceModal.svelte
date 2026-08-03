@@ -51,21 +51,21 @@
 			>
 				<TypeBadge kind={entry.type} form="tile" size="md" />
 				<span class="flex min-w-0 flex-col gap-0.5">
-					<span class="text-text-primary text-[13px] font-semibold">
+					<span class="text-text-primary text-base font-semibold">
 						{SERVICE_KIND_META[entry.type].label}
 					</span>
-					<span class="text-text-faint text-[11px] leading-snug">{entry.description}</span>
+					<span class="text-text-faint text-sm leading-snug">{entry.description}</span>
 				</span>
 			</button>
 		{/each}
 	</div>
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Name</span>
+		<span class="text-text-tertiary text-base font-medium">Name</span>
 		<input
 			bind:value={name}
 			type="text"
 			placeholder="my-service"
-			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 		/>
 	</label>
 </div>

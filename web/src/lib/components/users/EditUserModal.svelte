@@ -63,23 +63,23 @@
 	}}
 >
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Name</span>
+		<span class="text-text-tertiary text-base font-medium">Name</span>
 		<input
 			bind:value={name}
 			type="text"
 			placeholder="Ada Lovelace"
-			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 		/>
 	</label>
 	<div class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Role</span>
+		<span class="text-text-tertiary text-base font-medium">Role</span>
 		<div class="flex gap-2">
 			{#each ['member', 'admin'] as const as r (r)}
 				<button
 					type="button"
 					disabled={self}
 					onclick={() => (role = r)}
-					class="flex-1 rounded-[10px] border px-3 py-2.5 text-[13px] font-medium transition-colors {role ===
+					class="flex-1 rounded-[11px] border px-3 py-2.5 text-lg font-medium transition-colors {role ===
 					r
 						? 'border-accent/50 bg-accent/10 text-accent-nav'
 						: 'border-border-strong text-text-tertiary'} {self
@@ -91,7 +91,7 @@
 			{/each}
 		</div>
 		{#if self}
-			<p class="text-text-ghost text-[12px] leading-relaxed">
+			<p class="text-text-ghost text-md leading-relaxed">
 				You cannot change your own role — ask another admin.
 			</p>
 		{/if}

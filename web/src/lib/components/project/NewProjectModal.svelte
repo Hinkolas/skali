@@ -31,21 +31,21 @@
 
 <div class="flex flex-col gap-3.5 px-5.5 py-4">
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Name</span>
+		<span class="text-text-tertiary text-base font-medium">Name</span>
 		<input
 			bind:value={name}
 			type="text"
 			placeholder="my-project"
-			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 		/>
 	</label>
 	<label class="flex flex-col gap-1.5">
-		<span class="text-text-tertiary text-[12.5px] font-medium">Initial environment</span>
+		<span class="text-text-tertiary text-base font-medium">Initial environment</span>
 		<input
 			bind:value={environment}
 			type="text"
 			placeholder="production"
-			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[10px] border px-3.25 py-2.75 text-[13.5px] transition-colors focus:outline-none"
+			class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
 		/>
 	</label>
 </div>
