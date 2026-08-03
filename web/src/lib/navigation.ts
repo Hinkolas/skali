@@ -1,5 +1,6 @@
-// Single source of truth for sidebar navigation. Consumed by the Sidebar
-// variants and by the [section]/[tab] stub routes to 404 unknown slugs.
+// Single source of truth for app navigation. Consumed by the Sidebar
+// variants, the in-page service tab bar (ServiceTabs), and by the
+// [section]/[tab] stub routes to 404 unknown slugs.
 
 import type { Component } from 'svelte';
 import type { IconProps } from '@lucide/svelte';

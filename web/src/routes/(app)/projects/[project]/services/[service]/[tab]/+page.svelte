@@ -1,5 +1,4 @@
 <script lang="ts">
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import type { PageData } from './$types';
 
@@ -9,12 +8,6 @@
 <svelte:head>
 	<title>{data.title} · {data.service.name} — skali</title>
 </svelte:head>
-
-<PageHeader title={data.title}>
-	{#snippet subtitle()}
-		{data.service.name} · not designed yet
-	{/snippet}
-</PageHeader>
 
 <EmptyState
 	icon={data.icon}

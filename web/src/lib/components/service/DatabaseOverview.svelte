@@ -1,10 +1,6 @@
 <script lang="ts">
 	import type { DatabaseService, StatCardData } from '$lib/mock/types';
-	import { toast } from '$lib/stores/toast.svelte';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import StatusPill from '$lib/components/ui/StatusPill.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
 	import DbConnectionPanel from './DbConnectionPanel.svelte';
 	import DbExternalPanel from './DbExternalPanel.svelte';
@@ -40,34 +36,7 @@
 			}
 		];
 	});
-
-	function backupNow() {
-		void toast.promise(new Promise((resolve) => setTimeout(resolve, 1800)), {
-			loading: `Creating snapshot of ${service.name}…`,
-			success: {
-				title: 'Backup complete',
-				description: `${service.storage_used}G snapshot stored — mock only.`
-			},
-			error: 'Backup failed'
-		});
-	}
 </script>
-
-<PageHeader title={service.name}>
-	{#snippet titleTrailing()}
-		<StatusPill status={service.status} pill />
-	{/snippet}
-	{#snippet subtitle()}
-		<span class="font-mono text-text-faint text-md">
-			{service.engine}
-			{service.version} · created {service.created_at} · id {service.short_id}
-		</span>
-	{/snippet}
-	{#snippet actions()}
-		<Button onclick={() => toast.info('The database studio is coming soon')}>Open studio</Button>
-		<Button onclick={backupNow}>Back up now</Button>
-	{/snippet}
-</PageHeader>
 
 <div class="mb-6 grid grid-cols-4 gap-3.5">
 	{#each stats as stat (stat.label)}

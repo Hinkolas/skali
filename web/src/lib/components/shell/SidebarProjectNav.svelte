@@ -2,7 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import Plus from '@lucide/svelte/icons/plus';
-	import type { Project, Service } from '$lib/mock/types';
+	import type { Project, Service, ServiceType } from '$lib/mock/types';
 	import { PROJECT_TABS } from '$lib/navigation';
 	import { modal } from '$lib/stores/modal.svelte';
 	import StatusDot from '$lib/components/ui/StatusDot.svelte';
@@ -19,6 +19,15 @@
 	const pathname = $derived(page.url.pathname);
 	const base = $derived(`/projects/${project.slug}`);
 	const env = $derived(currentEnv(project, page.url));
+
+	// Active service row tint follows the service type (cyan for DBs etc.),
+	// matching the underline tints in ServiceTabs.
+	const serviceActiveClass: Record<ServiceType, string> = {
+		application: 'bg-accent/10 inset-ring inset-ring-accent/25 text-accent-nav',
+		database: 'bg-service-db/10 inset-ring inset-ring-service-db/25 text-[#b7e4ee]',
+		cache: 'bg-service-cache/10 inset-ring inset-ring-service-cache/25 text-[#eed0e9]',
+		storage: 'bg-service-storage/10 inset-ring inset-ring-service-storage/25 text-[#eedcbb]'
+	};
 </script>
 
 <NavSection label="Project" />
@@ -42,6 +51,8 @@
 </NavSection>
 <div class="flex flex-col gap-0.5 px-1">
 	{#each services as service (service.slug)}
+		{@const servicePath = `${base}/services/${service.slug}`}
+		{@const active = pathname === servicePath || pathname.startsWith(servicePath + '/')}
 		<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
 		<a
 			href={withEnv(
@@ -51,7 +62,9 @@
 				}),
 				env
 			)}
-			class="text-text-secondary flex items-center gap-2.5 rounded-[11px] px-3 py-1.75 text-lg transition-colors hover:bg-white/4"
+			class="flex items-center gap-2.5 rounded-[11px] px-3 py-1.75 text-lg transition-colors {active
+				? `font-medium ${serviceActiveClass[service.type]}`
+				: 'text-text-secondary hover:bg-white/4'}"
 		>
 			<TypeBadge kind={service.type} form="tile" />
 			<span class="truncate">{service.name}</span>

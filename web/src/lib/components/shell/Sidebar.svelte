@@ -4,32 +4,23 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import SidebarOrgNav from './SidebarOrgNav.svelte';
 	import SidebarProjectNav from './SidebarProjectNav.svelte';
-	import SidebarServiceNav from './SidebarServiceNav.svelte';
 	import SidebarStatus from './SidebarStatus.svelte';
 
 	// Context-switching sidebar. The variant derives from merged `page.data`
-	// keys set by nested layouts: `service` (+`project`) => service nav,
-	// `project` => project nav, otherwise org nav. Breadcrumbs reads the same
-	// contract; loads that introduce colliding `project`/`service` keys would
-	// break both.
+	// keys set by nested layouts: `project` => project nav, otherwise org nav.
+	// Service pages keep the project nav; service-level navigation lives in
+	// the tab bar inside the content card (ServiceTabs). Breadcrumbs reads the
+	// same contract; loads that introduce colliding keys would break both.
 	const data = $derived(
 		page.data as {
 			org: Org;
 			nodes: Node[];
 			project?: Project;
 			services?: Service[];
-			service?: Service;
 		}
 	);
 
 	const statusText = $derived.by(() => {
-		const service = data.service;
-		if (service) {
-			if (service.type === 'application') {
-				return `${service.instances} instance${service.instances === 1 ? '' : 's'} · ${service.instance_nodes}`;
-			}
-			return `on ${service.node} · healthy`;
-		}
 		const online = data.nodes.filter((n) => n.status === 'online').length;
 		return `${online}/${data.nodes.length} nodes online`;
 	});
@@ -56,9 +47,7 @@
 		</button>
 	</div>
 
-	{#if data.service && data.project}
-		<SidebarServiceNav project={data.project} service={data.service} />
-	{:else if data.project}
+	{#if data.project}
 		<SidebarProjectNav project={data.project} services={data.services ?? []} />
 	{:else}
 		<SidebarOrgNav org={data.org} />

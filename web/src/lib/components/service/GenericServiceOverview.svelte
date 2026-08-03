@@ -1,10 +1,8 @@
 <script lang="ts">
 	import Gauge from '@lucide/svelte/icons/gauge';
 	import type { CacheService, StatCardData, StorageService } from '$lib/mock/types';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import StatusPill from '$lib/components/ui/StatusPill.svelte';
 
 	let { service }: { service: CacheService | StorageService } = $props();
 
@@ -29,17 +27,6 @@
 		];
 	});
 </script>
-
-<PageHeader title={service.name}>
-	{#snippet titleTrailing()}
-		<StatusPill status={service.status} pill />
-	{/snippet}
-	{#snippet subtitle()}
-		<span class="font-mono text-text-faint text-md">
-			{service.kind_label} · on {service.node}
-		</span>
-	{/snippet}
-</PageHeader>
 
 <div class="mb-6 grid grid-cols-4 gap-3.5">
 	{#each stats as stat (stat.label)}
