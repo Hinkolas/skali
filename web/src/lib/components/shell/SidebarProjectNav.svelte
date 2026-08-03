@@ -53,7 +53,7 @@
 			)}
 			class="text-text-secondary flex items-center gap-2.5 rounded-[11px] px-3 py-1.75 text-lg transition-colors hover:bg-white/4"
 		>
-			<TypeBadge kind={service.type} />
+			<TypeBadge kind={service.type} form="tile" />
 			<span class="truncate">{service.name}</span>
 			<span class="ml-auto flex-none">
 				<StatusDot status={service.status} />

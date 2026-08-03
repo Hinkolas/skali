@@ -87,7 +87,7 @@
 			class="flex w-full cursor-pointer items-center gap-2.5 rounded-[11px] px-3 py-2 text-left transition-colors hover:bg-white/4"
 		>
 			{#if result.kind}
-				<TypeBadge kind={result.kind} />
+				<TypeBadge kind={result.kind} form="tile" />
 			{:else}
 				<FolderKanban size={15} class="text-text-tertiary flex-none" />
 			{/if}

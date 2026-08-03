@@ -2,8 +2,8 @@
 	import type { ServiceKind } from '$lib/mock/types';
 	import { SERVICE_KIND_META } from '$lib/service-types';
 
-	// Two forms: 'chip' is the inline AP ×2 pill (project cards, sidebar rows);
-	// 'tile' is the square icon block next to service names (sm 29px, md 33px).
+	// Two forms: 'chip' is the inline icon ×2 pill (project card kind counts);
+	// 'tile' is the square icon block next to service names (sm 26px, md 30px).
 	let {
 		kind,
 		form = 'chip',
@@ -17,21 +17,24 @@
 	} = $props();
 
 	const meta = $derived(SERVICE_KIND_META[kind]);
+	const Icon = $derived(meta.icon);
 </script>
 
 {#if form === 'tile'}
 	<span
-		class="font-mono grid flex-none place-items-center font-semibold {size === 'md'
-			? 'size-7.5 rounded-[10px] text-xs'
-			: 'size-6.5 rounded-lg text-2xs'} {meta.text} {meta.bg}"
+		class="grid flex-none place-items-center {size === 'md'
+			? 'size-7.5 rounded-[10px]'
+			: 'size-6.5 rounded-lg'} {meta.text} {meta.bg}"
+		title={meta.label}
 	>
-		{meta.code}
+		<Icon size={size === 'md' ? 16 : 14} />
 	</span>
 {:else}
 	<span
-		class="font-mono flex-none rounded-[6px] px-1.5 py-0.5 text-2xs font-semibold {meta.text} {meta.bg}"
+		class="font-mono inline-flex flex-none items-center gap-1 rounded-[6px] px-1.5 py-1 text-2xs font-semibold {meta.text} {meta.bg}"
+		title={meta.label}
 	>
-		{meta.code}{#if count && count > 1}
-			×{count}{/if}
+		<Icon size={13} />{#if count && count > 1}
+			<span>×{count}</span>{/if}
 	</span>
 {/if}

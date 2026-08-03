@@ -3,26 +3,38 @@
 // layer and survives the swap to the real API.
 
 import type { NodeRole, NodeStatus, ServiceKind, ServiceStatus } from '$lib/mock/types';
+import type { NavIcon } from '$lib/navigation';
+
+import Container from '@lucide/svelte/icons/container';
+import Database from '@lucide/svelte/icons/database';
+import DatabaseZap from '@lucide/svelte/icons/database-zap';
+import Globe from '@lucide/svelte/icons/globe';
+import HardDrive from '@lucide/svelte/icons/hard-drive';
 
 export const SERVICE_KIND_META: Record<
 	ServiceKind,
-	{ code: string; label: string; text: string; bg: string }
+	{ icon: NavIcon; label: string; text: string; bg: string }
 > = {
 	application: {
-		code: 'AP',
+		icon: Container,
 		label: 'Application',
 		text: 'text-service-app',
 		bg: 'bg-service-app/15'
 	},
-	database: { code: 'DB', label: 'Database', text: 'text-service-db', bg: 'bg-service-db/12' },
-	cache: { code: 'CA', label: 'Cache', text: 'text-service-cache', bg: 'bg-service-cache/12' },
+	database: { icon: Database, label: 'Database', text: 'text-service-db', bg: 'bg-service-db/12' },
+	cache: {
+		icon: DatabaseZap,
+		label: 'Cache',
+		text: 'text-service-cache',
+		bg: 'bg-service-cache/12'
+	},
 	storage: {
-		code: 'ST',
+		icon: HardDrive,
 		label: 'Storage',
 		text: 'text-service-storage',
 		bg: 'bg-service-storage/12'
 	},
-	ingress: { code: 'IN', label: 'Ingress', text: 'text-text-secondary', bg: 'bg-white/6' }
+	ingress: { icon: Globe, label: 'Ingress', text: 'text-text-secondary', bg: 'bg-white/6' }
 };
 
 export const STATUS_META: Record<ServiceStatus, { label: string; dot: string; text: string }> = {
@@ -43,4 +55,3 @@ export const NODE_ROLE_META: Record<NodeRole, { text: string; bg: string }> = {
 	worker: { text: 'text-text-muted', bg: 'bg-white/6' },
 	builder: { text: 'text-service-storage', bg: 'bg-service-storage/12' }
 };
-

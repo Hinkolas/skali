@@ -122,7 +122,7 @@
 					)}
 					selected={s.slug === service.slug}
 				>
-					<TypeBadge kind={s.type} />
+					<TypeBadge kind={s.type} form="tile" />
 					<span class="truncate">{s.name}</span>
 				</MenuItem>
 			{/each}
