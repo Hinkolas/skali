@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -200,29 +201,37 @@ func randomToken(bytes int) (string, error) {
 
 // --- prerequisites ---
 
-// CheckPrerequisites probes docker (with buildx) and k3d, returning
-// actionable errors.
+// CheckPrerequisites probes docker (with buildx) and a usable k3d,
+// returning actionable errors. errK3dMissing is not one for the user:
+// it asks Ensure to install the managed pinned k3d (k3d.go).
 func CheckPrerequisites(ctx context.Context) (docker, k3d string, err error) {
 	dockerOut, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Output()
 	if err != nil {
-		return "", "", errors.New("docker is required for skali dev and is not running: " +
-			"install and start Docker, https://docs.docker.com/get-docker/")
+		return "", "", errors.New(dockerInstallHint())
 	}
 	docker = strings.TrimSpace(string(dockerOut))
 	if _, err := exec.CommandContext(ctx, "docker", "buildx", "version").Output(); err != nil {
 		return docker, "", errors.New("docker buildx is required for local builds: " +
 			"install the buildx plugin, https://docs.docker.com/build/")
 	}
-	k3dOut, err := exec.CommandContext(ctx, "k3d", "version").Output()
+	k3d, err = checkK3d(ctx)
 	if err != nil {
-		return docker, "", errors.New("k3d is required for skali dev: install k3d >= 5.6, https://k3d.io")
-	}
-	for line := range strings.SplitSeq(strings.TrimSpace(string(k3dOut)), "\n") {
-		if version, found := strings.CutPrefix(line, "k3d version"); found {
-			k3d = strings.TrimSpace(version)
-		}
+		return docker, "", err
 	}
 	return docker, k3d, nil
+}
+
+// dockerInstallHint names the docker gap; docker itself is never
+// auto-installed (a desktop app the user must own and start), so the
+// hint carries the concrete command where one exists.
+func dockerInstallHint() string {
+	if runtime.GOOS == "darwin" {
+		return "docker is required for skali dev and is not running: " +
+			"start Docker Desktop or OrbStack, or install one first " +
+			"(brew install --cask docker), https://docs.docker.com/get-docker/"
+	}
+	return "docker is required for skali dev and is not running: " +
+		"install and start Docker, https://docs.docker.com/get-docker/"
 }
 
 // --- k3d lifecycle (exec of the k3d binary; prerequisite checked) ---
@@ -237,7 +246,7 @@ const (
 )
 
 func Status(ctx context.Context) (ClusterStatus, error) {
-	out, err := exec.CommandContext(ctx, "k3d", "cluster", "list", "-o", "json").Output()
+	out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "list", "-o", "json").Output()
 	if err != nil {
 		return ClusterAbsent, fmt.Errorf("localdev: k3d cluster list: %w", err)
 	}
@@ -327,7 +336,7 @@ func Create(ctx context.Context) error {
 		"-p", fmt.Sprintf("127.0.0.1:%d:30500@server:0:direct", RegistryPort()),
 		"--wait",
 	}
-	if out, err := exec.CommandContext(ctx, "k3d", args...).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, k3dBinary(), args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster create: %w\n%s", err, out)
 	}
 	if out, err := exec.CommandContext(ctx, "docker", "rename",
@@ -347,7 +356,7 @@ func WriteKubeconfig(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("localdev: create state directory: %w", err)
 	}
-	out, err := exec.CommandContext(ctx, "k3d", "kubeconfig", "get", ClusterName()).Output()
+	out, err := exec.CommandContext(ctx, k3dBinary(), "kubeconfig", "get", ClusterName()).Output()
 	if err != nil {
 		return fmt.Errorf("localdev: k3d kubeconfig get: %w", err)
 	}
@@ -358,7 +367,7 @@ func WriteKubeconfig(ctx context.Context) error {
 }
 
 func Start(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "k3d", "cluster", "start", ClusterName()).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "start", ClusterName()).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster start: %w\n%s", err, out)
 	}
 	removeToolsNode(ctx)
@@ -366,14 +375,14 @@ func Start(ctx context.Context) error {
 }
 
 func Stop(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "k3d", "cluster", "stop", ClusterName()).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "stop", ClusterName()).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster stop: %w\n%s", err, out)
 	}
 	return nil
 }
 
 func Delete(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "k3d", "cluster", "delete", ClusterName()).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "delete", ClusterName()).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster delete: %w\n%s", err, out)
 	}
 	return nil
@@ -434,7 +443,7 @@ func importImage(ctx context.Context, image string) error {
 			return nil
 		}
 	}
-	if out, err := exec.CommandContext(ctx, "k3d", "image", "import", "-c", ClusterName(), image).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, k3dBinary(), "image", "import", "-c", ClusterName(), image).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d image import %s: %w\n%s", image, err, out)
 	}
 	return nil

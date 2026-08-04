@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/localdev"
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 const localRemoteName = "local"
@@ -644,8 +645,8 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 }
 
 // defaultSkalidImage prefers the recorded image, then a working-tree build
-// when the CLI runs inside the repository (the developer path until
-// published bootstrap images exist).
+// when the CLI runs inside the repository (the developer path), then the
+// published image matching a released binary's version.
 func defaultSkalidImage(ctx context.Context, tasks *clirender.Tasks) string {
 	if state, err := localdev.LoadState(); err == nil && state.SkalidImage != "" {
 		return state.SkalidImage
@@ -655,6 +656,15 @@ func defaultSkalidImage(ctx context.Context, tasks *clirender.Tasks) string {
 		if err := localdev.BuildSkalidImage(ctx, root, "skalid:dev", task.NoteWriter()); err == nil {
 			task.Done("")
 			return "skalid:dev"
+		}
+		task.Fail()
+	}
+	if releaseVersionPattern.MatchString(versionpkg.Version) {
+		image := "ghcr.io/hinkolas/skalid:" + versionpkg.Version
+		task := tasks.Start("Pull " + image)
+		if err := localdev.EnsureHostImage(ctx, image); err == nil {
+			task.Done("")
+			return image
 		}
 		task.Fail()
 	}

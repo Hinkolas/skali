@@ -97,7 +97,10 @@ draining workloads. Existing schema-version-1 clusters keep their imperative
 
 ## Quickstart: run a project locally
 
-Requirements: Docker (with buildx) and [k3d](https://k3d.io). From a
+Requirements: Docker (with buildx). [k3d](https://k3d.io) is used for
+the local cluster; when none is on PATH, `skali dev` installs a pinned,
+checksum-verified copy into `~/.local/share/skali/bin` automatically
+(an existing k3d always wins). From a
 project directory with a `skali.yml` (for example
 [`examples/hello-world`](examples/hello-world), a build-sourced app, or
 [`examples/whoami`](examples/whoami), an imported image):

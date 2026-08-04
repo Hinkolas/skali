@@ -48,10 +48,21 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 
 	progress.Start("Check prerequisites")
 	docker, k3dVersion, err := CheckPrerequisites(ctx)
-	if err != nil {
+	switch {
+	case errors.Is(err, errK3dMissing):
+		progress.Done(fmt.Sprintf("docker %s, k3d missing", docker))
+		progress.Start("Install k3d v" + k3dPinnedVersion)
+		binary, installErr := installK3d(ctx)
+		if installErr != nil {
+			return nil, fmt.Errorf("install k3d v%s: %w (or install k3d >= %s yourself: %s)",
+				k3dPinnedVersion, installErr, k3dMinVersion, k3dInstallHint())
+		}
+		progress.Done(binary)
+	case err != nil:
 		return nil, err
+	default:
+		progress.Done(fmt.Sprintf("docker %s, k3d %s", docker, k3dVersion))
 	}
-	progress.Done(fmt.Sprintf("docker %s, k3d %s", docker, k3dVersion))
 
 	freshInstall := false
 	state, err := LoadState()
@@ -69,7 +80,8 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		state.SkalidImage = opts.SkalidImage
 	}
 	if state.SkalidImage == "" {
-		return nil, errors.New("no skalid image selected: run task dev:image or pass --skalid-image")
+		return nil, errors.New("no skalid image selected: pass --skalid-image " +
+			"(working from the skali repository, task dev:image builds one)")
 	}
 
 	status, err := Status(ctx)
