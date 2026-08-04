@@ -32,8 +32,6 @@ func writeFile(t *testing.T, root, name, content string) string {
 
 const flowManifest = `version: "1"
 name: flowdemo
-values:
-  APP_DOMAIN: {}
 applications:
   web:
     build:
@@ -137,24 +135,33 @@ func TestChooseEnvFile(t *testing.T) {
 	var out strings.Builder
 
 	// No env files: silently keep the stored values, no prompt printed.
-	selected, err := chooseEnvFile(&out, bufio.NewReader(strings.NewReader("")), root, "production")
+	selected, err := chooseEnvFile(&out, bufio.NewReader(strings.NewReader("")), root, "production", false)
 	require.NoError(t, err)
 	require.Empty(t, selected)
 	require.Empty(t, out.String())
 
-	writeFile(t, root, ".env", "A=1\n")
+	generic := writeFile(t, root, ".env", "A=1\n")
 	production := writeFile(t, root, ".env.production", "A=1\n")
 
-	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("3\n")), root, "production")
+	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("3\n")), root, "production", false)
 	require.NoError(t, err)
 	require.Equal(t, production, selected)
 	require.Contains(t, out.String(), "Override production with a local env file?")
 	require.Contains(t, out.String(), "  1) Use stored values\n")
 
 	// Empty input takes the default: keep the stored values.
-	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), root, "production")
+	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), root, "production", false)
 	require.NoError(t, err)
 	require.Empty(t, selected)
+
+	// Build arguments referencing project values withhold the stored-values
+	// option: an env file must be picked, and empty input takes the first.
+	out.Reset()
+	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), root, "production", true)
+	require.NoError(t, err)
+	require.Equal(t, generic, selected)
+	require.NotContains(t, out.String(), "Use stored values")
+	require.Contains(t, out.String(), "a local env file must supply them")
 }
 
 func TestChooseEnvironment(t *testing.T) {
@@ -495,7 +502,7 @@ func TestPrintPlanShape(t *testing.T) {
 			{Service: "databases.data", Action: "remove", Destructive: true,
 				Detail: "deletes the logical database and its data"},
 		},
-		Values: []client.PlanValueChange{{Name: "SESSION_SECRET", Action: "update", Secret: true}},
+		Values: []client.PlanValueChange{{Name: "SESSION_SECRET", Action: "update"}},
 	}, []client.ArtifactAction{{Application: "web", Action: "build"}}, "8d1e15b3aaaa")
 
 	rendered := out.String()

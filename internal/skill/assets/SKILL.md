@@ -29,11 +29,12 @@ manifest fields: parsing is strict and this reference is complete.
 - Database and bucket credentials come from typed outputs such as
   `{{databases.data.url}}` or `{{buckets.files.access_key}}`; never
   hand-write connection strings or credentials.
-- Secrecy is declared only in the `values:` block. Secret values may only
-  be referenced in application `environment:` and cannot have inline
-  defaults. A declared value that is never referenced is an error.
-- In `environment:` a `${NAME}` or `{{...}}` reference must be the whole
-  value; concatenation like `"prefix-${X}"` is rejected there.
+- Every `${NAME}` project value is secret: stored encrypted per
+  environment, write-only, and shown by name only. There is no `values:`
+  declaration block; the contract derives from the references.
+- `${NAME}` works in any free-form string field with concatenation, such
+  as `"postgres://app:${DB_PASSWORD}@db:5432/app"`. A `{{...}}` service
+  output may appear only in `environment:` and must be the whole value.
 - Health probes gate rollouts: without a readiness probe the platform
   has a weaker signal that a deployment succeeded.
 - Schema migrations belong in `deployment.releaseCommand`, which runs

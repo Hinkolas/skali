@@ -1,9 +1,11 @@
-// Package valuestore owns the typed environment value store: plain values in
-// plaintext, secret values encrypted at rest, both as append-only per-name
-// versions. Candidate staging and promotion implement the deployment
-// contract: a failed preparation discards staged rows and never touches the
-// current values, while promotion flips a whole candidate batch to current
-// inside the caller's transaction.
+// Package valuestore owns the environment value store. Every value is a
+// secret: encrypted at rest, write-only through the API, stored as
+// append-only per-name versions. Candidate staging and promotion implement
+// the deployment contract: a failed preparation discards staged rows and
+// never touches the current values, while promotion flips a whole candidate
+// batch to current inside the caller's transaction. Unset tombstones the
+// current generation without a successor, so pinned old revisions keep
+// resolving.
 package valuestore
 
 import (
@@ -20,7 +22,6 @@ import (
 	"github.com/Hinkolas/skali/internal/crypt"
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/store"
-	"github.com/Hinkolas/skali/internal/values"
 )
 
 // keyInfo pins the HKDF domain separation for secret values; changing it
@@ -50,18 +51,19 @@ func New(st *store.Store, secret string) (*Service, error) {
 	return &Service{st: st, key: key}, nil
 }
 
-// Candidate describes one staged batch. Secret plaintexts are never echoed;
-// only names and allocated versions leave the staging transaction.
+// Candidate describes one staged batch. Plaintexts are never echoed; only
+// names and allocated versions leave the staging transaction.
 type Candidate struct {
-	ID             uuid.UUID
-	Plain          []string
-	Secret         []string
-	SecretVersions map[string]int64
+	ID       uuid.UUID
+	Names    []string
+	Versions map[string]int64
 }
 
-// Stage inserts the resolved values as one staged batch. Nothing current
-// changes; promotion or discard decides the batch's fate.
-func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, resolved values.Resolved) (*Candidate, error) {
+// Stage encrypts and inserts the provided values as one staged batch. An
+// empty string is a real value and stages like any other. Nothing current
+// changes; promotion or discard decides the batch's fate. An empty map still
+// allocates a candidate so deployments can carry an empty batch.
+func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, provided map[string]string) (*Candidate, error) {
 	if err := s.environmentExists(ctx, environmentID); err != nil {
 		return nil, err
 	}
@@ -70,28 +72,12 @@ func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, resolved v
 		return nil, fmt.Errorf("valuestore: generate candidate id: %w", err)
 	}
 	candidate := &Candidate{
-		ID:             candidateID,
-		SecretVersions: make(map[string]int64, len(resolved.Secret)),
+		ID:       candidateID,
+		Versions: make(map[string]int64, len(provided)),
 	}
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
-		for _, name := range sortedKeys(resolved.Plain) {
-			id, err := uuid.NewV7()
-			if err != nil {
-				return fmt.Errorf("valuestore: generate id: %w", err)
-			}
-			if _, err := q.StageEnvironmentValue(ctx, store.StageEnvironmentValueParams{
-				ID:            id,
-				EnvironmentID: environmentID,
-				Name:          name,
-				Value:         resolved.Plain[name],
-				CandidateID:   &candidateID,
-			}); err != nil {
-				return stagingError(err)
-			}
-			candidate.Plain = append(candidate.Plain, name)
-		}
-		for _, name := range sortedKeys(resolved.Secret) {
-			ciphertext, err := crypt.Encrypt(s.key, []byte(resolved.Secret[name]))
+		for _, name := range sortedKeys(provided) {
+			ciphertext, err := crypt.Encrypt(s.key, []byte(provided[name]))
 			if err != nil {
 				return fmt.Errorf("valuestore: encrypt %s: %w", name, err)
 			}
@@ -109,8 +95,8 @@ func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, resolved v
 			if err != nil {
 				return stagingError(err)
 			}
-			candidate.Secret = append(candidate.Secret, name)
-			candidate.SecretVersions[name] = row.Version
+			candidate.Names = append(candidate.Names, name)
+			candidate.Versions[name] = row.Version
 		}
 		return nil
 	})
@@ -120,22 +106,11 @@ func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, resolved v
 	return candidate, nil
 }
 
-func (s *Service) CurrentPlain(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
-	rows, err := s.st.ListCurrentEnvironmentValues(ctx, environmentID)
-	if err != nil {
-		return nil, fmt.Errorf("valuestore: list current values: %w", err)
-	}
-	plain := make(map[string]string, len(rows))
-	for _, row := range rows {
-		plain[row.Name] = row.Value
-	}
-	return plain, nil
-}
-
-func (s *Service) CurrentSecretVersions(ctx context.Context, environmentID uuid.UUID) (map[string]int64, error) {
+// CurrentVersions returns the current generation of every set value.
+func (s *Service) CurrentVersions(ctx context.Context, environmentID uuid.UUID) (map[string]int64, error) {
 	rows, err := s.st.ListCurrentEnvironmentSecretVersions(ctx, environmentID)
 	if err != nil {
-		return nil, fmt.Errorf("valuestore: list current secret versions: %w", err)
+		return nil, fmt.Errorf("valuestore: list current versions: %w", err)
 	}
 	versions := make(map[string]int64, len(rows))
 	for _, row := range rows {
@@ -144,30 +119,14 @@ func (s *Service) CurrentSecretVersions(ctx context.Context, environmentID uuid.
 	return versions, nil
 }
 
-// StagedPlain returns the staged plain values of one candidate batch.
-func (s *Service) StagedPlain(ctx context.Context, environmentID, candidateID uuid.UUID) (map[string]string, error) {
-	rows, err := s.st.ListStagedEnvironmentValues(ctx, store.ListStagedEnvironmentValuesParams{
-		EnvironmentID: environmentID,
-		CandidateID:   &candidateID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("valuestore: list staged values: %w", err)
-	}
-	plain := make(map[string]string, len(rows))
-	for _, row := range rows {
-		plain[row.Name] = row.Value
-	}
-	return plain, nil
-}
-
-// StagedSecretVersions returns the staged secret versions of one candidate.
-func (s *Service) StagedSecretVersions(ctx context.Context, environmentID, candidateID uuid.UUID) (map[string]int64, error) {
+// StagedVersions returns the staged versions of one candidate batch.
+func (s *Service) StagedVersions(ctx context.Context, environmentID, candidateID uuid.UUID) (map[string]int64, error) {
 	rows, err := s.st.ListStagedEnvironmentSecretVersions(ctx, store.ListStagedEnvironmentSecretVersionsParams{
 		EnvironmentID: environmentID,
 		CandidateID:   &candidateID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("valuestore: list staged secret versions: %w", err)
+		return nil, fmt.Errorf("valuestore: list staged versions: %w", err)
 	}
 	versions := make(map[string]int64, len(rows))
 	for _, row := range rows {
@@ -176,50 +135,58 @@ func (s *Service) StagedSecretVersions(ctx context.Context, environmentID, candi
 	return versions, nil
 }
 
-// Entry is one line of the values summary. Value is set for plain names
-// only; secret values never leave the store in a summary.
+// Entry is one line of the values summary. Values are write-only: an entry
+// carries the name and version alone, never a plaintext.
 type Entry struct {
 	Name    string
-	Secret  bool
 	Version int64
-	Value   string
 }
 
-// Summary lists the current values of an environment, plain and secret,
-// sorted by name.
+// Summary lists the current values of an environment, sorted by name.
 func (s *Service) Summary(ctx context.Context, environmentID uuid.UUID) ([]Entry, error) {
 	if err := s.environmentExists(ctx, environmentID); err != nil {
 		return nil, err
 	}
-	plainRows, err := s.st.ListCurrentEnvironmentValues(ctx, environmentID)
+	rows, err := s.st.ListCurrentEnvironmentSecretVersions(ctx, environmentID)
 	if err != nil {
-		return nil, fmt.Errorf("valuestore: list current values: %w", err)
+		return nil, fmt.Errorf("valuestore: list current versions: %w", err)
 	}
-	secretRows, err := s.st.ListCurrentEnvironmentSecretVersions(ctx, environmentID)
-	if err != nil {
-		return nil, fmt.Errorf("valuestore: list current secret versions: %w", err)
-	}
-	entries := make([]Entry, 0, len(plainRows)+len(secretRows))
-	for _, row := range plainRows {
-		entries = append(entries, Entry{Name: row.Name, Version: row.Version, Value: row.Value})
-	}
-	for _, row := range secretRows {
-		entries = append(entries, Entry{Name: row.Name, Secret: true, Version: row.Version})
+	entries := make([]Entry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, Entry{Name: row.Name, Version: row.Version})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
 }
 
-// Redactor decrypts the environment's current secrets, plus the staged
-// secrets of candidateID when it is not uuid.Nil, in memory only, and
-// returns the matcher the journal writer uses. The map is keyed by
-// plaintext, so a current and a staged version of the same name are both
-// redacted.
+// Unset supersedes the current generation of each name without a successor:
+// the value disappears from future revisions while pinned (name, version)
+// resolution for existing revisions keeps working. A candidate staged before
+// Unset re-creates the name as current when it promotes. Returns the number
+// of names actually unset.
+func (s *Service) Unset(ctx context.Context, environmentID uuid.UUID, names []string) (int64, error) {
+	if err := s.environmentExists(ctx, environmentID); err != nil {
+		return 0, err
+	}
+	rows, err := s.st.UnsetCurrentEnvironmentSecrets(ctx, store.UnsetCurrentEnvironmentSecretsParams{
+		EnvironmentID: environmentID,
+		Names:         names,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("valuestore: unset values: %w", err)
+	}
+	return rows, nil
+}
+
+// Redactor decrypts the environment's current values, plus the staged batch
+// of candidateID when it is not uuid.Nil, in memory only, and returns the
+// matcher the journal writer uses. The map is keyed by plaintext, so a
+// current and a staged version of the same name are both redacted.
 func (s *Service) Redactor(ctx context.Context, environmentID, candidateID uuid.UUID) (*redact.Redactor, error) {
 	byPlaintext := make(map[string]string)
 	current, err := s.st.ListCurrentEnvironmentSecretCiphertexts(ctx, environmentID)
 	if err != nil {
-		return nil, fmt.Errorf("valuestore: list current secrets: %w", err)
+		return nil, fmt.Errorf("valuestore: list current values: %w", err)
 	}
 	for _, row := range current {
 		plaintext, err := crypt.Decrypt(s.key, row.Ciphertext)
@@ -234,7 +201,7 @@ func (s *Service) Redactor(ctx context.Context, environmentID, candidateID uuid.
 			CandidateID:   &candidateID,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("valuestore: list staged secrets: %w", err)
+			return nil, fmt.Errorf("valuestore: list staged values: %w", err)
 		}
 		for _, row := range staged {
 			plaintext, err := crypt.Decrypt(s.key, row.Ciphertext)
@@ -247,11 +214,11 @@ func (s *Service) Redactor(ctx context.Context, environmentID, candidateID uuid.
 	return redact.New(byPlaintext), nil
 }
 
-// SecretPlaintexts decrypts the exact secret versions a revision pinned.
-// Superseded rows are retained by the state model precisely so old pinned
-// versions keep resolving. Results live only in memory and in the applied
-// cluster Secret; callers must never log or persist them.
-func (s *Service) SecretPlaintexts(ctx context.Context, environmentID uuid.UUID, refs map[string]int) (map[string]string, error) {
+// Plaintexts decrypts the exact versions a revision pinned. Superseded rows
+// are retained by the state model precisely so old pinned versions keep
+// resolving, including tombstoned names. Results live only in memory and in
+// the applied cluster Secret; callers must never log or persist them.
+func (s *Service) Plaintexts(ctx context.Context, environmentID uuid.UUID, refs map[string]int) (map[string]string, error) {
 	plaintexts := make(map[string]string, len(refs))
 	for _, name := range sortedRefKeys(refs) {
 		ciphertext, err := s.st.GetEnvironmentSecretCiphertext(ctx, store.GetEnvironmentSecretCiphertextParams{
@@ -261,9 +228,9 @@ func (s *Service) SecretPlaintexts(ctx context.Context, environmentID uuid.UUID,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, fmt.Errorf("valuestore: secret %s version %d not found", name, refs[name])
+				return nil, fmt.Errorf("valuestore: value %s version %d not found", name, refs[name])
 			}
-			return nil, fmt.Errorf("valuestore: get secret %s: %w", name, err)
+			return nil, fmt.Errorf("valuestore: get value %s: %w", name, err)
 		}
 		plaintext, err := crypt.Decrypt(s.key, ciphertext)
 		if err != nil {
@@ -274,48 +241,27 @@ func (s *Service) SecretPlaintexts(ctx context.Context, environmentID uuid.UUID,
 	return plaintexts, nil
 }
 
-// DiscardCandidate deletes the staged rows of one batch. The queries never
-// select the value or ciphertext columns.
+// DiscardCandidate deletes the staged rows of one batch. The query never
+// selects the ciphertext column.
 func (s *Service) DiscardCandidate(ctx context.Context, environmentID, candidateID uuid.UUID) error {
-	return s.st.WithTx(ctx, func(q *store.Queries) error {
-		if _, err := q.DiscardStagedEnvironmentValues(ctx, store.DiscardStagedEnvironmentValuesParams{
-			EnvironmentID: environmentID,
-			CandidateID:   &candidateID,
-		}); err != nil {
-			return fmt.Errorf("valuestore: discard staged values: %w", err)
-		}
-		if _, err := q.DiscardStagedEnvironmentSecrets(ctx, store.DiscardStagedEnvironmentSecretsParams{
-			EnvironmentID: environmentID,
-			CandidateID:   &candidateID,
-		}); err != nil {
-			return fmt.Errorf("valuestore: discard staged secrets: %w", err)
-		}
-		return nil
-	})
+	if _, err := s.st.DiscardStagedEnvironmentSecrets(ctx, store.DiscardStagedEnvironmentSecretsParams{
+		EnvironmentID: environmentID,
+		CandidateID:   &candidateID,
+	}); err != nil {
+		return fmt.Errorf("valuestore: discard staged values: %w", err)
+	}
+	return nil
 }
 
 // SweepStaged deletes staged rows older than age; the safety net behind
 // explicit discards. Runs at boot and periodically.
 func (s *Service) SweepStaged(ctx context.Context, age time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-age)
-	var total int64
-	err := s.st.WithTx(ctx, func(q *store.Queries) error {
-		rows, err := q.SweepStagedEnvironmentValues(ctx, cutoff)
-		if err != nil {
-			return fmt.Errorf("valuestore: sweep staged values: %w", err)
-		}
-		total += rows
-		rows, err = q.SweepStagedEnvironmentSecrets(ctx, cutoff)
-		if err != nil {
-			return fmt.Errorf("valuestore: sweep staged secrets: %w", err)
-		}
-		total += rows
-		return nil
-	})
+	rows, err := s.st.SweepStagedEnvironmentSecrets(ctx, cutoff)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("valuestore: sweep staged values: %w", err)
 	}
-	return total, nil
+	return rows, nil
 }
 
 // PromoteTx flips the whole candidate batch to current inside the caller's
@@ -326,29 +272,17 @@ func (s *Service) PromoteTx(ctx context.Context, q *store.Queries, environmentID
 	if candidateID == uuid.Nil {
 		return nil
 	}
-	if err := q.SupersedeCurrentEnvironmentValues(ctx, store.SupersedeCurrentEnvironmentValuesParams{
+	if err := q.SupersedeCurrentEnvironmentSecrets(ctx, store.SupersedeCurrentEnvironmentSecretsParams{
 		EnvironmentID: environmentID,
 		CandidateID:   &candidateID,
 	}); err != nil {
 		return fmt.Errorf("valuestore: supersede values: %w", err)
 	}
-	if _, err := q.PromoteStagedEnvironmentValues(ctx, store.PromoteStagedEnvironmentValuesParams{
-		EnvironmentID: environmentID,
-		CandidateID:   &candidateID,
-	}); err != nil {
-		return fmt.Errorf("valuestore: promote values: %w", err)
-	}
-	if err := q.SupersedeCurrentEnvironmentSecrets(ctx, store.SupersedeCurrentEnvironmentSecretsParams{
-		EnvironmentID: environmentID,
-		CandidateID:   &candidateID,
-	}); err != nil {
-		return fmt.Errorf("valuestore: supersede secrets: %w", err)
-	}
 	if _, err := q.PromoteStagedEnvironmentSecrets(ctx, store.PromoteStagedEnvironmentSecretsParams{
 		EnvironmentID: environmentID,
 		CandidateID:   &candidateID,
 	}); err != nil {
-		return fmt.Errorf("valuestore: promote secrets: %w", err)
+		return fmt.Errorf("valuestore: promote values: %w", err)
 	}
 	return nil
 }

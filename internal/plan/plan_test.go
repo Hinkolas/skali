@@ -9,15 +9,11 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/revision"
-	"github.com/Hinkolas/skali/internal/values"
 )
 
 const baseManifest = `
 version: "1"
 name: demo
-values:
-  SESSION_SECRET:
-    secret: true
 applications:
   web:
     image: example.invalid/web:1
@@ -40,12 +36,9 @@ func buildRevision(t *testing.T, source string, mutate func(*revision.Input)) *r
 	result, err := compiler.Compile(document)
 	require.NoError(t, err)
 	input := revision.Input{
-		Result:      result,
-		Environment: "production",
-		Values: values.Resolved{
-			Plain:  map[string]string{},
-			Secret: map[string]string{"SESSION_SECRET": "s3cret"},
-		},
+		Result:         result,
+		Environment:    "production",
+		SecretVersions: map[string]int{"SESSION_SECRET": 1},
 		Artifacts: map[string]revision.Artifact{
 			"web": {Reference: "registry.internal/demo/web", Digest: digest("1"), Kind: revision.KindImport},
 		},
@@ -77,7 +70,7 @@ func TestInitialDeploymentCreatesEverything(t *testing.T) {
 
 	require.Equal(t, Change{Service: "applications.web", Action: ActionCreate}, changeFor(t, result, "applications.web"))
 	require.Equal(t, Change{Service: "databases.data", Action: ActionCreate}, changeFor(t, result, "databases.data"))
-	require.Equal(t, []ValueChange{{Name: "SESSION_SECRET", Action: ActionCreate, Secret: true}}, result.Values)
+	require.Equal(t, []ValueChange{{Name: "SESSION_SECRET", Action: ActionCreate}}, result.Values)
 	require.False(t, result.Destructive())
 }
 
@@ -144,7 +137,7 @@ func TestSecretVersionBumpIsAValueUpdate(t *testing.T) {
 
 	result := Diff(active, candidate)
 	require.Empty(t, result.Changes)
-	require.Equal(t, []ValueChange{{Name: "SESSION_SECRET", Action: ActionUpdate, Secret: true}}, result.Values)
+	require.Equal(t, []ValueChange{{Name: "SESSION_SECRET", Action: ActionUpdate}}, result.Values)
 }
 
 func TestVolumeRemovalIsDestructive(t *testing.T) {
@@ -168,7 +161,7 @@ applications:
     image: example.invalid/web:1
 `
 	noSecrets := func(input *revision.Input) {
-		input.Values.Secret = map[string]string{}
+		input.SecretVersions = nil
 	}
 	active := buildRevision(t, withVolume, noSecrets)
 	candidate := buildRevision(t, withoutVolume, noSecrets)
@@ -186,7 +179,7 @@ applications:
   other:
     image: example.invalid/other:1
 `, func(input *revision.Input) {
-		input.Values.Secret = map[string]string{}
+		input.SecretVersions = nil
 		input.Artifacts = map[string]revision.Artifact{
 			"other": {Reference: "registry.internal/demo/other", Digest: digest("3"), Kind: revision.KindImport},
 		}

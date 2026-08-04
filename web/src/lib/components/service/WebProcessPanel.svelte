@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { renderExpression } from '$lib/types/definition';
 	import type { ApplicationView } from '$lib/models/service';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { HEALTH_META } from '$lib/service-types';
@@ -14,10 +15,12 @@
 
 	const source = $derived(
 		service.config.source.kind === 'image'
-			? (service.config.source.image ?? 'image')
+			? renderExpression(service.config.source.image) || 'image'
 			: `build ${service.config.source.build?.context ?? '.'}`
 	);
-	const command = $derived(service.config.command?.join(' ') ?? 'image default');
+	const command = $derived(
+		service.config.command?.map(renderExpression).join(' ') || 'image default'
+	);
 	const ports = $derived(
 		Object.entries(service.config.ports ?? {})
 			.map(([name, p]) => `${name} ${p.port}/${p.protocol}`)

@@ -18,9 +18,8 @@ import (
 
 func newValidateCmd() *cobra.Command {
 	var (
-		manifestPath  string
-		envFile       string
-		ignoreUnknown bool
+		manifestPath string
+		envFile      string
 	)
 	command := &cobra.Command{
 		Use:   "validate",
@@ -43,12 +42,15 @@ func newValidateCmd() *cobra.Command {
 				result.Hash,
 			)
 			if envFile != "" {
-				resolved, path, err := resolveValues(result, envFile, ignoreUnknown)
+				resolved, path, skipped, err := resolveValues(result, envFile)
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(command.OutOrStdout(), "  values %s: %d plain, %d secret\n",
-					path, len(resolved.Plain), len(resolved.Secret))
+				fmt.Fprintf(command.OutOrStdout(), "  values %s: %d set\n", path, len(resolved))
+				if filtered := filterSkipped(result, skipped); len(filtered) > 0 {
+					fmt.Fprintf(command.OutOrStdout(), "  warning: skipped keys not referenced by the manifest: %s\n",
+						strings.Join(filtered, ", "))
+				}
 			}
 			for _, hint := range healthHints(result) {
 				fmt.Fprintln(command.OutOrStdout(), "  "+hint)
@@ -58,19 +60,17 @@ func newValidateCmd() *cobra.Command {
 	}
 	command.Flags().StringVar(&manifestPath, "manifest", "", "manifest path; defaults to skali.yml or skali.yaml")
 	command.Flags().StringVar(&envFile, "env-file", "", "dotenv file validated against the manifest's value requirements")
-	command.Flags().BoolVar(&ignoreUnknown, "ignore-unknown-values", false, "drop environment-file keys the manifest does not require")
 	return command
 }
 
 func newCompileCmd() *cobra.Command {
 	var (
-		manifestPath  string
-		target        string
-		envFile       string
-		ignoreUnknown bool
-		environment   string
-		namespace     string
-		images        []string
+		manifestPath string
+		target       string
+		envFile      string
+		environment  string
+		namespace    string
+		images       []string
 	)
 	command := &cobra.Command{
 		Use:   "compile",
@@ -90,7 +90,7 @@ func newCompileCmd() *cobra.Command {
 				_, err = fmt.Fprintln(command.OutOrStdout(), string(data))
 				return err
 			case "revision":
-				resolved, _, err := resolveValues(result, envFile, ignoreUnknown)
+				resolved, _, _, err := resolveValues(result, envFile)
 				if err != nil {
 					return err
 				}
@@ -102,10 +102,16 @@ func newCompileCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// Offline revisions pin every provided value at version 1;
+				// there is no store to allocate generations against.
+				versions := make(map[string]int, len(resolved))
+				for name := range resolved {
+					versions[name] = 1
+				}
 				built, err := revision.Build(revision.Input{
 					Result:          result,
 					Environment:     environment,
-					Values:          resolved,
+					SecretVersions:  versions,
 					Artifacts:       artifacts,
 					CompilerVersion: versionpkg.Version,
 				})
@@ -119,7 +125,7 @@ func newCompileCmd() *cobra.Command {
 				_, err = fmt.Fprintln(command.OutOrStdout(), string(data))
 				return err
 			case "kubernetes":
-				resolved, _, err := resolveValues(result, envFile, ignoreUnknown)
+				resolved, _, _, err := resolveValues(result, envFile)
 				if err != nil {
 					return err
 				}
@@ -132,7 +138,7 @@ func newCompileCmd() *cobra.Command {
 				}
 				objects, err := kubernetes.Render(result, kubernetes.Options{
 					Namespace:   namespace,
-					Variables:   resolved.Merged(),
+					Variables:   resolved,
 					BuildImages: buildImages,
 				})
 				if err != nil {
@@ -153,7 +159,6 @@ func newCompileCmd() *cobra.Command {
 	command.Flags().StringVar(&target, "target", "definition", "compile target: definition, revision, or kubernetes")
 	command.Flags().StringVar(&environment, "environment", "local", "environment name recorded in revision output")
 	command.Flags().StringVar(&envFile, "env-file", "", "dotenv file used to resolve project variables for Kubernetes rendering")
-	command.Flags().BoolVar(&ignoreUnknown, "ignore-unknown-values", false, "drop environment-file keys the manifest does not require")
 	command.Flags().StringVar(&namespace, "namespace", "", "Kubernetes namespace used for rendering")
 	command.Flags().StringArrayVar(&images, "image", nil, "prepared image for a build application, as service=reference")
 	return command
@@ -179,23 +184,43 @@ func loadAndCompile(explicit string) (*compiler.Result, *manifest.Document, erro
 	return result, document, nil
 }
 
-// resolveValues imports and validates the selected environment file against
-// the compiled definition. Without a file it resolves an empty value set, so
-// definitions whose values all carry defaults still render.
-func resolveValues(result *compiler.Result, envFile string, ignoreUnknown bool) (values.Resolved, string, error) {
+// resolveValues imports the selected environment file and intersects it with
+// the compiled definition's runtime requirements. Missing required values
+// are an error; unreferenced keys are skipped and reported. Without a file
+// it resolves an empty value set, so definitions whose values all carry
+// defaults still render.
+func resolveValues(result *compiler.Result, envFile string) (map[string]string, string, []string, error) {
 	file := &values.File{Path: "(none)", Values: map[string]string{}}
 	if envFile != "" {
 		parsed, err := values.ParseFile(envFile)
 		if err != nil {
-			return values.Resolved{}, "", err
+			return nil, "", nil, err
 		}
 		file = parsed
 	}
-	resolved, err := values.Resolve(result.Definition.RequiredVariables, file, values.Options{IgnoreUnknown: ignoreUnknown})
-	if err != nil {
-		return values.Resolved{}, "", fmt.Errorf("%s: %w", file.Path, err)
+	kept, missing, skipped := values.Conform(result.Definition.RequiredVariables, file.Values)
+	if len(missing) > 0 {
+		return nil, "", nil, fmt.Errorf("%s: missing required project values: %s", file.Path, strings.Join(missing, ", "))
 	}
-	return resolved, file.Path, nil
+	return kept, file.Path, skipped, nil
+}
+
+// filterSkipped removes build-only variables from a skipped list: they are
+// referenced by the manifest, just resolved client-side rather than stored.
+func filterSkipped(result *compiler.Result, skipped []string) []string {
+	buildOnly := make(map[string]bool, len(result.Definition.RequiredVariables))
+	for _, requirement := range result.Definition.RequiredVariables {
+		if requirement.Build && !requirement.Runtime {
+			buildOnly[requirement.Name] = true
+		}
+	}
+	var filtered []string
+	for _, name := range skipped {
+		if !buildOnly[name] {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered
 }
 
 // artifactsForRevision converts pinned --image references into revision

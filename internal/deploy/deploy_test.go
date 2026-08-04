@@ -14,15 +14,11 @@ import (
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
-	"github.com/Hinkolas/skali/internal/values"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 const testManifest = `version: "1"
 name: demo
-values:
-  SESSION_SECRET:
-    secret: true
 applications:
   web:
     image: ghcr.io/example/web:1.0.0
@@ -37,9 +33,6 @@ applications:
 
 const changedManifest = `version: "1"
 name: demo
-values:
-  SESSION_SECRET:
-    secret: true
 applications:
   web:
     image: ghcr.io/example/web:2.0.0
@@ -104,11 +97,9 @@ func (f *fixture) submit(t *testing.T, manifest string, expected int64) uuid.UUI
 	return row.ID
 }
 
-func (f *fixture) stage(t *testing.T, plain, secret map[string]string) *valuestore.Candidate {
+func (f *fixture) stage(t *testing.T, provided map[string]string) *valuestore.Candidate {
 	t.Helper()
-	candidate, err := f.values.Stage(context.Background(), f.environmentID, values.Resolved{
-		Plain: plain, Secret: secret,
-	})
+	candidate, err := f.values.Stage(context.Background(), f.environmentID, provided)
 	require.NoError(t, err)
 	return candidate
 }
@@ -120,8 +111,7 @@ func TestPrepareAndPromote(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "prepare-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "prepare-plant-value"})
 
 	prepared, err := f.deploy.Prepare(ctx, PrepareInput{
 		EnvironmentID:       f.environmentID,
@@ -132,7 +122,7 @@ func TestPrepareAndPromote(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil, prepared.RevisionID)
 	require.Equal(t, "production", prepared.Revision.Environment)
-	require.Equal(t, map[string]string{"APP_DOMAIN": "demo.example.com"}, prepared.Revision.Values)
+	require.Equal(t, 1, prepared.Revision.Secrets["APP_DOMAIN"].Version)
 	require.Equal(t, 1, prepared.Revision.Secrets["SESSION_SECRET"].Version)
 	require.Contains(t, prepared.Revision.Artifacts, "web")
 
@@ -149,9 +139,9 @@ func TestPrepareAndPromote(t *testing.T) {
 	require.Nil(t, target.ActiveRevisionID, "activation is R2; the pointer must stay empty")
 
 	// Values were promoted atomically with the target.
-	plain, err := f.values.CurrentPlain(ctx, f.environmentID)
+	current, err := f.values.CurrentVersions(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Equal(t, "demo.example.com", plain["APP_DOMAIN"])
+	require.Equal(t, map[string]int64{"APP_DOMAIN": 1, "SESSION_SECRET": 1}, current)
 
 	// The revision document round-trips and carries no plaintext secret.
 	document, err := f.deploy.GetRevision(ctx, prepared.RevisionID)
@@ -169,8 +159,7 @@ func TestPrepareIdenticalInputsReusesRevision(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "reuse-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "reuse-plant-value"})
 	resolver := &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID}
 
 	first, err := f.deploy.Prepare(ctx, PrepareInput{
@@ -204,7 +193,7 @@ func TestDeployInvalidValuesLeavesTarget(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	// Stage only the plain value; the required secret is missing.
-	candidate := f.stage(t, map[string]string{"APP_DOMAIN": "demo.example.com"}, nil)
+	candidate := f.stage(t, map[string]string{"APP_DOMAIN": "demo.example.com"})
 
 	_, err := f.deploy.Prepare(ctx, PrepareInput{
 		EnvironmentID:       f.environmentID,
@@ -233,8 +222,7 @@ func TestFailedPreparationDoesNotPromote(t *testing.T) {
 	// First, a successful deploy establishes current state.
 	definitionVersion := f.submit(t, testManifest, 0)
 	first := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "initial-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "initial-plant-value"})
 	prepared, err := f.deploy.Prepare(ctx, PrepareInput{
 		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
 		CandidateID: first.ID, Resolver: &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID},
@@ -246,9 +234,7 @@ func TestFailedPreparationDoesNotPromote(t *testing.T) {
 	require.NoError(t, err)
 	targetBefore, err := f.deploy.Target(ctx, f.environmentID)
 	require.NoError(t, err)
-	plainBefore, err := f.values.CurrentPlain(ctx, f.environmentID)
-	require.NoError(t, err)
-	secretsBefore, err := f.values.CurrentSecretVersions(ctx, f.environmentID)
+	versionsBefore, err := f.values.CurrentVersions(ctx, f.environmentID)
 	require.NoError(t, err)
 
 	// Second deploy: changed manifest, changed values, failing resolver.
@@ -256,8 +242,7 @@ func TestFailedPreparationDoesNotPromote(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, draftBefore.Hash, hash)
 	second := f.stage(t,
-		map[string]string{"APP_DOMAIN": "changed.example.com"},
-		map[string]string{"SESSION_SECRET": "changed-plant-value"})
+		map[string]string{"APP_DOMAIN": "changed.example.com", "SESSION_SECRET": "changed-plant-value"})
 
 	boom := errors.New("build exploded")
 	_, err = f.deploy.Prepare(ctx, PrepareInput{
@@ -282,12 +267,9 @@ func TestFailedPreparationDoesNotPromote(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, targetBefore.TargetRevisionID, targetAfter.TargetRevisionID)
 	require.Equal(t, targetBefore.UpdatedAt, targetAfter.UpdatedAt)
-	plainAfter, err := f.values.CurrentPlain(ctx, f.environmentID)
+	versionsAfter, err := f.values.CurrentVersions(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Equal(t, plainBefore, plainAfter)
-	secretsAfter, err := f.values.CurrentSecretVersions(ctx, f.environmentID)
-	require.NoError(t, err)
-	require.Equal(t, secretsBefore, secretsAfter)
+	require.Equal(t, versionsBefore, versionsAfter)
 
 	// Only the first revision exists; the pending artifact was abandoned.
 	rows, err := f.deploy.ListRevisions(ctx, f.environmentID)
@@ -301,7 +283,7 @@ func TestFailedPreparationDoesNotPromote(t *testing.T) {
 	// No staged rows remain, and the staged secret never appears anywhere.
 	var staged int
 	require.NoError(t, f.st.Pool.QueryRow(ctx,
-		"SELECT (SELECT count(*) FROM environment_values WHERE state = 'staged') + (SELECT count(*) FROM environment_secrets WHERE state = 'staged')").Scan(&staged))
+		"SELECT count(*) FROM environment_secrets WHERE state = 'staged'").Scan(&staged))
 	require.Zero(t, staged)
 }
 
@@ -314,8 +296,7 @@ func TestPromoteAdvancesDraftToCandidateDefinition(t *testing.T) {
 	changedVersion, _, err := f.projects.SubmitCandidate(ctx, f.projectID, []byte(changedManifest), "yaml")
 	require.NoError(t, err)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "advance-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "advance-plant-value"})
 
 	prepared, err := f.deploy.Prepare(ctx, PrepareInput{
 		EnvironmentID: f.environmentID, DefinitionVersionID: changedVersion,
@@ -343,8 +324,7 @@ func TestPromoteCreatesDraftWhenMissing(t *testing.T) {
 	require.ErrorIs(t, err, project.ErrDraftNotFound)
 
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "create-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "create-plant-value"})
 	prepared, err := f.deploy.Prepare(ctx, PrepareInput{
 		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
 		CandidateID: candidate.ID, Resolver: &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID},
@@ -371,8 +351,7 @@ func TestRollback(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "rollback-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "rollback-plant-value"})
 	resolver := &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID}
 	first, err := f.deploy.Prepare(ctx, PrepareInput{
 		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
@@ -430,6 +409,52 @@ func TestRollback(t *testing.T) {
 	require.ErrorIs(t, err, ErrRevisionMismatch)
 }
 
+
+// The wedge regression: a stored value whose reference was removed from the
+// manifest must never block later deployments. It is intersected away and
+// reported as orphaned instead.
+func TestOrphanedStoredValueDoesNotBlockDeploy(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	definitionVersion := f.submit(t, testManifest, 0)
+	candidate := f.stage(t,
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "orphan-plant-value"})
+	resolver := &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID}
+	first, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
+		CandidateID: candidate.ID, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.deploy.Promote(ctx, first))
+
+	// The new manifest drops the ${SESSION_SECRET} reference; the stored
+	// value remains current in the store.
+	withoutSecret := `version: "1"
+name: demo
+applications:
+  web:
+    image: ghcr.io/example/web:3.0.0
+    ports:
+      http:
+        port: 8080
+        protocol: http
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN}"
+`
+	changedVersion, _, err := f.projects.SubmitCandidate(ctx, f.projectID, []byte(withoutSecret), "yaml")
+	require.NoError(t, err)
+	second, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: changedVersion,
+		CandidateID: uuid.Nil, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"SESSION_SECRET"}, second.Orphaned)
+	require.NotContains(t, second.Revision.Secrets, "SESSION_SECRET")
+	require.NoError(t, f.deploy.Promote(ctx, second))
+}
+
 // recordingEnqueuer captures kernel handoffs.
 type recordingEnqueuer struct{ enqueued []uuid.UUID }
 
@@ -444,8 +469,7 @@ func TestRollbackCreatesRunAndEnqueues(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "rollback-enqueue-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "rollback-enqueue-value"})
 	resolver := &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID}
 	first, err := f.deploy.Prepare(ctx, PrepareInput{
 		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
@@ -527,8 +551,7 @@ func TestLoadPromotionSource(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "promotion-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "promotion-plant-value"})
 	prepared, err := f.deploy.Prepare(ctx, PrepareInput{
 		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
 		CandidateID: candidate.ID, Resolver: &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID},

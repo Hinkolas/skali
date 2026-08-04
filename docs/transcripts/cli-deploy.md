@@ -19,11 +19,11 @@ project      file-sharing (skali.yml)
 environment  production
 linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
 
-.env.production: 1 plain, 1 secret value (values are validated, not shown)
+.env.production: 2 values (validated, not shown)
 
 plan against active revision 2a91a76b
   update  applications.web   artifact 9f2c41d8b1c7 replaces 11ba90c2f4e9
-  value   SESSION_SECRET     update (secret)
+  value   SESSION_SECRET     update
 
 no destructive changes
 ```
@@ -51,12 +51,12 @@ linked to remote skali.example.com, project file-sharing, environment production
 
 ◆ Override production with a local env file?
 └ .env.production
-values       .env.production (1 plain, 1 secret)
+values       .env.production (2 staged)
 
 plan against active revision 2a91a76b
   update  applications.web   a new artifact replaces 11ba90c2f4e9
                              artifact will be rebuilt
-  value   SESSION_SECRET     update (secret)
+  value   SESSION_SECRET     update
 
 ◆ Continue with this deployment?
 └ Yes
@@ -64,7 +64,7 @@ plan against active revision 2a91a76b
 run 01J9V2E8  deploy file-sharing to production
   ok  Validate project definition
   ok  Prepare environment values
-        .env.production: 1 plain, 1 secret staged
+        .env.production: 2 values staged
   ok  Prepare artifacts
         ok  web
               ok  Build locally (BuildKit)                            38s

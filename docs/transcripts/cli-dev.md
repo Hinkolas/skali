@@ -10,7 +10,7 @@ CLI; nothing here touches a remote environment.
 ```console
 $ skali dev
 project  file-sharing (skali.yml)
-values   ./.env (1 plain, 1 secret; local values never leave this machine)
+values   ./.env (2 staged; local values never leave this machine)
 
 Local platform is not running. Creating it now.
   ok  Check prerequisites: docker 27.4
@@ -61,7 +61,7 @@ Pinned by this transcript:
 ```console
 $ skali dev
 project  file-sharing (skali.yml)
-values   ./.env (1 plain, 1 secret)
+values   ./.env (2 staged)
 
 local platform is running (cluster skali-dev)
 artifact for web is current (context unchanged, sha256:5b77e0a1...)

@@ -587,6 +587,18 @@ backups:
       volumes: all
 ```
 
+> **Amendment (2026-08-04, values rework):** the `values:` metadata block is
+> removed and the plain/secret split with it. The value contract derives
+> entirely from `${NAME}` references; every value is secret (encrypted at
+> rest, write-only API, names only in plans and logs). `${NAME}` is legal in
+> any free-form string field with concatenation; `{{...}}` outputs remain
+> environment-only and whole-value. An empty string is a real value; removal
+> is an explicit tombstone unset that keeps pinned revisions resolving.
+> Stored values the definition no longer references are ignored and reported
+> as orphaned, never a deployment error. Build arguments and targets resolve
+> client-side from a local env file only. The rules below describe the
+> pre-amendment design where they conflict.
+
 This is illustrative, not a frozen field spelling. The design rules are frozen:
 
 - Application, database, and bucket keys are stable identities in separate

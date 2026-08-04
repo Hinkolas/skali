@@ -53,7 +53,7 @@ func TestDecodeAndContract(t *testing.T) {
 
 	artifacts := svc.Artifacts()
 	require.Len(t, artifacts, 1)
-	require.Equal(t, "ghcr.io/example/api:1.0.0", artifacts[0].Source.Image)
+	require.Equal(t, "ghcr.io/example/api:1.0.0", artifacts[0].Source.Image.Literal())
 
 	steps := svc.Steps()
 	require.Len(t, steps, 3)

@@ -1,9 +1,9 @@
 {
-  "schemaVersion": "1",
+  "schemaVersion": "2",
   "project": "hello-world",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "9bbe35e68acd9a8ebc71f6b4f5f2fb2e65cf9b9c0fc1651e38b43b6d4c0f9ddc",
+  "definitionHash": "3b447584aa28ad72ae662fbd25beabbb66d929ace866f6a5729371e91235892c",
   "definition": {
     "version": "1",
     "name": "hello-world",
@@ -33,7 +33,14 @@
                 }
               ]
             },
-            "path": "/",
+            "path": {
+              "parts": [
+                {
+                  "kind": "literal",
+                  "value": "/"
+                }
+              ]
+            },
             "port": {
               "name": "http"
             },
@@ -46,7 +53,14 @@
               "port": {
                 "name": "http"
               },
-              "path": "/healthz"
+              "path": {
+                "parts": [
+                  {
+                    "kind": "literal",
+                    "value": "/healthz"
+                  }
+                ]
+              }
             },
             "intervalMillis": 5000,
             "timeoutMillis": 2000,
@@ -57,7 +71,14 @@
               "port": {
                 "name": "http"
               },
-              "path": "/healthz"
+              "path": {
+                "parts": [
+                  {
+                    "kind": "literal",
+                    "value": "/healthz"
+                  }
+                ]
+              }
             },
             "intervalMillis": 30000,
             "timeoutMillis": 2000,
@@ -82,13 +103,16 @@
     "requiredVariables": [
       {
         "name": "APP_DOMAIN",
-        "required": true
+        "required": true,
+        "runtime": true
       }
     ]
   },
-  "valuesHash": "0f2653b428522ff0f936fa5a5b6debeb42699043c9abe02bae450637fec18e4b",
-  "values": {
-    "APP_DOMAIN": "hello.example.com"
+  "valuesHash": "60d7cbaf16f6a97b16ecc928e7791f691a8cbe9762270591baf025ca6e7840c0",
+  "secrets": {
+    "APP_DOMAIN": {
+      "version": 1
+    }
   },
   "artifacts": {
     "web": {
@@ -102,5 +126,5 @@
     "application",
     "edge"
   ],
-  "checksum": "2fff35fe2c8564214dab269c84553ceda847cc9d55aa3a8f3b60f322d97b9d29"
+  "checksum": "0e01fde02c50a0416a01e93cc0c4bfaf9bb9c311693d471ac82472f479d9d9a4"
 }

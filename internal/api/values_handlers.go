@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
-	"strings"
+	"net/url"
+	"regexp"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -18,11 +19,11 @@ import (
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
-// valuesHandlers is the environment-values surface. Secrecy is declared by
-// the manifest values block alone: the client submits one flat map and the
-// server separates plain from secret against the project's current draft
-// definition (or an explicitly named candidate definition version). Secret
-// values are write-only.
+// valuesHandlers is the environment-values surface. Every value is a
+// secret: the client submits one flat map, names the definition does not
+// reference are skipped and reported (never an error), and stored values
+// are write-only; listings carry names and versions alone. DELETE
+// tombstones a value without touching the versions old revisions pinned.
 type valuesHandlers struct {
 	projects *project.Service
 	values   *valuestore.Service
@@ -31,10 +32,10 @@ type valuesHandlers struct {
 
 type valueEntryPayload struct {
 	Name    string `json:"name"`
-	Secret  bool   `json:"secret"`
 	Version int64  `json:"version"`
-	Value   string `json:"value,omitempty"`
 }
+
+var valueNamePattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
 
 // GET /v1/environments/{id}/values
 func (h *valuesHandlers) get(w http.ResponseWriter, r *http.Request) {
@@ -51,9 +52,7 @@ func (h *valuesHandlers) get(w http.ResponseWriter, r *http.Request) {
 	for i, entry := range entries {
 		payload[i] = valueEntryPayload{
 			Name:    entry.Name,
-			Secret:  entry.Secret,
 			Version: entry.Version,
-			Value:   entry.Value,
 		}
 	}
 	writeJSON(w, http.StatusOK, struct {
@@ -69,9 +68,9 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Values map[string]string `json:"values"`
-		// DefinitionVersionID resolves secrecy against a submitted
-		// candidate definition instead of the project draft, so a deploy
-		// can stage values for the exact manifest it is about to promote.
+		// DefinitionVersionID validates names against a submitted candidate
+		// definition instead of the project draft, so a deploy can stage
+		// values for the exact manifest it is about to promote.
 		DefinitionVersionID string `json:"definition_version_id"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
@@ -93,31 +92,57 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved, unknown := splitBySecrecy(requirements, req.Values)
-	if len(unknown) > 0 {
-		writeError(w, http.StatusBadRequest, codeBadRequest,
-			"values not declared by the project definition: "+strings.Join(unknown, ", "))
-		return
-	}
+	// Unknown names are skipped and reported, never an error: the store only
+	// accepts what the definition references, and an empty string is a real
+	// value that stages like any other.
+	accepted, _, skipped := values.Conform(requirements, req.Values)
 
-	candidate, err := h.values.Stage(r.Context(), id, resolved)
+	candidate, err := h.values.Stage(r.Context(), id, accepted)
 	if err != nil {
 		writeValuesError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, struct {
 		CandidateID string   `json:"candidate_id"`
-		Plain       []string `json:"plain"`
-		Secret      []string `json:"secret"`
+		Staged      []string `json:"staged"`
+		Skipped     []string `json:"skipped"`
 	}{
 		CandidateID: candidate.ID.String(),
-		Plain:       nonNil(candidate.Plain),
-		Secret:      nonNil(candidate.Secret),
+		Staged:      nonNil(candidate.Names),
+		Skipped:     nonNil(skipped),
 	})
 }
 
+// DELETE /v1/environments/{id}/values/{name}
+//
+// Tombstones the current value: future deployments no longer include the
+// name, while revisions that pinned earlier versions keep resolving. A name
+// with no current value is 404, so typos surface instead of succeeding
+// silently.
+func (h *valuesHandlers) del(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	name, err := url.PathUnescape(chi.URLParam(r, "name"))
+	if err != nil || !valueNamePattern.MatchString(name) {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "the value name is not a valid environment variable name")
+		return
+	}
+	unset, err := h.values.Unset(r.Context(), id, []string{name})
+	if err != nil {
+		writeValuesError(r.Context(), w, err)
+		return
+	}
+	if unset == 0 {
+		writeError(w, http.StatusNotFound, codeNotFound, "no stored value named "+name)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // requirements resolves the variable requirements the submitted values are
-// classified against: an explicitly named candidate definition version, or
+// validated against: an explicitly named candidate definition version, or
 // the project draft.
 func (h *valuesHandlers) requirements(w http.ResponseWriter, r *http.Request, projectID uuid.UUID, definitionVersion string) ([]compiler.VariableRequirement, bool) {
 	if definitionVersion != "" {
@@ -151,47 +176,16 @@ func (h *valuesHandlers) requirements(w http.ResponseWriter, r *http.Request, pr
 	draft, err := h.projects.GetDraft(r.Context(), projectID)
 	if err != nil {
 		if errors.Is(err, project.ErrDraftNotFound) {
+			// Without any definition every submitted name would be skipped
+			// silently, which is a worse trap than a 409.
 			writeError(w, http.StatusConflict, codeConflict,
-				"the project has no draft yet: submit a manifest first so value secrecy is known")
+				"the project has no draft yet: submit a manifest first so the value contract is known")
 			return nil, false
 		}
 		writeProjectError(r.Context(), w, err)
 		return nil, false
 	}
 	return draft.Definition.RequiredVariables, true
-}
-
-// splitBySecrecy classifies a flat name -> value map against the compiled
-// definition's variable requirements. Empty values follow the dotenv rule
-// (empty = unset) and are dropped. Returns the unknown names sorted.
-func splitBySecrecy(requirements []compiler.VariableRequirement, submitted map[string]string) (values.Resolved, []string) {
-	known := make(map[string]bool, len(requirements))
-	secret := make(map[string]bool, len(requirements))
-	for _, requirement := range requirements {
-		known[requirement.Name] = true
-		secret[requirement.Name] = requirement.Secret
-	}
-	resolved := values.Resolved{
-		Plain:  make(map[string]string),
-		Secret: make(map[string]string),
-	}
-	var unknown []string
-	for name, value := range submitted {
-		if !known[name] {
-			unknown = append(unknown, name)
-			continue
-		}
-		if value == "" {
-			continue
-		}
-		if secret[name] {
-			resolved.Secret[name] = value
-		} else {
-			resolved.Plain[name] = value
-		}
-	}
-	sort.Strings(unknown)
-	return resolved, unknown
 }
 
 // writeValuesError maps valuestore sentinel errors onto the envelope.

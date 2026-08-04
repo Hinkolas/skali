@@ -62,11 +62,6 @@ func Compile(document *manifest.Document) (*Result, error) {
 		definition.Backups[key] = b.compileBackup(key, source.Backups[key])
 	}
 
-	for _, name := range mapKeys(source.Values) {
-		if _, used := b.variables[name]; !used {
-			b.add("values."+name, "is declared but never referenced")
-		}
-	}
 	for _, name := range mapKeys(b.variables) {
 		definition.RequiredVariables = append(definition.RequiredVariables, b.variables[name])
 	}
@@ -99,14 +94,14 @@ func Compile(document *manifest.Document) (*Result, error) {
 func (b *builder) compileApplication(key string, source manifest.Application) Application {
 	base := "applications." + key
 	result := Application{
-		Command:     append([]string(nil), source.Command...),
+		Command:     b.expressionList(base+".command", source.Command, scopeRuntime),
 		Environment: make(map[string]Expression, len(source.Environment)),
 		Ports:       make(map[string]Port, len(source.Ports)),
 		Routes:      make(map[string]Route, len(source.Routes)),
 		Volumes:     make(map[string]Volume, len(source.Volumes)),
 	}
 	if source.Image != "" {
-		result.Source = ApplicationSource{Kind: "image", Image: source.Image}
+		result.Source = ApplicationSource{Kind: "image", Image: b.expr(base+".image", source.Image, false, scopeRuntime)}
 	} else {
 		context := b.relativePath(base+".build.context", source.Build.Context, true)
 		dockerfile := source.Build.Dockerfile
@@ -116,19 +111,16 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		dockerfile = b.relativePath(base+".build.dockerfile", dockerfile, false)
 		arguments := make(map[string]Expression, len(source.Build.Arguments))
 		for _, name := range mapKeys(source.Build.Arguments) {
-			path := base + ".build.arguments." + name
-			expression, err := parseExpression(string(source.Build.Arguments[name]), b.document.Project, false)
-			if err != nil {
-				b.add(path, "%s", err)
-				continue
-			}
-			b.collectVariables(path, expression, false)
-			arguments[name] = expression
+			arguments[name] = b.expr(base+".build.arguments."+name, string(source.Build.Arguments[name]), false, scopeBuild)
+		}
+		var target Expression
+		if source.Build.Target != "" {
+			target = b.expr(base+".build.target", source.Build.Target, false, scopeBuild)
 		}
 		result.Source = ApplicationSource{Kind: "build", Build: Build{
 			Context:    context,
 			Dockerfile: dockerfile,
-			Target:     source.Build.Target,
+			Target:     target,
 			Arguments:  arguments,
 		}}
 	}
@@ -145,11 +137,11 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path, "%s", err)
 			continue
 		}
-		if expressionHasReference(expression) && len(expression.Parts) != 1 {
-			b.add(path, "a project variable or service output must occupy the entire environment value")
+		if hasServiceOutputPart(expression) && len(expression.Parts) != 1 {
+			b.add(path, "a service output must occupy the entire environment value")
 			continue
 		}
-		b.collectVariables(path, expression, true)
+		b.collectVariables(path, expression, scopeRuntime)
 		for _, part := range expression.Parts {
 			if part.Kind == "service_output" {
 				b.dependencies[owner][part.Collection+"."+part.Service] = struct{}{}
@@ -178,15 +170,19 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path+".domain", "%s", err)
 			continue
 		}
-		b.collectVariables(path+".domain", domain, false)
-		routePath := route.Path
-		if routePath == "" {
-			routePath = "/"
+		b.collectVariables(path+".domain", domain, scopeRuntime)
+		rawPath := route.Path
+		if rawPath == "" {
+			rawPath = "/"
 		}
-		if !strings.HasPrefix(routePath, "/") {
-			b.add(path+".path", "must start with /")
-		} else {
-			routePath = pathpkg.Clean(routePath)
+		routePath := b.expr(path+".path", rawPath, false, scopeRuntime)
+		if routePath.IsLiteral() {
+			literal := routePath.Literal()
+			if !strings.HasPrefix(literal, "/") {
+				b.add(path+".path", "must start with /")
+			} else {
+				routePath = LiteralExpression(pathpkg.Clean(literal))
+			}
 		}
 		tls := route.TLS
 		if tls == "" {
@@ -197,7 +193,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		}
 		target := b.portTarget(path+".port", string(route.Port), source.Ports)
 		compiled := Route{Domain: domain, Path: routePath, Port: target, TLS: tls}
-		conflictKey := canonicalExpression(domain) + "|" + routePath
+		conflictKey := canonicalExpression(domain) + "|" + canonicalExpression(routePath)
 		if previous, exists := b.routes[conflictKey]; exists {
 			b.add(path, "conflicts with route %s; domain and path pairs must be unique", previous)
 		} else {
@@ -248,7 +244,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 	}
 	result.Placement = Placement{SpreadAcross: spread.Across, Minimum: spread.Minimum, Enforcement: spread.Enforcement}
 
-	result.Deployment.ReleaseCommand.Command = append([]string(nil), source.Deployment.ReleaseCommand.Command...)
+	result.Deployment.ReleaseCommand.Command = b.expressionList(base+".deployment.releaseCommand.command", source.Deployment.ReleaseCommand.Command, scopeRuntime)
 	result.Deployment.ReleaseCommand.TimeoutMillis = b.duration(base+".deployment.releaseCommand.timeout", source.Deployment.ReleaseCommand.Timeout)
 	rollout := source.Deployment.Rollout
 	strategy := rollout.Strategy
@@ -306,12 +302,13 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 
 	for _, name := range mapKeys(source.Volumes) {
 		volume := source.Volumes[name]
-		result.Volumes[name] = Volume{
-			MountPath: volume.MountPath,
-			SizeBytes: b.bytes(base+".volumes."+name+".size", volume.Size),
-		}
-		if !strings.HasPrefix(volume.MountPath, "/") {
+		mountPath := b.expr(base+".volumes."+name+".mountPath", volume.MountPath, false, scopeRuntime)
+		if mountPath.IsLiteral() && !strings.HasPrefix(mountPath.Literal(), "/") {
 			b.add(base+".volumes."+name+".mountPath", "must be an absolute container path")
+		}
+		result.Volumes[name] = Volume{
+			MountPath: mountPath,
+			SizeBytes: b.bytes(base+".volumes."+name+".size", volume.Size),
 		}
 	}
 	if len(source.Volumes) > 0 && maxReplicas > 1 {
@@ -328,8 +325,8 @@ func (b *builder) compileProbe(path string, source manifest.Probe, ports map[str
 	if source.HTTP.Port == "" {
 		b.add(path+".http.port", "is required")
 	}
-	httpPath := source.HTTP.Path
-	if httpPath == "" || !strings.HasPrefix(httpPath, "/") {
+	httpPath := b.expr(path+".http.path", source.HTTP.Path, false, scopeRuntime)
+	if httpPath.IsLiteral() && !strings.HasPrefix(httpPath.Literal(), "/") {
 		b.add(path+".http.path", "must start with /")
 	}
 	interval := b.duration(path+".interval", source.Interval)
@@ -461,19 +458,44 @@ func (b *builder) compileBackup(key string, source manifest.Backup) Backup {
 	}
 }
 
-func (b *builder) collectVariables(path string, expression Expression, secretAllowed bool) {
+// variableScope classifies where a ${NAME} reference appears: runtime
+// positions resolve server-side at render time from stored values, build
+// positions resolve client-side from a local environment file.
+type variableScope int
+
+const (
+	scopeRuntime variableScope = iota
+	scopeBuild
+)
+
+// expr parses one expression-bearing manifest field and records its project
+// variable references. Parse failures become diagnostics and yield a zero
+// expression.
+func (b *builder) expr(path, raw string, allowOutputs bool, scope variableScope) Expression {
+	expression, err := parseExpression(raw, b.document.Project, allowOutputs)
+	if err != nil {
+		b.add(path, "%s", err)
+		return Expression{}
+	}
+	b.collectVariables(path, expression, scope)
+	return expression
+}
+
+func (b *builder) expressionList(path string, values []string, scope variableScope) []Expression {
+	if len(values) == 0 {
+		return nil
+	}
+	list := make([]Expression, 0, len(values))
+	for index, value := range values {
+		list = append(list, b.expr(fmt.Sprintf("%s.%d", path, index), value, false, scope))
+	}
+	return list
+}
+
+func (b *builder) collectVariables(path string, expression Expression, scope variableScope) {
 	for _, part := range expression.Parts {
 		if part.Kind != "project_variable" {
 			continue
-		}
-		declaration, declared := b.document.Project.Values[part.Name]
-		if declared && declaration.Secret {
-			if part.HasDefault {
-				b.add(path, "secret project value %s cannot carry an inline default", part.Name)
-			}
-			if !secretAllowed {
-				b.add(path, "secret project value %s may only be used in application environment variables", part.Name)
-			}
 		}
 		requirement, exists := b.variables[part.Name]
 		if !exists {
@@ -483,19 +505,20 @@ func (b *builder) collectVariables(path string, expression Expression, secretAll
 				Default:    part.Default,
 				HasDefault: part.HasDefault,
 			}
-			if declared {
-				requirement.Secret = declaration.Secret
-				requirement.Description = declaration.Description
-			}
-			b.variables[part.Name] = requirement
 			b.variablePath[part.Name] = path
-			continue
+		} else {
+			if requirement.HasDefault && part.HasDefault && requirement.Default != part.Default {
+				b.add(path, "project variable %s has conflicting defaults %q and %q", part.Name, requirement.Default, part.Default)
+			}
+			if !part.HasDefault {
+				requirement.Required = true
+			}
 		}
-		if requirement.HasDefault && part.HasDefault && requirement.Default != part.Default {
-			b.add(path, "project variable %s has conflicting defaults %q and %q", part.Name, requirement.Default, part.Default)
-		}
-		if !part.HasDefault {
-			requirement.Required = true
+		switch scope {
+		case scopeRuntime:
+			requirement.Runtime = true
+		case scopeBuild:
+			requirement.Build = true
 		}
 		b.variables[part.Name] = requirement
 	}
@@ -580,32 +603,3 @@ func canonicalExpression(expression Expression) string {
 	return string(data)
 }
 
-func ValidateEnvironment(result *Result, values map[string]string) error {
-	var missing []string
-	known := make(map[string]struct{}, len(result.Definition.RequiredVariables))
-	for _, requirement := range result.Definition.RequiredVariables {
-		known[requirement.Name] = struct{}{}
-		if value, ok := values[requirement.Name]; (!ok || value == "") && requirement.Required {
-			missing = append(missing, requirement.Name)
-		}
-	}
-	var unknown []string
-	for name := range values {
-		if _, ok := known[name]; !ok {
-			unknown = append(unknown, name)
-		}
-	}
-	if len(missing) == 0 && len(unknown) == 0 {
-		return nil
-	}
-	sort.Strings(missing)
-	sort.Strings(unknown)
-	var problems []string
-	if len(missing) > 0 {
-		problems = append(problems, "missing project variables: "+strings.Join(missing, ", "))
-	}
-	if len(unknown) > 0 {
-		problems = append(problems, "unknown project variables: "+strings.Join(unknown, ", "))
-	}
-	return fmt.Errorf("%s", strings.Join(problems, "; "))
-}

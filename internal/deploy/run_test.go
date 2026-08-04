@@ -33,8 +33,7 @@ func TestExecuteEndToEnd(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "execute-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "execute-plant-value"})
 
 	result, err := f.execute(t, jsvc, definitionVersion, candidate.ID,
 		&artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID})
@@ -80,8 +79,7 @@ func TestExecuteFailureDoesNotPromote(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	first := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "stable-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "stable-plant-value"})
 	_, err := f.execute(t, jsvc, definitionVersion, first.ID,
 		&artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID})
 	require.NoError(t, err)
@@ -94,8 +92,7 @@ func TestExecuteFailureDoesNotPromote(t *testing.T) {
 	changedVersion, _, err := f.projects.SubmitCandidate(ctx, f.projectID, []byte(changedManifest), "yaml")
 	require.NoError(t, err)
 	second := f.stage(t,
-		map[string]string{"APP_DOMAIN": "changed.example.com"},
-		map[string]string{"SESSION_SECRET": "failed-plant-value"})
+		map[string]string{"APP_DOMAIN": "changed.example.com", "SESSION_SECRET": "failed-plant-value"})
 
 	boom := errors.New("build failed: secret failed-plant-value leaked into output")
 	result, err := f.execute(t, jsvc, changedVersion, second.ID, &artifactstore.Fake{
@@ -128,7 +125,7 @@ func TestExecuteFailureDoesNotPromote(t *testing.T) {
 	require.Equal(t, targetBefore.UpdatedAt, targetAfter.UpdatedAt)
 	var staged int
 	require.NoError(t, f.st.Pool.QueryRow(ctx,
-		"SELECT (SELECT count(*) FROM environment_values WHERE state = 'staged') + (SELECT count(*) FROM environment_secrets WHERE state = 'staged')").Scan(&staged))
+		"SELECT count(*) FROM environment_secrets WHERE state = 'staged'").Scan(&staged))
 	require.Zero(t, staged)
 }
 
@@ -144,8 +141,7 @@ func TestDeploymentPersistsNoSecretPlaintext(t *testing.T) {
 	const planted = "s3cr3t-plant-value-8829"
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": planted})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": planted})
 	_, err := f.execute(t, jsvc, definitionVersion, candidate.ID,
 		&artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID})
 	require.NoError(t, err)
@@ -154,7 +150,6 @@ func TestDeploymentPersistsNoSecretPlaintext(t *testing.T) {
 		"SELECT COALESCE(string_agg(document::text, ' '), '') FROM revisions",
 		"SELECT COALESCE(string_agg(message, ' '), '') FROM run_logs",
 		"SELECT COALESCE(string_agg(fields::text, ' '), '') FROM run_logs",
-		"SELECT COALESCE(string_agg(value, ' '), '') FROM environment_values",
 		"SELECT COALESCE(string_agg(definition::text, ' '), '') FROM definition_versions",
 		"SELECT COALESCE(string_agg(provenance::text, ' '), '') FROM artifacts",
 	} {
@@ -179,8 +174,7 @@ func TestRestartPreservesTargetAndRunIdentity(t *testing.T) {
 	// Deploy to establish a target.
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "restart-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "restart-plant-value"})
 	deployed, err := f.execute(t, jsvc, definitionVersion, candidate.ID,
 		&artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID})
 	require.NoError(t, err)
@@ -253,8 +247,7 @@ func TestExecuteRefusesConcurrentDeployment(t *testing.T) {
 
 	definitionVersion := f.submit(t, testManifest, 0)
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "concurrent-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "concurrent-plant-value"})
 	_, err = f.execute(t, jsvc, definitionVersion, candidate.ID,
 		&artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID})
 	require.ErrorIs(t, err, ErrDeploymentInFlight)

@@ -36,7 +36,7 @@ type Fake struct {
 // Resolve implements the deploy resolver seam.
 func (f *Fake) Resolve(ctx context.Context, application string, source compiler.ApplicationSource) (Resolved, error) {
 	kind := revision.KindImport
-	upstream := source.Image
+	upstream := source.Image.Literal()
 	contextHash := ""
 	if source.Kind == "build" {
 		kind = revision.KindBuildLocal

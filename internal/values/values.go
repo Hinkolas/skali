@@ -1,14 +1,13 @@
 // Package values implements the environment-values import model: dotenv
-// parsing, validation against a compiled definition's value requirements, and
-// plain/secret separation. Secrecy is declared by the manifest, never by the
-// file. An empty value counts as unset, mirroring expression resolution, and
-// defaults stay in the definition rather than being copied into the resolved
+// parsing and the single contract check between a compiled definition's
+// variable requirements and a provided value set. Every value is secret;
+// there is no plain class. A present empty string is a real value, and
+// defaults stay in the definition rather than being copied into the provided
 // set. The original file is an import format only; it is never persisted.
 package values
 
 import (
 	"fmt"
-	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,78 +43,41 @@ func Parse(data []byte, path string) (*File, error) {
 	return &File{Path: path, Values: parsed}, nil
 }
 
-// Resolved separates imported values by declared secrecy. Plain values become
-// typed environment values; secret values enter the secret store and are
-// represented elsewhere only by opaque references.
-type Resolved struct {
-	Plain  map[string]string
-	Secret map[string]string
+// MissingError reports required runtime values absent from a provided set.
+type MissingError struct {
+	Names []string
 }
 
-// Merged returns one map for local expression resolution and rendering.
-// Remote deployments never use this form; revisions carry secret references.
-func (r Resolved) Merged() map[string]string {
-	merged := make(map[string]string, len(r.Plain)+len(r.Secret))
-	maps.Copy(merged, r.Plain)
-	maps.Copy(merged, r.Secret)
-	return merged
+func (e *MissingError) Error() string {
+	return "missing required project values: " + strings.Join(e.Names, ", ")
 }
 
-type Options struct {
-	// IgnoreUnknown drops keys the definition does not require instead of
-	// rejecting the file. Ignored keys are never imported.
-	IgnoreUnknown bool
-}
-
-// ValidationError reports every missing required and unknown key at once.
-type ValidationError struct {
-	Missing []string
-	Unknown []string
-}
-
-func (e *ValidationError) Error() string {
-	var problems []string
-	if len(e.Missing) > 0 {
-		problems = append(problems, "missing required project values: "+strings.Join(e.Missing, ", "))
-	}
-	if len(e.Unknown) > 0 {
-		problems = append(problems, "unknown project values: "+strings.Join(e.Unknown, ", "))
-	}
-	return strings.Join(problems, "; ")
-}
-
-// Resolve validates a parsed file against the compiled definition's value
-// requirements and separates the accepted values by secrecy.
-func Resolve(requirements []compiler.VariableRequirement, file *File, options Options) (Resolved, error) {
-	resolved := Resolved{Plain: map[string]string{}, Secret: map[string]string{}}
-	failure := &ValidationError{}
+// Conform intersects a provided value set with the definition's runtime
+// variable requirements. kept is provided minus orphans; missing lists
+// required runtime names absent from provided; orphaned lists provided names
+// no runtime reference requires, sorted. Orphans are advisory, never errors:
+// a stored value whose reference was removed must not block deployments.
+// Build-only names never participate; they resolve client-side.
+func Conform[V any](requirements []compiler.VariableRequirement, provided map[string]V) (kept map[string]V, missing, orphaned []string) {
 	known := make(map[string]bool, len(requirements))
 	for _, requirement := range requirements {
-		known[requirement.Name] = true
-		value := file.Values[requirement.Name]
-		if value == "" {
-			if requirement.Required {
-				failure.Missing = append(failure.Missing, requirement.Name)
-			}
+		if !requirement.Runtime {
 			continue
 		}
-		if requirement.Secret {
-			resolved.Secret[requirement.Name] = value
+		known[requirement.Name] = true
+		if _, present := provided[requirement.Name]; !present && requirement.Required {
+			missing = append(missing, requirement.Name)
+		}
+	}
+	kept = make(map[string]V, len(provided))
+	for name, value := range provided {
+		if known[name] {
+			kept[name] = value
 		} else {
-			resolved.Plain[requirement.Name] = value
+			orphaned = append(orphaned, name)
 		}
 	}
-	if !options.IgnoreUnknown {
-		for name := range file.Values {
-			if !known[name] {
-				failure.Unknown = append(failure.Unknown, name)
-			}
-		}
-	}
-	if len(failure.Missing) > 0 || len(failure.Unknown) > 0 {
-		sort.Strings(failure.Missing)
-		sort.Strings(failure.Unknown)
-		return Resolved{}, failure
-	}
-	return resolved, nil
+	sort.Strings(missing)
+	sort.Strings(orphaned)
+	return kept, missing, orphaned
 }

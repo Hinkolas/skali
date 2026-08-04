@@ -210,7 +210,7 @@ func newDevCommand() *cobra.Command {
 			"revision history are retained, so the next skali dev brings it\n" +
 			"back with its data. With --purge the project's local environment\n" +
 			"is destroyed completely, including volumes and all values,\n" +
-			"secrets, revisions, and history; that decision is one-way.",
+			"revisions, and history; that decision is one-way.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			return runDevDown(command, purge, yes)
@@ -297,7 +297,7 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 
 	if purge && !yes {
 		fmt.Fprintln(out, style.BoldRed(fmt.Sprintf("This destroys the local environment of %s completely:", name)))
-		fmt.Fprintln(out, "  its namespace including all volumes, and its values, secrets,")
+		fmt.Fprintln(out, "  its namespace including all volumes, and its values,")
 		fmt.Fprintln(out, "  revisions, and history on the local platform.")
 		fmt.Fprintln(out, "Nothing outside this machine is affected.")
 		confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{

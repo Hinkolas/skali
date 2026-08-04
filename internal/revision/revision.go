@@ -1,9 +1,10 @@
 // Package revision assembles the immutable, environment-resolved revision a
-// deployment targets: the canonical definition, non-secret values, opaque
-// secret references, verified artifacts, and required target capabilities,
-// sealed by a deterministic checksum. Building is pure: artifact resolution,
-// clocks, and network access happen before Build, so the same inputs always
-// produce the same checksum. Secret plaintext never enters a revision.
+// deployment targets: the canonical definition, opaque value references,
+// verified artifacts, and required target capabilities, sealed by a
+// deterministic checksum. Building is pure: artifact resolution, clocks, and
+// network access happen before Build, so the same inputs always produce the
+// same checksum. Value plaintext never enters a revision; every value is
+// pinned as a (name, version) reference into the encrypted store.
 package revision
 
 import (
@@ -11,16 +12,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/values"
 )
 
-const SchemaVersion = "1"
+const SchemaVersion = "2"
 
 // Artifact kinds. Imported upstream content is a reconstructable cache;
 // locally or cloud-built artifacts may be the only deployable copy.
@@ -38,16 +39,15 @@ type Revision struct {
 	DefinitionHash  string                     `json:"definitionHash"`
 	Definition      compiler.ProjectDefinition `json:"definition"`
 	ValuesHash      string                     `json:"valuesHash"`
-	Values          map[string]string          `json:"values,omitempty"`
 	Secrets         map[string]SecretRef       `json:"secrets,omitempty"`
 	Artifacts       map[string]Artifact        `json:"artifacts,omitempty"`
 	Capabilities    []string                   `json:"capabilities"`
 	Checksum        string                     `json:"checksum"`
 }
 
-// SecretRef represents a secret value without its plaintext. The name is the
-// map key; the version identifies which stored secret generation the
-// revision was resolved against.
+// SecretRef represents a value without its plaintext. The name is the map
+// key; the version identifies which stored generation the revision was
+// resolved against.
 type SecretRef struct {
 	Version int `json:"version"`
 }
@@ -72,9 +72,10 @@ const PendingDigest = "sha256:00000000000000000000000000000000000000000000000000
 type Input struct {
 	Result      *compiler.Result
 	Environment string
-	Values      values.Resolved
-	// SecretVersions selects the stored secret generation per name; a present
-	// secret without an entry records version 1.
+	// SecretVersions is the provided value set: the stored generation per
+	// name. The caller resolves it against the store; Build intersects it
+	// with the definition's runtime requirements. A name with version 0
+	// records version 1.
 	SecretVersions  map[string]int
 	Artifacts       map[string]Artifact
 	CompilerVersion string
@@ -93,7 +94,8 @@ func Build(input Input) (*Revision, error) {
 	}
 	definition := input.Result.Definition
 
-	if err := checkValues(definition, input.Values); err != nil {
+	kept, err := checkValues(definition, input.SecretVersions)
+	if err != nil {
 		return nil, err
 	}
 	artifacts, err := checkArtifacts(definition, input.Artifacts)
@@ -101,11 +103,8 @@ func Build(input Input) (*Revision, error) {
 		return nil, err
 	}
 
-	plain := make(map[string]string, len(input.Values.Plain))
-	maps.Copy(plain, input.Values.Plain)
-	secrets := make(map[string]SecretRef, len(input.Values.Secret))
-	for name := range input.Values.Secret {
-		version := input.SecretVersions[name]
+	secrets := make(map[string]SecretRef, len(kept))
+	for name, version := range kept {
 		if version == 0 {
 			version = 1
 		}
@@ -119,8 +118,7 @@ func Build(input Input) (*Revision, error) {
 		CompilerVersion: input.CompilerVersion,
 		DefinitionHash:  input.Result.Hash,
 		Definition:      definition,
-		ValuesHash:      hashJSON(map[string]any{"values": plain, "secrets": secrets}),
-		Values:          plain,
+		ValuesHash:      hashJSON(secrets),
 		Secrets:         secrets,
 		Artifacts:       artifacts,
 		Capabilities:    requiredCapabilities(definition),
@@ -142,42 +140,17 @@ func valuesErrorf(format string, args ...any) error {
 	return &ValuesError{Message: fmt.Sprintf(format, args...)}
 }
 
-// checkValues enforces the separation contract between the compiled
-// requirements and the imported values: secrets only in the secret set, plain
-// values only in the plain set, required values present, nothing unknown.
-func checkValues(definition compiler.ProjectDefinition, resolved values.Resolved) error {
-	known := make(map[string]bool, len(definition.RequiredVariables))
-	for _, requirement := range definition.RequiredVariables {
-		known[requirement.Name] = true
-		_, plain := resolved.Plain[requirement.Name]
-		_, secret := resolved.Secret[requirement.Name]
-		if requirement.Secret {
-			if plain {
-				return valuesErrorf("secret value %s must not appear in the plain value set", requirement.Name)
-			}
-			if !secret {
-				return valuesErrorf("missing secret value %s", requirement.Name)
-			}
-			continue
-		}
-		if secret {
-			return valuesErrorf("value %s is not declared secret but was imported as secret", requirement.Name)
-		}
-		if !plain && requirement.Required {
-			return valuesErrorf("missing required value %s", requirement.Name)
-		}
+// checkValues intersects the provided value set with the definition's
+// runtime requirements. Missing required values are the deployer's mistake
+// and fail the build; orphaned values (stored but no longer referenced) are
+// intersected away silently so a removed reference can never wedge an
+// environment.
+func checkValues(definition compiler.ProjectDefinition, provided map[string]int) (map[string]int, error) {
+	kept, missing, _ := values.Conform(definition.RequiredVariables, provided)
+	if len(missing) > 0 {
+		return nil, valuesErrorf("missing required values: %s", strings.Join(missing, ", "))
 	}
-	for _, name := range sortedKeys(resolved.Plain) {
-		if !known[name] {
-			return valuesErrorf("value %s is not required by the definition", name)
-		}
-	}
-	for _, name := range sortedKeys(resolved.Secret) {
-		if !known[name] {
-			return valuesErrorf("secret value %s is not required by the definition", name)
-		}
-	}
-	return nil
+	return kept, nil
 }
 
 func checkArtifacts(definition compiler.ProjectDefinition, provided map[string]Artifact) (map[string]Artifact, error) {
@@ -200,7 +173,12 @@ func checkArtifacts(definition compiler.ProjectDefinition, provided map[string]A
 				return nil, fmt.Errorf("application %s uses an image source; its artifact kind must be %s", key, KindImport)
 			}
 			if artifact.Upstream == "" {
-				artifact.Upstream = source.Image
+				// Expression-bearing image references are resolved during
+				// artifact preparation, which records the resolved upstream.
+				if !source.Image.IsLiteral() {
+					return nil, fmt.Errorf("imported artifact for application %s must carry the resolved upstream reference", key)
+				}
+				artifact.Upstream = source.Image.Literal()
 			}
 			if artifact.ContextHash != "" {
 				return nil, fmt.Errorf("imported artifact for application %s must not carry a build-context hash", key)

@@ -1,6 +1,7 @@
--- Secret rows mirror environment_values exactly, with ciphertext instead of
--- plaintext. Version listings deliberately never select the ciphertext;
--- only the redaction and resolution paths read it.
+-- The single environment value store: every value is a secret, stored as
+-- ciphertext in append-only per-name versions. Version listings deliberately
+-- never select the ciphertext; only the redaction and resolution paths read
+-- it.
 
 -- name: StageEnvironmentSecret :one
 INSERT INTO environment_secrets (id, environment_id, name, version, ciphertext, state, candidate_id)
@@ -52,3 +53,11 @@ WHERE environment_id = $1 AND candidate_id = $2 AND state = 'staged';
 
 -- name: SweepStagedEnvironmentSecrets :execrows
 DELETE FROM environment_secrets WHERE state = 'staged' AND created_at < $1;
+
+-- Tombstone: supersede the current generation without a successor. The value
+-- disappears from future revisions while pinned (name, version) resolution
+-- keeps working; a later stage of the same name continues the version
+-- sequence because version allocation ignores state.
+-- name: UnsetCurrentEnvironmentSecrets :execrows
+UPDATE environment_secrets SET state = 'superseded'
+WHERE environment_id = @environment_id AND state = 'current' AND name = ANY(@names::text[]);

@@ -229,9 +229,10 @@ type StageEnvironmentSecretRow struct {
 	CreatedAt     time.Time
 }
 
-// Secret rows mirror environment_values exactly, with ciphertext instead of
-// plaintext. Version listings deliberately never select the ciphertext;
-// only the redaction and resolution paths read it.
+// The single environment value store: every value is a secret, stored as
+// ciphertext in append-only per-name versions. Version listings deliberately
+// never select the ciphertext; only the redaction and resolution paths read
+// it.
 func (q *Queries) StageEnvironmentSecret(ctx context.Context, arg StageEnvironmentSecretParams) (StageEnvironmentSecretRow, error) {
 	row := q.db.QueryRow(ctx, stageEnvironmentSecret,
 		arg.ID,
@@ -277,6 +278,28 @@ DELETE FROM environment_secrets WHERE state = 'staged' AND created_at < $1
 
 func (q *Queries) SweepStagedEnvironmentSecrets(ctx context.Context, createdAt time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, sweepStagedEnvironmentSecrets, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unsetCurrentEnvironmentSecrets = `-- name: UnsetCurrentEnvironmentSecrets :execrows
+UPDATE environment_secrets SET state = 'superseded'
+WHERE environment_id = $1 AND state = 'current' AND name = ANY($2::text[])
+`
+
+type UnsetCurrentEnvironmentSecretsParams struct {
+	EnvironmentID uuid.UUID
+	Names         []string
+}
+
+// Tombstone: supersede the current generation without a successor. The value
+// disappears from future revisions while pinned (name, version) resolution
+// keeps working; a later stage of the same name continues the version
+// sequence because version allocation ignores state.
+func (q *Queries) UnsetCurrentEnvironmentSecrets(ctx context.Context, arg UnsetCurrentEnvironmentSecretsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unsetCurrentEnvironmentSecrets, arg.EnvironmentID, arg.Names)
 	if err != nil {
 		return 0, err
 	}

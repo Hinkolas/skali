@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { renderExpression } from '$lib/types/definition';
 	import type { ServiceView } from '$lib/models/service';
 	import type { Project } from '$lib/types/project';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
@@ -53,7 +54,9 @@
 
 	{#if service.type === 'application'}
 		<div class="font-mono text-text-muted truncate text-sm">
-			{service.config.source.image ?? service.config.source.build?.context ?? 'source'}
+			{renderExpression(service.config.source.image) ||
+				service.config.source.build?.context ||
+				'source'}
 		</div>
 		<div class="font-mono text-text-faint border-border-subtle flex gap-3 border-t pt-2.75 text-xs">
 			<span>

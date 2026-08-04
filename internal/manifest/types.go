@@ -75,20 +75,10 @@ type Project struct {
 	Version      string                 `yaml:"version" json:"version" jsonschema:"Manifest schema version. Currently 1."`
 	Name         string                 `yaml:"name" json:"name" jsonschema:"Stable project name."`
 	Description  string                 `yaml:"description,omitempty" json:"description,omitempty" jsonschema:"Human-readable project description."`
-	Values       map[string]Value       `yaml:"values,omitempty" json:"values,omitempty" jsonschema:"Project value declarations keyed by environment value name."`
 	Applications map[string]Application `yaml:"applications,omitempty" json:"applications,omitempty" jsonschema:"Container applications keyed by stable service name."`
 	Databases    map[string]Database    `yaml:"databases,omitempty" json:"databases,omitempty" jsonschema:"Managed databases keyed by stable service name."`
 	Buckets      map[string]Bucket      `yaml:"buckets,omitempty" json:"buckets,omitempty" jsonschema:"Managed object-storage buckets keyed by stable service name."`
 	Backups      map[string]Backup      `yaml:"backups,omitempty" json:"backups,omitempty" jsonschema:"Project-wide coordinated backup policies."`
-}
-
-// Value declares metadata for a project value referenced through ${NAME}
-// expressions. Existence, required-ness, and defaults derive from use; this
-// declaration adds secrecy and documentation. Secrecy never comes from an
-// environment file.
-type Value struct {
-	Secret      bool   `yaml:"secret,omitempty" json:"secret,omitempty" jsonschema:"Marks the value as secret: it enters the secret store, is redacted everywhere, and is usable only in secret-capable positions."`
-	Description string `yaml:"description,omitempty" json:"description,omitempty" jsonschema:"Human-readable purpose of the value."`
 }
 
 type Application struct {
@@ -111,7 +101,7 @@ type Build struct {
 	Context    string            `yaml:"context,omitempty" json:"context,omitempty" jsonschema:"Build context relative to the project root."`
 	Dockerfile string            `yaml:"dockerfile,omitempty" json:"dockerfile,omitempty" jsonschema:"Dockerfile path relative to the build context."`
 	Target     string            `yaml:"target,omitempty" json:"target,omitempty" jsonschema:"Optional multi-stage build target."`
-	Arguments  map[string]Scalar `yaml:"arguments,omitempty" json:"arguments,omitempty" jsonschema:"Non-secret build arguments."`
+	Arguments  map[string]Scalar `yaml:"arguments,omitempty" json:"arguments,omitempty" jsonschema:"Build arguments. Project value expressions resolve from a local environment file at build time and persist in the image configuration."`
 }
 
 type Port struct {

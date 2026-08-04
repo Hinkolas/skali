@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -102,6 +103,9 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		return result, s.fail(ctx, in, runID, writer, err)
 	}
 	result.RevisionID = prepared.RevisionID
+	if len(prepared.Orphaned) > 0 {
+		_ = writer.Warn(ctx, "ignoring stored values not referenced by this definition: "+strings.Join(prepared.Orphaned, ", "))
+	}
 	_ = writer.Info(ctx, "revision "+prepared.Revision.Checksum+" stored")
 	if err := in.Journal.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded); err != nil {
 		return result, s.fail(ctx, in, runID, nil, err)

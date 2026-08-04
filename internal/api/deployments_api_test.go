@@ -39,9 +39,6 @@ func decodeTokenAccessNames(t *testing.T, body map[string]any) []string {
 // its removal a destructive change for the gate tests.
 const deployAPIManifest = `version: "1"
 name: demo
-values:
-  SESSION_SECRET:
-    secret: true
 applications:
   web:
     build:
@@ -61,9 +58,6 @@ applications:
 // deployAPIManifestNoVolume drops the volume: a destructive update.
 const deployAPIManifestNoVolume = `version: "1"
 name: demo
-values:
-  SESSION_SECRET:
-    secret: true
 applications:
   web:
     build:
@@ -650,7 +644,7 @@ func TestPlanReportsValuesViolation(t *testing.T) {
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, status, "%v", body)
 	require.Equal(t, "invalid_values", errCode(body))
-	require.Equal(t, "missing secret value SESSION_SECRET", errMessage(body))
+	require.Equal(t, "missing required values: SESSION_SECRET", errMessage(body))
 }
 
 func errCode(body map[string]any) string {

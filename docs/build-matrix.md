@@ -11,7 +11,7 @@ matrix documents what the R3 build schema and engine support.
 | --- | --- | --- |
 | Dockerfile builds | `build.context`, `build.dockerfile` | Paths are project-root-relative and cannot escape the root; the Dockerfile may live outside the context directory. |
 | Multi-stage targets | `build.target` | Passed as `--target`; part of the build configuration hash. |
-| Plain build arguments | `build.arguments` | Passed as `--build-arg`; values may reference non-secret project values (`${NAME}`). Part of the configuration hash. |
+| Build arguments | `build.arguments` | Passed as `--build-arg`; `${NAME}` references resolve client-side from a local env file (stored values are write-only). Part of the configuration hash. |
 | Target platform | (derived) | `linux/<host arch>` in R3; recorded on the build and part of the input hash. Cross-platform selection is an R4 surface. |
 | Ignore rules | `.dockerignore` in the context root | dockerignore pattern syntax, including `!` exceptions. Patterns are rooted: use `**/*.log` to reach subdirectories. |
 | Layer caching | (automatic) | The engine uses the local BuildKit cache; an unchanged input hash skips the build entirely and reuses the verified artifact. |
@@ -19,11 +19,13 @@ matrix documents what the R3 build schema and engine support.
 
 ## Enforced safety rules
 
-- Secret project values can never reach `build.arguments`; the compiler
-  rejects the reference. The engine supports BuildKit secret mounts
-  (`--secret id=...,env=...`) for the future secret-input surface; values
-  travel only through the child process environment, never argv, image
-  history, or any hash.
+- Build arguments persist in image configuration and history, so never
+  reference credentials in `build.arguments`. `${NAME}` references there
+  resolve only from a local environment file; the stored value store is
+  write-only and can never feed a build. The engine supports BuildKit
+  secret mounts (`--secret id=...,env=...`) for the future secret-input
+  surface; those values travel only through the child process
+  environment, never argv, image history, or any hash.
 - `.git/`, `.hg/`, `.svn/`, `.skali/`, `.env`, `.env.*`, and the selected
   environment file are always excluded from the context and its hash.
 - Symlinks must stay inside the context; absolute or escaping targets fail

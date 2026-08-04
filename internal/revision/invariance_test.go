@@ -9,18 +9,12 @@ import (
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
-	"github.com/Hinkolas/skali/internal/values"
 )
 
 // Two semantically identical manifests with every map in a different key
-// order: applications, values, ports, environment.
+// order: applications, ports, environment.
 const orderedManifest = `version: "1"
 name: demo
-values:
-  API_KEY:
-    secret: true
-  APP_DOMAIN:
-    description: public domain
 applications:
   api:
     image: example.invalid/api:1
@@ -55,11 +49,6 @@ applications:
         protocol: http
         port: 8080
     image: example.invalid/api:1
-values:
-  APP_DOMAIN:
-    description: public domain
-  API_KEY:
-    secret: true
 `
 
 func compileSource(t *testing.T, source string) *compiler.Result {
@@ -72,29 +61,28 @@ func compileSource(t *testing.T, source string) *compiler.Result {
 }
 
 // Exit criterion: reordering maps does not change a revision. The manifest
-// maps, the value maps, and the artifact maps are all built in different
-// orders; the checksums must be identical.
+// maps, the value version maps, and the artifact maps are all built in
+// different orders; the checksums must be identical.
 func TestBuildMapOrderInvariance(t *testing.T) {
 	t.Parallel()
 	input := func(result *compiler.Result, reversed bool) Input {
-		plain := map[string]string{}
-		secret := map[string]string{}
+		versions := map[string]int{}
 		artifacts := map[string]Artifact{}
 		if reversed {
 			artifacts["worker"] = Artifact{Reference: "r/worker", Digest: digest("b"), Kind: KindImport}
 			artifacts["api"] = Artifact{Reference: "r/api", Digest: digest("a"), Kind: KindImport}
-			secret["API_KEY"] = "irrelevant-plaintext"
-			plain["APP_DOMAIN"] = "demo.example.com"
+			versions["API_KEY"] = 1
+			versions["APP_DOMAIN"] = 1
 		} else {
-			plain["APP_DOMAIN"] = "demo.example.com"
-			secret["API_KEY"] = "irrelevant-plaintext"
+			versions["APP_DOMAIN"] = 1
+			versions["API_KEY"] = 1
 			artifacts["api"] = Artifact{Reference: "r/api", Digest: digest("a"), Kind: KindImport}
 			artifacts["worker"] = Artifact{Reference: "r/worker", Digest: digest("b"), Kind: KindImport}
 		}
 		return Input{
 			Result:          result,
 			Environment:     "production",
-			Values:          values.Resolved{Plain: plain, Secret: secret},
+			SecretVersions:  versions,
 			Artifacts:       artifacts,
 			CompilerVersion: "test",
 		}
@@ -109,20 +97,18 @@ func TestBuildMapOrderInvariance(t *testing.T) {
 	require.Equal(t, first.Checksum, second.Checksum)
 }
 
-// Exit criterion: secrets cannot appear in revision fixtures. The golden
-// documents are scanned for the planted secret plaintexts their inputs use.
-func TestGoldenFixturesContainNoSecretPlaintext(t *testing.T) {
+// Exit criterion: value plaintext cannot appear in revision fixtures. Build
+// only ever receives (name, version) references, so a fixture containing a
+// values map would mean the schema regressed.
+func TestGoldenFixturesCarryOnlyValueReferences(t *testing.T) {
 	t.Parallel()
-	planted := []string{"test-only-secret"}
 	entries, err := os.ReadDir("testdata")
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	for _, entry := range entries {
 		data, err := os.ReadFile(filepath.Join("testdata", entry.Name()))
 		require.NoError(t, err)
-		for _, secret := range planted {
-			require.NotContains(t, string(data), secret,
-				"golden fixture %s contains secret plaintext", entry.Name())
-		}
+		require.NotContains(t, string(data), "\"values\":",
+			"golden fixture %s carries a plaintext values map", entry.Name())
 	}
 }

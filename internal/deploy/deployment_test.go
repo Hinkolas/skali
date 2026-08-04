@@ -99,8 +99,7 @@ func TestFallbackEnvironmentTarget(t *testing.T) {
 	}
 
 	candidate := f.stage(t,
-		map[string]string{"APP_DOMAIN": "demo.example.com"},
-		map[string]string{"SESSION_SECRET": "fallback-plant-value"})
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "fallback-plant-value"})
 	revA := promote(testManifest, 0, candidate.ID)
 
 	// Before any activation there is nothing to fall back to.

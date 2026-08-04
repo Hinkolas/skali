@@ -32,7 +32,6 @@ type Change struct {
 type ValueChange struct {
 	Name   string `json:"name"`
 	Action Action `json:"action"`
-	Secret bool   `json:"secret,omitempty"`
 }
 
 type Plan struct {
@@ -150,34 +149,24 @@ func (p *Plan) diffCollection(active, candidate *revision.Revision, collection s
 	}
 }
 
+// diffValues compares value references by version; plaintext never enters a
+// revision, so a value change is always a version change.
 func (p *Plan) diffValues(active, candidate *revision.Revision) {
-	activePlain, activeSecrets := map[string]string{}, map[string]revision.SecretRef{}
+	activeSecrets := map[string]revision.SecretRef{}
 	if active != nil {
-		activePlain, activeSecrets = active.Values, active.Secrets
+		activeSecrets = active.Secrets
 	}
 
-	for _, name := range unionKeys(activePlain, candidate.Values) {
-		activeValue, inActive := activePlain[name]
-		candidateValue, inCandidate := candidate.Values[name]
-		switch {
-		case !inActive:
-			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionCreate})
-		case !inCandidate:
-			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionRemove})
-		case activeValue != candidateValue:
-			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionUpdate})
-		}
-	}
 	for _, name := range unionKeys(activeSecrets, candidate.Secrets) {
 		activeRef, inActive := activeSecrets[name]
 		candidateRef, inCandidate := candidate.Secrets[name]
 		switch {
 		case !inActive:
-			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionCreate, Secret: true})
+			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionCreate})
 		case !inCandidate:
-			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionRemove, Secret: true})
+			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionRemove})
 		case activeRef.Version != candidateRef.Version:
-			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionUpdate, Secret: true})
+			p.Values = append(p.Values, ValueChange{Name: name, Action: ActionUpdate})
 		}
 	}
 	sort.SliceStable(p.Values, func(i, j int) bool { return p.Values[i].Name < p.Values[j].Name })

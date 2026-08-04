@@ -227,8 +227,8 @@ internal/
   runtimelogs/   live application log streaming (cluster pass-through)
   store/         pgx pool/tx glue + sqlc-generated queries
   testdb/        ephemeral Postgres database per test
-  values/        dotenv import and typed value resolution
-  valuestore/    versioned environment values, encrypted secrets, staging
+  values/        dotenv import and the value contract check
+  valuestore/    versioned write-only environment values, encrypted, staging
 web/           SvelteKit BFF (adapter-node); lib/mock is the services design
                spec being promoted to the real API milestone by milestone
 .plan/         superseded first Kubernetes rework plan; historical context only

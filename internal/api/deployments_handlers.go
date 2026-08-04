@@ -167,7 +167,8 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		Plan     *plan.Plan              `json:"plan"`
 		Actions  []artifactActionPayload `json:"actions"`
 		UpToDate bool                    `json:"up_to_date"`
-	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate})
+		Orphaned []string                `json:"orphaned,omitempty"`
+	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned})
 }
 
 // POST /v1/environments/{id}/deployments
@@ -235,10 +236,12 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		Plan       *plan.Plan              `json:"plan"`
 		Actions    []artifactActionPayload `json:"actions"`
 		UpToDate   bool                    `json:"up_to_date"`
+		Orphaned   []string                `json:"orphaned,omitempty"`
 	}{
 		Deployment: newDeploymentPayload(opened.Deployment),
 		Plan:       opened.Plan,
 		Actions:    h.actionPayloads(r.Context(), opened.Deployment.ProjectID, opened.Actions),
+		Orphaned:   opened.Orphaned,
 	})
 }
 

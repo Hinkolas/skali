@@ -720,9 +720,8 @@ paths:
       operationId: listEnvironmentValues
       summary: List the current environment values
       description: |
-        Names, secrecy, and versions of every current value. Plain values
-        include their content; secret values are write-only and never
-        return content.
+        Names and versions of every current value. Values are write-only
+        and never returned.
       tags: [values]
       responses:
         "200":
@@ -742,12 +741,11 @@ paths:
       operationId: submitEnvironmentValues
       summary: Stage candidate environment values
       description: |
-        Submits one flat name-to-value map. Secrecy is declared by the
-        manifest values block alone: the server separates plain from
-        secret against the project's current draft definition and rejects
-        undeclared names. Empty values follow the dotenv rule (empty =
-        unset) and are dropped. The staged candidate changes nothing
-        until a deployment promotes it; unpromoted candidates are
+        Submits one flat name-to-value map. Every value is secret. Names
+        the definition does not reference are skipped and reported, never
+        an error. An empty string is stored as a real value; removal is
+        the DELETE operation. The staged candidate changes nothing until
+        a deployment promotes it; unpromoted candidates are
         garbage-collected.
       tags: [values]
       requestBody:
@@ -764,26 +762,55 @@ paths:
                     type: string
       responses:
         "201":
-          description: Candidate staged; secret values are not echoed.
+          description: Candidate staged; values are never echoed.
           content:
             application/json:
               schema:
                 type: object
-                required: [candidate_id, plain, secret]
+                required: [candidate_id, staged, skipped]
                 properties:
                   candidate_id:
                     type: string
                     format: uuid
-                  plain:
+                  staged:
                     type: array
                     items: { type: string }
-                  secret:
+                  skipped:
                     type: array
                     items: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/environments/{id}/values/{name}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      operationId: deleteEnvironmentValue
+      summary: Unset one environment value
+      description: |
+        Removes the current value immediately: the next deployment no
+        longer includes the name, while revisions that pinned earlier
+        versions keep resolving them. Deleting a name with no current
+        value is 404 so typos surface.
+      tags: [values]
+      responses:
+        "204":
+          description: Value unset.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/revisions:
     parameters:
@@ -824,10 +851,10 @@ paths:
       operationId: getRevision
       summary: Get a revision document
       description: |
-        The complete immutable revision: canonical definition, resolved
-        plain values, opaque secret references and versions, digest-pinned
-        artifacts, and required capabilities. Secret plaintext never
-        appears in a revision.
+        The complete immutable revision: canonical definition, opaque
+        value references and versions, digest-pinned artifacts, and
+        required capabilities. Value plaintext never appears in a
+        revision.
       tags: [revisions]
       responses:
         "200":
@@ -2679,19 +2706,15 @@ components:
     ValueEntry:
       type: object
       description: |
-        One current environment value. `value` is present for plain
-        entries only; secret entries carry name and version alone.
-      required: [name, secret, version]
+        One current environment value. Values are write-only, so an entry
+        carries the name and version alone.
+      required: [name, version]
       properties:
         name:
           type: string
-        secret:
-          type: boolean
         version:
           type: integer
           format: int64
-        value:
-          type: string
 
     Diagnostic:
       type: object
@@ -2799,8 +2822,6 @@ components:
               action:
                 type: string
                 enum: [create, update, remove]
-              secret:
-                type: boolean
 
     PlanRequest:
       type: object
@@ -2844,6 +2865,13 @@ components:
           items: { $ref: "#/components/schemas/ArtifactAction" }
         up_to_date:
           type: boolean
+        orphaned:
+          type: array
+          description: |
+            Stored value names the definition no longer references. They
+            are ignored by deployments; remove them with the value DELETE
+            operation.
+          items: { type: string }
 
     OpenDeploymentRequest:
       type: object
@@ -2929,6 +2957,13 @@ components:
           items: { $ref: "#/components/schemas/ArtifactAction" }
         up_to_date:
           type: boolean
+        orphaned:
+          type: array
+          description: |
+            Stored value names the definition no longer references. They
+            are ignored by deployments; remove them with the value DELETE
+            operation.
+          items: { type: string }
 
     StepIdentity:
       type: object

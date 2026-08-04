@@ -26,8 +26,10 @@ type DefinitionVersion struct {
 
 type StagedValues struct {
 	CandidateID string   `json:"candidate_id"`
-	Plain       []string `json:"plain"`
-	Secret      []string `json:"secret"`
+	Staged      []string `json:"staged"`
+	// Skipped lists submitted names the definition does not reference;
+	// they were not staged.
+	Skipped []string `json:"skipped"`
 }
 
 type BuildInput struct {
@@ -46,7 +48,6 @@ type PlanChange struct {
 type PlanValueChange struct {
 	Name   string `json:"name"`
 	Action string `json:"action"`
-	Secret bool   `json:"secret,omitempty"`
 }
 
 type PlanDocument struct {
@@ -89,6 +90,9 @@ type PlanResult struct {
 	Plan     *PlanDocument    `json:"plan"`
 	Actions  []ArtifactAction `json:"actions"`
 	UpToDate bool             `json:"up_to_date"`
+	// Orphaned lists stored value names the definition no longer
+	// references; deployments ignore them. Advisory only.
+	Orphaned []string `json:"orphaned"`
 }
 
 type Deployment struct {
@@ -107,6 +111,7 @@ type OpenedDeployment struct {
 	Plan       *PlanDocument    `json:"plan"`
 	Actions    []ArtifactAction `json:"actions"`
 	UpToDate   bool             `json:"up_to_date"`
+	Orphaned   []string         `json:"orphaned"`
 }
 
 type CompletedDeployment struct {
@@ -517,13 +522,11 @@ type ServiceStatus struct {
 	} `json:"pods"`
 }
 
-// ValueEntry is one stored environment value; secret entries never carry
-// their value.
+// ValueEntry is one stored environment value; values are write-only, so an
+// entry carries the name and version alone.
 type ValueEntry struct {
 	Name    string `json:"name"`
-	Secret  bool   `json:"secret"`
 	Version int64  `json:"version"`
-	Value   string `json:"value"`
 }
 
 func (c *Client) EnvironmentValues(ctx context.Context, environmentID string) ([]ValueEntry, error) {
@@ -534,6 +537,12 @@ func (c *Client) EnvironmentValues(ctx context.Context, environmentID string) ([
 		return nil, err
 	}
 	return res.Values, nil
+}
+
+// UnsetEnvironmentValue tombstones one stored value: the next deployment no
+// longer includes it, while pinned revisions keep resolving.
+func (c *Client) UnsetEnvironmentValue(ctx context.Context, environmentID, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/environments/"+environmentID+"/values/"+name, nil, nil)
 }
 
 func (c *Client) EnvironmentStatus(ctx context.Context, environmentID string) (*EnvironmentStatus, error) {

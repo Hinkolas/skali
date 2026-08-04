@@ -29,7 +29,7 @@
 			case 'application': {
 				const source =
 					service.config.source.kind === 'image'
-						? service.config.source.image
+						? renderExpression(service.config.source.image)
 						: `build ${service.config.source.build?.context ?? '.'}`;
 				return [source, appDomain].filter(Boolean).join(' · ');
 			}

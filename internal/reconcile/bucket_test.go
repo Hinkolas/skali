@@ -13,9 +13,6 @@ import (
 
 const bucketManifest = `version: "1"
 name: demo
-values:
-  SESSION_SECRET:
-    secret: true
 applications:
   web:
     image: ghcr.io/example/web:1.0.0

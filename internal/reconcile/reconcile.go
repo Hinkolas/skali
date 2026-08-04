@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -63,7 +62,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		return 0, fmt.Errorf("reconcile: load target revision: %w", err)
 	}
 
-	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID))
+	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID, rev))
 
 	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt)
 	if err != nil {
@@ -427,21 +426,13 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	for name, secret := range rev.Secrets {
 		refs[name] = secret.Version
 	}
-	plaintexts, err := k.deps.Values.SecretPlaintexts(ctx, environmentID, refs)
+	variables, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
 	if err != nil {
 		return nil, err
 	}
-	variables := maps.Clone(rev.Values)
-	if variables == nil {
-		variables = map[string]string{}
-	}
-	maps.Copy(variables, plaintexts)
-	data := make(map[string][]byte, len(rev.Values)+len(plaintexts))
-	for name, value := range rev.Values {
-		data[name] = []byte(value)
-	}
-	for name, value := range plaintexts {
-		data[name] = []byte(value)
+	data, err := rendering.EnvironmentSecretData(rev.Definition, variables)
+	if err != nil {
+		return nil, err
 	}
 
 	namespace := rendering.RenderNamespace(rev.Project, rev.Environment, environmentID.String())
@@ -535,15 +526,33 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 	return claimWaiting, nil
 }
 
-// redactor covers the environment's current secrets; kernel log lines carry
+// redactor covers the environment's current values plus, when a revision is
+// given, the exact versions it pinned (a tombstoned value is no longer
+// current but still resolvable by an old revision). Kernel log lines carry
 // no values, so this is defense in depth, not the only barrier.
-func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID) *redact.Redactor {
+func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision) *redact.Redactor {
 	redactor, err := k.deps.Values.Redactor(ctx, environmentID, uuid.Nil)
 	if err != nil {
 		slog.Warn("build redactor", "environment", environmentID, "error", err)
-		return redact.New(nil)
+		redactor = redact.New(nil)
 	}
-	return redactor
+	if rev == nil {
+		return redactor
+	}
+	refs := make(map[string]int, len(rev.Secrets))
+	for name, secret := range rev.Secrets {
+		refs[name] = secret.Version
+	}
+	plaintexts, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
+	if err != nil {
+		slog.Warn("build pinned redactor", "environment", environmentID, "error", err)
+		return redactor
+	}
+	byPlaintext := make(map[string]string, len(plaintexts))
+	for name, value := range plaintexts {
+		byPlaintext[value] = name
+	}
+	return redactor.Merge(redact.New(byPlaintext))
 }
 
 func liveObject(snapshot observe.Snapshot, service, kind string) *observe.Object {

@@ -1,9 +1,9 @@
 {
-  "schemaVersion": "1",
+  "schemaVersion": "2",
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "8de4a230358ff0940b1e96eb92e8313392fa96e1f00a9f1bcee4e007183a3f65",
+  "definitionHash": "4e081b1fea49c2bd24a0cd430672a3893780d475e41ba1b3334557e7b36e87c2",
   "definition": {
     "version": "1",
     "name": "file-sharing",
@@ -15,12 +15,33 @@
           "build": {
             "context": "web",
             "dockerfile": "deploy/Dockerfile",
-            "target": "runtime"
+            "target": {
+              "parts": [
+                {
+                  "kind": "literal",
+                  "value": "runtime"
+                }
+              ]
+            }
           }
         },
         "command": [
-          "/app/file-sharing",
-          "serve"
+          {
+            "parts": [
+              {
+                "kind": "literal",
+                "value": "/app/file-sharing"
+              }
+            ]
+          },
+          {
+            "parts": [
+              {
+                "kind": "literal",
+                "value": "serve"
+              }
+            ]
+          }
         ],
         "environment": {
           "NODE_ENV": {
@@ -160,7 +181,14 @@
                 }
               ]
             },
-            "path": "/",
+            "path": {
+              "parts": [
+                {
+                  "kind": "literal",
+                  "value": "/"
+                }
+              ]
+            },
             "port": {
               "name": "http"
             },
@@ -173,7 +201,14 @@
               "port": {
                 "name": "http"
               },
-              "path": "/health/startup"
+              "path": {
+                "parts": [
+                  {
+                    "kind": "literal",
+                    "value": "/health/startup"
+                  }
+                ]
+              }
             },
             "intervalMillis": 2000,
             "timeoutMillis": 2000,
@@ -184,7 +219,14 @@
               "port": {
                 "name": "http"
               },
-              "path": "/health/ready"
+              "path": {
+                "parts": [
+                  {
+                    "kind": "literal",
+                    "value": "/health/ready"
+                  }
+                ]
+              }
             },
             "intervalMillis": 10000,
             "timeoutMillis": 2000,
@@ -195,7 +237,14 @@
               "port": {
                 "name": "http"
               },
-              "path": "/health/live"
+              "path": {
+                "parts": [
+                  {
+                    "kind": "literal",
+                    "value": "/health/live"
+                  }
+                ]
+              }
             },
             "intervalMillis": 30000,
             "timeoutMillis": 2000,
@@ -227,9 +276,30 @@
         "deployment": {
           "releaseCommand": {
             "command": [
-              "/app/file-sharing",
-              "migrate",
-              "up"
+              {
+                "parts": [
+                  {
+                    "kind": "literal",
+                    "value": "/app/file-sharing"
+                  }
+                ]
+              },
+              {
+                "parts": [
+                  {
+                    "kind": "literal",
+                    "value": "migrate"
+                  }
+                ]
+              },
+              {
+                "parts": [
+                  {
+                    "kind": "literal",
+                    "value": "up"
+                  }
+                ]
+              }
             ],
             "timeoutMillis": 300000
           },
@@ -278,13 +348,12 @@
       {
         "name": "APP_DOMAIN",
         "required": true,
-        "description": "Public domain serving the web application."
+        "runtime": true
       },
       {
         "name": "SESSION_SECRET",
         "required": true,
-        "secret": true,
-        "description": "Secret used to sign browser sessions."
+        "runtime": true
       }
     ],
     "dependencies": {
@@ -294,11 +363,11 @@
       ]
     }
   },
-  "valuesHash": "91ae2fb4737285a67b051a7770f8780c6cfc1c80719cb082933289fe00e8a371",
-  "values": {
-    "APP_DOMAIN": "files.example.com"
-  },
+  "valuesHash": "5882e4b21146aac54fbbfb82062266c8596e2f42ccd4bbf072876e003985bc72",
   "secrets": {
+    "APP_DOMAIN": {
+      "version": 1
+    },
     "SESSION_SECRET": {
       "version": 1
     }
@@ -317,5 +386,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "6496df220c0dc7be56ac4a6a0b3ce57a2e613d8a20d6dee1c5e8f0fa393b83c3"
+  "checksum": "d8be0c7bd9f2738124266bcaa308e0de161f568ca7d5d4b502debb2434ce803c"
 }

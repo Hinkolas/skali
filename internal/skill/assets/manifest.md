@@ -23,7 +23,6 @@ Top level:
 version: "1"        # required, always the string "1"
 name: my-project    # required, matches ^[a-z][a-z0-9-]{0,62}$
 description: ...    # optional free text
-values: {}          # optional metadata for ${NAME} values
 applications: {}
 databases: {}
 buckets: {}
@@ -53,37 +52,34 @@ Available outputs:
 | `databases` | `host`, `port`, `name` | `username`, `password`, `url` |
 | `buckets` | `endpoint`, `name`, `region` | `access_key`, `secret_key` |
 
-The optional `values:` block adds metadata to `${NAME}` values:
-
-```yaml
-values:
-  APP_DOMAIN:
-    description: Public domain serving the application.
-  SESSION_SECRET:
-    secret: true
-    description: Secret used to sign browser sessions.
-```
+The value contract is derived entirely from `${NAME}` references; there
+is no declaration block. Every value is secret: stored encrypted per
+environment, write-only through the API and console, and shown in plans
+and logs by name only.
 
 Rules the compiler enforces:
 
-- Secrecy comes only from the `values:` block. An environment file never
-  decides what is secret.
-- A secret value may only be referenced from an application's
-  `environment:` block, and may not carry an inline default.
-- A value declared in `values:` but never referenced anywhere is an
-  error. Requiredness derives from use, not declaration.
-- In `environment:` a reference must occupy the entire value; writing
-  `"prefix-${X}"` there is an error. Route domains and build arguments
-  allow concatenation of literals and plain values, but never secrets or
-  service outputs.
+- Requiredness derives from use: any `${NAME}` reference without an
+  inline default makes the value required before deployment.
+- `${NAME}` works in any free-form string field, including concatenation
+  such as `"postgres://app:${DB_PASSWORD}@db:5432/app"` in an
+  environment value or `"app.${BASE_DOMAIN}"` in a route domain. Typed
+  fields (ports, quantities, replica counts, cron schedules) stay
+  literal.
+- A `{{...}}` service output may appear only in an application's
+  `environment:` block and must occupy the entire value.
+- The same name with two different inline defaults is an error.
 - Malformed `${` or `{{` anywhere in a string is an error, so typos never
   pass through silently.
 
 Values are supplied per environment: stored values are the default, and a
 dotenv file can be staged at deploy (`--env-file`) or picked up
-automatically from `./.env` by `skali dev`. An empty value in a dotenv
-file counts as unset. `.env` and `.env.*` files never enter build
-contexts.
+automatically from `./.env` by `skali dev`. Keys the manifest does not
+reference are skipped with a warning, never an error. An empty value in
+a dotenv file is stored as a real empty string; removing a value is
+explicit (`skali values unset NAME` or the console). Stored values the
+manifest no longer references are ignored by deployments and reported as
+orphaned. `.env` and `.env.*` files never enter build contexts.
 
 ## Applications
 
@@ -95,8 +91,8 @@ applications:
       context: ./web                # required with build; relative to project root
       dockerfile: deploy/Dockerfile # optional, relative to context, default Dockerfile
       target: runtime               # optional multi-stage target
-      arguments:                    # optional build args; plain values only, never secrets
-        VERSION: "${RELEASE:-dev}"
+      arguments:                    # optional build args; they persist in image
+        VERSION: "${RELEASE:-dev}"  # config, so never reference credentials here
     command: ["/app/web", "serve"]  # optional container command
     environment:                    # names match ^[A-Za-z_][A-Za-z0-9_]*$
       NODE_ENV: production
@@ -108,6 +104,10 @@ digest. Build contexts may not be absolute paths and may not escape the
 project root; `.dockerignore` in the context root filters files exactly
 as docker build would, and `.git/`, `.skali/`, `.env`, and `.env.*` are
 always excluded.
+
+Build arguments and targets referencing `${NAME}` resolve on the
+deploying machine from a local env file; stored values are write-only
+and can never feed a build, so such deployments require `--env-file`.
 
 ### Ports and routes
 
@@ -322,19 +322,12 @@ place.
 ## Complete example
 
 Two applications sharing a database; the worker has no route and holds
-the only secret:
+the Stripe key:
 
 ```yaml manifest
 version: "1"
 name: orders
 description: Order API with a background billing worker
-
-values:
-  APP_DOMAIN:
-    description: Public domain serving the API.
-  STRIPE_KEY:
-    secret: true
-    description: Stripe API key used by the billing worker.
 
 applications:
   api:

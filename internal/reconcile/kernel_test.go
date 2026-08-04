@@ -25,15 +25,11 @@ import (
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
-	"github.com/Hinkolas/skali/internal/values"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 const kernelManifest = `version: "1"
 name: demo
-values:
-  SESSION_SECRET:
-    secret: true
 applications:
   web:
     image: ghcr.io/example/web:1.0.0
@@ -173,9 +169,9 @@ func (f *kernelFixture) executeDeploymentManifest(t *testing.T, manifestSource s
 	require.NoError(t, err)
 	valueSvc, err := valuestore.New(f.st, strings.Repeat("k", 32))
 	require.NoError(t, err)
-	candidate, err := valueSvc.Stage(ctx, f.environmentID, values.Resolved{
-		Plain:  map[string]string{"APP_DOMAIN": "demo.example.com"},
-		Secret: map[string]string{"SESSION_SECRET": "kernel-plant-value"},
+	candidate, err := valueSvc.Stage(ctx, f.environmentID, map[string]string{
+		"APP_DOMAIN":     "demo.example.com",
+		"SESSION_SECRET": "kernel-plant-value",
 	})
 	require.NoError(t, err)
 

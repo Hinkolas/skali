@@ -341,9 +341,6 @@ func TestRenderValuesIdentity(t *testing.T) {
 	document, err := manifest.Parse([]byte(`
 version: "1"
 name: identity
-values:
-  SESSION_SECRET:
-    secret: true
 applications:
   web:
     image: example.invalid/web:1
@@ -395,7 +392,7 @@ applications:
 
 	base := Options{
 		Variables:      map[string]string{"APP_DOMAIN": "id.localhost", "SESSION_SECRET": "plaintext-one", "UNUSED": "0"},
-		SecretVersions: map[string]int{"SESSION_SECRET": 1},
+		SecretVersions: map[string]int{"APP_DOMAIN": 1, "SESSION_SECRET": 1, "UNUSED": 1},
 	}
 	render(t, base)
 
@@ -408,17 +405,18 @@ applications:
 	require.Len(t, workerHash, 16)
 	releaseTemplate := release.Spec.Template
 
-	// A changed value rolls exactly the applications referencing it.
+	// A changed value (a new stored generation) rolls exactly the
+	// applications referencing it.
 	changed := base
-	changed.Variables = map[string]string{"APP_DOMAIN": "id.localhost", "SESSION_SECRET": "plaintext-one", "UNUSED": "1"}
+	changed.SecretVersions = map[string]int{"APP_DOMAIN": 1, "SESSION_SECRET": 1, "UNUSED": 2}
 	render(t, changed)
 	require.Equal(t, webHash, valuesHash("web"))
 	require.NotEqual(t, workerHash, valuesHash("worker"))
 
-	// Secret rotation (a new version) changes the identity; a different
-	// plaintext at the same version does not enter the hash.
+	// A different plaintext at the same version never enters the hash: only
+	// version bumps roll pods.
 	rotated := base
-	rotated.SecretVersions = map[string]int{"SESSION_SECRET": 2}
+	rotated.SecretVersions = map[string]int{"APP_DOMAIN": 1, "SESSION_SECRET": 2, "UNUSED": 1}
 	render(t, rotated)
 	require.NotEqual(t, webHash, valuesHash("web"))
 	replaintexted := base

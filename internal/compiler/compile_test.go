@@ -16,7 +16,7 @@ func TestCompileExamples(t *testing.T) {
 	require.Len(t, hello.Definition.Applications, 1)
 	require.Equal(t, "build", hello.Definition.Applications["web"].Source.Kind)
 	require.Empty(t, hello.Definition.Dependencies["applications.web"])
-	require.Equal(t, []VariableRequirement{{Name: "APP_DOMAIN", Required: true}}, hello.Definition.RequiredVariables)
+	require.Equal(t, []VariableRequirement{{Name: "APP_DOMAIN", Required: true, Runtime: true}}, hello.Definition.RequiredVariables)
 
 	whoami := compileFixture(t, filepath.Join("..", "..", "examples", "whoami", "skali.yml"))
 	require.Len(t, whoami.Definition.Applications, 1)
@@ -28,9 +28,10 @@ func TestCompileExamples(t *testing.T) {
 	for _, requirement := range files.Definition.RequiredVariables {
 		variables[requirement.Name] = requirement
 	}
-	require.True(t, variables["SESSION_SECRET"].Secret)
-	require.NotEmpty(t, variables["SESSION_SECRET"].Description)
-	require.False(t, variables["APP_DOMAIN"].Secret)
+	require.True(t, variables["SESSION_SECRET"].Required)
+	require.True(t, variables["SESSION_SECRET"].Runtime)
+	require.False(t, variables["SESSION_SECRET"].Build)
+	require.True(t, variables["APP_DOMAIN"].Runtime)
 	require.EqualValues(t, 200, files.Definition.Applications["web"].Resources.Requests.MilliCPU)
 	require.EqualValues(t, 256_000_000, files.Definition.Applications["web"].Resources.Requests.MemoryBytes)
 	require.EqualValues(t, 20_000_000_000, files.Definition.Databases["data"].StorageBytes)
@@ -76,8 +77,8 @@ func TestInvalidFixtures(t *testing.T) {
 func TestSameDomainSupportsDistinctRoutePaths(t *testing.T) {
 	t.Parallel()
 	result := compileFixture(t, filepath.Join("testdata", "route-paths.yml"))
-	require.Equal(t, "/", result.Definition.Applications["web"].Routes["public"].Path)
-	require.Equal(t, "/api", result.Definition.Applications["api"].Routes["public"].Path)
+	require.Equal(t, "/", result.Definition.Applications["web"].Routes["public"].Path.Literal())
+	require.Equal(t, "/api", result.Definition.Applications["api"].Routes["public"].Path.Literal())
 }
 
 func TestProjectVariableDefault(t *testing.T) {
@@ -92,28 +93,20 @@ func TestProjectVariableDefault(t *testing.T) {
 	require.Equal(t, "custom", value)
 }
 
-func TestValidateEnvironment(t *testing.T) {
+// The variable contract is derived entirely from references: scope flags
+// follow the position, and one name may span both scopes.
+func TestVariableScopesFollowReferences(t *testing.T) {
 	t.Parallel()
-	result := compileFixture(t, filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
-	require.ErrorContains(t, ValidateEnvironment(result, nil), "APP_DOMAIN")
-	require.NoError(t, ValidateEnvironment(result, map[string]string{"APP_DOMAIN": "hello.localhost"}))
-	require.ErrorContains(t, ValidateEnvironment(result, map[string]string{
-		"APP_DOMAIN": "hello.localhost",
-		"UNUSED":     "value",
-	}), "unknown project variables: UNUSED")
-}
-
-func TestSecretValueRejectedOutsideApplicationEnvironment(t *testing.T) {
-	t.Parallel()
-	_, err := compileManifest(t, `
+	result, err := compileManifest(t, `
 version: "1"
-name: secret-route
-values:
-  APP_DOMAIN:
-    secret: true
+name: scoped-values
 applications:
   api:
-    image: example.invalid/api:1
+    build:
+      context: .
+      target: "${BUILD_TARGET:-runtime}"
+      arguments:
+        NPM_TOKEN: "${NPM_TOKEN}"
     ports:
       http:
         port: 8080
@@ -121,66 +114,80 @@ applications:
       public:
         domain: "${APP_DOMAIN}"
         port: http
-`)
-	require.ErrorContains(t, err, "secret project value APP_DOMAIN may only be used in application environment variables")
-}
-
-// Build arguments persist in image history, so a secret value can never
-// legally reach one; the build engine's secret mounts stay the only path
-// for secret build inputs.
-func TestSecretValueRejectedInBuildArguments(t *testing.T) {
-	t.Parallel()
-	_, err := compileManifest(t, `
-version: "1"
-name: secret-build-arg
-values:
-  NPM_TOKEN:
-    secret: true
-applications:
-  api:
-    build:
-      context: .
-      arguments:
-        NPM_TOKEN: "${NPM_TOKEN}"
-    ports:
-      http:
-        port: 8080
     environment:
       NPM_TOKEN: "${NPM_TOKEN}"
+      API_KEY: "${API_KEY:-fallback}"
 `)
-	require.ErrorContains(t, err, "secret project value NPM_TOKEN may only be used in application environment variables")
+	require.NoError(t, err)
+	variables := make(map[string]VariableRequirement, len(result.Definition.RequiredVariables))
+	for _, requirement := range result.Definition.RequiredVariables {
+		variables[requirement.Name] = requirement
+	}
+	require.Equal(t, VariableRequirement{Name: "NPM_TOKEN", Required: true, Runtime: true, Build: true}, variables["NPM_TOKEN"])
+	require.Equal(t, VariableRequirement{Name: "APP_DOMAIN", Required: true, Runtime: true}, variables["APP_DOMAIN"])
+	require.Equal(t, VariableRequirement{Name: "BUILD_TARGET", Default: "runtime", HasDefault: true, Build: true}, variables["BUILD_TARGET"])
+	require.Equal(t, VariableRequirement{Name: "API_KEY", Default: "fallback", HasDefault: true, Runtime: true}, variables["API_KEY"])
 }
 
-func TestSecretValueRejectsInlineDefault(t *testing.T) {
+// ${NAME} references concatenate with literals anywhere, including
+// environment values; only {{...}} service outputs must stand alone.
+func TestEnvironmentValueConcatenation(t *testing.T) {
+	t.Parallel()
+	result, err := compileManifest(t, `
+version: "1"
+name: concatenation
+applications:
+  api:
+    image: example.invalid/api:1
+    command: ["serve", "--host", "${APP_DOMAIN}"]
+    environment:
+      DATABASE_URL: "postgres://app:${DB_PASSWORD}@db:5432/app"
+`)
+	require.NoError(t, err)
+	expression := result.Definition.Applications["api"].Environment["DATABASE_URL"]
+	require.Len(t, expression.Parts, 3)
+	require.True(t, expression.HasProjectVariables())
+	variables := make(map[string]VariableRequirement, len(result.Definition.RequiredVariables))
+	for _, requirement := range result.Definition.RequiredVariables {
+		variables[requirement.Name] = requirement
+	}
+	require.True(t, variables["DB_PASSWORD"].Runtime)
+	require.True(t, variables["APP_DOMAIN"].Runtime)
+}
+
+func TestServiceOutputMustOccupyEntireEnvironmentValue(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
 version: "1"
-name: secret-default
-values:
-  API_KEY:
-    secret: true
+name: output-concat
 applications:
   api:
     image: example.invalid/api:1
     environment:
-      API_KEY: "${API_KEY:-fallback}"
+      DATABASE_URL: "{{databases.data.url}}?sslmode=require"
+databases:
+  data:
+    engine: postgres
+    version: 17
 `)
-	require.ErrorContains(t, err, "secret project value API_KEY cannot carry an inline default")
+	require.ErrorContains(t, err, "a service output must occupy the entire environment value")
 }
 
-func TestDeclaredValueMustBeReferenced(t *testing.T) {
+// The values: block no longer exists; the strict parser rejects manifests
+// that still carry one.
+func TestValuesBlockIsRejected(t *testing.T) {
 	t.Parallel()
-	_, err := compileManifest(t, `
+	_, err := manifest.Parse([]byte(`
 version: "1"
-name: unused-value
+name: legacy-values
 values:
-  UNUSED:
-    description: never referenced
+  APP_DOMAIN:
+    description: legacy declaration
 applications:
   api:
     image: example.invalid/api:1
-`)
-	require.ErrorContains(t, err, "values.UNUSED: is declared but never referenced")
+`), "skali.yml")
+	require.ErrorContains(t, err, "values")
 }
 
 func TestValueNamesMustBeEnvironmentStyle(t *testing.T) {
@@ -188,16 +195,13 @@ func TestValueNamesMustBeEnvironmentStyle(t *testing.T) {
 	_, err := compileManifest(t, `
 version: "1"
 name: bad-value-name
-values:
-  lowercase:
-    description: wrong shape
 applications:
   api:
     image: example.invalid/api:1
     environment:
       X: "${lowercase}"
 `)
-	require.ErrorContains(t, err, "value names must be uppercase environment-variable names")
+	require.ErrorContains(t, err, "malformed variable or service-output expression")
 }
 
 func TestRollingUpdateDefaultsSurgeWhenUnavailableIsSpecified(t *testing.T) {

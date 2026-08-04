@@ -190,7 +190,10 @@ func lookupRemoteByMaster(cfg *cliconfig.Config, master string) (string, *clicon
 // selectValues decides the value source: an explicit --env-file, the bare-dev
 // automatic ./.env, an interactively selected override from the project
 // root's env files, or nil for the environment's stored values (the default).
+// When build arguments reference project values, the stored-values fallback
+// is withheld from the picker; the caller rejects a nil result.
 func selectValues(out io.Writer, project *localProject, opts *deployOptions) (*values.File, error) {
+	requireFile := len(requiredBuildArgumentVariables(project.Result)) > 0
 	path := opts.EnvFile
 	if path == "" {
 		prompt := cliprompt.Interactive() && !opts.Yes
@@ -208,7 +211,7 @@ func selectValues(out io.Writer, project *localProject, opts *deployOptions) (*v
 			if !prompt {
 				return nil, nil
 			}
-			selected, err := chooseEnvFile(out, bufio.NewReader(os.Stdin), project.Root, opts.Environment)
+			selected, err := chooseEnvFile(out, bufio.NewReader(os.Stdin), project.Root, opts.Environment, requireFile)
 			if err != nil {
 				return nil, err
 			}
@@ -248,16 +251,27 @@ func discoverEnvFiles(root string) []string {
 
 // chooseEnvFile offers the discovered env files as an override for the
 // environment's stored values; an empty result keeps the stored values.
-func chooseEnvFile(out io.Writer, in *bufio.Reader, root, environment string) (string, error) {
+// requireFile withholds the stored-values option: build arguments reference
+// project values, and those resolve only from a local file.
+func chooseEnvFile(out io.Writer, in *bufio.Reader, root, environment string, requireFile bool) (string, error) {
 	files := discoverEnvFiles(root)
 	if len(files) == 0 {
 		return "", nil
 	}
 	options := make([]cliprompt.Option, 0, len(files)+1)
-	options = append(options, cliprompt.Option{
-		Label: "Use stored values",
-		Value: "",
-	})
+	title := fmt.Sprintf("Override %s with a local env file?", environment)
+	description := "Stored environment values remain the default."
+	defaultValue := ""
+	if requireFile {
+		title = fmt.Sprintf("Which env file should supply the build values for %s?", environment)
+		description = "Build arguments reference project values; a local env file must supply them."
+		defaultValue = files[0]
+	} else {
+		options = append(options, cliprompt.Option{
+			Label: "Use stored values",
+			Value: "",
+		})
+	}
 	for _, file := range files {
 		options = append(options, cliprompt.Option{
 			Label: filepath.Base(file),
@@ -265,10 +279,10 @@ func chooseEnvFile(out io.Writer, in *bufio.Reader, root, environment string) (s
 		})
 	}
 	return promptSession(out, in).Select(context.Background(), cliprompt.SelectOptions{
-		Title:        fmt.Sprintf("Override %s with a local env file?", environment),
-		Description:  "Stored environment values remain the default.",
+		Title:        title,
+		Description:  description,
 		Options:      options,
-		DefaultValue: "",
+		DefaultValue: defaultValue,
 	})
 }
 
@@ -291,22 +305,45 @@ func chooseEnvironment(out io.Writer, in *bufio.Reader, environments []client.En
 	})
 }
 
-func countBySecrecy(result *compiler.Result, file *values.File) (plain, secret int) {
-	secrecy := make(map[string]bool, len(result.Definition.RequiredVariables))
-	for _, requirement := range result.Definition.RequiredVariables {
-		secrecy[requirement.Name] = requirement.Secret
+// requiredBuildArgumentVariables lists the project values a local build
+// cannot proceed without: ${NAME} references without defaults in build
+// arguments and build targets. Stored values are write-only, so these must
+// come from a local environment file.
+func requiredBuildArgumentVariables(result *compiler.Result) []string {
+	if result == nil {
+		return nil
 	}
-	for name, value := range file.Values {
-		if value == "" {
+	names := map[string]bool{}
+	collect := func(expression compiler.Expression) {
+		for _, part := range expression.Parts {
+			if part.Kind == "project_variable" && !part.HasDefault {
+				names[part.Name] = true
+			}
+		}
+	}
+	for _, application := range result.Definition.Applications {
+		if application.Source.Kind != "build" {
 			continue
 		}
-		if secrecy[name] {
-			secret++
-		} else {
-			plain++
+		collect(application.Source.Build.Target)
+		for _, expression := range application.Source.Build.Arguments {
+			collect(expression)
 		}
 	}
-	return plain, secret
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+	sort.Strings(sorted)
+	return sorted
+}
+
+func formatVariableRefs(names []string) string {
+	refs := make([]string, len(names))
+	for index, name := range names {
+		refs[index] = "${" + name + "}"
+	}
+	return strings.Join(refs, ", ")
 }
 
 // resolveBuildPlatform picks the platform local builds target: an explicit
@@ -376,7 +413,11 @@ func buildInputs(project *localProject, variables map[string]string, excludeFile
 		if err != nil {
 			return nil, nil, err
 		}
-		configHash := build.ConfigHash(dockerfile, spec.Target, arguments)
+		target, err := resolveBuildTarget(key, spec.Target, variables)
+		if err != nil {
+			return nil, nil, err
+		}
+		configHash := build.ConfigHash(dockerfile, target, arguments)
 		inputs[key] = client.BuildInput{
 			InputHash:  build.InputHash(collected.TreeHash, configHash, platform),
 			ConfigHash: configHash,
@@ -397,6 +438,16 @@ func resolveBuildArguments(application string, arguments map[string]compiler.Exp
 				"pass --env-file)", name, application, err)
 		}
 		resolved[name] = value
+	}
+	return resolved, nil
+}
+
+func resolveBuildTarget(application string, target compiler.Expression, variables map[string]string) (string, error) {
+	resolved, err := compiler.ResolveExpression(target, variables)
+	if err != nil {
+		return "", fmt.Errorf("resolve build target of %s: %w "+
+			"(build targets referencing project values need the values available locally; "+
+			"pass --env-file)", application, err)
 	}
 	return resolved, nil
 }
@@ -440,11 +491,7 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 		}
 	}
 	for _, value := range plan.Values {
-		kind := ""
-		if value.Secret {
-			kind = " " + style.Dim("(secret)")
-		}
-		fmt.Fprintf(out, "  %s %-24s %s%s\n", actionColor(style, "value"), value.Name, value.Action, kind)
+		fmt.Fprintf(out, "  %s %-24s %s\n", actionColor(style, "value"), value.Name, value.Action)
 	}
 	if plan.Empty() {
 		fmt.Fprintln(out, "  "+style.Dim("no changes"))
@@ -459,7 +506,8 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 func healthHints(result *compiler.Result) []string {
 	var hints []string
 	for _, key := range sortedApplicationKeys(result.Definition.Applications) {
-		if result.Definition.Applications[key].Health.Readiness.HTTP.Path == "" {
+		path := result.Definition.Applications[key].Health.Readiness.HTTP.Path
+		if path.IsLiteral() && path.Literal() == "" {
 			hints = append(hints,
 				"hint: application "+key+" declares no health check; rollouts cannot verify readiness")
 		}
@@ -630,6 +678,10 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 			if err != nil {
 				return failDeployment(ctx, api, opened, err)
 			}
+			target, err := resolveBuildTarget(action.Application, spec.Target, variables)
+			if err != nil {
+				return failDeployment(ctx, api, opened, err)
+			}
 
 			buildStep, err := api.EnsureStep(ctx, runID, action.StepKey+".build",
 				"Build locally ("+action.Platform+")", action.StepKey)
@@ -645,7 +697,7 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 			result, err := engine.Build(ctx, build.BuildRequest{
 				ContextDir: contexts[action.Application].Dir,
 				Dockerfile: filepath.Join(project.Root, spec.Dockerfile),
-				Target:     spec.Target,
+				Target:     target,
 				Arguments:  arguments,
 				Platform:   action.Platform,
 				PushRef:    action.PushRef,
@@ -1075,40 +1127,48 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	}
 
 	// Values: an explicit or discovered local file stages a candidate;
-	// otherwise the environment's stored values apply. Local plain values
-	// double as the variable space for build-argument resolution.
+	// otherwise the environment's stored values apply. The full local file
+	// doubles as the variable space for build-argument resolution (stored
+	// values are write-only, so builds can never draw on them).
 	file, err := selectValues(out, project, opts)
 	if err != nil {
 		return "", err
 	}
-	localValues := map[string]string{}
-	if entries, err := api.EnvironmentValues(ctx, environmentID); err == nil {
-		for _, entry := range entries {
-			if !entry.Secret {
-				localValues[entry.Name] = entry.Value
-			}
+	if file == nil {
+		if names := requiredBuildArgumentVariables(project.Result); len(names) > 0 {
+			return "", fmt.Errorf("build arguments reference %s: stored values are write-only "+
+				"and cannot be used for local builds; pass --env-file with these values set",
+				formatVariableRefs(names))
 		}
 	}
+	localValues := map[string]string{}
 	candidateID := ""
 	var excludeFiles []string
 	if file != nil {
-		resolved, err := values.Resolve(project.Result.Definition.RequiredVariables, file, values.Options{})
-		if err != nil {
-			return "", fmt.Errorf("%s: %w", file.Path, err)
+		maps.Copy(localValues, file.Values)
+		kept, missing, skipped := values.Conform(project.Result.Definition.RequiredVariables, file.Values)
+		if len(missing) > 0 {
+			return "", fmt.Errorf("%s: missing required project values: %s", file.Path, strings.Join(missing, ", "))
 		}
-		maps.Copy(localValues, resolved.Merged())
+		skipped = filterSkipped(project.Result, skipped)
 		if !planOnly {
-			staged, err := api.StageValues(ctx, environmentID, file.Values, definitionVersion.DefinitionVersionID)
+			staged, err := api.StageValues(ctx, environmentID, kept, definitionVersion.DefinitionVersionID)
 			if err != nil {
 				return "", err
 			}
 			candidateID = staged.CandidateID
 			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("values"), file.Path,
-				style.Dim(fmt.Sprintf("(%d plain, %d secret)", len(staged.Plain), len(staged.Secret))))
+				style.Dim(fmt.Sprintf("(%d staged)", len(staged.Staged))))
+			if len(staged.Skipped) > 0 {
+				skipped = staged.Skipped
+			}
 		} else {
-			plain, secret := countBySecrecy(project.Result, file)
 			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("values"), file.Path,
-				style.Dim(fmt.Sprintf("(%d plain, %d secret; validated, not uploaded)", plain, secret)))
+				style.Dim(fmt.Sprintf("(%d values; validated, not uploaded)", len(kept))))
+		}
+		if len(skipped) > 0 {
+			fmt.Fprintf(out, "  %s\n", style.Yellow("warning: skipped keys not referenced by the manifest: "+
+				strings.Join(skipped, ", ")))
 		}
 		excludeFiles = append(excludeFiles, file.Path)
 	}
@@ -1142,6 +1202,10 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
+	if len(planned.Orphaned) > 0 {
+		fmt.Fprintf(out, "\n  %s\n", style.Yellow("warning: ignoring stored values no longer referenced by the manifest: "+
+			strings.Join(planned.Orphaned, ", ")+" (remove them with skali values unset)"))
+	}
 	printHealthHints(out, project.Result)
 	if planOnly {
 		return deployOutcomePlanned, nil

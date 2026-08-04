@@ -55,9 +55,9 @@ declared in the manifest. Three shapes appear in `environment:`:
 Applications should read configuration only from the environment: no
 config files baked into images, no environment detection. Credentials
 for databases and buckets always come from service outputs; never
-hand-write a connection string. Secret plaintext never appears in the
-manifest, in revisions, or in logs, and secret values may only be used
-in `environment:`.
+hand-write a connection string. Every project value is secret: stored
+encrypted, write-only, and named but never printed in revisions, plans,
+or logs.
 
 ## The lifecycle contract
 
@@ -121,13 +121,6 @@ cluster follows.
 version: "1"
 name: team-wiki
 description: Wiki with file attachments in a bucket and Postgres storage
-
-values:
-  APP_DOMAIN:
-    description: Public domain serving the wiki.
-  SESSION_SECRET:
-    secret: true
-    description: Secret used to sign browser sessions.
 
 applications:
   web:

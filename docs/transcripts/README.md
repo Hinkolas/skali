@@ -11,7 +11,7 @@ What is binding:
 - Safety behavior: what requires confirmation, what non-interactive use must
   state explicitly, which failures leave which state untouched, and the exact
   scope of destructive actions.
-- Information display: values and secrets are never printed; plans show
+- Information display: values are never printed; plans show
   destructive consequences; failures name the unchanged state.
 - The run/step/attempt shapes, statuses, and guarantees from REWORK_V2
   section 9.
@@ -54,5 +54,5 @@ Files:
   non-interactive flags, and the unmanaged-directory refusal.
 
 The example project throughout is `examples/file-sharing` (application `web`,
-database `data`, bucket `files`, values `APP_DOMAIN` and secret
+database `data`, bucket `files`, values `APP_DOMAIN` and
 `SESSION_SECRET`).

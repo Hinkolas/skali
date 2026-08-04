@@ -49,7 +49,7 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 		return 0, fmt.Errorf("reconcile: get environment: %w", err)
 	}
 	releasing := target.State == deploy.EnvironmentStateReleasing
-	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID))
+	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID, nil))
 	attachment.ensureKind = "teardown"
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)

@@ -13,7 +13,6 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
-	"github.com/Hinkolas/skali/internal/values"
 )
 
 func digest(fill string) string {
@@ -31,12 +30,9 @@ func compileExample(t *testing.T, name string) *compiler.Result {
 
 func helloWorldInput(t *testing.T) Input {
 	return Input{
-		Result:      compileExample(t, "hello-world"),
-		Environment: "production",
-		Values: values.Resolved{
-			Plain:  map[string]string{"APP_DOMAIN": "hello.example.com"},
-			Secret: map[string]string{},
-		},
+		Result:         compileExample(t, "hello-world"),
+		Environment:    "production",
+		SecretVersions: map[string]int{"APP_DOMAIN": 1},
 		Artifacts: map[string]Artifact{
 			"web": {
 				Reference:   "registry.skali.internal/skali/hello-world/web",
@@ -53,9 +49,9 @@ func fileSharingInput(t *testing.T) Input {
 	return Input{
 		Result:      compileExample(t, "file-sharing"),
 		Environment: "production",
-		Values: values.Resolved{
-			Plain:  map[string]string{"APP_DOMAIN": "files.example.com"},
-			Secret: map[string]string{"SESSION_SECRET": "test-only-secret"},
+		SecretVersions: map[string]int{
+			"APP_DOMAIN":     1,
+			"SESSION_SECRET": 1,
 		},
 		Artifacts: map[string]Artifact{
 			"web": {
@@ -106,30 +102,48 @@ func TestChecksumIsDeterministicAndInputSensitive(t *testing.T) {
 	require.Equal(t, first.Checksum, second.Checksum)
 
 	changed := fileSharingInput(t)
-	changed.Values.Plain["APP_DOMAIN"] = "other.example.com"
+	changed.SecretVersions["APP_DOMAIN"] = 2
 	third, err := Build(changed)
 	require.NoError(t, err)
 	require.NotEqual(t, first.ValuesHash, third.ValuesHash)
 	require.NotEqual(t, first.Checksum, third.Checksum)
 }
 
-func TestSecretPlaintextNeverEntersTheRevision(t *testing.T) {
+func TestValuePlaintextNeverEntersTheRevision(t *testing.T) {
 	t.Parallel()
 	built, err := Build(fileSharingInput(t))
 	require.NoError(t, err)
 	data, err := json.Marshal(built)
 	require.NoError(t, err)
-	require.NotContains(t, string(data), "test-only-secret")
+	// Every value is a (name, version) reference; no plaintext exists to
+	// leak, and the document never gains a values map.
+	require.NotContains(t, string(data), "\"values\":")
 	require.Equal(t, SecretRef{Version: 1}, built.Secrets["SESSION_SECRET"])
 }
 
-func TestSecretVersionsAreRecorded(t *testing.T) {
+func TestValueVersionsAreRecorded(t *testing.T) {
 	t.Parallel()
 	input := fileSharingInput(t)
-	input.SecretVersions = map[string]int{"SESSION_SECRET": 4}
+	input.SecretVersions["SESSION_SECRET"] = 4
 	built, err := Build(input)
 	require.NoError(t, err)
 	require.Equal(t, SecretRef{Version: 4}, built.Secrets["SESSION_SECRET"])
+}
+
+// A stored value the definition no longer references is intersected away:
+// it neither fails the build nor enters the revision. This is the fix for
+// the wedged-environment failure mode.
+func TestOrphanedValuesAreIgnored(t *testing.T) {
+	t.Parallel()
+	input := fileSharingInput(t)
+	input.SecretVersions["REMOVED"] = 3
+	built, err := Build(input)
+	require.NoError(t, err)
+	require.NotContains(t, built.Secrets, "REMOVED")
+
+	clean, err := Build(fileSharingInput(t))
+	require.NoError(t, err)
+	require.Equal(t, clean.Checksum, built.Checksum)
 }
 
 func TestCapabilityDerivation(t *testing.T) {
@@ -195,27 +209,17 @@ func TestBuildRejectsInvalidInput(t *testing.T) {
 			},
 			message: "artifact ghost does not match any application",
 		},
-		"secret imported as plain": {
-			mutate: func(input *Input) {
-				delete(input.Values.Secret, "SESSION_SECRET")
-				input.Values.Plain["SESSION_SECRET"] = "oops"
-			},
-			message: "secret value SESSION_SECRET must not appear in the plain value set",
-			values:  true,
-		},
-		"missing secret": {
-			mutate:  func(input *Input) { delete(input.Values.Secret, "SESSION_SECRET") },
-			message: "missing secret value SESSION_SECRET",
-			values:  true,
-		},
 		"missing required value": {
-			mutate:  func(input *Input) { delete(input.Values.Plain, "APP_DOMAIN") },
-			message: "missing required value APP_DOMAIN",
+			mutate:  func(input *Input) { delete(input.SecretVersions, "APP_DOMAIN") },
+			message: "missing required values: APP_DOMAIN",
 			values:  true,
 		},
-		"unknown value": {
-			mutate:  func(input *Input) { input.Values.Plain["EXTRA"] = "x" },
-			message: "value EXTRA is not required by the definition",
+		"missing several required values": {
+			mutate: func(input *Input) {
+				delete(input.SecretVersions, "APP_DOMAIN")
+				delete(input.SecretVersions, "SESSION_SECRET")
+			},
+			message: "missing required values: APP_DOMAIN, SESSION_SECRET",
 			values:  true,
 		},
 	}

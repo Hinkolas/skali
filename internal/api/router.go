@@ -203,6 +203,7 @@ func NewRouter(d Deps) http.Handler {
 				vh := &valuesHandlers{projects: d.Projects, values: d.Values, st: d.Store}
 				r.Get("/environments/{id}/values", vh.get)
 				r.Put("/environments/{id}/values", vh.put)
+				r.Delete("/environments/{id}/values/{name}", vh.del)
 
 				rh := &revisionsHandlers{deploy: d.Deploy, journal: d.Journal}
 				r.Get("/environments/{id}/revisions", rh.list)

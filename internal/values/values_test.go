@@ -9,9 +9,10 @@ import (
 )
 
 var requirements = []compiler.VariableRequirement{
-	{Name: "APP_DOMAIN", Required: true},
-	{Name: "SESSION_SECRET", Required: true, Secret: true},
-	{Name: "LOG_LEVEL", Default: "info", HasDefault: true},
+	{Name: "APP_DOMAIN", Required: true, Runtime: true},
+	{Name: "SESSION_SECRET", Required: true, Runtime: true},
+	{Name: "LOG_LEVEL", Default: "info", HasDefault: true, Runtime: true},
+	{Name: "NPM_TOKEN", Required: true, Build: true},
 }
 
 func TestParseSupportsCommentsAndQuotes(t *testing.T) {
@@ -22,55 +23,74 @@ func TestParseSupportsCommentsAndQuotes(t *testing.T) {
 	require.Equal(t, "quoted value", file.Values["SESSION_SECRET"])
 }
 
-func TestResolveSeparatesSecrets(t *testing.T) {
+func TestConformIntersects(t *testing.T) {
 	t.Parallel()
-	file := &File{Values: map[string]string{
+	kept, missing, orphaned := Conform(requirements, map[string]string{
 		"APP_DOMAIN":     "files.localhost",
 		"SESSION_SECRET": "s3cret",
-	}}
-	resolved, err := Resolve(requirements, file, Options{})
-	require.NoError(t, err)
-	require.Equal(t, map[string]string{"APP_DOMAIN": "files.localhost"}, resolved.Plain)
-	require.Equal(t, map[string]string{"SESSION_SECRET": "s3cret"}, resolved.Secret)
+		"REMOVED":        "stale",
+	})
 	require.Equal(t, map[string]string{
 		"APP_DOMAIN":     "files.localhost",
 		"SESSION_SECRET": "s3cret",
-	}, resolved.Merged())
+	}, kept)
+	require.Empty(t, missing)
+	require.Equal(t, []string{"REMOVED"}, orphaned)
 }
 
-func TestResolveReportsMissingAndUnknownTogether(t *testing.T) {
+func TestConformReportsMissingRequired(t *testing.T) {
 	t.Parallel()
-	file := &File{Values: map[string]string{
-		"TYPO": "value",
-		// An empty value counts as unset, mirroring expression resolution.
-		"APP_DOMAIN": "",
-	}}
-	_, err := Resolve(requirements, file, Options{})
-	require.ErrorContains(t, err, "missing required project values: APP_DOMAIN, SESSION_SECRET")
-	require.ErrorContains(t, err, "unknown project values: TYPO")
+	_, missing, _ := Conform(requirements, map[string]string{"APP_DOMAIN": "files.localhost"})
+	require.Equal(t, []string{"SESSION_SECRET"}, missing)
 }
 
-func TestResolveIgnoreUnknownDropsKeys(t *testing.T) {
+// A present empty string is a real value, never "unset".
+func TestConformTreatsEmptyStringAsPresent(t *testing.T) {
 	t.Parallel()
-	file := &File{Values: map[string]string{
+	kept, missing, _ := Conform(requirements, map[string]string{
+		"APP_DOMAIN":     "",
+		"SESSION_SECRET": "s3cret",
+	})
+	require.Empty(t, missing)
+	require.Equal(t, "", kept["APP_DOMAIN"])
+}
+
+// Build-only names never participate: they resolve client-side and are
+// orphans when submitted to the store.
+func TestConformExcludesBuildOnlyNames(t *testing.T) {
+	t.Parallel()
+	kept, missing, orphaned := Conform(requirements, map[string]string{
 		"APP_DOMAIN":     "files.localhost",
 		"SESSION_SECRET": "s3cret",
-		"TYPO":           "value",
-	}}
-	resolved, err := Resolve(requirements, file, Options{IgnoreUnknown: true})
-	require.NoError(t, err)
-	require.NotContains(t, resolved.Merged(), "TYPO")
+		"NPM_TOKEN":      "token",
+	})
+	require.NotContains(t, kept, "NPM_TOKEN")
+	require.NotContains(t, missing, "NPM_TOKEN")
+	require.Equal(t, []string{"NPM_TOKEN"}, orphaned)
 }
 
-func TestResolveLeavesDefaultsToTheDefinition(t *testing.T) {
+func TestConformLeavesDefaultsToTheDefinition(t *testing.T) {
 	t.Parallel()
-	file := &File{Values: map[string]string{
+	kept, missing, _ := Conform(requirements, map[string]string{
 		"APP_DOMAIN":     "files.localhost",
 		"SESSION_SECRET": "s3cret",
-	}}
-	resolved, err := Resolve(requirements, file, Options{})
-	require.NoError(t, err)
+	})
+	require.Empty(t, missing)
 	// LOG_LEVEL is optional and absent: it is not materialized here, its
 	// default applies during expression resolution.
-	require.NotContains(t, resolved.Plain, "LOG_LEVEL")
+	require.NotContains(t, kept, "LOG_LEVEL")
+}
+
+// Conform is generic so the same contract check serves dotenv strings and
+// stored version references.
+func TestConformOverVersionRefs(t *testing.T) {
+	t.Parallel()
+	kept, missing, orphaned := Conform(requirements, map[string]int{
+		"APP_DOMAIN":     3,
+		"SESSION_SECRET": 1,
+		"REMOVED":        7,
+	})
+	require.Equal(t, map[string]int{"APP_DOMAIN": 3, "SESSION_SECRET": 1}, kept)
+	require.Empty(t, missing)
+	require.Equal(t, []string{"REMOVED"}, orphaned)
 }

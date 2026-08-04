@@ -242,17 +242,6 @@ type EnvironmentTarget struct {
 	RestartedAt      *time.Time
 }
 
-type EnvironmentValue struct {
-	ID            uuid.UUID
-	EnvironmentID uuid.UUID
-	Name          string
-	Version       int64
-	Value         string
-	State         string
-	CandidateID   *uuid.UUID
-	CreatedAt     time.Time
-}
-
 type LoginChallenge struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID

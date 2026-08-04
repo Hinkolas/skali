@@ -5,18 +5,10 @@ version: "1"
 name: file-sharing
 description: Full-stack file-sharing application with PostgreSQL and S3 storage
 
-# ${NAME} values come from the project environment. A missing value without a
-# default fails validation before deployment; ${NAME:-default} uses a fallback.
-# The values block adds metadata: secrecy and documentation. Secrecy never
-# comes from an environment file, and secret values may only be used in
-# application environment variables.
-values:
-  APP_DOMAIN:
-    description: Public domain serving the web application.
-  SESSION_SECRET:
-    secret: true
-    description: Secret used to sign browser sessions.
-
+# ${NAME} values come from the project environment and are derived from use:
+# a missing value without a default fails validation before deployment, and
+# ${NAME:-default} uses a fallback. Every value is stored encrypted and stays
+# write-only; deployments and logs only ever show the name.
 applications:
   web:
     # The context is relative to the project root; the Dockerfile is relative

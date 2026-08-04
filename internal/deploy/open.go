@@ -177,6 +177,9 @@ type Preview struct {
 	// Candidate is the revision the plan was computed against; its
 	// checksum is only real when no placeholder artifacts were needed.
 	Candidate *revision.Revision
+	// Orphaned lists stored value names the definition no longer
+	// references; they are ignored by deployments. Advisory only.
+	Orphaned []string
 }
 
 type OpenInput struct {
@@ -202,6 +205,9 @@ type Opened struct {
 	Plan       *plan.Plan
 	Actions    []ArtifactAction
 	UpToDate   bool
+	// Orphaned lists stored value names the definition no longer
+	// references; they are ignored by deployments. Advisory only.
+	Orphaned []string
 }
 
 // PlanPreview validates the candidate server-side and returns the semantic
@@ -272,7 +278,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 		return nil, ErrDestructiveChange
 	}
 	if preview.UpToDate && !in.Force {
-		return &Opened{Plan: preview.Plan, Actions: preview.Actions, UpToDate: true}, nil
+		return &Opened{Plan: preview.Plan, Actions: preview.Actions, UpToDate: true, Orphaned: preview.Orphaned}, nil
 	}
 	needsArtifactWork := false
 	for _, action := range preview.Actions {
@@ -400,8 +406,8 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 	}
 	valuesLine := "using current environment values"
 	if in.CandidateID != uuid.Nil {
-		plain, secret := countCandidate(ctx, s.values, env.ID, in.CandidateID)
-		valuesLine = fmt.Sprintf("%d plain, %d secret values staged", plain, secret)
+		staged := countCandidate(ctx, s.values, env.ID, in.CandidateID)
+		valuesLine = fmt.Sprintf("%d values staged", staged)
 	}
 	if err := s.instantStep(ctx, in.Journal, runID, redactor, "values", "Prepare environment values", valuesLine); err != nil {
 		return nil, err
@@ -415,6 +421,7 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 		RunID:      runID,
 		Plan:       preview.Plan,
 		Actions:    actions,
+		Orphaned:   preview.Orphaned,
 	}, nil
 }
 
@@ -631,7 +638,11 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 	for _, key := range sortedKeys(definition.Applications) {
 		source := definition.Applications[key].Source
 		if source.Kind == "image" {
-			row, err := s.st.GetVerifiedArtifactByUpstream(ctx, source.Image)
+			upstream, err := s.imageReference(ctx, env.ID, in.CandidateID, key, source.Image)
+			if err != nil {
+				return nil, err
+			}
+			row, err := s.st.GetVerifiedArtifactByUpstream(ctx, upstream)
 			if in.Rebuild && err == nil {
 				// Rebuild discards the reusable row: the upstream is
 				// resolved and imported again, picking up a moved tag.
@@ -649,11 +660,11 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 			case errors.Is(err, pgx.ErrNoRows):
 				allReuse = false
 				actions = append(actions, ArtifactAction{
-					Application: key, Action: "import", Kind: revision.KindImport, Upstream: source.Image,
+					Application: key, Action: "import", Kind: revision.KindImport, Upstream: upstream,
 				})
 				artifacts[key] = revision.Artifact{
 					Reference: "pending", Digest: revision.PendingDigest,
-					Kind: revision.KindImport, Upstream: source.Image,
+					Kind: revision.KindImport, Upstream: upstream,
 				}
 			default:
 				return nil, fmt.Errorf("deploy: look up import artifact: %w", err)
@@ -716,14 +727,13 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 	candidateID uuid.UUID, actions []ArtifactAction,
 	artifacts map[string]revision.Artifact, allReuse bool) (*Preview, error) {
 
-	resolvedValues, secretVersions, err := s.resolveValues(ctx, env.ID, candidateID)
+	secretVersions, orphaned, err := s.resolveValues(ctx, env.ID, candidateID, definition.RequiredVariables)
 	if err != nil {
 		return nil, err
 	}
 	candidate, err := revision.Build(revision.Input{
 		Result:          &compiler.Result{Hash: definitionVersion.DefinitionHash, Definition: definition},
 		Environment:     env.Name,
-		Values:          resolvedValues,
 		SecretVersions:  secretVersions,
 		Artifacts:       artifacts,
 		CompilerVersion: s.version,
@@ -751,6 +761,7 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 		Actions:   actions,
 		UpToDate:  allReuse && active != nil && candidate.Checksum == activeChecksum,
 		Candidate: candidate,
+		Orphaned:  orphaned,
 	}, nil
 }
 
@@ -924,16 +935,12 @@ func (s *Service) closeArtifactsStep(ctx context.Context, jsvc *journal.Service,
 	return jsvc.SetStepStatus(ctx, step.ID, journal.StepSucceeded)
 }
 
-func countCandidate(ctx context.Context, values *valuestore.Service, environmentID, candidateID uuid.UUID) (int, int) {
-	plain, err := values.StagedPlain(ctx, environmentID, candidateID)
+func countCandidate(ctx context.Context, values *valuestore.Service, environmentID, candidateID uuid.UUID) int {
+	staged, err := values.StagedVersions(ctx, environmentID, candidateID)
 	if err != nil {
-		return 0, 0
+		return 0
 	}
-	secret, err := values.StagedSecretVersions(ctx, environmentID, candidateID)
-	if err != nil {
-		return len(plain), 0
-	}
-	return len(plain), len(secret)
+	return len(staged)
 }
 
 func missingCapabilities(required, available []string) []string {

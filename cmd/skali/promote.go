@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -182,7 +183,11 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 			}
 			candidateID = staged.CandidateID
 			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("values"), file.Path,
-				style.Dim(fmt.Sprintf("(%d plain, %d secret)", len(staged.Plain), len(staged.Secret))))
+				style.Dim(fmt.Sprintf("(%d staged)", len(staged.Staged))))
+			if len(staged.Skipped) > 0 {
+				fmt.Fprintf(out, "  %s\n", style.Yellow("warning: skipped keys not referenced by the manifest: "+
+					strings.Join(staged.Skipped, ", ")))
+			}
 		}
 	}
 

@@ -23,6 +23,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/values"
 )
 
 type Options struct {
@@ -69,8 +70,10 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 	if options.EnvironmentSecretName == "" {
 		options.EnvironmentSecretName = EnvironmentSecretName
 	}
-	if err := compiler.ValidateEnvironment(result, options.Variables); err != nil {
-		return nil, err
+	// Orphaned variables are ignored by design; only missing required
+	// runtime values block a render.
+	if _, missing, _ := values.Conform(result.Definition.RequiredVariables, options.Variables); len(missing) > 0 {
+		return nil, fmt.Errorf("missing project variables: %s", strings.Join(missing, ", "))
 	}
 	var objects []runtime.Object
 	for _, key := range sortedKeys(result.Definition.Applications) {
@@ -103,7 +106,10 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	if options.RevisionChecksum != "" {
 		labels[LabelRevision] = RevisionLabelValue(options.RevisionChecksum)
 	}
-	image := application.Source.Image
+	image, err := compiler.ResolveExpression(application.Source.Image, options.Variables)
+	if err != nil {
+		return nil, fmt.Errorf("image: %w", err)
+	}
 	if application.Source.Kind == "build" {
 		image = options.BuildImages[key]
 		if image == "" {
@@ -111,12 +117,16 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		}
 	}
 
+	args, err := resolveExpressionList(application.Command, options.Variables)
+	if err != nil {
+		return nil, fmt.Errorf("command: %w", err)
+	}
 	container := corev1.Container{
 		Name:            key,
 		Image:           image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Args:            append([]string(nil), application.Command...),
-		Env:             renderEnvironment(application.Environment, options.EnvironmentSecretName),
+		Args:            args,
+		Env:             renderEnvironment(key, application.Environment, options.EnvironmentSecretName),
 		Resources:       renderResources(application.Resources),
 	}
 	for _, portKey := range sortedKeys(application.Ports) {
@@ -127,17 +137,27 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			Protocol:      kubernetesProtocol(port.Protocol),
 		})
 	}
-	container.StartupProbe = renderProbe(application.Health.Startup)
-	container.ReadinessProbe = renderProbe(application.Health.Readiness)
-	container.LivenessProbe = renderProbe(application.Health.Liveness)
+	if container.StartupProbe, err = renderProbe(application.Health.Startup, options.Variables); err != nil {
+		return nil, fmt.Errorf("health startup: %w", err)
+	}
+	if container.ReadinessProbe, err = renderProbe(application.Health.Readiness, options.Variables); err != nil {
+		return nil, fmt.Errorf("health readiness: %w", err)
+	}
+	if container.LivenessProbe, err = renderProbe(application.Health.Liveness, options.Variables); err != nil {
+		return nil, fmt.Errorf("health liveness: %w", err)
+	}
 
 	var objects []runtime.Object
 	for _, volumeKey := range sortedKeys(application.Volumes) {
 		volume := application.Volumes[volumeKey]
 		claimName := objectName(name, volumeKey)
+		mountPath, err := compiler.ResolveExpression(volume.MountPath, options.Variables)
+		if err != nil {
+			return nil, fmt.Errorf("volume %s mountPath: %w", volumeKey, err)
+		}
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 			Name:      volumeKey,
-			MountPath: volume.MountPath,
+			MountPath: mountPath,
 		})
 		objects = append(objects, &corev1.PersistentVolumeClaim{
 			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PersistentVolumeClaim"},
@@ -156,7 +176,11 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	}
 
 	if len(application.Deployment.ReleaseCommand.Command) > 0 {
-		objects = append(objects, renderReleaseJob(project, key, name, image, labels, options))
+		job, err := renderReleaseJob(project, key, name, image, labels, options)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, job)
 	}
 
 	autoscalingEnabled := application.Scaling.MaxReplicas > application.Scaling.MinReplicas
@@ -186,7 +210,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      templateLabels,
-					Annotations: templateAnnotations(options, valuesIdentity(project, application, options)),
+					Annotations: templateAnnotations(options, valuesIdentity(application, options)),
 				},
 				Spec: corev1.PodSpec{
 					TerminationGracePeriodSeconds: &graceSeconds,
@@ -240,6 +264,15 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		if err != nil {
 			return nil, fmt.Errorf("route %s domain: %w", routeKey, err)
 		}
+		routePath, err := compiler.ResolveExpression(route.Path, options.Variables)
+		if err != nil {
+			return nil, fmt.Errorf("route %s path: %w", routeKey, err)
+		}
+		if !strings.HasPrefix(routePath, "/") {
+			// The message names the field only; the resolved string could
+			// carry value plaintext.
+			return nil, fmt.Errorf("route %s path: resolved value must start with /", routeKey)
+		}
 		pathType := networkingv1.PathTypePrefix
 		ingress := &networkingv1.Ingress{
 			TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
@@ -254,7 +287,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 					Host: domain,
 					IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
 						Paths: []networkingv1.HTTPIngressPath{{
-							Path:     route.Path,
+							Path:     routePath,
 							PathType: &pathType,
 							Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
 								Name: name,
@@ -338,13 +371,18 @@ func IsReleaseServiceIdentity(service string) bool { return strings.HasPrefix(se
 // manifest timeout, so a hung command fails visibly rather than pending
 // forever.
 func renderReleaseJob(project compiler.ProjectDefinition, key, name, image string,
-	labels map[string]string, options Options) *batchv1.Job {
+	labels map[string]string, options Options) (*batchv1.Job, error) {
 	application := project.Applications[key]
 	timeout := time.Duration(application.Deployment.ReleaseCommand.TimeoutMillis) * time.Millisecond
 	if timeout <= 0 {
 		timeout = DefaultReleaseTimeout
 	}
 	deadlineSeconds := int64(timeout / time.Second)
+
+	args, err := resolveExpressionList(application.Deployment.ReleaseCommand.Command, options.Variables)
+	if err != nil {
+		return nil, fmt.Errorf("release command: %w", err)
+	}
 
 	// The Job object carries the service identity like every other object of
 	// the application; the pod template does not. Release pods with the
@@ -359,8 +397,8 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, name, image strin
 		Name:            "release",
 		Image:           image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Args:            append([]string(nil), application.Deployment.ReleaseCommand.Command...),
-		Env:             renderEnvironment(application.Environment, options.EnvironmentSecretName),
+		Args:            args,
+		Env:             renderEnvironment(key, application.Environment, options.EnvironmentSecretName),
 		Resources:       renderResources(application.Resources),
 	}
 	job := &batchv1.Job{
@@ -387,32 +425,51 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, name, image strin
 			layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 		}
 	}
-	return job
+	return job, nil
 }
 
-func renderEnvironment(environment map[string]compiler.Expression, environmentSecret string) []corev1.EnvVar {
+// renderEnvironment binds one application's environment variables: service
+// outputs reference the substrate-owned output Secrets, anything touching a
+// project value references its composed entry in the environment Secret
+// (see EnvironmentSecretData), and pure literals inline.
+func renderEnvironment(applicationKey string, environment map[string]compiler.Expression, environmentSecret string) []corev1.EnvVar {
 	result := make([]corev1.EnvVar, 0, len(environment))
 	for _, name := range sortedKeys(environment) {
 		expression := environment[name]
-		part := expression.Parts[0]
 		variable := corev1.EnvVar{Name: name}
-		switch part.Kind {
-		case "literal":
-			variable.Value = part.Value
-		case "project_variable":
-			variable.ValueFrom = &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: environmentSecret},
-				Key:                  part.Name,
-			}}
-		case "service_output":
+		if part, ok := expression.ServiceOutput(); ok {
 			variable.ValueFrom = &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: OutputSecretName(part.Collection, part.Service)},
 				Key:                  part.Output,
 			}}
+		} else if expression.HasProjectVariables() {
+			variable.ValueFrom = &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: environmentSecret},
+				Key:                  EnvironmentSecretKey(applicationKey, name),
+			}}
+		} else {
+			variable.Value = expression.Literal()
 		}
 		result = append(result, variable)
 	}
 	return result
+}
+
+// resolveExpressionList resolves each element of a command-style expression
+// list. Errors name the element index only, never a resolved string.
+func resolveExpressionList(expressions []compiler.Expression, variables map[string]string) ([]string, error) {
+	if len(expressions) == 0 {
+		return nil, nil
+	}
+	resolved := make([]string, 0, len(expressions))
+	for index, expression := range expressions {
+		value, err := compiler.ResolveExpression(expression, variables)
+		if err != nil {
+			return nil, fmt.Errorf("element %d: %w", index, err)
+		}
+		resolved = append(resolved, value)
+	}
+	return resolved, nil
 }
 
 func renderResources(resources compiler.Resources) corev1.ResourceRequirements {
@@ -436,19 +493,28 @@ func resourceList(values compiler.ResourceValues) corev1.ResourceList {
 	return result
 }
 
-func renderProbe(probe compiler.Probe) *corev1.Probe {
-	if probe.HTTP.Path == "" {
-		return nil
+func renderProbe(probe compiler.Probe, variables map[string]string) (*corev1.Probe, error) {
+	if probe.HTTP.Path.IsLiteral() && probe.HTTP.Path.Literal() == "" {
+		return nil, nil
+	}
+	path, err := compiler.ResolveExpression(probe.HTTP.Path, variables)
+	if err != nil {
+		return nil, fmt.Errorf("path: %w", err)
+	}
+	if !strings.HasPrefix(path, "/") {
+		// The message names the field only; the resolved string could carry
+		// value plaintext.
+		return nil, fmt.Errorf("path: resolved value must start with /")
 	}
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-			Path: probe.HTTP.Path,
+			Path: path,
 			Port: targetPort(probe.HTTP.Port),
 		}},
 		PeriodSeconds:    durationSeconds(probe.IntervalMillis),
 		TimeoutSeconds:   durationSeconds(probe.TimeoutMillis),
 		FailureThreshold: int32(probe.FailureThreshold),
-	}
+	}, nil
 }
 
 func renderServicePorts(application compiler.Application) []corev1.ServicePort {
@@ -579,19 +645,16 @@ func cloneMap(source map[string]string) map[string]string {
 	return result
 }
 
-// valuesIdentity hashes the resolved values of exactly the project
-// variables this application's runtime environment references: plain
-// variables contribute their value, secret variables their stored version,
-// never plaintext (pod-read access is commonly broader than secret-read).
-// Empty when the application references no project variables. Excluded by
-// design: service outputs (their Secrets rotate through their own
-// lifecycle), route domains (Ingress-only), and build arguments (they flow
-// into the image digest).
-func valuesIdentity(project compiler.ProjectDefinition, application compiler.Application, options Options) string {
-	secret := make(map[string]bool, len(project.RequiredVariables))
-	for _, requirement := range project.RequiredVariables {
-		secret[requirement.Name] = requirement.Secret
-	}
+// valuesIdentity hashes the stored generations of exactly the project
+// variables this application's environment references, whole-value or
+// composed: NAME=v<version> lines, sorted, sha256[:8]. Plaintext never
+// enters the hash. Empty when the environment references no variables.
+// Excluded by design: service outputs (their Secrets rotate through their
+// own lifecycle), route domains and paths (Ingress-only; hashing them would
+// roll pods on edge-only changes), command, probe, and mount paths (they
+// resolve into the pod template, so a change rolls naturally), and build
+// arguments (they flow into the image digest).
+func valuesIdentity(application compiler.Application, options Options) string {
 	referenced := map[string]bool{}
 	for _, expression := range application.Environment {
 		for _, part := range expression.Parts {
@@ -605,11 +668,7 @@ func valuesIdentity(project compiler.ProjectDefinition, application compiler.App
 	}
 	lines := make([]string, 0, len(referenced))
 	for _, name := range sortedKeys(referenced) {
-		if secret[name] {
-			lines = append(lines, fmt.Sprintf("%s=v%d", name, options.SecretVersions[name]))
-		} else {
-			lines = append(lines, name+"="+options.Variables[name])
-		}
+		lines = append(lines, fmt.Sprintf("%s=v%d", name, options.SecretVersions[name]))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return hex.EncodeToString(sum[:8])

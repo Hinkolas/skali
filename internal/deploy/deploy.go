@@ -90,6 +90,9 @@ type Prepared struct {
 	DefinitionVersionID uuid.UUID
 	CandidateID         uuid.UUID
 	ArtifactIDs         []uuid.UUID
+	// Orphaned lists stored value names the definition no longer references;
+	// they were ignored, not deployed. Advisory only.
+	Orphaned []string
 	// Restart makes Promote stamp a workload restart on the target (a
 	// forced deployment); Prepare never sets it, the caller does.
 	Restart bool
@@ -121,7 +124,7 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 		return nil, fmt.Errorf("deploy: decode definition: %w", err)
 	}
 
-	resolvedValues, secretVersions, err := s.resolveValues(ctx, env.ID, in.CandidateID)
+	secretVersions, orphaned, err := s.resolveValues(ctx, env.ID, in.CandidateID, definition.RequiredVariables)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +135,15 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	artifacts := make(map[string]revision.Artifact, len(definition.Applications))
 	artifactIDs := make([]uuid.UUID, 0, len(definition.Applications))
 	for _, key := range sortedKeys(definition.Applications) {
-		resolved, err := in.Resolver.Resolve(ctx, key, definition.Applications[key].Source)
+		source := definition.Applications[key].Source
+		if source.Kind == "image" && !source.Image.IsLiteral() {
+			reference, err := s.imageReference(ctx, env.ID, in.CandidateID, key, source.Image)
+			if err != nil {
+				return nil, err
+			}
+			source.Image = compiler.LiteralExpression(reference)
+		}
+		resolved, err := in.Resolver.Resolve(ctx, key, source)
 		if err != nil {
 			return nil, fmt.Errorf("deploy: %w", err)
 		}
@@ -143,7 +154,6 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	built, err := revision.Build(revision.Input{
 		Result:          &compiler.Result{Hash: definitionVersion.DefinitionHash, Definition: definition},
 		Environment:     env.Name,
-		Values:          resolvedValues,
 		SecretVersions:  secretVersions,
 		Artifacts:       artifacts,
 		CompilerVersion: s.version,
@@ -163,6 +173,7 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 		DefinitionVersionID: definitionVersion.ID,
 		CandidateID:         in.CandidateID,
 		ArtifactIDs:         artifactIDs,
+		Orphaned:            orphaned,
 	}
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		id, err := uuid.NewV7()
@@ -380,41 +391,76 @@ func (s *Service) GetRevision(ctx context.Context, id uuid.UUID) (*revision.Revi
 	return &document, nil
 }
 
-// resolveValues merges the environment's current values with the staged
-// candidate batch (staged wins per name). Secret plaintexts are never
-// loaded: the resolved secret set carries names only, and versions come
-// from the store.
-func (s *Service) resolveValues(ctx context.Context, environmentID, candidateID uuid.UUID) (values.Resolved, map[string]int, error) {
-	plain, err := s.values.CurrentPlain(ctx, environmentID)
+// storedVersions merges the environment's current value versions with the
+// staged candidate batch (staged wins per name). Plaintexts are never
+// loaded here.
+func (s *Service) storedVersions(ctx context.Context, environmentID, candidateID uuid.UUID) (map[string]int, error) {
+	versions, err := s.values.CurrentVersions(ctx, environmentID)
 	if err != nil {
-		return values.Resolved{}, nil, err
-	}
-	versions, err := s.values.CurrentSecretVersions(ctx, environmentID)
-	if err != nil {
-		return values.Resolved{}, nil, err
+		return nil, err
 	}
 	if candidateID != uuid.Nil {
-		stagedPlain, err := s.values.StagedPlain(ctx, environmentID, candidateID)
+		staged, err := s.values.StagedVersions(ctx, environmentID, candidateID)
 		if err != nil {
-			return values.Resolved{}, nil, err
+			return nil, err
 		}
-		maps.Copy(plain, stagedPlain)
-		stagedVersions, err := s.values.StagedSecretVersions(ctx, environmentID, candidateID)
-		if err != nil {
-			return values.Resolved{}, nil, err
-		}
-		maps.Copy(versions, stagedVersions)
+		maps.Copy(versions, staged)
 	}
-	resolved := values.Resolved{
-		Plain:  plain,
-		Secret: make(map[string]string, len(versions)),
-	}
-	secretVersions := make(map[string]int, len(versions))
+	provided := make(map[string]int, len(versions))
 	for name, version := range versions {
-		resolved.Secret[name] = ""
-		secretVersions[name] = int(version)
+		provided[name] = int(version)
 	}
-	return resolved, secretVersions, nil
+	return provided, nil
+}
+
+// resolveValues intersects the environment's stored value versions with the
+// definition's runtime requirements. Orphaned names (stored but no longer
+// referenced by the definition) are reported for advisory surfacing, never
+// as errors: a removed reference must not wedge the environment.
+func (s *Service) resolveValues(ctx context.Context, environmentID, candidateID uuid.UUID,
+	requirements []compiler.VariableRequirement) (map[string]int, []string, error) {
+
+	provided, err := s.storedVersions(ctx, environmentID, candidateID)
+	if err != nil {
+		return nil, nil, err
+	}
+	kept, _, orphaned := values.Conform(requirements, provided)
+	return kept, orphaned, nil
+}
+
+// imageReference resolves an application's image reference. Literal
+// references (the normal case) resolve without touching the store; an
+// expression decrypts exactly the referenced values, pinned at the versions
+// a deployment would use. A missing value surfaces as a ValuesError naming
+// the variable, never a plaintext.
+func (s *Service) imageReference(ctx context.Context, environmentID, candidateID uuid.UUID,
+	application string, image compiler.Expression) (string, error) {
+
+	if image.IsLiteral() {
+		return image.Literal(), nil
+	}
+	versions, err := s.storedVersions(ctx, environmentID, candidateID)
+	if err != nil {
+		return "", err
+	}
+	needed := make(map[string]int)
+	for _, part := range image.Parts {
+		if part.Kind != "project_variable" {
+			continue
+		}
+		if version, ok := versions[part.Name]; ok {
+			needed[part.Name] = version
+		}
+	}
+	plaintexts, err := s.values.Plaintexts(ctx, environmentID, needed)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := compiler.ResolveExpression(image, plaintexts)
+	if err != nil {
+		return "", &revision.ValuesError{Message: fmt.Sprintf("application %s image: %s", application, err)}
+	}
+	return resolved, nil
 }
 
 func sortedKeys[T any](m map[string]T) []string {
