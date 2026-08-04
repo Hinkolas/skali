@@ -204,7 +204,7 @@ applications:
     environment:
       X: "${lowercase}"
 `)
-	require.ErrorContains(t, err, "malformed variable or service-output expression")
+	require.ErrorContains(t, err, "project value names match ^[A-Z_][A-Z0-9_]*$")
 }
 
 func TestRollingUpdateDefaultsSurgeWhenUnavailableIsSpecified(t *testing.T) {

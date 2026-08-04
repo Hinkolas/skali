@@ -2,13 +2,10 @@ package compiler
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/manifest"
 )
-
-var expressionToken = regexp.MustCompile("\\$\\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\\}|\\{\\{\\s*(databases|buckets)\\.([a-z][a-z0-9-]{0,62})\\.([a-z_][a-z0-9_]*)\\s*\\}\\}")
 
 var outputCatalog = map[string]map[string]bool{
 	"databases": {
@@ -28,78 +25,201 @@ var outputCatalog = map[string]map[string]bool{
 	},
 }
 
+// parseExpression scans one raw manifest string into literal and reference
+// parts. The grammar is flat: ${NAME} and ${NAME:-default} project values
+// plus {{collection.key.output}} service outputs, interleaved with literal
+// text. A lone $ or { passes through as literal text (shell syntax stays
+// intact), but a started token must be well-formed and a stray "}}" is an
+// error, so typos never pass through silently. Error positions are 1-based
+// byte offsets into the value.
 func parseExpression(raw string, project manifest.Project, allowOutputs bool) (Expression, error) {
 	var parts []ExpressionPart
-	cursor := 0
-	matches := expressionToken.FindAllStringSubmatchIndex(raw, -1)
-	for _, match := range matches {
-		if match[0] > cursor {
-			literal := raw[cursor:match[0]]
-			if containsExpressionMarker(literal) {
-				return Expression{}, fmt.Errorf("contains a malformed variable or service-output expression")
-			}
-			parts = append(parts, ExpressionPart{Kind: "literal", Value: literal})
+	var literal strings.Builder
+	flush := func() {
+		if literal.Len() > 0 {
+			parts = append(parts, ExpressionPart{Kind: "literal", Value: literal.String()})
+			literal.Reset()
 		}
-		if match[2] >= 0 {
-			part := ExpressionPart{
-				Kind: "project_variable",
-				Name: raw[match[2]:match[3]],
+	}
+	pos := 0
+	for pos < len(raw) {
+		switch {
+		case strings.HasPrefix(raw[pos:], "${"):
+			part, next, err := scanProjectVariable(raw, pos)
+			if err != nil {
+				return Expression{}, err
 			}
-			if match[4] >= 0 {
-				part.Default = raw[match[4]:match[5]]
-				part.HasDefault = true
-			}
+			flush()
 			parts = append(parts, part)
-		} else {
+			pos = next
+		case strings.HasPrefix(raw[pos:], "{{"):
+			part, next, err := scanServiceOutput(raw, pos)
+			if err != nil {
+				return Expression{}, err
+			}
 			if !allowOutputs {
 				return Expression{}, fmt.Errorf("service-output references are not allowed here")
 			}
-			collection := raw[match[6]:match[7]]
-			service := raw[match[8]:match[9]]
-			output := raw[match[10]:match[11]]
-			outputs := outputCatalog[collection]
-			sensitive, ok := outputs[output]
-			if !ok {
-				return Expression{}, fmt.Errorf("unknown %s output %q", strings.TrimSuffix(collection, "s"), output)
+			part, err = checkServiceOutput(part, project)
+			if err != nil {
+				return Expression{}, err
 			}
-			switch collection {
-			case "databases":
-				if _, ok := project.Databases[service]; !ok {
-					return Expression{}, fmt.Errorf("references unknown database %q", service)
-				}
-			case "buckets":
-				if _, ok := project.Buckets[service]; !ok {
-					return Expression{}, fmt.Errorf("references unknown bucket %q", service)
-				}
-			}
-			parts = append(parts, ExpressionPart{
-				Kind:       "service_output",
-				Collection: collection,
-				Service:    service,
-				Output:     output,
-				Sensitive:  sensitive,
-			})
+			flush()
+			parts = append(parts, part)
+			pos = next
+		case strings.HasPrefix(raw[pos:], "}}"):
+			return Expression{}, fmt.Errorf("stray \"}}\" at position %d has no matching \"{{\"", pos+1)
+		default:
+			literal.WriteByte(raw[pos])
+			pos++
 		}
-		cursor = match[1]
 	}
-	if cursor < len(raw) {
-		literal := raw[cursor:]
-		if containsExpressionMarker(literal) {
-			return Expression{}, fmt.Errorf("contains a malformed variable or service-output expression")
-		}
-		parts = append(parts, ExpressionPart{Kind: "literal", Value: literal})
-	}
+	flush()
 	if len(parts) == 0 {
-		if containsExpressionMarker(raw) {
-			return Expression{}, fmt.Errorf("contains a malformed variable or service-output expression")
-		}
 		parts = []ExpressionPart{{Kind: "literal", Value: raw}}
 	}
 	return Expression{Parts: parts}, nil
 }
 
-func containsExpressionMarker(value string) bool {
-	return strings.Contains(value, "${") || strings.Contains(value, "{{") || strings.Contains(value, "}}")
+// scanProjectVariable scans one ${NAME} or ${NAME:-default} token whose "${"
+// marker sits at start; next is the position after the closing brace. The
+// default runs to the first "}" and may be empty; nesting is not supported.
+func scanProjectVariable(raw string, start int) (part ExpressionPart, next int, err error) {
+	pos := start + 2
+	nameStart := pos
+	if pos < len(raw) && isProjectNameStart(raw[pos]) {
+		pos++
+		for pos < len(raw) && isProjectNameChar(raw[pos]) {
+			pos++
+		}
+	}
+	name := raw[nameStart:pos]
+	if name == "" {
+		if pos == len(raw) {
+			return part, 0, fmt.Errorf("unterminated ${...} expression at position %d", start+1)
+		}
+		return part, 0, fmt.Errorf("invalid ${...} expression at position %d: project value names match ^[A-Z_][A-Z0-9_]*$", start+1)
+	}
+	part = ExpressionPart{Kind: "project_variable", Name: name}
+	switch {
+	case pos < len(raw) && raw[pos] == '}':
+		return part, pos + 1, nil
+	case strings.HasPrefix(raw[pos:], ":-"):
+		pos += 2
+		defaultStart := pos
+		for pos < len(raw) && raw[pos] != '}' {
+			pos++
+		}
+		if pos == len(raw) {
+			return part, 0, fmt.Errorf("unterminated ${...} expression at position %d", start+1)
+		}
+		part.Default = raw[defaultStart:pos]
+		part.HasDefault = true
+		return part, pos + 1, nil
+	case pos == len(raw):
+		return part, 0, fmt.Errorf("unterminated ${...} expression at position %d", start+1)
+	default:
+		return part, 0, fmt.Errorf("invalid ${...} expression at position %d: expected } or :- after the name", start+1)
+	}
+}
+
+// scanServiceOutput scans one {{collection.key.output}} token whose "{{"
+// marker sits at start; next is the position after the closing braces.
+// Syntax only: catalog and declaration checks live in checkServiceOutput.
+func scanServiceOutput(raw string, start int) (part ExpressionPart, next int, err error) {
+	pos := skipSpaces(raw, start+2)
+	collectionStart := pos
+	for pos < len(raw) && isLowerLetter(raw[pos]) {
+		pos++
+	}
+	collection := raw[collectionStart:pos]
+	if collection != "databases" && collection != "buckets" {
+		return part, 0, fmt.Errorf("invalid {{...}} expression at position %d: the collection must be databases or buckets", start+1)
+	}
+	if pos == len(raw) || raw[pos] != '.' {
+		return part, 0, fmt.Errorf("invalid {{...}} expression at position %d: expected {{collection.key.output}}", start+1)
+	}
+	pos++
+	keyStart := pos
+	if pos < len(raw) && isLowerLetter(raw[pos]) {
+		pos++
+		for pos < len(raw) && isServiceKeyChar(raw[pos]) {
+			pos++
+		}
+	}
+	key := raw[keyStart:pos]
+	if key == "" || len(key) > 63 {
+		return part, 0, fmt.Errorf("invalid service key in {{...}} at position %d: keys match ^[a-z][a-z0-9-]{0,62}$", start+1)
+	}
+	if pos == len(raw) || raw[pos] != '.' {
+		return part, 0, fmt.Errorf("invalid {{...}} expression at position %d: expected {{collection.key.output}}", start+1)
+	}
+	pos++
+	outputStart := pos
+	if pos < len(raw) && isOutputNameStart(raw[pos]) {
+		pos++
+		for pos < len(raw) && isOutputNameChar(raw[pos]) {
+			pos++
+		}
+	}
+	output := raw[outputStart:pos]
+	if output == "" {
+		return part, 0, fmt.Errorf("invalid service output in {{...}} at position %d: outputs match ^[a-z_][a-z0-9_]*$", start+1)
+	}
+	pos = skipSpaces(raw, pos)
+	if pos == len(raw) {
+		return part, 0, fmt.Errorf("unterminated {{...}} expression at position %d", start+1)
+	}
+	if !strings.HasPrefix(raw[pos:], "}}") {
+		return part, 0, fmt.Errorf("invalid {{...}} expression at position %d: expected }}", start+1)
+	}
+	return ExpressionPart{
+		Kind:       "service_output",
+		Collection: collection,
+		Service:    key,
+		Output:     output,
+	}, pos + 2, nil
+}
+
+// checkServiceOutput resolves a scanned output token against the catalog
+// and the project's declared services, stamping the sensitivity flag.
+func checkServiceOutput(part ExpressionPart, project manifest.Project) (ExpressionPart, error) {
+	sensitive, ok := outputCatalog[part.Collection][part.Output]
+	if !ok {
+		return part, fmt.Errorf("unknown %s output %q", strings.TrimSuffix(part.Collection, "s"), part.Output)
+	}
+	part.Sensitive = sensitive
+	switch part.Collection {
+	case "databases":
+		if _, ok := project.Databases[part.Service]; !ok {
+			return part, fmt.Errorf("references unknown database %q", part.Service)
+		}
+	case "buckets":
+		if _, ok := project.Buckets[part.Service]; !ok {
+			return part, fmt.Errorf("references unknown bucket %q", part.Service)
+		}
+	}
+	return part, nil
+}
+
+func isProjectNameStart(c byte) bool { return c == '_' || c >= 'A' && c <= 'Z' }
+func isProjectNameChar(c byte) bool  { return isProjectNameStart(c) || c >= '0' && c <= '9' }
+func isLowerLetter(c byte) bool      { return c >= 'a' && c <= 'z' }
+func isServiceKeyChar(c byte) bool   { return c == '-' || isLowerLetter(c) || c >= '0' && c <= '9' }
+func isOutputNameStart(c byte) bool  { return c == '_' || isLowerLetter(c) }
+func isOutputNameChar(c byte) bool   { return isOutputNameStart(c) || c >= '0' && c <= '9' }
+
+// skipSpaces advances past the whitespace {{...}} tolerates around its body.
+func skipSpaces(raw string, pos int) int {
+	for pos < len(raw) {
+		switch raw[pos] {
+		case ' ', '\t', '\n', '\f', '\r':
+			pos++
+		default:
+			return pos
+		}
+	}
+	return pos
 }
 
 // ServiceOutput returns the sole part when the expression is exactly one
