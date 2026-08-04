@@ -14,7 +14,7 @@ func decode(t *testing.T) module.Service {
 	t.Helper()
 	definition := compiler.ProjectDefinition{
 		Applications: map[string]compiler.Application{
-			"web": {Source: compiler.ApplicationSource{Kind: "image", Image: compiler.LiteralExpression("example.invalid/web:1")}},
+			"web": {Source: compiler.ApplicationSource{Kind: "image", Image: "example.invalid/web:1"}},
 		},
 	}
 	svc, err := Module{}.Decode(definition, "web")
@@ -171,8 +171,8 @@ func TestDecodeAndRemoval(t *testing.T) {
 	definition := compiler.ProjectDefinition{
 		Applications: map[string]compiler.Application{
 			"web": {
-				Source:  compiler.ApplicationSource{Kind: "image", Image: compiler.LiteralExpression("example.invalid/web:1")},
-				Volumes: map[string]compiler.Volume{"data": {MountPath: compiler.LiteralExpression("/data")}},
+				Source:  compiler.ApplicationSource{Kind: "image", Image: "example.invalid/web:1"},
+				Volumes: map[string]compiler.Volume{"data": {MountPath: "/data"}},
 			},
 		},
 		Dependencies: map[string][]string{"applications.web": {"databases.data"}},

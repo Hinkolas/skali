@@ -9,6 +9,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/reconcile"
+	"github.com/Hinkolas/skali/internal/revision"
 )
 
 // statusHandlers serves topology and health projections. Every read comes
@@ -309,6 +310,11 @@ func (h *statusHandlers) system(w http.ResponseWriter, r *http.Request) {
 func writeStatusError(r *http.Request, w http.ResponseWriter, err error) {
 	if errors.Is(err, reconcile.ErrEnvironmentNotFound) {
 		writeError(w, http.StatusNotFound, codeNotFound, "environment not found")
+		return
+	}
+	var stale *revision.SchemaError
+	if errors.As(err, &stale) {
+		writeError(w, http.StatusConflict, codeUnsupportedSchema, stale.Error())
 		return
 	}
 	writeInternalError(r.Context(), w, "environment status", err)

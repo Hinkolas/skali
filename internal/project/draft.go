@@ -121,9 +121,9 @@ func (s *Service) GetDraft(ctx context.Context, projectID uuid.UUID) (*Draft, er
 	if err != nil {
 		return nil, fmt.Errorf("project: get definition version: %w", err)
 	}
-	var definition compiler.ProjectDefinition
-	if err := json.Unmarshal(version.Definition, &definition); err != nil {
-		return nil, fmt.Errorf("project: decode definition: %w", err)
+	definition, err := compiler.DecodeDefinition(version.Definition)
+	if err != nil {
+		return nil, err
 	}
 	return &Draft{
 		Version:    row.Version,

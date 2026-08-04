@@ -94,14 +94,14 @@ func Compile(document *manifest.Document) (*Result, error) {
 func (b *builder) compileApplication(key string, source manifest.Application) Application {
 	base := "applications." + key
 	result := Application{
-		Command:     b.expressionList(base+".command", source.Command, scopeRuntime),
+		Command:     append([]string(nil), source.Command...),
 		Environment: make(map[string]Expression, len(source.Environment)),
 		Ports:       make(map[string]Port, len(source.Ports)),
 		Routes:      make(map[string]Route, len(source.Routes)),
 		Volumes:     make(map[string]Volume, len(source.Volumes)),
 	}
 	if source.Image != "" {
-		result.Source = ApplicationSource{Kind: "image", Image: b.expr(base+".image", source.Image, false, scopeRuntime)}
+		result.Source = ApplicationSource{Kind: "image", Image: source.Image}
 	} else {
 		context := b.relativePath(base+".build.context", source.Build.Context, true)
 		dockerfile := source.Build.Dockerfile
@@ -109,18 +109,14 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			dockerfile = "Dockerfile"
 		}
 		dockerfile = b.relativePath(base+".build.dockerfile", dockerfile, false)
-		arguments := make(map[string]Expression, len(source.Build.Arguments))
+		arguments := make(map[string]string, len(source.Build.Arguments))
 		for _, name := range mapKeys(source.Build.Arguments) {
-			arguments[name] = b.expr(base+".build.arguments."+name, string(source.Build.Arguments[name]), false, scopeBuild)
-		}
-		var target Expression
-		if source.Build.Target != "" {
-			target = b.expr(base+".build.target", source.Build.Target, false, scopeBuild)
+			arguments[name] = string(source.Build.Arguments[name])
 		}
 		result.Source = ApplicationSource{Kind: "build", Build: Build{
 			Context:    context,
 			Dockerfile: dockerfile,
-			Target:     target,
+			Target:     source.Build.Target,
 			Arguments:  arguments,
 		}}
 	}
@@ -141,7 +137,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path, "a service output must occupy the entire environment value")
 			continue
 		}
-		b.collectVariables(path, expression, scopeRuntime)
+		b.collectVariables(path, expression)
 		for _, part := range expression.Parts {
 			if part.Kind == "service_output" {
 				b.dependencies[owner][part.Collection+"."+part.Service] = struct{}{}
@@ -170,19 +166,15 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path+".domain", "%s", err)
 			continue
 		}
-		b.collectVariables(path+".domain", domain, scopeRuntime)
-		rawPath := route.Path
-		if rawPath == "" {
-			rawPath = "/"
+		b.collectVariables(path+".domain", domain)
+		routePath := route.Path
+		if routePath == "" {
+			routePath = "/"
 		}
-		routePath := b.expr(path+".path", rawPath, false, scopeRuntime)
-		if routePath.IsLiteral() {
-			literal := routePath.Literal()
-			if !strings.HasPrefix(literal, "/") {
-				b.add(path+".path", "must start with /")
-			} else {
-				routePath = LiteralExpression(pathpkg.Clean(literal))
-			}
+		if !strings.HasPrefix(routePath, "/") {
+			b.add(path+".path", "must start with /")
+		} else {
+			routePath = pathpkg.Clean(routePath)
 		}
 		tls := route.TLS
 		if tls == "" {
@@ -193,7 +185,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		}
 		target := b.portTarget(path+".port", string(route.Port), source.Ports)
 		compiled := Route{Domain: domain, Path: routePath, Port: target, TLS: tls}
-		conflictKey := canonicalExpression(domain) + "|" + canonicalExpression(routePath)
+		conflictKey := canonicalExpression(domain) + "|" + routePath
 		if previous, exists := b.routes[conflictKey]; exists {
 			b.add(path, "conflicts with route %s; domain and path pairs must be unique", previous)
 		} else {
@@ -244,7 +236,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 	}
 	result.Placement = Placement{SpreadAcross: spread.Across, Minimum: spread.Minimum, Enforcement: spread.Enforcement}
 
-	result.Deployment.ReleaseCommand.Command = b.expressionList(base+".deployment.releaseCommand.command", source.Deployment.ReleaseCommand.Command, scopeRuntime)
+	result.Deployment.ReleaseCommand.Command = append([]string(nil), source.Deployment.ReleaseCommand.Command...)
 	result.Deployment.ReleaseCommand.TimeoutMillis = b.duration(base+".deployment.releaseCommand.timeout", source.Deployment.ReleaseCommand.Timeout)
 	rollout := source.Deployment.Rollout
 	strategy := rollout.Strategy
@@ -302,12 +294,11 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 
 	for _, name := range mapKeys(source.Volumes) {
 		volume := source.Volumes[name]
-		mountPath := b.expr(base+".volumes."+name+".mountPath", volume.MountPath, false, scopeRuntime)
-		if mountPath.IsLiteral() && !strings.HasPrefix(mountPath.Literal(), "/") {
+		if !strings.HasPrefix(volume.MountPath, "/") {
 			b.add(base+".volumes."+name+".mountPath", "must be an absolute container path")
 		}
 		result.Volumes[name] = Volume{
-			MountPath: mountPath,
+			MountPath: volume.MountPath,
 			SizeBytes: b.bytes(base+".volumes."+name+".size", volume.Size),
 		}
 	}
@@ -325,8 +316,8 @@ func (b *builder) compileProbe(path string, source manifest.Probe, ports map[str
 	if source.HTTP.Port == "" {
 		b.add(path+".http.port", "is required")
 	}
-	httpPath := b.expr(path+".http.path", source.HTTP.Path, false, scopeRuntime)
-	if httpPath.IsLiteral() && !strings.HasPrefix(httpPath.Literal(), "/") {
+	httpPath := source.HTTP.Path
+	if httpPath == "" || !strings.HasPrefix(httpPath, "/") {
 		b.add(path+".http.path", "must start with /")
 	}
 	interval := b.duration(path+".interval", source.Interval)
@@ -458,41 +449,7 @@ func (b *builder) compileBackup(key string, source manifest.Backup) Backup {
 	}
 }
 
-// variableScope classifies where a ${NAME} reference appears: runtime
-// positions resolve server-side at render time from stored values, build
-// positions resolve client-side from a local environment file.
-type variableScope int
-
-const (
-	scopeRuntime variableScope = iota
-	scopeBuild
-)
-
-// expr parses one expression-bearing manifest field and records its project
-// variable references. Parse failures become diagnostics and yield a zero
-// expression.
-func (b *builder) expr(path, raw string, allowOutputs bool, scope variableScope) Expression {
-	expression, err := parseExpression(raw, b.document.Project, allowOutputs)
-	if err != nil {
-		b.add(path, "%s", err)
-		return Expression{}
-	}
-	b.collectVariables(path, expression, scope)
-	return expression
-}
-
-func (b *builder) expressionList(path string, values []string, scope variableScope) []Expression {
-	if len(values) == 0 {
-		return nil
-	}
-	list := make([]Expression, 0, len(values))
-	for index, value := range values {
-		list = append(list, b.expr(fmt.Sprintf("%s.%d", path, index), value, false, scope))
-	}
-	return list
-}
-
-func (b *builder) collectVariables(path string, expression Expression, scope variableScope) {
+func (b *builder) collectVariables(path string, expression Expression) {
 	for _, part := range expression.Parts {
 		if part.Kind != "project_variable" {
 			continue
@@ -513,12 +470,6 @@ func (b *builder) collectVariables(path string, expression Expression, scope var
 			if !part.HasDefault {
 				requirement.Required = true
 			}
-		}
-		switch scope {
-		case scopeRuntime:
-			requirement.Runtime = true
-		case scopeBuild:
-			requirement.Build = true
 		}
 		b.variables[part.Name] = requirement
 	}
@@ -602,4 +553,3 @@ func canonicalExpression(expression Expression) string {
 	data, _ := json.Marshal(expression)
 	return string(data)
 }
-

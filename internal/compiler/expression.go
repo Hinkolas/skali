@@ -102,11 +102,6 @@ func containsExpressionMarker(value string) bool {
 	return strings.Contains(value, "${") || strings.Contains(value, "{{") || strings.Contains(value, "}}")
 }
 
-// LiteralExpression wraps plain text in a single-part literal expression.
-func LiteralExpression(value string) Expression {
-	return Expression{Parts: []ExpressionPart{{Kind: "literal", Value: value}}}
-}
-
 // ServiceOutput returns the sole part when the expression is exactly one
 // {{collection.service.output}} reference.
 func (e Expression) ServiceOutput() (ExpressionPart, bool) {
@@ -126,19 +121,8 @@ func (e Expression) HasProjectVariables() bool {
 	return false
 }
 
-// IsLiteral reports whether the expression carries no reference parts. The
-// zero expression counts as literal.
-func (e Expression) IsLiteral() bool {
-	for _, part := range e.Parts {
-		if part.Kind != "literal" {
-			return false
-		}
-	}
-	return true
-}
-
-// Literal returns the concatenated literal text. Reference parts contribute
-// nothing; callers should check IsLiteral first.
+// Literal returns the concatenated literal text of a pure-literal
+// expression. Reference parts contribute nothing.
 func (e Expression) Literal() string {
 	var result strings.Builder
 	for _, part := range e.Parts {
@@ -183,4 +167,3 @@ func ResolveExpression(expression Expression, values map[string]string) (string,
 	}
 	return result.String(), nil
 }
-

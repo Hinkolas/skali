@@ -58,7 +58,7 @@ func TestLoadLocalProjectAndBuildInputs(t *testing.T) {
 	require.Equal(t, "flowdemo", project.Result.Definition.Name)
 	require.Equal(t, root, project.Root)
 
-	inputs, contexts, err := buildInputs(project, map[string]string{"APP_DOMAIN": "flow.localhost"}, []string{envFile}, "linux/amd64")
+	inputs, contexts, err := buildInputs(project, []string{envFile}, "linux/amd64")
 	require.NoError(t, err)
 	require.Contains(t, inputs, "web")
 	require.Len(t, inputs["web"].InputHash, 64)
@@ -67,13 +67,13 @@ func TestLoadLocalProjectAndBuildInputs(t *testing.T) {
 	require.NotContains(t, contexts["web"].Files, ".env")
 
 	// The platform is part of the dedup key: a different target rebuilds.
-	otherPlatform, _, err := buildInputs(project, map[string]string{"APP_DOMAIN": "flow.localhost"}, []string{envFile}, "linux/arm64")
+	otherPlatform, _, err := buildInputs(project, []string{envFile}, "linux/arm64")
 	require.NoError(t, err)
 	require.NotEqual(t, inputs["web"].InputHash, otherPlatform["web"].InputHash)
 
 	// A source change moves the input hash; the dedup key is honest.
 	writeFile(t, root, "main.txt", "changed")
-	changed, _, err := buildInputs(project, map[string]string{"APP_DOMAIN": "flow.localhost"}, []string{envFile}, "linux/amd64")
+	changed, _, err := buildInputs(project, []string{envFile}, "linux/amd64")
 	require.NoError(t, err)
 	require.NotEqual(t, inputs["web"].InputHash, changed["web"].InputHash)
 }
@@ -135,33 +135,24 @@ func TestChooseEnvFile(t *testing.T) {
 	var out strings.Builder
 
 	// No env files: silently keep the stored values, no prompt printed.
-	selected, err := chooseEnvFile(&out, bufio.NewReader(strings.NewReader("")), root, "production", false)
+	selected, err := chooseEnvFile(&out, bufio.NewReader(strings.NewReader("")), root, "production")
 	require.NoError(t, err)
 	require.Empty(t, selected)
 	require.Empty(t, out.String())
 
-	generic := writeFile(t, root, ".env", "A=1\n")
+	writeFile(t, root, ".env", "A=1\n")
 	production := writeFile(t, root, ".env.production", "A=1\n")
 
-	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("3\n")), root, "production", false)
+	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("3\n")), root, "production")
 	require.NoError(t, err)
 	require.Equal(t, production, selected)
 	require.Contains(t, out.String(), "Override production with a local env file?")
 	require.Contains(t, out.String(), "  1) Use stored values\n")
 
 	// Empty input takes the default: keep the stored values.
-	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), root, "production", false)
+	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), root, "production")
 	require.NoError(t, err)
 	require.Empty(t, selected)
-
-	// Build arguments referencing project values withhold the stored-values
-	// option: an env file must be picked, and empty input takes the first.
-	out.Reset()
-	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), root, "production", true)
-	require.NoError(t, err)
-	require.Equal(t, generic, selected)
-	require.NotContains(t, out.String(), "Use stored values")
-	require.Contains(t, out.String(), "a local env file must supply them")
 }
 
 func TestChooseEnvironment(t *testing.T) {

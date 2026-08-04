@@ -607,6 +607,9 @@ func runDevLs(command *cobra.Command, args []string) error {
 				if status.ActiveRevision != nil {
 					active = shortChecksum(status.ActiveRevision.Checksum)
 				}
+			} else {
+				fmt.Fprintf(out, "  %s\n", style.Yellow(fmt.Sprintf(
+					"warning: could not fetch status of %s/%s: %v", project.Name, environment.Name, err)))
 			}
 			fmt.Fprintf(out, "%-24s  %-13s  %s  %s\n", project.Name, environment.Name,
 				stateColor(style, fmt.Sprintf("%-10s", state)), active)

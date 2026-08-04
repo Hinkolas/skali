@@ -27,7 +27,7 @@
 	// Runtime variables are the storable contract; build-only variables
 	// resolve from a local env file at deploy time and have no stored row.
 	const declared = $derived(
-		(data.definition?.requiredVariables ?? []).filter((v) => v.runtime || !v.build)
+		data.definition?.requiredVariables ?? []
 	);
 	const entryByName = $derived(new Map(data.values.map((v) => [v.name, v])));
 	const declaredNames = $derived(new Set(declared.map((d) => d.name)));

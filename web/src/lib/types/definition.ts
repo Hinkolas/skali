@@ -19,10 +19,6 @@ export interface VariableRequirement {
 	required: boolean;
 	default?: string;
 	hasDefault?: boolean;
-	/** Referenced by a render-time field; the stored value store serves it. */
-	runtime?: boolean;
-	/** Referenced by an image build; resolves client-side from an env file. */
-	build?: boolean;
 }
 
 export interface Expression {
@@ -43,7 +39,7 @@ export interface ExpressionPart {
 
 export interface Application {
 	source: ApplicationSource;
-	command?: Expression[];
+	command?: string[];
 	environment?: Record<string, Expression>;
 	ports?: Record<string, PortDef>;
 	routes?: Record<string, Route>;
@@ -58,15 +54,15 @@ export interface Application {
 
 export interface ApplicationSource {
 	kind: string;
-	image?: Expression;
+	image?: string;
 	build?: Build;
 }
 
 export interface Build {
 	context: string;
 	dockerfile: string;
-	target?: Expression;
-	arguments?: Record<string, Expression>;
+	target?: string;
+	arguments?: Record<string, string>;
 }
 
 export interface PortDef {
@@ -81,7 +77,7 @@ export interface PortTarget {
 
 export interface Route {
 	domain: Expression;
-	path: Expression;
+	path: string;
 	port: PortTarget;
 	tls: string;
 }
@@ -101,7 +97,7 @@ export interface Probe {
 
 export interface HTTPProbe {
 	port: PortTarget;
-	path: Expression;
+	path: string;
 }
 
 export interface Resources {
@@ -133,7 +129,7 @@ export interface DeploymentConfig {
 }
 
 export interface ReleaseCommand {
-	command?: Expression[];
+	command?: string[];
 	timeoutMillis?: number;
 }
 
@@ -149,7 +145,7 @@ export interface Shutdown {
 }
 
 export interface Volume {
-	mountPath: Expression;
+	mountPath: string;
 	sizeBytes: number;
 }
 

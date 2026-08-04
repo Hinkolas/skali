@@ -32,9 +32,10 @@ manifest fields: parsing is strict and this reference is complete.
 - Every `${NAME}` project value is secret: stored encrypted per
   environment, write-only, and shown by name only. There is no `values:`
   declaration block; the contract derives from the references.
-- `${NAME}` works in any free-form string field with concatenation, such
-  as `"postgres://app:${DB_PASSWORD}@db:5432/app"`. A `{{...}}` service
-  output may appear only in `environment:` and must be the whole value.
+- `${NAME}` works only in `environment:` values (with concatenation, such
+  as `"postgres://app:${DB_PASSWORD}@db:5432/app"`) and route domains.
+  Every other string field is literal. A `{{...}}` service output may
+  appear only in `environment:` and must be the whole value.
 - Health probes gate rollouts: without a readiness probe the platform
   has a weaker signal that a deployment succeeded.
 - Schema migrations belong in `deployment.releaseCommand`, which runs

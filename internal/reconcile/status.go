@@ -2,7 +2,6 @@ package reconcile
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -75,11 +74,10 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 			return nil, fmt.Errorf("reconcile: get target revision: %w", err)
 		}
 		status.Target = &RevisionRef{ID: row.ID, Checksum: row.Checksum}
-		var decoded revision.Revision
-		if err := json.Unmarshal(row.Document, &decoded); err != nil {
-			return nil, fmt.Errorf("reconcile: decode target revision: %w", err)
+		targetRevision, err = revision.Decode(row.Document)
+		if err != nil {
+			return nil, err
 		}
-		targetRevision = &decoded
 	}
 	if target.ActiveRevisionID != nil {
 		if status.Target != nil && *target.ActiveRevisionID == status.Target.ID {

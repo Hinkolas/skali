@@ -192,8 +192,13 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	}
 
 	activeChecksum := ""
-	if status, err := api.EnvironmentStatus(ctx, environmentID); err == nil && status.ActiveRevision != nil {
-		activeChecksum = status.ActiveRevision.Checksum
+	if status, err := api.EnvironmentStatus(ctx, environmentID); err == nil {
+		if status.ActiveRevision != nil {
+			activeChecksum = status.ActiveRevision.Checksum
+		}
+	} else {
+		fmt.Fprintf(out, "  %s\n", style.Yellow(fmt.Sprintf(
+			"warning: could not fetch environment status: %v", err)))
 	}
 	request := client.DeployRequest{
 		FromEnvironmentID: promote.source.ID,

@@ -20,16 +20,13 @@ type ProjectDefinition struct {
 }
 
 // VariableRequirement is the compiled contract for one ${NAME} project value,
-// derived entirely from references. Runtime marks names the server resolves at
-// render time; Build marks names the client resolves locally for image builds.
-// A name referenced in both positions carries both flags.
+// derived entirely from references; the server resolves every name at render
+// time.
 type VariableRequirement struct {
 	Name       string "json:\"name\""
 	Required   bool   "json:\"required\""
 	Default    string "json:\"default,omitempty\""
 	HasDefault bool   "json:\"hasDefault,omitempty\""
-	Runtime    bool   "json:\"runtime,omitempty\""
-	Build      bool   "json:\"build,omitempty\""
 }
 
 type Expression struct {
@@ -50,7 +47,7 @@ type ExpressionPart struct {
 
 type Application struct {
 	Source      ApplicationSource     "json:\"source\""
-	Command     []Expression          "json:\"command,omitempty\""
+	Command     []string              "json:\"command,omitempty\""
 	Environment map[string]Expression "json:\"environment,omitempty\""
 	Ports       map[string]Port       "json:\"ports,omitempty\""
 	Routes      map[string]Route      "json:\"routes,omitempty\""
@@ -64,16 +61,16 @@ type Application struct {
 }
 
 type ApplicationSource struct {
-	Kind  string     "json:\"kind\""
-	Image Expression "json:\"image,omitzero\""
-	Build Build      "json:\"build,omitzero\""
+	Kind  string "json:\"kind\""
+	Image string "json:\"image,omitempty\""
+	Build Build  "json:\"build,omitzero\""
 }
 
 type Build struct {
-	Context    string                "json:\"context\""
-	Dockerfile string                "json:\"dockerfile\""
-	Target     Expression            "json:\"target,omitzero\""
-	Arguments  map[string]Expression "json:\"arguments,omitempty\""
+	Context    string            "json:\"context\""
+	Dockerfile string            "json:\"dockerfile\""
+	Target     string            "json:\"target,omitempty\""
+	Arguments  map[string]string "json:\"arguments,omitempty\""
 }
 
 type Port struct {
@@ -88,7 +85,7 @@ type PortTarget struct {
 
 type Route struct {
 	Domain Expression "json:\"domain\""
-	Path   Expression "json:\"path\""
+	Path   string     "json:\"path\""
 	Port   PortTarget "json:\"port\""
 	TLS    string     "json:\"tls\""
 }
@@ -108,7 +105,7 @@ type Probe struct {
 
 type HTTPProbe struct {
 	Port PortTarget "json:\"port\""
-	Path Expression "json:\"path\""
+	Path string     "json:\"path\""
 }
 
 type Resources struct {
@@ -140,8 +137,8 @@ type Deployment struct {
 }
 
 type ReleaseCommand struct {
-	Command       []Expression "json:\"command,omitempty\""
-	TimeoutMillis int64        "json:\"timeoutMillis,omitempty\""
+	Command       []string "json:\"command,omitempty\""
+	TimeoutMillis int64    "json:\"timeoutMillis,omitempty\""
 }
 
 type Rollout struct {
@@ -156,8 +153,8 @@ type Shutdown struct {
 }
 
 type Volume struct {
-	MountPath Expression "json:\"mountPath\""
-	SizeBytes int64      "json:\"sizeBytes\""
+	MountPath string "json:\"mountPath\""
+	SizeBytes int64  "json:\"sizeBytes\""
 }
 
 // DatabaseClaim is the lower-level capability requested by a project database

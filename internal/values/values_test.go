@@ -9,10 +9,9 @@ import (
 )
 
 var requirements = []compiler.VariableRequirement{
-	{Name: "APP_DOMAIN", Required: true, Runtime: true},
-	{Name: "SESSION_SECRET", Required: true, Runtime: true},
-	{Name: "LOG_LEVEL", Default: "info", HasDefault: true, Runtime: true},
-	{Name: "NPM_TOKEN", Required: true, Build: true},
+	{Name: "APP_DOMAIN", Required: true},
+	{Name: "SESSION_SECRET", Required: true},
+	{Name: "LOG_LEVEL", Default: "info", HasDefault: true},
 }
 
 func TestParseSupportsCommentsAndQuotes(t *testing.T) {
@@ -53,20 +52,6 @@ func TestConformTreatsEmptyStringAsPresent(t *testing.T) {
 	})
 	require.Empty(t, missing)
 	require.Equal(t, "", kept["APP_DOMAIN"])
-}
-
-// Build-only names never participate: they resolve client-side and are
-// orphans when submitted to the store.
-func TestConformExcludesBuildOnlyNames(t *testing.T) {
-	t.Parallel()
-	kept, missing, orphaned := Conform(requirements, map[string]string{
-		"APP_DOMAIN":     "files.localhost",
-		"SESSION_SECRET": "s3cret",
-		"NPM_TOKEN":      "token",
-	})
-	require.NotContains(t, kept, "NPM_TOKEN")
-	require.NotContains(t, missing, "NPM_TOKEN")
-	require.Equal(t, []string{"NPM_TOKEN"}, orphaned)
 }
 
 func TestConformLeavesDefaultsToTheDefinition(t *testing.T) {

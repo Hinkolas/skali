@@ -10,6 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CurrentVersion is the single version knob for the whole authored and
+// stored contract: skali.yaml manifests, compiled definition documents, and
+// revision documents (revision.SchemaVersion aliases it) all carry it, and
+// reads accept exactly this value. Validate enforces it here, schema.go
+// injects it into the runtime JSON Schema, and revision.Decode plus
+// compiler.DecodeDefinition enforce it on stored documents. Bumping it must
+// update the static const in schemas/skali.schema.json in lockstep.
 const CurrentVersion = "1"
 
 // Text accepts a YAML/JSON string or number and preserves its textual form.
@@ -101,7 +108,7 @@ type Build struct {
 	Context    string            `yaml:"context,omitempty" json:"context,omitempty" jsonschema:"Build context relative to the project root."`
 	Dockerfile string            `yaml:"dockerfile,omitempty" json:"dockerfile,omitempty" jsonschema:"Dockerfile path relative to the build context."`
 	Target     string            `yaml:"target,omitempty" json:"target,omitempty" jsonschema:"Optional multi-stage build target."`
-	Arguments  map[string]Scalar `yaml:"arguments,omitempty" json:"arguments,omitempty" jsonschema:"Build arguments. Project value expressions resolve from a local environment file at build time and persist in the image configuration."`
+	Arguments  map[string]Scalar `yaml:"arguments,omitempty" json:"arguments,omitempty" jsonschema:"Literal build arguments. They persist in the image configuration, so never put credentials here."`
 }
 
 type Port struct {

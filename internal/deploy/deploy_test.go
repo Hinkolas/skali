@@ -409,7 +409,6 @@ func TestRollback(t *testing.T) {
 	require.ErrorIs(t, err, ErrRevisionMismatch)
 }
 
-
 // The wedge regression: a stored value whose reference was removed from the
 // manifest must never block later deployments. It is intersected away and
 // reported as orphaned instead.

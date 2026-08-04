@@ -54,7 +54,7 @@
 
 	{#if service.type === 'application'}
 		<div class="font-mono text-text-muted truncate text-sm">
-			{renderExpression(service.config.source.image) ||
+			{service.config.source.image ||
 				service.config.source.build?.context ||
 				'source'}
 		</div>

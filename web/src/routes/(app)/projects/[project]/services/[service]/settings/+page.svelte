@@ -17,7 +17,7 @@
 				const c = service.config;
 				const source =
 					c.source.kind === 'image'
-						? [{ k: 'Image', v: renderExpression(c.source.image) }]
+						? [{ k: 'Image', v: c.source.image ?? '' }]
 						: [
 								{ k: 'Build context', v: c.source.build?.context ?? '.' },
 								{ k: 'Dockerfile', v: c.source.build?.dockerfile ?? 'Dockerfile' }
@@ -27,7 +27,7 @@
 						title: 'Source',
 						rows: [
 							...source,
-							{ k: 'Command', v: c.command?.map(renderExpression).join(' ') || 'image default' }
+							{ k: 'Command', v: c.command?.join(' ') || 'image default' }
 						]
 					},
 					{
@@ -39,7 +39,7 @@
 							})),
 							...Object.entries(c.routes ?? {}).map(([name, r]) => ({
 								k: `Route ${name}`,
-								v: `${renderExpression(r.domain)}${renderExpression(r.path)}`
+								v: `${renderExpression(r.domain)}${r.path}`
 							}))
 						]
 					},
@@ -62,7 +62,7 @@
 								: []),
 							...Object.entries(c.volumes ?? {}).map(([name, v]) => ({
 								k: `Volume ${name}`,
-								v: `${renderExpression(v.mountPath)} · ${formatBytes(v.sizeBytes)}`
+								v: `${v.mountPath} · ${formatBytes(v.sizeBytes)}`
 							}))
 						]
 					},

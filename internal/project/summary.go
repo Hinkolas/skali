@@ -2,7 +2,6 @@ package project
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -59,9 +58,9 @@ func (s *Service) ListSummaries(ctx context.Context) (map[uuid.UUID]Summary, err
 		return nil, fmt.Errorf("project: list draft definitions: %w", err)
 	}
 	for _, draft := range drafts {
-		var definition compiler.ProjectDefinition
-		if err := json.Unmarshal(draft.Definition, &definition); err != nil {
-			return nil, fmt.Errorf("project: decode draft definition: %w", err)
+		definition, err := compiler.DecodeDefinition(draft.Definition)
+		if err != nil {
+			return nil, err
 		}
 		summary := summaries[draft.ProjectID]
 		summary.ServiceCounts = ServiceCounts{

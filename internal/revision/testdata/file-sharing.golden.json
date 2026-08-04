@@ -1,9 +1,9 @@
 {
-  "schemaVersion": "2",
+  "schemaVersion": "1",
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "4e081b1fea49c2bd24a0cd430672a3893780d475e41ba1b3334557e7b36e87c2",
+  "definitionHash": "c958075f686d42798f414059e3f009a53bce677608f08764a367d8adbeb22438",
   "definition": {
     "version": "1",
     "name": "file-sharing",
@@ -15,33 +15,12 @@
           "build": {
             "context": "web",
             "dockerfile": "deploy/Dockerfile",
-            "target": {
-              "parts": [
-                {
-                  "kind": "literal",
-                  "value": "runtime"
-                }
-              ]
-            }
+            "target": "runtime"
           }
         },
         "command": [
-          {
-            "parts": [
-              {
-                "kind": "literal",
-                "value": "/app/file-sharing"
-              }
-            ]
-          },
-          {
-            "parts": [
-              {
-                "kind": "literal",
-                "value": "serve"
-              }
-            ]
-          }
+          "/app/file-sharing",
+          "serve"
         ],
         "environment": {
           "NODE_ENV": {
@@ -181,14 +160,7 @@
                 }
               ]
             },
-            "path": {
-              "parts": [
-                {
-                  "kind": "literal",
-                  "value": "/"
-                }
-              ]
-            },
+            "path": "/",
             "port": {
               "name": "http"
             },
@@ -201,14 +173,7 @@
               "port": {
                 "name": "http"
               },
-              "path": {
-                "parts": [
-                  {
-                    "kind": "literal",
-                    "value": "/health/startup"
-                  }
-                ]
-              }
+              "path": "/health/startup"
             },
             "intervalMillis": 2000,
             "timeoutMillis": 2000,
@@ -219,14 +184,7 @@
               "port": {
                 "name": "http"
               },
-              "path": {
-                "parts": [
-                  {
-                    "kind": "literal",
-                    "value": "/health/ready"
-                  }
-                ]
-              }
+              "path": "/health/ready"
             },
             "intervalMillis": 10000,
             "timeoutMillis": 2000,
@@ -237,14 +195,7 @@
               "port": {
                 "name": "http"
               },
-              "path": {
-                "parts": [
-                  {
-                    "kind": "literal",
-                    "value": "/health/live"
-                  }
-                ]
-              }
+              "path": "/health/live"
             },
             "intervalMillis": 30000,
             "timeoutMillis": 2000,
@@ -276,30 +227,9 @@
         "deployment": {
           "releaseCommand": {
             "command": [
-              {
-                "parts": [
-                  {
-                    "kind": "literal",
-                    "value": "/app/file-sharing"
-                  }
-                ]
-              },
-              {
-                "parts": [
-                  {
-                    "kind": "literal",
-                    "value": "migrate"
-                  }
-                ]
-              },
-              {
-                "parts": [
-                  {
-                    "kind": "literal",
-                    "value": "up"
-                  }
-                ]
-              }
+              "/app/file-sharing",
+              "migrate",
+              "up"
             ],
             "timeoutMillis": 300000
           },
@@ -347,13 +277,11 @@
     "requiredVariables": [
       {
         "name": "APP_DOMAIN",
-        "required": true,
-        "runtime": true
+        "required": true
       },
       {
         "name": "SESSION_SECRET",
-        "required": true,
-        "runtime": true
+        "required": true
       }
     ],
     "dependencies": {
@@ -386,5 +314,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "d8be0c7bd9f2738124266bcaa308e0de161f568ca7d5d4b502debb2434ce803c"
+  "checksum": "cddcc8f972240778712ee105e38c517a22daf3eec3ea61fbdca2899f057a625b"
 }

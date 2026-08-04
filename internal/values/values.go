@@ -43,7 +43,7 @@ func Parse(data []byte, path string) (*File, error) {
 	return &File{Path: path, Values: parsed}, nil
 }
 
-// MissingError reports required runtime values absent from a provided set.
+// MissingError reports required values absent from a provided set.
 type MissingError struct {
 	Names []string
 }
@@ -52,18 +52,14 @@ func (e *MissingError) Error() string {
 	return "missing required project values: " + strings.Join(e.Names, ", ")
 }
 
-// Conform intersects a provided value set with the definition's runtime
-// variable requirements. kept is provided minus orphans; missing lists
-// required runtime names absent from provided; orphaned lists provided names
-// no runtime reference requires, sorted. Orphans are advisory, never errors:
-// a stored value whose reference was removed must not block deployments.
-// Build-only names never participate; they resolve client-side.
+// Conform intersects a provided value set with the definition's variable
+// requirements. kept is provided minus orphans; missing lists required names
+// absent from provided; orphaned lists provided names no reference requires,
+// sorted. Orphans are advisory, never errors: a stored value whose reference
+// was removed must not block deployments.
 func Conform[V any](requirements []compiler.VariableRequirement, provided map[string]V) (kept map[string]V, missing, orphaned []string) {
 	known := make(map[string]bool, len(requirements))
 	for _, requirement := range requirements {
-		if !requirement.Runtime {
-			continue
-		}
 		known[requirement.Name] = true
 		if _, present := provided[requirement.Name]; !present && requirement.Required {
 			missing = append(missing, requirement.Name)

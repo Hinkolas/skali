@@ -937,7 +937,8 @@ paths:
             `conflict`: the environment already targets this revision, or
             the revision belongs to another environment.
             `deployment_in_flight`: another deployment or run is in
-            flight.
+            flight. `unsupported_schema`: the revision document was
+            written by another build and cannot be targeted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1146,6 +1147,13 @@ paths:
               schema: { $ref: "#/components/schemas/EnvironmentStatus" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            `unsupported_schema`: the target revision document was written
+            by another build; redeploy the environment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/environments/{id}/status/stream:
     parameters:
@@ -1612,7 +1620,8 @@ paths:
         "409":
           description: |
             `conflict`: the promotion source environment has no active
-            revision.
+            revision. `unsupported_schema`: a stored revision or definition
+            document was written by another build; redeploy or resubmit.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1673,7 +1682,9 @@ paths:
         "409":
           description: |
             `deployment_in_flight` or `destructive_change`, or `conflict`
-            when the promotion source environment has no active revision.
+            when the promotion source environment has no active revision, or
+            `unsupported_schema` when a stored revision or definition
+            document was written by another build.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

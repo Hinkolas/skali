@@ -18,10 +18,13 @@ import (
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/values"
 )
 
-const SchemaVersion = "2"
+// SchemaVersion follows the single version knob in manifest.CurrentVersion:
+// stored revision documents carry it, and Decode accepts exactly that value.
+const SchemaVersion = manifest.CurrentVersion
 
 // Artifact kinds. Imported upstream content is a reconstructable cache;
 // locally or cloud-built artifacts may be the only deployable copy.
@@ -127,6 +130,39 @@ func Build(input Input) (*Revision, error) {
 	return revision, nil
 }
 
+// SchemaError reports a stored revision document written under a different
+// schema version than this build supports. Callers may surface the message
+// verbatim.
+type SchemaError struct {
+	Got  string
+	Want string
+}
+
+func (e *SchemaError) Error() string {
+	return fmt.Sprintf("revision schema %q is not supported by this build (expected %q); redeploy the environment", e.Got, e.Want)
+}
+
+// Decode unmarshals a stored revision document, accepting exactly the
+// current SchemaVersion. The version is peeked before the full unmarshal
+// because a document from another schema generation may not even fit the
+// current struct shapes; the version mismatch is the error worth reporting.
+func Decode(document []byte) (*Revision, error) {
+	var peek struct {
+		SchemaVersion string `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(document, &peek); err != nil {
+		return nil, fmt.Errorf("decode revision document: %w", err)
+	}
+	if peek.SchemaVersion != SchemaVersion {
+		return nil, &SchemaError{Got: peek.SchemaVersion, Want: SchemaVersion}
+	}
+	var decoded Revision
+	if err := json.Unmarshal(document, &decoded); err != nil {
+		return nil, fmt.Errorf("decode revision document: %w", err)
+	}
+	return &decoded, nil
+}
+
 // ValuesError reports that the environment's values do not satisfy the
 // definition's requirements. It is the deployer's mistake, not an internal
 // failure, so callers may surface the message verbatim.
@@ -141,8 +177,8 @@ func valuesErrorf(format string, args ...any) error {
 }
 
 // checkValues intersects the provided value set with the definition's
-// runtime requirements. Missing required values are the deployer's mistake
-// and fail the build; orphaned values (stored but no longer referenced) are
+// requirements. Missing required values are the deployer's mistake and fail
+// the build; orphaned values (stored but no longer referenced) are
 // intersected away silently so a removed reference can never wedge an
 // environment.
 func checkValues(definition compiler.ProjectDefinition, provided map[string]int) (map[string]int, error) {
@@ -173,12 +209,7 @@ func checkArtifacts(definition compiler.ProjectDefinition, provided map[string]A
 				return nil, fmt.Errorf("application %s uses an image source; its artifact kind must be %s", key, KindImport)
 			}
 			if artifact.Upstream == "" {
-				// Expression-bearing image references are resolved during
-				// artifact preparation, which records the resolved upstream.
-				if !source.Image.IsLiteral() {
-					return nil, fmt.Errorf("imported artifact for application %s must carry the resolved upstream reference", key)
-				}
-				artifact.Upstream = source.Image.Literal()
+				artifact.Upstream = source.Image
 			}
 			if artifact.ContextHash != "" {
 				return nil, fmt.Errorf("imported artifact for application %s must not carry a build-context hash", key)

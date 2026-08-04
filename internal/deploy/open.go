@@ -638,10 +638,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 	for _, key := range sortedKeys(definition.Applications) {
 		source := definition.Applications[key].Source
 		if source.Kind == "image" {
-			upstream, err := s.imageReference(ctx, env.ID, in.CandidateID, key, source.Image)
-			if err != nil {
-				return nil, err
-			}
+			upstream := source.Image
 			row, err := s.st.GetVerifiedArtifactByUpstream(ctx, upstream)
 			if in.Rebuild && err == nil {
 				// Rebuild discards the reusable row: the upstream is
@@ -814,9 +811,9 @@ func (s *Service) loadPromotionSource(ctx context.Context, environmentID, fromEn
 	if err != nil {
 		return nil, fmt.Errorf("deploy: get source revision: %w", err)
 	}
-	var document revision.Revision
-	if err := json.Unmarshal(row.Document, &document); err != nil {
-		return nil, fmt.Errorf("deploy: decode source revision: %w", err)
+	document, err := revision.Decode(row.Document)
+	if err != nil {
+		return nil, err
 	}
 
 	leases, err := s.st.ListArtifactLeasesByRevision(ctx, row.ID)
@@ -874,8 +871,9 @@ func (s *Service) loadDefinition(ctx context.Context, environmentID, definitionV
 	if definitionVersion.ProjectID != env.ProjectID {
 		return env, definitionVersion, definition, ErrDefinitionMismatch
 	}
-	if err := json.Unmarshal(definitionVersion.Definition, &definition); err != nil {
-		return env, definitionVersion, definition, fmt.Errorf("deploy: decode definition: %w", err)
+	definition, err = compiler.DecodeDefinition(definitionVersion.Definition)
+	if err != nil {
+		return env, definitionVersion, definition, err
 	}
 	return env, definitionVersion, definition, nil
 }

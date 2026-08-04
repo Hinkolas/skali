@@ -12,6 +12,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/buildstore"
+	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/plan"
@@ -593,6 +594,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	var incomplete *deploy.ArtifactsIncompleteError
 	var platformMismatch *deploy.PlatformMismatchError
 	var invalidValues *revision.ValuesError
+	var staleRevision *revision.SchemaError
+	var staleDefinition *compiler.UnsupportedDefinitionError
 	switch {
 	case errors.Is(err, deploy.ErrEnvironmentNotFound),
 		errors.Is(err, deploy.ErrRevisionNotFound),
@@ -641,6 +644,12 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, codeInvalidValues, invalidValues.Message)
 	case errors.As(err, &incomplete):
 		writeError(w, http.StatusConflict, codeArtifactsIncomplete, trimDeployPrefix(err))
+	// 409, not 422: the request is well-formed; the conflict is with stored
+	// state written by another build, and the remedy is a state transition.
+	case errors.As(err, &staleRevision):
+		writeError(w, http.StatusConflict, codeUnsupportedSchema, staleRevision.Error())
+	case errors.As(err, &staleDefinition):
+		writeError(w, http.StatusConflict, codeUnsupportedSchema, staleDefinition.Error())
 	default:
 		writeInternalError(ctx, w, "deploy error", err)
 	}

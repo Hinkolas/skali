@@ -119,9 +119,9 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	if definitionVersion.ProjectID != env.ProjectID {
 		return nil, ErrDefinitionMismatch
 	}
-	var definition compiler.ProjectDefinition
-	if err := json.Unmarshal(definitionVersion.Definition, &definition); err != nil {
-		return nil, fmt.Errorf("deploy: decode definition: %w", err)
+	definition, err := compiler.DecodeDefinition(definitionVersion.Definition)
+	if err != nil {
+		return nil, err
 	}
 
 	secretVersions, orphaned, err := s.resolveValues(ctx, env.ID, in.CandidateID, definition.RequiredVariables)
@@ -136,13 +136,6 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	artifactIDs := make([]uuid.UUID, 0, len(definition.Applications))
 	for _, key := range sortedKeys(definition.Applications) {
 		source := definition.Applications[key].Source
-		if source.Kind == "image" && !source.Image.IsLiteral() {
-			reference, err := s.imageReference(ctx, env.ID, in.CandidateID, key, source.Image)
-			if err != nil {
-				return nil, err
-			}
-			source.Image = compiler.LiteralExpression(reference)
-		}
 		resolved, err := in.Resolver.Resolve(ctx, key, source)
 		if err != nil {
 			return nil, fmt.Errorf("deploy: %w", err)
@@ -274,6 +267,11 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	if row.EnvironmentID != in.EnvironmentID {
 		return nil, ErrRevisionMismatch
 	}
+	// The target must never point at a document this build cannot decode;
+	// the reconciler would hot-loop on it.
+	if row.SchemaVersion != revision.SchemaVersion {
+		return nil, &revision.SchemaError{Got: row.SchemaVersion, Want: revision.SchemaVersion}
+	}
 	target, err := s.st.GetEnvironmentTarget(ctx, in.EnvironmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -375,7 +373,9 @@ func (s *Service) ListRevisions(ctx context.Context, environmentID uuid.UUID) ([
 	return rows, nil
 }
 
-// GetRevision decodes the stored canonical document.
+// GetRevision decodes the stored canonical document. A schema mismatch
+// surfaces as the revision package's typed error, unwrapped, so API layers
+// can map it.
 func (s *Service) GetRevision(ctx context.Context, id uuid.UUID) (*revision.Revision, error) {
 	row, err := s.st.GetRevisionByID(ctx, id)
 	if err != nil {
@@ -384,11 +384,7 @@ func (s *Service) GetRevision(ctx context.Context, id uuid.UUID) (*revision.Revi
 		}
 		return nil, fmt.Errorf("deploy: get revision: %w", err)
 	}
-	var document revision.Revision
-	if err := json.Unmarshal(row.Document, &document); err != nil {
-		return nil, fmt.Errorf("deploy: decode revision: %w", err)
-	}
-	return &document, nil
+	return revision.Decode(row.Document)
 }
 
 // storedVersions merges the environment's current value versions with the
@@ -414,7 +410,7 @@ func (s *Service) storedVersions(ctx context.Context, environmentID, candidateID
 }
 
 // resolveValues intersects the environment's stored value versions with the
-// definition's runtime requirements. Orphaned names (stored but no longer
+// definition's requirements. Orphaned names (stored but no longer
 // referenced by the definition) are reported for advisory surfacing, never
 // as errors: a removed reference must not wedge the environment.
 func (s *Service) resolveValues(ctx context.Context, environmentID, candidateID uuid.UUID,
@@ -426,41 +422,6 @@ func (s *Service) resolveValues(ctx context.Context, environmentID, candidateID 
 	}
 	kept, _, orphaned := values.Conform(requirements, provided)
 	return kept, orphaned, nil
-}
-
-// imageReference resolves an application's image reference. Literal
-// references (the normal case) resolve without touching the store; an
-// expression decrypts exactly the referenced values, pinned at the versions
-// a deployment would use. A missing value surfaces as a ValuesError naming
-// the variable, never a plaintext.
-func (s *Service) imageReference(ctx context.Context, environmentID, candidateID uuid.UUID,
-	application string, image compiler.Expression) (string, error) {
-
-	if image.IsLiteral() {
-		return image.Literal(), nil
-	}
-	versions, err := s.storedVersions(ctx, environmentID, candidateID)
-	if err != nil {
-		return "", err
-	}
-	needed := make(map[string]int)
-	for _, part := range image.Parts {
-		if part.Kind != "project_variable" {
-			continue
-		}
-		if version, ok := versions[part.Name]; ok {
-			needed[part.Name] = version
-		}
-	}
-	plaintexts, err := s.values.Plaintexts(ctx, environmentID, needed)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := compiler.ResolveExpression(image, plaintexts)
-	if err != nil {
-		return "", &revision.ValuesError{Message: fmt.Sprintf("application %s image: %s", application, err)}
-	}
-	return resolved, nil
 }
 
 func sortedKeys[T any](m map[string]T) []string {

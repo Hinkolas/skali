@@ -24,7 +24,7 @@
             "properties": {
               "arguments": {
                 "type": "object",
-                "description": "Build arguments. Project value expressions resolve from a local environment file at build time and persist in the image configuration.",
+                "description": "Literal build arguments. They persist in the image configuration, so never put credentials here.",
                 "additionalProperties": {
                   "anyOf": [
                     {

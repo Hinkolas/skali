@@ -47,9 +47,9 @@ func newValidateCmd() *cobra.Command {
 					return err
 				}
 				fmt.Fprintf(command.OutOrStdout(), "  values %s: %d set\n", path, len(resolved))
-				if filtered := filterSkipped(result, skipped); len(filtered) > 0 {
+				if len(skipped) > 0 {
 					fmt.Fprintf(command.OutOrStdout(), "  warning: skipped keys not referenced by the manifest: %s\n",
-						strings.Join(filtered, ", "))
+						strings.Join(skipped, ", "))
 				}
 			}
 			for _, hint := range healthHints(result) {
@@ -203,24 +203,6 @@ func resolveValues(result *compiler.Result, envFile string) (map[string]string, 
 		return nil, "", nil, fmt.Errorf("%s: missing required project values: %s", file.Path, strings.Join(missing, ", "))
 	}
 	return kept, file.Path, skipped, nil
-}
-
-// filterSkipped removes build-only variables from a skipped list: they are
-// referenced by the manifest, just resolved client-side rather than stored.
-func filterSkipped(result *compiler.Result, skipped []string) []string {
-	buildOnly := make(map[string]bool, len(result.Definition.RequiredVariables))
-	for _, requirement := range result.Definition.RequiredVariables {
-		if requirement.Build && !requirement.Runtime {
-			buildOnly[requirement.Name] = true
-		}
-	}
-	var filtered []string
-	for _, name := range skipped {
-		if !buildOnly[name] {
-			filtered = append(filtered, name)
-		}
-	}
-	return filtered
 }
 
 // artifactsForRevision converts pinned --image references into revision

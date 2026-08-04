@@ -1,9 +1,9 @@
 {
-  "schemaVersion": "2",
+  "schemaVersion": "1",
   "project": "hello-world",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "3b447584aa28ad72ae662fbd25beabbb66d929ace866f6a5729371e91235892c",
+  "definitionHash": "9bbe35e68acd9a8ebc71f6b4f5f2fb2e65cf9b9c0fc1651e38b43b6d4c0f9ddc",
   "definition": {
     "version": "1",
     "name": "hello-world",
@@ -33,14 +33,7 @@
                 }
               ]
             },
-            "path": {
-              "parts": [
-                {
-                  "kind": "literal",
-                  "value": "/"
-                }
-              ]
-            },
+            "path": "/",
             "port": {
               "name": "http"
             },
@@ -53,14 +46,7 @@
               "port": {
                 "name": "http"
               },
-              "path": {
-                "parts": [
-                  {
-                    "kind": "literal",
-                    "value": "/healthz"
-                  }
-                ]
-              }
+              "path": "/healthz"
             },
             "intervalMillis": 5000,
             "timeoutMillis": 2000,
@@ -71,14 +57,7 @@
               "port": {
                 "name": "http"
               },
-              "path": {
-                "parts": [
-                  {
-                    "kind": "literal",
-                    "value": "/healthz"
-                  }
-                ]
-              }
+              "path": "/healthz"
             },
             "intervalMillis": 30000,
             "timeoutMillis": 2000,
@@ -103,8 +82,7 @@
     "requiredVariables": [
       {
         "name": "APP_DOMAIN",
-        "required": true,
-        "runtime": true
+        "required": true
       }
     ]
   },
@@ -126,5 +104,5 @@
     "application",
     "edge"
   ],
-  "checksum": "0e01fde02c50a0416a01e93cc0c4bfaf9bb9c311693d471ac82472f479d9d9a4"
+  "checksum": "5982c655963ea5b97f030106713f4d87f8bd939043314ecdbacd748911833dd1"
 }

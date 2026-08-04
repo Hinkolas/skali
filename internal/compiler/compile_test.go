@@ -16,7 +16,7 @@ func TestCompileExamples(t *testing.T) {
 	require.Len(t, hello.Definition.Applications, 1)
 	require.Equal(t, "build", hello.Definition.Applications["web"].Source.Kind)
 	require.Empty(t, hello.Definition.Dependencies["applications.web"])
-	require.Equal(t, []VariableRequirement{{Name: "APP_DOMAIN", Required: true, Runtime: true}}, hello.Definition.RequiredVariables)
+	require.Equal(t, []VariableRequirement{{Name: "APP_DOMAIN", Required: true}}, hello.Definition.RequiredVariables)
 
 	whoami := compileFixture(t, filepath.Join("..", "..", "examples", "whoami", "skali.yml"))
 	require.Len(t, whoami.Definition.Applications, 1)
@@ -29,9 +29,7 @@ func TestCompileExamples(t *testing.T) {
 		variables[requirement.Name] = requirement
 	}
 	require.True(t, variables["SESSION_SECRET"].Required)
-	require.True(t, variables["SESSION_SECRET"].Runtime)
-	require.False(t, variables["SESSION_SECRET"].Build)
-	require.True(t, variables["APP_DOMAIN"].Runtime)
+	require.Contains(t, variables, "APP_DOMAIN")
 	require.EqualValues(t, 200, files.Definition.Applications["web"].Resources.Requests.MilliCPU)
 	require.EqualValues(t, 256_000_000, files.Definition.Applications["web"].Resources.Requests.MemoryBytes)
 	require.EqualValues(t, 20_000_000_000, files.Definition.Databases["data"].StorageBytes)
@@ -77,8 +75,8 @@ func TestInvalidFixtures(t *testing.T) {
 func TestSameDomainSupportsDistinctRoutePaths(t *testing.T) {
 	t.Parallel()
 	result := compileFixture(t, filepath.Join("testdata", "route-paths.yml"))
-	require.Equal(t, "/", result.Definition.Applications["web"].Routes["public"].Path.Literal())
-	require.Equal(t, "/api", result.Definition.Applications["api"].Routes["public"].Path.Literal())
+	require.Equal(t, "/", result.Definition.Applications["web"].Routes["public"].Path)
+	require.Equal(t, "/api", result.Definition.Applications["api"].Routes["public"].Path)
 }
 
 func TestProjectVariableDefault(t *testing.T) {
@@ -93,13 +91,13 @@ func TestProjectVariableDefault(t *testing.T) {
 	require.Equal(t, "custom", value)
 }
 
-// The variable contract is derived entirely from references: scope flags
-// follow the position, and one name may span both scopes.
-func TestVariableScopesFollowReferences(t *testing.T) {
+// Interpolation is limited to environment values and route domains: build
+// fields carry ${...} text through verbatim and register no requirement.
+func TestBuildFieldsAreLiteral(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
 version: "1"
-name: scoped-values
+name: literal-build
 applications:
   api:
     build:
@@ -115,18 +113,20 @@ applications:
         domain: "${APP_DOMAIN}"
         port: http
     environment:
-      NPM_TOKEN: "${NPM_TOKEN}"
       API_KEY: "${API_KEY:-fallback}"
 `)
 	require.NoError(t, err)
+	build := result.Definition.Applications["api"].Source.Build
+	require.Equal(t, "${BUILD_TARGET:-runtime}", build.Target)
+	require.Equal(t, map[string]string{"NPM_TOKEN": "${NPM_TOKEN}"}, build.Arguments)
 	variables := make(map[string]VariableRequirement, len(result.Definition.RequiredVariables))
 	for _, requirement := range result.Definition.RequiredVariables {
 		variables[requirement.Name] = requirement
 	}
-	require.Equal(t, VariableRequirement{Name: "NPM_TOKEN", Required: true, Runtime: true, Build: true}, variables["NPM_TOKEN"])
-	require.Equal(t, VariableRequirement{Name: "APP_DOMAIN", Required: true, Runtime: true}, variables["APP_DOMAIN"])
-	require.Equal(t, VariableRequirement{Name: "BUILD_TARGET", Default: "runtime", HasDefault: true, Build: true}, variables["BUILD_TARGET"])
-	require.Equal(t, VariableRequirement{Name: "API_KEY", Default: "fallback", HasDefault: true, Runtime: true}, variables["API_KEY"])
+	require.NotContains(t, variables, "BUILD_TARGET")
+	require.NotContains(t, variables, "NPM_TOKEN")
+	require.Equal(t, VariableRequirement{Name: "APP_DOMAIN", Required: true}, variables["APP_DOMAIN"])
+	require.Equal(t, VariableRequirement{Name: "API_KEY", Default: "fallback", HasDefault: true}, variables["API_KEY"])
 }
 
 // ${NAME} references concatenate with literals anywhere, including
@@ -151,8 +151,11 @@ applications:
 	for _, requirement := range result.Definition.RequiredVariables {
 		variables[requirement.Name] = requirement
 	}
-	require.True(t, variables["DB_PASSWORD"].Runtime)
-	require.True(t, variables["APP_DOMAIN"].Runtime)
+	require.Contains(t, variables, "DB_PASSWORD")
+	// Command elements are plain strings now; a ${...} there is shell text,
+	// not a project variable reference.
+	require.Equal(t, []string{"serve", "--host", "${APP_DOMAIN}"}, result.Definition.Applications["api"].Command)
+	require.NotContains(t, variables, "APP_DOMAIN")
 }
 
 func TestServiceOutputMustOccupyEntireEnvironmentValue(t *testing.T) {

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -165,8 +164,13 @@ func (h *valuesHandlers) requirements(w http.ResponseWriter, r *http.Request, pr
 				"the definition version belongs to another project")
 			return nil, false
 		}
-		var definition compiler.ProjectDefinition
-		if err := json.Unmarshal(row.Definition, &definition); err != nil {
+		definition, err := compiler.DecodeDefinition(row.Definition)
+		if err != nil {
+			var unsupported *compiler.UnsupportedDefinitionError
+			if errors.As(err, &unsupported) {
+				writeError(w, http.StatusConflict, codeUnsupportedSchema, unsupported.Error())
+				return nil, false
+			}
 			writeInternalError(r.Context(), w, "decode definition", err)
 			return nil, false
 		}

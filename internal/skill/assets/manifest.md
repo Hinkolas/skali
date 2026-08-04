@@ -61,16 +61,19 @@ Rules the compiler enforces:
 
 - Requiredness derives from use: any `${NAME}` reference without an
   inline default makes the value required before deployment.
-- `${NAME}` works in any free-form string field, including concatenation
-  such as `"postgres://app:${DB_PASSWORD}@db:5432/app"` in an
-  environment value or `"app.${BASE_DOMAIN}"` in a route domain. Typed
-  fields (ports, quantities, replica counts, cron schedules) stay
-  literal.
+- Expressions live in exactly two places: an application's `environment:`
+  values (`${NAME}` with concatenation such as
+  `"postgres://app:${DB_PASSWORD}@db:5432/app"`) and a route's `domain:`
+  (`${NAME}` with concatenation such as `"app.${BASE_DOMAIN}"`).
+- Every other string field is literal: image, command, build target and
+  arguments, route and probe paths, volume mount paths. A `${...}` there
+  passes through verbatim, so shell syntax in `command` reaches the
+  container untouched.
 - A `{{...}}` service output may appear only in an application's
   `environment:` block and must occupy the entire value.
 - The same name with two different inline defaults is an error.
-- Malformed `${` or `{{` anywhere in a string is an error, so typos never
-  pass through silently.
+- Malformed `${` or `{{` inside an expression-bearing field is an error,
+  so typos never pass through silently.
 
 Values are supplied per environment: stored values are the default, and a
 dotenv file can be staged at deploy (`--env-file`) or picked up
@@ -90,9 +93,9 @@ applications:
     build:
       context: ./web                # required with build; relative to project root
       dockerfile: deploy/Dockerfile # optional, relative to context, default Dockerfile
-      target: runtime               # optional multi-stage target
-      arguments:                    # optional build args; they persist in image
-        VERSION: "${RELEASE:-dev}"  # config, so never reference credentials here
+      target: runtime               # optional multi-stage target, literal
+      arguments:                    # optional literal build args; they persist in
+        VERSION: "1.4.2"            # image config, so never put credentials here
     command: ["/app/web", "serve"]  # optional container command
     environment:                    # names match ^[A-Za-z_][A-Za-z0-9_]*$
       NODE_ENV: production
@@ -104,10 +107,6 @@ digest. Build contexts may not be absolute paths and may not escape the
 project root; `.dockerignore` in the context root filters files exactly
 as docker build would, and `.git/`, `.skali/`, `.env`, and `.env.*` are
 always excluded.
-
-Build arguments and targets referencing `${NAME}` resolve on the
-deploying machine from a local env file; stored values are write-only
-and can never feed a build, so such deployments require `--env-file`.
 
 ### Ports and routes
 

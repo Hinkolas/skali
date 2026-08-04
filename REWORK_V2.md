@@ -599,6 +599,21 @@ backups:
 > client-side from a local env file only. The rules below describe the
 > pre-amendment design where they conflict.
 
+> **Amendment (2026-08-05, interpolation scope-back):** the
+> interpolation-anywhere half of the values rework is reverted. `${NAME}`
+> expressions live in exactly two positions: application `environment:`
+> values (concatenation allowed; `{{...}}` outputs whole-value) and route
+> `domain:`. Every other string field is literal, including build arguments
+> and targets, which lose the interpolation they had before the rework;
+> `${...}` in `command` is shell text and passes through verbatim. The
+> client-side build-value resolution and its forced `--env-file` path are
+> deleted. One central version knob (`manifest.CurrentVersion`, a string,
+> currently "1") governs manifests, stored definition documents, and
+> revision documents; every read accepts exactly that value and rejects
+> anything else loudly (`unsupported_schema`, HTTP 409) instead of failing
+> as an opaque decode error. No data migration: stale stores are wiped and
+> redeployed (prerelease).
+
 This is illustrative, not a frozen field spelling. The design rules are frozen:
 
 - Application, database, and bucket keys are stable identities in separate
