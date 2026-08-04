@@ -105,11 +105,23 @@ func requestLogger(next http.Handler) http.Handler {
 // signal, not a security boundary: server authentication remains TLS's job.
 const InstanceHeader = "Skali-Instance"
 
-// instanceHeader stamps the installation identity onto every response.
-func instanceHeader(id string) func(http.Handler) http.Handler {
+// VersionHeader carries the daemon build version on every response, so
+// clients can diagnose version skew pre-auth and on failures (the meta
+// endpoint needs a session). Diagnostics only: compatibility gates stay on
+// explicit signals (error codes, capabilities), never on comparing versions.
+const VersionHeader = "Skali-Version"
+
+// platformHeaders stamps the installation identity and daemon version onto
+// every response.
+func platformHeaders(instanceID, version string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set(InstanceHeader, id)
+			if instanceID != "" {
+				w.Header().Set(InstanceHeader, instanceID)
+			}
+			if version != "" {
+				w.Header().Set(VersionHeader, version)
+			}
 			next.ServeHTTP(w, r)
 		})
 	}

@@ -62,7 +62,8 @@ type Deps struct {
 	// SecretReader is the sanctioned request-time Secret read behind
 	// credential reveal; nil (API-only mode) disables reveal.
 	SecretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
-	// Version is the daemon build version reported on /v1/system/meta.
+	// Version is the daemon build version reported on /v1/system/meta and
+	// stamped onto every response as the Skali-Version header.
 	Version string
 	// InstanceName is the operator-chosen installation name reported on
 	// /v1/system/meta; empty leaves naming to the client.
@@ -105,9 +106,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(realIP)
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
-	if d.InstanceID != "" {
-		r.Use(instanceHeader(d.InstanceID))
-	}
+	r.Use(platformHeaders(d.InstanceID, d.Version))
 	// The request timeout is applied per group below, not globally: SSE
 	// streams must outlive it.
 

@@ -26,6 +26,13 @@ import (
 // job.
 const InstanceHeader = "Skali-Instance"
 
+// VersionHeader is the response header carrying the daemon's build version,
+// available pre-auth and on error responses (the meta endpoint needs a
+// session). Diagnostics only: compatibility decisions belong to explicit
+// signals like error codes and the capabilities list, never to comparing
+// version strings (a working-tree daemon reports 0.0.0-dev).
+const VersionHeader = "Skali-Version"
+
 // Client talks to one master. Token may be empty for public endpoints.
 type Client struct {
 	base      string
@@ -37,10 +44,11 @@ type Client struct {
 	streaming *http.Client
 
 	// Install-identity pinning state; see PinInstance.
-	mu       sync.Mutex
-	pinned   string
-	observed string
-	onAdopt  func(observed string)
+	mu              sync.Mutex
+	pinned          string
+	observed        string
+	observedVersion string
+	onAdopt         func(observed string)
 }
 
 // Master reports the base URL this client talks to.
@@ -98,8 +106,22 @@ func (c *Client) ObservedInstance() string {
 	return c.observed
 }
 
-// checkInstance records the response's install identity and enforces the pin.
+// ObservedVersion reports the daemon build version from the most recent
+// response, empty until one carried the header (an older daemon).
+func (c *Client) ObservedVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.observedVersion
+}
+
+// checkInstance records the response's platform headers and enforces the
+// install-identity pin.
 func (c *Client) checkInstance(res *http.Response) error {
+	if version := res.Header.Get(VersionHeader); version != "" {
+		c.mu.Lock()
+		c.observedVersion = version
+		c.mu.Unlock()
+	}
 	observed := res.Header.Get(InstanceHeader)
 	if observed == "" {
 		return nil

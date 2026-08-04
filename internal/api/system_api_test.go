@@ -77,11 +77,13 @@ func TestInstanceHeaderOnEveryResponse(t *testing.T) {
 
 	// The identity must ride on errors too: the stale-token 401 from a
 	// reinstalled cluster is exactly where clients need it to tell "expired
-	// session" from "different installation".
+	// session" from "different installation". The version rides along for
+	// skew diagnostics pre-auth.
 	for _, path := range []string{"/healthz", "/v1/system/meta", "/v1/does-not-exist"} {
 		res, err := http.Get(a.srv.URL + path)
 		require.NoError(t, err)
 		res.Body.Close()
 		require.Equal(t, testInstanceID, res.Header.Get(InstanceHeader), path)
+		require.Equal(t, "test", res.Header.Get(VersionHeader), path)
 	}
 }

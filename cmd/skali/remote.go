@@ -14,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 func newRemoteCmd() *cobra.Command {
@@ -305,6 +306,13 @@ func newRemoteStatusCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Println("health:  ok")
+			if version := c.ObservedVersion(); version != "" {
+				if version == versionpkg.Version {
+					fmt.Printf("server:  skalid %s\n", version)
+				} else {
+					fmt.Printf("server:  skalid %s (this CLI is %s)\n", version, versionpkg.Version)
+				}
+			}
 
 			if remote.Token == "" {
 				fmt.Println("session: not logged in")

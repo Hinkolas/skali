@@ -28,6 +28,12 @@ info:
     as an expired session. The header is a convenience signal, not
     man-in-the-middle protection; server authentication remains TLS's
     job. It also appears as `instance_id` on `/v1/system/meta`.
+
+    Every response also carries the `Skali-Version` header: the daemon
+    build version, available pre-auth and on errors so clients can
+    diagnose version skew without a session. Diagnostics only:
+    compatibility decisions belong to explicit signals (error codes, the
+    capabilities list), never to comparing version strings.
   version: 0.1.0
   license:
     name: Apache 2.0

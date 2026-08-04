@@ -15,6 +15,7 @@ func instanceServer(t *testing.T, id string, status int, body string) *httptest.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if id != "" {
 			w.Header().Set(InstanceHeader, id)
+			w.Header().Set(VersionHeader, "v9.9.9")
 		}
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
@@ -33,6 +34,7 @@ func TestInstanceAdoptedOnFirstUse(t *testing.T) {
 	require.NoError(t, c.Health(context.Background()))
 	require.Equal(t, []string{"install-a"}, adopted)
 	require.Equal(t, "install-a", c.ObservedInstance())
+	require.Equal(t, "v9.9.9", c.ObservedVersion())
 
 	// The adopted identity is the pin now: matching responses pass, and
 	// the adoption callback does not fire again.
@@ -75,6 +77,7 @@ func TestInstanceHeaderAbsentVerifiesNothing(t *testing.T) {
 
 	require.NoError(t, c.Health(context.Background()))
 	require.Empty(t, c.ObservedInstance())
+	require.Empty(t, c.ObservedVersion())
 }
 
 func TestStreamChecksInstance(t *testing.T) {
