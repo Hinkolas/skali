@@ -99,8 +99,8 @@ type InitConfig struct {
 // EndpointsConfig declares the public domains.
 type EndpointsConfig struct {
 	API      string `yaml:"api" json:"api" jsonschema:"Public api/ui domain, for example skali.example.com."`
-	Registry string `yaml:"registry" json:"registry" jsonschema:"Public managed-registry domain, for example registry.example.com."`
-	S3       string `yaml:"s3,omitempty" json:"s3,omitempty" jsonschema:"Optional public S3 endpoint domain, for example s3.example.com; empty keeps bucket access in-cluster."`
+	Registry string `yaml:"registry" json:"registry" jsonschema:"Public managed-registry domain, for example cr.skali.example.com."`
+	S3       string `yaml:"s3,omitempty" json:"s3,omitempty" jsonschema:"Optional public S3 endpoint domain, for example s3.skali.example.com; empty keeps bucket access in-cluster."`
 }
 
 // TLSInitConfig parameterizes the ACME cluster issuer.

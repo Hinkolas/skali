@@ -100,7 +100,7 @@ For third-party OCI tooling the token still works as a registry password
 (any username):
 
 ```console
-$ skali remote token | crane auth login registry.example.com -u token --password-stdin
+$ skali remote token | crane auth login cr.skali.example.com -u token --password-stdin
 ```
 
 ## 7. Remove, and the reserved local remote

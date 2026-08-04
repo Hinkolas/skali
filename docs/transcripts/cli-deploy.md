@@ -68,7 +68,7 @@ run 01J9V2E8  deploy file-sharing to production
   ok  Prepare artifacts
         ok  web
               ok  Build locally (BuildKit)                            38s
-              ok  Push registry.example.com/skali/file-sharing/web
+              ok  Push cr.skali.example.com/skali/file-sharing/web
               ok  Verify sha256:9f2c41d8...
   ok  Create revision 8d1e15b3
   ok  Prepare environment
@@ -118,7 +118,7 @@ Notes pinned by this transcript:
   `skali remote add`.
 - Staged values are promoted atomically with the target change, after
   artifacts verify.
-- The push to `registry.example.com` authenticates with the remote's
+- The push to `cr.skali.example.com` authenticates with the remote's
   session token automatically: builds export the image locally and skali
   uploads it in-process, the same way imports copy upstream images, so
   docker never contacts the managed registry and nothing is written to the

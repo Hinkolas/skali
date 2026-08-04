@@ -39,7 +39,7 @@ func TestSeedInitInputsMissingRegistryPrompts(t *testing.T) {
 	}
 	opts := installer.InitOptions{}
 	require.NoError(t, seedInitInputs(inputReader("\n"), true, record, &opts))
-	require.Equal(t, "registry.example.com", opts.Endpoints.Registry)
+	require.Equal(t, "cr.skali.example.com", opts.Endpoints.Registry)
 }
 
 func TestSeedInitInputsMissingRegistryNonInteractive(t *testing.T) {
@@ -59,11 +59,11 @@ func TestSeedInitInputsNilEndpointsPromptsAll(t *testing.T) {
 	// keeps buckets in-cluster).
 	record := &installer.Record{}
 	opts := installer.InitOptions{}
-	input := "skali.example.com\n\ns3.example.com\nops@example.com\n"
+	input := "skali.example.com\n\ns3.skali.example.com\nops@example.com\n"
 	require.NoError(t, seedInitInputs(inputReader(input), true, record, &opts))
 	require.Equal(t, "skali.example.com", opts.Endpoints.API)
-	require.Equal(t, "registry.example.com", opts.Endpoints.Registry)
-	require.Equal(t, "s3.example.com", opts.Endpoints.S3)
+	require.Equal(t, "cr.skali.example.com", opts.Endpoints.Registry)
+	require.Equal(t, "s3.skali.example.com", opts.Endpoints.S3)
 	require.Equal(t, "ops@example.com", opts.TLS.IssuerEmail)
 }
 

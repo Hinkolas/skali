@@ -194,7 +194,9 @@ This host is not part of a Skali installation. Install one?
 ◆ api/ui domain
 └ skali.example.com
 ◆ registry domain
-└ registry.example.com
+└ cr.skali.example.com
+◆ s3 domain
+└ (empty, buckets stay in-cluster)
 ◆ tls issuer email
 └ ops@example.com
 
@@ -229,7 +231,7 @@ derived topology
 
 Skali is ready:
   https://skali.example.com        api/ui
-  https://registry.example.com     managed registry
+  https://cr.skali.example.com     managed registry
 
 Install logs: /var/lib/skali/logs/init-01J9X2.log
 ```
@@ -252,7 +254,7 @@ The managed registry requires token authentication from the start: `init`
 generates the token-signing keypair (the registry trusts the certificate,
 `skalid` holds the key and mints short-lived, repository-scoped tokens),
 and the registry publishes on its own domain with the token realm at
-`https://registry.example.com/token`. Point DNS for both domains at the
+`https://cr.skali.example.com/token`. Point DNS for both domains at the
 cluster; nodes must be able to resolve the registry domain themselves,
 because containerd fetches pull tokens from that realm using the node
 credential the installer wrote into `/etc/rancher/k3s/registries.yaml`.
@@ -280,7 +282,7 @@ Cluster initialization configuration:
 # init.yaml
 endpoints:
   api: skali.example.com
-  registry: registry.example.com
+  registry: cr.skali.example.com
 tls:
   issuerEmail: ops@example.com
 admin:

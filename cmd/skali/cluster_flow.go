@@ -393,7 +393,7 @@ func seedInitInputs(reader *bufio.Reader, promptAllowed bool,
 		// running silently for headless upgrades). Gaining the endpoint
 		// later goes through the init config's endpoints.s3.
 		opts.Endpoints.S3, err = cliprompt.LineDefault(reader,
-			"  s3 domain (empty keeps buckets in-cluster) []: ", "")
+			"  s3 domain (for example s3."+opts.Endpoints.API+", empty keeps buckets in-cluster) []: ", "")
 		if err != nil {
 			return err
 		}
@@ -479,16 +479,12 @@ func printInitReady(out *os.File, result *installer.InitResult) {
 	fmt.Fprintln(out, "Install logs:", result.LogPath)
 }
 
-// registryDomainDefault derives the registry domain suggestion from the
-// api/ui domain by replacing its first label: skali.example.com suggests
-// registry.example.com. A domain too short to strip is prefixed whole.
+// registryDomainDefault derives the registry domain suggestion by
+// prefixing the api/ui domain: skali.example.com suggests
+// cr.skali.example.com.
 func registryDomainDefault(apiDomain string) string {
 	if apiDomain == "" {
 		return ""
 	}
-	labels := strings.Split(apiDomain, ".")
-	if len(labels) >= 3 {
-		return "registry." + strings.Join(labels[1:], ".")
-	}
-	return "registry." + apiDomain
+	return "cr." + apiDomain
 }
