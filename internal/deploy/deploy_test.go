@@ -330,6 +330,40 @@ func TestPromoteAdvancesDraftToCandidateDefinition(t *testing.T) {
 	require.Contains(t, string(draft.Source), "web:2.0.0")
 }
 
+// A CLI-first project only ever submits candidates, so no draft row exists
+// until the first promotion creates it.
+func TestPromoteCreatesDraftWhenMissing(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	definitionVersion, _, err := f.projects.SubmitCandidate(ctx, f.projectID, []byte(testManifest), "yaml")
+	require.NoError(t, err)
+	_, err = f.projects.GetDraft(ctx, f.projectID)
+	require.ErrorIs(t, err, project.ErrDraftNotFound)
+
+	candidate := f.stage(t,
+		map[string]string{"APP_DOMAIN": "demo.example.com"},
+		map[string]string{"SESSION_SECRET": "create-plant-value"})
+	prepared, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
+		CandidateID: candidate.ID, Resolver: &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.deploy.Promote(ctx, prepared))
+
+	draft, err := f.projects.GetDraft(ctx, f.projectID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), draft.Version, "first promotion creates the draft")
+	require.Contains(t, string(draft.Source), "web:1.0.0")
+
+	// Re-promoting the same definition leaves the draft untouched.
+	require.NoError(t, f.deploy.Promote(ctx, prepared))
+	draft, err = f.projects.GetDraft(ctx, f.projectID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), draft.Version)
+}
+
 func TestRollback(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

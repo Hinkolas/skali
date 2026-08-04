@@ -12,9 +12,13 @@ import (
 )
 
 const advanceProjectDraft = `-- name: AdvanceProjectDraft :execrows
-UPDATE project_drafts
-SET version = version + 1, definition_version_id = $2, updated_at = now()
-WHERE project_id = $1 AND definition_version_id <> $2
+INSERT INTO project_drafts (project_id, definition_version_id)
+VALUES ($1, $2)
+ON CONFLICT (project_id) DO UPDATE
+SET version = project_drafts.version + 1,
+    definition_version_id = EXCLUDED.definition_version_id,
+    updated_at = now()
+WHERE project_drafts.definition_version_id <> EXCLUDED.definition_version_id
 `
 
 type AdvanceProjectDraftParams struct {
@@ -23,7 +27,8 @@ type AdvanceProjectDraftParams struct {
 }
 
 // Unconditional advance used inside the deploy promotion transaction, where
-// the promoted definition wins by design.
+// the promoted definition wins by design. Upserts because a project that has
+// only ever been deployed from the CLI has no draft row yet.
 func (q *Queries) AdvanceProjectDraft(ctx context.Context, arg AdvanceProjectDraftParams) (int64, error) {
 	result, err := q.db.Exec(ctx, advanceProjectDraft, arg.ProjectID, arg.DefinitionVersionID)
 	if err != nil {
