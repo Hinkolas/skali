@@ -242,6 +242,11 @@ type EnvironmentTarget struct {
 	RestartedAt      *time.Time
 }
 
+type InstanceIdentity struct {
+	Singleton bool
+	ID        uuid.UUID
+}
+
 type LoginChallenge struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID

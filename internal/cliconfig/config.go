@@ -14,10 +14,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Remote is one master a user can talk to.
+// Remote is one master a user can talk to. Instance pins the installation
+// identity the master answered with when the remote was added (trust on
+// first use), so a later reinstall of the cluster is detected instead of
+// surfacing as a confusing expired session; empty until observed.
 type Remote struct {
-	Master string `yaml:"master"`
-	Token  string `yaml:"token,omitempty"`
+	Master   string `yaml:"master"`
+	Token    string `yaml:"token,omitempty"`
+	Instance string `yaml:"instance,omitempty"`
 }
 
 // Config is the on-disk shape of ~/.config/skali/config.yaml.

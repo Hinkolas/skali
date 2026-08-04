@@ -840,7 +840,7 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 			return nil, err
 		}
 	}
-	api := client.New(remote.Master, remote.Token, userAgent())
+	api := remoteClient(cfg, remote)
 
 	if opts.UseBinding {
 		fmt.Fprintf(out, "%s       %s %s\n", style.Dim("remote"), remoteName,

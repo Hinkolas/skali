@@ -57,6 +57,9 @@ type testAPI struct {
 // push refs must name it, artifact references never.
 const testPushHost = "push.example.test"
 
+// testInstanceID is the installation identity the test daemon answers with.
+const testInstanceID = "11111111-2222-4333-8444-555555555555"
+
 func newTestAPI(t *testing.T) *testAPI {
 	t.Helper()
 	pool := testdb.New(t)
@@ -137,6 +140,7 @@ func newTestAPI(t *testing.T) *testAPI {
 		Databases:          dbstore.New(st),
 		Version:            "test",
 		InstanceName:       "Test Instance",
+		InstanceID:         testInstanceID,
 		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
 			return map[string][]byte{
 				"username":   []byte("u_" + name),

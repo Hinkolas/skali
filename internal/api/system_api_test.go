@@ -69,4 +69,19 @@ func TestSystemMeta(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "test", body["version"])
 	require.Equal(t, "Test Instance", body["name"])
+	require.Equal(t, testInstanceID, body["instance_id"])
+}
+
+func TestInstanceHeaderOnEveryResponse(t *testing.T) {
+	a := newTestAPI(t)
+
+	// The identity must ride on errors too: the stale-token 401 from a
+	// reinstalled cluster is exactly where clients need it to tell "expired
+	// session" from "different installation".
+	for _, path := range []string{"/healthz", "/v1/system/meta", "/v1/does-not-exist"} {
+		res, err := http.Get(a.srv.URL + path)
+		require.NoError(t, err)
+		res.Body.Close()
+		require.Equal(t, testInstanceID, res.Header.Get(InstanceHeader), path)
+	}
 }

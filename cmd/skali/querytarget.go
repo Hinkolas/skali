@@ -51,7 +51,7 @@ func resolveQueryRemote(start string) (string, *checkout.Target, *client.Client,
 	} else if remoteName, remote, err = cfg.Current(); err != nil {
 		return "", nil, nil, err
 	}
-	return remoteName, binding, client.New(remote.Master, remote.Token, userAgent()), nil
+	return remoteName, binding, remoteClient(cfg, remote), nil
 }
 
 // resolveQueryTarget resolves the remote and environment that inspection

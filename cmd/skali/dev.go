@@ -388,7 +388,7 @@ func finishInterrupted(command *cobra.Command, window string, keepRunning bool) 
 		return errors.New("interrupted")
 	}
 	localRemote := cfg.Remotes[localRemoteName]
-	api := client.New(localRemote.Master, localRemote.Token, userAgent())
+	api := remoteClient(cfg, localRemote)
 
 	if window != "" {
 		// The interrupted build client owns the open window; failing it
@@ -588,7 +588,7 @@ func runDevLs(command *cobra.Command, args []string) error {
 	if localRemote == nil {
 		return errors.New("the local platform is not set up; run skali dev up first")
 	}
-	api := client.New(localRemote.Master, localRemote.Token, userAgent())
+	api := remoteClient(cfg, localRemote)
 	projects, err := api.ListProjects(ctx)
 	if err != nil {
 		return err
@@ -701,10 +701,17 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 	if err != nil {
 		return err
 	}
+	// The local platform is owned by skali dev, so its identity is always
+	// trusted: both paths re-pin whatever the platform answers with, and a
+	// recreated platform (invalid token) simply falls through to a fresh
+	// login instead of a mismatch prompt.
 	existing := cfg.Remotes[localRemoteName]
 	if existing != nil && existing.Token != "" {
 		probe := client.New(localdev.MasterURL(), existing.Token, userAgent())
 		if _, err := probe.CurrentSession(ctx); err == nil {
+			if observed := probe.ObservedInstance(); observed != "" {
+				existing.Instance = observed
+			}
 			cfg.CurrentRemote = localRemoteName
 			return cliconfig.Save(cfg)
 		}
@@ -721,8 +728,9 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 		cfg.Remotes = map[string]*cliconfig.Remote{}
 	}
 	cfg.Remotes[localRemoteName] = &cliconfig.Remote{
-		Master: localdev.MasterURL(),
-		Token:  result.Session.Token,
+		Master:   localdev.MasterURL(),
+		Token:    result.Session.Token,
+		Instance: api.ObservedInstance(),
 	}
 	cfg.CurrentRemote = localRemoteName
 	return cliconfig.Save(cfg)
@@ -743,7 +751,7 @@ func localProjectEnvironment(command *cobra.Command) (*client.Client, string, er
 	if localRemote == nil {
 		return nil, "", errors.New("the local platform is not set up; run skali dev up first")
 	}
-	api := client.New(localRemote.Master, localRemote.Token, userAgent())
+	api := remoteClient(cfg, localRemote)
 	_, environmentID, err := resolveEnvironmentIDs(command.Context(), api,
 		project.Result.Definition.Name, localEnvironmentName)
 	if err != nil {

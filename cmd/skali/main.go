@@ -10,6 +10,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -38,8 +39,26 @@ func main() {
 	if err := root.Execute(); err != nil {
 		style := clirender.StyleFor(os.Stderr)
 		fmt.Fprintln(os.Stderr, style.BoldRed("error:"), err)
+		if mismatch, ok := errors.AsType[*client.InstanceMismatchError](err); ok {
+			fmt.Fprintln(os.Stderr, instanceMismatchHint(mismatch.Master))
+		}
 		os.Exit(1)
 	}
+}
+
+// instanceMismatchHint tells the user how to resolve a changed installation
+// identity for the remote behind the given master URL.
+func instanceMismatchHint(master string) string {
+	if cfg, err := cliconfig.Load(); err == nil {
+		if name, _, ok := lookupRemoteByMaster(cfg, master); ok {
+			if name == localRemoteName {
+				return "the local platform was recreated; run `skali dev` to log in to it again"
+			}
+			return fmt.Sprintf("to trust the new installation run `skali remote login %s`, or drop the remote with `skali remote remove %s`",
+				name, name)
+		}
+	}
+	return "to trust the new installation run `skali remote login`, or drop the remote with `skali remote remove`"
 }
 
 // userAgent identifies this device in session lists ("skali/<version> (host)").
@@ -61,5 +80,19 @@ func currentClient() (*cliconfig.Config, string, *client.Client, error) {
 	if err != nil {
 		return nil, "", nil, err
 	}
-	return cfg, name, client.New(remote.Master, remote.Token, userAgent()), nil
+	return cfg, name, remoteClient(cfg, remote), nil
+}
+
+// remoteClient builds the API client for a stored remote with install-identity
+// verification armed: a changed identity fails requests with
+// *client.InstanceMismatchError, and the first identity an unpinned remote
+// observes is adopted into the config (trust on first use). The save is best
+// effort; a failed adoption simply repeats on the next command.
+func remoteClient(cfg *cliconfig.Config, remote *cliconfig.Remote) *client.Client {
+	c := client.New(remote.Master, remote.Token, userAgent())
+	c.PinInstance(remote.Instance, func(observed string) {
+		remote.Instance = observed
+		_ = cliconfig.Save(cfg)
+	})
+	return c
 }

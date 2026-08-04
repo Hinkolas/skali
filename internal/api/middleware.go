@@ -97,6 +97,24 @@ func requestLogger(next http.Handler) http.Handler {
 	})
 }
 
+// InstanceHeader carries the installation identity on every response,
+// including errors: the value is minted with the database (migration 00015)
+// and changes exactly when a cluster is uninstalled and reinstalled. Clients
+// pin it per remote to tell a reinstalled cluster apart from an expired
+// session; internal/client owns the pinning side. This is a convenience
+// signal, not a security boundary: server authentication remains TLS's job.
+const InstanceHeader = "Skali-Instance"
+
+// instanceHeader stamps the installation identity onto every response.
+func instanceHeader(id string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set(InstanceHeader, id)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // realIP folds the proxy-reported client address into r.RemoteAddr: X-Real-IP
 // first, else the rightmost X-Forwarded-For entry — the one appended by the
 // nearest hop. These headers are trusted because the daemon is documented to

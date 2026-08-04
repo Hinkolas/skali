@@ -13,8 +13,18 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
+
+// InstanceHeader is the response header every skalid stamps with its
+// installation identity, minted when the cluster's database was created.
+// Pinning it per remote detects an uninstalled-and-reinstalled cluster,
+// which would otherwise surface as a confusing expired session (or, after
+// re-onboarding with the same credentials, as missing projects). It is a
+// convenience signal, not MITM protection: server authentication is TLS's
+// job.
+const InstanceHeader = "Skali-Instance"
 
 // Client talks to one master. Token may be empty for public endpoints.
 type Client struct {
@@ -25,6 +35,12 @@ type Client struct {
 	// streaming has no client timeout: SSE subscriptions outlive any
 	// sensible request deadline.
 	streaming *http.Client
+
+	// Install-identity pinning state; see PinInstance.
+	mu       sync.Mutex
+	pinned   string
+	observed string
+	onAdopt  func(observed string)
 }
 
 // Master reports the base URL this client talks to.
@@ -56,6 +72,79 @@ func localhostTransport() *http.Transport {
 		return dialer.DialContext(ctx, network, address)
 	}
 	return transport
+}
+
+// PinInstance arms install-identity verification. Every response carrying
+// the Skali-Instance header is compared against pinned; a mismatch fails the
+// request with *InstanceMismatchError, taking precedence over the response
+// itself (the identity change explains whatever error rode along). An empty
+// pinned value means trust on first use: the first observed identity is
+// adopted and reported through onAdopt so the caller can persist it. A
+// response without the header (an older daemon) verifies nothing.
+func (c *Client) PinInstance(pinned string, onAdopt func(observed string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pinned = pinned
+	c.onAdopt = onAdopt
+}
+
+// ObservedInstance reports the identity from the most recent response, empty
+// until one carried the header. Callers that must not fail on a mismatch
+// (probes ahead of an interactive trust decision) read it off an unpinned
+// client.
+func (c *Client) ObservedInstance() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.observed
+}
+
+// checkInstance records the response's install identity and enforces the pin.
+func (c *Client) checkInstance(res *http.Response) error {
+	observed := res.Header.Get(InstanceHeader)
+	if observed == "" {
+		return nil
+	}
+	c.mu.Lock()
+	c.observed = observed
+	pinned := c.pinned
+	adopt := c.onAdopt
+	if pinned == "" {
+		c.pinned = observed
+	}
+	c.mu.Unlock()
+	if pinned == "" {
+		if adopt != nil {
+			adopt(observed)
+		}
+		return nil
+	}
+	if observed != pinned {
+		return &InstanceMismatchError{Master: c.base, Pinned: pinned, Observed: observed}
+	}
+	return nil
+}
+
+// InstanceMismatchError reports that the master answered as a different
+// installation than the one pinned for it, which almost always means the
+// cluster was uninstalled and reinstalled.
+type InstanceMismatchError struct {
+	Master   string
+	Pinned   string
+	Observed string
+}
+
+func (e *InstanceMismatchError) Error() string {
+	return fmt.Sprintf("the server at %s identifies as installation %s, but this remote is pinned to %s; the cluster was probably reinstalled",
+		e.Master, shortInstance(e.Observed), shortInstance(e.Pinned))
+}
+
+// shortInstance abbreviates an installation id for error messages; the full
+// values stay on the error's fields.
+func shortInstance(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 // decodeErrorEnvelope turns a non-2xx body into an *APIError.
@@ -188,6 +277,9 @@ func (c *Client) Health(ctx context.Context) error {
 		return fmt.Errorf("client: %s unreachable: %w", c.base, err)
 	}
 	defer res.Body.Close()
+	if err := c.checkInstance(res); err != nil {
+		return err
+	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		return fmt.Errorf("client: read response: %w", err)
@@ -244,6 +336,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return fmt.Errorf("client: %s unreachable: %w", c.base, err)
 	}
 	defer res.Body.Close()
+
+	if err := c.checkInstance(res); err != nil {
+		return err
+	}
 
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {

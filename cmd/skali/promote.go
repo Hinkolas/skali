@@ -63,7 +63,7 @@ func resolvePromoteContext(ctx context.Context, from string) (*promoteContext, e
 	} else if remoteName, remote, err = cfg.Current(); err != nil {
 		return nil, err
 	}
-	api := client.New(remote.Master, remote.Token, userAgent())
+	api := remoteClient(cfg, remote)
 
 	if binding != nil {
 		project, err := findProject(ctx, api, binding.Project)

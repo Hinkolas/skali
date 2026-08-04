@@ -103,6 +103,15 @@ func runServe() error {
 	defer pool.Close()
 	st := store.NewStore(pool)
 
+	// The installation identity is minted with the database (migration
+	// 00015); serving without it would leave clients unable to tell a
+	// reinstall from an expired session, so an unmigrated database fails
+	// here instead of per request.
+	instanceID, err := st.GetInstanceIdentity(ctx)
+	if err != nil {
+		return fmt.Errorf("read instance identity (is the database migrated?): %w", err)
+	}
+
 	authSvc, err := auth.New(st, auth.Config{Secret: cfg.AuthSecret, ReauthWindow: cfg.ReauthWindow})
 	if err != nil {
 		return err
@@ -267,6 +276,7 @@ func runServe() error {
 			SecretReader:       secretReader,
 			Version:            versionpkg.Version,
 			InstanceName:       cfg.InstanceName,
+			InstanceID:         instanceID.String(),
 		})),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

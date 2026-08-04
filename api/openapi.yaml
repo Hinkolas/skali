@@ -19,6 +19,15 @@ info:
     operator-configured reauth window). A stale session receives
     `403 reauth_required`; clients recover by confirming identity at
     `/v1/auth/reauth` and retrying the original request.
+
+    Every response carries the `Skali-Instance` header: the installation
+    identity minted with the database, which changes exactly when a
+    cluster is uninstalled and reinstalled. Clients that store remotes
+    should pin it on first contact and treat a later change as "this is a
+    different installation" rather than misreading the accompanying `401`
+    as an expired session. The header is a convenience signal, not
+    man-in-the-middle protection; server authentication remains TLS's
+    job. It also appears as `instance_id` on `/v1/system/meta`.
   version: 0.1.0
   license:
     name: Apache 2.0
@@ -2669,14 +2678,20 @@ components:
       type: object
       description: |
         Instance facts that are configuration, not observation: the daemon
-        build version and the operator-chosen installation name (absent
-        when unset).
+        build version, the operator-chosen installation name (absent when
+        unset), and the installation identity. instance_id is minted with
+        the database and never changes afterwards; every response also
+        carries it in the Skali-Instance header so clients can pin it per
+        remote and detect that a cluster was uninstalled and reinstalled.
       required: [version]
       properties:
         version:
           type: string
         name:
           type: string
+        instance_id:
+          type: string
+          format: uuid
 
     Node:
       type: object

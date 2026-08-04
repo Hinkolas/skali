@@ -40,6 +40,10 @@ func (c *Client) Stream(ctx context.Context, path string, lastEventID string) (<
 	if err != nil {
 		return nil, fmt.Errorf("client: %s unreachable: %w", c.base, err)
 	}
+	if err := c.checkInstance(res); err != nil {
+		res.Body.Close()
+		return nil, err
+	}
 	if res.StatusCode >= 400 {
 		defer res.Body.Close()
 		raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))

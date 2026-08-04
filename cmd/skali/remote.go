@@ -87,11 +87,11 @@ stored.`,
 				}
 				return probeErr
 			}
-			sess, err := loginSession(cmd.Context(), master, email)
+			sess, instance, err := loginSession(cmd.Context(), cliprompt.New(os.Stdin, os.Stderr), master, email)
 			if err != nil {
 				return fmt.Errorf("remote %q not added: %w", remoteName, err)
 			}
-			cfg.Remotes[remoteName] = &cliconfig.Remote{Master: master, Token: sess.Token}
+			cfg.Remotes[remoteName] = &cliconfig.Remote{Master: master, Token: sess.Token, Instance: instance}
 			cfg.CurrentRemote = remoteName
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
@@ -133,11 +133,37 @@ current when the login succeeds. Remotes are created with "skali remote add".`,
 					return err
 				}
 			}
-			sess, err := loginSession(cmd.Context(), target.Master, email)
+			// The trust decision comes before the credentials: an unpinned
+			// probe fetches the identity the master answers with today, and
+			// a change (the cluster was reinstalled) must be confirmed. An
+			// unreachable master skips the probe; the login surfaces it.
+			prompts := cliprompt.New(os.Stdin, os.Stderr)
+			if target.Instance != "" {
+				probe := client.New(target.Master, "", userAgent())
+				_ = probe.Health(cmd.Context())
+				observed := probe.ObservedInstance()
+				if observed != "" && observed != target.Instance {
+					trusted, err := prompts.Confirm(cmd.Context(), cliprompt.ConfirmOptions{
+						Title: fmt.Sprintf("The installation identity of remote %q has changed", name),
+						Description: "The cluster was probably uninstalled and reinstalled. " +
+							"Trust the new installation and log in to it?",
+					})
+					if err != nil {
+						return err
+					}
+					if !trusted {
+						return fmt.Errorf("login aborted; run `skali remote remove %s` to drop this remote", name)
+					}
+				}
+			}
+			sess, instance, err := loginSession(cmd.Context(), prompts, target.Master, email)
 			if err != nil {
 				return err
 			}
 			target.Token = sess.Token
+			if instance != "" {
+				target.Instance = instance
+			}
 			cfg.CurrentRemote = name
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
@@ -180,7 +206,7 @@ func newRemoteLogoutCmd() *cobra.Command {
 			}
 			// Best effort server-side; the local token is cleared regardless,
 			// so an unreachable master can't keep you "logged in".
-			c := client.New(target.Master, target.Token, userAgent())
+			c := remoteClient(cfg, target)
 			if err := c.Logout(cmd.Context()); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: server-side revoke failed: %v\n", err)
 			}
@@ -269,6 +295,12 @@ func newRemoteStatusCmd() *cobra.Command {
 			fmt.Printf("remote:  %s\nmaster:  %s\n", name, remote.Master)
 
 			if err := c.Health(cmd.Context()); err != nil {
+				if mismatch, ok := errors.AsType[*client.InstanceMismatchError](err); ok {
+					fmt.Println("health:  ok, but the installation identity changed (cluster reinstalled?)")
+					fmt.Printf("         pinned %s, server answers %s\n", mismatch.Pinned, mismatch.Observed)
+					fmt.Printf("         trust it with `skali remote login %s` or drop it with `skali remote remove %s`\n", name, name)
+					return nil
+				}
 				fmt.Printf("health:  unreachable (%v)\n", err)
 				return nil
 			}
@@ -348,7 +380,7 @@ func newRemoteRemoveCmd() *cobra.Command {
 				// Best effort, like logout: removal must not strand a live
 				// session server-side, but an unreachable master cannot
 				// block the removal either.
-				c := client.New(target.Master, target.Token, userAgent())
+				c := remoteClient(cfg, target)
 				if err := c.Logout(cmd.Context()); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: server-side revoke failed: %v\n", err)
 				}
@@ -417,8 +449,11 @@ func parseMasterURL(raw string) (name, master string, err error) {
 
 // loginSession collects credentials (the email is prompted unless provided),
 // performs the login, and answers a TOTP challenge when one is presented.
-func loginSession(ctx context.Context, master, email string) (*client.SessionCreated, error) {
-	prompts := cliprompt.New(os.Stdin, os.Stderr)
+// Alongside the session it returns the installation identity the master
+// answered with (empty from an older daemon) so callers can pin it. The
+// prompt session comes from the caller so questions asked before the login
+// (the identity trust confirm) share one stdin reader with these.
+func loginSession(ctx context.Context, prompts *cliprompt.Session, master, email string) (*client.SessionCreated, string, error) {
 	if email == "" {
 		line, err := prompts.Text(ctx, cliprompt.TextOptions{
 			Title: "Email",
@@ -430,7 +465,7 @@ func loginSession(ctx context.Context, master, email string) (*client.SessionCre
 			},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("read email: %w", err)
+			return nil, "", fmt.Errorf("read email: %w", err)
 		}
 		email = line
 	}
@@ -444,13 +479,13 @@ func loginSession(ctx context.Context, master, email string) (*client.SessionCre
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("read password: %w", err)
+		return nil, "", fmt.Errorf("read password: %w", err)
 	}
 
 	c := client.New(master, "", userAgent())
 	res, err := c.Login(ctx, email, password)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	sess := res.Session
 	if res.Challenge != nil {
@@ -471,12 +506,12 @@ func loginSession(ctx context.Context, master, email string) (*client.SessionCre
 			},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("read code: %w", err)
+			return nil, "", fmt.Errorf("read code: %w", err)
 		}
 		sess, err = c.VerifyTwoFactor(ctx, res.Challenge.Token, code)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
-	return sess, nil
+	return sess, c.ObservedInstance(), nil
 }

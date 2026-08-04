@@ -67,6 +67,10 @@ type Deps struct {
 	// InstanceName is the operator-chosen installation name reported on
 	// /v1/system/meta; empty leaves naming to the client.
 	InstanceName string
+	// InstanceID is the installation identity stamped onto every response
+	// as the Skali-Instance header (and reported on /v1/system/meta) so
+	// clients can detect a reinstalled cluster; empty disables the header.
+	InstanceID string
 }
 
 // StripAPIPrefix serves the router both at the root and under /api: the
@@ -101,6 +105,9 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(realIP)
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
+	if d.InstanceID != "" {
+		r.Use(instanceHeader(d.InstanceID))
+	}
 	// The request timeout is applied per group below, not globally: SSE
 	// streams must outlive it.
 
@@ -233,8 +240,8 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/system/observation", sh.system)
 				r.Get("/nodes", sh.nodes)
 
-				// Instance facts: version and name.
-				mh := &systemHandlers{version: d.Version, instanceName: d.InstanceName}
+				// Instance facts: version, name, and identity.
+				mh := &systemHandlers{version: d.Version, instanceName: d.InstanceName, instanceID: d.InstanceID}
 				r.Get("/system/meta", mh.meta)
 
 				// Database and bucket connection projections; credential
