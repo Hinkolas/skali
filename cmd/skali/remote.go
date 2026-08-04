@@ -35,19 +35,21 @@ creates one and logs in; "skali remote login" re-authenticates.`,
 func newRemoteAddCmd() *cobra.Command {
 	var name, email string
 	cmd := &cobra.Command{
-		Use:   "add <url>",
+		Use:   "add <host or url>",
 		Short: "Add a remote and log in to it",
 		Long: `Add a named remote for a skali master and perform the initial login.
-The name defaults to the URL host (https://skali.example.com becomes
-"skali.example.com"); override it with --name. On success the new remote
-becomes the current one; on failure nothing is stored.`,
+A bare hostname tries https then http and targets the cluster's /api path
+(skali.example.com becomes https://skali.example.com/api); an explicit URL
+is used verbatim. The name defaults to the host; override it with --name.
+On success the new remote becomes the current one; on failure nothing is
+stored.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := cliconfig.Load()
 			if err != nil {
 				return err
 			}
-			derived, master, err := parseMasterURL(args[0])
+			derived, candidates, err := masterCandidates(args[0])
 			if err != nil {
 				return err
 			}
@@ -65,9 +67,25 @@ becomes the current one; on failure nothing is stored.`,
 				return fmt.Errorf("remote %q already exists; run `skali remote login %s` to re-authenticate, or pick another name with --name", remoteName, remoteName)
 			}
 			// Probe before prompting so a typo'd URL never asks for a
-			// password. /healthz is unauthenticated on every skali master.
-			if err := client.New(master, "", userAgent()).Health(cmd.Context()); err != nil {
-				return fmt.Errorf("master %s is not reachable: %w", master, err)
+			// password. /healthz is unauthenticated on every skali master;
+			// the first candidate that answers like one wins.
+			master := ""
+			var probeErr error
+			for _, candidate := range candidates {
+				if err := client.New(candidate, "", userAgent()).Health(cmd.Context()); err != nil {
+					if probeErr == nil {
+						probeErr = fmt.Errorf("master %s is not reachable: %w", candidate, err)
+					}
+					continue
+				}
+				master = candidate
+				break
+			}
+			if master == "" {
+				if len(candidates) > 1 {
+					return fmt.Errorf("%w (also tried %s)", probeErr, candidates[1])
+				}
+				return probeErr
 			}
 			sess, err := loginSession(cmd.Context(), master, email)
 			if err != nil {
@@ -350,6 +368,36 @@ func newRemoteRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// masterCandidates resolves the add argument into the base URLs to probe.
+// An explicit URL is used verbatim. A bare hostname gets the convenient
+// form: https first with http as the fallback, and the /api path a cluster
+// serves its API under (the daemon strips /api itself, so the suffix also
+// works against a directly exposed daemon). A schemeless input carrying a
+// path keeps that path instead.
+func masterCandidates(raw string) (name string, candidates []string, err error) {
+	trimmed := strings.TrimSpace(raw)
+	if strings.Contains(trimmed, "://") {
+		name, master, err := parseMasterURL(trimmed)
+		if err != nil {
+			return "", nil, err
+		}
+		return name, []string{master}, nil
+	}
+	u, parseErr := url.Parse("https://" + trimmed)
+	if parseErr != nil || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", nil, fmt.Errorf("invalid master %q: expected a hostname like skali.example.com or a full URL", raw)
+	}
+	if u.User != nil {
+		return "", nil, fmt.Errorf("invalid master %q: credentials do not belong in the URL", raw)
+	}
+	path := strings.TrimRight(u.Path, "/")
+	if path == "" {
+		path = "/api"
+	}
+	return strings.ToLower(u.Host),
+		[]string{"https://" + u.Host + path, "http://" + u.Host + path}, nil
 }
 
 // parseMasterURL validates a master URL and derives the default remote name

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -148,6 +149,76 @@ func TestParseMasterURL(t *testing.T) {
 		require.Equal(t, tc.name, name, tc.raw)
 		require.Equal(t, tc.master, master, tc.raw)
 	}
+}
+
+func TestMasterCandidates(t *testing.T) {
+	cases := []struct {
+		raw        string
+		name       string
+		candidates []string
+		fails      bool
+	}{
+		// Bare hostnames get https-then-http and the cluster's /api path.
+		{raw: "skali.khz.dev", name: "skali.khz.dev",
+			candidates: []string{"https://skali.khz.dev/api", "http://skali.khz.dev/api"}},
+		{raw: "skali.khz.dev/", name: "skali.khz.dev",
+			candidates: []string{"https://skali.khz.dev/api", "http://skali.khz.dev/api"}},
+		{raw: "localhost:7070", name: "localhost:7070",
+			candidates: []string{"https://localhost:7070/api", "http://localhost:7070/api"}},
+		// A schemeless input carrying a path keeps that path.
+		{raw: "skali.khz.dev/custom", name: "skali.khz.dev",
+			candidates: []string{"https://skali.khz.dev/custom", "http://skali.khz.dev/custom"}},
+		// Explicit URLs are verbatim, single candidate.
+		{raw: "https://skali.khz.dev/api", name: "skali.khz.dev",
+			candidates: []string{"https://skali.khz.dev/api"}},
+		{raw: "http://localhost:7070", name: "localhost:7070",
+			candidates: []string{"http://localhost:7070"}},
+		{raw: "", fails: true},
+		{raw: "user:pw@skali.khz.dev", fails: true},
+		{raw: "skali.khz.dev?x=1", fails: true},
+		{raw: "ftp://skali.khz.dev", fails: true},
+	}
+	for _, tc := range cases {
+		name, candidates, err := masterCandidates(tc.raw)
+		if tc.fails {
+			require.Error(t, err, tc.raw)
+			continue
+		}
+		require.NoError(t, err, tc.raw)
+		require.Equal(t, tc.name, name, tc.raw)
+		require.Equal(t, tc.candidates, candidates, tc.raw)
+	}
+}
+
+func TestRemoteAddBareHostname(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// The fake master serves /api-prefixed paths like a production edge
+	// (and like the daemon's own strip wrapper). The https candidate fails
+	// against the plain-http listener, so the http fallback must win.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/healthz", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"session":` + sessionJSON + `}`))
+	})
+	srv := fakeMaster(t, mux)
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	var output string
+	err := withStdin(t, "password\n", func() error {
+		var runErr error
+		output, runErr = runCapturingStdout(t, func() error {
+			return execute(newRemoteAddCmd(), host, "--name", "bare", "--email", "dana@example.com")
+		})
+		return runErr
+	})
+	require.NoError(t, err)
+	require.Contains(t, output, "logged in to http://"+host+"/api as dana@example.com")
+
+	cfg := loadConfig(t)
+	require.Equal(t, "bare", cfg.CurrentRemote)
+	require.Equal(t, "http://"+host+"/api", cfg.Remotes["bare"].Master)
 }
 
 func TestRemoteAddReservedName(t *testing.T) {

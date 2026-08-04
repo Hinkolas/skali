@@ -10,7 +10,7 @@ re-authenticates an existing entry, and the `local` remote belongs to
 ## 1. Add the first remote
 
 ```console
-$ skali remote add https://skali.example.com/api
+$ skali remote add skali.example.com
 ◆ Email
 └ dana@example.com
 ◆ Password
@@ -18,7 +18,9 @@ $ skali remote add https://skali.example.com/api
 logged in to https://skali.example.com/api as dana@example.com (remote "skali.example.com")
 ```
 
-The name defaults to the URL host, including any non-standard port
+A bare hostname tries https then http and targets the cluster's `/api`
+path; an explicit URL (`http://localhost:7070`) is used verbatim. The name
+defaults to the host, including any non-standard port
 (`http://localhost:7070` becomes `localhost:7070`). The new remote becomes
 the current one. A failed add creates nothing: the URL is validated and the
 master probed for reachability before any credential prompt, and the entry is
