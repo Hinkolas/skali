@@ -41,6 +41,10 @@ type InitOptions struct {
 	// optionally pins the content identity behind a mutable tag.
 	SkalidImage   string
 	SkalidImageID string
+	// WebImage is the web console image reference serving the platform
+	// domain root; WebImageID optionally pins its content identity.
+	WebImage   string
+	WebImageID string
 	// RegistryNode pins the local registry volume to the coordinator's
 	// durable placement choice. Empty retains legacy capability-only
 	// placement.
@@ -63,6 +67,9 @@ type InitOptions struct {
 
 // InitResult reports where the initialized installation answers.
 type InitResult struct {
+	// ConsoleURL is the web console at the platform domain root; APIURL is
+	// the daemon behind the /api path on the same domain.
+	ConsoleURL  string
 	APIURL      string
 	RegistryURL string
 	LogPath     string
@@ -209,6 +216,8 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 			DatabaseStorage:    DefaultDatabaseStorage,
 			RegistryStorage:    DefaultRegistryStorage,
 			RegistryNode:       opts.RegistryNode,
+			WebImage:           opts.WebImage,
+			WebImageID:         opts.WebImageID,
 			InstallationRecord: canonical,
 		},
 	}
@@ -247,7 +256,8 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		return nil, err
 	}
 	return &InitResult{
-		APIURL:      "https://" + opts.Endpoints.API,
+		ConsoleURL:  "https://" + opts.Endpoints.API,
+		APIURL:      "https://" + opts.Endpoints.API + "/api",
 		RegistryURL: "https://" + opts.Endpoints.Registry,
 		LogPath:     log.path,
 	}, nil
@@ -268,6 +278,9 @@ func ValidateInitOptions(opts InitOptions) error {
 	}
 	if opts.SkalidImage == "" {
 		return errors.New("init requires a skalid image")
+	}
+	if opts.WebImage == "" {
+		return errors.New("init requires a web console image")
 	}
 	if opts.Admin == nil && !opts.SkipAdmin {
 		return errors.New("init requires admin credentials")

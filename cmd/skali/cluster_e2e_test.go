@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -180,9 +181,9 @@ func TestClusterEndToEnd(t *testing.T) {
 	require.NoError(t, hostdErr, "cross-compile hostd: %s", hostdOut)
 	h.copyIn(hostdBinary, "/tmp/skali-hostd")
 	h.copyInTo(e2eAgentVM, hostdBinary, "/tmp/skali-hostd")
-	h.vmOK("sudo", "install", "-m", "0755", "/tmp/skali-hostd",
+	h.vmOK("sudo", "install", "-D", "-m", "0755", "/tmp/skali-hostd",
 		installer.HostdBinaryPath)
-	h.vmOKOn(e2eAgentVM, "sudo", "install", "-m", "0755", "/tmp/skali-hostd",
+	h.vmOKOn(e2eAgentVM, "sudo", "install", "-D", "-m", "0755", "/tmp/skali-hostd",
 		installer.HostdBinaryPath)
 
 	binaryA := filepath.Join(t.TempDir(), "skali-a")
@@ -240,6 +241,15 @@ func TestClusterEndToEnd(t *testing.T) {
 	require.Equal(t, 0, code, saveOut)
 	h.copyIn(imageTar, "/tmp/skalid-dev.tar")
 
+	// The web console image rides its own tar the same way.
+	webTar := filepath.Join(t.TempDir(), "skali-web-dev.tar")
+	buildOut, code = h.hostCommand("docker", "build", "-t", "skali-web:dev",
+		"-f", filepath.Join(h.repoRoot, "build", "web.Dockerfile"), filepath.Join(h.repoRoot, "web"))
+	require.Equal(t, 0, code, buildOut)
+	saveOut, code = h.hostCommand("docker", "save", "skali-web:dev", "-o", webTar)
+	require.Equal(t, 0, code, saveOut)
+	h.copyIn(webTar, "/tmp/skali-web-dev.tar")
+
 	// Init: the ACME staging directory keeps pending issuance away from
 	// production rate limits; skali.e2e.test never resolves, so
 	// certificates stay pending by design and nothing asserts TLS.
@@ -255,12 +265,17 @@ admin:
   passwordFile: %s
 skalid:
   image: skalid:dev
+web:
+  image: skali-web:dev
 `, passwordFile))
-	// --image-tar imports the tar into the node's containerd during init.
+	// The tar flags import both images into the node's containerd during
+	// init.
 	initOut, code := h.vm("sudo", "/tmp/skali-a", "cluster", "init", "--config", initConfig,
-		"--image-tar", "/tmp/skalid-dev.tar")
+		"--image-tar", "/tmp/skalid-dev.tar", "--web-image-tar", "/tmp/skali-web-dev.tar")
 	require.Equal(t, 0, code, initOut)
-	require.Contains(t, initOut, "Import skalid image skalid:dev")
+	require.Contains(t, initOut, "Import image skalid:dev")
+	require.Contains(t, initOut, "Import image skali-web:dev")
+	require.Contains(t, initOut, "https://skali.e2e.test/api")
 	require.Contains(t, initOut, "https://registry.skali.e2e.test")
 
 	// The control plane answers through the service proxy and the
@@ -270,11 +285,22 @@ skalid:
 	require.NotEmpty(t, health)
 	h.vmOK("sudo", "k3s", "kubectl", "get", "configmap", "-n", "skali-system", "skali-installation")
 
+	// The single public surface through the Traefik edge (plain HTTP on the
+	// web entrypoint; certificates stay pending by design): the console owns
+	// the domain root and the daemon answers behind /api.
+	edgeHealth := h.vmOK("curl", "-s", "--resolve", "skali.e2e.test:80:127.0.0.1",
+		"http://skali.e2e.test/api/healthz")
+	require.Contains(t, edgeHealth, `"status":"ok"`)
+	consoleHTML := h.vmOK("curl", "-sL", "--resolve", "skali.e2e.test:80:127.0.0.1",
+		"http://skali.e2e.test/")
+	require.Contains(t, strings.ToLower(consoleHTML), "<!doctype html")
+
 	statusOut, code = h.vm("sudo", "/tmp/skali-a", "cluster", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "Skali server")
 	require.Contains(t, statusOut, "database healthy")
 	require.Contains(t, statusOut, "skalid healthy")
+	require.Contains(t, statusOut, "web healthy")
 
 	// Upgrade phase: the current build takes over the installation build A
 	// created, moving k3s to the current pin and re-converging the bundle
@@ -291,7 +317,7 @@ skalid:
 	h.vmOK("sudo", "cp", "/var/lib/skali/installation.yaml", "/tmp/installation-backup.yaml")
 	h.vmOK("sudo", "sed", "-i", "/registry:/d", "/var/lib/skali/installation.yaml")
 	missingOut, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes",
-		"--image-tar", "/tmp/skalid-dev.tar")
+		"--image-tar", "/tmp/skalid-dev.tar", "--web-image-tar", "/tmp/skali-web-dev.tar")
 	require.NotEqual(t, 0, code, missingOut)
 	require.Contains(t, missingOut, "registry domain")
 	require.Contains(t, missingOut, "interactively")
@@ -306,9 +332,9 @@ skalid:
 	registriesStripped := h.vmOK("sudo", "cat", "/etc/rancher/k3s/registries.yaml")
 	require.NotContains(t, registriesStripped, "password:")
 
-	// The upgrade itself, reusing the already-staged image tar.
+	// The upgrade itself, reusing the already-staged image tars.
 	upgradeOut, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes",
-		"--image-tar", "/tmp/skalid-dev.tar")
+		"--image-tar", "/tmp/skalid-dev.tar", "--web-image-tar", "/tmp/skali-web-dev.tar")
 	require.Equal(t, 0, code, upgradeOut)
 	require.Contains(t, upgradeOut, e2eOlderK3s+" -> "+installer.K3sVersion)
 	require.Contains(t, upgradeOut, "0.0.0-e2e-a -> 0.0.0-dev")
@@ -339,6 +365,7 @@ skalid:
 	require.Contains(t, statusOut, installer.K3sVersion+" (current)")
 	require.Contains(t, statusOut, "0.0.0-dev (current)")
 	require.Contains(t, statusOut, "skalid healthy")
+	require.Contains(t, statusOut, "web healthy")
 
 	// Idempotence: a second upgrade has nothing to do.
 	repeatUpgrade, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes")
@@ -357,10 +384,14 @@ skalid:
 
 	skalidIP := strings.TrimSpace(h.vmOK("sudo", "k3s", "kubectl", "get", "svc",
 		"-n", "skali-system", "skalid", "-o", "jsonpath={.spec.clusterIP}"))
+	// Login traverses the real edge (/api path, strip wrapper); the token
+	// mint below stays on the ClusterIP root, proving root paths still work
+	// exactly as the registry-domain ingress delivers them to the realm.
 	loginJSON := h.vmOK("curl", "-s", "-X", "POST",
 		"-H", "Content-Type: application/json",
+		"--resolve", "skali.e2e.test:80:127.0.0.1",
 		"-d", `{"email":"admin@skali.e2e.test","password":"e2e-admin-password"}`,
-		"http://"+skalidIP+"/v1/auth/login")
+		"http://skali.e2e.test/api/v1/auth/login")
 	var login struct {
 		Session struct {
 			Token string `json:"token"`
@@ -484,7 +515,7 @@ skalid:
 
 	serverPlan, code := h.vm("sudo", "/tmp/skali", "cluster", "plan")
 	require.Equal(t, 0, code, serverPlan)
-	require.Contains(t, serverPlan, "add-server")
+	require.Contains(t, serverPlan, "add server")
 	serverApply, code := h.vm("sudo", "/tmp/skali", "cluster", "apply",
 		"--yes", "--wait")
 	require.Equal(t, 0, code, serverApply)
@@ -529,7 +560,18 @@ skalid:
 	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "skalid healthy")
-	h.vmOKOn(e2eAgentVM, "sudo", "install", "-m", "0755", "/tmp/skali-hostd",
+	require.Contains(t, statusOut, "web healthy")
+
+	// The leaver's final cleanup runs via a transient unit two seconds
+	// after the acknowledgment, so wait for the host state and the hostd
+	// binary to be gone before re-enrolling the freshly cleaned host.
+	require.Eventually(t, func() bool {
+		_, stateCode := h.vmOn(e2eAgentVM, "sudo", "test", "-e", installer.StateDir)
+		_, binCode := h.vmOn(e2eAgentVM, "test", "-e", installer.HostdBinaryPath)
+		return stateCode != 0 && binCode != 0
+	}, 30*time.Second, 2*time.Second,
+		"the removed node's self-cleanup must leave the host fresh")
+	h.vmOKOn(e2eAgentVM, "sudo", "install", "-D", "-m", "0755", "/tmp/skali-hostd",
 		installer.HostdBinaryPath)
 
 	// Agent enrollment is another one-use invitation.
@@ -556,7 +598,7 @@ skalid:
 	require.Contains(t, joinOut, "pending cluster apply")
 	agentPlan, code := h.vm("sudo", "/tmp/skali", "cluster", "plan")
 	require.Equal(t, 0, code, agentPlan)
-	require.Contains(t, agentPlan, "add-agent")
+	require.Contains(t, agentPlan, "add agent")
 	agentApply, code := h.vm("sudo", "/tmp/skali", "cluster", "apply",
 		"--yes", "--wait")
 	require.Equal(t, 0, code, agentApply)
@@ -594,7 +636,7 @@ skalid:
 	require.Equal(t, 0, code, diagnoseOut)
 	require.Contains(t, diagnoseOut, "k3s service: active")
 	require.Contains(t, diagnoseOut, "kubernetes api: reachable")
-	require.Contains(t, diagnoseOut, "nodes 2/2 ready")
+	require.Contains(t, diagnoseOut, "nodes: 2/2 ready")
 	require.Contains(t, statusOut, "0.0.0-dev (current)",
 		"the topology apply must restamp the bundle hash")
 

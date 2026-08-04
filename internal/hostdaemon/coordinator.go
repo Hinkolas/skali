@@ -578,6 +578,20 @@ func (d *CoordinatorDaemon) reconcile(ctx context.Context, store *clusterstate.S
 		}
 		from := state.Revisions[operation.FromRevision]
 		target := state.Revisions[operation.TargetRevision]
+		// Membership changed, so settle the platform onto the remaining
+		// topology before verifying it: a removed database node strands its
+		// instance (the local-path volume left with the node), which blocks
+		// the CNPG descale, and the lowered tier needs a converge nothing
+		// else drives. On an unchanged tier both steps are no-ops.
+		if target.Platform.Enabled {
+			if err := d.pruneOrphanedDatabaseInstances(ctx); err != nil {
+				return err
+			}
+			if err := d.reconcilePlatform(ctx); err != nil &&
+				!errors.Is(err, errPlatformInitializationRequired) {
+				return err
+			}
+		}
 		if err := d.verifyTarget(ctx, from, target); err != nil {
 			return err
 		}
@@ -739,7 +753,7 @@ func (d *CoordinatorDaemon) verifyTarget(ctx context.Context, from,
 	if bundle.StampedHash(ctx, client) == "" {
 		return errors.New("verify platform: bundle convergence stamp is missing")
 	}
-	for _, name := range []string{"skali-registry", "skalid"} {
+	for _, name := range []string{"skali-registry", "skalid", "skali-web"} {
 		deployment, err := client.Clientset.AppsV1().Deployments(bundle.Namespace).
 			Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
@@ -877,6 +891,14 @@ func (d *CoordinatorDaemon) reconcilePlatform(ctx context.Context) error {
 	}
 	profile, _, err := installer.LiveProfile(ctx, client, d.Runner, record)
 	if err != nil {
+		// An empty stamp means a converge is in flight: init clears it with
+		// its first namespace apply and restamps only after the last stage,
+		// so the live objects LiveProfile reads (the skali-web deployment
+		// in particular) may not exist yet. Defer to the driver instead of
+		// failing the operation on a half-assembled platform.
+		if bundle.StampedHash(ctx, client) == "" {
+			return errPlatformInitializationRequired
+		}
 		return err
 	}
 	if bundle.StampedHash(ctx, client) == bundle.Hash(profile) {
@@ -886,6 +908,79 @@ func (d *CoordinatorDaemon) reconcilePlatform(ctx context.Context) error {
 		return err
 	}
 	return bundle.StampHash(ctx, client, profile)
+}
+
+// pruneOrphanedDatabaseInstances removes bootstrap-database instances
+// stranded by a node removal: their local-path volume is pinned to the gone
+// node, so the recreated pod pends forever, blocking both the CNPG descale
+// and the operation verify. Only a pending instance whose bound volume
+// names a node that no longer exists is pruned; a scale-up instance still
+// waiting for first consumer has no bound volume and is left alone.
+func (d *CoordinatorDaemon) pruneOrphanedDatabaseInstances(ctx context.Context) error {
+	client, err := installer.KubeClient(ctx, d.Runner)
+	if err != nil {
+		return err
+	}
+	pods, err := client.Clientset.CoreV1().Pods(bundle.Namespace).List(ctx,
+		metav1.ListOptions{LabelSelector: "cnpg.io/cluster=skali-db"})
+	if err != nil {
+		return fmt.Errorf("list database instances: %w", err)
+	}
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName != "" || pod.Status.Phase != corev1.PodPending {
+			continue
+		}
+		claim, err := client.Clientset.CoreV1().PersistentVolumeClaims(bundle.Namespace).
+			Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil || claim.Spec.VolumeName == "" {
+			continue
+		}
+		volume, err := client.Clientset.CoreV1().PersistentVolumes().
+			Get(ctx, claim.Spec.VolumeName, metav1.GetOptions{})
+		if err != nil {
+			continue
+		}
+		if !volumeNodesGone(ctx, client.Clientset, volume) {
+			continue
+		}
+		d.log("pruning database instance stranded by node removal", "instance", pod.Name)
+		if err := client.Clientset.CoreV1().PersistentVolumeClaims(bundle.Namespace).
+			DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
+				LabelSelector: "cnpg.io/instanceName=" + pod.Name,
+			}); err != nil {
+			return fmt.Errorf("prune database instance %s claims: %w", pod.Name, err)
+		}
+		if err := client.Clientset.CoreV1().Pods(bundle.Namespace).
+			Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("prune database instance %s: %w", pod.Name, err)
+		}
+	}
+	return nil
+}
+
+// volumeNodesGone reports whether every node the volume's affinity pins it
+// to has left the cluster; a volume without node affinity is never gone.
+func volumeNodesGone(ctx context.Context, clientset kubernetes.Interface, volume *corev1.PersistentVolume) bool {
+	if volume.Spec.NodeAffinity == nil || volume.Spec.NodeAffinity.Required == nil {
+		return false
+	}
+	pinned := false
+	for _, term := range volume.Spec.NodeAffinity.Required.NodeSelectorTerms {
+		for _, expression := range term.MatchExpressions {
+			if expression.Key != corev1.LabelHostname && expression.Key != "metadata.name" {
+				continue
+			}
+			for _, name := range expression.Values {
+				pinned = true
+				if _, err := clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{}); err == nil {
+					return false
+				} else if !apierrors.IsNotFound(err) {
+					return false
+				}
+			}
+		}
+	}
+	return pinned
 }
 
 func (d *CoordinatorDaemon) rebalanceWorkloads(ctx context.Context) error {

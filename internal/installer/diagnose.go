@@ -308,6 +308,8 @@ func diagnoseKubernetes(ctx context.Context, client *kube.Client, diagnosis *Dia
 		"managed registry", "skali-registry", "app.kubernetes.io/name=skali-registry", false)
 	diagnoseDeployment(ctx, client, diagnosis, suggest,
 		"skalid", "skalid", "app.kubernetes.io/name=skalid", databaseFailed)
+	diagnoseDeployment(ctx, client, diagnosis, suggest,
+		"web console", "skali-web", "app.kubernetes.io/name=skali-web", false)
 	diagnoseVolumes(ctx, client, diagnosis)
 	diagnoseCertificates(ctx, client, diagnosis)
 }

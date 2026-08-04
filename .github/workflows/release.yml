@@ -31,6 +31,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The web console image; goreleaser keeps owning the binaries and the
+      # skalid image. Runs before goreleaser so a failed image build never
+      # leaves a GitHub release without its console.
+      - uses: docker/build-push-action@v6
+        with:
+          context: web
+          file: build/web.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/hinkolas/skali-web:${{ github.ref_name }}
+            ghcr.io/hinkolas/skali-web:latest
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser

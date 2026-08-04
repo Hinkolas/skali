@@ -7,6 +7,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -66,6 +67,29 @@ type Deps struct {
 	// InstanceName is the operator-chosen installation name reported on
 	// /v1/system/meta; empty leaves naming to the client.
 	InstanceName string
+}
+
+// StripAPIPrefix serves the router both at the root and under /api: the
+// production edge routes /api to skalid while the web console owns /, and
+// in-cluster clients (the BFF, the registry token realm, health probes)
+// keep root paths. Only a whole /api path segment is stripped, so lookalike
+// paths like /apifoo pass through untouched.
+func StripAPIPrefix(next http.Handler) http.Handler {
+	stripped := http.StripPrefix("/api", next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api":
+			// http.StripPrefix would leave an empty path here.
+			clone := r.Clone(r.Context())
+			clone.URL.Path = "/"
+			clone.URL.RawPath = ""
+			next.ServeHTTP(w, clone)
+		case strings.HasPrefix(r.URL.Path, "/api/"):
+			stripped.ServeHTTP(w, r)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
 }
 
 func NewRouter(d Deps) http.Handler {

@@ -1,7 +1,7 @@
 // The BFF's connection to the Go API: bearer-token fetch plus the session
 // cookie that carries the token between browser and BFF. The token never
 // reaches browser JavaScript — it lives in an httpOnly cookie and is attached
-// server-side (here and in the /api proxy).
+// server-side (here and in the /_api proxy).
 
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';

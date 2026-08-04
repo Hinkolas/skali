@@ -234,4 +234,3 @@ func TestObjectStoreLifecycle(t *testing.T) {
 	replacement := f.objectStore(t)
 	require.NotEqual(t, sw.ID, replacement.ID)
 }
-

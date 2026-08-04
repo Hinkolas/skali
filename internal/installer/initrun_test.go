@@ -31,7 +31,12 @@ func TestInitAdminValidation(t *testing.T) {
 		SkalidImage: "skalid:dev",
 	}
 
+	// The web console image is validated before the admin gate.
 	_, err := Init(context.Background(), &host.Fake{}, record, opts)
+	require.ErrorContains(t, err, "web console image")
+
+	opts.WebImage = "skali-web:dev"
+	_, err = Init(context.Background(), &host.Fake{}, record, opts)
 	require.ErrorContains(t, err, "admin credentials")
 
 	// SkipAdmin passes validation; the fake then fails at the first host

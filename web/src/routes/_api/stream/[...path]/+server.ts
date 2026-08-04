@@ -1,7 +1,7 @@
-// SSE pass-through proxy: the buffered catch-all at /api/[...path] reads the
+// SSE pass-through proxy: the buffered catch-all at /_api/[...path] reads the
 // whole upstream body and therefore cannot serve event streams. This route
 // pipes the upstream body through untouched. The literal `stream` segment
-// wins over the catch-all sibling, so /api/stream/v1/... lands here.
+// wins over the catch-all sibling, so /_api/stream/v1/... lands here.
 
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { apiFetch, clientMeta } from '$lib/server/api';

@@ -28,6 +28,7 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Equal(t, "Cluster", objects.Database[0].GetKind())
 	require.Len(t, objects.Registry, 4)
 	require.Len(t, objects.Skalid, 7)
+	require.Empty(t, objects.Web, "the web console is production-only")
 	require.Len(t, objects.BootstrapUser, 2)
 
 	// Everything namespaced sits in skali-system; the admin password only

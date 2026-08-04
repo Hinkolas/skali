@@ -39,6 +39,7 @@ func productionProfile() Profile {
 			DatabaseTier:       layout.TierSynchronous,
 			DatabaseStorage:    "10Gi",
 			RegistryStorage:    "20Gi",
+			WebImage:           "ghcr.io/hinkolas/skali-web:v2.0.0",
 			InstallationRecord: "version: \"1\"\ninstallationId: 0f0f\ncluster: production\n",
 		},
 	}
@@ -51,14 +52,14 @@ func TestLocalRenderFrozen(t *testing.T) {
 	t.Parallel()
 	profile := localProfile()
 	sources := stageSources(profile)
-	require.Len(t, sources, 8)
+	require.Len(t, sources, 9)
 
 	frozen := map[string]int{
 		"local-namespace.yaml": 0,
 		"local-database.yaml":  3,
 		"local-registry.yaml":  4,
 		"local-skalid.yaml":    5,
-		"local-bootstrap.yaml": 7,
+		"local-bootstrap.yaml": 8,
 	}
 	for name, index := range frozen {
 		golden, err := os.ReadFile(filepath.Join("testdata", name))
@@ -69,6 +70,7 @@ func TestLocalRenderFrozen(t *testing.T) {
 	require.Empty(t, sources[1], "issuer stage must be empty locally")
 	require.Empty(t, sources[2], "edge stage must be empty locally")
 	require.Empty(t, sources[6], "record stage must be empty locally")
+	require.Empty(t, sources[7], "web stage must be empty locally")
 
 	// The full hash including the vendored operator manifests is frozen
 	// too: cert-manager must not leak into the local fingerprint.
@@ -148,6 +150,15 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.Equal(t, []any{"skali.example.com"}, entry["hosts"])
 	rules, _, _ := unstructured.NestedSlice(ingress.Object, "spec", "rules")
 	require.Equal(t, "skali.example.com", rules[0].(map[string]any)["host"])
+	// The platform domain splits by path: /api to the daemon (listed first,
+	// Traefik matches the longer path), everything else to the web console.
+	skalidIngressJSON, err := ingress.MarshalJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(skalidIngressJSON), `"path":"/api"`)
+	require.Contains(t, string(skalidIngressJSON), `"path":"/"`)
+	require.Contains(t, string(skalidIngressJSON), `"name":"skali-web"`)
+	require.Less(t, strings.Index(string(skalidIngressJSON), `"path":"/api"`),
+		strings.Index(string(skalidIngressJSON), `"path":"/"`))
 
 	// Registry: token secret first, then the four base objects, the public
 	// ingress last.
@@ -222,6 +233,26 @@ func TestRenderProductionObjects(t *testing.T) {
 	text, _, _ := unstructured.NestedString(record.Object, "data", RecordKey)
 	require.Equal(t, profile.Production.InstallationRecord, text)
 
+	// Web console: deployment wired to the in-cluster daemon and the public
+	// origin, service in front of the SvelteKit port.
+	require.Len(t, objects.Web, 2)
+	webDeployment := objects.Web[0]
+	require.Equal(t, "Deployment", webDeployment.GetKind())
+	require.Equal(t, "skali-web", webDeployment.GetName())
+	webJSON, err := webDeployment.MarshalJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(webJSON), `"value":"http://skalid"`)
+	require.Contains(t, string(webJSON), `"value":"https://skali.example.com"`)
+	require.Contains(t, string(webJSON), `"ADDRESS_HEADER"`)
+	require.Contains(t, string(webJSON), `"path":"/healthz"`)
+	webService := objects.Web[1]
+	require.Equal(t, "Service", webService.GetKind())
+	ports, _, _ := unstructured.NestedSlice(webService.Object, "spec", "ports")
+	require.Len(t, ports, 1)
+	webPort := ports[0].(map[string]any)
+	require.EqualValues(t, 80, webPort["port"])
+	require.EqualValues(t, 3000, webPort["targetPort"])
+
 	// The vendored cert-manager manifest parses.
 	certManager, err := ParseManifest(CertManagerManifest())
 	require.NoError(t, err)
@@ -243,6 +274,7 @@ func TestProductionHashProperties(t *testing.T) {
 		"registry domain": func(p *Production) { p.RegistryDomain = "other-registry.example.com" },
 		"token key":       func(p *Production) { p.TokenKeyPEM = "rotated" },
 		"node secret":     func(p *Production) { p.NodePullSecret = "rotated" },
+		"web image":       func(p *Production) { p.WebImage = "ghcr.io/hinkolas/skali-web:other" },
 	} {
 		changed := productionProfile()
 		mutate(changed.Production)
@@ -275,6 +307,7 @@ func TestProductionProfileValidation(t *testing.T) {
 		"database tier":         func(p *Production) { p.DatabaseTier = "" },
 		"database storage size": func(p *Production) { p.DatabaseStorage = "" },
 		"registry storage size": func(p *Production) { p.RegistryStorage = "" },
+		"web image":             func(p *Production) { p.WebImage = "" },
 		"installation record":   func(p *Production) { p.InstallationRecord = "" },
 	} {
 		profile := productionProfile()

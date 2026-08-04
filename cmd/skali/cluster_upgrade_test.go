@@ -73,39 +73,43 @@ func TestPrintUpgradePlanVariants(t *testing.T) {
 		BundleFrom: "1.0.0", BundleTo: "1.1.0", BundleDrifted: true,
 	}
 	var out bytes.Buffer
-	printUpgradePlan(&out, drifted, layout.RoleServer, "", "skalid:dev", true, false)
+	printUpgradePlan(&out, drifted, layout.RoleServer, "", "skalid:dev", true, "skali-web:dev", true, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n"+
 		"  bundle  1.0.0 -> 1.1.0\n"+
-		"  skalid  skalid:dev (imported from tar)\n\n", out.String())
+		"  skalid  skalid:dev (imported from tar)\n"+
+		"  web     skali-web:dev (imported from tar)\n\n", out.String())
 
 	tarForced := installer.UpgradePlan{
 		K3sFrom: "v1.33.3+k3s1", K3sTo: "v1.33.3+k3s1",
 		BundleFrom: "1.1.0", BundleTo: "1.1.0", ImageForced: true,
 	}
 	out.Reset()
-	printUpgradePlan(&out, tarForced, layout.RoleServer, "", "skalid:dev", true, false)
+	printUpgradePlan(&out, tarForced, layout.RoleServer, "", "skalid:dev", true, "skali-web:dev", true, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.3+k3s1 (current)\n"+
 		"  bundle  1.1.0 (reconverge for the new skalid image)\n"+
-		"  skalid  skalid:dev (imported from tar)\n\n", out.String())
+		"  skalid  skalid:dev (imported from tar)\n"+
+		"  web     skali-web:dev (imported from tar)\n\n", out.String())
 
 	k3sOnly := installer.UpgradePlan{
 		K3sFrom: "v1.33.2+k3s1", K3sTo: "v1.33.3+k3s1", K3sDrifted: true,
 		BundleFrom: "1.1.0", BundleTo: "1.1.0",
 	}
 	out.Reset()
-	printUpgradePlan(&out, k3sOnly, layout.RoleServer, "", "ghcr.io/hinkolas/skalid:1.1.0", false, false)
+	printUpgradePlan(&out, k3sOnly, layout.RoleServer, "", "ghcr.io/hinkolas/skalid:1.1.0", false,
+		"ghcr.io/hinkolas/skali-web:1.1.0", false, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n"+
 		"  bundle  1.1.0 (reconverge to republish the record)\n"+
-		"  skalid  ghcr.io/hinkolas/skalid:1.1.0\n\n", out.String())
+		"  skalid  ghcr.io/hinkolas/skalid:1.1.0\n"+
+		"  web     ghcr.io/hinkolas/skali-web:1.1.0\n\n", out.String())
 
 	agent := installer.UpgradePlan{
 		K3sFrom: "v1.33.2+k3s1", K3sTo: "v1.33.3+k3s1", K3sDrifted: true,
 	}
 	out.Reset()
-	printUpgradePlan(&out, agent, layout.RoleAgent, "", "", false, false)
+	printUpgradePlan(&out, agent, layout.RoleAgent, "", "", false, "", false, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n\n"+
 		"This node is an agent: upgrade the servers first, one at a time, then each agent.\n\n",
@@ -114,7 +118,7 @@ func TestPrintUpgradePlanVariants(t *testing.T) {
 	// A secondary server: its bundle is maintained by the init owner, so
 	// the plan names that node and stops at k3s.
 	out.Reset()
-	printUpgradePlan(&out, k3sOnly, layout.RoleServer, "cp-1", "", false, false)
+	printUpgradePlan(&out, k3sOnly, layout.RoleServer, "cp-1", "", false, "", false, false)
 	require.Equal(t, ""+
 		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n"+
 		"  bundle  maintained on cp-1\n\n", out.String())
@@ -122,12 +126,12 @@ func TestPrintUpgradePlanVariants(t *testing.T) {
 	// A pre-token-auth host: the credential line names the restart only
 	// when no k3s upgrade will restart the service anyway.
 	out.Reset()
-	printUpgradePlan(&out, drifted, layout.RoleServer, "", "skalid:dev", true, true)
+	printUpgradePlan(&out, drifted, layout.RoleServer, "", "skalid:dev", true, "skali-web:dev", true, true)
 	require.Contains(t, out.String(), "  pull    node registry credential missing, minted during this upgrade\n")
 	require.NotContains(t, out.String(), "k3s restarts")
 
 	out.Reset()
-	printUpgradePlan(&out, tarForced, layout.RoleServer, "", "skalid:dev", true, true)
+	printUpgradePlan(&out, tarForced, layout.RoleServer, "", "skalid:dev", true, "skali-web:dev", true, true)
 	require.Contains(t, out.String(),
 		"  pull    node registry credential missing, minted during this upgrade; "+
 			"k3s restarts to load it (containers keep running)\n")

@@ -174,6 +174,15 @@ type Production struct {
 	// first reconciled initialization. Empty retains legacy
 	// capability-only placement.
 	RegistryNode string
+	// WebImage is the web console image reference; the console serves the
+	// platform domain root while /api routes to skalid. Local dev runs the
+	// console from the working tree instead, so the field is
+	// production-only.
+	WebImage string
+	// WebImageID is the content identity behind WebImage, stamped as a
+	// pod-template annotation so a re-imported image rolls the deployment
+	// under an unchanged mutable tag. Empty omits the annotation.
+	WebImageID string
 	// InstallationRecord is the canonical YAML of the root-owned
 	// installation record; it is published as the skali-installation
 	// ConfigMap. The record must never carry credentials, and its
@@ -203,6 +212,8 @@ func (p *Production) validate() error {
 		return errors.New("bundle: production profile: database storage size is required")
 	case p.RegistryStorage == "":
 		return errors.New("bundle: production profile: registry storage size is required")
+	case p.WebImage == "":
+		return errors.New("bundle: production profile: web image is required")
 	case p.InstallationRecord == "":
 		return errors.New("bundle: production profile: installation record is required")
 	}
@@ -262,6 +273,9 @@ type Objects struct {
 	// Record is the in-cluster installation record; empty under the local
 	// profile.
 	Record []unstructured.Unstructured
+	// Web is the web console deployment behind the platform domain root;
+	// empty under the local profile.
+	Web []unstructured.Unstructured
 	// BootstrapUser creates the first operator user.
 	BootstrapUser []unstructured.Unstructured
 }
@@ -279,6 +293,7 @@ func stageSources(profile Profile) []string {
 		registryYAML(profile),
 		skalidYAML(profile),
 		recordYAML(profile),
+		webYAML(profile),
 		bootstrapYAML(profile),
 	}
 }
@@ -299,6 +314,7 @@ func Render(profile Profile) (*Objects, error) {
 		&objects.Registry,
 		&objects.Skalid,
 		&objects.Record,
+		&objects.Web,
 		&objects.BootstrapUser,
 	}
 	for index, source := range stageSources(profile) {
@@ -680,6 +696,18 @@ func skalidYAML(profile Profile) string {
 	ingressTLS := ""
 	ingressHost := "skali.localhost"
 	ingressClass := "traefik"
+	// Locally the daemon owns the whole host; production splits the platform
+	// domain, /api to skalid (which also answers root paths for in-cluster
+	// clients) and the rest to the web console. Traefik matches the longer
+	// path first.
+	ingressPaths := `
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: skalid
+                port:
+                  number: 80`
 	if production := profile.Production; production != nil {
 		// Production states the installation's capability union. The token
 		// signing key and node pull secret ride the same production block:
@@ -700,6 +728,21 @@ func skalidYAML(profile Profile) string {
 			"\n      secretName: skalid-tls"
 		ingressHost = production.IngressHost
 		ingressClass = production.ingressClassName()
+		ingressPaths = `
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: skalid
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: skali-web
+                port:
+                  number: 80`
 	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
@@ -839,16 +882,75 @@ spec:
   rules:
     - host: %[9]s
       http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: skalid
-                port:
-                  number: 80
+        paths:%[11]s
 `, Namespace, profile.SkalidImage, base64.StdEncoding.EncodeToString([]byte(profile.AuthSecret)), profile.RegistryHost,
-		podAnnotations, capabilitiesEnv, ingressAnnotations, ingressTLS, ingressHost, ingressClass)
+		podAnnotations, capabilitiesEnv, ingressAnnotations, ingressTLS, ingressHost, ingressClass, ingressPaths)
+}
+
+// webYAML renders the web console: the SvelteKit BFF that serves the
+// platform domain root while the skalid ingress path routes /api to the
+// daemon. ORIGIN pins SvelteKit's form-action origin check to the public
+// domain, and ADDRESS_HEADER makes getClientAddress read the client IP the
+// Traefik edge forwards. Local dev runs the console from the working tree,
+// so the stage renders empty there.
+func webYAML(profile Profile) string {
+	production := profile.Production
+	if production == nil {
+		return ""
+	}
+	podAnnotations := ""
+	if production.WebImageID != "" {
+		podAnnotations = "\n      annotations:\n        skali.dev/image-id: " + production.WebImageID
+	}
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skali-web
+  namespace: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: skali-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: skali-web%[3]s
+    spec:
+      containers:
+        - name: skali-web
+          image: %[2]s
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: API_URL
+              value: http://skalid
+            - name: ORIGIN
+              value: https://%[4]s
+            - name: ADDRESS_HEADER
+              value: x-forwarded-for
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 2
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: skali-web
+  namespace: %[1]s
+spec:
+  selector:
+    app.kubernetes.io/name: skali-web
+  ports:
+    - port: 80
+      targetPort: 3000
+`, Namespace, production.WebImage, podAnnotations, production.IngressHost)
 }
 
 func bootstrapYAML(profile Profile) string {

@@ -74,6 +74,19 @@ func liveProfileObjects() []runtime.Object {
 				},
 			},
 		},
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "skali-web", Namespace: bundle.Namespace},
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{"skali.dev/image-id": "sha256:def"},
+					},
+					Spec: corev1.PodSpec{Containers: []corev1.Container{
+						{Name: "skali-web", Image: "skali-web:dev"},
+					}},
+				},
+			},
+		},
 	}
 }
 
@@ -121,6 +134,8 @@ func TestLiveProfileHashStability(t *testing.T) {
 			DatabaseTier:       topology.DatabaseTier,
 			DatabaseStorage:    DefaultDatabaseStorage,
 			RegistryStorage:    DefaultRegistryStorage,
+			WebImage:           "skali-web:dev",
+			WebImageID:         "sha256:def",
 			InstallationRecord: canonical,
 		},
 	}
@@ -158,5 +173,12 @@ func TestLiveProfileRefusals(t *testing.T) {
 	}}
 	_, _, err = LiveProfile(ctx, fakeClientWith(objects[0], objects[1], objects[2]), fake, liveProfileRecord())
 	require.ErrorContains(t, err, "skalid deployment is missing")
+	require.ErrorContains(t, err, "skali cluster upgrade")
+
+	// Missing web console deployment: pre-web clusters refuse until an
+	// upgrade resolves the image.
+	_, _, err = LiveProfile(ctx, fakeClientWith(objects[0], objects[1], objects[2], objects[3]),
+		fake, liveProfileRecord())
+	require.ErrorContains(t, err, "skali-web deployment is missing")
 	require.ErrorContains(t, err, "skali cluster upgrade")
 }

@@ -36,6 +36,13 @@ tasks:
       - mkdir -p .cache
       - docker save skalid:dev -o .cache/skalid-dev.tar
 
+  build:web-image:
+    desc: Build the skali-web:dev console image from this checkout and save it to .cache/skali-web-dev.tar (needs docker)
+    cmds:
+      - docker build -t skali-web:dev -f build/web.Dockerfile web
+      - mkdir -p .cache
+      - docker save skali-web:dev -o .cache/skali-web-dev.tar
+
   install:cli:
     desc: Build the skali CLI and install it to ~/.local/bin
     cmds:
@@ -52,10 +59,11 @@ tasks:
     cmds:
       - task: build
       - task: build:image
+      - task: build:web-image
       # Linux installs this host (hence sudo); macOS manages a Lima VM
-      # rootless. The tar is imported into the node during init instead of
+      # rootless. The tars are imported into the node during init instead of
       # pulling from a registry.
-      - '{{if eq OS "linux"}}sudo {{end}}./bin/skali cluster --image-tar .cache/skalid-dev.tar'
+      - '{{if eq OS "linux"}}sudo {{end}}./bin/skali cluster --image-tar .cache/skalid-dev.tar --web-image-tar .cache/skali-web-dev.tar'
 
   # --- Dev loop ---
 

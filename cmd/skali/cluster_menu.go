@@ -220,7 +220,9 @@ func printStatus(out *os.File, status *installer.Status) {
 		parts := make([]string, 0, len(status.Components))
 		for _, component := range status.Components {
 			if component.Healthy {
-				parts = append(parts, component.Name+" "+style.BrightGreen("healthy"))
+				// The healthy detail carries information beyond the flag,
+				// e.g. the database's deployed tier.
+				parts = append(parts, component.Name+" "+style.BrightGreen(component.Detail))
 			} else {
 				parts = append(parts, component.Name+" "+style.BrightYellow(component.Detail))
 			}

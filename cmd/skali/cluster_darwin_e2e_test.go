@@ -131,6 +131,14 @@ vm:
 	saveOut, code := h.hostCommand("docker", "save", "skalid:dev", "-o", imageTar)
 	require.Equal(t, 0, code, saveOut)
 
+	// The web console image rides its own tar the same way.
+	webTar := filepath.Join(t.TempDir(), "skali-web-dev.tar")
+	dockerOut, code = h.hostCommand("docker", "build", "-t", "skali-web:dev",
+		"-f", filepath.Join(h.repoRoot, "build", "web.Dockerfile"), filepath.Join(h.repoRoot, "web"))
+	require.Equal(t, 0, code, dockerOut)
+	saveOut, code = h.hostCommand("docker", "save", "skali-web:dev", "-o", webTar)
+	require.Equal(t, 0, code, saveOut)
+
 	// Init with a MAC-side password file: the installer must read it on
 	// this machine, not inside the VM.
 	passwordFile := filepath.Join(t.TempDir(), "admin-password")
@@ -147,10 +155,14 @@ admin:
   passwordFile: %s
 skalid:
   image: skalid:dev
+web:
+  image: skali-web:dev
 `, passwordFile), 0o644))
-	initOut, code := run("init", "--config", initConfig, "--image-tar", imageTar)
+	initOut, code := run("init", "--config", initConfig, "--image-tar", imageTar,
+		"--web-image-tar", webTar)
 	require.Equal(t, 0, code, initOut)
-	require.Contains(t, initOut, "Import skalid image skalid:dev")
+	require.Contains(t, initOut, "Import image skalid:dev")
+	require.Contains(t, initOut, "Import image skali-web:dev")
 
 	// A healthy status can only come from a working kube client, and the
 	// template forwards guest 6443 to host 16443: an unrewritten kubeconfig

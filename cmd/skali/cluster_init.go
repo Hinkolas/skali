@@ -91,6 +91,8 @@ func newClusterInitCmd() *cobra.Command {
 				TLS:           installer.TLSConfig{IssuerEmail: config.TLS.IssuerEmail, ACMEServer: config.TLS.ACMEServer},
 				SkalidImage:   config.Skalid.Image,
 				SkalidImageID: config.Skalid.ImageID,
+				WebImage:      config.Web.Image,
+				WebImageID:    config.Web.ImageID,
 				Layout:        asserted,
 				Admin: func(context.Context) (string, string, error) {
 					return config.Admin.Email, adminPassword, nil
@@ -118,6 +120,23 @@ func newClusterInitCmd() *cobra.Command {
 					return err
 				}
 				opts.SkalidImageID = stagedID
+			}
+			if webImageTarFlag != "" {
+				webTar, stagedImage, stagedID, err := loadImageTar(ctx, webImageTarFlag)
+				if err != nil {
+					progress.Abort()
+					return err
+				}
+				if stagedImage != config.Web.Image {
+					progress.Abort()
+					return fmt.Errorf("the web image tar carries %s but the config names %s",
+						stagedImage, config.Web.Image)
+				}
+				if err := importImageTar(ctx, runner(), webTar, stagedImage, progress); err != nil {
+					progress.Abort()
+					return err
+				}
+				opts.WebImageID = stagedID
 			}
 			if err := stageReconciledLayout(ctx, detected.Record, asserted); err != nil {
 				progress.Abort()

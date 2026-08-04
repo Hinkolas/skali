@@ -247,7 +247,7 @@ func runServe() error {
 	}
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: api.NewRouter(api.Deps{
+		Handler: api.StripAPIPrefix(api.NewRouter(api.Deps{
 			Auth:               authSvc,
 			Store:              st,
 			DB:                 pool,
@@ -267,7 +267,7 @@ func runServe() error {
 			SecretReader:       secretReader,
 			Version:            versionpkg.Version,
 			InstanceName:       cfg.InstanceName,
-		}),
+		})),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)

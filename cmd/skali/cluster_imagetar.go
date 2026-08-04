@@ -50,7 +50,7 @@ func loadImageTar(ctx context.Context, tarPath string) (data []byte, image, imag
 // containerd.
 func importImageTar(ctx context.Context, runner host.Runner, data []byte, image string,
 	progress *taskProgress) error {
-	progress.Start("Import skalid image " + image)
+	progress.Start("Import image " + image)
 	const remote = "/tmp/skali-image-import.tar"
 	if err := runner.WriteFile(ctx, remote, data, 0o600); err != nil {
 		return err

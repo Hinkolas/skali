@@ -1,6 +1,7 @@
-// Catch-all BFF proxy: the browser calls relative /api/v1/… URLs, this
+// Catch-all BFF proxy: the browser calls relative /_api/v1/… URLs, this
 // forwards them to the Go API with the bearer token from the httpOnly session
-// cookie attached. The token never reaches browser JavaScript.
+// cookie attached. The token never reaches browser JavaScript. The prefix is
+// /_api because the production edge routes /api to the daemon directly.
 
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { apiFetch, clientMeta } from '$lib/server/api';

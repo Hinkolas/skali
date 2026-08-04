@@ -8,7 +8,8 @@
     "endpoints",
     "tls",
     "admin",
-    "skalid"
+    "skalid",
+    "web"
   ],
   "properties": {
     "admin": {
@@ -42,7 +43,11 @@
         },
         "registry": {
           "type": "string",
-          "description": "Public managed-registry domain, for example registry.example.com."
+          "description": "Public managed-registry domain, for example cr.skali.example.com."
+        },
+        "s3": {
+          "type": "string",
+          "description": "Optional public S3 endpoint domain, for example s3.skali.example.com; empty keeps bucket access in-cluster."
         }
       },
       "additionalProperties": false
@@ -77,6 +82,23 @@
         "issuerEmail": {
           "type": "string",
           "description": "ACME account email for certificate issuance."
+        }
+      },
+      "additionalProperties": false
+    },
+    "web": {
+      "type": "object",
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "skali-web console image reference to install."
+        },
+        "imageId": {
+          "type": "string",
+          "description": "Optional image content identity behind a mutable tag."
         }
       },
       "additionalProperties": false

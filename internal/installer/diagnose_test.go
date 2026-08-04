@@ -89,7 +89,7 @@ func findCheck(t *testing.T, diagnosis *Diagnosis, name string) Check {
 func TestDiagnoseHealthy(t *testing.T) {
 	t.Parallel()
 	client := diagnoseClient(
-		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid")},
+		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid"), healthyDeployment("skali-web")},
 		cnpgCluster(1, 1, "Cluster in healthy state"),
 	)
 	diagnosis, err := Diagnose(context.Background(), diagnoseHost(t), DiagnoseOptions{Client: client})
@@ -106,7 +106,7 @@ func TestDiagnoseHealthy(t *testing.T) {
 func TestDiagnoseReadOnly(t *testing.T) {
 	t.Parallel()
 	clientset := k8sfake.NewSimpleClientset(
-		liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid"))
+		liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid"), healthyDeployment("skali-web"))
 	scheme := runtime.NewScheme()
 	dynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
 		map[schema.GroupVersionResource]string{
@@ -157,7 +157,7 @@ func TestDiagnoseVersionDriftWarns(t *testing.T) {
 		return host.Result{Stdout: "k3s version v1.33.2+k3s1 (0000)\n"}, nil
 	}
 	client := diagnoseClient(
-		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid")},
+		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid"), healthyDeployment("skali-web")},
 		cnpgCluster(1, 1, "Cluster in healthy state"),
 	)
 	diagnosis, err := Diagnose(context.Background(), fake, DiagnoseOptions{Client: client})
@@ -221,7 +221,7 @@ func TestDiagnoseSectionSevenScene(t *testing.T) {
 	brokenSkalid.Status.AvailableReplicas = 0
 	client := diagnoseClient(
 		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), brokenSkalid,
-			pendingPod, crashPod},
+			healthyDeployment("skali-web"), pendingPod, crashPod},
 		cnpgCluster(3, 1, "Waiting for the instances to become active"),
 	)
 
@@ -324,7 +324,7 @@ func multiHomedHost(t *testing.T, coordinatorBound string) *host.Fake {
 func TestDiagnoseMultiHomedNodeFindsUnservedEndpointAndCertificate(t *testing.T) {
 	t.Parallel()
 	client := diagnoseClient(
-		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid")},
+		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid"), healthyDeployment("skali-web")},
 		cnpgCluster(1, 1, "Cluster in healthy state"),
 	)
 
@@ -358,7 +358,7 @@ func TestDiagnoseMultiHomedNodeAcceptsBoundEndpoint(t *testing.T) {
 	fake := multiHomedHost(t, "10.0.1.2")
 	fake.FS[K3sServingCertPath] = servingCertificate(t, "203.0.113.7", "10.0.1.2")
 	client := diagnoseClient(
-		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid")},
+		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid"), healthyDeployment("skali-web")},
 		cnpgCluster(1, 1, "Cluster in healthy state"),
 	)
 
@@ -409,7 +409,7 @@ func TestDiagnoseWarnsOnUnusedPrivateNetwork(t *testing.T) {
 	diagnosis, err := Diagnose(context.Background(), fake, DiagnoseOptions{
 		Client: diagnoseClient(
 			[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"),
-				healthyDeployment("skalid")},
+				healthyDeployment("skalid"), healthyDeployment("skali-web")},
 			cnpgCluster(1, 1, "Cluster in healthy state")),
 	})
 

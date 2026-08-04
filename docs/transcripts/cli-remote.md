@@ -10,12 +10,12 @@ re-authenticates an existing entry, and the `local` remote belongs to
 ## 1. Add the first remote
 
 ```console
-$ skali remote add https://skali.example.com
+$ skali remote add https://skali.example.com/api
 ◆ Email
 └ dana@example.com
 ◆ Password
 └ entered
-logged in to https://skali.example.com as dana@example.com (remote "skali.example.com")
+logged in to https://skali.example.com/api as dana@example.com (remote "skali.example.com")
 ```
 
 The name defaults to the URL host, including any non-standard port
@@ -46,7 +46,7 @@ Bare `skali remote` lists; `*` marks the current remote:
 
 ```console
 $ skali remote
-  skali.example.com  https://skali.example.com  [logged in]
+  skali.example.com  https://skali.example.com/api  [logged in]
 * staging            https://staging.example.com  [logged in]
 
 $ skali remote use skali.example.com
@@ -58,7 +58,7 @@ switched to remote "skali.example.com"
 ```console
 $ skali remote status
 remote:  skali.example.com
-master:  https://skali.example.com
+master:  https://skali.example.com/api
 health:  ok
 user:    dana@example.com (Dana)
 session: valid, expires 2026-07-29 14:02
@@ -72,7 +72,7 @@ When the master is unreachable, status stops after the health line.
 ```console
 $ skali remote status
 remote:  skali.example.com
-master:  https://skali.example.com
+master:  https://skali.example.com/api
 health:  ok
 session: expired or revoked; run `skali remote login`
 
@@ -81,7 +81,7 @@ $ skali remote login
 └ dana@example.com
 ◆ Password
 └ entered
-logged in to https://skali.example.com as dana@example.com (remote "skali.example.com")
+logged in to https://skali.example.com/api as dana@example.com (remote "skali.example.com")
 ```
 
 `skali remote login staging` logs in to a named remote and makes it current on

@@ -126,6 +126,10 @@ func TestParseMasterURL(t *testing.T) {
 	}{
 		{raw: "https://skali.khz.dev", name: "skali.khz.dev", master: "https://skali.khz.dev"},
 		{raw: "https://skali.khz.dev/", name: "skali.khz.dev", master: "https://skali.khz.dev"},
+		// The single-surface cluster API lives behind a path prefix; the
+		// path survives round-tripping while the name stays host-only.
+		{raw: "https://skali.khz.dev/api", name: "skali.khz.dev", master: "https://skali.khz.dev/api"},
+		{raw: "https://skali.khz.dev/api/", name: "skali.khz.dev", master: "https://skali.khz.dev/api"},
 		{raw: "http://localhost:7070", name: "localhost:7070", master: "http://localhost:7070"},
 		{raw: "https://SKALI.Example.Com", name: "skali.example.com", master: "https://SKALI.Example.Com"},
 		{raw: "skali.khz.dev", fails: true},
@@ -193,7 +197,7 @@ func TestRemoteAddUnreachable(t *testing.T) {
 func TestRemoteAddSuccess(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ok"}`)) })
 	mux.HandleFunc("/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"session":` + sessionJSON + `}`))
 	})
@@ -221,7 +225,7 @@ func TestRemoteAddTwoFactor(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	verified := false
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ok"}`)) })
 	mux.HandleFunc("/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"challenge":{"token":"ch-1","expires_at":"2026-07-22T18:00:00Z"}}`))
 	})
@@ -245,7 +249,7 @@ func TestRemoteAddTwoFactor(t *testing.T) {
 func TestRemoteAddFailedLoginLeavesNothing(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ok"}`)) })
 	mux.HandleFunc("/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":{"code":"invalid_credentials","message":"invalid email or password"}}`))
@@ -414,7 +418,7 @@ func TestRemoteRemoveCurrentClearsCurrent(t *testing.T) {
 func TestRemoteStatus(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ok"}`)) })
 	mux.HandleFunc("/v1/auth/session", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"user":{"email":"dana@example.com","name":"Dana"},` +
 			`"session":{"id":"s1","expires_at":"2026-07-29T14:02:00Z"}}`))
@@ -441,7 +445,7 @@ func TestRemoteStatus(t *testing.T) {
 func TestRemoteStatusExpiredSession(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ok"}`)) })
 	mux.HandleFunc("/v1/auth/session", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":{"code":"invalid_token","message":"session expired"}}`))

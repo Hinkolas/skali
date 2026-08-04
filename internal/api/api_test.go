@@ -116,7 +116,9 @@ func newTestAPI(t *testing.T) *testAPI {
 	tokenSigner, err := registrytoken.LoadSigner(keyPEM)
 	require.NoError(t, err)
 
-	srv := httptest.NewServer(NewRouter(Deps{
+	// StripAPIPrefix wraps here exactly as in cmd/skalid, so every test
+	// doubles as proof that root paths pass through the /api wrapper.
+	srv := httptest.NewServer(StripAPIPrefix(NewRouter(Deps{
 		Auth:               svc,
 		Store:              st,
 		DB:                 pool,
@@ -143,7 +145,7 @@ func newTestAPI(t *testing.T) *testAPI {
 				"secret_key": []byte("sk-" + name),
 			}, nil
 		},
-	}))
+	})))
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc,
 		observed: observed, held: held, registryHost: registryURL.Host}
@@ -569,6 +571,39 @@ func TestHealthzAndOpenAPI(t *testing.T) {
 	raw, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 	require.True(t, bytes.HasPrefix(raw, []byte("openapi: 3.1")), "spec should be OpenAPI 3.1")
+}
+
+// TestAPIPrefixStrip proves the /api alias the production edge routes to:
+// every root path also answers under /api, bare /api rewrites cleanly, and
+// lookalike prefixes are left alone. Root pass-through is covered by every
+// other test in the package since newTestAPI wraps with StripAPIPrefix.
+func TestAPIPrefixStrip(t *testing.T) {
+	a := newTestAPI(t)
+
+	status, body := a.do("GET", "/api/healthz", "", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "ok", body["status"])
+
+	res, err := a.srv.Client().Get(a.srv.URL + "/api/openapi.yaml")
+	require.NoError(t, err)
+	defer res.Body.Close()
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.Equal(t, "application/yaml", res.Header.Get("Content-Type"))
+
+	a.createUser("prefix@example.com", "hunter2hunter2")
+	token := a.login("prefix@example.com", "hunter2hunter2")
+	status, body = a.do("GET", "/api/v1/auth/session", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.NotNil(t, body["user"])
+
+	// Bare /api rewrites to / (a plain-text chi 404, not a panic), and
+	// lookalike prefixes are not stripped.
+	for _, path := range []string{"/api", "/apihealthz"} {
+		res, err := a.srv.Client().Get(a.srv.URL + path)
+		require.NoError(t, err)
+		res.Body.Close()
+		require.Equal(t, http.StatusNotFound, res.StatusCode, path)
+	}
 }
 
 // TestSpecCoversAllRoutes walks the chi routing tree and asserts every /v1

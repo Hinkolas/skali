@@ -4,7 +4,7 @@ import type { AuthUser } from '$lib/types/auth';
 import type { PageServerLoad } from './$types';
 
 // First real-data page: the user list is server-loaded per navigation;
-// mutations happen client-side through the /api proxy and re-run this load
+// mutations happen client-side through the /_api proxy and re-run this load
 // via invalidateAll().
 export const load: PageServerLoad = async ({ locals, fetch }) => {
 	if (locals.user?.role !== 'admin') {

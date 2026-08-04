@@ -1,5 +1,6 @@
-// Thin client for the BFF proxy: relative /api/v1/… calls, envelope-aware
-// error handling. Components never talk to the Go API directly.
+// Thin client for the BFF proxy: relative /_api/v1/… calls, envelope-aware
+// error handling. Components never talk to the Go API directly. The prefix
+// is /_api because the production edge owns /api for the daemon itself.
 
 export class ApiError extends Error {
 	constructor(
@@ -20,7 +21,7 @@ async function request<T>(
 ): Promise<T> {
 	let res: Response;
 	try {
-		res = await fetch(`/api${path}`, {
+		res = await fetch(`/_api${path}`, {
 			method,
 			headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
 			body: body !== undefined ? JSON.stringify(body) : undefined

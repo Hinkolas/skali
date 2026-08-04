@@ -297,11 +297,23 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 	if err := resolveSkalidImage(reader, true, &opts); err != nil {
 		return err
 	}
+	if err := resolveWebImage(reader, true, &opts); err != nil {
+		return err
+	}
 	var imageTar []byte
 	if imageTarFlag != "" {
 		var err error
 		imageTar, opts.SkalidImage, opts.SkalidImageID, err =
 			loadImageTar(ctx, imageTarFlag)
+		if err != nil {
+			return err
+		}
+	}
+	var webTar []byte
+	if webImageTarFlag != "" {
+		var err error
+		webTar, opts.WebImage, opts.WebImageID, err =
+			loadImageTar(ctx, webImageTarFlag)
 		if err != nil {
 			return err
 		}
@@ -322,6 +334,12 @@ func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
 	}
 	if len(imageTar) > 0 {
 		if err := importImageTar(ctx, runner(), imageTar, opts.SkalidImage, progress); err != nil {
+			progress.Abort()
+			return err
+		}
+	}
+	if len(webTar) > 0 {
+		if err := importImageTar(ctx, runner(), webTar, opts.WebImage, progress); err != nil {
 			progress.Abort()
 			return err
 		}
@@ -443,6 +461,34 @@ func resolveSkalidImage(reader *bufio.Reader, promptAllowed bool, opts *installe
 	return err
 }
 
+// resolveWebImage settles the web console image the same way: a staged tar
+// wins, then the --web-image flag, released installers default to the
+// published image of the same version, and dev builds must name one.
+func resolveWebImage(reader *bufio.Reader, promptAllowed bool, opts *installer.InitOptions) error {
+	var err error
+	switch {
+	case webImageTarFlag != "":
+		// A staged tar names the image itself; no prompt.
+	case webImageFlag != "":
+		opts.WebImage = webImageFlag
+	case releaseVersionPattern.MatchString(versionpkg.Version):
+		defaultImage := "ghcr.io/hinkolas/skali-web:" + versionpkg.Version
+		if !promptAllowed {
+			opts.WebImage = defaultImage
+			return nil
+		}
+		opts.WebImage, err = cliprompt.LineDefault(reader,
+			"  web console image ["+defaultImage+"]: ", defaultImage)
+	default:
+		if !promptAllowed {
+			return fmt.Errorf("no published skali-web image exists for installer version %s; "+
+				"pass --web-image or --web-image-tar or run interactively", versionpkg.Version)
+		}
+		opts.WebImage, err = cliprompt.Line(reader, "  web console image (dev build, no published default): ")
+	}
+	return err
+}
+
 // promptAdmin collects the first operator account credentials with a
 // confirmation re-entry; they are never persisted host-side.
 func promptAdmin(reader *bufio.Reader) (string, string, error) {
@@ -473,7 +519,8 @@ func promptAdmin(reader *bufio.Reader) (string, string, error) {
 func printInitReady(out *os.File, result *installer.InitResult) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Skali is ready:")
-	fmt.Fprintf(out, "  %-32s api/ui\n", result.APIURL)
+	fmt.Fprintf(out, "  %-32s web console\n", result.ConsoleURL)
+	fmt.Fprintf(out, "  %-32s api\n", result.APIURL)
 	fmt.Fprintf(out, "  %-32s managed registry\n", result.RegistryURL)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Install logs:", result.LogPath)

@@ -137,7 +137,7 @@ func TestImportImageSettlesProgress(t *testing.T) {
 
 	require.NoError(t, importImageTar(context.Background(), fake, data, "skalid:dev", progress))
 	require.Nil(t, progress.current)
-	require.Contains(t, out.String(), "Import skalid image skalid:dev")
+	require.Contains(t, out.String(), "Import image skalid:dev")
 }
 
 func TestStageSkalidImageImportFailure(t *testing.T) {

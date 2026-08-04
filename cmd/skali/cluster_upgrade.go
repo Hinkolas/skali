@@ -67,24 +67,34 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	// A server whose local record never initialized the bundle is a
 	// secondary server when the in-cluster record names the init owner:
 	// its bundle is maintained there, so this host moves k3s only.
+	// Reconciled (version-2) clusters have no init owner at all; the
+	// shared coordinator maintains the bundle, so any active server may
+	// inspect it and, when drifted, reconverge it.
 	bundleOwner := ""
 	if role == layout.RoleServer && record.Versions.Bundle == "" {
-		if status.InitOwner == "" {
+		switch {
+		case record.Reconciled() && status.Initialized:
+		case status.InitOwner == "":
 			return errors.New("the bundle was never initialized; run skali cluster init first")
+		default:
+			bundleOwner = status.InitOwner
 		}
-		bundleOwner = status.InitOwner
 	}
-	if imageTarFlag != "" {
+	if imageTarFlag != "" || webImageTarFlag != "" {
+		tarFlag := "--image-tar"
+		if imageTarFlag == "" {
+			tarFlag = "--web-image-tar"
+		}
 		if role == layout.RoleAgent {
-			return errors.New("--image-tar applies to server upgrades; agent nodes run no bundle")
+			return fmt.Errorf("%s applies to server upgrades; agent nodes run no bundle", tarFlag)
 		}
 		if bundleOwner != "" {
-			return fmt.Errorf("--image-tar applies to bundle upgrades; the bundle is maintained on %s",
-				bundleOwner)
+			return fmt.Errorf("%s applies to bundle upgrades; the bundle is maintained on %s",
+				tarFlag, bundleOwner)
 		}
 	}
 
-	plan := installer.PlanUpgrade(status, imageTarFlag != "")
+	plan := installer.PlanUpgrade(status, imageTarFlag != "" || webImageTarFlag != "")
 	if plan.K3sDowngrade {
 		return fmt.Errorf("this installer pins k3s %s but the host runs %s; a newer installer must run this upgrade",
 			plan.K3sTo, plan.K3sFrom)
@@ -116,6 +126,7 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	promptAllowed := !yes && cliprompt.Interactive()
 	opts := installer.InitOptions{Out: out, SkipAdmin: true}
 	var tarData []byte
+	var webTarData []byte
 	if role == layout.RoleServer && bundleOwner == "" {
 		if err := seedInitInputs(reader, promptAllowed, record, &opts); err != nil {
 			return err
@@ -128,10 +139,19 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		} else if err := resolveSkalidImage(reader, promptAllowed, &opts); err != nil {
 			return err
 		}
+		if webImageTarFlag != "" {
+			webTarData, opts.WebImage, opts.WebImageID, err = loadImageTar(ctx, webImageTarFlag)
+			if err != nil {
+				return err
+			}
+		} else if err := resolveWebImage(reader, promptAllowed, &opts); err != nil {
+			return err
+		}
 	}
 
 	fmt.Fprintf(out, "upgrade plan for host %s (cluster %q)\n", hostLabel(detected), record.Cluster)
-	printUpgradePlan(out, plan, role, bundleOwner, opts.SkalidImage, tarData != nil, credentialMissing)
+	printUpgradePlan(out, plan, role, bundleOwner, opts.SkalidImage, tarData != nil,
+		opts.WebImage, webTarData != nil, credentialMissing)
 	printUpgradeSequence(out, status)
 
 	if !yes {
@@ -186,6 +206,12 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	}
 	if tarData != nil {
 		if err := importImageTar(ctx, runner(), tarData, opts.SkalidImage, progress); err != nil {
+			progress.Abort()
+			return err
+		}
+	}
+	if webTarData != nil {
+		if err := importImageTar(ctx, runner(), webTarData, opts.WebImage, progress); err != nil {
 			progress.Abort()
 			return err
 		}
@@ -255,7 +281,8 @@ func printRemainingAfterUpgrade(ctx context.Context, out io.Writer) {
 // bundle-owning server converges whenever the flow reaches this point, so
 // its bundle line always states what the converge is for; agents and
 // secondary servers move k3s only.
-func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, bundleOwner, image string, fromTar, credentialMissing bool) {
+func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, bundleOwner, image string, fromTar bool,
+	webImage string, webFromTar, credentialMissing bool) {
 	if plan.K3sDrifted {
 		fmt.Fprintf(out, "  k3s     %s -> %s\n", orUnknown(plan.K3sFrom), plan.K3sTo)
 	} else {
@@ -286,6 +313,13 @@ func printUpgradePlan(out io.Writer, plan installer.UpgradePlan, role, bundleOwn
 			suffix = " (imported from tar)"
 		}
 		fmt.Fprintf(out, "  skalid  %s%s\n", image, suffix)
+	}
+	if webImage != "" {
+		suffix := ""
+		if webFromTar {
+			suffix = " (imported from tar)"
+		}
+		fmt.Fprintf(out, "  web     %s%s\n", webImage, suffix)
 	}
 	if credentialMissing {
 		detail := "minted during this upgrade"

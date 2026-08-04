@@ -1,7 +1,7 @@
 # Remote plan and deploy transcripts
 
 Context: the developer has an authenticated remote `skali.example.com` for
-the installation at `https://skali.example.com` (added once with
+the installation at `https://skali.example.com/api` (added once with
 `skali remote add`, see `cli-remote.md`), and the project checkout
 contains `skali.yml` plus a gitignored `.env.production`.
 
@@ -14,7 +14,7 @@ it appears; once linked, the bound target applies without the note.
 
 ```console
 $ skali plan --environment production --env-file ./.env.production
-remote       skali.example.com (https://skali.example.com)
+remote       skali.example.com (https://skali.example.com/api)
 project      file-sharing (skali.yml)
 environment  production
 linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
@@ -42,7 +42,7 @@ override:
 
 ```console
 $ skali deploy --build=local
-remote       skali.example.com (https://skali.example.com)
+remote       skali.example.com (https://skali.example.com/api)
 project      file-sharing (skali.yml)
 ◆ Which environment should Skali use?
 └ production
@@ -136,7 +136,7 @@ and links the checkout:
 
 ```console
 $ skali deploy --build=local
-remote       skali.example.com (https://skali.example.com)
+remote       skali.example.com (https://skali.example.com/api)
 project      file-sharing (skali.yml)
 ◆ Create project file-sharing on skali.example.com?
 └ Yes
@@ -156,9 +156,9 @@ installation, and non-interactive deploys never create:
 
 ```console
 $ skali plan --environment production
-error: project file-sharing does not exist on https://skali.example.com; skali plan never changes the installation, run skali deploy to create it
+error: project file-sharing does not exist on https://skali.example.com/api; skali plan never changes the installation, run skali deploy to create it
 $ skali deploy --environment production --yes
-error: project file-sharing does not exist on https://skali.example.com; run skali deploy interactively to create it
+error: project file-sharing does not exist on https://skali.example.com/api; run skali deploy interactively to create it
 $ echo $?
 1
 ```

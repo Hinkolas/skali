@@ -26,6 +26,8 @@ info:
 servers:
   - url: /
     description: Same host the spec is served from.
+  - url: /api
+    description: The public path on a production cluster, where the domain root serves the web console.
 
 security:
   - bearerAuth: []

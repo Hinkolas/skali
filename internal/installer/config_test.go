@@ -154,6 +154,8 @@ admin:
   passwordFile: /root/skali-admin-password
 skalid:
   image: ghcr.io/hinkolas/skalid:v2.0.0
+web:
+  image: ghcr.io/hinkolas/skali-web:v2.0.0
 `))
 	require.NoError(t, err)
 	require.Equal(t, "skali.example.com", config.Endpoints.API)
@@ -161,6 +163,7 @@ skalid:
 	require.Equal(t, "ops@example.com", config.TLS.IssuerEmail)
 	require.Equal(t, "/root/skali-admin-password", config.Admin.PasswordFile)
 	require.Equal(t, "ghcr.io/hinkolas/skalid:v2.0.0", config.Skalid.Image)
+	require.Equal(t, "ghcr.io/hinkolas/skali-web:v2.0.0", config.Web.Image)
 }
 
 func TestParseInitConfigRejections(t *testing.T) {
@@ -170,10 +173,11 @@ func TestParseInitConfigRejections(t *testing.T) {
 		"tls":       "tls:\n  issuerEmail: ops@example.com\n",
 		"admin":     "admin:\n  email: a@example.com\n  passwordFile: /root/pw\n",
 		"skalid":    "skalid:\n  image: skalid:dev\n",
+		"web":       "web:\n  image: skali-web:dev\n",
 	}
 	build := func(omit string) string {
 		var document strings.Builder
-		for _, key := range []string{"endpoints", "tls", "admin", "skalid"} {
+		for _, key := range []string{"endpoints", "tls", "admin", "skalid", "web"} {
 			if key != omit {
 				document.WriteString(base[key])
 			}
@@ -185,6 +189,7 @@ func TestParseInitConfigRejections(t *testing.T) {
 		"tls":       "tls.issuerEmail is required",
 		"admin":     "admin.email is required",
 		"skalid":    "skalid.image is required",
+		"web":       "web.image is required",
 	}
 	for omit, want := range cases {
 		t.Run("missing "+omit, func(t *testing.T) {

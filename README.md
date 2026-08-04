@@ -46,8 +46,10 @@ Distinct product and operational roles:
   servers also run the TLS enrollment coordinator. It is independent of
   `skalid` and the product database.
 - **`web/`** — SvelteKit BFF (adapter-node). Owns the browser session cookie
-  and proxies `/api/v1/*` to the daemon; the bearer token never reaches
-  browser JavaScript.
+  and proxies `/_api/v1/*` to the daemon; the bearer token never reaches
+  browser JavaScript. On a production cluster it ships as the `skali-web`
+  deployment behind the platform domain: `/` serves the console and `/api`
+  routes to the daemon, one surface over 80/443.
 
 Auth is email+password (argon2id) with optional TOTP 2FA and backup codes;
 sessions are opaque bearer tokens (sha256-hashed at rest, 30-day sliding
@@ -148,8 +150,9 @@ task dev:web
 The planned local Kubernetes workflow and parity boundaries are defined in the
 [V2 local-development section](REWORK_V2.md#11-local-development-and-cli).
 
-The OpenAPI contract is served at `GET /openapi.yaml` and lives in
-[`api/openapi.yaml`](api/openapi.yaml); a router-walk test keeps it honest.
+The OpenAPI contract is served at `GET /openapi.yaml` (on a cluster:
+`/api/openapi.yaml`) and lives in [`api/openapi.yaml`](api/openapi.yaml); a
+router-walk test keeps it honest.
 
 ## Manifest compiler preview
 

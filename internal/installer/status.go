@@ -192,6 +192,7 @@ func gatherComponents(ctx context.Context, client *kube.Client) ([]ComponentStat
 		database,
 		deploymentComponent(ctx, client, "registry", bundle.Namespace, "skali-registry"),
 		deploymentComponent(ctx, client, "skalid", bundle.Namespace, "skalid"),
+		deploymentComponent(ctx, client, "web", bundle.Namespace, "skali-web"),
 	}
 	return components, instances
 }

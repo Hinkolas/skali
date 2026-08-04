@@ -230,7 +230,8 @@ derived topology
   ok  Create admin account
 
 Skali is ready:
-  https://skali.example.com        api/ui
+  https://skali.example.com        web console
+  https://skali.example.com/api    api
   https://cr.skali.example.com     managed registry
 
 Install logs: /var/lib/skali/logs/init-01J9X2.log

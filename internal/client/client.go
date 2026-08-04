@@ -174,8 +174,44 @@ func (c *Client) RevokeSession(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/auth/sessions/"+id, nil, nil)
 }
 
+// Health probes the daemon and requires its JSON answer. On a
+// single-surface cluster the domain root serves the web console, whose
+// /healthz is plain text, so a base URL missing the /api path must fail
+// here with guidance instead of passing and confusing the login after it.
 func (c *Client) Health(ctx context.Context) error {
-	return c.do(ctx, http.MethodGet, "/healthz", nil, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/healthz", nil)
+	if err != nil {
+		return fmt.Errorf("client: %w", err)
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("client: %s unreachable: %w", c.base, err)
+	}
+	defer res.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("client: read response: %w", err)
+	}
+	if res.StatusCode >= 400 {
+		var envelope struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Error.Code == "" {
+			return &APIError{Status: res.StatusCode, Code: "internal", Message: strings.TrimSpace(string(raw))}
+		}
+		return &APIError{Status: res.StatusCode, Code: envelope.Error.Code, Message: envelope.Error.Message}
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(raw, &body) != nil || body.Status != "ok" {
+		return fmt.Errorf("client: %s answered, but not like a skali api; "+
+			"a cluster serves its api at https://<domain>/api", c.base)
+	}
+	return nil
 }
 
 // do sends one JSON request and decodes either the response into out or the

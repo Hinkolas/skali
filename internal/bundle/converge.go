@@ -141,6 +141,17 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 		return err
 	}
 	progress.Done(profile.SkalidImage)
+
+	if production != nil {
+		progress.Start("Apply web console")
+		if err := applier.ApplyObjects(ctx, objects.Web); err != nil {
+			return err
+		}
+		if err := applier.WaitDeploymentReady(ctx, Namespace, "skali-web"); err != nil {
+			return err
+		}
+		progress.Done(production.WebImage)
+	}
 	return nil
 }
 
