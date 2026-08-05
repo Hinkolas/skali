@@ -4,9 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Hinkolas/skali/internal/yamldoc"
 	"github.com/stretchr/testify/require"
-
-	"github.com/Hinkolas/skali/internal/manifest"
 )
 
 const validManifest = `version: "1"
@@ -95,7 +94,7 @@ func TestSubmitDraftInvalidWritesNothing(t *testing.T) {
 		Source: []byte(invalid), Format: "yaml", ExpectedVersion: 1,
 	})
 	require.Error(t, err)
-	var diagnostics manifest.Diagnostics
+	var diagnostics yamldoc.Diagnostics
 	require.ErrorAs(t, err, &diagnostics)
 
 	count, err := svc.st.CountDefinitionVersions(ctx, proj.ID)

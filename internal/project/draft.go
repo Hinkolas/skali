@@ -13,6 +13,7 @@ import (
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/store"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
 // Draft is the current editable definition document of a project together
@@ -165,7 +166,7 @@ func (s *Service) SubmitCandidate(ctx context.Context, projectID uuid.UUID, sour
 }
 
 // compileSource runs the full in-memory pipeline: strict parse, validation,
-// compilation. The returned error is manifest.Diagnostics when the document
+// compilation. The returned error is yamldoc.Diagnostics when the document
 // itself is at fault, so callers can render positions.
 func compileSource(source []byte, format string) (*compiler.Result, error) {
 	if format != "yaml" && format != "json" {
@@ -173,9 +174,9 @@ func compileSource(source []byte, format string) (*compiler.Result, error) {
 	}
 	document, err := manifest.Parse(source, "skali."+shortFormat(format))
 	if err != nil {
-		var diagnostic manifest.Diagnostic
+		var diagnostic yamldoc.Diagnostic
 		if errors.As(err, &diagnostic) {
-			return nil, manifest.Diagnostics{diagnostic}
+			return nil, yamldoc.Diagnostics{diagnostic}
 		}
 		return nil, err
 	}

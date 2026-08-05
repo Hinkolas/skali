@@ -11,11 +11,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/compiler"
-	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
 // projectsHandlers is the definition-plane surface: projects and their draft
@@ -107,7 +107,7 @@ type diagnosticPayload struct {
 
 // writeManifestDiagnostics reports an invalid manifest as 422 with the full
 // diagnostic list next to the standard error envelope.
-func writeManifestDiagnostics(w http.ResponseWriter, diagnostics manifest.Diagnostics) {
+func writeManifestDiagnostics(w http.ResponseWriter, diagnostics yamldoc.Diagnostics) {
 	payload := make([]diagnosticPayload, len(diagnostics))
 	for i, d := range diagnostics {
 		payload[i] = diagnosticPayload{
@@ -130,7 +130,7 @@ func writeManifestDiagnostics(w http.ResponseWriter, diagnostics manifest.Diagno
 // writeProjectError maps project sentinel errors onto the envelope; anything
 // unrecognized is logged and reported as an opaque 500.
 func writeProjectError(ctx context.Context, w http.ResponseWriter, err error) {
-	var diagnostics manifest.Diagnostics
+	var diagnostics yamldoc.Diagnostics
 	switch {
 	case errors.As(err, &diagnostics):
 		writeManifestDiagnostics(w, diagnostics)

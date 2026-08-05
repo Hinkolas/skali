@@ -6,13 +6,14 @@ import (
 	"strconv"
 
 	"github.com/Hinkolas/skali/internal/utils"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
 var stableKeyPattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,62}$")
 
-func Validate(document *Document) Diagnostics {
+func Validate(document *Document) yamldoc.Diagnostics {
 	project := document.Project
-	var diagnostics Diagnostics
+	var diagnostics yamldoc.Diagnostics
 	add := func(path, format string, args ...any) {
 		diagnostics = append(diagnostics, document.Diagnostic(path, fmt.Sprintf(format, args...)))
 	}
@@ -109,7 +110,7 @@ func Validate(document *Document) Diagnostics {
 	return diagnostics
 }
 
-func validateStableKey(diagnostics *Diagnostics, document *Document, path, key string) {
+func validateStableKey(diagnostics *yamldoc.Diagnostics, document *Document, path, key string) {
 	if stableKeyPattern.MatchString(key) {
 		return
 	}
@@ -117,7 +118,7 @@ func validateStableKey(diagnostics *Diagnostics, document *Document, path, key s
 		"key must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens"))
 }
 
-func validateSelection[T any](diagnostics *Diagnostics, document *Document, path string, selection Selection, resources map[string]T) {
+func validateSelection[T any](diagnostics *yamldoc.Diagnostics, document *Document, path string, selection Selection, resources map[string]T) {
 	if selection.All {
 		return
 	}

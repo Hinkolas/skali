@@ -15,13 +15,14 @@ import (
 
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/utils"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
 var environmentKeyPattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
 
 type builder struct {
 	document     *manifest.Document
-	diagnostics  manifest.Diagnostics
+	diagnostics  yamldoc.Diagnostics
 	variables    map[string]VariableRequirement
 	variablePath map[string]string
 	dependencies map[string]map[string]struct{}

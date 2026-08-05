@@ -7,13 +7,14 @@ import (
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/utils"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
 var stableKeyPattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,62}$")
 
-func Validate(document *Document) Diagnostics {
+func Validate(document *Document) yamldoc.Diagnostics {
 	l := document.Layout
-	var diagnostics Diagnostics
+	var diagnostics yamldoc.Diagnostics
 	add := func(path, format string, args ...any) {
 		diagnostics = append(diagnostics, document.Diagnostic(path, fmt.Sprintf(format, args...)))
 	}
