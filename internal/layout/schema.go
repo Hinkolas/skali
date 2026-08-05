@@ -3,9 +3,8 @@ package layout
 //go:generate go run ../../cmd/skali-schema --schema layout --output ../../schemas/skali-layout.schema.json
 
 import (
-	"encoding/json"
-
 	"github.com/Hinkolas/skali/internal/utils"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -17,34 +16,30 @@ func Schema() (*jsonschema.Schema, error) {
 		return nil, err
 	}
 
-	schema.ID = SchemaID
-	schema.Schema = "https://json-schema.org/draft/2020-12/schema"
-	schema.Title = "Skali cluster layout"
-	schema.Description = "Installation layout consumed by skali cluster: hosts, K3s roles, and designated node capabilities."
+	yamldoc.StampSchema(schema, SchemaID, "Skali cluster layout",
+		"Installation layout consumed by skali cluster: hosts, K3s roles, and designated node capabilities.")
 	schema.Properties["version"].Const = new(any(CurrentVersion))
 	schema.Properties["name"].Pattern = stableKeyPattern.String()
 	schema.Properties["nodes"].PropertyNames = &jsonschema.Schema{
 		Type:    "string",
 		Pattern: stableKeyPattern.String(),
 	}
-
-	node := schema.Properties["nodes"].AdditionalProperties
-	node.Properties["role"].Enum = utils.AnySlice(RoleServer, RoleAgent)
-	capabilities := node.Properties["capabilities"]
-	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: utils.AnySlice(Capabilities...)}
-	capabilities.UniqueItems = true
+	ApplyNodeGrammar(schema.Properties["nodes"].AdditionalProperties)
 
 	return schema, nil
 }
 
+// ApplyNodeGrammar stamps the shared node grammar, the role enum and the
+// capability set, onto a schema carrying role and capabilities
+// properties. layout.yaml and the installer's node.yaml must agree on
+// it, so both build their schemas through this one function.
+func ApplyNodeGrammar(node *jsonschema.Schema) {
+	node.Properties["role"].Enum = utils.AnySlice(RoleServer, RoleAgent)
+	capabilities := node.Properties["capabilities"]
+	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: utils.AnySlice(Capabilities...)}
+	capabilities.UniqueItems = true
+}
+
 func JSONSchema() ([]byte, error) {
-	schema, err := Schema()
-	if err != nil {
-		return nil, err
-	}
-	data, err := json.MarshalIndent(schema, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
+	return yamldoc.MarshalSchema(Schema)
 }

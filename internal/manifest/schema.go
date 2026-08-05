@@ -3,10 +3,10 @@ package manifest
 //go:generate go run ../../cmd/skali-schema --output ../../schemas/skali.schema.json
 
 import (
-	"encoding/json"
 	"reflect"
 
 	"github.com/Hinkolas/skali/internal/utils"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -38,10 +38,8 @@ func Schema() (*jsonschema.Schema, error) {
 		return nil, err
 	}
 
-	schema.ID = SchemaID
-	schema.Schema = "https://json-schema.org/draft/2020-12/schema"
-	schema.Title = "Skali project manifest"
-	schema.Description = "Portable, declarative project definition consumed by the Skali compiler."
+	yamldoc.StampSchema(schema, SchemaID, "Skali project manifest",
+		"Portable, declarative project definition consumed by the Skali compiler.")
 	schema.Properties["version"].Const = new(any(CurrentVersion))
 	schema.Properties["name"].Pattern = stableKeyPattern.String()
 	schema.AnyOf = []*jsonschema.Schema{
@@ -133,15 +131,7 @@ func Schema() (*jsonschema.Schema, error) {
 }
 
 func JSONSchema() ([]byte, error) {
-	schema, err := Schema()
-	if err != nil {
-		return nil, err
-	}
-	data, err := json.MarshalIndent(schema, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
+	return yamldoc.MarshalSchema(Schema)
 }
 
 func setDuration(schema *jsonschema.Schema, property string) {
