@@ -5,6 +5,7 @@ package manifest
 import (
 	"reflect"
 
+	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -41,7 +42,7 @@ func Schema() (*jsonschema.Schema, error) {
 	yamldoc.StampSchema(schema, SchemaID, "Skali project manifest",
 		"Portable, declarative project definition consumed by the Skali compiler.")
 	schema.Properties["version"].Const = new(any(CurrentVersion))
-	schema.Properties["name"].Pattern = stableKeyPattern.String()
+	schema.Properties["name"].Pattern = naming.KeyPattern
 	schema.AnyOf = []*jsonschema.Schema{
 		{Required: []string{"applications"}},
 		{Required: []string{"databases"}},
@@ -139,7 +140,7 @@ func setDuration(schema *jsonschema.Schema, property string) {
 }
 
 func stableKeySchema() *jsonschema.Schema {
-	return &jsonschema.Schema{Type: "string", Pattern: stableKeyPattern.String()}
+	return &jsonschema.Schema{Type: "string", Pattern: naming.KeyPattern}
 }
 
 func quantitySchema() *jsonschema.Schema {

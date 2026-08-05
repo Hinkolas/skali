@@ -13,7 +13,7 @@
     "name": {
       "type": "string",
       "description": "Stable installation name.",
-      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+      "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
     },
     "nodes": {
       "type": "object",
@@ -52,7 +52,7 @@
       },
       "propertyNames": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
       }
     },
     "version": {

@@ -346,7 +346,7 @@
             },
             "propertyNames": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+              "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
             }
           },
           "resources": {
@@ -461,7 +461,7 @@
                     },
                     {
                       "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                      "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
                     }
                   ]
                 },
@@ -478,7 +478,7 @@
             },
             "propertyNames": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+              "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
             }
           },
           "scaling": {
@@ -563,7 +563,7 @@
             },
             "propertyNames": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+              "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
             }
           }
         },
@@ -597,7 +597,7 @@
       },
       "propertyNames": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
       }
     },
     "backups": {
@@ -624,7 +624,7 @@
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                      "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
                     },
                     "uniqueItems": true
                   }
@@ -640,7 +640,7 @@
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                      "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
                     },
                     "uniqueItems": true
                   }
@@ -656,7 +656,7 @@
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                      "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
                     },
                     "uniqueItems": true
                   }
@@ -683,7 +683,7 @@
       },
       "propertyNames": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
       }
     },
     "buckets": {
@@ -764,7 +764,7 @@
       },
       "propertyNames": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
       }
     },
     "databases": {
@@ -853,7 +853,7 @@
       },
       "propertyNames": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
       }
     },
     "description": {
@@ -863,7 +863,7 @@
     "name": {
       "type": "string",
       "description": "Stable project name.",
-      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+      "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
     },
     "version": {
       "type": "string",

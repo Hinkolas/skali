@@ -3,6 +3,7 @@ package layout
 //go:generate go run ../../cmd/skali-schema --schema layout --output ../../schemas/skali-layout.schema.json
 
 import (
+	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -19,10 +20,10 @@ func Schema() (*jsonschema.Schema, error) {
 	yamldoc.StampSchema(schema, SchemaID, "Skali cluster layout",
 		"Installation layout consumed by skali cluster: hosts, K3s roles, and designated node capabilities.")
 	schema.Properties["version"].Const = new(any(CurrentVersion))
-	schema.Properties["name"].Pattern = stableKeyPattern.String()
+	schema.Properties["name"].Pattern = naming.KeyPattern
 	schema.Properties["nodes"].PropertyNames = &jsonschema.Schema{
 		Type:    "string",
-		Pattern: stableKeyPattern.String(),
+		Pattern: naming.KeyPattern,
 	}
 	ApplyNodeGrammar(schema.Properties["nodes"].AdditionalProperties)
 

@@ -7,18 +7,16 @@ import (
 	"fmt"
 	pathpkg "path"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 )
-
-var environmentKeyPattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
 
 type builder struct {
 	document     *manifest.Document
@@ -128,8 +126,8 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 	b.dependencies[owner] = make(map[string]struct{})
 	for _, name := range utils.SortedKeys(source.Environment) {
 		path := base + ".environment." + name
-		if !environmentKeyPattern.MatchString(name) {
-			b.add(path, "environment variable names must match %s", environmentKeyPattern)
+		if err := naming.CheckEnvName(name); err != nil {
+			b.add(path, "environment variable name %s", err)
 		}
 		expression, err := parseExpression(string(source.Environment[name]), b.document.Project, true)
 		if err != nil {

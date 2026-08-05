@@ -8,7 +8,7 @@ var (
 	ErrDraftNotFound        = errors.New("project: draft not found")
 	ErrProjectNameTaken     = errors.New("project: name already in use")
 	ErrEnvironmentNameTaken = errors.New("project: environment name already in use")
-	ErrInvalidName          = errors.New("project: name must match ^[a-z][a-z0-9-]{0,62}$")
+	ErrInvalidName          = errors.New("project: invalid name")
 	ErrInvalidSourceMode    = errors.New("project: source mode must be managed or file")
 	ErrInvalidFormat        = errors.New("project: format must be yaml or json")
 	ErrNameMismatch         = errors.New("project: manifest name does not match the project name")

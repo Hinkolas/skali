@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/naming"
 )
 
 func expressionProject() manifest.Project {
@@ -82,7 +83,7 @@ func TestParseExpressionErrors(t *testing.T) {
 		"stray closing":         {"x}}y", "stray \"}}\" at position 2 has no matching \"{{\""},
 		"unknown collection":    {"{{volumes.data.path}}", "the collection must be databases or buckets"},
 		"missing dots":          {"{{databases}}", "expected {{collection.key.output}}"},
-		"bad key":               {"{{databases.Bad.url}}", "keys match ^[a-z][a-z0-9-]{0,62}$"},
+		"bad key":               {"{{databases.Bad.url}}", "keys match " + naming.KeyPattern},
 		"bad output":            {"{{databases.data.URL}}", "outputs match ^[a-z_][a-z0-9_]*$"},
 		"single closing brace":  {"{{databases.data.url}", "expected }}"},
 		"unterminated output":   {"{{databases.data.url", "unterminated {{...}} expression at position 1"},

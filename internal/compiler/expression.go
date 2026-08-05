@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/naming"
 )
 
 var outputCatalog = map[string]map[string]bool{
@@ -149,7 +150,7 @@ func scanServiceOutput(raw string, start int) (part ExpressionPart, next int, er
 	}
 	key := raw[keyStart:pos]
 	if key == "" || len(key) > 63 {
-		return part, 0, fmt.Errorf("invalid service key in {{...}} at position %d: keys match ^[a-z][a-z0-9-]{0,62}$", start+1)
+		return part, 0, fmt.Errorf("invalid service key in {{...}} at position %d: keys match %s", start+1, naming.KeyPattern)
 	}
 	if pos == len(raw) || raw[pos] != '.' {
 		return part, 0, fmt.Errorf("invalid {{...}} expression at position %d: expected {{collection.key.output}}", start+1)

@@ -21,7 +21,7 @@ Top level:
 
 ```yaml
 version: "1"        # required, always the string "1"
-name: my-project    # required, matches ^[a-z][a-z0-9-]{0,62}$
+name: my-project    # required, matches ^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$
 description: ...    # optional free text
 applications: {}
 databases: {}
@@ -30,7 +30,7 @@ backups: {}
 ```
 
 At least one application, database, or bucket must be declared. Keys in
-every collection are stable identifiers matching `^[a-z][a-z0-9-]{0,62}$`
+every collection are stable identifiers matching `^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`
 and are part of resource identity: renaming a key means destroying and
 recreating what it names.
 

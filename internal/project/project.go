@@ -8,16 +8,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/store"
 )
-
-var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 type Service struct {
 	st *store.Store
@@ -28,8 +26,8 @@ func New(st *store.Store) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, name, displayName string) (*store.Project, error) {
-	if !namePattern.MatchString(name) {
-		return nil, ErrInvalidName
+	if err := naming.CheckKey(name); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
 	}
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -110,8 +108,8 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, name string) (*store.Environment, error) {
-	if !namePattern.MatchString(name) {
-		return nil, ErrInvalidName
+	if err := naming.CheckKey(name); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
 	}
 	if _, err := s.Get(ctx, projectID); err != nil {
 		return nil, err

@@ -5,13 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"regexp"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/values"
@@ -33,8 +33,6 @@ type valueEntryPayload struct {
 	Name    string `json:"name"`
 	Version int64  `json:"version"`
 }
-
-var valueNamePattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
 
 // GET /v1/environments/{id}/values
 func (h *valuesHandlers) get(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +122,7 @@ func (h *valuesHandlers) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name, err := url.PathUnescape(chi.URLParam(r, "name"))
-	if err != nil || !valueNamePattern.MatchString(name) {
+	if err != nil || naming.CheckEnvName(name) != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, "the value name is not a valid environment variable name")
 		return
 	}

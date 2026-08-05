@@ -2,15 +2,13 @@ package layout
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 )
-
-var stableKeyPattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,62}$")
 
 func Validate(document *Document) yamldoc.Diagnostics {
 	l := document.Layout
@@ -22,8 +20,8 @@ func Validate(document *Document) yamldoc.Diagnostics {
 	if l.Version != CurrentVersion {
 		add("version", "unsupported layout version %q; expected %q", l.Version, CurrentVersion)
 	}
-	if !stableKeyPattern.MatchString(l.Name) {
-		add("name", "must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens")
+	if err := naming.CheckKey(l.Name); err != nil {
+		add("name", "%s", err)
 	}
 	if len(l.Nodes) == 0 {
 		add("nodes", "must declare at least one node")
@@ -35,8 +33,8 @@ func Validate(document *Document) yamldoc.Diagnostics {
 	for _, key := range utils.SortedKeys(l.Nodes) {
 		path := "nodes." + key
 		node := l.Nodes[key]
-		if !stableKeyPattern.MatchString(key) {
-			add(path, "key must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens")
+		if err := naming.CheckKey(key); err != nil {
+			add(path, "key %s", err)
 		}
 		switch node.Role {
 		case RoleServer:

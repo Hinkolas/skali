@@ -2,14 +2,12 @@ package manifest
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 
+	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 )
-
-var stableKeyPattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,62}$")
 
 func Validate(document *Document) yamldoc.Diagnostics {
 	project := document.Project
@@ -21,8 +19,8 @@ func Validate(document *Document) yamldoc.Diagnostics {
 	if project.Version != CurrentVersion {
 		add("version", "unsupported manifest version %q; expected %q", project.Version, CurrentVersion)
 	}
-	if !stableKeyPattern.MatchString(project.Name) {
-		add("name", "must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens")
+	if err := naming.CheckKey(project.Name); err != nil {
+		add("name", "%s", err)
 	}
 	if len(project.Applications)+len(project.Databases)+len(project.Buckets) == 0 {
 		add("", "must declare at least one application, database, or bucket")
@@ -111,11 +109,9 @@ func Validate(document *Document) yamldoc.Diagnostics {
 }
 
 func validateStableKey(diagnostics *yamldoc.Diagnostics, document *Document, path, key string) {
-	if stableKeyPattern.MatchString(key) {
-		return
+	if err := naming.CheckKey(key); err != nil {
+		*diagnostics = append(*diagnostics, document.Diagnostic(path, "key "+err.Error()))
 	}
-	*diagnostics = append(*diagnostics, document.Diagnostic(path,
-		"key must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens"))
 }
 
 func validateSelection[T any](diagnostics *yamldoc.Diagnostics, document *Document, path string, selection Selection, resources map[string]T) {

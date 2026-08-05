@@ -18,6 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 )
@@ -84,16 +85,14 @@ type Input struct {
 	CompilerVersion string
 }
 
-var environmentPattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,62}$")
-
 var digestPattern = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
 
 func Build(input Input) (*Revision, error) {
 	if input.Result == nil {
 		return nil, fmt.Errorf("revision requires a compiled definition")
 	}
-	if !environmentPattern.MatchString(input.Environment) {
-		return nil, fmt.Errorf("invalid environment name %q", input.Environment)
+	if err := naming.CheckKey(input.Environment); err != nil {
+		return nil, fmt.Errorf("invalid environment name %q: %v", input.Environment, err)
 	}
 	definition := input.Result.Definition
 
