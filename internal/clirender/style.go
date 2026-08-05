@@ -18,10 +18,16 @@ type Style struct {
 // StyleFor enables styling when out is a terminal and the environment does
 // not opt out (NO_COLOR, TERM=dumb).
 func StyleFor(out io.Writer) *Style {
-	file, ok := out.(interface{ Fd() uintptr })
-	enabled := ok && term.IsTerminal(int(file.Fd())) &&
+	enabled := IsTerminal(out) &&
 		os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 	return &Style{Enabled: enabled}
+}
+
+// IsTerminal reports whether the stream is backed by a terminal; any
+// value without a file descriptor is not one.
+func IsTerminal(stream any) bool {
+	file, ok := stream.(interface{ Fd() uintptr })
+	return ok && term.IsTerminal(int(file.Fd()))
 }
 
 func (s *Style) on() bool { return s != nil && s.Enabled }
@@ -97,9 +103,9 @@ func (s *Style) Cross() string {
 	return s.Red("✗") + " "
 }
 
-// terminalWidth reports the width of out when it is a terminal; the
+// TerminalWidth reports the width of out when it is a terminal; the
 // fallback keeps truncation sane for pipes that claimed a style anyway.
-func terminalWidth(out io.Writer) int {
+func TerminalWidth(out io.Writer) int {
 	if file, ok := out.(interface{ Fd() uintptr }); ok {
 		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 0 {
 			return width
@@ -108,8 +114,8 @@ func terminalWidth(out io.Writer) int {
 	return 100
 }
 
-// truncate bounds text to width terminal cells, marking the cut.
-func truncate(text string, width int) string {
+// Truncate bounds text to width terminal cells, marking the cut.
+func Truncate(text string, width int) string {
 	if width <= 1 {
 		return text
 	}

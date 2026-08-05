@@ -79,15 +79,15 @@ func (task *Task) spin() {
 func (task *Task) paint() {
 	task.erase()
 	style := task.tasks.Style
-	width := terminalWidth(task.tasks.Out)
-	line := "  " + style.Cyan(style.spinner(task.frame)) + " " + truncate(task.title, width-6)
+	width := TerminalWidth(task.tasks.Out)
+	line := "  " + style.Cyan(style.spinner(task.frame)) + " " + Truncate(task.title, width-6)
 	if elapsed := task.elapsed(); elapsed != "" {
 		line += "  " + style.Dim(elapsed)
 	}
 	fmt.Fprintln(task.tasks.Out, line)
 	task.live = 1
 	if task.note != "" {
-		fmt.Fprintln(task.tasks.Out, "    "+style.Dim(truncate(task.note, width-6)))
+		fmt.Fprintln(task.tasks.Out, "    "+style.Dim(Truncate(task.note, width-6)))
 		task.live = 2
 	}
 }

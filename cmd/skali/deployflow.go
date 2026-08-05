@@ -18,7 +18,6 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/Hinkolas/skali/internal/build"
 	"github.com/Hinkolas/skali/internal/checkout"
@@ -727,7 +726,7 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 	attachCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 
-	tty := term.IsTerminal(int(os.Stdout.Fd()))
+	tty := clirender.IsTerminal(os.Stdout)
 	renderer := &clirender.Renderer{
 		Out:   out,
 		TTY:   tty,

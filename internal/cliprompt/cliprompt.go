@@ -17,6 +17,7 @@ import (
 
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Hinkolas/skali/internal/clirender"
 	"golang.org/x/term"
 )
 
@@ -106,7 +107,7 @@ func New(in io.Reader, out io.Writer) *Session {
 		in:          in,
 		out:         out,
 		reader:      reader,
-		interactive: isTerminal(in) && isTerminal(out),
+		interactive: clirender.IsTerminal(in) && clirender.IsTerminal(out),
 		accessible:  os.Getenv("SKALI_ACCESSIBLE") == "1" || os.Getenv("TERM") == "dumb",
 		noColor:     noColor,
 	}
@@ -129,12 +130,7 @@ func (s *Session) Interactive() bool { return s.interactive }
 // Interactive reports whether stdin and stdout are terminals; command policy
 // uses it to decide whether asking a question is allowed at all.
 func Interactive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
-}
-
-func isTerminal(stream any) bool {
-	file, ok := stream.(interface{ Fd() uintptr })
-	return ok && term.IsTerminal(int(file.Fd()))
+	return clirender.IsTerminal(os.Stdin) && clirender.IsTerminal(os.Stdout)
 }
 
 func (s *Session) terminalUI() bool {
@@ -593,7 +589,7 @@ func (s *Session) plainText(options TextOptions) (string, error) {
 
 func (s *Session) plainSecret(options SecretOptions) (string, error) {
 	// A terminal in accessibility mode can still suppress echo.
-	if file, ok := s.in.(interface{ Fd() uintptr }); ok && isTerminal(s.in) {
+	if file, ok := s.in.(interface{ Fd() uintptr }); ok && clirender.IsTerminal(s.in) {
 		for {
 			fmt.Fprint(s.out, options.Title+": ")
 			value, err := term.ReadPassword(int(file.Fd()))

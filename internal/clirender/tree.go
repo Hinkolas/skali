@@ -93,7 +93,7 @@ func stepLines(step *client.Step, depth int, logs func(stepID string) []string, 
 	if logs != nil && showTail && len(step.Children) == 0 {
 		for _, entry := range logs(step.ID) {
 			if view.width > 0 {
-				entry = truncate(entry, view.width-len(tailIndent)-1)
+				entry = Truncate(entry, view.width-len(tailIndent)-1)
 			}
 			lines = append(lines, tailIndent+view.style.Dim(entry))
 		}
@@ -148,7 +148,7 @@ func (r *Renderer) paint() {
 	view := &treeView{style: r.Style, frame: r.frame}
 	if r.Style.on() {
 		view.now = time.Now()
-		view.width = terminalWidth(r.Out)
+		view.width = TerminalWidth(r.Out)
 	}
 	lines := treeLines(r.lastTree, r.Logs, view)
 	if r.TTY && r.previousLines > 0 {
