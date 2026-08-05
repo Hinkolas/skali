@@ -298,7 +298,7 @@ func TestDevEndToEnd(t *testing.T) {
 		require.NotEqual(t, string(content), slow, "slow-start edit did not apply")
 		require.NoError(t, os.WriteFile(source, []byte(slow), 0o644))
 
-		out := h.run(false, "", "deploy", "--environment", "local", "--yes", "--detach")
+		out := h.run(false, "", "deploy", "--remote", "local", "--environment", "local", "--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
 
 		out = h.runInterrupt("following logs", 8*time.Minute, "dev")
@@ -312,7 +312,7 @@ func TestDevEndToEnd(t *testing.T) {
 	t.Run("DevForceCancelsInFlightRun", func(t *testing.T) {
 		// --force takes the slot instead of adopting it: the in-flight run
 		// is cancelled and the fresh forced deploy proceeds to ready.
-		out := h.run(false, "", "deploy", "--environment", "local", "--yes", "--detach")
+		out := h.run(false, "", "deploy", "--remote", "local", "--environment", "local", "--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
 
 		out = h.run(false, "", "dev", "-d", "--force")
@@ -345,26 +345,26 @@ func TestDevEndToEnd(t *testing.T) {
 		require.NotEqual(t, string(content), v2, "v2 edit did not apply")
 		require.NoError(t, os.WriteFile(source, []byte(v2), 0o644))
 
-		out := h.run(false, "", "deploy", "--environment", "local", "--yes")
+		out := h.run(false, "", "deploy", "--remote", "local", "--environment", "local", "--yes")
 		require.Contains(t, out, "ready")
 		match := regexp.MustCompile(`plan against active revision ([0-9a-f]+)`).FindStringSubmatch(out)
 		require.NotNil(t, match, "the deploy must print the active revision, got: %s", out)
 		previous := match[1]
 		h.waitRoute("hello from v2", 2*time.Minute)
 
-		out = h.run(false, "", "rollback", "--environment", "local",
+		out = h.run(false, "", "rollback", "--remote", "local", "--environment", "local",
 			"--revision", previous, "--yes")
 		require.Contains(t, out, "roll back local to "+previous)
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 2*time.Minute)
 
 		// The rollback ran as its own journaled run kind.
-		out = h.run(false, "", "run", "list", "--environment", "local")
+		out = h.run(false, "", "run", "list", "--remote", "local", "--environment", "local")
 		require.Contains(t, out, "rollback")
 
 		// Rolling back to the revision the target already points at is
 		// refused with a plain error.
-		out = h.run(true, "", "rollback", "--environment", "local",
+		out = h.run(true, "", "rollback", "--remote", "local", "--environment", "local",
 			"--revision", previous, "--yes")
 		require.Contains(t, out, "already targets")
 
@@ -403,7 +403,7 @@ func TestDevEndToEnd(t *testing.T) {
 		require.NoError(t, os.WriteFile(source,
 			[]byte(strings.Replace(string(content), "hello from skali", "hello again from skali", 1)), 0o644))
 
-		out := h.run(false, "", "deploy", "--environment", "local",
+		out := h.run(false, "", "deploy", "--remote", "local", "--environment", "local",
 			"--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
 		// Deploys against the dev-owned local remote are never bound.
@@ -609,16 +609,16 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 	_, err = fmt.Sscanf(body, "visits: %d", &before)
 	require.NoError(t, err, "unexpected body %q", body)
 
-	run = h.run(false, "", "backup", "target", "set",
+	run = h.run(false, "", "backup", "target", "set", "--remote", "local",
 		"--endpoint", fmt.Sprintf("http://host.k3d.internal:%d", minioPort),
 		"--bucket", "skali-backups",
 		"--access-key", "minioadmin", "--secret-key", "minioadmin")
 	require.Contains(t, run, "backup target set")
 
-	run = h.run(false, "", "backup", "create", "--environment", "local")
+	run = h.run(false, "", "backup", "create", "--remote", "local", "--environment", "local")
 	require.Contains(t, run, "backup complete")
 
-	run = h.run(false, "", "backup", "ls", "--environment", "local")
+	run = h.run(false, "", "backup", "ls", "--remote", "local", "--environment", "local")
 	match := regexp.MustCompile(`(?m)^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})  `).
 		FindStringSubmatch(run)
 	require.NotNil(t, match, "no snapshot id in:\n%s", run)
@@ -646,10 +646,10 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 
 	// The fresh environment knows nothing in its database; the listing
 	// comes purely from the S3 manifests.
-	run = h.run(false, "", "backup", "ls", "--environment", "local")
+	run = h.run(false, "", "backup", "ls", "--remote", "local", "--environment", "local")
 	require.Contains(t, run, snapshot)
 
-	run = h.run(false, "", "backup", "restore", snapshot, "--environment", "local", "--yes")
+	run = h.run(false, "", "backup", "restore", snapshot, "--remote", "local", "--environment", "local", "--yes")
 	require.Contains(t, run, "restore complete")
 
 	// Every data kind is back: the dump's rows (plus this read's insert),

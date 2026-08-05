@@ -23,7 +23,7 @@ func TestResolveQueryTargetFromBinding(t *testing.T) {
 		Master: bound.srv.URL, Project: "flowdemo", Environment: "production"}))
 
 	// The binding supplies remote and environment; no flag needed.
-	target, err := resolveQueryTarget(context.Background(), project.Root, "")
+	target, err := resolveQueryTarget(context.Background(), project.Root, "", "")
 	require.NoError(t, err)
 	require.Equal(t, "bound", target.remoteName)
 	require.Equal(t, bound.srv.URL, target.master)
@@ -32,13 +32,13 @@ func TestResolveQueryTargetFromBinding(t *testing.T) {
 	require.Equal(t, "p1-e1", target.environmentID)
 
 	// An explicit environment overrides the bound one within the project.
-	target, err = resolveQueryTarget(context.Background(), project.Root, "staging")
+	target, err = resolveQueryTarget(context.Background(), project.Root, "staging", "")
 	require.NoError(t, err)
 	require.Equal(t, "staging", target.environment)
 	require.Equal(t, "p1-e2", target.environmentID)
 
 	// A name outside the bound project is a precise error.
-	_, err = resolveQueryTarget(context.Background(), project.Root, "missing")
+	_, err = resolveQueryTarget(context.Background(), project.Root, "missing", "")
 	require.ErrorContains(t, err, "environment missing does not exist in project flowdemo")
 }
 
@@ -46,7 +46,7 @@ func TestResolveQueryTargetUnboundNeedsEnvironment(t *testing.T) {
 	install := newFakeInstall(t)
 	stageRemotes(t, "r", map[string]*cliconfig.Remote{"r": {Master: install.srv.URL}})
 
-	_, err := resolveQueryTarget(context.Background(), t.TempDir(), "")
+	_, err := resolveQueryTarget(context.Background(), t.TempDir(), "", "")
 	require.ErrorContains(t, err, "--environment is required")
 	require.ErrorContains(t, err, "checkout")
 }
@@ -57,14 +57,47 @@ func TestResolveQueryTargetUnboundScansCurrentRemote(t *testing.T) {
 	install.seed("p2", "flowdemo", "production")
 	stageRemotes(t, "r", map[string]*cliconfig.Remote{"r": {Master: install.srv.URL}})
 
-	target, err := resolveQueryTarget(context.Background(), t.TempDir(), "production")
+	target, err := resolveQueryTarget(context.Background(), t.TempDir(), "production", "")
 	require.NoError(t, err)
 	require.Equal(t, "r", target.remoteName)
 	require.Empty(t, target.project)
 	require.Equal(t, "p2-e1", target.environmentID)
 
-	_, err = resolveQueryTarget(context.Background(), t.TempDir(), "missing")
+	_, err = resolveQueryTarget(context.Background(), t.TempDir(), "missing", "")
 	require.ErrorContains(t, err, "environment missing not found on this installation")
+}
+
+func TestResolveQueryTargetExplicitRemoteWinsOverBinding(t *testing.T) {
+	bound := newFakeInstall(t)
+	bound.seed("p1", "flowdemo", "production")
+	local := newFakeInstall(t)
+	local.seed("p9", "flowdemo", "local")
+	stageRemotes(t, "", map[string]*cliconfig.Remote{
+		"bound": {Master: bound.srv.URL},
+		"local": {Master: local.srv.URL},
+	})
+	project := testFlowProject(t)
+	require.NoError(t, checkout.Save(project.Root, &checkout.Target{
+		Master: bound.srv.URL, Project: "flowdemo", Environment: "production"}))
+
+	// The override ignores the binding entirely, so the environment must be
+	// named; the bound default must not leak across remotes.
+	_, err := resolveQueryTarget(context.Background(), project.Root, "", "local")
+	require.ErrorContains(t, err, "--environment is required")
+
+	target, err := resolveQueryTarget(context.Background(), project.Root, "local", "local")
+	require.NoError(t, err)
+	require.Equal(t, "local", target.remoteName)
+	require.Equal(t, local.srv.URL, target.master)
+	require.Equal(t, "p9-e1", target.environmentID)
+
+	// An unknown override names the fix, and the hidden local remote gets
+	// the dev hint instead of a listing that would not show it.
+	_, err = resolveQueryTarget(context.Background(), project.Root, "local", "nope")
+	require.ErrorContains(t, err, `remote "nope" does not exist`)
+	stageRemotes(t, "", map[string]*cliconfig.Remote{})
+	_, err = resolveQueryTarget(context.Background(), t.TempDir(), "local", "local")
+	require.ErrorContains(t, err, "the local platform is not set up")
 }
 
 func TestResolveQueryTargetUnknownBoundMaster(t *testing.T) {
@@ -73,7 +106,7 @@ func TestResolveQueryTargetUnknownBoundMaster(t *testing.T) {
 	require.NoError(t, checkout.Save(project.Root, &checkout.Target{
 		Master: "https://gone.example.com", Project: "flowdemo", Environment: "production"}))
 
-	_, err := resolveQueryTarget(context.Background(), project.Root, "")
+	_, err := resolveQueryTarget(context.Background(), project.Root, "", "")
 	require.ErrorContains(t, err, "no remote for https://gone.example.com on this machine")
 	require.ErrorContains(t, err, "skali remote add")
 }

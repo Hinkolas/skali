@@ -32,11 +32,12 @@ type promoteContext struct {
 }
 
 // resolvePromoteContext resolves the remote, project, and source environment
-// of a promotion without reading any manifest: the checkout binding names
-// the project when one is discovered next to a manifest, and without one
+// of a promotion without reading any manifest: an explicit --remote wins
+// (the checkout binding is ignored), otherwise the binding names the
+// project when one is discovered next to a manifest, and without either
 // the source environment's name is resolved by scanning the current
 // remote's projects.
-func resolvePromoteContext(ctx context.Context, from string) (*promoteContext, error) {
+func resolvePromoteContext(ctx context.Context, from, override string) (*promoteContext, error) {
 	cfg, err := cliconfig.Load()
 	if err != nil {
 		return nil, err
@@ -46,22 +47,32 @@ func resolvePromoteContext(ctx context.Context, from string) (*promoteContext, e
 		return nil, err
 	}
 	var binding *checkout.Target
-	if path, err := manifest.Discover("", start); err == nil {
-		if binding, err = checkout.Load(filepath.Dir(path)); err != nil {
-			return nil, err
+	if override == "" {
+		if path, err := manifest.Discover("", start); err == nil {
+			if binding, err = checkout.Load(filepath.Dir(path)); err != nil {
+				return nil, err
+			}
 		}
 	}
 	var remoteName string
 	var remote *cliconfig.Remote
-	if binding != nil {
+	switch {
+	case override != "":
+		remoteName = override
+		if remote, err = remoteByName(cfg, remoteName); err != nil {
+			return nil, err
+		}
+	case binding != nil:
 		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
 		if !ok {
 			return nil, fmt.Errorf("no remote for %s on this machine; run skali remote add %s",
 				binding.Master, binding.Master)
 		}
 		remoteName, remote = name, found
-	} else if remoteName, remote, err = cfg.Current(); err != nil {
-		return nil, err
+	default:
+		if remoteName, remote, err = cfg.Current(); err != nil {
+			return nil, err
+		}
 	}
 	api := remoteClient(cfg, remote)
 
@@ -120,7 +131,7 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	style := clirender.StyleFor(out)
 	prompts := cliprompt.Interactive() && !opts.Yes
 
-	promote, err := resolvePromoteContext(ctx, opts.From)
+	promote, err := resolvePromoteContext(ctx, opts.From, opts.Remote)
 	if err != nil {
 		return "", err
 	}
@@ -251,10 +262,10 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		return "", err
 	}
 	if opts.Detach {
-		fmt.Fprintf(out, "deployment continues on the server; attach with: skali run attach %s\n", opened.Deployment.RunID)
+		fmt.Fprintf(out, "deployment continues on the server; attach with: %s\n", runAttachHint(opts.Remote, opened.Deployment.RunID))
 		return deployOutcomeDetached, nil
 	}
-	status, err := attachRun(ctx, out, api, opened.Deployment.RunID)
+	status, err := attachRun(ctx, out, api, opened.Deployment.RunID, opts.Remote)
 	if err != nil {
 		return "", err
 	}

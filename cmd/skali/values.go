@@ -23,7 +23,7 @@ func newValuesCommand() *cobra.Command {
 }
 
 func newValuesLsCommand() *cobra.Command {
-	var environment string
+	var environment, remote string
 	command := &cobra.Command{
 		Use:   "ls",
 		Short: "List the environment's stored values by name and version",
@@ -35,7 +35,7 @@ func newValuesLsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(ctx, start, environment)
+			target, err := resolveQueryTarget(ctx, start, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -55,12 +55,15 @@ func newValuesLsCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&environment, "environment", "", "environment to list; defaults to the checkout binding")
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command
 }
 
 func newValuesUnsetCommand() *cobra.Command {
 	var (
 		environment string
+		remote      string
 		yes         bool
 	)
 	command := &cobra.Command{
@@ -78,7 +81,7 @@ func newValuesUnsetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(ctx, start, environment)
+			target, err := resolveQueryTarget(ctx, start, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -106,6 +109,8 @@ func newValuesUnsetCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&environment, "environment", "", "environment to modify; defaults to the checkout binding")
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
 	return command
 }

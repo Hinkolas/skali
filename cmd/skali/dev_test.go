@@ -194,7 +194,7 @@ func TestAttachRunInterruptedByParentDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	var out strings.Builder
-	status, err := attachRun(ctx, &out, f.client(), "r1")
+	status, err := attachRun(ctx, &out, f.client(), "r1", "")
 	require.NoError(t, err)
 	require.Equal(t, "interrupted", status)
 	require.NotContains(t, out.String(), "detached from run")

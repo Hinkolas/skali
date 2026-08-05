@@ -33,6 +33,10 @@ import (
 
 // deployOptions are the shared knobs of skali plan, deploy, and dev.
 type deployOptions struct {
+	// Remote names the remote to target explicitly, bypassing both the
+	// checkout binding and the current remote. dev sets it to the local
+	// remote so the local platform never has to be the current remote.
+	Remote      string
 	Environment string
 	Manifest    string
 	EnvFile     string
@@ -60,8 +64,8 @@ type deployOptions struct {
 	// behind explicit confirmation.
 	CreateMissing bool
 	// UseBinding reads and writes the .skali/ checkout binding; set by
-	// plan and deploy. dev force-selects the local remote and never
-	// touches the binding.
+	// plan and deploy. dev targets the local remote through Remote and
+	// never touches the binding.
 	UseBinding bool
 	// OnDeploymentOpened and OnDeploymentClosed observe the artifact
 	// window so a signaled dev session can fail an interrupted window on a
@@ -168,6 +172,19 @@ func sameMaster(a, b string) bool {
 	return strings.EqualFold(parsedA.Scheme, parsedB.Scheme) &&
 		strings.EqualFold(parsedA.Host, parsedB.Host) &&
 		parsedA.Path == parsedB.Path
+}
+
+// remoteByName resolves an explicit --remote value against the config. The
+// dev-owned local remote gets its own hint: it is hidden from listings, so
+// "run skali remote list" would point nowhere.
+func remoteByName(cfg *cliconfig.Config, name string) (*cliconfig.Remote, error) {
+	if remote := cfg.Remotes[name]; remote != nil {
+		return remote, nil
+	}
+	if name == localRemoteName {
+		return nil, errors.New("the local platform is not set up; run `skali dev` first")
+	}
+	return nil, fmt.Errorf("remote %q does not exist; run `skali remote list`", name)
 }
 
 // lookupRemoteByMaster finds the remote whose master URL matches, scanning
@@ -699,11 +716,22 @@ func startHeartbeat(ctx context.Context, api *client.Client, buildID string) (st
 	return func() { cancel(); <-done }
 }
 
+// runAttachHint renders the reattach command for a run, carrying the
+// invocation's explicit --remote so the hint points at the same master.
+func runAttachHint(remote, runID string) string {
+	if remote == "" {
+		return "skali run attach " + runID
+	}
+	return "skali run attach --remote " + remote + " " + runID
+}
+
 // attachRun renders the run tree until it settles or the user detaches
 // with an interrupt (detaching never cancels). A parent context dying under
 // the wait (a deadline, a lost session) is not a detach: nobody asked for
-// one, so it returns "interrupted" without claiming anything.
-func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID string) (string, error) {
+// one, so it returns "interrupted" without claiming anything. remoteHint
+// names the invocation's explicit --remote for the reattach hint; empty
+// means the default resolution finds the run again.
+func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string) (string, error) {
 	attachCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 
@@ -764,7 +792,7 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID str
 					return "interrupted", nil
 				}
 				fmt.Fprintf(out, "\ndetached from run %s; the %s continues on the server\n", runID, kind)
-				fmt.Fprintf(out, "  reattach  skali run attach %s\n", runID)
+				fmt.Fprintf(out, "  reattach  %s\n", runAttachHint(remoteHint, runID))
 				return "detached", nil
 			case <-spin.C:
 				renderer.Tick()
@@ -815,8 +843,10 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 	if err != nil {
 		return nil, err
 	}
+	// An explicit remote is a one-shot override: the checkout binding is
+	// neither consulted nor written for this invocation.
 	var binding *checkout.Target
-	if opts.UseBinding {
+	if opts.UseBinding && opts.Remote == "" {
 		if binding, err = checkout.Load(project.Root); err != nil {
 			return nil, err
 		}
@@ -828,14 +858,20 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 
 	var remoteName string
 	var remote *cliconfig.Remote
-	if binding != nil {
+	switch {
+	case opts.Remote != "":
+		remoteName = opts.Remote
+		if remote, err = remoteByName(cfg, remoteName); err != nil {
+			return nil, err
+		}
+	case binding != nil:
 		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
 		if !ok {
 			return nil, fmt.Errorf("no remote for %s on this machine; run skali remote add %s",
 				binding.Master, binding.Master)
 		}
 		remoteName, remote = name, found
-	} else {
+	default:
 		if remoteName, remote, err = cfg.Current(); err != nil {
 			return nil, err
 		}
@@ -899,9 +935,10 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		return nil, err
 	}
 
-	// Link the checkout on first contact. The dev-owned local remote is
-	// disposable and never bound.
-	if opts.UseBinding && binding == nil && remoteName != localRemoteName {
+	// Link the checkout on first contact, but only when the remote came
+	// from the config's current selection: an explicit --remote (including
+	// dev's disposable local remote) is one-shot and never bound.
+	if opts.UseBinding && binding == nil && opts.Remote == "" {
 		if err := checkout.Save(project.Root, &checkout.Target{
 			Master:      remote.Master,
 			Project:     projectName,
@@ -1150,10 +1187,10 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		opts.OnDeploymentClosed()
 	}
 	if opts.Detach {
-		fmt.Fprintf(out, "deployment continues on the server; attach with: skali run attach %s\n", opened.Deployment.RunID)
+		fmt.Fprintf(out, "deployment continues on the server; attach with: %s\n", runAttachHint(opts.Remote, opened.Deployment.RunID))
 		return deployOutcomeDetached, nil
 	}
-	status, err := attachRun(ctx, out, api, opened.Deployment.RunID)
+	status, err := attachRun(ctx, out, api, opened.Deployment.RunID, opts.Remote)
 	if err != nil {
 		return "", err
 	}

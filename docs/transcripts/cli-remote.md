@@ -113,12 +113,19 @@ removed remote "staging"
 
 $ skali remote remove local
 error: remote "local" is managed by skali dev; run `skali dev reset` to remove the local platform
+
+$ skali remote use local
+error: remote "local" is managed by skali dev; dev commands target the local platform themselves
 $ echo $?
 1
 ```
 
 Removing a logged-in remote revokes its session server-side on a best-effort
-basis before the entry is deleted. The `local` remote is created and refreshed
-by `skali dev up` (its bootstrap credentials are machine-local, so
-`skali remote login local` is never needed) and only `skali dev reset`
-removes it.
+basis before the entry is deleted. The `local` remote is invisible: it never
+appears in `skali remote` listings and never becomes the current remote, so
+a deploy without a selected remote blocks instead of landing on the local
+platform. `skali dev` creates and refreshes it (its bootstrap credentials
+are machine-local, so `skali remote login local` is never needed and is
+refused), only `skali dev reset` removes it, and workflow commands target it
+deliberately with `--remote local`, for example
+`skali run list --remote local --environment local`.

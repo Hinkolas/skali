@@ -19,6 +19,9 @@ func newRunCommand() *cobra.Command {
 		Use:   "run",
 		Short: "List, inspect, attach to, or cancel runs",
 	}
+	var remote string
+	command.PersistentFlags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 
 	var environment string
 	list := &cobra.Command{
@@ -30,7 +33,7 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(command.Context(), start, environment)
+			target, err := resolveQueryTarget(command.Context(), start, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -62,7 +65,7 @@ func newRunCommand() *cobra.Command {
 		Short: "Print a run's step tree",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			api, err := queryClient()
+			api, err := queryClient(remote)
 			if err != nil {
 				return err
 			}
@@ -84,11 +87,11 @@ func newRunCommand() *cobra.Command {
 		Short: "Attach the terminal to a run until it settles",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			api, err := queryClient()
+			api, err := queryClient(remote)
 			if err != nil {
 				return err
 			}
-			status, err := attachRun(command.Context(), command.OutOrStdout(), api, args[0])
+			status, err := attachRun(command.Context(), command.OutOrStdout(), api, args[0], remote)
 			if err != nil {
 				return err
 			}
@@ -106,7 +109,7 @@ func newRunCommand() *cobra.Command {
 			"deployment returns the target to the prior active revision.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			api, err := queryClient()
+			api, err := queryClient(remote)
 			if err != nil {
 				return err
 			}
@@ -132,7 +135,7 @@ func newRunCommand() *cobra.Command {
 			if stepKey == "" {
 				return errors.New("--step is required")
 			}
-			api, err := queryClient()
+			api, err := queryClient(remote)
 			if err != nil {
 				return err
 			}
@@ -162,7 +165,7 @@ func newRunCommand() *cobra.Command {
 }
 
 func newLogsCommand() *cobra.Command {
-	var environment, service string
+	var environment, service, remote string
 	command := &cobra.Command{
 		Use:   "logs [service]",
 		Short: "Stream live application logs",
@@ -175,7 +178,7 @@ func newLogsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(command.Context(), start, environment)
+			target, err := resolveQueryTarget(command.Context(), start, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -184,6 +187,8 @@ func newLogsCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&environment, "environment", "",
 		"environment name (default: the checkout binding)")
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command
 }
 

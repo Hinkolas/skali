@@ -1510,14 +1510,18 @@ The checkout binding (`.skali/target.yaml`, section 6.1) selects the deploy
 target. Its master URL wins over the machine's current remote and is resolved
 among the machine's configured remotes by master URL, never by remote name;
 without a matching remote the command fails and points at `skali remote add`.
+An explicit `--remote <name>` outranks both for one invocation: the binding
+is neither consulted nor written, and it is the only way the workflow
+commands reach the dev-owned `local` remote, which is hidden from remote
+listings and never current.
 The bound environment is the default for interactive and non-interactive use
 alike, and `--environment` overrides it for one invocation without rewriting
 the binding. The manifest `name:` remains the project identity and must equal
 the bound project name; a mismatch is an error, never a rename. `skali dev`
 neither reads nor writes the binding. Writing the binding is local tool
 state, not an installation mutation: both `skali plan` and `skali deploy`
-record it once the project and environment resolve, except against the
-dev-owned `local` remote, which is never bound.
+record it once the project and environment resolve, except under an explicit
+`--remote` (including dev's `local`), which is one-shot and never bound.
 
 Only interactive `skali deploy` may create a missing project or environment
 on the installation, each behind an explicit `[y/N]` confirmation; when a
@@ -1641,7 +1645,11 @@ terminal, build-engine, or local-machine access:
 Named remotes are managed by the `skali remote` group. `skali remote add <url>`
 creates the remote, named after the URL host by default, and performs the
 initial login; `skali remote login` re-authenticates an existing remote. The
-`local` remote is owned exclusively by `skali dev`.
+`local` remote is owned exclusively by `skali dev`: it is hidden from
+listings, never becomes the current remote, and `use`, `login`, `logout`,
+and `remove` refuse it. Without a selected remote the workflow commands
+block instead of falling back to the local platform; an explicit
+`--remote local` is the deliberate way to target it.
 
 Production K3s creation, node lifecycle, Kubernetes upgrades, diagnosis,
 repair, and uninstall belong exclusively to the `skali cluster` command group,

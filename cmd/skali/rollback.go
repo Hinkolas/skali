@@ -17,6 +17,7 @@ import (
 )
 
 type rollbackOptions struct {
+	Remote      string
 	Environment string
 	Revision    string
 	Yes         bool
@@ -36,6 +37,8 @@ func newRollbackCommand() *cobra.Command {
 			return runRollback(command, opts)
 		},
 	}
+	command.Flags().StringVar(&opts.Remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().StringVar(&opts.Environment, "environment", "",
 		"environment name (default: the checkout binding)")
 	command.Flags().StringVar(&opts.Revision, "revision", "",
@@ -55,7 +58,7 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 	if err != nil {
 		return err
 	}
-	target, err := resolveQueryTarget(ctx, start, opts.Environment)
+	target, err := resolveQueryTarget(ctx, start, opts.Environment, opts.Remote)
 	if err != nil {
 		return err
 	}
@@ -114,10 +117,10 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 	fmt.Fprintf(out, "\n%s %s  roll back %s to %s\n", style.Dim("run"),
 		style.Bold(result.RunID), target.environment, shortChecksum(chosen.Checksum))
 	if opts.Detach {
-		fmt.Fprintf(out, "rollback continues on the server; attach with: skali run attach %s\n", result.RunID)
+		fmt.Fprintf(out, "rollback continues on the server; attach with: %s\n", runAttachHint(opts.Remote, result.RunID))
 		return nil
 	}
-	status, err := attachRun(ctx, out, target.api, result.RunID)
+	status, err := attachRun(ctx, out, target.api, result.RunID, opts.Remote)
 	if err != nil {
 		return err
 	}

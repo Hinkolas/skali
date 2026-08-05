@@ -375,17 +375,50 @@ func TestResolveDeployTargetLinksOnceAndSkipsLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, out.String(), "linked to remote")
 
-	// The dev-owned local remote is never bound.
-	stageRemotes(t, "local", map[string]*cliconfig.Remote{"local": {Master: install.srv.URL}})
+	// The dev-owned local remote is never bound, even when the binding
+	// machinery is on.
+	stageRemotes(t, "", map[string]*cliconfig.Remote{"local": {Master: install.srv.URL}})
 	local := testFlowProject(t)
 	out.Reset()
 	_, err = resolveForTest(t, &out, "", local,
-		&deployOptions{UseBinding: true, Environment: "production"}, true, false)
+		&deployOptions{Remote: "local", UseBinding: true, Environment: "production"}, true, false)
 	require.NoError(t, err)
 	require.NotContains(t, out.String(), "linked to remote")
 	binding, err = checkout.Load(local.Root)
 	require.NoError(t, err)
 	require.Nil(t, binding)
+}
+
+func TestResolveDeployTargetExplicitRemoteBypassesCurrent(t *testing.T) {
+	install := newFakeInstall(t)
+	install.seed("p1", "flowdemo", "production")
+	other := newFakeInstall(t)
+	stageRemotes(t, "other", map[string]*cliconfig.Remote{
+		"other": {Master: other.srv.URL},
+		"local": {Master: install.srv.URL},
+	})
+
+	var out strings.Builder
+	target, err := resolveForTest(t, &out, "", testFlowProject(t),
+		&deployOptions{Remote: "local", Environment: "production"}, true, false)
+	require.NoError(t, err)
+	require.Equal(t, "local", target.remoteName)
+	require.Equal(t, install.srv.URL, target.master)
+}
+
+func TestResolveDeployTargetLocalRemoteNeverCurrent(t *testing.T) {
+	// A config from an older CLI where skali dev made the local platform
+	// the current remote: an unbound deploy must block instead of silently
+	// targeting it.
+	install := newFakeInstall(t)
+	install.seed("p1", "flowdemo", "production")
+	stageRemotes(t, "local", map[string]*cliconfig.Remote{"local": {Master: install.srv.URL}})
+
+	var out strings.Builder
+	_, err := resolveForTest(t, &out, "", testFlowProject(t),
+		&deployOptions{UseBinding: true, Environment: "production"}, false, false)
+	require.ErrorContains(t, err, "no remote selected")
+	require.ErrorContains(t, err, "skali remote add")
 }
 
 func TestResolveDeployTargetPlanNeverCreates(t *testing.T) {

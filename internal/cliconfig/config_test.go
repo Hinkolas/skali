@@ -52,6 +52,33 @@ func TestSaveLoadRoundTripAndPermissions(t *testing.T) {
 	require.Equal(t, "secret-token", remote.Token)
 }
 
+// TestLoadClearsLocalCurrentRemote covers the lazy migration from CLIs
+// where skali dev made the local platform the current remote: the selection
+// is dropped on load so nothing targets the local platform implicitly.
+func TestLoadClearsLocalCurrentRemote(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	require.NoError(t, Save(&Config{
+		CurrentRemote: LocalRemoteName,
+		Remotes: map[string]*Remote{
+			LocalRemoteName: {Master: "http://skali.localhost:8080", Token: "tok"},
+			"prod":          {Master: "https://skali.example.com"},
+		},
+	}))
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Empty(t, cfg.CurrentRemote)
+	require.NotNil(t, cfg.Remotes[LocalRemoteName])
+
+	// With a selectable remote on file the error points at `use`, and the
+	// local remote alone does not.
+	_, _, err = cfg.Current()
+	require.ErrorContains(t, err, "skali remote use")
+	delete(cfg.Remotes, "prod")
+	_, _, err = cfg.Current()
+	require.ErrorContains(t, err, "skali remote add")
+}
+
 // TestOldContextKeysAreIgnored documents the deliberate no-migration decision:
 // a pre-rename config file (contexts:/current_context:) loads as empty, and
 // the first Save after a remote add rewrites it with the new keys only.

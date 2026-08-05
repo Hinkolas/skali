@@ -14,6 +14,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// LocalRemoteName is the reserved remote name of the dev-owned local
+// platform. skali dev creates and refreshes it; it is hidden from remote
+// listings and never becomes the current remote, so generic commands
+// cannot target the local platform by accident.
+const LocalRemoteName = "local"
+
 // Remote is one master a user can talk to. Instance pins the installation
 // identity the master answered with when the remote was added (trust on
 // first use), so a later reinstall of the cluster is detected instead of
@@ -65,6 +71,12 @@ func Load() (*Config, error) {
 	if cfg.Remotes == nil {
 		cfg.Remotes = map[string]*Remote{}
 	}
+	// Older CLIs made the local platform the current remote; treat that as
+	// no selection so unbound deploys block instead of silently targeting
+	// it. The cleared value persists on the next save.
+	if cfg.CurrentRemote == LocalRemoteName {
+		cfg.CurrentRemote = ""
+	}
 	return &cfg, nil
 }
 
@@ -88,9 +100,15 @@ func Save(cfg *Config) error {
 }
 
 // Current returns the active remote, or an error telling the user how to
-// create one.
+// select or create one. The dev-owned local remote never counts: it is not
+// selectable, so it must not turn the "add a remote" hint into "use one".
 func (c *Config) Current() (string, *Remote, error) {
 	if c.CurrentRemote == "" {
+		for name := range c.Remotes {
+			if name != LocalRemoteName {
+				return "", nil, errors.New("no remote selected; run `skali remote use <name>`")
+			}
+		}
 		return "", nil, errors.New("no remote selected; run `skali remote add <url>` first")
 	}
 	remote, ok := c.Remotes[c.CurrentRemote]

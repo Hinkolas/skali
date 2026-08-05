@@ -24,14 +24,23 @@ type queryTarget struct {
 	environmentID string
 }
 
-// resolveQueryRemote picks the remote inspection commands talk to: the
-// checkout binding's master when a binding is discovered at or above
-// start, the current remote otherwise. The returned binding is nil when
-// none was found.
-func resolveQueryRemote(start string) (string, *checkout.Target, *client.Client, error) {
+// resolveQueryRemote picks the remote inspection commands talk to: an
+// explicit --remote override first (the checkout binding is ignored, so
+// the returned binding is nil), the binding's master when one is
+// discovered at or above start, the current remote otherwise. The
+// override is also the only way these commands reach the dev-owned local
+// remote, which is never current.
+func resolveQueryRemote(start, override string) (string, *checkout.Target, *client.Client, error) {
 	cfg, err := cliconfig.Load()
 	if err != nil {
 		return "", nil, nil, err
+	}
+	if override != "" {
+		remote, err := remoteByName(cfg, override)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		return override, nil, remoteClient(cfg, remote), nil
 	}
 	var binding *checkout.Target
 	if path, err := manifest.Discover("", start); err == nil {
@@ -58,10 +67,10 @@ func resolveQueryRemote(start string) (string, *checkout.Target, *client.Client,
 // commands (run list, logs) read from. The checkout binding discovered at
 // or above start supplies the defaults, an explicit environment overrides
 // the bound one for a single invocation, and nothing is ever created or
-// linked. Without a binding the current remote answers and the environment
-// must be named explicitly.
-func resolveQueryTarget(ctx context.Context, start, environment string) (*queryTarget, error) {
-	remoteName, binding, api, err := resolveQueryRemote(start)
+// linked. Without a binding (or with an explicit remote override) the
+// environment must be named explicitly.
+func resolveQueryTarget(ctx context.Context, start, environment, remote string) (*queryTarget, error) {
+	remoteName, binding, api, err := resolveQueryRemote(start, remote)
 	if err != nil {
 		return nil, err
 	}
@@ -107,14 +116,14 @@ func resolveQueryTarget(ctx context.Context, start, environment string) (*queryT
 }
 
 // queryClient is the binding-aware client for commands that carry their
-// own scope (a run id): the remote comes from the checkout binding when
-// one exists, the current remote otherwise.
-func queryClient() (*client.Client, error) {
+// own scope (a run id): an explicit --remote override wins, then the
+// checkout binding when one exists, the current remote otherwise.
+func queryClient(remote string) (*client.Client, error) {
 	start, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
-	_, _, api, err := resolveQueryRemote(start)
+	_, _, api, err := resolveQueryRemote(start, remote)
 	return api, err
 }
 

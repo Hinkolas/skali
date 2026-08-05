@@ -23,7 +23,7 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-const localRemoteName = "local"
+const localRemoteName = cliconfig.LocalRemoteName
 const localEnvironmentName = "local"
 
 func newDevCommand() *cobra.Command {
@@ -93,6 +93,7 @@ func newDevCommand() *cobra.Command {
 				}
 			}
 			opts := &deployOptions{
+				Remote:             localRemoteName,
 				Environment:        localEnvironmentName,
 				EnvFile:            envFile,
 				AutoEnvFile:        true,
@@ -369,7 +370,7 @@ func teardownLocalEnvironment(ctx context.Context, out io.Writer, api *client.Cl
 		verb = "purge"
 	}
 	fmt.Fprintf(out, "%s %s  %s %s\n", style.Dim("run"), style.Bold(runID), verb, name)
-	status, err := attachRun(ctx, out, api, runID)
+	status, err := attachRun(ctx, out, api, runID, localRemoteName)
 	if err != nil {
 		// The purge epilogue deletes the environment row and every run
 		// with it; losing the run mid-poll means the purge finished.
@@ -475,7 +476,7 @@ func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
 	if running.Kind != "deployment" {
 		fmt.Fprintf(out, "a %s is in flight; waiting for run %s to finish\n",
 			running.Kind, style.Bold(running.ID))
-		status, err := attachRun(ctx, out, api, running.ID)
+		status, err := attachRun(ctx, out, api, running.ID, localRemoteName)
 		if err != nil {
 			return "", err
 		}
@@ -486,7 +487,7 @@ func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
 	}
 	fmt.Fprintf(out, "a deployment is already in flight; attaching to run %s\n",
 		style.Bold(running.ID))
-	status, err := attachRun(ctx, out, api, running.ID)
+	status, err := attachRun(ctx, out, api, running.ID, localRemoteName)
 	if err != nil {
 		return "", err
 	}
@@ -732,7 +733,6 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 			if observed := probe.ObservedInstance(); observed != "" {
 				existing.Instance = observed
 			}
-			cfg.CurrentRemote = localRemoteName
 			return cliconfig.Save(cfg)
 		}
 	}
@@ -752,7 +752,6 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 		Token:    result.Session.Token,
 		Instance: api.ObservedInstance(),
 	}
-	cfg.CurrentRemote = localRemoteName
 	return cliconfig.Save(cfg)
 }
 
@@ -911,9 +910,6 @@ func runDevReset(command *cobra.Command, yes bool) error {
 	// Drop the stored local remote; its token died with the cluster.
 	if cfg, err := cliconfig.Load(); err == nil {
 		delete(cfg.Remotes, localRemoteName)
-		if cfg.CurrentRemote == localRemoteName {
-			cfg.CurrentRemote = ""
-		}
 		_ = cliconfig.Save(cfg)
 	}
 	return nil

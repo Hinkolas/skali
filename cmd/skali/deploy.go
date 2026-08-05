@@ -74,6 +74,8 @@ func newDeployCommand() *cobra.Command {
 }
 
 func addDeployFlags(command *cobra.Command, opts *deployOptions) {
+	command.Flags().StringVar(&opts.Remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().StringVar(&opts.Environment, "environment", "",
 		"target environment name (defaults to the checkout binding, prompted interactively otherwise)")
 	command.Flags().StringVar(&opts.Manifest, "manifest", "", "explicit manifest path (skali.yml discovered by default)")

@@ -124,6 +124,9 @@ current when the login succeeds. Remotes are created with "skali remote add".`,
 			var target *cliconfig.Remote
 			if len(args) == 1 {
 				name = args[0]
+				if name == localRemoteName {
+					return errors.New("remote \"local\" is managed by skali dev; running `skali dev` logs in to the local platform itself")
+				}
 				target = cfg.Remotes[name]
 				if target == nil {
 					return fmt.Errorf("remote %q does not exist; run `skali remote add <url>`", name)
@@ -191,6 +194,9 @@ func newRemoteLogoutCmd() *cobra.Command {
 			var target *cliconfig.Remote
 			if len(args) == 1 {
 				name = args[0]
+				if name == localRemoteName {
+					return errors.New("remote \"local\" is managed by skali dev; run `skali dev reset` to remove the local platform")
+				}
 				target = cfg.Remotes[name]
 				if target == nil {
 					return fmt.Errorf("remote %q does not exist; run `skali remote list`", name)
@@ -235,13 +241,17 @@ func runRemoteList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(cfg.Remotes) == 0 {
-		fmt.Println("no remotes; run `skali remote add <url>`")
-		return nil
-	}
+	// The dev-owned local remote is an implementation detail of skali dev;
+	// listing it would invite selecting it.
 	names := make([]string, 0, len(cfg.Remotes))
 	for name := range cfg.Remotes {
-		names = append(names, name)
+		if name != localRemoteName {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		fmt.Println("no remotes; run `skali remote add <url>`")
+		return nil
 	}
 	sort.Strings(names)
 	for _, name := range names {
@@ -269,6 +279,9 @@ func newRemoteUseCmd() *cobra.Command {
 				return err
 			}
 			name := args[0]
+			if name == localRemoteName {
+				return errors.New("remote \"local\" is managed by skali dev; dev commands target the local platform themselves")
+			}
 			if cfg.Remotes[name] == nil {
 				return fmt.Errorf("remote %q does not exist; run `skali remote list`", name)
 			}

@@ -31,6 +31,7 @@ func newBackupCommand() *cobra.Command {
 func newBackupRestoreCommand() *cobra.Command {
 	var (
 		environment string
+		remote      string
 		yes         bool
 	)
 	command := &cobra.Command{
@@ -50,7 +51,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(ctx, start, environment)
+			target, err := resolveQueryTarget(ctx, start, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -83,7 +84,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			}
 			fmt.Fprintf(out, "%s %s  restore %s into %s\n", style.Dim("run"),
 				style.Bold(runID), snapshotID, target.environment)
-			status, err := attachRun(ctx, out, target.api, runID)
+			status, err := attachRun(ctx, out, target.api, runID, remote)
 			if err != nil {
 				return err
 			}
@@ -101,6 +102,8 @@ func newBackupRestoreCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&environment, "environment", "", "environment to restore; defaults to the checkout binding")
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().BoolVar(&yes, "yes", false, "skip the typed confirmation")
 	return command
 }
@@ -108,6 +111,7 @@ func newBackupRestoreCommand() *cobra.Command {
 func newBackupCreateCommand() *cobra.Command {
 	var (
 		environment string
+		remote      string
 		detach      bool
 	)
 	command := &cobra.Command{
@@ -126,7 +130,7 @@ func newBackupCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(ctx, start, environment)
+			target, err := resolveQueryTarget(ctx, start, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -137,10 +141,10 @@ func newBackupCreateCommand() *cobra.Command {
 			fmt.Fprintf(out, "%s %s  back up %s\n", style.Dim("run"),
 				style.Bold(result.RunID), target.environment)
 			if detach {
-				fmt.Fprintf(out, "backup continues on the server; attach with: skali run attach %s\n", result.RunID)
+				fmt.Fprintf(out, "backup continues on the server; attach with: %s\n", runAttachHint(remote, result.RunID))
 				return nil
 			}
-			status, err := attachRun(ctx, out, target.api, result.RunID)
+			status, err := attachRun(ctx, out, target.api, result.RunID, remote)
 			if err != nil {
 				return err
 			}
@@ -159,12 +163,14 @@ func newBackupCreateCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&environment, "environment", "", "environment to back up; defaults to the checkout binding")
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().BoolVar(&detach, "detach", false, "start the backup and return without following it")
 	return command
 }
 
 func newBackupLsCommand() *cobra.Command {
-	var environment string
+	var environment, remote string
 	command := &cobra.Command{
 		Use:   "ls",
 		Short: "List the environment's snapshots on the backup target",
@@ -177,7 +183,7 @@ func newBackupLsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(ctx, start, environment)
+			target, err := resolveQueryTarget(ctx, start, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -201,6 +207,8 @@ func newBackupLsCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&environment, "environment", "", "environment to list; defaults to the checkout binding")
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command
 }
 
@@ -230,6 +238,7 @@ func newBackupTargetCommand() *cobra.Command {
 
 func newBackupTargetSetCommand() *cobra.Command {
 	var (
+		remote    string
 		endpoint  string
 		region    string
 		bucket    string
@@ -248,7 +257,7 @@ func newBackupTargetSetCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			ctx := command.Context()
 			out := command.OutOrStdout()
-			api, err := queryClient()
+			api, err := queryClient(remote)
 			if err != nil {
 				return err
 			}
@@ -288,6 +297,8 @@ func newBackupTargetSetCommand() *cobra.Command {
 			return nil
 		},
 	}
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().StringVar(&endpoint, "endpoint", "", "S3 endpoint URL, e.g. https://s3.example.com")
 	command.Flags().StringVar(&region, "region", "", "S3 region; empty for providers that ignore it")
 	command.Flags().StringVar(&bucket, "bucket", "", "bucket backups are written into")
@@ -301,6 +312,7 @@ func newBackupTargetSetCommand() *cobra.Command {
 }
 
 func newBackupTargetShowCommand() *cobra.Command {
+	var remote string
 	command := &cobra.Command{
 		Use:   "show",
 		Short: "Show the configured backup target",
@@ -308,7 +320,7 @@ func newBackupTargetShowCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			ctx := command.Context()
 			out := command.OutOrStdout()
-			api, err := queryClient()
+			api, err := queryClient(remote)
 			if err != nil {
 				return err
 			}
@@ -339,6 +351,8 @@ func newBackupTargetShowCommand() *cobra.Command {
 			return nil
 		},
 	}
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command
 }
 

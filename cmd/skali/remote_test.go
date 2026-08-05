@@ -422,6 +422,63 @@ func TestRemoteListAndBareRemote(t *testing.T) {
 	require.Contains(t, output, "* b  https://b.example.com  [logged in]\n")
 }
 
+func TestRemoteListHidesLocal(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedConfig(t, &cliconfig.Config{
+		CurrentRemote: "b",
+		Remotes: map[string]*cliconfig.Remote{
+			"local": {Master: "http://127.0.0.1:8080", Token: "tok"},
+			"b":     {Master: "https://b.example.com", Token: "tok"},
+		},
+	})
+
+	output, err := runCapturingStdout(t, func() error {
+		return execute(newRemoteListCmd())
+	})
+	require.NoError(t, err)
+	require.Contains(t, output, "* b  https://b.example.com  [logged in]\n")
+	require.NotContains(t, output, "local")
+
+	// Only the dev-owned local remote on file still reads as no remotes.
+	seedConfig(t, &cliconfig.Config{Remotes: map[string]*cliconfig.Remote{
+		"local": {Master: "http://127.0.0.1:8080", Token: "tok"},
+	}})
+	output, err = runCapturingStdout(t, func() error {
+		return execute(newRemoteListCmd())
+	})
+	require.NoError(t, err)
+	require.Contains(t, output, "no remotes; run `skali remote add <url>`")
+}
+
+func TestRemoteUseLocalRefused(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedConfig(t, &cliconfig.Config{
+		CurrentRemote: "a",
+		Remotes: map[string]*cliconfig.Remote{
+			"a":     {Master: "https://a.example.com"},
+			"local": {Master: "http://127.0.0.1:8080", Token: "tok"},
+		},
+	})
+
+	err := execute(newRemoteUseCmd(), "local")
+	require.ErrorContains(t, err, "managed by skali dev")
+	require.Equal(t, "a", loadConfig(t).CurrentRemote)
+}
+
+func TestRemoteLoginLocalRefused(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	err := execute(newRemoteLoginCmd(), "local")
+	require.ErrorContains(t, err, "managed by skali dev")
+}
+
+func TestRemoteLogoutLocalRefused(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	err := execute(newRemoteLogoutCmd(), "local")
+	require.ErrorContains(t, err, "managed by skali dev")
+}
+
 func TestRemoteRemove(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// The stored token points at a dead master: the best-effort revoke
