@@ -119,7 +119,15 @@ func (a *runAttachment) ensure(ctx context.Context) {
 		return
 	}
 	if err := a.journal.StartRun(ctx, run.ID); err != nil {
+		// The environment already has a running run this pass did not adopt
+		// (a deployment still inside its artifact window, or one that started
+		// after attachRun read). The created row can never start and nothing
+		// would ever finish it, so it goes away and the pass journals
+		// nothing; the next pass adopts the run that won.
 		warn("start reconcile run", err, "environment", a.environmentID)
+		if discardErr := a.journal.DiscardRun(ctx, run.ID); discardErr != nil {
+			warn("discard unstarted reconcile run", discardErr, "run", run.ID)
+		}
 		return
 	}
 	a.run = run

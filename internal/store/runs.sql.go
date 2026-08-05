@@ -87,6 +87,22 @@ func (q *Queries) DeleteExcessTerminalRuns(ctx context.Context, arg DeleteExcess
 	return result.RowsAffected(), nil
 }
 
+const deletePendingRun = `-- name: DeletePendingRun :execrows
+DELETE FROM runs WHERE id = $1 AND status = 'pending'
+`
+
+// A run that never started explains nothing and nothing will ever finish
+// it: the creator removes the row instead of stranding it pending, which
+// the terminal-only retention below would never reclaim. Guarded on the
+// status so a run that did start is never deleted underneath its writer.
+func (q *Queries) DeletePendingRun(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePendingRun, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRunByID = `-- name: GetRunByID :one
 SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at FROM runs WHERE id = $1
 `

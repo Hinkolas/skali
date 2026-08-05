@@ -300,6 +300,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 		return nil, err
 	}
 	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
+		discardUnstartedRun(ctx, in.Journal, run.ID)
 		if errors.Is(err, journal.ErrRunConflict) {
 			return nil, ErrDeploymentInFlight
 		}
@@ -469,10 +470,20 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 		if err != nil {
 			return nil, err
 		}
-		if err := jsvc.StartRun(ctx, run.ID); err != nil && !errors.Is(err, journal.ErrRunConflict) {
-			return nil, err
-		}
 		runID = run.ID
+		if err := jsvc.StartRun(ctx, run.ID); err != nil {
+			if !errors.Is(err, journal.ErrRunConflict) {
+				return nil, err
+			}
+			// Another run holds the environment: journal the remaining
+			// stages under it instead of stranding a pending second row.
+			// The journal still never drives, so a lookup that finds
+			// nothing simply keeps the row this call made.
+			if existing, lookupErr := s.st.GetRunningRunByEnvironment(ctx, &deployment.EnvironmentID); lookupErr == nil {
+				discardUnstartedRun(ctx, jsvc, run.ID)
+				runID = existing.ID
+			}
+		}
 	}
 
 	if err := s.closeArtifactsStep(ctx, jsvc, runID, deployment, actions); err != nil {
@@ -492,14 +503,18 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 		Journal:             jsvc,
 		Actor:               deployment.Actor,
 		Restart:             deployment.Restart,
+		DeploymentID:        deploymentID,
 	})
 	if err != nil {
-		if statusErr := s.setDeploymentStatus(ctx, deploymentID, DeploymentFailed, uuid.Nil); statusErr != nil {
+		// Promotion marks the deployment promoted inside its own
+		// transaction, so a failure after that point (journal writes on the
+		// way to the rollout handoff) finds a row the kernel already owns:
+		// the target moved, and calling it failed would be a lie the
+		// lifecycle machine correctly refuses.
+		if statusErr := s.setDeploymentStatus(ctx, deploymentID, DeploymentFailed, uuid.Nil); statusErr != nil &&
+			!errors.Is(statusErr, ErrInvalidDeploymentTransition) {
 			return result, fmt.Errorf("deploy: mark deployment failed: %w (original: %w)", statusErr, err)
 		}
-		return result, err
-	}
-	if err := s.setDeploymentStatus(ctx, deploymentID, DeploymentPromoted, result.RevisionID); err != nil {
 		return result, err
 	}
 	return result, nil

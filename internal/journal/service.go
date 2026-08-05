@@ -105,6 +105,28 @@ func (s *Service) StartRun(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// DiscardRun removes a run that never started. A CreateRun whose StartRun
+// lost the environment's running-run race would otherwise strand a pending
+// row: nothing finishes it, the retention caps only reclaim terminal runs,
+// and every reader counts it as in flight. The delete is guarded on the
+// pending status, so a run that did start is never removed.
+func (s *Service) DiscardRun(ctx context.Context, id uuid.UUID) error {
+	run, err := s.st.GetRunByID(ctx, id)
+	if err != nil {
+		return notFoundOr(err, "get run")
+	}
+	rows, err := s.st.DeletePendingRun(ctx, id)
+	if err != nil {
+		return fmt.Errorf("journal: discard run: %w", err)
+	}
+	if rows == 0 {
+		return nil // it started after all; its own writer owns it
+	}
+	s.notifyRun(id)
+	s.notifyEnvironment(run.EnvironmentID)
+	return nil
+}
+
 // FinishRun moves the run to a terminal status and forces every non-terminal
 // step and attempt terminal in the same transaction: running work adopts the
 // run's outcome (failed or cancelled), unstarted steps are skipped. It then

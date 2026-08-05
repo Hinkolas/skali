@@ -76,6 +76,65 @@ func TestDeploymentRowLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrDeploymentNotFound)
 }
 
+// Promotion closes the artifact window inside the transaction that moves
+// the target: no reader can observe a moved target under a deployment row
+// that still claims the build client owns it. The kernel's run adoption,
+// run cancellation, and the stale-deployment sweeper all branch on exactly
+// that status, and a window between the two writes let the kernel mint
+// reconcile runs it could never start.
+func TestPromoteClosesArtifactWindow(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	definitionVersion := f.submit(t, testManifest, 0)
+	candidate := f.stage(t,
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "window-plant-value"})
+
+	deployment, err := f.deploy.CreateDeployment(ctx, NewDeployment{
+		ProjectID:           f.projectID,
+		EnvironmentID:       f.environmentID,
+		DefinitionVersionID: definitionVersion,
+		Actor:               "tester",
+	})
+	require.NoError(t, err)
+
+	prepare := func(candidateID uuid.UUID) *Prepared {
+		t.Helper()
+		prepared, err := f.deploy.Prepare(ctx, PrepareInput{
+			EnvironmentID:       f.environmentID,
+			DefinitionVersionID: definitionVersion,
+			CandidateID:         candidateID,
+			Resolver:            &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID},
+		})
+		require.NoError(t, err)
+		prepared.DeploymentID = deployment.ID
+		return prepared
+	}
+
+	prepared := prepare(candidate.ID)
+	require.NoError(t, f.deploy.Promote(ctx, prepared))
+
+	promoted, err := f.deploy.GetDeployment(ctx, deployment.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(DeploymentPromoted), promoted.Status,
+		"the target move and the status flip are one transaction")
+	require.NotNil(t, promoted.RevisionID)
+	require.Equal(t, prepared.RevisionID, *promoted.RevisionID)
+
+	// All or nothing in the other direction too: a promotion the deployment
+	// lifecycle refuses moves no target.
+	second := prepare(uuid.Nil)
+	require.ErrorIs(t, f.deploy.Promote(ctx, second), ErrInvalidDeploymentTransition)
+	target, err := f.deploy.Target(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, prepared.RevisionID, *target.TargetRevisionID)
+
+	// A promotion outside the deployment flow still touches no row.
+	standalone := prepare(uuid.Nil)
+	standalone.DeploymentID = uuid.Nil
+	require.NoError(t, f.deploy.Promote(ctx, standalone))
+}
+
 // TestFallbackEnvironmentTarget proves the fallback compare-and-swap: it
 // returns the target to the active revision exactly once, never clobbers a
 // newer target, and is a no-op before any activation.

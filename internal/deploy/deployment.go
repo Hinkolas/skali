@@ -114,30 +114,37 @@ func (s *Service) GetDeployment(ctx context.Context, id uuid.UUID) (*store.Deplo
 // optionally recording the revision the deployment produced.
 func (s *Service) setDeploymentStatus(ctx context.Context, id uuid.UUID, to DeploymentStatus, revisionID uuid.UUID) error {
 	return s.st.WithTx(ctx, func(q *store.Queries) error {
-		row, err := q.GetDeploymentForUpdate(ctx, id)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrDeploymentNotFound
-			}
-			return fmt.Errorf("deploy: lock deployment: %w", err)
-		}
-		if !DeploymentStatuses.Can(DeploymentStatus(row.Status), to) {
-			return fmt.Errorf("%w: %s -> %s", ErrInvalidDeploymentTransition, row.Status, to)
-		}
-		if revisionID != uuid.Nil {
-			if err := q.SetDeploymentRevision(ctx, store.SetDeploymentRevisionParams{
-				ID: id, RevisionID: &revisionID,
-			}); err != nil {
-				return fmt.Errorf("deploy: set deployment revision: %w", err)
-			}
-		}
-		if err := q.SetDeploymentStatus(ctx, store.SetDeploymentStatusParams{
-			ID: id, Status: string(to),
-		}); err != nil {
-			return fmt.Errorf("deploy: set deployment status: %w", err)
-		}
-		return nil
+		return setDeploymentStatusTx(ctx, q, id, to, revisionID)
 	})
+}
+
+// setDeploymentStatusTx is the guarded change itself, so a caller that
+// already owns a transaction (Promote) can make the status part of it.
+func setDeploymentStatusTx(ctx context.Context, q *store.Queries, id uuid.UUID,
+	to DeploymentStatus, revisionID uuid.UUID) error {
+	row, err := q.GetDeploymentForUpdate(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrDeploymentNotFound
+		}
+		return fmt.Errorf("deploy: lock deployment: %w", err)
+	}
+	if !DeploymentStatuses.Can(DeploymentStatus(row.Status), to) {
+		return fmt.Errorf("%w: %s -> %s", ErrInvalidDeploymentTransition, row.Status, to)
+	}
+	if revisionID != uuid.Nil {
+		if err := q.SetDeploymentRevision(ctx, store.SetDeploymentRevisionParams{
+			ID: id, RevisionID: &revisionID,
+		}); err != nil {
+			return fmt.Errorf("deploy: set deployment revision: %w", err)
+		}
+	}
+	if err := q.SetDeploymentStatus(ctx, store.SetDeploymentStatusParams{
+		ID: id, Status: string(to),
+	}); err != nil {
+		return fmt.Errorf("deploy: set deployment status: %w", err)
+	}
+	return nil
 }
 
 func isUniqueViolation(err error) bool {

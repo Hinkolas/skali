@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -13,6 +14,16 @@ import (
 
 // ErrDeploymentInFlight: the environment already has a running deployment.
 var ErrDeploymentInFlight = errors.New("deploy: another deployment is already running for this environment")
+
+// discardUnstartedRun removes a run whose start lost the environment's
+// running-run race. The row explains nothing, nothing will ever finish it,
+// and the journal's retention only reclaims terminal runs, so abandoning it
+// would leave a pending run in every reader's view forever.
+func discardUnstartedRun(ctx context.Context, jr *journal.Service, id uuid.UUID) {
+	if err := jr.DiscardRun(ctx, id); err != nil {
+		slog.WarnContext(ctx, "discard unstarted run", "run", id, "error", err)
+	}
+}
 
 // ExecuteInput describes one deployment execution. The journal is passed in
 // rather than owned so the run tree and the deployment stay decoupled:
@@ -28,6 +39,10 @@ type ExecuteInput struct {
 	// Restart stamps a workload restart at promotion (a forced deployment):
 	// application pods are recreated even when the revision is unchanged.
 	Restart bool
+	// DeploymentID is the artifact-window row this execution closes;
+	// promotion marks it promoted in the transaction that moves the target.
+	// uuid.Nil runs the stages without a deployment row.
+	DeploymentID uuid.UUID
 }
 
 type ExecuteResult struct {
@@ -53,6 +68,7 @@ func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult,
 		return nil, err
 	}
 	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
+		discardUnstartedRun(ctx, in.Journal, run.ID)
 		if errors.Is(err, journal.ErrRunConflict) {
 			return nil, ErrDeploymentInFlight
 		}
@@ -128,6 +144,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	}
 	promoteWriter := in.Journal.Writer(promoteAttempt.ID, redactor)
 	prepared.Restart = in.Restart
+	prepared.DeploymentID = in.DeploymentID
 	if in.Restart {
 		_ = promoteWriter.Info(ctx, "forced deployment: application workloads will restart")
 	}

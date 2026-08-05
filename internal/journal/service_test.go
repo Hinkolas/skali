@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/project"
@@ -75,6 +76,34 @@ func TestRunLifecycleGuards(t *testing.T) {
 	// Terminal runs cannot be finished again.
 	require.ErrorIs(t, f.svc.FinishRun(ctx, run.ID, RunFailed), ErrInvalidTransition)
 	require.ErrorIs(t, f.svc.StartRun(ctx, uuid.New()), ErrNotFound)
+}
+
+// A run whose start lost the environment's running-run race is removed
+// rather than left pending: nothing would ever finish it and the retention
+// caps only reclaim terminal runs.
+func TestDiscardRun(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	running := f.startRun(t)
+	loser, err := f.svc.CreateRun(ctx, RunInput{
+		Kind: "reconcile", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "system:reconcile",
+	})
+	require.NoError(t, err)
+	require.ErrorIs(t, f.svc.StartRun(ctx, loser.ID), ErrRunConflict)
+
+	require.NoError(t, f.svc.DiscardRun(ctx, loser.ID))
+	_, err = f.st.GetRunByID(ctx, loser.ID)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+
+	// A run that did start is never removed underneath its writer.
+	require.NoError(t, f.svc.DiscardRun(ctx, running.ID))
+	kept, err := f.st.GetRunByID(ctx, running.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(RunRunning), kept.Status)
+
+	require.ErrorIs(t, f.svc.DiscardRun(ctx, uuid.New()), ErrNotFound)
 }
 
 func TestStepAndAttemptGuards(t *testing.T) {

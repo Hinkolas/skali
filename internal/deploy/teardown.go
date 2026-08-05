@@ -100,6 +100,7 @@ func (s *Service) Teardown(ctx context.Context, environmentID uuid.UUID, purge b
 		return nil, err
 	}
 	if err := jr.StartRun(ctx, run.ID); err != nil {
+		discardUnstartedRun(ctx, jr, run.ID)
 		if errors.Is(err, journal.ErrRunConflict) {
 			return nil, ErrDeploymentInFlight
 		}

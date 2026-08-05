@@ -99,6 +99,9 @@ func TestPreparingDeploymentRunNotAdopted(t *testing.T) {
 		"a preparing deployment's run must not be adopted or deadline-failed")
 	require.Equal(t, *before.TargetRevisionID, *f.target(t).TargetRevisionID,
 		"no fallback fires during the artifact window")
+	require.Empty(t, f.pendingRuns(t),
+		"a pass with no run to journal into strands none: the row could never "+
+			"start, nothing would finish it, and retention reclaims only terminal runs")
 
 	// Promote flips the boundary: the same run is adopted and the stale
 	// unhealthy target now fails it under the deadline.
@@ -174,6 +177,21 @@ func (f *kernelFixture) drainQueue(t *testing.T) {
 		f.kernel.queue.Done(item)
 		f.kernel.queue.Forget(item)
 	}
+}
+
+// pendingRuns lists the environment's runs that were created but never
+// started.
+func (f *kernelFixture) pendingRuns(t *testing.T) []store.Run {
+	t.Helper()
+	runs, err := f.st.ListRunsByEnvironment(context.Background(), &f.environmentID)
+	require.NoError(t, err)
+	var pending []store.Run
+	for _, run := range runs {
+		if run.Status == string(journal.RunPending) {
+			pending = append(pending, run)
+		}
+	}
+	return pending
 }
 
 // countOps counts the recorded cluster operations equal to op, including

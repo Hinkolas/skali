@@ -96,6 +96,11 @@ type Prepared struct {
 	// Restart makes Promote stamp a workload restart on the target (a
 	// forced deployment); Prepare never sets it, the caller does.
 	Restart bool
+	// DeploymentID is the multi-request deployment this promotion closes:
+	// Promote marks it promoted in the same transaction that moves the
+	// target. uuid.Nil promotes outside that flow (Execute, tests) and
+	// touches no deployment row.
+	DeploymentID uuid.UUID
 }
 
 // Prepare loads and re-validates the inputs, resolves artifacts outside any
@@ -205,9 +210,16 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 }
 
 // Promote is the single atomic transaction of a deployment: move the target
-// pointer, promote the candidate's staged values and secrets, and advance
-// the project draft to the promoted definition when it differs. All or
-// nothing; this is the only writer of target_revision_id besides Rollback.
+// pointer, promote the candidate's staged values and secrets, advance the
+// project draft to the promoted definition when it differs, and close the
+// deployment's artifact window by marking it promoted. All or nothing; this
+// is the only writer of target_revision_id besides Rollback.
+//
+// The deployment status belongs in this transaction rather than after it:
+// every reader that branches on "still preparing" (the kernel's run
+// adoption, run cancellation, the stale-deployment sweeper) would otherwise
+// see a window where the target has already moved but the row still claims
+// the client owns it.
 func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 	return s.st.WithTx(ctx, func(q *store.Queries) error {
 		rows, err := q.SetEnvironmentTarget(ctx, store.SetEnvironmentTargetParams{
@@ -234,7 +246,10 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 		}); err != nil {
 			return fmt.Errorf("deploy: advance draft: %w", err)
 		}
-		return nil
+		if p.DeploymentID == uuid.Nil {
+			return nil // promotion outside the multi-request deployment flow
+		}
+		return setDeploymentStatusTx(ctx, q, p.DeploymentID, DeploymentPromoted, p.RevisionID)
 	})
 }
 
@@ -300,6 +315,7 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		return nil, err
 	}
 	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
+		discardUnstartedRun(ctx, in.Journal, run.ID)
 		if errors.Is(err, journal.ErrRunConflict) {
 			return nil, ErrDeploymentInFlight
 		}
