@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/Hinkolas/skali/internal/broadcast"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
 )
@@ -106,7 +107,7 @@ type Store struct {
 	// projections.
 	sources map[string]*sourceRecord
 
-	broadcast *broadcaster
+	broadcast *broadcast.Broadcaster[Invalidation]
 }
 
 func NewStore(clock func() time.Time) *Store {
@@ -128,7 +129,7 @@ func NewStore(clock func() time.Time) *Store {
 		sources: map[string]*sourceRecord{
 			SourceKubernetes: {state: module.SourceUnknown},
 		},
-		broadcast: newBroadcaster(),
+		broadcast: broadcast.New[Invalidation](64),
 	}
 }
 
@@ -706,7 +707,7 @@ func (s *Store) environments() []uuid.UUID {
 
 func (s *Store) invalidate(environmentID uuid.UUID) {
 	if environmentID != uuid.Nil {
-		s.broadcast.publish(Invalidation{EnvironmentID: environmentID})
+		s.broadcast.Publish(environmentID, Invalidation{EnvironmentID: environmentID})
 	}
 }
 
@@ -714,7 +715,7 @@ func (s *Store) invalidate(environmentID uuid.UUID) {
 // when the subscriber falls behind (resubscribe and re-read, same contract
 // as the journal stream).
 func (s *Store) Subscribe(environmentID uuid.UUID) (<-chan Invalidation, func()) {
-	return s.broadcast.subscribe(environmentID)
+	return s.broadcast.Subscribe(environmentID)
 }
 
 // Invalidate nudges an environment's subscribers after a projection-relevant

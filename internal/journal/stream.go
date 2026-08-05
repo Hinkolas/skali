@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -90,71 +89,11 @@ func (s *Service) Subscribe(ctx context.Context, stepID uuid.UUID, after Cursor)
 		}
 		return nil, fmt.Errorf("journal: get step: %w", err)
 	}
-	events, cancel := s.broadcast.subscribe(stepID)
+	events, cancel := s.broadcast.Subscribe(stepID)
 	backlog, err := s.StepLogs(ctx, stepID, after, 1000)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	return &Subscription{Backlog: backlog, Events: events, Cancel: cancel}, nil
-}
-
-// broadcaster is the in-process fan-out for live log entries. Single-daemon
-// by design in R1; a multi-replica control plane would replace this with a
-// shared channel.
-type broadcaster struct {
-	mu   sync.Mutex
-	subs map[uuid.UUID]map[chan LogEvent]struct{}
-}
-
-func newBroadcaster() *broadcaster {
-	return &broadcaster{subs: make(map[uuid.UUID]map[chan LogEvent]struct{})}
-}
-
-func (b *broadcaster) subscribe(stepID uuid.UUID) (chan LogEvent, func()) {
-	ch := make(chan LogEvent, 256)
-	b.mu.Lock()
-	if b.subs[stepID] == nil {
-		b.subs[stepID] = make(map[chan LogEvent]struct{})
-	}
-	b.subs[stepID][ch] = struct{}{}
-	b.mu.Unlock()
-
-	var once sync.Once
-	cancel := func() {
-		once.Do(func() {
-			b.mu.Lock()
-			if set, ok := b.subs[stepID]; ok {
-				if _, subscribed := set[ch]; subscribed {
-					delete(set, ch)
-					close(ch)
-				}
-				if len(set) == 0 {
-					delete(b.subs, stepID)
-				}
-			}
-			b.mu.Unlock()
-		})
-	}
-	return ch, cancel
-}
-
-// publish delivers to every subscriber of the entry's step. A subscriber
-// whose buffer is full is disconnected (channel closed) rather than blocked
-// or silently skipped; it resubscribes from its cursor and catches up.
-func (b *broadcaster) publish(event LogEvent) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	set := b.subs[event.StepID]
-	for ch := range set {
-		select {
-		case ch <- event:
-		default:
-			delete(set, ch)
-			close(ch)
-		}
-	}
-	if set != nil && len(set) == 0 {
-		delete(b.subs, event.StepID)
-	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Hinkolas/skali/internal/broadcast"
 	"github.com/Hinkolas/skali/internal/lifecycle"
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -32,11 +33,11 @@ var (
 type Service struct {
 	st         *store.Store
 	executorID string
-	broadcast  *broadcaster
+	broadcast  *broadcast.Broadcaster[LogEvent]
 	// runWatch and envRunsWatch are the payload-free invalidation planes
 	// behind the run-tree and run-list SSE streams (runstream.go).
-	runWatch     *signalBroadcaster
-	envRunsWatch *signalBroadcaster
+	runWatch     *broadcast.Broadcaster[struct{}]
+	envRunsWatch *broadcast.Broadcaster[struct{}]
 }
 
 // NewService binds the journal to this boot's executor identity (a fresh
@@ -44,8 +45,8 @@ type Service struct {
 // executors no longer exist.
 func NewService(st *store.Store, executorID string) *Service {
 	return &Service{
-		st: st, executorID: executorID, broadcast: newBroadcaster(),
-		runWatch: newSignalBroadcaster(), envRunsWatch: newSignalBroadcaster(),
+		st: st, executorID: executorID, broadcast: broadcast.New[LogEvent](256),
+		runWatch: broadcast.New[struct{}](16), envRunsWatch: broadcast.New[struct{}](16),
 	}
 }
 

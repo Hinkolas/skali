@@ -103,7 +103,7 @@ func (s *Service) Append(ctx context.Context, attemptID uuid.UUID, redactor *red
 	// Publish only after the transaction committed, so subscribers never
 	// see an entry that was rolled back.
 	if event != nil {
-		s.broadcast.publish(*event)
+		s.broadcast.Publish(event.StepID, *event)
 	}
 	return nil
 }
