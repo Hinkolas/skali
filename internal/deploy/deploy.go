@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"sort"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -23,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
@@ -139,7 +139,7 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	// record lifecycle through the artifact store.
 	artifacts := make(map[string]revision.Artifact, len(definition.Applications))
 	artifactIDs := make([]uuid.UUID, 0, len(definition.Applications))
-	for _, key := range sortedKeys(definition.Applications) {
+	for _, key := range utils.SortedKeys(definition.Applications) {
 		source := definition.Applications[key].Source
 		resolved, err := in.Resolver.Resolve(ctx, key, source)
 		if err != nil {
@@ -438,13 +438,4 @@ func (s *Service) resolveValues(ctx context.Context, environmentID, candidateID 
 	}
 	kept, _, orphaned := values.Conform(requirements, provided)
 	return kept, orphaned, nil
-}
-
-func sortedKeys[T any](m map[string]T) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // ErrSnapshotNotFound: the named snapshot has no manifest on the target.
@@ -188,7 +189,7 @@ func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *s
 		if c.deps.Enqueue != nil {
 			c.deps.Enqueue(row.EnvironmentID)
 		}
-		log.Info(ctx, "target restored to revision "+shortChecksum(revisionDoc.Checksum))
+		log.Info(ctx, "target restored to revision "+utils.ShortChecksum(revisionDoc.Checksum))
 		return nil
 	}); err != nil {
 		return err
@@ -313,7 +314,7 @@ func (c *Controller) restoreDatabase(ctx context.Context, log *stepLog, bctx *ba
 	identity.WorkerImage = workerImage
 	identity.TargetSecret = targetSecretName
 	identity.SnapshotObject = component.ObjectKey
-	name := jobName("skali-restore", shortID(row.ID.String()), "db", component.ServiceKey)
+	name := jobName("skali-restore", utils.ShortID(row.ID), "db", component.ServiceKey)
 	log.Info(ctx, "restoring into database "+identity.DatabaseName)
 	return c.runJob(ctx, log, renderDatabaseRestoreJob(name, substrate.Namespace, row.ID.String(), identity))
 }
@@ -370,7 +371,7 @@ func (c *Controller) restoreVolume(ctx context.Context, log *stepLog, bctx *back
 		return err
 	}
 	claimName := kubernetes.VolumeClaimName(row.ProjectName, component.Application, component.Volume)
-	name := jobName("skali-restore", shortID(row.ID.String()), "vol", component.Application, component.Volume)
+	name := jobName("skali-restore", utils.ShortID(row.ID), "vol", component.Application, component.Volume)
 	log.Info(ctx, "restoring volume claim "+claimName)
 	job := renderVolumeJob(name, namespace, row.ID.String(), workerImage, targetSecretName,
 		claimName, component.ObjectKey, true)
@@ -400,11 +401,4 @@ func (c *Controller) awaitReconverge(ctx context.Context, log *stepLog, row *sto
 		}
 	}
 	return errors.New("the environment did not become healthy in time; reconciliation continues toward the resumed revision")
-}
-
-func shortChecksum(checksum string) string {
-	if len(checksum) <= 12 {
-		return checksum
-	}
-	return checksum[:12]
 }

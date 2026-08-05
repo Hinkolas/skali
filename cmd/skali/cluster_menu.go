@@ -16,6 +16,7 @@ import (
 	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/utils"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -523,18 +524,11 @@ func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reade
 func nodeRoleCounts(status *installer.Status) string {
 	servers := status.Servers()
 	agents := len(status.Nodes) - servers
-	parts := []string{pluralCount(servers, "server")}
+	parts := []string{utils.PluralCount(servers, "server")}
 	if agents > 0 {
-		parts = append(parts, pluralCount(agents, "agent"))
+		parts = append(parts, utils.PluralCount(agents, "agent"))
 	}
 	return strings.Join(parts, ", ")
-}
-
-func pluralCount(count int, noun string) string {
-	if count == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", count, noun)
 }
 
 func healthyOverall(status *installer.Status) bool {

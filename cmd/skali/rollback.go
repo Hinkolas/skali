@@ -14,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 type rollbackOptions struct {
@@ -91,7 +92,7 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 		}
 	}
 	if pointer.TargetRevisionID != nil && *pointer.TargetRevisionID == chosen.ID {
-		return fmt.Errorf("the environment already targets revision %s", shortChecksum(chosen.Checksum))
+		return fmt.Errorf("the environment already targets revision %s", utils.ShortChecksum(chosen.Checksum))
 	}
 
 	if !opts.Yes {
@@ -100,7 +101,7 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 		}
 		confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{
 			Title: fmt.Sprintf("Roll back %s to revision %s (%s)?", target.environment,
-				shortChecksum(chosen.Checksum), humanSince(chosen.CreatedAt)),
+				utils.ShortChecksum(chosen.Checksum), utils.HumanSince(chosen.CreatedAt)),
 		})
 		if err != nil {
 			return err
@@ -115,7 +116,7 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 		return err
 	}
 	fmt.Fprintf(out, "\n%s %s  roll back %s to %s\n", style.Dim("run"),
-		style.Bold(result.RunID), target.environment, shortChecksum(chosen.Checksum))
+		style.Bold(result.RunID), target.environment, utils.ShortChecksum(chosen.Checksum))
 	if opts.Detach {
 		fmt.Fprintf(out, "rollback continues on the server; attach with: %s\n", runAttachHint(opts.Remote, result.RunID))
 		return nil
@@ -202,7 +203,7 @@ func chooseRevision(out io.Writer, in *bufio.Reader, revisions []client.Revision
 			}
 		}
 		options = append(options, cliprompt.Option{
-			Label:       shortChecksum(rev.Checksum) + "  " + humanSince(rev.CreatedAt),
+			Label:       utils.ShortChecksum(rev.Checksum) + "  " + utils.HumanSince(rev.CreatedAt),
 			Description: strings.Join(notes, ", "),
 			Value:       rev.ID,
 		})

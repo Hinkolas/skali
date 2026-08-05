@@ -21,6 +21,7 @@ import (
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
@@ -402,7 +403,7 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 
 	// The server-owned opening steps of the transcript tree.
 	if err := s.instantStep(ctx, in.Journal, runID, redactor, "validate", "Validate project definition",
-		"definition "+shortHash(preview.Candidate.DefinitionHash)+" validated"); err != nil {
+		"definition "+utils.ShortChecksum(preview.Candidate.DefinitionHash)+" validated"); err != nil {
 		return nil, err
 	}
 	valuesLine := "using current environment values"
@@ -650,7 +651,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 	actions := make([]ArtifactAction, 0, len(definition.Applications))
 	artifacts := make(map[string]revision.Artifact, len(definition.Applications))
 	allReuse := true
-	for _, key := range sortedKeys(definition.Applications) {
+	for _, key := range utils.SortedKeys(definition.Applications) {
 		source := definition.Applications[key].Source
 		if source.Kind == "image" {
 			upstream := source.Image
@@ -846,7 +847,7 @@ func (s *Service) loadPromotionSource(ctx context.Context, environmentID, fromEn
 		}
 	}
 	actions := make([]ArtifactAction, 0, len(document.Artifacts))
-	for _, key := range sortedKeys(document.Artifacts) {
+	for _, key := range utils.SortedKeys(document.Artifacts) {
 		art := document.Artifacts[key]
 		artRow, ok := byIdentity[art.Reference+"@"+art.Digest]
 		if !ok {
@@ -968,11 +969,4 @@ func missingCapabilities(required, available []string) []string {
 		}
 	}
 	return missing
-}
-
-func shortHash(hash string) string {
-	if len(hash) > 12 {
-		return hash[:12]
-	}
-	return hash
 }

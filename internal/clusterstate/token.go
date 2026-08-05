@@ -1,7 +1,6 @@
 package clusterstate
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -10,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 const TokenPrefix = "skali."
@@ -28,13 +29,13 @@ func NewToken(invitation, caPin string) (encoded string, token Token, err error)
 	if err := validateCAPin(caPin); err != nil {
 		return "", Token{}, err
 	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
+	credential, err := utils.RandomToken(32)
+	if err != nil {
 		return "", Token{}, fmt.Errorf("generate invitation credential: %w", err)
 	}
 	token = Token{
 		Version: CurrentVersion, Invitation: invitation,
-		Credential: base64.RawURLEncoding.EncodeToString(raw), CAPin: caPin,
+		Credential: credential, CAPin: caPin,
 	}
 	body, err := json.Marshal(token)
 	if err != nil {

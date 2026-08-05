@@ -63,7 +63,7 @@ func TestDetectHostAddressesExcludesClusterNetworks(t *testing.T) {
 	}
 }
 
-func TestResolveNodeNetworkDefaultsToDefaultRoute(t *testing.T) {
+func TestResolveNodeNetworkDefaultsToSolePrivateAddress(t *testing.T) {
 	t.Parallel()
 	fake := addressFake(hetznerAddresses,
 		"1.1.1.1 via 203.0.113.1 dev eth0 src 203.0.113.7 uid 0\n")
@@ -71,8 +71,36 @@ func TestResolveNodeNetworkDefaultsToDefaultRoute(t *testing.T) {
 	resolved, err := ResolveNodeNetwork(context.Background(), fake, NodeNetwork{})
 
 	require.NoError(t, err)
+	require.Equal(t, "10.0.1.2", resolved.ClusterIP,
+		"an undeclared address resolves to the sole private address, the same choice the prompt recommends")
+}
+
+// publicOnlyAddresses reproduces a server without a private network:
+// two public interfaces, one carrying the default route.
+const publicOnlyAddresses = `1: lo    inet 127.0.0.1/8 scope host lo\       valid_lft forever
+2: eth0    inet 203.0.113.7/32 metric 100 scope global dynamic eth0\       valid_lft 84559sec
+3: eth1    inet 198.51.100.4/32 scope global eth1\       valid_lft forever
+`
+
+func TestResolveNodeNetworkFallsBackToDefaultRoute(t *testing.T) {
+	t.Parallel()
+	fake := addressFake(publicOnlyAddresses,
+		"1.1.1.1 via 203.0.113.1 dev eth0 src 203.0.113.7 uid 0\n")
+
+	resolved, err := ResolveNodeNetwork(context.Background(), fake, NodeNetwork{})
+
+	require.NoError(t, err)
 	require.Equal(t, "203.0.113.7", resolved.ClusterIP,
-		"an undeclared address resolves to the one k3s would have picked, but explicitly")
+		"without a private network the undeclared address is the one k3s would have picked")
+}
+
+func TestDefaultClusterAddressAmbiguity(t *testing.T) {
+	t.Parallel()
+	require.Empty(t, DefaultClusterAddress(nil))
+	require.Empty(t, DefaultClusterAddress([]HostAddress{
+		{IP: "10.0.1.2", Private: true},
+		{IP: "10.0.2.2", Private: true},
+	}), "two private addresses without a default route are ambiguous")
 }
 
 func TestResolveNodeNetworkRefusesForeignClusterAddress(t *testing.T) {

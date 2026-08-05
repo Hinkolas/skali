@@ -1,7 +1,6 @@
 package installer
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Hinkolas/skali/internal/registrytoken"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // joinTokenPrefix marks a composite skali join token: the k3s join token
@@ -42,11 +42,11 @@ type decodedJoinToken struct {
 // the first server mints it at install and it lives only in
 // registries.yaml (root, 0600) until init copies it into the cluster.
 func newPullSecret() (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
+	secret, err := utils.RandomToken(32)
+	if err != nil {
 		return "", fmt.Errorf("generate registry pull credential: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
+	return secret, nil
 }
 
 // encodeJoinToken wraps the k3s token, the pull credential, and the

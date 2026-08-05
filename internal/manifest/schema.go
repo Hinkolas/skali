@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"reflect"
 
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -22,7 +23,7 @@ func Schema() (*jsonschema.Schema, error) {
 		{Type: "boolean"},
 	}}
 	selectionSchema := &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-		{Type: "string", Const: anyPointer("all")},
+		{Type: "string", Const: new(any("all"))},
 		{Type: "array", Items: stableKeySchema(), UniqueItems: true},
 	}}
 
@@ -41,7 +42,7 @@ func Schema() (*jsonschema.Schema, error) {
 	schema.Schema = "https://json-schema.org/draft/2020-12/schema"
 	schema.Title = "Skali project manifest"
 	schema.Description = "Portable, declarative project definition consumed by the Skali compiler."
-	schema.Properties["version"].Const = anyPointer(CurrentVersion)
+	schema.Properties["version"].Const = new(any(CurrentVersion))
 	schema.Properties["name"].Pattern = stableKeyPattern.String()
 	schema.AnyOf = []*jsonschema.Schema{
 		{Required: []string{"applications"}},
@@ -58,22 +59,22 @@ func Schema() (*jsonschema.Schema, error) {
 		{Required: []string{"image"}, Not: &jsonschema.Schema{Required: []string{"build"}}},
 		{Required: []string{"build"}, Not: &jsonschema.Schema{Required: []string{"image"}}},
 	}})
-	application.Properties["build"].Properties["context"].MinLength = intPointer(1)
+	application.Properties["build"].Properties["context"].MinLength = new(1)
 	application.Properties["build"].Required = []string{"context"}
 	application.Properties["ports"].PropertyNames = stableKeySchema()
 	application.Properties["routes"].PropertyNames = stableKeySchema()
 	application.Properties["volumes"].PropertyNames = stableKeySchema()
 
 	port := application.Properties["ports"].AdditionalProperties
-	port.Properties["port"].Minimum = floatPointer(1)
-	port.Properties["port"].Maximum = floatPointer(65535)
-	port.Properties["protocol"].Enum = enum("http", "https", "tcp", "udp")
+	port.Properties["port"].Minimum = new(float64(1))
+	port.Properties["port"].Maximum = new(float64(65535))
+	port.Properties["protocol"].Enum = utils.AnySlice("http", "https", "tcp", "udp")
 
 	route := application.Properties["routes"].AdditionalProperties
-	route.Properties["domain"].MinLength = intPointer(1)
+	route.Properties["domain"].MinLength = new(1)
 	route.Properties["path"].Pattern = "^/"
 	route.Properties["port"] = portTargetSchema()
-	route.Properties["tls"].Enum = enum("automatic", "disabled")
+	route.Properties["tls"].Enum = utils.AnySlice("automatic", "disabled")
 
 	resourceValues := application.Properties["resources"].Properties["requests"]
 	resourceValues.Properties["cpu"] = cpuSchema()
@@ -85,17 +86,17 @@ func Schema() (*jsonschema.Schema, error) {
 	resourceLimits.Properties["temporaryStorage"] = quantitySchema()
 
 	scaling := application.Properties["scaling"]
-	scaling.Properties["replicas"].Properties["min"].Minimum = floatPointer(1)
-	scaling.Properties["replicas"].Properties["max"].Minimum = floatPointer(1)
-	scaling.Properties["autoscaling"].Properties["cpu"].Properties["targetUtilization"].Minimum = floatPointer(1)
-	scaling.Properties["autoscaling"].Properties["cpu"].Properties["targetUtilization"].Maximum = floatPointer(100)
+	scaling.Properties["replicas"].Properties["min"].Minimum = new(float64(1))
+	scaling.Properties["replicas"].Properties["max"].Minimum = new(float64(1))
+	scaling.Properties["autoscaling"].Properties["cpu"].Properties["targetUtilization"].Minimum = new(float64(1))
+	scaling.Properties["autoscaling"].Properties["cpu"].Properties["targetUtilization"].Maximum = new(float64(100))
 
-	application.Properties["placement"].Properties["spread"].Properties["across"].Enum = enum("nodes", "zones")
-	application.Properties["placement"].Properties["spread"].Properties["enforcement"].Enum = enum("preferred", "required")
+	application.Properties["placement"].Properties["spread"].Properties["across"].Enum = utils.AnySlice("nodes", "zones")
+	application.Properties["placement"].Properties["spread"].Properties["enforcement"].Enum = utils.AnySlice("preferred", "required")
 	rollout := application.Properties["deployment"].Properties["rollout"]
-	rollout.Properties["strategy"].Enum = enum("rolling", "recreate")
-	rollout.Properties["maxUnavailable"].Minimum = floatPointer(0)
-	rollout.Properties["maxSurge"].Minimum = floatPointer(0)
+	rollout.Properties["strategy"].Enum = utils.AnySlice("rolling", "recreate")
+	rollout.Properties["maxUnavailable"].Minimum = new(float64(0))
+	rollout.Properties["maxSurge"].Minimum = new(float64(0))
 	setDuration(application.Properties["deployment"].Properties["releaseCommand"], "timeout")
 	setDuration(application.Properties["deployment"].Properties["rollout"], "timeout")
 	setDuration(application.Properties["shutdown"], "gracePeriod")
@@ -109,23 +110,23 @@ func Schema() (*jsonschema.Schema, error) {
 	}
 
 	database := schema.Properties["databases"].AdditionalProperties
-	database.Properties["engine"].Enum = enum("postgres")
+	database.Properties["engine"].Enum = utils.AnySlice("postgres")
 	database.Properties["version"] = versionSchema()
-	database.Properties["isolation"].Enum = enum("shared", "project", "dedicated")
-	database.Properties["availability"].Enum = enum("single", "asynchronous", "synchronous")
+	database.Properties["isolation"].Enum = utils.AnySlice("shared", "project", "dedicated")
+	database.Properties["availability"].Enum = utils.AnySlice("single", "asynchronous", "synchronous")
 	database.Properties["storage"].Properties["size"] = quantitySchema()
 	setDuration(database.Properties["recovery"], "pointInTime")
 
 	bucket := schema.Properties["buckets"].AdditionalProperties
-	bucket.Properties["visibility"].Enum = enum("private", "public-read")
-	bucket.Properties["versioning"].Enum = enum("enabled", "disabled")
+	bucket.Properties["visibility"].Enum = utils.AnySlice("private", "public-read")
+	bucket.Properties["versioning"].Enum = utils.AnySlice("enabled", "disabled")
 	bucket.Properties["quotas"].Properties["storage"] = quantitySchema()
 	bucket.Properties["quotas"].Properties["maxObjectSize"] = quantitySchema()
 	setDuration(bucket.Properties["lifecycle"], "abortIncompleteUploadsAfter")
 	setDuration(bucket.Properties["lifecycle"], "expireNoncurrentVersionsAfter")
 
 	backup := schema.Properties["backups"].AdditionalProperties
-	backup.Properties["schedule"].MinLength = intPointer(1)
+	backup.Properties["schedule"].MinLength = new(1)
 	backup.Properties["retention"] = durationSchema()
 
 	return schema, nil
@@ -169,33 +170,21 @@ func durationSchema() *jsonschema.Schema {
 
 func cpuSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{
-		{Type: "number", ExclusiveMinimum: floatPointer(0)},
+		{Type: "number", ExclusiveMinimum: new(float64(0))},
 		{Type: "string", Pattern: "^[0-9]+(?:\\.[0-9]+)?$"},
 	}}
 }
 
 func versionSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{
-		{Type: "integer", Minimum: floatPointer(1)},
+		{Type: "integer", Minimum: new(float64(1))},
 		{Type: "string", Pattern: "^[1-9][0-9]*$"},
 	}}
 }
 
 func portTargetSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{
-		{Type: "integer", Minimum: floatPointer(1), Maximum: floatPointer(65535)},
+		{Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(65535))},
 		stableKeySchema(),
 	}}
 }
-
-func enum(values ...string) []any {
-	result := make([]any, len(values))
-	for index, value := range values {
-		result[index] = value
-	}
-	return result
-}
-
-func anyPointer(value any) *any           { return &value }
-func floatPointer(value float64) *float64 { return &value }
-func intPointer(value int) *int           { return &value }

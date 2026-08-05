@@ -279,7 +279,7 @@ func defaultRouteAddress(ctx context.Context, runner host.Runner) string {
 }
 
 // ResolveNodeNetwork completes an operator declaration against the host:
-// the cluster address defaults to the default-route address, and every
+// the cluster address defaults to DefaultClusterAddress, and every
 // declared cluster address must actually exist here (k3s refuses a node-ip
 // it cannot find). Public addresses are deliberately not required to be
 // local, because floating and NAT-mapped addresses are declared but never
@@ -297,7 +297,7 @@ func ResolveNodeNetwork(ctx context.Context, runner host.Runner, desired NodeNet
 		return resolved, nil
 	}
 	if resolved.ClusterIP == "" {
-		resolved.ClusterIP = defaultClusterAddress(addresses)
+		resolved.ClusterIP = DefaultClusterAddress(addresses)
 		return resolved, nil
 	}
 	if !slices.ContainsFunc(addresses, func(candidate HostAddress) bool {
@@ -309,11 +309,28 @@ func ResolveNodeNetwork(ctx context.Context, runner host.Runner, desired NodeNet
 	return resolved, nil
 }
 
-// defaultClusterAddress picks the address a node advertises when the
-// operator declared none: the default route's address, which reproduces
-// k3s's own implicit choice. Making it explicit is what puts it in the
-// certificate SANs and in the endpoint other nodes are told to use.
-func defaultClusterAddress(addresses []HostAddress) string {
+// DefaultClusterAddress picks the address a node advertises when the
+// operator declared none; the interactive prompt recommends the same
+// choice so a headless install and an answered prompt agree. Exactly
+// one private address wins, because a private network is what an
+// operator attaches cluster nodes to; otherwise the default route's
+// address reproduces k3s's own implicit choice, and a host with a
+// single address has no choice at all. Anything else is ambiguous and
+// stays empty so the operator decides. Making the choice explicit is
+// what puts it in the certificate SANs and in the endpoint other nodes
+// are told to use.
+func DefaultClusterAddress(addresses []HostAddress) string {
+	private := ""
+	privateCount := 0
+	for _, address := range addresses {
+		if address.Private {
+			private = address.IP
+			privateCount++
+		}
+	}
+	if privateCount == 1 {
+		return private
+	}
 	for _, address := range addresses {
 		if address.DefaultRoute {
 			return address.IP

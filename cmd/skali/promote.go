@@ -17,6 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 )
 
@@ -161,7 +162,7 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	if sourceRevision == nil {
 		return "", fmt.Errorf("environment %s has no active revision to promote", opts.From)
 	}
-	fmt.Fprintf(out, "%s     %s %s\n", style.Dim("revision"), shortChecksum(sourceRevision.Checksum),
+	fmt.Fprintf(out, "%s     %s %s\n", style.Dim("revision"), utils.ShortChecksum(sourceRevision.Checksum),
 		style.Dim("(active in "+opts.From+")"))
 
 	// The bound environment is the target default, exactly like an ordinary
@@ -256,7 +257,7 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 			return "", fmt.Errorf("unexpected %s action for %s in a promotion", action.Action, action.Application)
 		}
 		tasks.Start("artifact for " + action.Application).
-			Skip("current, " + shortChecksum(action.Digest))
+			Skip("current, " + utils.ShortChecksum(action.Digest))
 	}
 	if _, err := api.CompleteDeployment(ctx, opened.Deployment.ID); err != nil {
 		return "", err

@@ -3,8 +3,9 @@ package manifest
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
+
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 var stableKeyPattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,62}$")
@@ -26,7 +27,7 @@ func Validate(document *Document) Diagnostics {
 		add("", "must declare at least one application, database, or bucket")
 	}
 
-	for _, key := range sortedKeys(project.Applications) {
+	for _, key := range utils.SortedKeys(project.Applications) {
 		path := "applications." + key
 		application := project.Applications[key]
 		validateStableKey(&diagnostics, document, path, key)
@@ -38,7 +39,7 @@ func Validate(document *Document) Diagnostics {
 		if hasBuild && application.Build.Context == "" {
 			add(path+".build.context", "is required")
 		}
-		for _, portKey := range sortedKeys(application.Ports) {
+		for _, portKey := range utils.SortedKeys(application.Ports) {
 			portPath := path + ".ports." + portKey
 			validateStableKey(&diagnostics, document, portPath, portKey)
 			port := application.Ports[portKey]
@@ -46,7 +47,7 @@ func Validate(document *Document) Diagnostics {
 				add(portPath+".port", "must be between 1 and 65535")
 			}
 		}
-		for _, routeKey := range sortedKeys(application.Routes) {
+		for _, routeKey := range utils.SortedKeys(application.Routes) {
 			routePath := path + ".routes." + routeKey
 			validateStableKey(&diagnostics, document, routePath, routeKey)
 			route := application.Routes[routeKey]
@@ -65,7 +66,7 @@ func Validate(document *Document) Diagnostics {
 		}
 	}
 
-	for _, key := range sortedKeys(project.Databases) {
+	for _, key := range utils.SortedKeys(project.Databases) {
 		path := "databases." + key
 		database := project.Databases[key]
 		validateStableKey(&diagnostics, document, path, key)
@@ -77,11 +78,11 @@ func Validate(document *Document) Diagnostics {
 		}
 	}
 
-	for _, key := range sortedKeys(project.Buckets) {
+	for _, key := range utils.SortedKeys(project.Buckets) {
 		validateStableKey(&diagnostics, document, "buckets."+key, key)
 	}
 
-	for _, key := range sortedKeys(project.Backups) {
+	for _, key := range utils.SortedKeys(project.Backups) {
 		path := "backups." + key
 		backup := project.Backups[key]
 		validateStableKey(&diagnostics, document, path, key)
@@ -140,13 +141,4 @@ func volumeExists(project Project, reference string) bool {
 		}
 	}
 	return false
-}
-
-func sortedKeys[T any](values map[string]T) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

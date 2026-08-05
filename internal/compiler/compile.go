@@ -8,11 +8,13 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 var environmentKeyPattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
@@ -49,23 +51,23 @@ func Compile(document *manifest.Document) (*Result, error) {
 		Dependencies: make(map[string][]string, len(source.Applications)),
 	}
 
-	for _, key := range mapKeys(source.Applications) {
+	for _, key := range utils.SortedKeys(source.Applications) {
 		definition.Applications[key] = b.compileApplication(key, source.Applications[key])
 	}
-	for _, key := range mapKeys(source.Databases) {
+	for _, key := range utils.SortedKeys(source.Databases) {
 		definition.Databases[key] = b.compileDatabase(key, source.Databases[key])
 	}
-	for _, key := range mapKeys(source.Buckets) {
+	for _, key := range utils.SortedKeys(source.Buckets) {
 		definition.Buckets[key] = b.compileBucket(key, source.Buckets[key])
 	}
-	for _, key := range mapKeys(source.Backups) {
+	for _, key := range utils.SortedKeys(source.Backups) {
 		definition.Backups[key] = b.compileBackup(key, source.Backups[key])
 	}
 
-	for _, name := range mapKeys(b.variables) {
+	for _, name := range utils.SortedKeys(b.variables) {
 		definition.RequiredVariables = append(definition.RequiredVariables, b.variables[name])
 	}
-	for _, owner := range mapKeys(b.dependencies) {
+	for _, owner := range utils.SortedKeys(b.dependencies) {
 		if len(b.dependencies[owner]) == 0 {
 			continue
 		}
@@ -110,7 +112,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		}
 		dockerfile = b.relativePath(base+".build.dockerfile", dockerfile, false)
 		arguments := make(map[string]string, len(source.Build.Arguments))
-		for _, name := range mapKeys(source.Build.Arguments) {
+		for _, name := range utils.SortedKeys(source.Build.Arguments) {
 			arguments[name] = string(source.Build.Arguments[name])
 		}
 		result.Source = ApplicationSource{Kind: "build", Build: Build{
@@ -123,7 +125,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 
 	owner := "applications." + key
 	b.dependencies[owner] = make(map[string]struct{})
-	for _, name := range mapKeys(source.Environment) {
+	for _, name := range utils.SortedKeys(source.Environment) {
 		path := base + ".environment." + name
 		if !environmentKeyPattern.MatchString(name) {
 			b.add(path, "environment variable names must match %s", environmentKeyPattern)
@@ -146,7 +148,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		result.Environment[name] = expression
 	}
 
-	for _, name := range mapKeys(source.Ports) {
+	for _, name := range utils.SortedKeys(source.Ports) {
 		port := source.Ports[name]
 		protocol := port.Protocol
 		if protocol == "" {
@@ -158,7 +160,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		result.Ports[name] = Port{Port: port.Port, Protocol: protocol}
 	}
 
-	for _, name := range mapKeys(source.Routes) {
+	for _, name := range utils.SortedKeys(source.Routes) {
 		path := base + ".routes." + name
 		route := source.Routes[name]
 		domain, err := parseExpression(route.Domain, b.document.Project, false)
@@ -292,7 +294,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 	}
 	result.Shutdown = Shutdown{GracePeriodMillis: grace}
 
-	for _, name := range mapKeys(source.Volumes) {
+	for _, name := range utils.SortedKeys(source.Volumes) {
 		volume := source.Volumes[name]
 		if !strings.HasPrefix(volume.MountPath, "/") {
 			b.add(base+".volumes."+name+".mountPath", "must be an absolute container path")
@@ -531,22 +533,8 @@ func (b *builder) add(path, format string, args ...any) {
 	b.diagnostics = append(b.diagnostics, b.document.Diagnostic(path, fmt.Sprintf(format, args...)))
 }
 
-func mapKeys[T any](values map[string]T) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func oneOf(value string, allowed ...string) bool {
-	for _, item := range allowed {
-		if value == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(allowed, value)
 }
 
 func canonicalExpression(expression Expression) string {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // maxManifestBytes bounds a snapshot manifest read; a manifest carries one
@@ -208,14 +208,14 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 // deterministic order: databases, buckets, then application volumes.
 func planComponents(definition *compiler.ProjectDefinition) []Component {
 	var components []Component
-	for _, key := range sortedKeys(definition.Databases) {
+	for _, key := range utils.SortedKeys(definition.Databases) {
 		components = append(components, Component{Kind: ComponentDatabase, ServiceKey: key})
 	}
-	for _, key := range sortedKeys(definition.Buckets) {
+	for _, key := range utils.SortedKeys(definition.Buckets) {
 		components = append(components, Component{Kind: ComponentBucket, ServiceKey: key})
 	}
-	for _, appKey := range sortedKeys(definition.Applications) {
-		for _, volume := range sortedKeys(definition.Applications[appKey].Volumes) {
+	for _, appKey := range utils.SortedKeys(definition.Applications) {
+		for _, volume := range utils.SortedKeys(definition.Applications[appKey].Volumes) {
 			components = append(components, Component{
 				Kind: ComponentVolume, Application: appKey, Volume: volume,
 			})
@@ -349,7 +349,7 @@ func (c *Controller) backupDatabase(ctx context.Context, log *stepLog, bctx *bac
 	identity.WorkerImage = workerImage
 	identity.TargetSecret = targetSecretName
 	identity.SnapshotObject = key
-	name := jobName("skali-backup", shortID(row.ID.String()), "db", component.ServiceKey)
+	name := jobName("skali-backup", utils.ShortID(row.ID), "db", component.ServiceKey)
 	log.Info(ctx, "dumping database "+identity.DatabaseName)
 	if err := c.runJob(ctx, log, renderDatabaseBackupJob(name, substrate.Namespace, row.ID.String(), identity)); err != nil {
 		return err
@@ -404,7 +404,7 @@ func (c *Controller) backupVolume(ctx context.Context, log *stepLog, bctx *backu
 	claimName := kubernetes.VolumeClaimName(row.ProjectName, component.Application, component.Volume)
 	key := volumeKey(bctx.prefix(), row.ProjectName, row.EnvironmentName,
 		component.Application, component.Volume, bctx.snapshotID)
-	name := jobName("skali-backup", shortID(row.ID.String()), "vol", component.Application, component.Volume)
+	name := jobName("skali-backup", utils.ShortID(row.ID), "vol", component.Application, component.Volume)
 	log.Info(ctx, "archiving volume claim "+claimName)
 	job := renderVolumeJob(name, namespace, row.ID.String(), workerImage, targetSecretName, claimName, key, false)
 	if err := c.runJob(ctx, log, job); err != nil {
@@ -438,15 +438,6 @@ func (c *Controller) cleanupJobs(ctx context.Context, row *store.Backup) {
 		}
 		c.deleteTargetSecret(ctx, namespace)
 	}
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func readAll(r io.Reader, limit int64) ([]byte, error) {

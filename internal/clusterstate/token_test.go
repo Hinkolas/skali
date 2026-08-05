@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +21,7 @@ func TestEnrollmentTokenCarriesAuthenticationOnly(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(body, &payload))
 	require.ElementsMatch(t, []string{"version", "invitation", "credential", "caPin"},
-		mapKeys(payload))
+		utils.SortedKeys(payload))
 	for _, forbidden := range []string{
 		"server", "cluster", "role", "capabilities", "registryCredential", "k3sToken",
 	} {
@@ -57,12 +58,4 @@ func TestEnrollmentTokenRejectsMalformedCAPin(t *testing.T) {
 		_, err = ParseToken(TokenPrefix + base64.RawURLEncoding.EncodeToString(payload))
 		require.ErrorContains(t, err, "coordinator CA pin", pin)
 	}
-}
-
-func mapKeys(values map[string]any) []string {
-	result := make([]string, 0, len(values))
-	for key := range values {
-		result = append(result, key)
-	}
-	return result
 }

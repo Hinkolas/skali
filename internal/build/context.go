@@ -5,13 +5,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/moby/patternmatcher"
 	"github.com/moby/patternmatcher/ignorefile"
 )
@@ -138,9 +138,9 @@ func Collect(projectRoot, contextRel string, opts CollectOptions) (*Context, err
 			if err != nil {
 				return fmt.Errorf("build: stat %s: %w", rel, err)
 			}
-			contentHash, err := hashFile(path)
+			contentHash, _, err := utils.FileSHA256(path)
 			if err != nil {
-				return err
+				return fmt.Errorf("build: %w", err)
 			}
 			executable := "-"
 			if mode.Mode()&0o111 != 0 {
@@ -218,19 +218,6 @@ func loadIgnore(dir string) (*patternmatcher.PatternMatcher, error) {
 		return nil, fmt.Errorf("build: parse %s: %w", IgnoreFile, err)
 	}
 	return matcher, nil
-}
-
-func hashFile(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("build: open %s: %w", path, err)
-	}
-	defer file.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, file); err != nil {
-		return "", fmt.Errorf("build: hash %s: %w", path, err)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func isEnvFileName(name string) bool {

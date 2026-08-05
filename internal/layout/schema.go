@@ -5,6 +5,7 @@ package layout
 import (
 	"encoding/json"
 
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -28,9 +29,9 @@ func Schema() (*jsonschema.Schema, error) {
 	}
 
 	node := schema.Properties["nodes"].AdditionalProperties
-	node.Properties["role"].Enum = enum(RoleServer, RoleAgent)
+	node.Properties["role"].Enum = utils.AnySlice(RoleServer, RoleAgent)
 	capabilities := node.Properties["capabilities"]
-	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: enum(Capabilities...)}
+	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: utils.AnySlice(Capabilities...)}
 	capabilities.UniqueItems = true
 
 	return schema, nil
@@ -46,12 +47,4 @@ func JSONSchema() ([]byte, error) {
 		return nil, err
 	}
 	return append(data, '\n'), nil
-}
-
-func enum(values ...string) []any {
-	result := make([]any, len(values))
-	for index, value := range values {
-		result[index] = value
-	}
-	return result
 }

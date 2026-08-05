@@ -9,8 +9,6 @@ package localdev
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +19,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // The pinned local topology (section 11.2 and the cli-dev transcript).
@@ -33,7 +33,7 @@ const (
 // contract; the SKALI_DEV_* environment overrides exist so the end-to-end
 // suite runs against a throwaway installation without touching a real one.
 
-func ClusterName() string { return envOr("SKALI_DEV_CLUSTER", "skali-dev") }
+func ClusterName() string { return utils.EnvOr("SKALI_DEV_CLUSTER", "skali-dev") }
 
 // HTTPPort() publishes the traefik edge; the local platform is HTTP-only
 // by decision (TLS issuance is a production concern). RegistryPort()
@@ -48,13 +48,6 @@ func RegistryHost() string { return fmt.Sprintf("localhost:%d", RegistryPort()) 
 
 // MasterURL() reaches the in-cluster skalid through the edge.
 func MasterURL() string { return fmt.Sprintf("http://skali.localhost:%d", HTTPPort()) }
-
-func envOr(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
-}
 
 func envPortOr(name string, fallback int) int {
 	if value := os.Getenv(name); value != "" {
@@ -172,13 +165,13 @@ func RemoveState() error {
 
 // NewState generates the secrets of a fresh installation.
 func NewState(skalidImage string) (*State, error) {
-	authSecret, err := randomToken(32)
+	authSecret, err := utils.RandomToken(32)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("localdev: generate secret: %w", err)
 	}
-	password, err := randomToken(18)
+	password, err := utils.RandomToken(18)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("localdev: generate secret: %w", err)
 	}
 	return &State{
 		Cluster:       ClusterName(),
@@ -189,14 +182,6 @@ func NewState(skalidImage string) (*State, error) {
 		AuthSecret:    authSecret,
 		CreatedAt:     time.Now(),
 	}, nil
-}
-
-func randomToken(bytes int) (string, error) {
-	raw := make([]byte, bytes)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("localdev: generate secret: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 // --- prerequisites ---

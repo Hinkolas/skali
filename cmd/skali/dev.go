@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/localdev"
+	"github.com/Hinkolas/skali/internal/utils"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -621,7 +622,7 @@ func runDevLs(command *cobra.Command, args []string) error {
 			if status, err := api.EnvironmentStatus(ctx, environment.ID); err == nil {
 				state = status.State
 				if status.ActiveRevision != nil {
-					active = shortChecksum(status.ActiveRevision.Checksum)
+					active = utils.ShortChecksum(status.ActiveRevision.Checksum)
 				}
 			} else {
 				fmt.Fprintf(out, "  %s\n", style.Yellow(fmt.Sprintf(
@@ -812,7 +813,7 @@ func runDevStatus(command *cobra.Command, args []string) error {
 	}
 	active := "none"
 	if status.ActiveRevision != nil {
-		active = shortChecksum(status.ActiveRevision.Checksum)
+		active = utils.ShortChecksum(status.ActiveRevision.Checksum)
 	}
 	fmt.Fprintf(out, "project    active revision %s (observation %s)\n", active, status.Observation.State)
 	for _, service := range status.Services {

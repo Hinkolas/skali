@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // reconcileBucketClaim drives one bucket claim toward its phase goal.
@@ -156,9 +157,9 @@ func (c *Controller) ensureAllocationRecord(ctx context.Context, row store.Bucke
 	return c.deps.DB.RecordAllocation(ctx, dbstore.AllocationInput{
 		ClaimID:          row.ID,
 		StoreID:          sw.ID,
-		BucketName:       "b-" + dnsName(bucketOwnerBase(row)) + "-" + shortID(row.ID),
+		BucketName:       "b-" + dnsName(bucketOwnerBase(row)) + "-" + utils.ShortID(row.ID),
 		AccessKeyID:      seaweed.GenerateAccessKey(),
-		CredentialSecret: "s3cred-" + shortID(row.ID),
+		CredentialSecret: "s3cred-" + utils.ShortID(row.ID),
 		Endpoint:         c.bucketEndpoint(),
 		Region:           seaweed.Region,
 	})

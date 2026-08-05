@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
+
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 var stableKeyPattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,62}$")
@@ -30,7 +31,7 @@ func Validate(document *Document) Diagnostics {
 
 	servers := 0
 	capable := make(map[string]bool)
-	for _, key := range sortedKeys(l.Nodes) {
+	for _, key := range utils.SortedKeys(l.Nodes) {
 		path := "nodes." + key
 		node := l.Nodes[key]
 		if !stableKeyPattern.MatchString(key) {
@@ -75,13 +76,4 @@ func Validate(document *Document) Diagnostics {
 	}
 
 	return diagnostics
-}
-
-func sortedKeys[T any](values map[string]T) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

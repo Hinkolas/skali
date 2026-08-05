@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // EnsureClaim records desired database capability for an owner. It returns
@@ -32,8 +33,8 @@ func (s *Service) EnsureClaim(ctx context.Context, owner Owner, spec ClaimSpec) 
 			row, err = q.CreateDatabaseClaim(ctx, store.CreateDatabaseClaimParams{
 				ID:            id,
 				OwnerKind:     owner.Kind,
-				ProjectID:     optionalID(owner.ProjectID),
-				EnvironmentID: optionalID(owner.EnvironmentID),
+				ProjectID:     utils.NilWhenZero(owner.ProjectID),
+				EnvironmentID: utils.NilWhenZero(owner.EnvironmentID),
 				ServiceKey:    owner.ServiceKey,
 				SystemKey:     owner.SystemKey,
 				OwnerRef:      owner.Ref,
@@ -92,7 +93,7 @@ func (s *Service) liveClaim(ctx context.Context, q *store.Queries, owner Owner) 
 		return q.GetLiveSystemDatabaseClaim(ctx, owner.SystemKey)
 	}
 	return q.GetLiveServiceDatabaseClaim(ctx, store.GetLiveServiceDatabaseClaimParams{
-		EnvironmentID: optionalID(owner.EnvironmentID),
+		EnvironmentID: utils.NilWhenZero(owner.EnvironmentID),
 		ServiceKey:    owner.ServiceKey,
 	})
 }
@@ -113,7 +114,7 @@ func (s *Service) GetClaim(ctx context.Context, id uuid.UUID) (*store.DatabaseCl
 // ErrNotFound.
 func (s *Service) LiveServiceClaim(ctx context.Context, environmentID uuid.UUID, serviceKey string) (*store.DatabaseClaim, error) {
 	row, err := s.st.GetLiveServiceDatabaseClaim(ctx, store.GetLiveServiceDatabaseClaimParams{
-		EnvironmentID: optionalID(environmentID),
+		EnvironmentID: utils.NilWhenZero(environmentID),
 		ServiceKey:    serviceKey,
 	})
 	if err != nil {
@@ -139,7 +140,7 @@ func (s *Service) LiveSystemClaim(ctx context.Context, systemKey string) (*store
 
 // ListEnvironmentClaims returns the environment's live service claims.
 func (s *Service) ListEnvironmentClaims(ctx context.Context, environmentID uuid.UUID) ([]store.DatabaseClaim, error) {
-	rows, err := s.st.ListLiveDatabaseClaimsByEnvironment(ctx, optionalID(environmentID))
+	rows, err := s.st.ListLiveDatabaseClaimsByEnvironment(ctx, utils.NilWhenZero(environmentID))
 	if err != nil {
 		return nil, fmt.Errorf("dbstore: list environment claims: %w", err)
 	}

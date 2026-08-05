@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/revision"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 type Action string
@@ -177,18 +178,10 @@ func (p *Plan) diffValues(active, candidate *revision.Revision) {
 // sentinel instead of a digest, so there is no hash to show.
 func artifactReason(active, candidate revision.Artifact) string {
 	if candidate.Digest == revision.PendingDigest {
-		return "a new artifact replaces " + shortDigest(active.Digest)
+		return "a new artifact replaces " + utils.ShortChecksum(active.Digest)
 	}
 	return fmt.Sprintf("artifact %s replaces %s",
-		shortDigest(candidate.Digest), shortDigest(active.Digest))
-}
-
-func shortDigest(digest string) string {
-	digest = strings.TrimPrefix(digest, "sha256:")
-	if len(digest) > 12 {
-		digest = digest[:12]
-	}
-	return digest
+		utils.ShortChecksum(candidate.Digest), utils.ShortChecksum(active.Digest))
 }
 
 func removedVolumes(active, candidate *revision.Revision, key string) []string {

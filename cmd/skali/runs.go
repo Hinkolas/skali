@@ -12,6 +12,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 func newRunCommand() *cobra.Command {
@@ -49,7 +50,7 @@ func newRunCommand() *cobra.Command {
 			for _, run := range runs {
 				started := ""
 				if run.StartedAt != nil {
-					started = humanSince(*run.StartedAt)
+					started = utils.HumanSince(*run.StartedAt)
 				}
 				fmt.Fprintf(out, "%-36s  %-11s  %-9s  %s\n", run.ID, run.Kind, run.Status, started)
 			}
@@ -282,18 +283,4 @@ func findStep(steps []client.Step, key string) *client.Step {
 		}
 	}
 	return nil
-}
-
-func humanSince(t time.Time) string {
-	elapsed := time.Since(t).Round(time.Second)
-	switch {
-	case elapsed < time.Minute:
-		return fmt.Sprintf("%ds ago", int(elapsed.Seconds()))
-	case elapsed < time.Hour:
-		return fmt.Sprintf("%dm ago", int(elapsed.Minutes()))
-	case elapsed < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(elapsed.Hours()))
-	default:
-		return t.Local().Format("2006-01-02 15:04")
-	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/localdev"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // newBackupCommand groups the manual backup surface: the admin-configured
@@ -199,9 +200,9 @@ func newBackupLsCommand() *cobra.Command {
 				fmt.Fprintf(out, "%s  %s  %s  %s  %s\n",
 					snapshot.ID,
 					snapshot.CreatedAt,
-					shortChecksum(snapshot.RevisionChecksum),
+					utils.ShortChecksum(snapshot.RevisionChecksum),
 					fmt.Sprintf("%dd/%db/%dv", snapshot.Databases, snapshot.Buckets, snapshot.Volumes),
-					formatBytes(snapshot.Bytes))
+					utils.FormatBytes(snapshot.Bytes))
 			}
 			return nil
 		},
@@ -210,21 +211,6 @@ func newBackupLsCommand() *cobra.Command {
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command
-}
-
-// formatBytes renders a byte count for humans without dropping to zero for
-// small snapshots.
-func formatBytes(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1fGiB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1fMiB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.1fKiB", float64(n)/(1<<10))
-	default:
-		return fmt.Sprintf("%dB", n)
-	}
 }
 
 func newBackupTargetCommand() *cobra.Command {

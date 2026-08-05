@@ -22,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/crypt"
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // keyInfo pins the HKDF domain separation for secret values; changing it
@@ -76,7 +77,7 @@ func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, provided m
 		Versions: make(map[string]int64, len(provided)),
 	}
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
-		for _, name := range sortedKeys(provided) {
+		for _, name := range utils.SortedKeys(provided) {
 			ciphertext, err := crypt.Encrypt(s.key, []byte(provided[name]))
 			if err != nil {
 				return fmt.Errorf("valuestore: encrypt %s: %w", name, err)
@@ -220,7 +221,7 @@ func (s *Service) Redactor(ctx context.Context, environmentID, candidateID uuid.
 // the applied cluster Secret; callers must never log or persist them.
 func (s *Service) Plaintexts(ctx context.Context, environmentID uuid.UUID, refs map[string]int) (map[string]string, error) {
 	plaintexts := make(map[string]string, len(refs))
-	for _, name := range sortedRefKeys(refs) {
+	for _, name := range utils.SortedKeys(refs) {
 		ciphertext, err := s.st.GetEnvironmentSecretCiphertext(ctx, store.GetEnvironmentSecretCiphertextParams{
 			EnvironmentID: environmentID,
 			Name:          name,
@@ -303,22 +304,4 @@ func stagingError(err error) error {
 		return ErrStagingConflict
 	}
 	return fmt.Errorf("valuestore: stage: %w", err)
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func sortedRefKeys(m map[string]int) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

@@ -66,7 +66,7 @@ func promptDetectedNodeNetwork(ctx context.Context, out io.Writer, session *clip
 				Description: "type an address the detection missed",
 				Value:       manualAddressValue,
 			}),
-			DefaultValue: defaultClusterAddress(addresses),
+			DefaultValue: installer.DefaultClusterAddress(addresses),
 		})
 		if err != nil {
 			return installer.NodeNetwork{}, err
@@ -180,30 +180,6 @@ func addressDescription(address installer.HostAddress) string {
 		scope += ", default route"
 	}
 	return address.Interface + ", " + scope
-}
-
-// defaultClusterAddress recommends the private address when there is
-// exactly one, because a private network is what an operator attaches
-// cluster nodes to; otherwise it recommends the address k3s would have
-// picked by itself.
-func defaultClusterAddress(addresses []installer.HostAddress) string {
-	private := ""
-	count := 0
-	for _, address := range addresses {
-		if address.Private {
-			private = address.IP
-			count++
-		}
-	}
-	if count == 1 {
-		return private
-	}
-	for _, address := range addresses {
-		if address.DefaultRoute {
-			return address.IP
-		}
-	}
-	return addresses[0].IP
 }
 
 func publicAddresses(addresses []installer.HostAddress) []string {

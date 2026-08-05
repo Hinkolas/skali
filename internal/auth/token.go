@@ -1,21 +1,21 @@
 package auth
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
+
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // newToken returns a fresh opaque bearer token: 32 bytes of entropy,
 // URL-safe base64 (43 chars). The plaintext is returned to the client exactly
 // once; the database only ever sees its hash.
 func newToken() (string, error) {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	token, err := utils.RandomToken(32)
+	if err != nil {
 		return "", fmt.Errorf("auth: token: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+	return token, nil
 }
 
 // hashToken maps a token to its storage form. Plain sha256 is sufficient here

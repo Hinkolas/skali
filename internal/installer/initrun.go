@@ -2,8 +2,6 @@ package installer
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/registrytoken"
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/version"
 )
 
@@ -360,7 +359,7 @@ func assertClusterMembership(nodes []corev1.Node, cluster string) error {
 // refuses on any difference, listing all of them.
 func assertLayout(expected, live layout.Layout) error {
 	var differences []string
-	for _, name := range sortedNodeNames(expected) {
+	for _, name := range utils.SortedKeys(expected.Nodes) {
 		node := expected.Nodes[name]
 		liveNode, ok := live.Nodes[name]
 		if !ok {
@@ -377,7 +376,7 @@ func assertLayout(expected, live layout.Layout) error {
 					strings.Join(node.Capabilities, ", "), strings.Join(liveNode.Capabilities, ", ")))
 		}
 	}
-	for _, name := range sortedNodeNames(live) {
+	for _, name := range utils.SortedKeys(live.Nodes) {
 		if _, ok := expected.Nodes[name]; !ok {
 			differences = append(differences, fmt.Sprintf("node %s has joined but is not in the layout", name))
 		}
@@ -395,15 +394,6 @@ func normalizedCapabilities(capabilities []string) []string {
 	return normalized
 }
 
-func sortedNodeNames(l layout.Layout) []string {
-	names := make([]string, 0, len(l.Nodes))
-	for name := range l.Nodes {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // ensureAuthSecret reuses the existing cluster auth secret so repeat init
 // stays convergent without persisting secrets host-side; a fresh cluster
 // gets a new 32-byte value.
@@ -416,11 +406,11 @@ func ensureAuthSecret(ctx context.Context, client *kube.Client) (string, error) 
 	} else if !apierrors.IsNotFound(err) {
 		return "", fmt.Errorf("read auth secret: %w", err)
 	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
+	value, err := utils.RandomToken(32)
+	if err != nil {
 		return "", fmt.Errorf("generate auth secret: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
+	return value, nil
 }
 
 // ensureRegistryTokenKeypair reuses the registry token signing keypair

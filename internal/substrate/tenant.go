@@ -21,6 +21,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // reconcileClaim drives one claim toward its phase goal. Waiting states
@@ -140,7 +141,7 @@ func (c *Controller) provision(ctx context.Context, row store.DatabaseClaim) (bo
 
 // ensureTenantRecord generates and durably records the tenant identity once.
 func (c *Controller) ensureTenantRecord(ctx context.Context, row store.DatabaseClaim, pool *store.DatabaseCluster) (*store.DatabaseTenant, error) {
-	suffix := shortID(row.ID)
+	suffix := utils.ShortID(row.ID)
 	base := sqlName(ownerBase(row))
 	return c.deps.DB.RecordTenant(ctx, dbstore.TenantInput{
 		ClaimID:          row.ID,
@@ -276,7 +277,7 @@ func claimLabels(row store.DatabaseClaim) map[string]string {
 }
 
 func databaseObjectName(tenant store.DatabaseTenant) string {
-	return "db-" + shortID(tenant.ClaimID)
+	return "db-" + utils.ShortID(tenant.ClaimID)
 }
 
 // tenantPool recovers the pool name from the tenant host

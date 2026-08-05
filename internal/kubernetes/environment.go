@@ -7,6 +7,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // EnvironmentSecretName is the fixed name of the per-environment values
@@ -29,9 +30,9 @@ func EnvironmentSecretKey(applicationKey, envName string) string {
 // field paths and variable names only.
 func EnvironmentSecretData(definition compiler.ProjectDefinition, variables map[string]string) (map[string][]byte, error) {
 	data := map[string][]byte{}
-	for _, applicationKey := range sortedKeys(definition.Applications) {
+	for _, applicationKey := range utils.SortedKeys(definition.Applications) {
 		application := definition.Applications[applicationKey]
-		for _, name := range sortedKeys(application.Environment) {
+		for _, name := range utils.SortedKeys(application.Environment) {
 			expression := application.Environment[name]
 			if _, isOutput := expression.ServiceOutput(); isOutput || !expression.HasProjectVariables() {
 				continue

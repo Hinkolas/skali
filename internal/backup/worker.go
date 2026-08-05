@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/klauspost/compress/zstd"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -98,9 +99,9 @@ func workerUpload(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	digest, size, err := fileSHA256(*file)
+	digest, size, err := utils.FileSHA256(*file)
 	if err != nil {
-		return err
+		return fmt.Errorf("backup-worker: %w", err)
 	}
 	reader, err := os.Open(*file)
 	if err != nil {
@@ -366,18 +367,4 @@ func securePath(root, name string) (string, error) {
 		return "", fmt.Errorf("backup-worker: archive entry %q escapes the destination", name)
 	}
 	return cleaned, nil
-}
-
-func fileSHA256(name string) (string, int64, error) {
-	file, err := os.Open(name)
-	if err != nil {
-		return "", 0, fmt.Errorf("backup-worker: open %s: %w", name, err)
-	}
-	defer file.Close()
-	hash := sha256.New()
-	size, err := io.Copy(hash, file)
-	if err != nil {
-		return "", 0, fmt.Errorf("backup-worker: hash %s: %w", name, err)
-	}
-	return hex.EncodeToString(hash.Sum(nil)), size, nil
 }

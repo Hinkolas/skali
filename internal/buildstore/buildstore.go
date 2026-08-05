@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 var (
@@ -57,16 +58,16 @@ func (s *Service) CreateLocal(ctx context.Context, in Local) (*store.Build, erro
 	now := time.Now()
 	row, err := s.st.CreateBuild(ctx, store.CreateBuildParams{
 		ID:           id,
-		ProjectID:    nilWhenZero(in.ProjectID),
-		DeploymentID: nilWhenZero(in.DeploymentID),
+		ProjectID:    utils.NilWhenZero(in.ProjectID),
+		DeploymentID: utils.NilWhenZero(in.DeploymentID),
 		Application:  in.Application,
 		Origin:       "local",
 		Status:       string(StatusRunning),
 		Platform:     in.Platform,
 		ContextHash:  in.ContextHash,
 		ConfigHash:   in.ConfigHash,
-		ArtifactID:   nilWhenZero(in.ArtifactID),
-		RunID:        nilWhenZero(in.RunID),
+		ArtifactID:   utils.NilWhenZero(in.ArtifactID),
+		RunID:        utils.NilWhenZero(in.RunID),
 		StepKey:      in.StepKey,
 		StartedAt:    &now,
 		HeartbeatAt:  &now,
@@ -142,11 +143,4 @@ func (s *Service) transition(ctx context.Context, id uuid.UUID, to Status) error
 			ID: id, Status: string(to),
 		})
 	})
-}
-
-func nilWhenZero(id uuid.UUID) *uuid.UUID {
-	if id == uuid.Nil {
-		return nil
-	}
-	return &id
 }

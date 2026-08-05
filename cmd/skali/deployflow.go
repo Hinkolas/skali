@@ -28,6 +28,7 @@ import (
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 )
 
@@ -383,7 +384,7 @@ func buildInputs(project *localProject, excludeFiles []string, platform string) 
 func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.ArtifactAction, activeChecksum string) {
 	style := clirender.StyleFor(out)
 	if activeChecksum != "" {
-		fmt.Fprintf(out, "\nplan against active revision %s\n", shortChecksum(activeChecksum))
+		fmt.Fprintf(out, "\nplan against active revision %s\n", utils.ShortChecksum(activeChecksum))
 	} else {
 		fmt.Fprintf(out, "\nplan for the initial deployment\n")
 	}
@@ -433,22 +434,13 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 // rollout health guarantee is weak. Advisory only, never an error.
 func healthHints(result *compiler.Result) []string {
 	var hints []string
-	for _, key := range sortedApplicationKeys(result.Definition.Applications) {
+	for _, key := range utils.SortedKeys(result.Definition.Applications) {
 		if result.Definition.Applications[key].Health.Readiness.HTTP.Path == "" {
 			hints = append(hints,
 				"hint: application "+key+" declares no health check; rollouts cannot verify readiness")
 		}
 	}
 	return hints
-}
-
-func sortedApplicationKeys(applications map[string]compiler.Application) []string {
-	keys := make([]string, 0, len(applications))
-	for key := range applications {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // printHealthHints renders the advisory block after a plan.
@@ -593,7 +585,7 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 		switch action.Action {
 		case "reuse":
 			tasks.Start("artifact for " + action.Application).
-				Skip("current, " + shortChecksum(action.Digest))
+				Skip("current, " + utils.ShortChecksum(action.Digest))
 			continue
 		case "build":
 			if _, err := api.EnsureStep(ctx, runID, action.StepKey, action.Application, "artifacts"); err != nil {
@@ -628,7 +620,7 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				_ = api.SetStepStatus(ctx, buildStep.ID, "failed")
 				return failDeployment(ctx, api, opened, fmt.Errorf("build for %s failed: %w", action.Application, err))
 			}
-			task.Done(shortChecksum(result.Digest))
+			task.Done(utils.ShortChecksum(result.Digest))
 			if err := api.SetStepStatus(ctx, buildStep.ID, "succeeded"); err != nil {
 				return err
 			}
@@ -657,7 +649,7 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				_ = api.SetStepStatus(ctx, importStep.ID, "failed")
 				return failDeployment(ctx, api, opened, fmt.Errorf("import for %s failed: %w", action.Application, err))
 			}
-			task.Done(shortChecksum(result.Digest))
+			task.Done(utils.ShortChecksum(result.Digest))
 			if err := api.SetStepStatus(ctx, importStep.ID, "succeeded"); err != nil {
 				return err
 			}
@@ -674,7 +666,7 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 func verifyAction(ctx context.Context, api *client.Client, opened *client.OpenedDeployment,
 	action client.ArtifactAction, digest string) error {
 	step, err := api.EnsureStep(ctx, opened.Deployment.RunID, action.StepKey+".verify",
-		"Verify "+shortChecksum(digest), action.StepKey)
+		"Verify "+utils.ShortChecksum(digest), action.StepKey)
 	if err != nil {
 		return err
 	}
@@ -1205,12 +1197,4 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	default:
 		return deployOutcomeDetached, nil
 	}
-}
-
-func shortChecksum(checksum string) string {
-	checksum = strings.TrimPrefix(checksum, "sha256:")
-	if len(checksum) > 12 {
-		return checksum[:12]
-	}
-	return checksum
 }

@@ -110,16 +110,6 @@ func jobName(parts ...string) string {
 	return strings.TrimRight(value[:54], "-") + "-" + hex.EncodeToString(sum[:4])
 }
 
-// shortID mirrors the substrate's identity suffix: the last eight hex
-// characters of a v7 UUID (the leading ones are timestamp and collide).
-func shortID(id string) string {
-	compact := strings.ReplaceAll(id, "-", "")
-	if len(compact) <= 8 {
-		return compact
-	}
-	return compact[len(compact)-8:]
-}
-
 func jobMeta(name, namespace, backupID string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name:      name,

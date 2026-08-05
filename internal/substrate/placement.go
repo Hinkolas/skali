@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // errWaiting keeps a claim pending with a visible reason instead of failing:
@@ -157,7 +157,7 @@ func (c *Controller) selectPool(ctx context.Context, claim store.DatabaseClaim, 
 		// explicit tier upgrade.
 		return c.createPool(ctx, poolPlan{
 			engine: engine, major: major, class: dbstore.ClassEnvironment,
-			name:          poolPrefix(engine, major) + "-env-" + shortID(environmentID),
+			name:          poolPrefix(engine, major) + "-env-" + utils.ShortID(environmentID),
 			tier:          tierForNodes(requiredNodes(claim.Availability)),
 			environmentID: environmentID,
 		})
@@ -171,7 +171,7 @@ func (c *Controller) selectPool(ctx context.Context, claim store.DatabaseClaim, 
 		}
 		return c.createPool(ctx, poolPlan{
 			engine: engine, major: major, class: dbstore.ClassDedicated,
-			name:         poolPrefix(engine, major) + "-ded-" + shortID(claim.ID),
+			name:         poolPrefix(engine, major) + "-ded-" + utils.ShortID(claim.ID),
 			tier:         tierForNodes(requiredNodes(claim.Availability)),
 			claimID:      claim.ID,
 			storageBytes: claim.StorageBytes,
@@ -211,17 +211,6 @@ func (c *Controller) createPool(ctx context.Context, plan poolPlan) (*store.Data
 		return nil, err
 	}
 	return pool, nil
-}
-
-// shortID is the collision-resistant fragment of generated identities. It
-// takes the LAST 8 hex characters: a v7 UUID's leading characters are pure
-// timestamp, identical for every id minted in the same window, and two
-// claims created in one deployment pass would collide on their Database CR
-// and Secret names (measured: the guestbook data claim and the seaweed
-// metadata claim rendered the same db-<id8> object).
-func shortID(id uuid.UUID) string {
-	hex := strings.ReplaceAll(id.String(), "-", "")
-	return hex[len(hex)-8:]
 }
 
 // tierForNodes maps a node requirement back onto the availability tier.

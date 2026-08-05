@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Hinkolas/skali/internal/lifecycle"
 	"github.com/Hinkolas/skali/internal/store"
@@ -94,7 +93,7 @@ func (s *Service) StartRun(ctx context.Context, id uuid.UUID) error {
 		environmentID = run.EnvironmentID
 		return q.MarkRunRunning(ctx, id)
 	})
-	if isUniqueViolation(err) {
+	if store.IsUniqueViolation(err) {
 		return ErrRunConflict
 	}
 	if err != nil {
@@ -248,7 +247,7 @@ func (s *Service) StartAttempt(ctx context.Context, stepID uuid.UUID) (*store.At
 		ID: id, StepID: stepID, ExecutorID: s.executorID,
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if store.IsUniqueViolation(err) {
 			return nil, ErrAttemptConflict
 		}
 		return nil, fmt.Errorf("journal: create attempt: %w", err)
@@ -324,9 +323,4 @@ func notFoundOr(err error, what string) error {
 		return ErrNotFound
 	}
 	return fmt.Errorf("journal: %s: %w", what, err)
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

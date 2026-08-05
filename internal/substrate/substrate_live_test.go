@@ -25,6 +25,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 	"github.com/Hinkolas/skali/internal/testdb"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // TestLiveClaimProvisioning drives one claim from pending to provisioned
@@ -112,7 +113,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "off", cluster.GetAnnotations()[cnpg.HibernationAnnotation])
 	database, err := client.Dynamic.Resource(cnpg.DatabaseGVR).Namespace(Namespace).
-		Get(ctx, "db-"+shortID(created.ID), metav1.GetOptions{})
+		Get(ctx, "db-"+utils.ShortID(created.ID), metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, "databases.data", database.GetLabels()[kubernetes.LabelService])
 
@@ -257,7 +258,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 	_, err = client.Dynamic.Resource(cnpg.DatabaseGVR).Namespace(Namespace).
-		Get(ctx, "db-"+shortID(created.ID), metav1.GetOptions{})
+		Get(ctx, "db-"+utils.ShortID(created.ID), metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "the Database object must be gone")
 	_, err = client.Clientset.CoreV1().Secrets(Namespace).
 		Get(ctx, tenant.CredentialSecret, metav1.GetOptions{})

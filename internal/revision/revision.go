@@ -13,12 +13,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 )
 
@@ -191,7 +191,7 @@ func checkValues(definition compiler.ProjectDefinition, provided map[string]int)
 
 func checkArtifacts(definition compiler.ProjectDefinition, provided map[string]Artifact) (map[string]Artifact, error) {
 	artifacts := make(map[string]Artifact, len(definition.Applications))
-	for _, key := range sortedKeys(definition.Applications) {
+	for _, key := range utils.SortedKeys(definition.Applications) {
 		artifact, ok := provided[key]
 		if !ok {
 			return nil, fmt.Errorf("application %s has no prepared artifact", key)
@@ -224,7 +224,7 @@ func checkArtifacts(definition compiler.ProjectDefinition, provided map[string]A
 		}
 		artifacts[key] = artifact
 	}
-	for _, key := range sortedKeys(provided) {
+	for _, key := range utils.SortedKeys(provided) {
 		if _, ok := definition.Applications[key]; !ok {
 			return nil, fmt.Errorf("artifact %s does not match any application", key)
 		}
@@ -270,13 +270,4 @@ func hashJSON(value any) string {
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
-}
-
-func sortedKeys[T any](values map[string]T) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

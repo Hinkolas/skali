@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 type ActionKind string
@@ -74,7 +75,7 @@ func BuildPlan(state *State, from, target Revision, rebalanceWorkloads bool) (Pl
 			return Plan{}, fmt.Errorf("node %s cannot change role from %s to %s; remove and re-enroll it",
 				node.Name, old.Role, node.Role)
 		}
-		if !sameStrings(old.Capabilities, node.Capabilities) {
+		if !utils.SameStrings(old.Capabilities, node.Capabilities) {
 			plan.Actions = append(plan.Actions, Action{
 				Kind: ActionChangeCapabilities, NodeID: node.ID, NodeName: node.Name,
 				From: append([]string(nil), old.Capabilities...),
@@ -196,14 +197,6 @@ func tier(nodes map[string]RevisionNode) layout.Tier {
 		}
 	}
 	return layout.DeriveTier(count)
-}
-
-func sameStrings(left, right []string) bool {
-	left = append([]string(nil), left...)
-	right = append([]string(nil), right...)
-	sort.Strings(left)
-	sort.Strings(right)
-	return slices.Equal(left, right)
 }
 
 func removesAny(from, to []string) bool {

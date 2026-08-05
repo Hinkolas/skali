@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // ClusterInput is the desired shape of a new pool. Exactly one of the owner
@@ -40,8 +41,8 @@ func (s *Service) CreateCluster(ctx context.Context, in ClusterInput) (*store.Da
 		Engine:        in.Engine,
 		Major:         int32(in.Major),
 		Class:         in.Class,
-		EnvironmentID: optionalID(in.EnvironmentID),
-		ClaimID:       optionalID(in.ClaimID),
+		EnvironmentID: utils.NilWhenZero(in.EnvironmentID),
+		ClaimID:       utils.NilWhenZero(in.ClaimID),
 		Instances:     int32(in.Instances),
 		StorageBytes:  in.StorageBytes,
 		Image:         in.Image,
@@ -87,7 +88,7 @@ func (s *Service) LiveEnvironmentCluster(ctx context.Context, engine string, maj
 	row, err := s.st.GetLiveEnvironmentDatabaseCluster(ctx, store.GetLiveEnvironmentDatabaseClusterParams{
 		Engine:        engine,
 		Major:         int32(major),
-		EnvironmentID: optionalID(environmentID),
+		EnvironmentID: utils.NilWhenZero(environmentID),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -101,7 +102,7 @@ func (s *Service) LiveEnvironmentCluster(ctx context.Context, engine string, maj
 // LiveDedicatedCluster returns the claim's live dedicated pool, or
 // ErrNotFound.
 func (s *Service) LiveDedicatedCluster(ctx context.Context, claimID uuid.UUID) (*store.DatabaseCluster, error) {
-	row, err := s.st.GetLiveDedicatedDatabaseCluster(ctx, optionalID(claimID))
+	row, err := s.st.GetLiveDedicatedDatabaseCluster(ctx, utils.NilWhenZero(claimID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

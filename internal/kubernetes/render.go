@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
+	"maps"
 	"strings"
 	"time"
 
@@ -23,6 +23,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 )
 
@@ -76,7 +77,7 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 		return nil, fmt.Errorf("missing project variables: %s", strings.Join(missing, ", "))
 	}
 	var objects []runtime.Object
-	for _, key := range sortedKeys(result.Definition.Applications) {
+	for _, key := range utils.SortedKeys(result.Definition.Applications) {
 		rendered, err := renderApplication(result.Definition, key, options)
 		if err != nil {
 			return nil, fmt.Errorf("render application %s: %w", key, err)
@@ -98,7 +99,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		LabelProject:             project.Name,
 		LabelApplication:         key,
 	}
-	labels := cloneMap(selectorLabels)
+	labels := maps.Clone(selectorLabels)
 	labels[LabelService] = key
 	if options.EnvironmentID != "" {
 		labels[LabelEnvironment] = options.EnvironmentID
@@ -122,7 +123,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		Env:             renderEnvironment(key, application.Environment, options.EnvironmentSecretName),
 		Resources:       renderResources(application.Resources),
 	}
-	for _, portKey := range sortedKeys(application.Ports) {
+	for _, portKey := range utils.SortedKeys(application.Ports) {
 		port := application.Ports[portKey]
 		container.Ports = append(container.Ports, corev1.ContainerPort{
 			Name:          portKey,
@@ -135,7 +136,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	container.LivenessProbe = renderProbe(application.Health.Liveness)
 
 	var objects []runtime.Object
-	for _, volumeKey := range sortedKeys(application.Volumes) {
+	for _, volumeKey := range utils.SortedKeys(application.Volumes) {
 		volume := application.Volumes[volumeKey]
 		claimName := objectName(name, volumeKey)
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
@@ -147,7 +148,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      claimName,
 				Namespace: options.Namespace,
-				Labels:    cloneMap(labels),
+				Labels:    maps.Clone(labels),
 			},
 			Spec: corev1.PersistentVolumeClaimSpec{
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
@@ -165,26 +166,26 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	autoscalingEnabled := application.Scaling.MaxReplicas > application.Scaling.MinReplicas
 	var replicas *int32
 	if !autoscalingEnabled {
-		replicas = int32Pointer(int32(application.Scaling.MinReplicas))
+		replicas = new(int32(application.Scaling.MinReplicas))
 	}
 	graceSeconds := int64(time.Duration(application.Shutdown.GracePeriodMillis) * time.Millisecond / time.Second)
 	// The revision label stays off the pod template: it would roll every
 	// application on every revision. The template instead carries a values
 	// identity so exactly the applications whose referenced values changed
 	// roll, and everything else rolls only on a real spec change.
-	templateLabels := cloneMap(labels)
+	templateLabels := maps.Clone(labels)
 	delete(templateLabels, LabelRevision)
 	deployment := &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: options.Namespace,
-			Labels:    cloneMap(labels),
+			Labels:    maps.Clone(labels),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas:             replicas,
-			RevisionHistoryLimit: int32Pointer(revisionHistoryLimit),
-			Selector:             &metav1.LabelSelector{MatchLabels: cloneMap(selectorLabels)},
+			RevisionHistoryLimit: new(int32(revisionHistoryLimit)),
+			Selector:             &metav1.LabelSelector{MatchLabels: maps.Clone(selectorLabels)},
 			Strategy:             renderStrategy(application.Deployment.Rollout),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -199,14 +200,14 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		},
 	}
 	if options.ProgressDeadlineSeconds > 0 {
-		deployment.Spec.ProgressDeadlineSeconds = int32Pointer(int32(options.ProgressDeadlineSeconds))
+		deployment.Spec.ProgressDeadlineSeconds = new(int32(options.ProgressDeadlineSeconds))
 	}
 	if options.ManagedCluster {
 		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
 			layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 		}
 	}
-	for _, volumeKey := range sortedKeys(application.Volumes) {
+	for _, volumeKey := range utils.SortedKeys(application.Volumes) {
 		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
 			Name: volumeKey,
 			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
@@ -226,10 +227,10 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: options.Namespace,
-				Labels:    cloneMap(labels),
+				Labels:    maps.Clone(labels),
 			},
 			Spec: corev1.ServiceSpec{
-				Selector: cloneMap(selectorLabels),
+				Selector: maps.Clone(selectorLabels),
 				Ports:    servicePorts,
 			},
 		})
@@ -237,7 +238,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 
 	// Every rendered route uses the managed k3s edge.
 	ingressClass := "traefik"
-	for _, routeKey := range sortedKeys(application.Routes) {
+	for _, routeKey := range utils.SortedKeys(application.Routes) {
 		route := application.Routes[routeKey]
 		domain, err := compiler.ResolveExpression(route.Domain, options.Variables)
 		if err != nil {
@@ -249,10 +250,10 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      objectName(name, routeKey),
 				Namespace: options.Namespace,
-				Labels:    cloneMap(labels),
+				Labels:    maps.Clone(labels),
 			},
 			Spec: networkingv1.IngressSpec{
-				IngressClassName: stringPointer(ingressClass),
+				IngressClassName: new(ingressClass),
 				Rules: []networkingv1.IngressRule{{
 					Host: domain,
 					IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
@@ -285,7 +286,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: options.Namespace,
-				Labels:    cloneMap(labels),
+				Labels:    maps.Clone(labels),
 			},
 			Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
 				ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
@@ -293,7 +294,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 					Kind:       "Deployment",
 					Name:       name,
 				},
-				MinReplicas: int32Pointer(int32(application.Scaling.MinReplicas)),
+				MinReplicas: new(int32(application.Scaling.MinReplicas)),
 				MaxReplicas: int32(application.Scaling.MaxReplicas),
 				Metrics: []autoscalingv2.MetricSpec{{
 					Type: autoscalingv2.ResourceMetricSourceType,
@@ -354,7 +355,7 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, name, image strin
 	// application's bare key and name label would match its immutable
 	// Service/Deployment selectors and join its health evaluation and member
 	// listings.
-	podLabels := cloneMap(labels)
+	podLabels := maps.Clone(labels)
 	podLabels["app.kubernetes.io/name"] = name + "-release"
 	podLabels[LabelService] = ReleaseServiceIdentity(key)
 
@@ -371,10 +372,10 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, name, image strin
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ReleaseJobName(project.Name, key, options.RevisionChecksum),
 			Namespace: options.Namespace,
-			Labels:    cloneMap(labels),
+			Labels:    maps.Clone(labels),
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:          int32Pointer(0),
+			BackoffLimit:          new(int32(0)),
 			ActiveDeadlineSeconds: &deadlineSeconds,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: podLabels},
@@ -399,7 +400,7 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, name, image strin
 // (see EnvironmentSecretData), and pure literals inline.
 func renderEnvironment(applicationKey string, environment map[string]compiler.Expression, environmentSecret string) []corev1.EnvVar {
 	result := make([]corev1.EnvVar, 0, len(environment))
-	for _, name := range sortedKeys(environment) {
+	for _, name := range utils.SortedKeys(environment) {
 		expression := environment[name]
 		variable := corev1.EnvVar{Name: name}
 		if part, ok := expression.ServiceOutput(); ok {
@@ -459,7 +460,7 @@ func renderProbe(probe compiler.Probe) *corev1.Probe {
 func renderServicePorts(application compiler.Application) []corev1.ServicePort {
 	ports := make([]corev1.ServicePort, 0, len(application.Ports)+len(application.Routes))
 	numbers := make(map[int]struct{})
-	for _, name := range sortedKeys(application.Ports) {
+	for _, name := range utils.SortedKeys(application.Ports) {
 		port := application.Ports[name]
 		numbers[port.Port] = struct{}{}
 		appProtocol := port.Protocol
@@ -471,7 +472,7 @@ func renderServicePorts(application compiler.Application) []corev1.ServicePort {
 			AppProtocol: &appProtocol,
 		})
 	}
-	for _, name := range sortedKeys(application.Routes) {
+	for _, name := range utils.SortedKeys(application.Routes) {
 		target := application.Routes[name].Port
 		if target.Number == 0 {
 			continue
@@ -497,8 +498,8 @@ func renderStrategy(rollout compiler.Rollout) appsv1.DeploymentStrategy {
 	return appsv1.DeploymentStrategy{
 		Type: appsv1.RollingUpdateDeploymentStrategyType,
 		RollingUpdate: &appsv1.RollingUpdateDeployment{
-			MaxUnavailable: intOrStringPointer(intstr.FromInt32(int32(rollout.MaxUnavailable))),
-			MaxSurge:       intOrStringPointer(intstr.FromInt32(int32(rollout.MaxSurge))),
+			MaxUnavailable: new(intstr.FromInt32(int32(rollout.MaxUnavailable))),
+			MaxSurge:       new(intstr.FromInt32(int32(rollout.MaxSurge))),
 		},
 	}
 }
@@ -516,13 +517,13 @@ func renderSpread(labels map[string]string, placement compiler.Placement) *corev
 		MaxSkew:           1,
 		TopologyKey:       topologyKey,
 		WhenUnsatisfiable: action,
-		LabelSelector:     &metav1.LabelSelector{MatchLabels: cloneMap(labels)},
+		LabelSelector:     &metav1.LabelSelector{MatchLabels: maps.Clone(labels)},
 	}
 	// Kubernetes only permits minDomains with DoNotSchedule. Preferred spread
 	// still balances across every available topology domain, while Skali keeps
 	// the requested minimum in its IR for health/diagnostic projections.
 	if placement.Minimum > 0 && action == corev1.DoNotSchedule {
-		constraint.MinDomains = int32Pointer(int32(placement.Minimum))
+		constraint.MinDomains = new(int32(placement.Minimum))
 	}
 	return constraint
 }
@@ -575,23 +576,6 @@ func objectName(parts ...string) string {
 	return strings.TrimRight(value[:54], "-") + "-" + suffix
 }
 
-func sortedKeys[T any](values map[string]T) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func cloneMap(source map[string]string) map[string]string {
-	result := make(map[string]string, len(source))
-	for key, value := range source {
-		result[key] = value
-	}
-	return result
-}
-
 // valuesIdentity hashes the stored generations of exactly the project
 // variables this application's environment references, whole-value or
 // composed: NAME=v<version> lines, sorted, sha256[:8]. Plaintext never
@@ -614,7 +598,7 @@ func valuesIdentity(application compiler.Application, options Options) string {
 		return ""
 	}
 	lines := make([]string, 0, len(referenced))
-	for _, name := range sortedKeys(referenced) {
+	for _, name := range utils.SortedKeys(referenced) {
 		lines = append(lines, fmt.Sprintf("%s=v%d", name, options.SecretVersions[name]))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
@@ -637,7 +621,3 @@ func templateAnnotations(options Options, valuesHash string) map[string]string {
 	}
 	return annotations
 }
-
-func stringPointer(value string) *string                              { return &value }
-func int32Pointer(value int32) *int32                                 { return &value }
-func intOrStringPointer(value intstr.IntOrString) *intstr.IntOrString { return &value }

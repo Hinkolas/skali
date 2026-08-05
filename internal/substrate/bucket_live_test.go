@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 	"github.com/Hinkolas/skali/internal/testdb"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // TestLiveBucketClaimProvisioning drives one bucket claim from pending to
@@ -105,7 +106,7 @@ func TestLiveBucketClaimProvisioning(t *testing.T) {
 	allocation, err := dbSvc.LiveAllocation(ctx, created.ID)
 	require.NoError(t, err)
 	require.Regexp(t, `^b-files-[0-9a-f]{8}$`, allocation.BucketName)
-	require.Equal(t, "s3cred-"+shortID(created.ID), allocation.CredentialSecret)
+	require.Equal(t, "s3cred-"+utils.ShortID(created.ID), allocation.CredentialSecret)
 	require.Equal(t, "http://seaweed-s3.skali-platform.svc.cluster.local:8333", allocation.Endpoint)
 
 	// The credential Secret and the output mirror agree on the keypair,

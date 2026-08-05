@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Hinkolas/skali/internal/lifecycle"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // ErrDeploymentNotFound: no deployment row with that id.
@@ -83,15 +83,15 @@ func (s *Service) CreateDeployment(ctx context.Context, in NewDeployment) (*stor
 		ProjectID:           in.ProjectID,
 		EnvironmentID:       in.EnvironmentID,
 		DefinitionVersionID: in.DefinitionVersionID,
-		CandidateID:         nilWhenZero(in.CandidateID),
-		RunID:               nilWhenZero(in.RunID),
+		CandidateID:         utils.NilWhenZero(in.CandidateID),
+		RunID:               utils.NilWhenZero(in.RunID),
 		Actor:               in.Actor,
 		BuildExecutor:       executor,
 		Actions:             actions,
 		Restart:             in.Restart,
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if store.IsUniqueViolation(err) {
 			return nil, ErrDeploymentInFlight
 		}
 		return nil, fmt.Errorf("deploy: create deployment: %w", err)
@@ -145,16 +145,4 @@ func setDeploymentStatusTx(ctx context.Context, q *store.Queries, id uuid.UUID,
 		return fmt.Errorf("deploy: set deployment status: %w", err)
 	}
 	return nil
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
-func nilWhenZero(id uuid.UUID) *uuid.UUID {
-	if id == uuid.Nil {
-		return nil
-	}
-	return &id
 }

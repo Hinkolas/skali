@@ -17,6 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/utils"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -219,7 +220,7 @@ func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptio
 	if completedRecord != nil {
 		if completedRecord.Cluster != preflight.Cluster ||
 			completedRecord.Node.Role != preflight.Role ||
-			!sameCapabilitySet(completedRecord.Node.Capabilities, opts.Capabilities) {
+			!utils.SameStrings(completedRecord.Node.Capabilities, opts.Capabilities) {
 			return nil, errors.New(
 				"this completed enrollment does not match the requested cluster, role, or capabilities")
 		}
@@ -294,14 +295,6 @@ func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptio
 
 func reconciledToken(value string) bool {
 	return strings.HasPrefix(strings.TrimSpace(value), clusterstate.TokenPrefix)
-}
-
-func sameCapabilitySet(left, right []string) bool {
-	left = append([]string(nil), left...)
-	right = append([]string(nil), right...)
-	slices.Sort(left)
-	slices.Sort(right)
-	return slices.Equal(left, right)
 }
 
 func reconciledClusterStore(ctx context.Context) (*clusterstate.Store, *installer.Record, error) {

@@ -11,10 +11,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/google/go-containerregistry/pkg/authn"
 )
 
@@ -142,13 +142,13 @@ func (d *Docker) runBuildx(ctx context.Context, req BuildRequest, output []strin
 	if req.Platform != "" {
 		args = append(args, "--platform", req.Platform)
 	}
-	for _, name := range sortedNames(req.Arguments) {
+	for _, name := range utils.SortedKeys(req.Arguments) {
 		args = append(args, "--build-arg", name+"="+req.Arguments[name])
 	}
 	// Secret values travel only through the child process environment and
 	// BuildKit secret mounts; they never appear in the argument list.
 	env := os.Environ()
-	for index, id := range sortedNames(req.SecretEnv) {
+	for index, id := range utils.SortedKeys(req.SecretEnv) {
 		variable := fmt.Sprintf("SKALI_BUILD_SECRET_%d", index)
 		args = append(args, "--secret", fmt.Sprintf("id=%s,env=%s", id, variable))
 		env = append(env, variable+"="+req.SecretEnv[id])
@@ -240,13 +240,4 @@ func streamLines(wg *sync.WaitGroup, reader io.Reader, sink ProgressSink) {
 	for scanner.Scan() {
 		sink.Line("info", scanner.Text())
 	}
-}
-
-func sortedNames[T any](m map[string]T) []string {
-	names := make([]string, 0, len(m))
-	for name := range m {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }

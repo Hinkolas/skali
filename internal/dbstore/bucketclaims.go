@@ -10,6 +10,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // EnsureBucketClaim records desired bucket capability for an owner. It
@@ -31,8 +32,8 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 			row, err = q.CreateBucketClaim(ctx, store.CreateBucketClaimParams{
 				ID:                           id,
 				OwnerKind:                    owner.Kind,
-				ProjectID:                    optionalID(owner.ProjectID),
-				EnvironmentID:                optionalID(owner.EnvironmentID),
+				ProjectID:                    utils.NilWhenZero(owner.ProjectID),
+				EnvironmentID:                utils.NilWhenZero(owner.EnvironmentID),
 				ServiceKey:                   owner.ServiceKey,
 				SystemKey:                    owner.SystemKey,
 				OwnerRef:                     owner.Ref,
@@ -91,7 +92,7 @@ func (s *Service) liveBucketClaim(ctx context.Context, q *store.Queries, owner O
 		return q.GetLiveSystemBucketClaim(ctx, owner.SystemKey)
 	}
 	return q.GetLiveServiceBucketClaim(ctx, store.GetLiveServiceBucketClaimParams{
-		EnvironmentID: optionalID(owner.EnvironmentID),
+		EnvironmentID: utils.NilWhenZero(owner.EnvironmentID),
 		ServiceKey:    owner.ServiceKey,
 	})
 }
@@ -112,7 +113,7 @@ func (s *Service) GetBucketClaim(ctx context.Context, id uuid.UUID) (*store.Buck
 // ErrNotFound.
 func (s *Service) LiveServiceBucketClaim(ctx context.Context, environmentID uuid.UUID, serviceKey string) (*store.BucketClaim, error) {
 	row, err := s.st.GetLiveServiceBucketClaim(ctx, store.GetLiveServiceBucketClaimParams{
-		EnvironmentID: optionalID(environmentID),
+		EnvironmentID: utils.NilWhenZero(environmentID),
 		ServiceKey:    serviceKey,
 	})
 	if err != nil {
@@ -126,7 +127,7 @@ func (s *Service) LiveServiceBucketClaim(ctx context.Context, environmentID uuid
 
 // ListEnvironmentBucketClaims returns the environment's live service claims.
 func (s *Service) ListEnvironmentBucketClaims(ctx context.Context, environmentID uuid.UUID) ([]store.BucketClaim, error) {
-	rows, err := s.st.ListLiveBucketClaimsByEnvironment(ctx, optionalID(environmentID))
+	rows, err := s.st.ListLiveBucketClaimsByEnvironment(ctx, utils.NilWhenZero(environmentID))
 	if err != nil {
 		return nil, fmt.Errorf("dbstore: list environment bucket claims: %w", err)
 	}

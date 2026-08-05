@@ -9,6 +9,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 const (
@@ -26,14 +27,14 @@ func NodeConfigSchema() (*jsonschema.Schema, error) {
 	schema.Schema = "https://json-schema.org/draft/2020-12/schema"
 	schema.Title = "Skali installer node configuration"
 	schema.Description = "Per-host install configuration consumed by skali cluster install --config."
-	schema.Properties["role"].Enum = enum(layout.RoleServer, layout.RoleAgent)
+	schema.Properties["role"].Enum = utils.AnySlice(layout.RoleServer, layout.RoleAgent)
 	capabilities := schema.Properties["capabilities"]
-	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: enum(layout.Capabilities...)}
+	capabilities.Items = &jsonschema.Schema{Type: "string", Enum: utils.AnySlice(layout.Capabilities...)}
 	capabilities.UniqueItems = true
-	schema.Properties["vm"].Properties["network"].Enum = enum("bridged", "shared", "user-v2")
+	schema.Properties["vm"].Properties["network"].Enum = utils.AnySlice("bridged", "shared", "user-v2")
 	bind := schema.Properties["network"].Properties["coordinatorBind"]
 	bind.Items = &jsonschema.Schema{
-		Type: "string", Enum: enum(NetworkScopeCluster, NetworkScopePublic),
+		Type: "string", Enum: utils.AnySlice(NetworkScopeCluster, NetworkScopePublic),
 	}
 	bind.UniqueItems = true
 	return schema, nil
@@ -72,12 +73,4 @@ func marshalSchema(build func() (*jsonschema.Schema, error)) ([]byte, error) {
 		return nil, err
 	}
 	return append(data, '\n'), nil
-}
-
-func enum(values ...string) []any {
-	result := make([]any, len(values))
-	for index, value := range values {
-		result[index] = value
-	}
-	return result
 }

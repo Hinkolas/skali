@@ -14,6 +14,7 @@ import (
 	"sort"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // Module decodes services of one type out of the canonical definition.
@@ -88,12 +89,7 @@ func (r *Registry) Get(serviceType string) (Module, bool) {
 }
 
 func (r *Registry) Types() []string {
-	types := make([]string, 0, len(r.modules))
-	for serviceType := range r.modules {
-		types = append(types, serviceType)
-	}
-	sort.Strings(types)
-	return types
+	return utils.SortedKeys(r.modules)
 }
 
 // ErrCycle: the dependency graph contains a cycle.

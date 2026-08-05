@@ -65,12 +65,3 @@ func TestSecurePathRejectsEscapes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(root, "a", "b", "c.txt"), inside)
 }
-
-func TestFileSHA256(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "f")
-	require.NoError(t, os.WriteFile(path, []byte("hello"), 0o644))
-	digest, size, err := fileSHA256(path)
-	require.NoError(t, err)
-	require.EqualValues(t, 5, size)
-	require.Equal(t, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", digest)
-}
