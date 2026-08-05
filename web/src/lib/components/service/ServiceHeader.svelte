@@ -11,7 +11,8 @@
 	// name, status and actions persist while the tabs below switch content.
 	let { service }: { service: ServiceView } = $props();
 
-	const health = $derived(envStatus.service(service.type, service.key)?.health ?? 'unknown');
+	const live = $derived(envStatus.service(service.type, service.key));
+	const health = $derived(live?.health ?? 'unknown');
 
 	// The first route whose domain renders to a plain literal becomes the
 	// "Open app" target; expression-typed domains cannot be resolved here.
@@ -43,7 +44,7 @@
 
 <PageHeader title={service.name}>
 	{#snippet titleTrailing()}
-		<StatusPill status={health} pill />
+		<StatusPill status={health} pill diagnostics={live?.diagnostics ?? []} />
 	{/snippet}
 	{#snippet subtitle()}
 		<span class="font-mono text-text-faint text-md">{subtitleText}</span>

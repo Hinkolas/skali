@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { renderExpression } from '$lib/types/definition';
 	import type { ServiceView } from '$lib/models/service';
 	import type { Project } from '$lib/types/project';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
@@ -48,15 +47,21 @@
 			<div class="font-mono text-text-faint truncate text-xs">{kindLabel}</div>
 		</div>
 		<span class="ml-auto flex-none">
-			<StatusPill status={health} />
+			<!-- Hover-only: the card is one big link, so the pill cannot take a
+			     tab stop of its own. Keyboard readers get the same diagnostics
+			     from the service header this card links to. -->
+			<StatusPill
+				status={health}
+				diagnostics={live?.diagnostics ?? []}
+				align="end"
+				focusable={false}
+			/>
 		</span>
 	</div>
 
 	{#if service.type === 'application'}
 		<div class="font-mono text-text-muted truncate text-sm">
-			{service.config.source.image ||
-				service.config.source.build?.context ||
-				'source'}
+			{service.config.source.image || service.config.source.build?.context || 'source'}
 		</div>
 		<div class="font-mono text-text-faint border-border-subtle flex gap-3 border-t pt-2.75 text-xs">
 			<span>
