@@ -212,6 +212,23 @@ func k3dVersionString(output string) string {
 	return ""
 }
 
+// VersionOlder reports dotted version a strictly older than b, tolerating
+// a leading "v"; false when either does not parse, so callers only act on
+// drift they can actually judge.
+func VersionOlder(a, b string) bool {
+	got, okA := parseVersion(a)
+	want, okB := parseVersion(b)
+	if !okA || !okB {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return got[i] < want[i]
+		}
+	}
+	return false
+}
+
 // versionAtLeast compares dotted numeric versions, tolerating a leading
 // "v" and non-numeric suffixes ("v5.9.0-rc.1"). An unparseable version is
 // accepted: refusing to run over a string we cannot judge would block dev

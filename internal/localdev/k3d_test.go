@@ -164,6 +164,27 @@ func TestVersionAtLeast(t *testing.T) {
 	}
 }
 
+func TestVersionOlder(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"v0.1.0", "v0.2.0", true},
+		{"v0.2.0", "v0.1.0", false},
+		{"v0.2.0", "v0.2.0", false},
+		{"v0.2.0", "v0.10.0", true}, // numeric, not lexical
+		{"0.1.0", "v0.2.0", true},   // leading v optional
+		{"v0.9.9", "v1.0.0", true},
+		{"weird", "v0.2.0", false}, // unjudgeable versions never report drift
+		{"v0.1.0", "weird", false},
+		{"", "v0.2.0", false},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, VersionOlder(c.a, c.b),
+			"VersionOlder(%q, %q)", c.a, c.b)
+	}
+}
+
 func TestK3dVersionString(t *testing.T) {
 	out := "k3d version v5.9.0\nk3s version v1.33.6-k3s1 (default)\n"
 	require.Equal(t, "v5.9.0", k3dVersionString(out))

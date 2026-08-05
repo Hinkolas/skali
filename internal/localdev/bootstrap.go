@@ -133,6 +133,9 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		if err := Create(ctx); err != nil {
 			return nil, err
 		}
+		// Create always uses the current pin; a recreation under retained
+		// state must not keep reporting the old cluster's k3s.
+		state.K3sImage = K3sImage
 		progress.Done(K3sImage + ", pinned")
 	case ClusterStopped:
 		progress.Start("Start k3d cluster " + ClusterName())

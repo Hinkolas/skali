@@ -444,7 +444,7 @@ func resolveSkalidImage(reader *bufio.Reader, promptAllowed bool, opts *installe
 	case releaseVersionPattern.MatchString(versionpkg.Version):
 		// A released installer has a published skalid image of the same
 		// version; the operator can still type any other reference.
-		defaultImage := "ghcr.io/hinkolas/skalid:" + versionpkg.Version
+		defaultImage := publishedSkalidRepo + versionpkg.Version
 		if !promptAllowed {
 			opts.SkalidImage = defaultImage
 			return nil

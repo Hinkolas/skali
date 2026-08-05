@@ -168,11 +168,26 @@ func newDevCommand() *cobra.Command {
 
 	up := &cobra.Command{
 		Use:   "up",
-		Short: "Fully converge the local platform (create, repair, upgrade)",
+		Short: "Fully converge the local platform (create, repair)",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			_, err := ensureLocalPlatform(command, skalidImage, true)
 			return err
+		},
+	}
+
+	upgrade := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Upgrade the local platform to this CLI's skalid version",
+		Long: "Moves the local platform's control plane to the skalid this CLI\n" +
+			"ships: the working-tree build inside the skali repository, the\n" +
+			"published image of the same version for a released CLI. Bare\n" +
+			"skali dev and skali dev up repair the platform but never change\n" +
+			"its version; this command is the one that does. Project data is\n" +
+			"retained. Downgrades are refused.",
+		Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, args []string) error {
+			return runDevUpgrade(command, skalidImage)
 		},
 	}
 
@@ -274,7 +289,7 @@ func newDevCommand() *cobra.Command {
 	}
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
-	command.AddCommand(up, status, logs, down, ls, stop, start, reset)
+	command.AddCommand(up, upgrade, status, logs, down, ls, stop, start, reset)
 	return command
 }
 
@@ -641,6 +656,11 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 		progress.Abort()
 		return nil, err
 	}
+	// A released CLI ahead of the platform names the gap once per session;
+	// nothing here changes versions (that stays skali dev upgrade's job).
+	if hint := upgradeHint(state.SkalidImage); hint != "" {
+		fmt.Fprintln(out, clirender.StyleFor(out).Yellow(hint))
+	}
 	if err := loginLocalRemote(ctx, state); err != nil {
 		return nil, err
 	}
@@ -663,7 +683,7 @@ func defaultSkalidImage(ctx context.Context, tasks *clirender.Tasks) string {
 		task.Fail()
 	}
 	if releaseVersionPattern.MatchString(versionpkg.Version) {
-		image := "ghcr.io/hinkolas/skalid:" + versionpkg.Version
+		image := publishedSkalidRepo + versionpkg.Version
 		task := tasks.Start("Pull " + image)
 		if err := localdev.EnsureHostImage(ctx, image); err == nil {
 			task.Done("")
