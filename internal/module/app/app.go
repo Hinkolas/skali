@@ -4,9 +4,8 @@
 // health evaluation is pure projection over the ObservedStore snapshot:
 // rollout progress from workload generations and update counts, member
 // diagnostics from pod states, and controller conditions, with the shared
-// stale-source guard short-circuiting to unknown. The apptest module keeps
-// serving registry and kernel tests; this module is what the daemon
-// registers.
+// stale-source guard short-circuiting to unknown. This module is what the
+// daemon registers and what the kernel and API tests exercise.
 package app
 
 import (

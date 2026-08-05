@@ -62,7 +62,7 @@ func TestPreparingDeploymentRunNotAdopted(t *testing.T) {
 	first := f.executeDeployment(t)
 	f.fake.SetFresh()
 	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", "",
-		module.WorkloadStatus{Desired: 1, Ready: 0})
+		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 	require.NoError(t, f.journal.FinishRun(ctx, first.RunID, journal.RunCancelled))
 
 	// A second deployment opens its artifact window: the run is running
@@ -143,7 +143,7 @@ func TestDeadlineFallbackToActive(t *testing.T) {
 	require.NotEqual(t, first.RevisionID, second.RevisionID)
 	f.kernel.cfg.RolloutDeadline = time.Nanosecond
 	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", "",
-		module.WorkloadStatus{Desired: 1, Ready: 0})
+		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
@@ -371,7 +371,7 @@ func TestRollbackDeadlineFallbackToActive(t *testing.T) {
 	require.NoError(t, err)
 	f.kernel.cfg.RolloutDeadline = time.Nanosecond
 	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", "",
-		module.WorkloadStatus{Desired: 1, Ready: 0})
+		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)

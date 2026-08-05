@@ -130,7 +130,7 @@ func TestEnvironmentStatusStream(t *testing.T) {
 
 	// An observation change for this environment triggers a re-send.
 	a.observed.SetWorkload(environmentID, "skali-demo-production", "demo-web", "web", "abcd",
-		module.WorkloadStatus{Desired: 2, Ready: 1})
+		module.WorkloadStatus{Desired: 2, Ready: 1, Updated: 2})
 	second := readStatusEvent()
 	require.Contains(t, second, envID)
 }

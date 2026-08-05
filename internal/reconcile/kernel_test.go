@@ -18,7 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
-	"github.com/Hinkolas/skali/internal/module/apptest"
+	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/module/bucket"
 	"github.com/Hinkolas/skali/internal/module/database"
 	"github.com/Hinkolas/skali/internal/observe"
@@ -118,7 +118,7 @@ func newKernelFixture(t *testing.T, cfg Config) *kernelFixture {
 	deploySvc := deploy.New(st, valueSvc, artifactSvc, "test")
 	journalSvc := journal.NewService(st, "kernel-test-boot-1")
 	registry := module.NewRegistry()
-	require.NoError(t, registry.Register(apptest.Module{}))
+	require.NoError(t, registry.Register(app.Module{}))
 	require.NoError(t, registry.Register(database.Module{}))
 	require.NoError(t, registry.Register(bucket.Module{}))
 	fake := observe.NewFake()
@@ -203,7 +203,7 @@ func (f *kernelFixture) markHealthy(t *testing.T) {
 	row, err := f.st.GetRevisionByID(context.Background(), *target.TargetRevisionID)
 	require.NoError(t, err)
 	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", row.Checksum[:16],
-		module.WorkloadStatus{Desired: 1, Ready: 1})
+		module.WorkloadStatus{Desired: 1, Ready: 1, Updated: 1})
 	f.fake.SetPod(f.environmentID, f.namespace, "web", "web-1", "node-a",
 		module.PodStatus{Phase: "Running", Ready: true})
 }
@@ -307,7 +307,7 @@ func TestReconcileDeadlineFailsRunKeepsTarget(t *testing.T) {
 	result := f.executeDeployment(t)
 	f.fake.SetFresh()
 	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", "",
-		module.WorkloadStatus{Desired: 1, Ready: 0})
+		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)

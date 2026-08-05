@@ -83,8 +83,8 @@ func newLiveFixture(t *testing.T, cfg Config, config *rest.Config) *liveFixture 
 	artifactSvc := artifactstore.New(st)
 	deploySvc := deploy.New(st, valueSvc, artifactSvc, "test")
 	journalSvc := journal.NewService(st, "live-boot-"+uuid.NewString()[:8])
-	// Live tests run the production application module; apptest keeps
-	// serving the pure kernel tests over the observe fake.
+	// Live tests run the production application module, same as the
+	// kernel tests over the observe fake.
 	registry := module.NewRegistry()
 	require.NoError(t, registry.Register(app.Module{}))
 

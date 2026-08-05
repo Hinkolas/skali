@@ -27,7 +27,7 @@ import (
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/module"
-	"github.com/Hinkolas/skali/internal/module/apptest"
+	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
@@ -75,7 +75,7 @@ func newTestAPI(t *testing.T) *testAPI {
 	deploySvc := deploy.New(st, values, artifactSvc, "test")
 	journalSvc := journal.NewService(st, uuid.NewString())
 	registryModules := module.NewRegistry()
-	require.NoError(t, registryModules.Register(apptest.Module{}))
+	require.NoError(t, registryModules.Register(app.Module{}))
 	observed := observe.NewFake()
 	kernel := reconcile.New(reconcile.Deps{
 		Store:    st,

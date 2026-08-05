@@ -19,7 +19,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubetest"
 	"github.com/Hinkolas/skali/internal/module"
-	"github.com/Hinkolas/skali/internal/module/apptest"
+	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/observe"
 )
 
@@ -346,7 +346,7 @@ func restartKernel(t *testing.T, f *liveFixture) *liveFixture {
 		Enqueue:        func(id uuid.UUID) { kernel.Enqueue(id) },
 	})
 	registry := module.NewRegistry()
-	require.NoError(t, registry.Register(apptest.Module{}))
+	require.NoError(t, registry.Register(app.Module{}))
 	kernel = New(Deps{
 		Store: f.st, Deploy: f.deploy, Values: f.values, Journal: journalSvc,
 		Registry: registry, Observed: observed, Source: source, Cluster: client,
