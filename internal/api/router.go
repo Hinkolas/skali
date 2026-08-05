@@ -17,6 +17,7 @@ import (
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/backup"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
@@ -72,6 +73,12 @@ type Deps struct {
 	// as the Skali-Instance header (and reported on /v1/system/meta) so
 	// clients can detect a reinstalled cluster; empty disables the header.
 	InstanceID string
+	// BackupTargets manages the external S3 backup locations; nil hides the
+	// backup target routes.
+	BackupTargets *backup.TargetStore
+	// Backups executes backup and restore operations; nil (API-only mode,
+	// no cluster) hides the backup routes.
+	Backups *backup.Controller
 }
 
 // StripAPIPrefix serves the router both at the root and under /api: the
@@ -258,6 +265,14 @@ func NewRouter(d Deps) http.Handler {
 					})
 				}
 
+				// Environment snapshots: create is 202-async like teardown,
+				// listing reads the S3 manifests.
+				if d.Backups != nil {
+					bkh := &backupsHandlers{backups: d.Backups, st: d.Store}
+					r.Post("/environments/{id}/backups", bkh.create)
+					r.Get("/environments/{id}/backups", bkh.list)
+				}
+
 				// Run journal reads; the SSE stream lives outside this group.
 				r.Get("/environments/{id}/runs", jh.list)
 				r.Get("/runs/{id}", jh.get)
@@ -268,6 +283,13 @@ func NewRouter(d Deps) http.Handler {
 					r.Delete("/projects/{id}", ph.delete)
 					r.Delete("/environments/{id}", eh.delete)
 					r.Post("/environments/{id}/teardown", eh.teardown)
+
+					// Restore replaces the environment's data; like
+					// teardown it needs sudo mode.
+					if d.Backups != nil {
+						bkh := &backupsHandlers{backups: d.Backups, st: d.Store}
+						r.Post("/environments/{id}/restore", bkh.restore)
+					}
 				})
 
 				// Instance management, admins only.
@@ -287,6 +309,14 @@ func NewRouter(d Deps) http.Handler {
 						r.Patch("/users/{id}", uh.update)
 						r.Delete("/users/{id}", uh.delete)
 						r.Post("/users/{id}/password", uh.resetPassword)
+
+						// The backup target holds external S3 credentials;
+						// reads and writes both stay behind sudo mode.
+						if d.BackupTargets != nil {
+							bth := &backupTargetHandlers{targets: d.BackupTargets}
+							r.Get("/system/backup-target", bth.get)
+							r.Put("/system/backup-target", bth.put)
+						}
 					})
 				})
 			})

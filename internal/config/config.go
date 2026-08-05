@@ -142,6 +142,15 @@ type API struct {
 	// BuildStaleTimeout bounds how long a local build may go without a
 	// heartbeat before the sweeper fails it and its deployment.
 	BuildStaleTimeout time.Duration `env:"BUILD_STALE_TIMEOUT,default=30m"`
+
+	// BackupWorkerImage overrides the image backup Jobs run the data-mover
+	// in; empty resolves the daemon's own Deployment image, which is right
+	// everywhere the bundle deployed skalid.
+	BackupWorkerImage string `env:"SKALI_BACKUP_WORKER_IMAGE,default="`
+
+	// BackupJobTimeout bounds one backup or restore Job (a database dump,
+	// upload, or volume archive) before it fails as stuck.
+	BackupJobTimeout time.Duration `env:"SKALI_BACKUP_JOB_TIMEOUT,default=1h"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.

@@ -62,6 +62,16 @@ func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UU
 		}
 		return attachment
 	}
+	switch run.Kind {
+	case "deployment", "rollback", "teardown", "reconcile":
+	default:
+		// The kernel adopts only runs whose lifecycle it owns. A backup or
+		// restore run is driven by the backup controller; adopting it would
+		// let a converged pass's activate() or the teardown path finish it
+		// mid-flight. The pass still reconciles, and its lazy run loses the
+		// StartRun race below, journaling nothing.
+		return attachment
+	}
 	if run.Kind == "deployment" {
 		// A deployment run in its artifact window still belongs to the build
 		// client: rollout journaling and the rollout deadline begin at

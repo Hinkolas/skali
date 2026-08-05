@@ -1446,6 +1446,81 @@ paths:
               schema: { $ref: "#/components/schemas/SystemMeta" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /v1/system/backup-target:
+    get:
+      operationId: getBackupTarget
+      summary: Get the configured backup target
+      description: |
+        Admin only, sudo mode. The external S3 location backups are written
+        to, without its secret access key: the secret is write-only and
+        never leaves the daemon after it is set.
+      tags: [backups]
+      responses:
+        "200":
+          description: The configured target.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target]
+                properties:
+                  target: { $ref: "#/components/schemas/BackupTarget" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No backup target is configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      operationId: putBackupTarget
+      summary: Configure the backup target
+      description: |
+        Admin only, sudo mode. Replaces the whole target; there are no
+        partial updates. The secret access key is encrypted at rest and
+        never returned by any read.
+      tags: [backups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, bucket, access_key_id, secret_access_key]
+              properties:
+                endpoint:
+                  type: string
+                  description: S3 endpoint URL (http or https).
+                region:
+                  type: string
+                bucket:
+                  type: string
+                prefix:
+                  type: string
+                  description: Key prefix inside the bucket; empty for the root.
+                access_key_id:
+                  type: string
+                secret_access_key:
+                  type: string
+                  description: Write-only; never returned by any read.
+      responses:
+        "200":
+          description: The stored target.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target]
+                properties:
+                  target: { $ref: "#/components/schemas/BackupTarget" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A field failed validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/nodes:
     get:
       operationId: listNodes
@@ -1546,6 +1621,147 @@ paths:
         "403": { $ref: "#/components/responses/ReauthRequired" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/environments/{id}/backups:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: createBackup
+      summary: Snapshot the environment's data
+      description: |
+        Accepts a manual backup of every database, bucket, and application
+        volume to the configured backup target as one complete snapshot,
+        executed as a journaled run of kind `backup`. Configuration and
+        secret values are deliberately not included: a snapshot restores
+        data into a redeployed environment. The environment must be active,
+        and the run claims the environment's single running-run slot.
+      tags: [backups]
+      responses:
+        "202":
+          description: Backup accepted; attach to the returned run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, backup_id]
+                properties:
+                  run_id: { type: string, format: uuid }
+                  backup_id: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Another run is in flight (`backup_in_flight`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: The environment is not active (`environment_not_active`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: |
+            No backup target is configured (`backup_target_unconfigured`)
+            or it did not answer (`backup_target_unreachable`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      operationId: listBackups
+      summary: List the environment's snapshots
+      description: |
+        The environment's snapshots, newest first, read from the backup
+        target's manifests rather than the control-plane database: after a
+        cluster reinstall the bucket is the only truth.
+      tags: [backups]
+      responses:
+        "200":
+          description: Snapshots on the backup target.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [snapshots]
+                properties:
+                  snapshots:
+                    type: array
+                    items: { $ref: "#/components/schemas/BackupSnapshot" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: |
+            No backup target is configured (`backup_target_unconfigured`)
+            or it did not answer (`backup_target_unreachable`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/environments/{id}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: restoreBackup
+      summary: Restore a snapshot into the environment
+      description: |
+        Destructive: stops the environment, replaces every matching
+        database, bucket, and volume with the snapshot's data, then
+        resumes the current revision, all as a journaled run of kind
+        `restore`. Components whose service key no longer exists are
+        skipped visibly. The environment must be active; on failure it
+        deliberately stays down rather than resuming over partial data.
+        Requires recent authentication (sudo mode).
+      tags: [backups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshot_id]
+              properties:
+                snapshot_id: { type: string }
+      responses:
+        "202":
+          description: Restore accepted; attach to the returned run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404":
+          description: |
+            Unknown environment, or no snapshot with this id exists on the
+            backup target (`snapshot_not_found`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Another run is in flight (`backup_in_flight`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: The environment is not active (`environment_not_active`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: |
+            No backup target is configured (`backup_target_unconfigured`)
+            or it did not answer (`backup_target_unreachable`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/projects/{id}/definitions:
     parameters:
@@ -2386,7 +2602,7 @@ components:
           format: uuid
         kind:
           type: string
-          description: "deployment, rollback, reconcile, or teardown."
+          description: "deployment, rollback, reconcile, teardown, backup, or restore."
         project_id:
           type: [string, "null"]
           format: uuid
@@ -2698,6 +2914,58 @@ components:
         instance_id:
           type: string
           format: uuid
+
+    BackupSnapshot:
+      type: object
+      description: One snapshot on the backup target, read from its manifest.
+      required: [id, created_at, revision_checksum, encryption, bytes]
+      properties:
+        id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        revision_checksum:
+          type: string
+        encryption:
+          type: string
+          description: Component object encryption; `none` in this release.
+        databases:
+          type: integer
+        buckets:
+          type: integer
+        volumes:
+          type: integer
+        bytes:
+          type: integer
+          format: int64
+
+    BackupTarget:
+      type: object
+      description: |
+        An external S3 backup location. The secret access key is write-only
+        and deliberately absent from this shape.
+      required: [name, endpoint, region, bucket, prefix, access_key_id, created_at, updated_at]
+      properties:
+        name:
+          type: string
+          description: Target name; the v1 surface manages the target named `default`.
+        endpoint:
+          type: string
+        region:
+          type: string
+        bucket:
+          type: string
+        prefix:
+          type: string
+        access_key_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Node:
       type: object

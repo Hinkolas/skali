@@ -71,6 +71,41 @@ func main() {
 		}
 		fmt.Fprintf(w, "visits: %d\n", count)
 	})
+	// Disk notes live on the persistent volume: PUT writes a file under
+	// the mount, GET reads it back, exercising volume persistence.
+	disk := os.Getenv("DISK_PATH")
+	if disk == "" {
+		disk = "/data"
+	}
+	http.HandleFunc("/disk/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/disk/")
+		if name == "" || strings.Contains(name, "/") {
+			http.Error(w, "file name required", http.StatusBadRequest)
+			return
+		}
+		path := disk + "/" + name
+		switch r.Method {
+		case http.MethodPut, http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err == nil {
+				err = os.WriteFile(path, body, 0o644)
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprintf(w, "stored %s\n", name)
+		case http.MethodGet:
+			data, err := os.ReadFile(path)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(data)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
 	// Notes live in the bucket: PUT stores the body as an object, GET reads
 	// it back through the same injected credentials.
 	http.HandleFunc("/notes/", func(w http.ResponseWriter, r *http.Request) {

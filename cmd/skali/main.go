@@ -34,7 +34,7 @@ func main() {
 	root.AddCommand(newRemoteCmd(), newValidateCmd(), newCompileCmd(),
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
 		newDevCommand(), newRunCommand(), newLogsCommand(),
-		newValuesCommand(), newClusterCommand(), newSkillCommand())
+		newValuesCommand(), newBackupCommand(), newClusterCommand(), newSkillCommand())
 
 	if err := root.Execute(); err != nil {
 		style := clirender.StyleFor(os.Stderr)

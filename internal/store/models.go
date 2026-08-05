@@ -51,12 +51,40 @@ type Attempt struct {
 	FinishedAt *time.Time
 }
 
+type Backup struct {
+	ID              uuid.UUID
+	Kind            string
+	EnvironmentID   uuid.UUID
+	ProjectName     string
+	EnvironmentName string
+	Status          string
+	SnapshotKey     string
+	RevisionID      *uuid.UUID
+	RunID           *uuid.UUID
+	Error           *string
+	CreatedAt       time.Time
+	FinishedAt      *time.Time
+}
+
 type BackupCode struct {
 	ID          uuid.UUID
 	TwoFactorID uuid.UUID
 	CodeHash    string
 	UsedAt      *time.Time
 	CreatedAt   time.Time
+}
+
+type BackupTarget struct {
+	ID              uuid.UUID
+	Name            string
+	Endpoint        string
+	Region          string
+	Bucket          string
+	Prefix          string
+	AccessKeyID     string
+	SecretAccessKey []byte
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type BucketAllocation struct {
@@ -114,17 +142,6 @@ type Build struct {
 	UpdatedAt      time.Time
 	StartedAt      *time.Time
 	FinishedAt     *time.Time
-}
-
-type DatabaseBackup struct {
-	ID         uuid.UUID
-	ClaimID    *uuid.UUID
-	ClusterID  *uuid.UUID
-	Kind       string
-	Status     string
-	RunID      *uuid.UUID
-	CreatedAt  time.Time
-	FinishedAt *time.Time
 }
 
 type DatabaseClaim struct {

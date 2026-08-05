@@ -556,6 +556,14 @@ func durationSeconds(milliseconds int64) int32 {
 	return int32(seconds)
 }
 
+// VolumeClaimName is the PVC name of one application volume, for callers
+// outside rendering (the backup engine mounts the PVC into its Jobs). It
+// must mirror the render path exactly: the application object name first,
+// then the volume key, each pass applying the length cap.
+func VolumeClaimName(project, application, volume string) string {
+	return objectName(objectName(project, application), volume)
+}
+
 func objectName(parts ...string) string {
 	value := strings.ToLower(strings.Join(parts, "-"))
 	value = strings.Trim(value, "-")

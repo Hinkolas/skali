@@ -385,3 +385,45 @@ func TestRollbackDeadlineFallbackToActive(t *testing.T) {
 		"the target returns to the revision the rollback left")
 	require.Equal(t, second.RevisionID, *target.ActiveRevisionID)
 }
+
+// A backup or restore run holds the environment's single running-run slot
+// while its controller moves data. The kernel must not adopt it: a
+// converged pass's activate() would finish it succeeded mid-flight, and a
+// teardown pass would do the same during a stop-first restore. The pass
+// still reconciles; only the journaling is withheld.
+func TestBackupRunNotAdoptedOrFinished(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Nanosecond})
+	ctx := context.Background()
+
+	// Converge the environment fully.
+	f.executeDeployment(t)
+	f.fake.SetFresh()
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+
+	// A backup run claims the running slot, as the backup controller would.
+	backupRun, err := f.journal.CreateRun(ctx, journal.RunInput{
+		Kind:          "backup",
+		ProjectID:     f.projectID,
+		EnvironmentID: f.environmentID,
+		Actor:         "tester",
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.journal.StartRun(ctx, backupRun.ID))
+
+	// A converged pass (audit, resync, watch poke) must leave it running,
+	// even under an expired rollout deadline.
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+
+	run, err := f.st.GetRunByID(ctx, backupRun.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", run.Status,
+		"the kernel must not adopt or finish a backup run")
+	require.Empty(t, f.pendingRuns(t),
+		"the pass's lazy run loses the StartRun race and is discarded, not stranded")
+}

@@ -15,6 +15,13 @@ applications:
         port: 8080
         protocol: http
 
+    # A persistent volume beside the database and bucket, so the example
+    # (and the backup e2e suite) exercises every stateful kind.
+    volumes:
+      disk:
+        mountPath: /data
+        size: 1GB
+
     routes:
       public:
         domain: "${APP_DOMAIN}"

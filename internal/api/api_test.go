@@ -21,6 +21,7 @@ import (
 	apispec "github.com/Hinkolas/skali/api"
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/backup"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
@@ -67,6 +68,8 @@ func newTestAPI(t *testing.T) *testAPI {
 	svc, err := auth.New(st, auth.Config{Secret: strings.Repeat("s", 32)})
 	require.NoError(t, err)
 	values, err := valuestore.New(st, strings.Repeat("s", 32))
+	require.NoError(t, err)
+	backupTargets, err := backup.NewTargetStore(st, strings.Repeat("s", 32))
 	require.NoError(t, err)
 	artifactSvc := artifactstore.New(st)
 	deploySvc := deploy.New(st, values, artifactSvc, "test")
@@ -138,9 +141,14 @@ func newTestAPI(t *testing.T) *testAPI {
 		RuntimeLogs:        &runtimelogs.Streamer{Observed: observed.Store, Store: st},
 		Capabilities:       []string{"application", "edge", "database"},
 		Databases:          dbstore.New(st),
-		Version:            "test",
-		InstanceName:       "Test Instance",
-		InstanceID:         testInstanceID,
+		BackupTargets:      backupTargets,
+		Backups: backup.New(backup.Deps{
+			Store: st, Journal: journalSvc, Values: values,
+			DB: dbstore.New(st), Deploy: deploySvc, Targets: backupTargets,
+		}, backup.Config{}),
+		Version:      "test",
+		InstanceName: "Test Instance",
+		InstanceID:   testInstanceID,
 		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
 			return map[string][]byte{
 				"username":   []byte("u_" + name),
@@ -619,6 +627,8 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	spec := string(apispec.OpenAPI)
 	values, err := valuestore.New(a.st, strings.Repeat("s", 32))
 	require.NoError(t, err)
+	backupTargets, err := backup.NewTargetStore(a.st, strings.Repeat("s", 32))
+	require.NoError(t, err)
 	deploySvc := deploy.New(a.st, values, artifactstore.New(a.st), "test")
 	journalSvc := journal.NewService(a.st, uuid.NewString())
 	router := NewRouter(Deps{
@@ -635,7 +645,12 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 			Store: a.st, Deploy: deploySvc, Values: values, Journal: journalSvc,
 			Registry: module.NewRegistry(), Observed: observe.NewFake().Store,
 		}, reconcile.Config{}),
-		Registry: &registry.Client{},
+		Registry:      &registry.Client{},
+		BackupTargets: backupTargets,
+		Backups: backup.New(backup.Deps{
+			Store: a.st, Journal: journalSvc, Values: values,
+			DB: dbstore.New(a.st), Deploy: deploySvc, Targets: backupTargets,
+		}, backup.Config{}),
 	}).(chi.Routes)
 
 	routes := 0
@@ -649,5 +664,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 60, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 65, routes, "route count changed; update the OpenAPI spec and this number")
 }

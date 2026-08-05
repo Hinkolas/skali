@@ -1,0 +1,39 @@
+{
+  "format_version": "1",
+  "snapshot_id": "0198c0de-0000-7000-8000-000000000001",
+  "encryption": "none",
+  "created_at": "2026-08-05T03:00:00Z",
+  "skali_version": "test",
+  "project": "guestbook",
+  "environment": "production",
+  "revision_checksum": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "revision": {
+    "schemaVersion": "1"
+  },
+  "components": [
+    {
+      "kind": "database",
+      "service_key": "data",
+      "object_key": "skali/v1/guestbook/production/databases/data/0198c0de-0000-7000-8000-000000000001.dump",
+      "bytes": 4096,
+      "sha256": "aabb",
+      "status": "complete"
+    },
+    {
+      "kind": "bucket",
+      "service_key": "assets",
+      "object_prefix": "skali/v1/guestbook/production/buckets/assets/0198c0de-0000-7000-8000-000000000001/",
+      "object_count": 3,
+      "bytes": 1024,
+      "status": "complete"
+    },
+    {
+      "kind": "volume",
+      "application": "web",
+      "volume": "state",
+      "object_key": "skali/v1/guestbook/production/volumes/web/state/0198c0de-0000-7000-8000-000000000001.tar.zst",
+      "bytes": 2048,
+      "status": "complete"
+    }
+  ]
+}

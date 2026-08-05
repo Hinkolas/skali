@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minio/minio-go/v7"
+	miniocredentials "github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
 )
 
@@ -565,4 +567,118 @@ func TestDevGuestbookDatabase(t *testing.T) {
 		status, body := h.route("/notes/e2e")
 		return status == http.StatusOK && body == "stored through skali buckets"
 	}, 2*time.Minute, 3*time.Second, "the stored note must survive down")
+}
+
+// TestDevGuestbookBackupRestore is the backup slice's acceptance loop, the
+// REWORK_V2 17.3 destroy-and-restore requirement in miniature: snapshot an
+// environment bearing all three data kinds to an external S3 target, purge
+// the environment completely, redeploy it empty, and restore the data by
+// snapshot id, with the fresh installation learning about the snapshot
+// purely from the bucket.
+func TestDevGuestbookBackupRestore(t *testing.T) {
+	h := newE2EHarnessFor(t, "guestbook", "guestbook.localhost")
+
+	// A MinIO container on the host is the external S3 target; pods and
+	// skalid reach it as host.k3d.internal.
+	const minioName = "skali-e2e-minio"
+	const minioPort = 19100
+	_ = exec.Command("docker", "rm", "-f", minioName).Run()
+	out, err := exec.Command("docker", "run", "-d", "--name", minioName,
+		"-p", fmt.Sprintf("127.0.0.1:%d:9000", minioPort),
+		"minio/minio", "server", "/data").CombinedOutput()
+	require.NoError(t, err, "start minio: %s", out)
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", minioName).Run() })
+	makeMinioBucket(t, fmt.Sprintf("127.0.0.1:%d", minioPort), "skali-backups")
+
+	run := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
+	require.Contains(t, run, "ready")
+	h.waitRoute("visits: ", 10*time.Minute)
+
+	// Seed all three data kinds: database rows, a bucket object, a file on
+	// the persistent volume.
+	status, body := h.request(http.MethodPut, "/notes/e2e", "bucket note survives reinstall")
+	require.Equal(t, http.StatusOK, status, "store note: %s", body)
+	status, body = h.request(http.MethodPut, "/disk/e2e", "disk note survives reinstall")
+	require.Equal(t, http.StatusOK, status, "store disk file: %s", body)
+	// Pad the history so the fresh environment (whose own health polls
+	// insert a few rows) can never catch up to the snapshot's count.
+	h.route("/")
+	h.route("/")
+	var before int
+	_, body = h.route("/")
+	_, err = fmt.Sscanf(body, "visits: %d", &before)
+	require.NoError(t, err, "unexpected body %q", body)
+
+	run = h.run(false, "", "backup", "target", "set",
+		"--endpoint", fmt.Sprintf("http://host.k3d.internal:%d", minioPort),
+		"--bucket", "skali-backups",
+		"--access-key", "minioadmin", "--secret-key", "minioadmin")
+	require.Contains(t, run, "backup target set")
+
+	run = h.run(false, "", "backup", "create", "--environment", "local")
+	require.Contains(t, run, "backup complete")
+
+	run = h.run(false, "", "backup", "ls", "--environment", "local")
+	match := regexp.MustCompile(`(?m)^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})  `).
+		FindStringSubmatch(run)
+	require.NotNil(t, match, "no snapshot id in:\n%s", run)
+	snapshot := match[1]
+
+	// The wipe: purge removes the namespace, volumes, claims, and the
+	// environment row itself, the closest local stand-in for a cluster
+	// reinstall.
+	run = h.run(false, "y\n", "dev", "down", "--purge")
+	require.Contains(t, run, "is purged from the local platform")
+
+	// Redeploy fresh and prove all three data kinds are empty.
+	run = h.run(false, "", "dev", "-d")
+	require.Contains(t, run, "ready")
+	h.waitRoute("visits: ", 6*time.Minute)
+	var fresh int
+	_, body = h.route("/")
+	_, err = fmt.Sscanf(body, "visits: %d", &fresh)
+	require.NoError(t, err, "unexpected body %q", body)
+	require.Less(t, fresh, before, "the purge must reset the visit history")
+	_, body = h.route("/notes/e2e")
+	require.NotEqual(t, "bucket note survives reinstall", body, "the purge must reset the bucket")
+	status, _ = h.route("/disk/e2e")
+	require.Equal(t, http.StatusNotFound, status, "the purge must reset the volume")
+
+	// The fresh environment knows nothing in its database; the listing
+	// comes purely from the S3 manifests.
+	run = h.run(false, "", "backup", "ls", "--environment", "local")
+	require.Contains(t, run, snapshot)
+
+	run = h.run(false, "", "backup", "restore", snapshot, "--environment", "local", "--yes")
+	require.Contains(t, run, "restore complete")
+
+	// Every data kind is back: the dump's rows (plus this read's insert),
+	// the bucket object, the volume file.
+	h.waitRoute("visits: ", 4*time.Minute)
+	var after int
+	_, body = h.route("/")
+	_, err = fmt.Sscanf(body, "visits: %d", &after)
+	require.NoError(t, err, "unexpected body %q", body)
+	require.Greater(t, after, before, "the restored visit history must include the pre-purge rows")
+	require.Eventually(t, func() bool {
+		_, body := h.route("/notes/e2e")
+		return body == "bucket note survives reinstall"
+	}, 2*time.Minute, 3*time.Second, "the bucket note must be restored")
+	_, body = h.route("/disk/e2e")
+	require.Equal(t, "disk note survives reinstall", body, "the disk note must be restored")
+}
+
+// makeMinioBucket waits for the test MinIO to answer and creates the
+// backup bucket through its S3 API.
+func makeMinioBucket(t *testing.T, endpoint, bucket string) {
+	t.Helper()
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:        miniocredentials.NewStaticV4("minioadmin", "minioadmin", ""),
+		Secure:       false,
+		BucketLookup: minio.BucketLookupPath,
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return client.MakeBucket(t.Context(), bucket, minio.MakeBucketOptions{}) == nil
+	}, time.Minute, time.Second, "minio never became ready")
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/Hinkolas/skali/internal/api"
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/backup"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/dbstore"
@@ -71,6 +72,10 @@ func run() error {
 		return runUser(args[1:])
 	case "migrate":
 		return runMigrate(args[1:])
+	case "backup-worker":
+		// The in-Job data mover; never invoked by operators directly, so it
+		// stays out of the unknown-command listing.
+		return backup.RunWorker(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (available: serve, user, migrate)", args[0])
 	}
@@ -124,6 +129,10 @@ func runServe() error {
 	artifactSvc := artifactstore.New(st)
 	buildSvc := buildstore.New(st)
 	deploySvc := deploy.New(st, valueSvc, artifactSvc, versionpkg.Version)
+	backupTargets, err := backup.NewTargetStore(st, cfg.AuthSecret)
+	if err != nil {
+		return err
+	}
 
 	// The managed-registry client; an empty SKALI_REGISTRY_HOST disables
 	// the build and import surfaces (API-only or values-only development).
@@ -241,6 +250,30 @@ func runServe() error {
 	kernel = reconcile.New(kernelDeps, reconcileCfg)
 	deploySvc.SetEnqueuer(kernel)
 
+	// The backup controller runs beside the kernel and the substrate with
+	// its own queue: backup and restore runs are operational work driven by
+	// durable backup rows, never by the environment converge loop.
+	var backupCtl *backup.Controller
+	if kubeClient != nil {
+		backupCtl = backup.New(backup.Deps{
+			Store:   st,
+			Journal: journalSvc,
+			Values:  valueSvc,
+			DB:      dbstore.New(st),
+			Deploy:  deploySvc,
+			Kube:    kubeClient,
+			Targets: backupTargets,
+			Enqueue: func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+			Version: versionpkg.Version,
+		}, backup.Config{
+			WorkerImage: cfg.BackupWorkerImage,
+			JobTimeout:  cfg.BackupJobTimeout,
+		})
+		if err := backupCtl.RecoverOnBoot(ctx); err != nil {
+			return fmt.Errorf("recover backups: %w", err)
+		}
+	}
+
 	runtimeLogs := &runtimelogs.Streamer{Observed: observed, Store: st}
 	// The sanctioned request-time Secret read behind credential reveal.
 	var secretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
@@ -277,6 +310,8 @@ func runServe() error {
 			Version:            versionpkg.Version,
 			InstanceName:       cfg.InstanceName,
 			InstanceID:         instanceID.String(),
+			BackupTargets:      backupTargets,
+			Backups:            backupCtl,
 		})),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -298,6 +333,9 @@ func runServe() error {
 			slog.Error("reconcile kernel stopped", "err", err)
 		}
 	}()
+	if backupCtl != nil {
+		go backupCtl.Run(loopCtx)
+	}
 	if substrateCtl != nil {
 		go substrateCtl.Run(loopCtx)
 		// The SeaweedFS provider observer (REWORK_V2 7.4): poll-based, its

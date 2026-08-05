@@ -47,6 +47,13 @@ const (
 	codePlatformMismatch        = "platform_mismatch"
 	codeInvalidValues           = "invalid_values"
 	codeUnsupportedSchema       = "unsupported_schema"
+
+	// Backups.
+	codeBackupInFlight           = "backup_in_flight"
+	codeBackupTargetUnconfigured = "backup_target_unconfigured"
+	codeBackupTargetUnreachable  = "backup_target_unreachable"
+	codeEnvironmentNotActive     = "environment_not_active"
+	codeSnapshotNotFound         = "snapshot_not_found"
 )
 
 // writeInternalError logs the real error and reports an opaque 500.

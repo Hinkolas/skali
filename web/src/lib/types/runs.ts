@@ -1,6 +1,6 @@
 // Shapes mirror the skali API (api/openapi.yaml), snake_case included.
 
-export type RunKind = 'deployment' | 'rollback' | 'teardown' | 'reconcile';
+export type RunKind = 'deployment' | 'rollback' | 'teardown' | 'reconcile' | 'backup' | 'restore';
 
 export type RunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 

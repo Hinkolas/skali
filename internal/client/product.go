@@ -552,3 +552,100 @@ func (c *Client) EnvironmentStatus(ctx context.Context, environmentID string) (*
 	}
 	return &res, nil
 }
+
+// BackupTarget is a backup location as the API reports it: everything
+// except the secret access key, which is write-only.
+type BackupTarget struct {
+	Name        string `json:"name"`
+	Endpoint    string `json:"endpoint"`
+	Region      string `json:"region"`
+	Bucket      string `json:"bucket"`
+	Prefix      string `json:"prefix"`
+	AccessKeyID string `json:"access_key_id"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// BackupTargetInput is one complete backup target write; there are no
+// partial updates.
+type BackupTargetInput struct {
+	Endpoint        string `json:"endpoint"`
+	Region          string `json:"region"`
+	Bucket          string `json:"bucket"`
+	Prefix          string `json:"prefix"`
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+}
+
+func (c *Client) GetBackupTarget(ctx context.Context) (*BackupTarget, error) {
+	var res struct {
+		Target BackupTarget `json:"target"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/system/backup-target", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res.Target, nil
+}
+
+func (c *Client) PutBackupTarget(ctx context.Context, input BackupTargetInput) (*BackupTarget, error) {
+	var res struct {
+		Target BackupTarget `json:"target"`
+	}
+	if err := c.do(ctx, http.MethodPut, "/v1/system/backup-target", input, &res); err != nil {
+		return nil, err
+	}
+	return &res.Target, nil
+}
+
+// BackupSnapshot is one listable snapshot, read from its S3 manifest.
+type BackupSnapshot struct {
+	ID               string `json:"id"`
+	CreatedAt        string `json:"created_at"`
+	RevisionChecksum string `json:"revision_checksum"`
+	Encryption       string `json:"encryption"`
+	Databases        int    `json:"databases"`
+	Buckets          int    `json:"buckets"`
+	Volumes          int    `json:"volumes"`
+	Bytes            int64  `json:"bytes"`
+}
+
+// CreateBackupResult identifies the accepted backup operation.
+type CreateBackupResult struct {
+	RunID    string `json:"run_id"`
+	BackupID string `json:"backup_id"`
+}
+
+// CreateBackup requests a manual snapshot of the environment's data.
+func (c *Client) CreateBackup(ctx context.Context, environmentID string) (*CreateBackupResult, error) {
+	var res CreateBackupResult
+	if err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/backups", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// ListBackups returns the environment's snapshots, newest first.
+func (c *Client) ListBackups(ctx context.Context, environmentID string) ([]BackupSnapshot, error) {
+	var res struct {
+		Snapshots []BackupSnapshot `json:"snapshots"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/environments/"+environmentID+"/backups", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Snapshots, nil
+}
+
+// RestoreBackup requests a stop-first restore of one snapshot into the
+// environment; the environment stops, data is replaced, and the current
+// revision resumes.
+func (c *Client) RestoreBackup(ctx context.Context, environmentID, snapshotID string) (string, error) {
+	var res struct {
+		RunID string `json:"run_id"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/restore",
+		map[string]string{"snapshot_id": snapshotID}, &res)
+	if err != nil {
+		return "", err
+	}
+	return res.RunID, nil
+}
