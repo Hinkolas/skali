@@ -60,8 +60,8 @@ func PlanTier(status *Status) (TierPlan, error) {
 	plan.Deployed = status.DeployedTier
 	plan.Available = status.AvailableTier
 	plan.DatabaseNodes = status.DatabaseNodes
-	plan.Instances = bundle.TierInstances(status.AvailableTier)
-	plan.Downgrade = plan.Instances < bundle.TierInstances(status.DeployedTier)
+	plan.Instances = layout.TierInstances(status.AvailableTier)
+	plan.Downgrade = plan.Instances < layout.TierInstances(status.DeployedTier)
 	return plan, nil
 }
 

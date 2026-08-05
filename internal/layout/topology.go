@@ -15,7 +15,9 @@ const (
 // database-capable nodes supports. One node runs a single instance, two allow
 // asynchronous replication, and three or more allow synchronous quorum
 // replication. Tier changes after initialization are explicit installer
-// operations, never side effects of node membership changes.
+// operations, never side effects of node membership changes. As
+// TierInstances' inverse it also reads a deployed instance count back as
+// the tier it represents, for tier-drift detection.
 func DeriveTier(databaseNodes int) Tier {
 	switch {
 	case databaseNodes >= 3:
@@ -24,6 +26,20 @@ func DeriveTier(databaseNodes int) Tier {
 		return TierAsynchronous
 	default:
 		return TierSingle
+	}
+}
+
+// TierInstances maps a database availability tier to its instance count,
+// one instance per node the tier requires: single 1, asynchronous 2,
+// synchronous 3.
+func TierInstances(tier Tier) int {
+	switch tier {
+	case TierSynchronous:
+		return 3
+	case TierAsynchronous:
+		return 2
+	default:
+		return 1
 	}
 }
 

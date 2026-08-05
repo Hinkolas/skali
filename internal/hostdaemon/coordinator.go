@@ -775,7 +775,7 @@ func (d *CoordinatorDaemon) verifyTarget(ctx context.Context, from,
 			databaseNodes++
 		}
 	}
-	instances := bundle.TierInstances(layout.DeriveTier(databaseNodes))
+	instances := layout.TierInstances(layout.DeriveTier(databaseNodes))
 	if err := (&bundle.Applier{Client: client}).WaitClusterReady(ctx,
 		bundle.Namespace, "skali-db", instances); err != nil {
 		return fmt.Errorf("verify database replication: %w", err)

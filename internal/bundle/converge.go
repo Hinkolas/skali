@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/layout"
 )
 
 // Progress narrates converge stages: Start begins a stage, Done concludes
@@ -111,7 +112,7 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	instances := 1
 	tier := "single"
 	if production != nil {
-		instances = TierInstances(production.DatabaseTier)
+		instances = layout.TierInstances(production.DatabaseTier)
 		tier = string(production.DatabaseTier)
 	}
 	if err := applier.WaitClusterReady(ctx, Namespace, "skali-db", instances); err != nil {

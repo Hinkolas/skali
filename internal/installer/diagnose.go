@@ -528,7 +528,7 @@ func diagnoseDatabase(ctx context.Context, client *kube.Client, diagnosis *Diagn
 	if phase == "Cluster in healthy state" && readyInstances >= instances {
 		diagnosis.Checks = append(diagnosis.Checks, Check{
 			Name:   "bootstrap database",
-			Detail: fmt.Sprintf("healthy (%s)", bundle.TierFromInstances(int(instances))),
+			Detail: fmt.Sprintf("healthy (%s)", layout.DeriveTier(int(instances))),
 		})
 		return false
 	}

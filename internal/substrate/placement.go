@@ -158,7 +158,7 @@ func (c *Controller) selectPool(ctx context.Context, claim store.DatabaseClaim, 
 		return c.createPool(ctx, poolPlan{
 			engine: engine, major: major, class: dbstore.ClassEnvironment,
 			name:          poolPrefix(engine, major) + "-env-" + utils.ShortID(environmentID),
-			tier:          tierForNodes(requiredNodes(claim.Availability)),
+			tier:          layout.DeriveTier(requiredNodes(claim.Availability)),
 			environmentID: environmentID,
 		})
 	case "dedicated":
@@ -172,7 +172,7 @@ func (c *Controller) selectPool(ctx context.Context, claim store.DatabaseClaim, 
 		return c.createPool(ctx, poolPlan{
 			engine: engine, major: major, class: dbstore.ClassDedicated,
 			name:         poolPrefix(engine, major) + "-ded-" + utils.ShortID(claim.ID),
-			tier:         tierForNodes(requiredNodes(claim.Availability)),
+			tier:         layout.DeriveTier(requiredNodes(claim.Availability)),
 			claimID:      claim.ID,
 			storageBytes: claim.StorageBytes,
 		})
@@ -195,7 +195,7 @@ func (c *Controller) createPool(ctx context.Context, plan poolPlan) (*store.Data
 	if storage < floor {
 		storage = floor
 	}
-	instances := bundleTierInstances(plan.tier)
+	instances := layout.TierInstances(plan.tier)
 	pool, err := c.deps.DB.CreateCluster(ctx, dbstore.ClusterInput{
 		Name:          plan.name,
 		Engine:        plan.engine,
@@ -211,29 +211,4 @@ func (c *Controller) createPool(ctx context.Context, plan poolPlan) (*store.Data
 		return nil, err
 	}
 	return pool, nil
-}
-
-// tierForNodes maps a node requirement back onto the availability tier.
-func tierForNodes(nodes int) layout.Tier {
-	switch {
-	case nodes >= 3:
-		return layout.TierSynchronous
-	case nodes == 2:
-		return layout.TierAsynchronous
-	default:
-		return layout.TierSingle
-	}
-}
-
-// bundleTierInstances mirrors bundle.TierInstances without importing the
-// installer bundle: one instance per tier level.
-func bundleTierInstances(tier layout.Tier) int {
-	switch tier {
-	case layout.TierSynchronous:
-		return 3
-	case layout.TierAsynchronous:
-		return 2
-	default:
-		return 1
-	}
 }

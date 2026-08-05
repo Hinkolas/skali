@@ -93,9 +93,6 @@ func TestProductionDatabaseTiers(t *testing.T) {
 		require.NoError(t, err, golden)
 		require.Equal(t, string(expected), source, golden)
 	}
-	require.Equal(t, 1, TierInstances(layout.TierSingle))
-	require.Equal(t, 2, TierInstances(layout.TierAsynchronous))
-	require.Equal(t, 3, TierInstances(layout.TierSynchronous))
 }
 
 func TestRenderProductionObjects(t *testing.T) {

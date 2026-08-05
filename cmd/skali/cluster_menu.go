@@ -618,7 +618,7 @@ func printTierDriftBlock(out *os.File, status *installer.Status) {
 // so entry [2] names what applying it would do.
 func verboseMenu(status *installer.Status) string {
 	tierAction := "upgrade system databases to " + string(status.AvailableTier)
-	if bundleTierRank(status.AvailableTier) < bundleTierRank(status.DeployedTier) {
+	if layout.TierInstances(status.AvailableTier) < layout.TierInstances(status.DeployedTier) {
 		tierAction = "downgrade system databases to " + string(status.AvailableTier)
 	}
 	return "" +
@@ -627,17 +627,6 @@ func verboseMenu(status *installer.Status) string {
 		"  [3] upgrade       k3s / bundle versions\n" +
 		"  [4] repair        diagnose and repair\n" +
 		"  [5] uninstall     scoped removal\n"
-}
-
-func bundleTierRank(tier layout.Tier) int {
-	switch tier {
-	case layout.TierSynchronous:
-		return 3
-	case layout.TierAsynchronous:
-		return 2
-	default:
-		return 1
-	}
 }
 
 func hostLabel(detected *installer.Host) string {

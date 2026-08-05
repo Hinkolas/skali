@@ -181,7 +181,7 @@ func GatherStatus(ctx context.Context, runner host.Runner) (*Status, error) {
 	}
 	status.Components, status.DatabaseInstances = gatherComponents(ctx, client)
 	if status.DatabaseInstances > 0 {
-		status.DeployedTier = bundle.TierFromInstances(status.DatabaseInstances)
+		status.DeployedTier = layout.DeriveTier(status.DatabaseInstances)
 	}
 	return status, nil
 }
@@ -227,7 +227,7 @@ func databaseComponent(ctx context.Context, client *kube.Client) (ComponentStatu
 	healthy := phase == "Cluster in healthy state" && ready >= instances
 	detail := fmt.Sprintf("%d/%d instances ready", ready, instances)
 	if healthy {
-		detail = fmt.Sprintf("healthy (%s)", bundle.TierFromInstances(int(instances)))
+		detail = fmt.Sprintf("healthy (%s)", layout.DeriveTier(int(instances)))
 	}
 	return ComponentStatus{Name: "database", Healthy: healthy, Detail: detail}, int(instances)
 }

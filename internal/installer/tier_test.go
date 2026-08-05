@@ -5,18 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/layout"
 )
-
-func TestTierFromInstancesRoundTrip(t *testing.T) {
-	t.Parallel()
-	for _, tier := range []layout.Tier{layout.TierSingle, layout.TierAsynchronous, layout.TierSynchronous} {
-		require.Equal(t, tier, bundle.TierFromInstances(bundle.TierInstances(tier)))
-	}
-	require.Equal(t, layout.TierSingle, bundle.TierFromInstances(0))
-	require.Equal(t, layout.TierSynchronous, bundle.TierFromInstances(5))
-}
 
 func tierStatus() *Status {
 	return &Status{

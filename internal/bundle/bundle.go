@@ -226,32 +226,6 @@ func (p *Production) ingressClassName() string {
 	return "traefik"
 }
 
-// TierInstances maps a database availability tier to its CNPG instance
-// count: single 1, asynchronous 2, synchronous 3.
-func TierInstances(tier layout.Tier) int {
-	switch tier {
-	case layout.TierSynchronous:
-		return 3
-	case layout.TierAsynchronous:
-		return 2
-	default:
-		return 1
-	}
-}
-
-// TierFromInstances is the inverse: the tier a deployed skali-db instance
-// count represents, for tier-drift detection against the derived tier.
-func TierFromInstances(instances int) layout.Tier {
-	switch {
-	case instances >= 3:
-		return layout.TierSynchronous
-	case instances == 2:
-		return layout.TierAsynchronous
-	default:
-		return layout.TierSingle
-	}
-}
-
 // Objects renders the skalid-independent and skalid parts of the bundle
 // as ordered stages; every stage must be applied and healthy before the
 // next starts.
@@ -438,7 +412,7 @@ func databaseYAML(profile Profile) string {
 	affinity := ""
 	synchronous := ""
 	if production := profile.Production; production != nil {
-		instances = TierInstances(production.DatabaseTier)
+		instances = layout.TierInstances(production.DatabaseTier)
 		storage = production.DatabaseStorage
 		// The affinity block renders only in production: local k3d nodes
 		// carry no capability labels and would strand the pod Pending.
