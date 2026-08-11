@@ -120,6 +120,15 @@ web-6d9f7b-1  GET /health/ready 200
 web-6d9f7b-2  GET / 200
 ^C
 
+$ skali dev exec web -- bun run seed:demo
+Seeding demo data...
+Done. 42 records created.
+
+$ skali dev exec web
+/app $ ls
+node_modules  package.json  src
+/app $ exit
+
 $ skali dev stop
 stopped local platform; state is retained
 $ skali dev start
@@ -129,6 +138,14 @@ $ skali dev start
   ok  Converge platform (unchanged since last converge)
 local platform running; state is retained
 ```
+
+`skali dev exec [service] -- <command>...` runs one command inside a
+running container of the service (the newest ready pod); without a command
+it opens an interactive shell (`/bin/sh`). The remote exit status becomes
+the local one, piped stdin propagates (`... -- psql < dump.sql`), and with
+no running pod the error hints that a dev session must be up first
+(pause-on-exit scales workloads to zero between sessions). The same
+command exists as top-level `skali exec` against bound remotes.
 
 Stopping retains volumes and control-plane state; starting hits the fast
 path (no bundle converge) once skalid answers through the edge again. After

@@ -4,13 +4,79 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/streaming/pkg/httpstream"
 )
+
+// ExecStreamOptions carries the live streams of one interactive exec.
+type ExecStreamOptions struct {
+	Stdin  io.Reader // nil means no stdin is wired
+	Stdout io.Writer
+	Stderr io.Writer // ignored when TTY: the remote merges into stdout
+	TTY    bool
+	Resize remotecommand.TerminalSizeQueue // nil disables resize propagation
+}
+
+// ExecStream runs one command in a named pod with live streams, for
+// interactive sessions. A nonzero remote exit surfaces as
+// *exec.CodeExitError (k8s.io/client-go/util/exec) so callers can
+// distinguish the process's own status from infrastructure failures.
+func (c *Client) ExecStream(ctx context.Context, namespace, pod, container string, command []string, opts ExecStreamOptions) error {
+	req := c.Clientset.CoreV1().RESTClient().Post().
+		Resource("pods").Namespace(namespace).Name(pod).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: container,
+			Command:   command,
+			Stdin:     opts.Stdin != nil,
+			Stdout:    true,
+			Stderr:    !opts.TTY,
+			TTY:       opts.TTY,
+		}, scheme.ParameterCodec)
+
+	executor, err := c.execExecutor(req)
+	if err != nil {
+		return err
+	}
+	streams := remotecommand.StreamOptions{
+		Stdin:             opts.Stdin,
+		Stdout:            opts.Stdout,
+		Tty:               opts.TTY,
+		TerminalSizeQueue: opts.Resize,
+	}
+	if !opts.TTY {
+		streams.Stderr = opts.Stderr
+	}
+	// CodeExitError passes through unwrapped: the process's exit status is
+	// a result, not a failure of this call.
+	return executor.StreamWithContext(ctx, streams)
+}
+
+// execExecutor builds the exec transport for one prepared subresource
+// request: WebSocket first with SPDY fallback, exactly like kubectl. Raw
+// SPDY hangs behind proxies that cannot upgrade it (k3d's nginx-based
+// serverlb is the measured case), while in-cluster both work.
+func (c *Client) execExecutor(req *rest.Request) (remotecommand.Executor, error) {
+	spdyExec, err := remotecommand.NewSPDYExecutor(c.Config, "POST", req.URL())
+	if err != nil {
+		return nil, fmt.Errorf("kube: exec executor: %w", err)
+	}
+	wsExec, err := remotecommand.NewWebSocketExecutor(c.Config, "GET", req.URL().String())
+	if err != nil {
+		return nil, fmt.Errorf("kube: exec websocket executor: %w", err)
+	}
+	exec, err := remotecommand.NewFallbackExecutor(wsExec, spdyExec, httpstream.IsUpgradeFailure)
+	if err != nil {
+		return nil, fmt.Errorf("kube: exec fallback executor: %w", err)
+	}
+	return exec, nil
+}
 
 // ExecInPod runs one command in the first ready pod matching the selector
 // and returns its stdout. The exec subresource rides the API server like
@@ -51,20 +117,9 @@ func (c *Client) ExecInPod(ctx context.Context, namespace, selector, container s
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 
-	// WebSocket first with SPDY fallback, exactly like kubectl: raw SPDY
-	// hangs behind proxies that cannot upgrade it (k3d's nginx-based
-	// serverlb is the measured case), while in-cluster both work.
-	spdyExec, err := remotecommand.NewSPDYExecutor(c.Config, "POST", req.URL())
+	exec, err := c.execExecutor(req)
 	if err != nil {
-		return "", fmt.Errorf("kube: exec executor: %w", err)
-	}
-	wsExec, err := remotecommand.NewWebSocketExecutor(c.Config, "GET", req.URL().String())
-	if err != nil {
-		return "", fmt.Errorf("kube: exec websocket executor: %w", err)
-	}
-	exec, err := remotecommand.NewFallbackExecutor(wsExec, spdyExec, httpstream.IsUpgradeFailure)
-	if err != nil {
-		return "", fmt.Errorf("kube: exec fallback executor: %w", err)
+		return "", err
 	}
 	var stdout, stderr bytes.Buffer
 	if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr}); err != nil {

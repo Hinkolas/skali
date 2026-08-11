@@ -70,16 +70,23 @@ func New(master, token, userAgent string) *Client {
 // refuse to resolve subdomains of localhost, and the local installation
 // serves skali.localhost and every app route through the loopback edge.
 func localhostTransport() *http.Transport {
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+	transport.DialContext = localhostDialContext()
+	return transport
+}
+
+// localhostDialContext is the dial function behind localhostTransport,
+// shared with the exec WebSocket dialer so both transports resolve
+// *.localhost identically.
+func localhostDialContext() func(ctx context.Context, network, address string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err == nil && (host == "localhost" || strings.HasSuffix(host, ".localhost")) {
 			address = net.JoinHostPort("127.0.0.1", port)
 		}
 		return dialer.DialContext(ctx, network, address)
 	}
-	return transport
 }
 
 // PinInstance arms install-identity verification. Every response carrying

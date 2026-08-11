@@ -682,3 +682,70 @@ func makeMinioBucket(t *testing.T, endpoint, bucket string) {
 		return client.MakeBucket(t.Context(), bucket, minio.MakeBucketOptions{}) == nil
 	}, time.Minute, time.Second, "minio never became ready")
 }
+
+// runExit executes the CLI like run but reports the exit code instead of
+// asserting on it, for commands whose status IS the result (exec).
+func (h *e2eHarness) runExit(stdin string, args ...string) (string, int) {
+	h.t.Helper()
+	command := exec.Command(h.binary, args...)
+	command.Dir = h.projectDir
+	command.Env = h.env
+	if stdin != "" {
+		command.Stdin = strings.NewReader(stdin)
+	}
+	out, err := command.CombinedOutput()
+	if err == nil {
+		return string(out), 0
+	}
+	var exit *exec.ExitError
+	require.ErrorAs(h.t, err, &exit, "skali %s did not run:\n%s", strings.Join(args, " "), out)
+	return string(out), exit.ExitCode()
+}
+
+// TestDevExec drives the interactive exec surface end to end in plain pipe
+// mode: output and exit status pass through the full edge path (traefik WS
+// upgrade included), and stdin EOF propagates to the remote process.
+func TestDevExec(t *testing.T) {
+	h := newE2EHarness(t)
+
+	// The stock hello-world image is FROM scratch; exec needs a shell, so
+	// the scratch copy trades the final stage for alpine.
+	dockerfile := `FROM golang:1.26-alpine AS builder
+WORKDIR /src
+COPY go.mod main.go ./
+RUN CGO_ENABLED=0 go build -o /hello-build .
+
+FROM alpine:3.22
+COPY --from=builder /hello-build /hello-build
+EXPOSE 8080
+ENTRYPOINT ["/hello-build"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "Dockerfile"), []byte(dockerfile), 0o644))
+
+	h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
+	h.waitRoute("hello from skali", 5*time.Minute)
+
+	// One-off command: stdout and the zero exit pass through. The service
+	// argument is omitted on purpose: hello-world has exactly one
+	// application, so the default must pick it.
+	out, code := h.runExit("", "dev", "exec", "--", "sh", "-c", "echo exec-roundtrip")
+	require.Zero(t, code, "exec failed:\n%s", out)
+	require.Contains(t, out, "exec-roundtrip")
+
+	// The remote exit status becomes the local one, with no error line.
+	out, code = h.runExit("", "dev", "exec", "web", "--", "sh", "-c", "exit 7")
+	require.Equal(t, 7, code, "output:\n%s", out)
+	require.NotContains(t, out, "error:")
+
+	// Piped stdin reaches the remote process and its EOF terminates it.
+	out, code = h.runExit("ping-through-exec", "dev", "exec", "web", "--", "cat")
+	require.Zero(t, code, "exec cat failed:\n%s", out)
+	require.Contains(t, out, "ping-through-exec")
+
+	// An unknown service resolves to no ready pod and hints at dev.
+	out, code = h.runExit("", "dev", "exec", "missing", "--", "true")
+	require.NotZero(t, code)
+	require.Contains(t, out, "no running pod")
+
+	h.run(false, "", "dev", "down")
+}

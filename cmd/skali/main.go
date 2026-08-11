@@ -33,10 +33,16 @@ func main() {
 
 	root.AddCommand(newRemoteCmd(), newValidateCmd(), newCompileCmd(),
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
-		newDevCommand(), newRunCommand(), newLogsCommand(),
+		newDevCommand(), newRunCommand(), newLogsCommand(), newExecCommand(),
 		newValuesCommand(), newBackupCommand(), newClusterCommand(), newSkillCommand())
 
 	if err := root.Execute(); err != nil {
+		// A remote exec command's own exit status is a result, not an
+		// error: pass it through silently, the process already wrote its
+		// stderr through the session.
+		if exit, ok := errors.AsType[*client.ExecExitError](err); ok {
+			os.Exit(exit.Code)
+		}
 		style := clirender.StyleFor(os.Stderr)
 		fmt.Fprintln(os.Stderr, style.BoldRed("error:"), err)
 		if mismatch, ok := errors.AsType[*client.InstanceMismatchError](err); ok {

@@ -40,6 +40,7 @@ import (
 	"github.com/Hinkolas/skali/internal/module/database"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/podexec"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
@@ -275,6 +276,9 @@ func runServe() error {
 	}
 
 	runtimeLogs := &runtimelogs.Streamer{Observed: observed, Store: st}
+	// Exec needs the full kube client (the rest.Config drives the exec
+	// subresource transport); a nil client answers node_unreachable.
+	execSvc := &podexec.Service{Kube: kubeClient, Observed: observed, Store: st}
 	// The sanctioned request-time Secret read behind credential reveal.
 	var secretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	if kubeClient != nil {
@@ -304,6 +308,7 @@ func runServe() error {
 			RegistryToken:      tokenSigner,
 			RegistryNodeSecret: cfg.RegistryNodeSecret,
 			RuntimeLogs:        runtimeLogs,
+			Exec:               execSvc,
 			Capabilities:       cfg.Capabilities,
 			Databases:          dbstore.New(st),
 			SecretReader:       secretReader,

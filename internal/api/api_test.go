@@ -52,6 +52,8 @@ type testAPI struct {
 	// registryHost is the fake registry's address: the Host artifact
 	// references carry, distinct from the push host clients push through.
 	registryHost string
+	// execFake scripts the exec surface per test; unscripted calls fail.
+	execFake *fakeExecService
 }
 
 // testPushHost is the public push host the test registry client carries;
@@ -122,6 +124,8 @@ func newTestAPI(t *testing.T) *testAPI {
 	tokenSigner, err := registrytoken.LoadSigner(keyPEM)
 	require.NoError(t, err)
 
+	execFake := &fakeExecService{}
+
 	// StripAPIPrefix wraps here exactly as in cmd/skalid, so every test
 	// doubles as proof that root paths pass through the /api wrapper.
 	srv := httptest.NewServer(StripAPIPrefix(NewRouter(Deps{
@@ -139,6 +143,7 @@ func newTestAPI(t *testing.T) *testAPI {
 		RegistryToken:      tokenSigner,
 		RegistryNodeSecret: "node-secret",
 		RuntimeLogs:        &runtimelogs.Streamer{Observed: observed.Store, Store: st},
+		Exec:               execFake,
 		Capabilities:       []string{"application", "edge", "database"},
 		Databases:          dbstore.New(st),
 		BackupTargets:      backupTargets,
@@ -160,7 +165,8 @@ func newTestAPI(t *testing.T) *testAPI {
 	})))
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc,
-		observed: observed, held: held, registryHost: registryURL.Host}
+		observed: observed, held: held, registryHost: registryURL.Host,
+		execFake: execFake}
 }
 
 // exchangeToken drives the registry token realm with Basic credentials and

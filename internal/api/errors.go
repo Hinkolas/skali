@@ -54,6 +54,9 @@ const (
 	codeBackupTargetUnreachable  = "backup_target_unreachable"
 	codeEnvironmentNotActive     = "environment_not_active"
 	codeSnapshotNotFound         = "snapshot_not_found"
+
+	// Exec.
+	codeNoReadyPod = "no_ready_pod"
 )
 
 // writeInternalError logs the real error and reports an opaque 500.

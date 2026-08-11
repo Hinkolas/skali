@@ -2279,6 +2279,101 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/environments/{id}/exec:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: service
+        in: query
+        required: false
+        schema:
+          type: string
+        description: >
+          App service key to exec into. Required unless `pod` names the
+          target directly.
+      - name: pod
+        in: query
+        required: false
+        schema:
+          type: string
+        description: >
+          Explicit pod override. The default is the newest ready pod of the
+          service; an explicit pod must be Running but may be unready, so
+          crash-looping containers stay debuggable.
+      - name: container
+        in: query
+        required: false
+        schema:
+          type: string
+        description: "Container name (default: the service key)."
+      - name: tty
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: >
+          Allocate a remote TTY: stderr merges into stdout and resize
+          control messages apply.
+      - name: cmd
+        in: query
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: array
+          items:
+            type: string
+        description: >
+          Command vector, one repeated parameter per argv element, order
+          preserving. Absent runs the default interactive shell (/bin/sh).
+    get:
+      operationId: execEnvironment
+      summary: Exec into an app container (WebSocket)
+      description: |
+        Opens an interactive exec session inside a running app container, a
+        sanctioned request-time cluster pass-through like credential reveal
+        and runtime logs. The request upgrades to a WebSocket; every
+        failure before the upgrade (auth, reauth gate, resolution) is the
+        normal JSON error envelope on the handshake response.
+
+        After the 101 the connection carries binary frames whose first
+        byte selects a channel: 0 stdin (client to server), 1 stdout, 2
+        stderr (server to client; unused with a TTY), 3 control. Control
+        frames are single JSON objects `{"type": ...}`: clients send
+        `resize` (`cols`/`rows`) and `stdin_eof` (half-close); the server
+        ends every session with exactly one terminal frame, either `exit`
+        (`code` carries the process exit status) or `error` (`err_code`
+        `exec_failed`, `message`), then closes the connection. A close
+        without a terminal frame means the session failed. The server
+        pings every 15 seconds; the route is exempt from the request
+        timeout. Targets resolve only among the environment's own app
+        pods; the session requires a fresh (reauthenticated) session.
+      tags: [exec]
+      responses:
+        "101":
+          description: Upgraded; the connection speaks the exec protocol.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            `no_ready_pod`: the service has no ready pod to exec into; the
+            message lists the current pods and their states.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: "`node_unreachable`: no cluster is connected."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2462,6 +2557,7 @@ components:
             - invalid_manifest
             - rate_limited
             - node_unreachable
+            - no_ready_pod
             - registry_disabled
             - registry_unavailable
             - internal

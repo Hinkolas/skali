@@ -54,6 +54,11 @@ type Deps struct {
 	// RuntimeLogs streams live application logs; nil-clientset streams
 	// answer node_unreachable.
 	RuntimeLogs *runtimelogs.Streamer
+	// Exec runs interactive commands in app pods over a WebSocket; nil
+	// hides the route (tests without a fake). Production always wires
+	// *podexec.Service, which answers node_unreachable itself in API-only
+	// mode.
+	Exec ExecService
 	// Capabilities is the installation's declared capability set for the
 	// deployment gate.
 	Capabilities []string
@@ -162,6 +167,17 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/environments/{id}/runs/stream", jh.streamRuns)
 			r.Get("/environments/{id}/status/stream", sh.stream)
 			r.Get("/environments/{id}/logs/stream", lh.stream)
+
+			// Exec sits with the streams (a session must outlive the
+			// request timeout) but behind the reauth gate: a shell in the
+			// container exposes everything credential reveal does.
+			if d.Exec != nil {
+				xh := newExecHandlers(d.Exec)
+				r.Group(func(r chi.Router) {
+					r.Use(RequireFresh(d.Auth))
+					r.Get("/environments/{id}/exec", xh.open)
+				})
+			}
 		})
 
 		// Everything else runs under the request timeout.

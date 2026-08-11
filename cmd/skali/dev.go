@@ -291,7 +291,7 @@ func newDevCommand() *cobra.Command {
 	}
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
-	command.AddCommand(up, upgrade, status, logs, down, ls, stop, start, reset)
+	command.AddCommand(up, upgrade, status, logs, newDevExecCommand(), down, ls, stop, start, reset)
 	return command
 }
 
