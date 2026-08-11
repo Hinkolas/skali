@@ -30,8 +30,13 @@ func newDevExecCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			project, err := loadLocalProject("")
+			if err != nil {
+				return err
+			}
 			reauth := func(ctx context.Context) error { return reauthLocal(ctx, api) }
-			err = runExecSession(command, api, environmentID, inv, service, argv, reauth)
+			prompt := shellPrompt(localRemoteName, service, inv, project.Result.Definition.Name)
+			err = runExecSession(command, api, environmentID, inv, service, argv, prompt, reauth)
 			if isNoReadyPod(err) {
 				// Pause-on-exit scales dev workloads to zero between
 				// sessions; the pod usually just is not running yet.

@@ -70,7 +70,12 @@ func newExecCommand() *cobra.Command {
 			reauth := func(ctx context.Context) error {
 				return reauthForAdmin(ctx, command, command.OutOrStdout(), target.api)
 			}
-			return runExecSession(command, target.api, target.environmentID, inv, service, argv, reauth)
+			scope := target.environment
+			if target.project != "" {
+				scope = target.project + "/" + target.environment
+			}
+			prompt := shellPrompt(target.remoteName, service, inv, scope)
+			return runExecSession(command, target.api, target.environmentID, inv, service, argv, prompt, reauth)
 		},
 	}
 	command.Flags().StringVar(&environment, "environment", "",
@@ -125,6 +130,18 @@ func defaultExecService(command *cobra.Command) (string, error) {
 	return session.Select(command.Context(), cliprompt.SelectOptions{Title: "Service", Options: options})
 }
 
+// shellPrompt is the PS1 seeded into the default interactive shell so
+// every session names where it runs: (remote) service@scope cwd $. The
+// \w escape renders the working directory in busybox ash and bash;
+// shells without prompt escapes (plain dash) print it literally.
+func shellPrompt(remote, service string, inv execInvocation, scope string) string {
+	target := service
+	if target == "" {
+		target = inv.pod
+	}
+	return fmt.Sprintf("(%s) %s@%s \\w $ ", remote, target, scope)
+}
+
 // decideTTY resolves whether the session allocates a remote TTY: an
 // explicit flag wins, otherwise a TTY is allocated exactly when stdin and
 // stdout are both terminals.
@@ -146,7 +163,7 @@ func decideTTY(inv execInvocation) (bool, error) {
 // other sudo-gated command), owns the local terminal for its duration, and
 // maps the remote exit status onto the process's own.
 func runExecSession(command *cobra.Command, api *client.Client, environmentID string,
-	inv execInvocation, service string, argv []string, reauth func(context.Context) error) error {
+	inv execInvocation, service string, argv []string, prompt string, reauth func(context.Context) error) error {
 	ctx := command.Context()
 	tty, err := decideTTY(inv)
 	if err != nil {
@@ -158,6 +175,13 @@ func runExecSession(command *cobra.Command, api *client.Client, environmentID st
 		Container: inv.container,
 		Command:   argv,
 		TTY:       tty,
+	}
+	if tty && len(argv) == 0 && prompt != "" {
+		// The exec subresource cannot seed environment variables, so the
+		// default interactive shell starts through a wrapper that exports
+		// PS1. The prompt rides as a positional argument, so no shell
+		// quoting applies to it.
+		opts.Command = []string{"/bin/sh", "-c", `export PS1="$1"; exec /bin/sh`, "sh", prompt}
 	}
 	session, err := api.Exec(ctx, environmentID, opts)
 	if isReauthRequired(err) {
