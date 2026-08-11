@@ -15,9 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -220,6 +222,30 @@ func runServe() error {
 		kernelDeps.Cluster = kubeClient
 		kernelDeps.JobLogs = kubeClient.TailJobLogs
 		kernelDeps.RefreshObservation = source.Refresh
+	}
+	if !cfg.ManagedCluster {
+		// Intercept EndpointSlices route to the host machine; skalid runs
+		// in-cluster on the local platform, where k3d publishes the name
+		// through CoreDNS. The address is stable for the cluster's life,
+		// so one successful lookup is cached.
+		var hostGatewayMu sync.Mutex
+		hostGateway := ""
+		kernelDeps.HostGateway = func(ctx context.Context) (string, error) {
+			hostGatewayMu.Lock()
+			defer hostGatewayMu.Unlock()
+			if hostGateway != "" {
+				return hostGateway, nil
+			}
+			addresses, err := net.DefaultResolver.LookupHost(ctx, "host.k3d.internal")
+			if err != nil {
+				return "", fmt.Errorf("resolve host.k3d.internal: %w", err)
+			}
+			if len(addresses) == 0 {
+				return "", fmt.Errorf("host.k3d.internal resolved to no addresses")
+			}
+			hostGateway = addresses[0]
+			return hostGateway, nil
+		}
 	}
 	// The platform substrate controller runs beside the kernel with its own
 	// queue: it owns pools, tenants, the object store, and credentials in

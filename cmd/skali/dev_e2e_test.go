@@ -827,17 +827,35 @@ applications:
 			_ = session.Process.Kill()
 		}
 	}()
+	// waitForOutput polls for a marker, failing immediately (with the
+	// session's actual output) when the session exits early. Failure
+	// messages must read the buffer at failure time; passing
+	// output.String() as a message argument would capture it empty at call
+	// time.
+	waitForOutput := func(marker string, wait time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(wait)
+		for {
+			if strings.Contains(output.String(), marker) {
+				return
+			}
+			select {
+			case err := <-sessionDone:
+				t.Fatalf("dev session exited before %q (%v):\n%s", marker, err, output.String())
+			case <-time.After(time.Second):
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("session output never contained %q:\n%s", marker, output.String())
+			}
+		}
+	}
 
-	require.Eventually(t, func() bool {
-		return strings.Contains(output.String(), "following logs")
-	}, 15*time.Minute, time.Second, "session never reached the log follow:\n%s", output.String())
+	waitForOutput("following logs", 15*time.Minute)
 	require.Contains(t, output.String(), "intercepted to the host dev process")
 	h.waitRoute("dev-loop-host-marker", 3*time.Minute)
 	// The host server's access log lines arrive multiplexed with the app
 	// prefix (waitRoute above guarantees at least one request).
-	require.Eventually(t, func() bool {
-		return strings.Contains(output.String(), "web | ")
-	}, time.Minute, time.Second, "no prefixed child output:\n%s", output.String())
+	waitForOutput("web | ", time.Minute)
 
 	// Named and raw commands run with the resolved environment; exit codes
 	// pass through silently.
