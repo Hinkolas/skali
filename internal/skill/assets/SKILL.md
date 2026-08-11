@@ -40,6 +40,11 @@ manifest fields: parsing is strict and this reference is complete.
   has a weaker signal that a deployment succeeded.
 - Schema migrations belong in `deployment.releaseCommand`, which runs
   once before replicas roll forward.
+- An application with a `dev:` block runs on the developer's machine
+  under bare `skali dev` (hot reload behind the real cluster routes) and
+  its `releaseCommand` does not run there; keep migrations invokable as
+  named `commands:` (`skali dev run migrate`). Both blocks are
+  client-only and never affect remote deploys.
 - Removing a database or bucket from the manifest destroys its data;
   deploys ask for typed confirmation.
 

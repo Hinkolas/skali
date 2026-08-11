@@ -101,6 +101,20 @@ single-instance pool regardless of isolation and availability intents,
 and bucket endpoints are in-cluster. Design for production and the dev
 cluster follows.
 
+An application may additionally declare a `dev:` block for a fast edit
+loop: bare `skali dev` then skips building it and runs the dev command
+(vite, `bun run dev`) on the developer's machine instead, while the
+cluster's routes and sibling services are intercepted to reach the host
+process. The process receives the application's real resolved
+environment, with database and bucket addresses rewritten to loopback
+ports the dev cluster publishes, so the managed Postgres and S3 are the
+ones behind the hot reload. Two consequences to design for: the local
+runtime (host node/bun) is not the container image, and the
+`releaseCommand` does not run while intercepted; keep migrations and
+seeds invokable as named `commands:` (`skali dev run migrate`) and use
+`skali dev --preview` as the periodic full-parity check. Remote deploys
+ignore both blocks entirely.
+
 ## Checklist
 
 - Serves HTTP on one declared port, bound to 0.0.0.0.
