@@ -38,7 +38,9 @@ func newDevCommand() *cobra.Command {
 			"registry), builds and deploys the current project, attaches to the\n" +
 			"rollout, and follows the runtime logs. Like docker compose, ending\n" +
 			"the session (Ctrl-C, closing the terminal) pauses the project; its\n" +
-			"data is retained and the next skali dev brings it back. A rollout\n" +
+			"data is retained and the next skali dev brings it back. Pressing d\n" +
+			"while the logs follow detaches instead: the session ends and the\n" +
+			"project keeps running, as if started with -d. A rollout\n" +
 			"already in flight is adopted: dev attaches to it instead of\n" +
 			"failing; --force cancels it and redeploys. Use -d for a background\n" +
 			"project that keeps running, skali dev down to pause it explicitly,\n" +
@@ -521,14 +523,47 @@ func findRunningRun(ctx context.Context, api *client.Client, environmentID strin
 	return nil, nil
 }
 
-// devFollowLogs hands the rest of the session to the runtime logs; when
-// they end the epilogue pauses the project.
+// devFollowLogs hands the rest of the session to the runtime logs. On a
+// terminal the d key detaches: the follow ends and the project keeps
+// running, exactly as if the session had started with -d. Everything else
+// that ends the logs reaches the epilogue, which pauses the project.
 func devFollowLogs(command *cobra.Command, api *client.Client, environmentID string,
 	window *atomic.Value) error {
-	fmt.Fprintln(command.OutOrStdout(),
-		"\nfollowing logs; Ctrl-C pauses the project (skali dev -d keeps it running)")
-	if err := followRuntimeLogs(command, api, environmentID, ""); err != nil {
+	out := command.OutOrStdout()
+	sessionCtx := command.Context()
+	followCtx := sessionCtx
+	var detached atomic.Bool
+	keys, restoreTerminal := watchDetachKey()
+	defer restoreTerminal()
+	if keys != nil {
+		var cancelFollow context.CancelFunc
+		followCtx, cancelFollow = context.WithCancel(sessionCtx)
+		defer cancelFollow()
+		go func() {
+			select {
+			case <-keys:
+				detached.Store(true)
+				cancelFollow()
+			case <-followCtx.Done():
+			}
+		}()
+		fmt.Fprintln(out,
+			"\nfollowing logs; Ctrl-C pauses the project, d detaches and keeps it running")
+	} else {
+		fmt.Fprintln(out,
+			"\nfollowing logs; Ctrl-C pauses the project (skali dev -d keeps it running)")
+	}
+	if err := followRuntimeLogs(followCtx, out, api, environmentID, ""); err != nil {
 		return err
+	}
+	// A dead session context wins over a simultaneous keypress: the user's
+	// Ctrl-C asked for the pause.
+	if detached.Load() && sessionCtx.Err() == nil {
+		style := clirender.StyleFor(out)
+		fmt.Fprintf(out, "\n%sdetached; the project keeps running\n", style.Check())
+		fmt.Fprintf(out, "  %s  skali dev\n", style.Dim("reattach"))
+		fmt.Fprintf(out, "  %s     skali dev down\n", style.Dim("pause"))
+		return nil
 	}
 	return finishInterrupted(command, window.Load().(string), false)
 }

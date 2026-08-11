@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -207,14 +208,13 @@ func streamRuntimeLogs(command *cobra.Command, api *client.Client, environmentID
 }
 
 // followRuntimeLogs is the compose-like attach: it tails the runtime log
-// stream until the session context ends (the dev session decides what
-// happens next, normally the pause-on-exit). The server closes the stream
+// stream until ctx ends (the dev session decides what happens next: the
+// pause-on-exit, or nothing after a detach). The server closes the stream
 // on overflow and replays a bounded tail per fresh subscription, so the
 // follow reconnects and suppresses replayed lines by their kubelet
 // timestamps.
-func followRuntimeLogs(command *cobra.Command, api *client.Client, environmentID, service string) error {
-	ctx := command.Context()
-	out := command.OutOrStdout()
+func followRuntimeLogs(ctx context.Context, out io.Writer, api *client.Client,
+	environmentID, service string) error {
 	lastSeen := map[string]time.Time{}
 	for ctx.Err() == nil {
 		events, err := api.Stream(ctx, runtimeLogsPath(environmentID, service), "")
