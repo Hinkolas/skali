@@ -83,6 +83,11 @@ type Input struct {
 	SecretVersions  map[string]int
 	Artifacts       map[string]Artifact
 	CompilerVersion string
+	// LocalApplications marks applications deployed as host-run intercepts
+	// (skali dev): they carry no artifact and checkArtifacts tolerates the
+	// absence. The zero value keeps every other caller strict; only the
+	// local-platform deploy path ever sets it.
+	LocalApplications map[string]bool
 }
 
 var digestPattern = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
@@ -100,7 +105,7 @@ func Build(input Input) (*Revision, error) {
 	if err != nil {
 		return nil, err
 	}
-	artifacts, err := checkArtifacts(definition, input.Artifacts)
+	artifacts, err := checkArtifacts(definition, input.Artifacts, input.LocalApplications)
 	if err != nil {
 		return nil, err
 	}
@@ -188,11 +193,16 @@ func checkValues(definition compiler.ProjectDefinition, provided map[string]int)
 	return kept, nil
 }
 
-func checkArtifacts(definition compiler.ProjectDefinition, provided map[string]Artifact) (map[string]Artifact, error) {
+func checkArtifacts(definition compiler.ProjectDefinition, provided map[string]Artifact, local map[string]bool) (map[string]Artifact, error) {
 	artifacts := make(map[string]Artifact, len(definition.Applications))
 	for _, key := range utils.SortedKeys(definition.Applications) {
 		artifact, ok := provided[key]
 		if !ok {
+			if local[key] {
+				// Host-run intercepts ship no artifact; the revision
+				// records the absence and its checksum changes with it.
+				continue
+			}
 			return nil, fmt.Errorf("application %s has no prepared artifact", key)
 		}
 		if artifact.Reference == "" {

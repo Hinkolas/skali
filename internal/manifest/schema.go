@@ -63,6 +63,13 @@ func Schema() (*jsonschema.Schema, error) {
 	application.Properties["ports"].PropertyNames = stableKeySchema()
 	application.Properties["routes"].PropertyNames = stableKeySchema()
 	application.Properties["volumes"].PropertyNames = stableKeySchema()
+	application.Properties["commands"].PropertyNames = stableKeySchema()
+	application.Properties["commands"].AdditionalProperties.MinItems = new(1)
+	dev := application.Properties["dev"]
+	dev.Properties["command"].MinItems = new(1)
+	dev.Properties["ports"].PropertyNames = stableKeySchema()
+	dev.Properties["ports"].AdditionalProperties.Minimum = new(float64(1))
+	dev.Properties["ports"].AdditionalProperties.Maximum = new(float64(65535))
 
 	port := application.Properties["ports"].AdditionalProperties
 	port.Properties["port"].Minimum = new(float64(1))

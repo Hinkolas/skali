@@ -31,6 +31,9 @@ const (
 	e2eCluster      = "skali-dev-e2e"
 	e2eHTTPPort     = 8082
 	e2eRegistryPort = 5512
+	// e2eLoopbackBase shifts the loopback service range away from a real
+	// skali-dev installation's identity mapping (30501..30510).
+	e2eLoopbackBase = 45001
 )
 
 type e2eHarness struct {
@@ -89,6 +92,7 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 			"SKALI_DEV_CLUSTER="+e2eCluster,
 			fmt.Sprintf("SKALI_DEV_HTTP_PORT=%d", e2eHTTPPort),
 			fmt.Sprintf("SKALI_DEV_REGISTRY_PORT=%d", e2eRegistryPort),
+			fmt.Sprintf("SKALI_DEV_LOOPBACK_PORT_BASE=%d", e2eLoopbackBase),
 			"XDG_STATE_HOME="+stateHome,
 			"XDG_CONFIG_HOME="+configHome,
 		),
@@ -746,6 +750,119 @@ ENTRYPOINT ["/hello-build"]
 	out, code = h.runExit("", "dev", "exec", "missing", "--", "true")
 	require.NotZero(t, code)
 	require.Contains(t, out, "no running pod")
+
+	h.run(false, "", "dev", "down")
+}
+
+// TestDevLocalDev drives local dev mode end to end: a dev-block application
+// is not built, its host dev server answers through the cluster ingress
+// (traefik -> selectorless Service -> intercept EndpointSlice -> host),
+// skali dev run executes named and raw commands with the resolved
+// environment and propagates exit codes, the session epilogue terminates
+// the host process before pausing, and --preview restores the full
+// in-cluster deployment.
+func TestDevLocalDev(t *testing.T) {
+	h := newE2EHarnessFor(t, "dev-loop", "dev-loop.localhost")
+
+	// A throwaway host port for the dev server, so a developer's real vite
+	// on 5173 never collides with the suite.
+	const devPort = 15173
+	manifest := fmt.Sprintf(`version: "1"
+name: dev-loop
+applications:
+  web:
+    build:
+      context: .
+    ports:
+      web:
+        port: 8080
+        protocol: http
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        path: /
+        port: web
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN}"
+    commands:
+      hello: [sh, -c, "echo hello-from-dev-run domain=$APP_DOMAIN"]
+    dev:
+      command: [python3, -m, http.server, "%d", --bind, "0.0.0.0"]
+      ports:
+        web: %d
+`, devPort, devPort)
+	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "skali.yml"), []byte(manifest), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "index.html"),
+		[]byte("dev-loop-host-marker\n"), 0o644))
+
+	// A detached session cannot host local dev processes.
+	out, code := h.runExit("", "dev", "-d", "--skalid-image", "skalid:dev")
+	require.NotZero(t, code)
+	require.Contains(t, out, "--detach cannot host local dev processes")
+
+	// Bare dev: platform bootstrap, no build for web, host server running,
+	// route served by it through the cluster edge.
+	session := exec.Command(h.binary, "dev", "--skalid-image", "skalid:dev")
+	session.Dir = h.projectDir
+	session.Env = h.env
+	output := &syncBuffer{}
+	session.Stdout = output
+	session.Stderr = output
+	require.NoError(t, session.Start())
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- session.Wait() }()
+	stopSession := func() string {
+		_ = session.Process.Signal(os.Interrupt)
+		select {
+		case err := <-sessionDone:
+			require.NoError(t, err, "dev session after interrupt:\n%s", output.String())
+		case <-time.After(5 * time.Minute):
+			_ = session.Process.Kill()
+			t.Fatalf("dev session never exited after interrupt:\n%s", output.String())
+		}
+		return output.String()
+	}
+	defer func() {
+		if session.ProcessState == nil {
+			_ = session.Process.Kill()
+		}
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(output.String(), "following logs")
+	}, 15*time.Minute, time.Second, "session never reached the log follow:\n%s", output.String())
+	require.Contains(t, output.String(), "intercepted to the host dev process")
+	h.waitRoute("dev-loop-host-marker", 3*time.Minute)
+	// The host server's access log lines arrive multiplexed with the app
+	// prefix (waitRoute above guarantees at least one request).
+	require.Eventually(t, func() bool {
+		return strings.Contains(output.String(), "web | ")
+	}, time.Minute, time.Second, "no prefixed child output:\n%s", output.String())
+
+	// Named and raw commands run with the resolved environment; exit codes
+	// pass through silently.
+	out, code = h.runExit("", "dev", "run", "hello")
+	require.Zero(t, code, "dev run hello failed:\n%s", out)
+	require.Contains(t, out, "hello-from-dev-run domain=dev-loop.localhost")
+	out, code = h.runExit("", "dev", "run", "web", "--", "sh", "-c", "exit 7")
+	require.Equal(t, 7, code, "output:\n%s", out)
+	require.NotContains(t, out, "error:")
+
+	// Ctrl-C: children terminate, the project pauses.
+	sessionOut := stopSession()
+	require.Contains(t, sessionOut, "paused")
+	require.Eventually(t, func() bool {
+		_, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", devPort))
+		return err != nil
+	}, time.Minute, time.Second, "the host dev server is still listening")
+
+	// --preview deploys the full in-cluster build: the pod, not a host
+	// process, serves the route, and the intercept is cleared.
+	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "index.html"),
+		[]byte("dev-loop-preview-marker\n"), 0o644))
+	out = h.run(false, "", "dev", "--preview", "-d", "--skalid-image", "skalid:dev")
+	require.NotContains(t, out, "intercepted to the host dev process")
+	h.waitRoute("dev-loop-preview-marker", 10*time.Minute)
 
 	h.run(false, "", "dev", "down")
 }

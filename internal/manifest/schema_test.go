@@ -29,6 +29,7 @@ func TestSchemaAcceptsExamples(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join("..", "..", "examples", "hello-world", "skali.yml"),
 		filepath.Join("..", "..", "examples", "file-sharing", "skali.yml"),
+		filepath.Join("..", "..", "examples", "dev-loop", "skali.yml"),
 	} {
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)

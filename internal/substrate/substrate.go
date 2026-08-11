@@ -41,6 +41,10 @@ import (
 // waves already delete it between project namespaces and skali-system.
 const Namespace = "skali-platform"
 
+// The loopback NodePort range for pools and the dev S3 gateway lives in
+// the bundle package (bundle.PoolNodePortMin..Max, bundle.S3NodePort) so
+// the CLI shares the numbers without importing the substrate.
+
 const (
 	// DefaultEngine/DefaultMajor identify the default shared pool a
 	// production installation ensures eagerly at boot.

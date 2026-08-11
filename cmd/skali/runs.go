@@ -20,6 +20,10 @@ func newRunCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "run",
 		Short: "List, inspect, attach to, or cancel runs",
+		Long: "Runs are the journal of platform operations: deployments, rollbacks,\n" +
+			"and teardowns. This group lists and inspects them. For running a\n" +
+			"project command (seed, migrate) with the application's environment,\n" +
+			"see skali dev run.",
 	}
 	var remote string
 	command.PersistentFlags().StringVar(&remote, "remote", "",

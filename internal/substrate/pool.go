@@ -2,11 +2,15 @@ package substrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/Hinkolas/skali/internal/bundle"
+	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
@@ -39,6 +43,30 @@ func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster)
 	})
 	if _, err := c.deps.Cluster.ApplyAs(ctx, object, kube.FieldManagerPlatform, false); err != nil {
 		return fmt.Errorf("substrate: apply pool %s: %w", pool.Name, err)
+	}
+	if !c.cfg.Managed {
+		if err := c.ensurePoolNodePort(ctx, pool); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensurePoolNodePort gives a dev pool its loopback NodePort Service. An
+// exhausted range degrades to a cluster-internal pool with a warning rather
+// than failing the pool converge.
+func (c *Controller) ensurePoolNodePort(ctx context.Context, pool store.DatabaseCluster) error {
+	nodePort, err := c.deps.DB.AllocateClusterNodePort(ctx, pool.ID, bundle.PoolNodePortMin, bundle.PoolNodePortMax)
+	if errors.Is(err, dbstore.ErrNodePortsExhausted) {
+		slog.Warn("substrate: loopback node ports exhausted; pool stays cluster-internal", "pool", pool.Name)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("substrate: allocate node port for pool %s: %w", pool.Name, err)
+	}
+	service := cnpg.RenderPrimaryNodePortService(Namespace, pool.Name, int32(nodePort))
+	if _, err := c.deps.Cluster.ApplyAs(ctx, service, kube.FieldManagerPlatform, false); err != nil {
+		return fmt.Errorf("substrate: apply pool %s external service: %w", pool.Name, err)
 	}
 	return nil
 }

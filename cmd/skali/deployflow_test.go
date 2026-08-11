@@ -58,7 +58,7 @@ func TestLoadLocalProjectAndBuildInputs(t *testing.T) {
 	require.Equal(t, "flowdemo", project.Result.Definition.Name)
 	require.Equal(t, root, project.Root)
 
-	inputs, contexts, err := buildInputs(project, []string{envFile}, "linux/amd64")
+	inputs, contexts, err := buildInputs(project, []string{envFile}, "linux/amd64", nil)
 	require.NoError(t, err)
 	require.Contains(t, inputs, "web")
 	require.Len(t, inputs["web"].InputHash, 64)
@@ -67,15 +67,21 @@ func TestLoadLocalProjectAndBuildInputs(t *testing.T) {
 	require.NotContains(t, contexts["web"].Files, ".env")
 
 	// The platform is part of the dedup key: a different target rebuilds.
-	otherPlatform, _, err := buildInputs(project, []string{envFile}, "linux/arm64")
+	otherPlatform, _, err := buildInputs(project, []string{envFile}, "linux/arm64", nil)
 	require.NoError(t, err)
 	require.NotEqual(t, inputs["web"].InputHash, otherPlatform["web"].InputHash)
 
 	// A source change moves the input hash; the dedup key is honest.
 	writeFile(t, root, "main.txt", "changed")
-	changed, _, err := buildInputs(project, []string{envFile}, "linux/amd64")
+	changed, _, err := buildInputs(project, []string{envFile}, "linux/amd64", nil)
 	require.NoError(t, err)
 	require.NotEqual(t, inputs["web"].InputHash, changed["web"].InputHash)
+
+	// A host-run intercept is skipped from the build inputs entirely.
+	skipped, _, err := buildInputs(project, []string{envFile}, "linux/amd64",
+		map[string]client.LocalApplication{"web": {Ports: map[string]int{"http": 5173}}})
+	require.NoError(t, err)
+	require.NotContains(t, skipped, "web")
 }
 
 func TestResolveBuildPlatform(t *testing.T) {

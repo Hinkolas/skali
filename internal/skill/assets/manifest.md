@@ -222,6 +222,38 @@ Volumes are the escape hatch, not the paved path: an application with
 volumes is forced to `recreate` rollouts and a single replica. Prefer
 databases and buckets; see `architecture.md`.
 
+### Commands and local dev
+
+```yaml
+    commands:                # named host-side commands (skali dev run)
+      seed: [bun, run, db:seed]
+      migrate: [bun, run, db:migrate]
+    dev:                     # local dev server mode (skali dev)
+      command: [bun, run, dev]
+      ports:
+        web: 5173            # application port name -> host port
+```
+
+Both blocks are client-only authoring surface: they never enter the
+compiled definition, so editing them changes no deployment plan and rolls
+nothing.
+
+`commands` are named commands `skali dev run <name>` executes on this
+machine in the project root, with the application's fully resolved
+environment: stored values plus database and bucket outputs rewritten to
+the local platform's loopback ports. Seeds and migrations against the dev
+database live here. Keys are stable keys like every other name.
+
+A `dev` block switches the application to local dev mode: bare `skali dev`
+skips building it and runs `command` on the host instead, while the
+cluster's routes and sibling services are intercepted to reach the host
+process at the declared ports. `ports` maps the application's declared
+port names to the host ports the dev server actually listens on; every
+service port needs a mapping. `skali dev --preview` ignores dev blocks and
+deploys everything in the cluster; remote deploys always do. Note that an
+intercepted application runs no release command, so run migrations through
+`commands` while iterating locally.
+
 ## Databases
 
 ```yaml

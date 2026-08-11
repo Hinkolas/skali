@@ -53,6 +53,9 @@ const (
 	// KindBucketClaim is the substrate's provider observation of one bucket
 	// claim's durable phase, published like KindDatabaseClaim.
 	KindBucketClaim = "bucket-claim"
+	// KindEndpointSlice observes intercept EndpointSlices (local dev): they
+	// exist so pruning sees them; no module evaluates their health.
+	KindEndpointSlice = "endpointslice"
 	// KindObjectStore/KindBucket project the SeaweedFS system and per-bucket
 	// usage through the poll-based provider observer (REWORK_V2 7.4). Store
 	// projections are platform-scoped and join service snapshots through the

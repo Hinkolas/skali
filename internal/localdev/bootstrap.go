@@ -102,6 +102,18 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		return nil, fmt.Errorf("the %s cluster predates the single-container layout: "+
 			"recreate it with `skali dev reset`, then run `skali dev` again", ClusterName())
 	}
+	// Loopback service ports (postgres, S3) are create-time k3d options: a
+	// cluster from before them cannot be reshaped in place either.
+	if status != ClusterAbsent {
+		hasPorts, err := HasLoopbackPortMaps(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !hasPorts {
+			return nil, fmt.Errorf("the %s cluster predates the loopback service port maps: "+
+				"recreate it with `skali dev reset`, then run `skali dev` again", ClusterName())
+		}
+	}
 
 	// Public platform images pre-pull on the host in parallel with the
 	// cluster work below and land in one batched import, so a cold cluster

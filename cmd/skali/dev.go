@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/localdev"
+	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/utils"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
@@ -29,7 +30,7 @@ const localEnvironmentName = "local"
 
 func newDevCommand() *cobra.Command {
 	var envFile, skalidImage, platform string
-	var detach, force, rebuild bool
+	var detach, force, rebuild, preview bool
 	command := &cobra.Command{
 		Use:   "dev",
 		Short: "Run the project on the local skali platform",
@@ -59,11 +60,49 @@ func newDevCommand() *cobra.Command {
 
 			var window atomic.Value // open artifact window's deployment ID
 			window.Store("")
+
+			// Dev-block applications run on the host instead of building,
+			// unless --preview asks for the full in-cluster deployment.
+			// They are child processes of this session, so a detached
+			// session cannot host them.
+			project, err := loadLocalProject("")
+			if err != nil {
+				return err
+			}
+			devApps := map[string]manifest.Dev{}
+			if !preview {
+				devApps = devApplications(project)
+			}
+			if detach && len(devApps) > 0 {
+				return fmt.Errorf("--detach cannot host local dev processes (%s); "+
+					"use --preview for a detached full deployment",
+					strings.Join(utils.SortedKeys(devApps), ", "))
+			}
+
 			if _, err := ensureLocalPlatform(command, skalidImage, false); err != nil {
 				if sessionCtx.Err() != nil {
 					return errors.New("interrupted")
 				}
 				return err
+			}
+			// followWithChildren starts the host dev processes (none under
+			// --preview) and hands the session to the log follow.
+			followWithChildren := func(api *client.Client, environmentID string) error {
+				var children *devChildren
+				var mux *logMux
+				if len(devApps) > 0 {
+					mux = newLogMux(command.OutOrStdout())
+					var err error
+					children, err = startDevChildren(sessionCtx, mux, command.OutOrStdout(),
+						api, environmentID, project.Root, devApps)
+					if err != nil {
+						if sessionCtx.Err() != nil {
+							return finishInterrupted(command, window.Load().(string), detach)
+						}
+						return err
+					}
+				}
+				return devFollowLogs(command, api, environmentID, &window, children, mux)
 			}
 			// A run already holding the environment's slot (a rollout still
 			// settling, a pause finishing) is resolved before the deploy
@@ -71,13 +110,18 @@ func newDevCommand() *cobra.Command {
 			// or cancel it when --force asked for a fresh deploy. A failed
 			// environment lookup means nothing is deployed yet.
 			attachToRunning := func(api *client.Client, environmentID string) error {
-				if err := printDevReady(command); err != nil {
+				if err := printDevReady(command, devApps); err != nil {
 					return err
 				}
 				if detach {
 					return nil
 				}
-				return devFollowLogs(command, api, environmentID, &window)
+				if len(devApps) > 0 {
+					out := command.OutOrStdout()
+					fmt.Fprintf(out, "  %s\n", clirender.StyleFor(out).Yellow(
+						"note: attached to an in-flight run; route interception may lag until the next deploy"))
+				}
+				return followWithChildren(api, environmentID)
 			}
 			if api, environmentID, err := localProjectEnvironment(command); err == nil {
 				action, err := devResolveInFlight(sessionCtx, command.OutOrStdout(),
@@ -107,6 +151,12 @@ func newDevCommand() *cobra.Command {
 				Rebuild:            rebuild,
 				OnDeploymentOpened: func(id string) { window.Store(id) },
 				OnDeploymentClosed: func() { window.Store("") },
+			}
+			if len(devApps) > 0 {
+				opts.LocalApplications = make(map[string]client.LocalApplication, len(devApps))
+				for key, dev := range devApps {
+					opts.LocalApplications[key] = client.LocalApplication{Ports: dev.Ports}
+				}
 			}
 			var outcome string
 			for attempt := 0; ; attempt++ {
@@ -145,7 +195,7 @@ func newDevCommand() *cobra.Command {
 					return attachToRunning(api, environmentID)
 				}
 			}
-			if err := printDevReady(command); err != nil {
+			if err := printDevReady(command, devApps); err != nil {
 				return err
 			}
 			if detach || outcome == deployOutcomeDetached {
@@ -155,7 +205,7 @@ func newDevCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return devFollowLogs(command, api, environmentID, &window)
+			return followWithChildren(api, environmentID)
 		},
 	}
 	command.PersistentFlags().StringVar(&skalidImage, "skalid-image", "",
@@ -169,6 +219,8 @@ func newDevCommand() *cobra.Command {
 		"deploy even when nothing changed, cancelling any in-flight run first; application workloads are restarted (data is untouched)")
 	command.Flags().BoolVar(&rebuild, "rebuild", false,
 		"rebuild and re-import artifacts without caches, picking up moved base images (implies --force)")
+	command.Flags().BoolVar(&preview, "preview", false,
+		"build and deploy every application in the cluster, ignoring dev blocks; no local dev processes run")
 
 	up := &cobra.Command{
 		Use:   "up",
@@ -293,7 +345,8 @@ func newDevCommand() *cobra.Command {
 	}
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
-	command.AddCommand(up, upgrade, status, logs, newDevExecCommand(), down, ls, stop, start, reset)
+	command.AddCommand(up, upgrade, status, logs, newDevExecCommand(), newDevRunCommand(),
+		down, ls, stop, start, reset)
 	return command
 }
 
@@ -525,10 +578,12 @@ func findRunningRun(ctx context.Context, api *client.Client, environmentID strin
 
 // devFollowLogs hands the rest of the session to the runtime logs. On a
 // terminal the d key detaches: the follow ends and the project keeps
-// running, exactly as if the session had started with -d. Everything else
-// that ends the logs reaches the epilogue, which pauses the project.
+// running, exactly as if the session had started with -d; host dev
+// processes are terminated first, since they cannot outlive the CLI.
+// Everything else that ends the logs terminates the children and reaches
+// the epilogue, which pauses the project.
 func devFollowLogs(command *cobra.Command, api *client.Client, environmentID string,
-	window *atomic.Value) error {
+	window *atomic.Value, children *devChildren, mux *logMux) error {
 	out := command.OutOrStdout()
 	sessionCtx := command.Context()
 	followCtx := sessionCtx
@@ -553,14 +608,25 @@ func devFollowLogs(command *cobra.Command, api *client.Client, environmentID str
 		fmt.Fprintln(out,
 			"\nfollowing logs; Ctrl-C pauses the project (skali dev -d keeps it running)")
 	}
-	if err := followRuntimeLogs(followCtx, out, api, environmentID, ""); err != nil {
+	// Cluster lines interleave with child output through the mux; the pod
+	// prefix printLogEvent writes already labels them.
+	followOut := out
+	if mux != nil {
+		followOut = mux.Writer("")
+	}
+	if err := followRuntimeLogs(followCtx, followOut, api, environmentID, ""); err != nil {
+		children.Terminate(childGrace)
 		return err
 	}
 	// A dead session context wins over a simultaneous keypress: the user's
-	// Ctrl-C asked for the pause.
+	// Ctrl-C asked for the pause. Children terminate on both paths.
+	children.Terminate(childGrace)
 	if detached.Load() && sessionCtx.Err() == nil {
 		style := clirender.StyleFor(out)
 		fmt.Fprintf(out, "\n%sdetached; the project keeps running\n", style.Check())
+		if children != nil {
+			fmt.Fprintln(out, "  local dev processes stopped; apps with dev blocks are down until the next skali dev")
+		}
 		fmt.Fprintf(out, "  %s  skali dev\n", style.Dim("reattach"))
 		fmt.Fprintf(out, "  %s     skali dev down\n", style.Dim("pause"))
 		return nil
@@ -951,11 +1017,19 @@ func runDevReset(command *cobra.Command, yes bool) error {
 	return nil
 }
 
-func printDevReady(command *cobra.Command) error {
+func printDevReady(command *cobra.Command, devApps map[string]manifest.Dev) error {
 	out := command.OutOrStdout()
 	style := clirender.StyleFor(out)
 	fmt.Fprintf(out, "  %s  %s\n", style.Dim("dashboard"), style.Cyan(localdev.MasterURL()))
 	fmt.Fprintf(out, "  %s     http://<domain>:%d for your manifest's *.localhost domains\n",
 		style.Dim("routes"), localdev.HTTPPort())
+	for _, key := range utils.SortedKeys(devApps) {
+		ports := make([]string, 0, len(devApps[key].Ports))
+		for _, name := range utils.SortedKeys(devApps[key].Ports) {
+			ports = append(ports, fmt.Sprintf("%s=localhost:%d", name, devApps[key].Ports[name]))
+		}
+		fmt.Fprintf(out, "  %s  %s intercepted to the host dev process (%s)\n",
+			style.Dim("local"), key, strings.Join(ports, ", "))
+	}
 	return nil
 }

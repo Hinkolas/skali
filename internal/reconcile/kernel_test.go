@@ -132,6 +132,9 @@ func newKernelFixture(t *testing.T, cfg Config) *kernelFixture {
 		Registry: registry,
 		Observed: fake.Store,
 		Cluster:  cluster,
+		HostGateway: func(context.Context) (string, error) {
+			return "192.0.2.10", nil
+		},
 	}, cfg)
 	deploySvc.SetEnqueuer(kernel)
 

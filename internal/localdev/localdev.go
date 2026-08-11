@@ -17,9 +17,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
@@ -40,6 +42,31 @@ func ClusterName() string { return utils.EnvOr("SKALI_DEV_CLUSTER", "skali-dev")
 // publishes the managed registry for host-side pushes.
 func HTTPPort() int     { return envPortOr("SKALI_DEV_HTTP_PORT", 8080) }
 func RegistryPort() int { return envPortOr("SKALI_DEV_REGISTRY_PORT", 5510) }
+
+// LoopbackPortBase() is the first host port of the loopback service range:
+// ten consecutive 127.0.0.1 ports mapped onto the substrate's fixed
+// NodePorts (postgres pools 30501-30509, then S3 on 30510). The default is
+// the identity mapping, so host port == NodePort and the server can
+// compute host addresses without a translation table; the override shifts
+// the whole range for the e2e suite.
+func LoopbackPortBase() int {
+	return envPortOr("SKALI_DEV_LOOPBACK_PORT_BASE", bundle.PoolNodePortMin)
+}
+
+// loopbackNodePortCount spans pools plus the S3 gateway.
+const loopbackNodePortCount = bundle.S3NodePort - bundle.PoolNodePortMin + 1
+
+// loopbackPortArgs renders the k3d -p mappings of the loopback service
+// range.
+func loopbackPortArgs() []string {
+	base := LoopbackPortBase()
+	args := make([]string, 0, 2*loopbackNodePortCount)
+	for offset := range loopbackNodePortCount {
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d@server:0:direct",
+			base+offset, bundle.PoolNodePortMin+offset))
+	}
+	return args
+}
 
 // RegistryHost() names the registry in artifact references; valid from the
 // host (buildx push through the port mapping) and from containerd (the
@@ -283,6 +310,45 @@ func legacyLayout(ctx context.Context) bool {
 	return exec.CommandContext(ctx, "docker", "container", "inspect", "k3d-"+ClusterName()+"-server-0").Run() == nil
 }
 
+// HasLoopbackPortMaps reports whether the existing node container publishes
+// the loopback service range. Port maps are create-time k3d options, so a
+// cluster from before the range must be recreated (skali dev reset).
+// Checking the last port of the range suffices: the maps are created as one
+// block. Works on stopped containers too.
+func HasLoopbackPortMaps(ctx context.Context) (bool, error) {
+	out, err := exec.CommandContext(ctx, "docker", "container", "inspect", nodeContainer()).Output()
+	if err != nil {
+		return false, fmt.Errorf("localdev: inspect node container: %w", err)
+	}
+	return portBindingsHaveLoopback(out, bundle.S3NodePort,
+		LoopbackPortBase()+loopbackNodePortCount-1)
+}
+
+// portBindingsHaveLoopback checks a docker-inspect document for a published
+// binding of the container port to the loopback host port.
+func portBindingsHaveLoopback(raw []byte, nodePort, hostPort int) (bool, error) {
+	var doc []struct {
+		HostConfig struct {
+			PortBindings map[string][]struct {
+				HostIP   string `json:"HostIp"`
+				HostPort string `json:"HostPort"`
+			} `json:"PortBindings"`
+		} `json:"HostConfig"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return false, fmt.Errorf("localdev: decode container inspect: %w", err)
+	}
+	if len(doc) == 0 {
+		return false, fmt.Errorf("localdev: container inspect returned no entries")
+	}
+	for _, binding := range doc[0].HostConfig.PortBindings[fmt.Sprintf("%d/tcp", nodePort)] {
+		if binding.HostPort == strconv.Itoa(hostPort) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // registriesConfig lets containerd on the nodes resolve the artifact
 // reference host through the node-local NodePort.
 func registriesConfig() string {
@@ -319,8 +385,9 @@ func Create(ctx context.Context) error {
 		"--registry-config", registries,
 		"-p", fmt.Sprintf("127.0.0.1:%d:80@server:0:direct", HTTPPort()),
 		"-p", fmt.Sprintf("127.0.0.1:%d:30500@server:0:direct", RegistryPort()),
-		"--wait",
 	}
+	args = append(args, loopbackPortArgs()...)
+	args = append(args, "--wait")
 	if out, err := exec.CommandContext(ctx, k3dBinary(), args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster create: %w\n%s", err, out)
 	}

@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -474,4 +475,53 @@ applications:
 	deployment, ok = objects[0].(*appsv1.Deployment)
 	require.True(t, ok)
 	require.Equal(t, int32(600), *deployment.Spec.ProgressDeadlineSeconds)
+}
+
+// An intercepted application renders no workload: Service without selector,
+// a managed EndpointSlice targeting the host, and its Ingress; Deployment,
+// HPA, and release Job are absent. A build source needs no prepared image.
+func TestRenderInterceptedApplication(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	objects, err := Render(result, Options{
+		Namespace:       "skali-hello-world",
+		Variables:       map[string]string{"APP_DOMAIN": "hello.localhost"},
+		Intercepts:      map[string]map[string]int32{"web": {"http": 5173}},
+		InterceptHostIP: "192.0.2.10",
+	})
+	require.NoError(t, err)
+	kinds := make([]string, 0, len(objects))
+	for _, object := range objects {
+		kinds = append(kinds, object.GetObjectKind().GroupVersionKind().Kind)
+	}
+	require.Equal(t, []string{"Service", "EndpointSlice", "Ingress"}, kinds)
+
+	service := objects[0].(*corev1.Service)
+	require.Nil(t, service.Spec.Selector, "intercepted Services drop their selector")
+
+	slice := objects[1].(*discoveryv1.EndpointSlice)
+	require.Equal(t, service.Name+"-local", slice.Name)
+	require.Equal(t, "true", slice.Labels[LabelManaged])
+	require.Equal(t, service.Name, slice.Labels["kubernetes.io/service-name"])
+	require.Equal(t, "skali.dev", slice.Labels["endpointslice.kubernetes.io/managed-by"])
+	require.Equal(t, discoveryv1.AddressTypeIPv4, slice.AddressType)
+	require.Equal(t, []string{"192.0.2.10"}, slice.Endpoints[0].Addresses)
+	require.True(t, *slice.Endpoints[0].Conditions.Ready)
+	require.Len(t, slice.Ports, len(service.Spec.Ports))
+	for index, port := range service.Spec.Ports {
+		require.Equal(t, port.Name, *slice.Ports[index].Name)
+		require.EqualValues(t, 5173, *slice.Ports[index].Port)
+	}
+
+	// A missing host IP fails the render instead of publishing a dead slice.
+	_, err = Render(result, Options{
+		Namespace:  "skali-hello-world",
+		Variables:  map[string]string{"APP_DOMAIN": "hello.localhost"},
+		Intercepts: map[string]map[string]int32{"web": {"http": 5173}},
+	})
+	require.ErrorContains(t, err, "host gateway")
 }

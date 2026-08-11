@@ -1336,6 +1336,79 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /v1/environments/{id}/applications/{key}/environment:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: audience
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [internal, local]
+          default: internal
+        description: |
+          Address form for endpoint-bearing outputs. `internal` returns
+          cluster-internal addresses (what the pod sees); `local` rewrites
+          database and bucket endpoints to the 127.0.0.1 loopback ports the
+          dev cluster maps, and is rejected on managed clusters.
+      - name: port_base
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        description: |
+          First host port of the client's loopback range (defaults to the
+          identity mapping). Only meaningful with `audience=local`.
+    get:
+      operationId: getApplicationEnvironment
+      summary: Resolve an application's full environment
+      description: |
+        The exact variable set the application's pod would receive, with
+        stored values decrypted and service outputs materialized from the
+        substrate. Backs skali dev's host-run processes. Returns secret
+        values, so it requires fresh authentication (sudo mode) like
+        credential reveal; values are never cached, journaled, or logged.
+        Variables whose services are not provisioned yet are omitted with a
+        warning.
+      responses:
+        "200":
+          description: The resolved environment.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [values, warnings]
+                properties:
+                  values:
+                    type: object
+                    additionalProperties: { type: string }
+                  warnings:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            `conflict`: the environment has no active revision yet, or the
+            local audience was requested on a managed cluster.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/environments/{id}/buckets/{key}/connection:
     parameters:
       - name: id
@@ -2922,6 +2995,12 @@ components:
         pods:
           type: array
           items: { $ref: "#/components/schemas/PodStatus" }
+        intercepted:
+          type: boolean
+          description: >
+            The application is served by a local dev process on the host
+            (skali dev interception); its health is synthesized healthy and
+            no Deployment exists for it.
 
     EnvironmentStatus:
       type: object
@@ -3250,6 +3329,25 @@ components:
           description: |
             Plan as if artifact reuse were disabled: every build-sourced
             application builds again and every image source re-imports.
+        local_applications:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/LocalApplication" }
+          description: |
+            Applications the client runs on the host during a dev session
+            (interception). They need no build input and no artifact; the
+            reconciler routes their Service to the declared host ports
+            instead of running a Deployment. Each deploy replaces the
+            environment's whole intercept set, so an absent map clears it.
+            Local platform only; managed clusters reject it.
+
+    LocalApplication:
+      type: object
+      properties:
+        ports:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Manifest port name mapped to the host port.
 
     PlanResponse:
       type: object
@@ -3298,6 +3396,13 @@ components:
         builds:
           type: object
           additionalProperties: { $ref: "#/components/schemas/BuildInput" }
+        local_applications:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/LocalApplication" }
+          description: |
+            Applications the client runs on the host during a dev session;
+            see the same field on PlanRequest. Promotion replaces the
+            environment's intercept set with it.
         force:
           type: boolean
           description: |

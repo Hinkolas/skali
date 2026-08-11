@@ -43,6 +43,10 @@ type ExecuteInput struct {
 	// promotion marks it promoted in the transaction that moves the target.
 	// uuid.Nil runs the stages without a deployment row.
 	DeploymentID uuid.UUID
+	// LocalApplications is the intercept set this deploy promotes: host-run
+	// applications that resolve no artifact. Promotion replaces the
+	// environment's stored intercepts with it; empty clears them.
+	LocalApplications map[string]LocalApplication
 }
 
 type ExecuteResult struct {
@@ -111,6 +115,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		DefinitionVersionID: in.DefinitionVersionID,
 		CandidateID:         in.CandidateID,
 		Resolver:            in.Resolver,
+		LocalApplications:   in.LocalApplications,
 	})
 	if err != nil {
 		_ = writer.Error(ctx, "preparation failed: "+err.Error())

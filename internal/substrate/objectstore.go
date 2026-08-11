@@ -158,6 +158,8 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 	objects := seaweed.RenderDev(spec)
 	if c.cfg.Managed {
 		objects = seaweed.RenderProduction(spec)
+	} else {
+		objects = append(objects, seaweed.RenderDevS3NodePort(Namespace))
 	}
 	if c.cfg.Managed && c.cfg.S3Domain != "" {
 		objects = append(objects, seaweed.RenderS3Ingress(Namespace, c.cfg.S3Domain))

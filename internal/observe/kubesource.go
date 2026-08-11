@@ -13,6 +13,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -186,6 +187,18 @@ func (k *KubeSource) register() {
 			return networking.Ingresses(all).Watch(context.Background(), o)
 		},
 		managed, ""), convertPlain(schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"}, module.KindIngress))
+
+	// Intercept EndpointSlices (local dev). Only managed slices match the
+	// selector; the endpointslice controller's own slices for ordinary
+	// Services never carry the label and stay invisible.
+	k.addObjectInformer("EndpointSlice", &discoveryv1.EndpointSlice{}, k.listWatch("EndpointSlice",
+		func(o metav1.ListOptions) (runtime.Object, error) {
+			return k.client.Clientset.DiscoveryV1().EndpointSlices(all).List(context.Background(), o)
+		},
+		func(o metav1.ListOptions) (watch.Interface, error) {
+			return k.client.Clientset.DiscoveryV1().EndpointSlices(all).Watch(context.Background(), o)
+		},
+		managed, ""), convertPlain(schema.GroupVersionKind{Group: "discovery.k8s.io", Version: "v1", Kind: "EndpointSlice"}, module.KindEndpointSlice))
 
 	k.addObjectInformer("PersistentVolumeClaim", &corev1.PersistentVolumeClaim{}, k.listWatch("PersistentVolumeClaim",
 		func(o metav1.ListOptions) (runtime.Object, error) {

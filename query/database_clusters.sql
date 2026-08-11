@@ -47,3 +47,16 @@ WHERE id = $1 AND state = sqlc.arg(from_state);
 UPDATE database_clusters
 SET instances = $2, storage_bytes = $3, updated_at = now()
 WHERE id = $1;
+
+-- Local-platform loopback port allocation. The IS NULL guard makes a lost
+-- allocation race a 0-row no-op; the caller re-reads and retries. The
+-- partial unique index rejects double allocation of the same port.
+-- name: SetDatabaseClusterNodePort :execrows
+UPDATE database_clusters
+SET node_port = $2, updated_at = now()
+WHERE id = $1 AND node_port IS NULL;
+
+-- name: ListAllocatedNodePorts :many
+SELECT node_port FROM database_clusters
+WHERE node_port IS NOT NULL AND state <> 'released'
+ORDER BY node_port;

@@ -54,6 +54,58 @@ func (s *Service) CreateCluster(ctx context.Context, in ClusterInput) (*store.Da
 	return &row, nil
 }
 
+// ErrNodePortsExhausted reports that every loopback NodePort in the allowed
+// range is held by a live pool.
+var ErrNodePortsExhausted = errors.New("dbstore: node port range exhausted")
+
+// AllocateClusterNodePort assigns the lowest free loopback NodePort in
+// [minPort, maxPort] to the cluster, or returns the port it already holds.
+// A lost race against a concurrent allocation retries with a fresh view of
+// the allocated set; a fully held range returns ErrNodePortsExhausted.
+func (s *Service) AllocateClusterNodePort(ctx context.Context, id uuid.UUID, minPort, maxPort int) (int, error) {
+	for attempt := 0; attempt <= maxPort-minPort+1; attempt++ {
+		cluster, err := s.GetCluster(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		if cluster.NodePort != nil {
+			return int(*cluster.NodePort), nil
+		}
+		taken, err := s.st.ListAllocatedNodePorts(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("dbstore: list node ports: %w", err)
+		}
+		used := make(map[int]bool, len(taken))
+		for _, port := range taken {
+			if port != nil {
+				used[int(*port)] = true
+			}
+		}
+		candidate := 0
+		for port := minPort; port <= maxPort; port++ {
+			if !used[port] {
+				candidate = port
+				break
+			}
+		}
+		if candidate == 0 {
+			return 0, ErrNodePortsExhausted
+		}
+		value := int32(candidate)
+		rows, err := s.st.SetDatabaseClusterNodePort(ctx, store.SetDatabaseClusterNodePortParams{ID: id, NodePort: &value})
+		if err != nil {
+			if store.IsUniqueViolation(err) {
+				continue
+			}
+			return 0, fmt.Errorf("dbstore: set node port: %w", err)
+		}
+		if rows > 0 {
+			return candidate, nil
+		}
+	}
+	return 0, fmt.Errorf("dbstore: allocate node port: retries exhausted")
+}
+
 // GetCluster returns a cluster by id regardless of state.
 func (s *Service) GetCluster(ctx context.Context, id uuid.UUID) (*store.DatabaseCluster, error) {
 	row, err := s.st.GetDatabaseCluster(ctx, id)

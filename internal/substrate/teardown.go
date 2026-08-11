@@ -171,6 +171,14 @@ func (c *Controller) releasePool(ctx context.Context, pool store.DatabaseCluster
 	}); err != nil {
 		return fmt.Errorf("substrate: delete pool: %w", err)
 	}
+	// The dev-only loopback Service goes with the pool; deleting a Service
+	// that was never rendered is a tolerated no-op.
+	if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
+		GVK:       schema.GroupVersionKind{Version: "v1", Kind: "Service"},
+		Namespace: Namespace, Name: pool.Name + "-external",
+	}); err != nil {
+		return fmt.Errorf("substrate: delete pool external service: %w", err)
+	}
 	if _, err := c.deps.DB.TransitionCluster(ctx, pool.ID, dbstore.StateReleased); err != nil {
 		return err
 	}

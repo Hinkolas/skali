@@ -26,6 +26,22 @@ var outputCatalog = map[string]map[string]bool{
 	},
 }
 
+// endpointBearing marks the outputs whose value embeds a network address:
+// exactly these change when outputs are resolved for a non-internal
+// audience (the resolved-environment API rewrites them to host-reachable
+// addresses). Kept beside outputCatalog so the classification cannot drift
+// from the catalog itself.
+var endpointBearing = map[string]map[string]bool{
+	"databases": {"host": true, "port": true, "url": true},
+	"buckets":   {"endpoint": true},
+}
+
+// EndpointBearingOutput reports whether an output's value embeds a network
+// address and therefore depends on the resolution audience.
+func EndpointBearingOutput(collection, output string) bool {
+	return endpointBearing[collection][output]
+}
+
 // parseExpression scans one raw manifest string into literal and reference
 // parts. The grammar is flat: ${NAME} and ${NAME:-default} project values
 // plus {{collection.key.output}} service outputs, interleaved with literal
@@ -266,25 +282,66 @@ func hasServiceOutputPart(e Expression) bool {
 func ResolveExpression(expression Expression, values map[string]string) (string, error) {
 	var result strings.Builder
 	for _, part := range expression.Parts {
-		switch part.Kind {
-		case "literal":
-			result.WriteString(part.Value)
-		case "project_variable":
-			// A present empty string is a real value; only absence falls back
-			// to the inline default.
-			value, ok := values[part.Name]
-			if !ok {
-				if !part.HasDefault {
-					return "", fmt.Errorf("missing project variable %s", part.Name)
-				}
-				value = part.Default
-			}
-			result.WriteString(value)
-		case "service_output":
+		if part.Kind == "service_output" {
 			return "", fmt.Errorf("service output %s.%s.%s is not a plain compile-time value", part.Collection, part.Service, part.Output)
-		default:
-			return "", fmt.Errorf("unknown expression part %q", part.Kind)
 		}
+		value, err := resolvePlainPart(part, values)
+		if err != nil {
+			return "", err
+		}
+		result.WriteString(value)
 	}
 	return result.String(), nil
+}
+
+// ResolveExpressionOutputs resolves like ResolveExpression but additionally
+// substitutes {{collection.service.output}} references from the outputs map,
+// keyed by "<collection>.<service>" and then by output name. It backs the
+// resolved-environment API, the one consumer that materializes service
+// outputs outside the cluster; the in-cluster path binds outputs by Secret
+// reference instead and never sees their values.
+func ResolveExpressionOutputs(expression Expression, values map[string]string, outputs map[string]map[string]string) (string, error) {
+	var result strings.Builder
+	for _, part := range expression.Parts {
+		if part.Kind == "service_output" {
+			set, ok := outputs[part.Collection+"."+part.Service]
+			if !ok {
+				return "", fmt.Errorf("missing outputs for %s.%s", part.Collection, part.Service)
+			}
+			value, ok := set[part.Output]
+			if !ok {
+				return "", fmt.Errorf("missing output %s.%s.%s", part.Collection, part.Service, part.Output)
+			}
+			result.WriteString(value)
+			continue
+		}
+		value, err := resolvePlainPart(part, values)
+		if err != nil {
+			return "", err
+		}
+		result.WriteString(value)
+	}
+	return result.String(), nil
+}
+
+// resolvePlainPart resolves the literal and project-variable arms shared by
+// ResolveExpression and ResolveExpressionOutputs.
+func resolvePlainPart(part ExpressionPart, values map[string]string) (string, error) {
+	switch part.Kind {
+	case "literal":
+		return part.Value, nil
+	case "project_variable":
+		// A present empty string is a real value; only absence falls back
+		// to the inline default.
+		value, ok := values[part.Name]
+		if !ok {
+			if !part.HasDefault {
+				return "", fmt.Errorf("missing project variable %s", part.Name)
+			}
+			value = part.Default
+		}
+		return value, nil
+	default:
+		return "", fmt.Errorf("unknown expression part %q", part.Kind)
+	}
 }

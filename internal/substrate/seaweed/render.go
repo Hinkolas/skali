@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
@@ -674,6 +675,26 @@ func RenderAccessPolicy(namespace string, cidrs []string) *networkingv1.NetworkP
 					{Port: &filerPort, Protocol: &tcp},
 					{Port: &masterPort, Protocol: &tcp},
 				},
+			}},
+		},
+	}
+}
+
+// RenderDevS3NodePort exposes the dev all-in-one S3 gateway on a fixed
+// NodePort for the local platform's loopback port maps (skali dev maps the
+// identical number on 127.0.0.1). Dev shape only; managed clusters publish
+// S3 through the ingress instead.
+func RenderDevS3NodePort(namespace string) *corev1.Service {
+	return &corev1.Service{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: objectMeta(namespace, S3Service+"-external", AllInOneApp),
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeNodePort,
+			Selector: map[string]string{"app": AllInOneApp},
+			Ports: []corev1.ServicePort{{
+				Name:     "s3",
+				Port:     S3Port,
+				NodePort: bundle.S3NodePort,
 			}},
 		},
 	}

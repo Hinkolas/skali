@@ -72,6 +72,12 @@ type deployOptions struct {
 	// fresh context (pause-on-exit); both optional.
 	OnDeploymentOpened func(deploymentID string)
 	OnDeploymentClosed func()
+	// LocalApplications declares dev-block applications this session runs
+	// on the host: they are not built and the server intercepts their
+	// Service. Only bare skali dev sets it; plan, deploy, promote, and dev
+	// --preview leave it nil, so those flows build dev-block apps exactly
+	// like any other.
+	LocalApplications map[string]client.LocalApplication
 }
 
 // project bundles everything the flow knows about the local checkout.
@@ -80,6 +86,23 @@ type localProject struct {
 	Root   string // project root (manifest directory)
 	Source []byte
 	Result *compiler.Result
+	// Document keeps the parsed manifest: the client-only authoring
+	// surface (dev blocks, named commands) is deliberately absent from the
+	// compiled Result and is read from here.
+	Document *manifest.Document
+}
+
+// devApplications returns the manifest's dev-block applications by key.
+// Presence is read from the document (an empty dev block is still a dev
+// block, caught by validation before it gets here).
+func devApplications(project *localProject) map[string]manifest.Dev {
+	devs := map[string]manifest.Dev{}
+	for key, application := range project.Document.Project.Applications {
+		if project.Document.Has("applications." + key + ".dev") {
+			devs[key] = application.Dev
+		}
+	}
+	return devs
 }
 
 func loadLocalProject(explicit string) (*localProject, error) {
@@ -104,10 +127,11 @@ func loadLocalProject(explicit string) (*localProject, error) {
 		return nil, err
 	}
 	return &localProject{
-		Path:   path,
-		Root:   filepath.Dir(path),
-		Source: source,
-		Result: result,
+		Path:     path,
+		Root:     filepath.Dir(path),
+		Source:   source,
+		Result:   result,
+		Document: document,
 	}, nil
 }
 
@@ -353,11 +377,16 @@ func canonicalPlatforms(platforms []string) string {
 
 // buildInputs computes the per-application hashes: the dedup key the
 // server decides reuse with. Selected env files never enter the context.
-func buildInputs(project *localProject, excludeFiles []string, platform string) (map[string]client.BuildInput, map[string]*build.Context, error) {
+// Applications in the skip set (host-run intercepts) hash nothing.
+func buildInputs(project *localProject, excludeFiles []string, platform string,
+	skip map[string]client.LocalApplication) (map[string]client.BuildInput, map[string]*build.Context, error) {
 	inputs := make(map[string]client.BuildInput)
 	contexts := make(map[string]*build.Context)
 	for key, application := range project.Result.Definition.Applications {
 		if application.Source.Kind != "build" {
+			continue
+		}
+		if _, ok := skip[key]; ok {
 			continue
 		}
 		spec := application.Source.Build
@@ -1100,7 +1129,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 			"warning: could not fetch environment status: %v", err)))
 	}
 	platform := resolveBuildPlatform(out, envStatus, opts.Platform)
-	inputs, contexts, err := buildInputs(project, excludeFiles, platform)
+	inputs, contexts, err := buildInputs(project, excludeFiles, platform, opts.LocalApplications)
 	if err != nil {
 		return "", err
 	}
@@ -1111,6 +1140,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		Builds:              inputs,
 		Force:               opts.Force,
 		Rebuild:             opts.Rebuild,
+		LocalApplications:   opts.LocalApplications,
 	}
 
 	activeChecksum := ""

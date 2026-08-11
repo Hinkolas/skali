@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=../../schemas/skali.schema.json
+
+version: "1"
+
+name: dev-loop
+description: Local dev mode flagship, a dev server on the host behind the cluster edge
+
+applications:
+  web:
+    build:
+      context: .
+
+    ports:
+      web:
+        port: 8080
+        protocol: http
+
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        path: /
+        port: web
+
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN}"
+
+    # Named host-side commands: skali dev run seed executes with the
+    # application's resolved environment (databases and buckets included,
+    # rewritten to the local platform's loopback ports).
+    commands:
+      hello: [sh, -c, "echo hello from dev-loop"]
+
+    # Local dev mode: bare skali dev skips building this application and
+    # runs the command below on this machine; the cluster route above is
+    # intercepted to reach it. The dev server must listen on the declared
+    # host port and accept non-loopback connections (the cluster gateway
+    # connects from the container network).
+    dev:
+      command: [python3, -m, http.server, "5173", --bind, "0.0.0.0"]
+      ports:
+        web: 5173

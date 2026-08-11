@@ -34,6 +34,22 @@ type deploymentsHandlers struct {
 	registry     *registry.Client
 	reconcile    *reconcile.Kernel
 	capabilities []string
+	managed      bool
+}
+
+type localApplicationPayload struct {
+	Ports map[string]int32 `json:"ports"`
+}
+
+func decodeLocalApplications(payload map[string]localApplicationPayload) map[string]deploy.LocalApplication {
+	if len(payload) == 0 {
+		return nil
+	}
+	locals := make(map[string]deploy.LocalApplication, len(payload))
+	for application, local := range payload {
+		locals[application] = deploy.LocalApplication{Ports: local.Ports}
+	}
+	return locals
 }
 
 type buildInputPayload struct {
@@ -127,11 +143,12 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DefinitionVersionID string                       `json:"definition_version_id"`
-		FromEnvironmentID   string                       `json:"from_environment_id"`
-		CandidateID         string                       `json:"candidate_id"`
-		Builds              map[string]buildInputPayload `json:"builds"`
-		Rebuild             bool                         `json:"rebuild"`
+		DefinitionVersionID string                             `json:"definition_version_id"`
+		FromEnvironmentID   string                             `json:"from_environment_id"`
+		CandidateID         string                             `json:"candidate_id"`
+		Builds              map[string]buildInputPayload       `json:"builds"`
+		Rebuild             bool                               `json:"rebuild"`
+		LocalApplications   map[string]localApplicationPayload `json:"local_applications"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -159,6 +176,8 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		BuildInputs:         decodeBuildInputs(req.Builds),
 		NodePlatforms:       h.reconcile.NodePlatforms(),
 		Rebuild:             req.Rebuild,
+		LocalApplications:   decodeLocalApplications(req.LocalApplications),
+		ManagedCluster:      h.managed,
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)
@@ -179,14 +198,15 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DefinitionVersionID string                       `json:"definition_version_id"`
-		FromEnvironmentID   string                       `json:"from_environment_id"`
-		CandidateID         string                       `json:"candidate_id"`
-		BuildExecutor       string                       `json:"build_executor"`
-		AllowDestructive    bool                         `json:"allow_destructive"`
-		Builds              map[string]buildInputPayload `json:"builds"`
-		Force               bool                         `json:"force"`
-		Rebuild             bool                         `json:"rebuild"`
+		DefinitionVersionID string                             `json:"definition_version_id"`
+		FromEnvironmentID   string                             `json:"from_environment_id"`
+		CandidateID         string                             `json:"candidate_id"`
+		BuildExecutor       string                             `json:"build_executor"`
+		AllowDestructive    bool                               `json:"allow_destructive"`
+		Builds              map[string]buildInputPayload       `json:"builds"`
+		Force               bool                               `json:"force"`
+		Rebuild             bool                               `json:"rebuild"`
+		LocalApplications   map[string]localApplicationPayload `json:"local_applications"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -212,6 +232,8 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 			BuildInputs:         decodeBuildInputs(req.Builds),
 			NodePlatforms:       h.reconcile.NodePlatforms(),
 			Rebuild:             req.Rebuild,
+			LocalApplications:   decodeLocalApplications(req.LocalApplications),
+			ManagedCluster:      h.managed,
 		},
 		Actor:              user.ID.String(),
 		BuildExecutor:      req.BuildExecutor,
@@ -593,6 +615,9 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	var missingInput *deploy.MissingBuildInputError
 	var incomplete *deploy.ArtifactsIncompleteError
 	var platformMismatch *deploy.PlatformMismatchError
+	var localsUnsupported *deploy.LocalApplicationsUnsupportedError
+	var unknownLocal *deploy.UnknownLocalApplicationError
+	var invalidIntercept *deploy.InvalidInterceptPortsError
 	var invalidValues *revision.ValuesError
 	var staleRevision *revision.SchemaError
 	var staleDefinition *compiler.UnsupportedDefinitionError
@@ -640,6 +665,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &platformMismatch):
 		writeError(w, http.StatusUnprocessableEntity, codePlatformMismatch, trimDeployPrefix(err))
+	case errors.As(err, &localsUnsupported), errors.As(err, &unknownLocal), errors.As(err, &invalidIntercept):
+		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &invalidValues):
 		writeError(w, http.StatusUnprocessableEntity, codeInvalidValues, invalidValues.Message)
 	case errors.As(err, &incomplete):

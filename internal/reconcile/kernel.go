@@ -93,6 +93,12 @@ type Deps struct {
 	// watch event will ever heal. Nil disables the recovery (API-only mode,
 	// tests).
 	RefreshObservation func()
+	// HostGateway resolves the address in-cluster traffic uses to reach
+	// the host machine (host.k3d.internal on the local platform); rendered
+	// into intercept EndpointSlices. Nil on managed clusters, where
+	// intercepts are rejected at deploy time and any stale intercept row
+	// fails the desired set visibly instead of routing nowhere.
+	HostGateway func(ctx context.Context) (string, error)
 }
 
 type Config struct {

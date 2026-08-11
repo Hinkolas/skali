@@ -102,6 +102,22 @@ type Application struct {
 	Deployment  Deployment        `yaml:"deployment,omitempty" json:"deployment,omitempty" jsonschema:"Release and rollout behavior."`
 	Shutdown    Shutdown          `yaml:"shutdown,omitempty" json:"shutdown,omitempty" jsonschema:"Graceful shutdown behavior."`
 	Volumes     map[string]Volume `yaml:"volumes,omitempty" json:"volumes,omitempty" jsonschema:"Persistent volumes mounted by the application."`
+	// Commands and Dev are client-only authoring surface: they drive host-side
+	// behavior (skali dev interception and skali dev run) and are deliberately
+	// not mirrored into compiler.Application, the compiled definition, or its
+	// hash. Mirroring them would change every environment's plan diff for a
+	// purely local concern.
+	Commands map[string][]string `yaml:"commands,omitempty" json:"commands,omitempty" jsonschema:"Named host-side commands run with the application's resolved environment via skali dev run."`
+	Dev      Dev                 `yaml:"dev,omitempty" json:"dev,omitempty" jsonschema:"Local dev server mode: skali dev runs this command on the host instead of building the application."`
+}
+
+// Dev describes an application's local dev server. When present, skali dev
+// skips building the application and runs the command on the host with the
+// application's resolved environment, while cluster routes are intercepted to
+// reach the host process.
+type Dev struct {
+	Command []string       `yaml:"command,omitempty" json:"command,omitempty" jsonschema:"Host command that starts the dev server."`
+	Ports   map[string]int `yaml:"ports,omitempty" json:"ports,omitempty" jsonschema:"Application port name mapped to the host port the dev server listens on."`
 }
 
 type Build struct {

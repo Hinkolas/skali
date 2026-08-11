@@ -178,6 +178,7 @@ type DatabaseCluster struct {
 	State         string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	NodePort      *int32
 }
 
 type DatabasePlacement struct {
@@ -229,6 +230,7 @@ type Deployment struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	Restart             bool
+	LocalApplications   []byte
 }
 
 type Environment struct {
@@ -237,6 +239,13 @@ type Environment struct {
 	Name      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type EnvironmentIntercept struct {
+	EnvironmentID  uuid.UUID
+	ApplicationKey string
+	Ports          []byte
+	CreatedAt      time.Time
 }
 
 type EnvironmentSecret struct {

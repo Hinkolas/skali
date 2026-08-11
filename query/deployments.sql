@@ -1,9 +1,10 @@
 -- name: CreateDeployment :one
 INSERT INTO deployments (
     id, project_id, environment_id, definition_version_id,
-    candidate_id, run_id, actor, build_executor, actions, restart
+    candidate_id, run_id, actor, build_executor, actions, restart,
+    local_applications
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: GetDeploymentByID :one

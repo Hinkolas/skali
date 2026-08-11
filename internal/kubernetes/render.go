@@ -15,6 +15,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,6 +58,18 @@ type Options struct {
 
 	// ManagedCluster enables capability placement on Skali-labeled nodes.
 	ManagedCluster bool
+
+	// Intercepts marks applications served by a local dev process on the
+	// host instead of a Deployment: application key to rendered service
+	// port name to host port. Intercepted applications render their
+	// Service without a selector plus a managed EndpointSlice targeting
+	// InterceptHostIP, keep their Ingresses and PVCs, and render no
+	// Deployment, HPA, or release Job.
+	Intercepts map[string]map[string]int32
+	// InterceptHostIP is the address in-cluster traffic uses to reach the
+	// host (host.k3d.internal resolved to an IP; kube-proxy ignores FQDN
+	// endpoints). Required when Intercepts is non-empty.
+	InterceptHostIP string
 }
 
 // revisionHistoryLimit bounds retained ReplicaSets. Rollback re-renders old
@@ -107,10 +120,11 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	if options.RevisionChecksum != "" {
 		labels[LabelRevision] = RevisionLabelValue(options.RevisionChecksum)
 	}
+	hostPorts, intercepted := options.Intercepts[key]
 	image := application.Source.Image
 	if application.Source.Kind == "build" {
 		image = options.BuildImages[key]
-		if image == "" {
+		if image == "" && !intercepted {
 			return nil, fmt.Errorf("build source has no prepared image")
 		}
 	}
@@ -159,11 +173,11 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		})
 	}
 
-	if len(application.Deployment.ReleaseCommand.Command) > 0 {
+	if len(application.Deployment.ReleaseCommand.Command) > 0 && !intercepted {
 		objects = append(objects, renderReleaseJob(project, key, name, image, labels, options))
 	}
 
-	autoscalingEnabled := application.Scaling.MaxReplicas > application.Scaling.MinReplicas
+	autoscalingEnabled := application.Scaling.MaxReplicas > application.Scaling.MinReplicas && !intercepted
 	var replicas *int32
 	if !autoscalingEnabled {
 		replicas = new(int32(application.Scaling.MinReplicas))
@@ -175,53 +189,62 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	// roll, and everything else rolls only on a real spec change.
 	templateLabels := maps.Clone(labels)
 	delete(templateLabels, LabelRevision)
-	deployment := &appsv1.Deployment{
-		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: options.Namespace,
-			Labels:    maps.Clone(labels),
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas:             replicas,
-			RevisionHistoryLimit: new(int32(revisionHistoryLimit)),
-			Selector:             &metav1.LabelSelector{MatchLabels: maps.Clone(selectorLabels)},
-			Strategy:             renderStrategy(application.Deployment.Rollout),
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels:      templateLabels,
-					Annotations: templateAnnotations(options, valuesIdentity(application, options)),
-				},
-				Spec: corev1.PodSpec{
-					TerminationGracePeriodSeconds: &graceSeconds,
-					Containers:                    []corev1.Container{container},
+	if !intercepted {
+		deployment := &appsv1.Deployment{
+			TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: options.Namespace,
+				Labels:    maps.Clone(labels),
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas:             replicas,
+				RevisionHistoryLimit: new(int32(revisionHistoryLimit)),
+				Selector:             &metav1.LabelSelector{MatchLabels: maps.Clone(selectorLabels)},
+				Strategy:             renderStrategy(application.Deployment.Rollout),
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels:      templateLabels,
+						Annotations: templateAnnotations(options, valuesIdentity(application, options)),
+					},
+					Spec: corev1.PodSpec{
+						TerminationGracePeriodSeconds: &graceSeconds,
+						Containers:                    []corev1.Container{container},
+					},
 				},
 			},
-		},
-	}
-	if options.ProgressDeadlineSeconds > 0 {
-		deployment.Spec.ProgressDeadlineSeconds = new(int32(options.ProgressDeadlineSeconds))
-	}
-	if options.ManagedCluster {
-		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
-			layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 		}
+		if options.ProgressDeadlineSeconds > 0 {
+			deployment.Spec.ProgressDeadlineSeconds = new(int32(options.ProgressDeadlineSeconds))
+		}
+		if options.ManagedCluster {
+			deployment.Spec.Template.Spec.NodeSelector = map[string]string{
+				layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
+			}
+		}
+		for _, volumeKey := range utils.SortedKeys(application.Volumes) {
+			deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: volumeKey,
+				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: objectName(name, volumeKey),
+				}},
+			})
+		}
+		if constraint := renderSpread(selectorLabels, application.Placement); constraint != nil {
+			deployment.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{*constraint}
+		}
+		objects = append(objects, deployment)
 	}
-	for _, volumeKey := range utils.SortedKeys(application.Volumes) {
-		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: volumeKey,
-			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: objectName(name, volumeKey),
-			}},
-		})
-	}
-	if constraint := renderSpread(selectorLabels, application.Placement); constraint != nil {
-		deployment.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{*constraint}
-	}
-	objects = append(objects, deployment)
 
 	servicePorts := renderServicePorts(application)
 	if len(servicePorts) > 0 {
+		// An intercepted application's Service drops its selector: kube-proxy
+		// then routes it by the managed EndpointSlice below, which points at
+		// the local dev process on the host.
+		serviceSelector := maps.Clone(selectorLabels)
+		if intercepted {
+			serviceSelector = nil
+		}
 		objects = append(objects, &corev1.Service{
 			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 			ObjectMeta: metav1.ObjectMeta{
@@ -230,10 +253,17 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				Labels:    maps.Clone(labels),
 			},
 			Spec: corev1.ServiceSpec{
-				Selector: maps.Clone(selectorLabels),
+				Selector: serviceSelector,
 				Ports:    servicePorts,
 			},
 		})
+		if intercepted {
+			slice, err := renderInterceptSlice(name, options.Namespace, labels, servicePorts, hostPorts, options.InterceptHostIP)
+			if err != nil {
+				return nil, err
+			}
+			objects = append(objects, slice)
+		}
 	}
 
 	// Every rendered route uses the managed k3s edge.
@@ -620,4 +650,52 @@ func templateAnnotations(options Options, valuesHash string) map[string]string {
 		annotations[AnnotationValuesHash] = valuesHash
 	}
 	return annotations
+}
+
+// renderInterceptSlice is the routing half of an intercept: the managed
+// EndpointSlice that sends the selectorless Service's traffic to the local
+// dev process on the host. The service-name label is what kube-proxy joins
+// on; the managed-by label keeps the kube endpointslice controller from
+// garbage-collecting a slice it does not own.
+func renderInterceptSlice(serviceName, namespace string, labels map[string]string,
+	servicePorts []corev1.ServicePort, hostPorts map[string]int32, hostIP string) (*discoveryv1.EndpointSlice, error) {
+	if hostIP == "" {
+		return nil, fmt.Errorf("intercepted application requires the resolved host gateway address")
+	}
+	ports := make([]discoveryv1.EndpointPort, 0, len(servicePorts))
+	for _, servicePort := range servicePorts {
+		hostPort, ok := hostPorts[servicePort.Name]
+		if !ok {
+			return nil, fmt.Errorf("intercept declares no host port for service port %s", servicePort.Name)
+		}
+		name := servicePort.Name
+		port := hostPort
+		protocol := servicePort.Protocol
+		if protocol == "" {
+			protocol = corev1.ProtocolTCP
+		}
+		ports = append(ports, discoveryv1.EndpointPort{
+			Name:     &name,
+			Port:     &port,
+			Protocol: &protocol,
+		})
+	}
+	sliceLabels := maps.Clone(labels)
+	sliceLabels["kubernetes.io/service-name"] = serviceName
+	sliceLabels["endpointslice.kubernetes.io/managed-by"] = "skali.dev"
+	ready := true
+	return &discoveryv1.EndpointSlice{
+		TypeMeta: metav1.TypeMeta{APIVersion: "discovery.k8s.io/v1", Kind: "EndpointSlice"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objectName(serviceName, "local"),
+			Namespace: namespace,
+			Labels:    sliceLabels,
+		},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints: []discoveryv1.Endpoint{{
+			Addresses:  []string{hostIP},
+			Conditions: discoveryv1.EndpointConditions{Ready: &ready},
+		}},
+		Ports: ports,
+	}, nil
 }

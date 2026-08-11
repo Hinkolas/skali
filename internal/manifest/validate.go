@@ -63,6 +63,27 @@ func Validate(document *Document) yamldoc.Diagnostics {
 				add(routePath+".port", "must be between 1 and 65535")
 			}
 		}
+		for _, commandKey := range utils.SortedKeys(application.Commands) {
+			commandPath := path + ".commands." + commandKey
+			validateStableKey(&diagnostics, document, commandPath, commandKey)
+			if len(application.Commands[commandKey]) == 0 {
+				add(commandPath, "must not be empty")
+			}
+		}
+		if document.Has(path + ".dev") {
+			if len(application.Dev.Command) == 0 {
+				add(path+".dev.command", "is required")
+			}
+			for _, portKey := range utils.SortedKeys(application.Dev.Ports) {
+				portPath := path + ".dev.ports." + portKey
+				if _, ok := application.Ports[portKey]; !ok {
+					add(portPath, "references unknown application port %q", portKey)
+				}
+				if hostPort := application.Dev.Ports[portKey]; hostPort < 1 || hostPort > 65535 {
+					add(portPath, "must be between 1 and 65535")
+				}
+			}
+		}
 	}
 
 	for _, key := range utils.SortedKeys(project.Databases) {

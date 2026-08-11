@@ -62,6 +62,10 @@ type Deps struct {
 	// Capabilities is the installation's declared capability set for the
 	// deployment gate.
 	Capabilities []string
+	// ManagedCluster mirrors the installation mode: managed clusters reject
+	// local-application intercepts and the local resolution audience, both
+	// of which exist only on the local dev platform.
+	ManagedCluster bool
 	// Databases serves database connection projections; nil hides the
 	// routes (no substrate wired).
 	Databases *dbstore.Service
@@ -153,7 +157,7 @@ func NewRouter(d Deps) http.Handler {
 	dh := &deploymentsHandlers{
 		st: d.Store, deploy: d.Deploy, artifacts: d.Artifacts, builds: d.Builds,
 		journal: d.Journal, registry: d.Registry, reconcile: d.Reconcile,
-		capabilities: d.Capabilities,
+		capabilities: d.Capabilities, managed: d.ManagedCluster,
 	}
 	ch := &clientStepsHandlers{st: d.Store, journal: d.Journal, values: d.Values}
 	r.Route("/v1", func(r chi.Router) {
@@ -295,6 +299,17 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/steps/{id}/logs", jh.stepLogs)
 				r.Group(func(r chi.Router) {
 					r.Use(RequireFresh(d.Auth))
+
+					// One application's fully resolved environment (skali
+					// dev host runs); returns secret values, so it shares
+					// reveal's sudo gate. Registered unconditionally and
+					// answering 503 in API-only mode so the route set stays
+					// deployment-independent.
+					aeh := &appEnvHandlers{
+						deploy: d.Deploy, values: d.Values, db: d.Databases,
+						secrets: d.SecretReader, managed: d.ManagedCluster,
+					}
+					r.Get("/environments/{id}/applications/{key}/environment", aeh.resolved)
 
 					r.Delete("/projects/{id}", ph.delete)
 					r.Delete("/environments/{id}", eh.delete)

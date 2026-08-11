@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -302,6 +303,17 @@ type DeployRequest struct {
 	// Rebuild ignores artifact reuse: builds run again and images
 	// re-import, picking up moved upstream tags and refreshed bases.
 	Rebuild bool `json:"rebuild,omitempty"`
+	// LocalApplications declares applications this dev session runs on the
+	// host: no build input, no artifact; the server intercepts their
+	// Service to the declared host ports. Each deploy replaces the
+	// environment's intercept set, so an absent map clears it.
+	LocalApplications map[string]LocalApplication `json:"local_applications,omitempty"`
+}
+
+// LocalApplication maps an application's manifest port names to the host
+// ports its local dev process listens on.
+type LocalApplication struct {
+	Ports map[string]int `json:"ports,omitempty"`
 }
 
 func (c *Client) Plan(ctx context.Context, environmentID string, req DeployRequest) (*PlanResult, error) {
@@ -321,6 +333,9 @@ func (c *Client) Plan(ctx context.Context, environmentID string, req DeployReque
 	}
 	if req.Rebuild {
 		body["rebuild"] = true
+	}
+	if len(req.LocalApplications) > 0 {
+		body["local_applications"] = req.LocalApplications
 	}
 	if err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/plan", body, &res); err != nil {
 		return nil, err
@@ -510,6 +525,7 @@ type ServiceStatus struct {
 	Key         string `json:"key"`
 	Type        string `json:"type"`
 	Health      string `json:"health"`
+	Intercepted bool   `json:"intercepted,omitempty"`
 	Diagnostics []struct {
 		Severity string `json:"severity"`
 		Code     string `json:"code"`
@@ -548,6 +564,28 @@ func (c *Client) UnsetEnvironmentValue(ctx context.Context, environmentID, name 
 func (c *Client) EnvironmentStatus(ctx context.Context, environmentID string) (*EnvironmentStatus, error) {
 	var res EnvironmentStatus
 	if err := c.do(ctx, http.MethodGet, "/v1/environments/"+environmentID+"/status", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// ResolvedEnvironment is one application's fully resolved variable set: what
+// its pod would receive, with endpoint-bearing outputs rewritten to the
+// host's loopback ports. Variables whose services are not provisioned are
+// omitted with a warning.
+type ResolvedEnvironment struct {
+	Values   map[string]string `json:"values"`
+	Warnings []string          `json:"warnings"`
+}
+
+// ApplicationEnvironment resolves an application's environment for host-run
+// processes (skali dev). Requires fresh authentication like credential
+// reveal; portBase is the first host port of the CLI's loopback range.
+func (c *Client) ApplicationEnvironment(ctx context.Context, environmentID, applicationKey string, portBase int) (*ResolvedEnvironment, error) {
+	var res ResolvedEnvironment
+	path := "/v1/environments/" + environmentID + "/applications/" + applicationKey +
+		"/environment?audience=local&port_base=" + strconv.Itoa(portBase)
+	if err := c.do(ctx, http.MethodGet, path, nil, &res); err != nil {
 		return nil, err
 	}
 	return &res, nil

@@ -199,3 +199,19 @@ func (f *Fake) SetObjectStore(name string, status module.ObjectStoreStatus) {
 		ObjectStore: &status,
 	})
 }
+
+// SetEndpointSlice records an intercept EndpointSlice projection (local
+// dev) so pruning sees it when the intercept clears.
+func (f *Fake) SetEndpointSlice(environmentID uuid.UUID, namespace, objectName, service string) {
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Group: "discovery.k8s.io", Version: "v1", Kind: "EndpointSlice"},
+			Namespace: namespace,
+			Name:      objectName,
+		},
+		Kind:        module.KindEndpointSlice,
+		Name:        objectName,
+		Environment: environmentID,
+		Service:     service,
+	})
+}

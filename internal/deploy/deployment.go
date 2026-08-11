@@ -60,6 +60,11 @@ type NewDeployment struct {
 	// Restart records a forced deployment: promotion stamps a workload
 	// restart even when the revision is unchanged.
 	Restart bool
+	// LocalApplications records the requested intercept set (JSON map of
+	// application key to LocalApplication) so completion re-reads it from
+	// the row instead of trusting the client a second time. Empty means
+	// this deploy clears the environment's intercepts.
+	LocalApplications json.RawMessage
 }
 
 // CreateDeployment inserts the coordination row in preparing. The partial
@@ -89,6 +94,7 @@ func (s *Service) CreateDeployment(ctx context.Context, in NewDeployment) (*stor
 		BuildExecutor:       executor,
 		Actions:             actions,
 		Restart:             in.Restart,
+		LocalApplications:   in.LocalApplications,
 	})
 	if err != nil {
 		if store.IsUniqueViolation(err) {

@@ -11,6 +11,19 @@ manifest:
 - `skali compile` prints the compiled project definition, showing
   defaults and normalized units.
 
-Deeper guidance on driving skali from a coding agent (local dev clusters
-with `skali dev`, deploys, logs, runs) ships in a later release of this
-skill.
+## Local development
+
+- `skali dev` is the paved path: it ensures the disposable local platform
+  and deploys the project. Applications with a `dev:` block are not built;
+  their dev command runs on this machine with the real resolved
+  environment, and the cluster's routes reach the host process. Ctrl-C
+  pauses the project; `d` detaches (host dev processes still stop).
+- `skali dev --preview` deploys everything in the cluster, exactly like a
+  remote deploy would, ignoring dev blocks.
+- `skali dev run <name>` runs a named command from the manifest
+  (`applications.<app>.commands`) on this machine with the application's
+  resolved environment; `skali dev run <app> -- <command>...` runs a raw
+  command. Database and bucket addresses are rewritten to the local
+  platform's loopback ports, so seeds and migrations just work.
+- `skali dev exec [app]` opens a shell inside the running container
+  instead; `skali run` manages journal runs, not project commands.

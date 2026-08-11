@@ -184,3 +184,34 @@ func RenderCredentialSecret(namespace, name, poolName, username, password string
 		},
 	}
 }
+
+// RenderPrimaryNodePortService exposes a pool's primary instance on a fixed
+// NodePort for the local platform's loopback port maps (skali dev maps the
+// identical number on 127.0.0.1). CNPG's own -rw Service stays the
+// in-cluster path; this Service exists only so host processes can reach the
+// pool, and it is never rendered on managed clusters. The selector mirrors
+// the one CNPG puts on its -rw Service.
+func RenderPrimaryNodePortService(namespace, poolName string, nodePort int32) *corev1.Service {
+	return &corev1.Service{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      poolName + "-external",
+			Namespace: namespace,
+			Labels: map[string]string{
+				kubernetes.LabelPool: poolName,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Selector: map[string]string{
+				"cnpg.io/cluster":      poolName,
+				"cnpg.io/instanceRole": "primary",
+			},
+			Ports: []corev1.ServicePort{{
+				Name:     "postgres",
+				Port:     5432,
+				NodePort: nodePort,
+			}},
+		},
+	}
+}

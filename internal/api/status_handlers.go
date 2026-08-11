@@ -53,6 +53,7 @@ type serviceStatusPayload struct {
 	Health      string                    `json:"health"`
 	Diagnostics []healthDiagnosticPayload `json:"diagnostics"`
 	Pods        []podPayload              `json:"pods"`
+	Intercepted bool                      `json:"intercepted,omitempty"`
 }
 
 type environmentStatusPayload struct {
@@ -99,6 +100,7 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 			Health:      string(service.Health),
 			Diagnostics: make([]healthDiagnosticPayload, 0, len(service.Diagnostics)),
 			Pods:        make([]podPayload, 0, len(service.Pods)),
+			Intercepted: service.Intercepted,
 		}
 		for _, diagnostic := range service.Diagnostics {
 			servicePayload.Diagnostics = append(servicePayload.Diagnostics, healthDiagnosticPayload{

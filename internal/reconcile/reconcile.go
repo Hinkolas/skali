@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -64,7 +65,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID, rev))
 
-	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt)
+	intercepts, err := k.loadIntercepts(ctx, environmentID)
+	if err != nil {
+		return 0, err
+	}
+
+	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, intercepts)
 	if err != nil {
 		// An unrenderable revision is permanent for this target: journal the
 		// diagnostic, never prune (compiler-error absence must not delete
@@ -127,7 +133,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	// Pre-pass health gates later batches: a dependency that is not ready
 	// produces a visible waiting step, not an opaque retry.
-	preHealth := healthByService(k.evaluateServices(rev, snapshot))
+	preHealth := healthByService(k.evaluateServices(rev, snapshot, intercepts))
 	var unhealthyEarlier []string
 	for _, batch := range batches {
 		blockedOn := strings.Join(unhealthyEarlier, ", ")
@@ -249,7 +255,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
-	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID))
+	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID), intercepts)
 	// A service blocked on a projection the observation never delivered
 	// cannot be healed by waiting: the object exists on the cluster but its
 	// creation fell into an informer-establishment gap, and no further
@@ -420,8 +426,29 @@ func (k *Kernel) executeOps(ctx context.Context, ops []Op) ([]string, error) {
 // plaintexts are decrypted for the values Secret only and never logged.
 // restartedAt is the target's restart stamp; nil means no restart was ever
 // forced for this environment.
+// loadIntercepts decodes the environment's intercept rows into the declared
+// host-port map per application key.
+func (k *Kernel) loadIntercepts(ctx context.Context, environmentID uuid.UUID) (map[string]map[string]int32, error) {
+	rows, err := k.deps.Store.ListEnvironmentIntercepts(ctx, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("reconcile: list intercepts: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	intercepts := make(map[string]map[string]int32, len(rows))
+	for _, row := range rows {
+		var ports map[string]int32
+		if err := json.Unmarshal(row.Ports, &ports); err != nil {
+			return nil, fmt.Errorf("reconcile: decode intercept ports for %s: %w", row.ApplicationKey, err)
+		}
+		intercepts[row.ApplicationKey] = ports
+	}
+	return intercepts, nil
+}
+
 func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
-	restartedAt *time.Time) (*desiredSet, error) {
+	restartedAt *time.Time, intercepts map[string]map[string]int32) (*desiredSet, error) {
 	refs := make(map[string]int, len(rev.Secrets))
 	for name, secret := range rev.Secrets {
 		refs[name] = secret.Version
@@ -444,6 +471,11 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		if application.Source.Kind != "build" {
 			continue
 		}
+		if _, ok := intercepts[key]; ok {
+			// Intercepted applications ship no artifact; they render no
+			// workload either.
+			continue
+		}
 		artifact, resolved := rev.Artifacts[key]
 		if !resolved {
 			return nil, fmt.Errorf("reconcile: revision has no artifact for application %s", key)
@@ -455,6 +487,37 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		buildImages[key] = image
 	}
 
+	// Intercept declarations are keyed by manifest port name; rendering
+	// needs them per rendered service port. A failure here is permanent for
+	// this target and takes the safe desiredSet-error path: journaled, and
+	// nothing is ever pruned on it.
+	var interceptPorts map[string]map[string]int32
+	interceptHostIP := ""
+	if len(intercepts) > 0 {
+		if k.deps.HostGateway == nil {
+			return nil, fmt.Errorf("reconcile: intercepts require a host gateway resolver")
+		}
+		hostIP, err := k.deps.HostGateway(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("reconcile: resolve host gateway: %w", err)
+		}
+		interceptHostIP = hostIP
+		interceptPorts = make(map[string]map[string]int32, len(intercepts))
+		for key, declared := range intercepts {
+			application, ok := rev.Definition.Applications[key]
+			if !ok {
+				// A stale row for an application the revision no longer
+				// declares; nothing renders for it either way.
+				continue
+			}
+			resolved, err := rendering.ResolveInterceptPorts(application, declared)
+			if err != nil {
+				return nil, fmt.Errorf("reconcile: intercept %s: %w", key, err)
+			}
+			interceptPorts[key] = resolved
+		}
+	}
+
 	renderOptions := rendering.Options{
 		Namespace:               namespace.Name,
 		Variables:               variables,
@@ -464,6 +527,8 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		SecretVersions:          refs,
 		ProgressDeadlineSeconds: int64(k.cfg.RolloutDeadline / time.Second),
 		ManagedCluster:          k.cfg.ManagedCluster,
+		Intercepts:              interceptPorts,
+		InterceptHostIP:         interceptHostIP,
 	}
 	if restartedAt != nil {
 		renderOptions.RestartedAt = restartedAt.UTC().Format(time.RFC3339)

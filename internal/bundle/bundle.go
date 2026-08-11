@@ -48,6 +48,16 @@ const (
 	// RegistryNodePort is the stable node port the host maps its loopback
 	// registry port onto.
 	RegistryNodePort = 30500
+	// PoolNodePortMin..Max bound the loopback NodePort range the local
+	// platform assigns to postgres pools; S3NodePort sits just above it
+	// for the dev object store gateway. skali dev maps the identical
+	// numbers on 127.0.0.1 at cluster create, so allocation caps at nine
+	// live pools with host access. Managed clusters never allocate any of
+	// these. Defined here (not in substrate) because the CLI's localdev
+	// package must share them without importing the substrate.
+	PoolNodePortMin = 30501
+	PoolNodePortMax = 30509
+	S3NodePort      = 30510
 	// RegistryInternalHost names the managed registry in production
 	// artifact references. It never resolves in DNS (.internal is reserved
 	// for private use): every node's containerd maps it onto the local

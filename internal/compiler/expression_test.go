@@ -107,3 +107,65 @@ func TestParseExpressionOutputsNotAllowed(t *testing.T) {
 	_, err := parseExpression("{{databases.data.url}}", expressionProject(), false)
 	require.ErrorContains(t, err, "service-output references are not allowed here")
 }
+
+func TestResolveExpressionOutputs(t *testing.T) {
+	t.Parallel()
+	outputs := map[string]map[string]string{
+		"databases.data": {"url": "postgresql://u:p@127.0.0.1:30501/db", "host": "127.0.0.1"},
+		"buckets.files":  {"endpoint": "http://127.0.0.1:30510"},
+	}
+
+	parse := func(raw string) Expression {
+		expression, err := parseExpression(raw, expressionProject(), true)
+		require.NoError(t, err)
+		return expression
+	}
+
+	// Pure literal and project variables behave exactly like ResolveExpression.
+	resolved, err := ResolveExpressionOutputs(parse("plain"), nil, outputs)
+	require.NoError(t, err)
+	require.Equal(t, "plain", resolved)
+	resolved, err = ResolveExpressionOutputs(parse("${NAME:-fallback}"), nil, outputs)
+	require.NoError(t, err)
+	require.Equal(t, "fallback", resolved)
+	resolved, err = ResolveExpressionOutputs(parse("${NAME}"), map[string]string{"NAME": "value"}, outputs)
+	require.NoError(t, err)
+	require.Equal(t, "value", resolved)
+
+	// Single output and a composed literal+variable+output expression.
+	resolved, err = ResolveExpressionOutputs(parse("{{databases.data.url}}"), nil, outputs)
+	require.NoError(t, err)
+	require.Equal(t, "postgresql://u:p@127.0.0.1:30501/db", resolved)
+	resolved, err = ResolveExpressionOutputs(
+		parse("s3://${BUCKET_PREFIX:-x}@{{ buckets.files.endpoint }}/path"), nil, outputs)
+	require.NoError(t, err)
+	require.Equal(t, "s3://x@http://127.0.0.1:30510/path", resolved)
+
+	// Missing variable, missing output set, and missing output name all fail.
+	_, err = ResolveExpressionOutputs(parse("${NAME}"), nil, outputs)
+	require.ErrorContains(t, err, "missing project variable NAME")
+	_, err = ResolveExpressionOutputs(parse("{{databases.data.url}}"), nil, nil)
+	require.ErrorContains(t, err, "missing outputs for databases.data")
+	_, err = ResolveExpressionOutputs(parse("{{databases.data.port}}"), nil, outputs)
+	require.ErrorContains(t, err, "missing output databases.data.port")
+}
+
+func TestEndpointBearingOutput(t *testing.T) {
+	t.Parallel()
+	require.True(t, EndpointBearingOutput("databases", "host"))
+	require.True(t, EndpointBearingOutput("databases", "port"))
+	require.True(t, EndpointBearingOutput("databases", "url"))
+	require.True(t, EndpointBearingOutput("buckets", "endpoint"))
+	require.False(t, EndpointBearingOutput("databases", "password"))
+	require.False(t, EndpointBearingOutput("buckets", "access_key"))
+	require.False(t, EndpointBearingOutput("volumes", "size"))
+
+	// Every endpoint-bearing entry must exist in the catalog so the
+	// classification cannot drift from the outputs that actually render.
+	for collection, outputs := range endpointBearing {
+		for output := range outputs {
+			_, ok := outputCatalog[collection][output]
+			require.True(t, ok, "%s.%s not in outputCatalog", collection, output)
+		}
+	}
+}

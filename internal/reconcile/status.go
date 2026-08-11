@@ -39,6 +39,11 @@ type ServiceStatus struct {
 	Health      module.Health
 	Diagnostics []module.Diagnostic
 	Pods        []PodInfo
+	// Intercepted marks an application served by a local dev process on
+	// the host instead of a Deployment; its health is synthesized healthy
+	// so activation and batch gating never wait on a workload that
+	// deliberately does not exist.
+	Intercepted bool
 }
 
 type PodInfo struct {
@@ -91,7 +96,11 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		}
 	}
 	if targetRevision != nil {
-		status.Services = k.evaluateServices(targetRevision, k.deps.Observed.Snapshot(environmentID))
+		intercepts, err := k.loadIntercepts(ctx, environmentID)
+		if err != nil {
+			return nil, err
+		}
+		status.Services = k.evaluateServices(targetRevision, k.deps.Observed.Snapshot(environmentID), intercepts)
 	}
 	return status, nil
 }
@@ -108,7 +117,8 @@ func (k *Kernel) SubscribeStatus(environmentID uuid.UUID) (<-chan observe.Invali
 // observed store by bare key (the immutable label contract); database
 // projections use the dotted form so keys can never collide across
 // collections.
-func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snapshot) []ServiceStatus {
+func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snapshot,
+	intercepts map[string]map[string]int32) []ServiceStatus {
 	type entry struct {
 		key         string
 		serviceType string
@@ -138,6 +148,20 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 		status := ServiceStatus{Key: item.key, Type: item.serviceType}
 		if item.withPods {
 			status.Pods = podsFor(snapshot, item.key)
+		}
+		if _, ok := intercepts[item.key]; ok && item.serviceType == "application" {
+			// Synthesized at the kernel, not in the app module: the module
+			// stays free of store state, and its missing-workload verdict
+			// would otherwise block activation and trip rollout fallback
+			// for a Deployment that deliberately does not exist.
+			status.Health = module.HealthHealthy
+			status.Intercepted = true
+			status.Diagnostics = []module.Diagnostic{{
+				Severity: "info", Code: "intercepted",
+				Message: "served by a local dev process on the host",
+			}}
+			statuses = append(statuses, status)
+			continue
 		}
 		mod, registered := k.deps.Registry.Get(item.serviceType)
 		if !registered {

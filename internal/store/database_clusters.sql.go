@@ -16,7 +16,7 @@ INSERT INTO database_clusters (
     id, name, engine, major, class, environment_id, claim_id,
     instances, storage_bytes, image, state
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at
+RETURNING id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at, node_port
 `
 
 type CreateDatabaseClusterParams struct {
@@ -62,12 +62,13 @@ func (q *Queries) CreateDatabaseCluster(ctx context.Context, arg CreateDatabaseC
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodePort,
 	)
 	return i, err
 }
 
 const getDatabaseCluster = `-- name: GetDatabaseCluster :one
-SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at FROM database_clusters WHERE id = $1
+SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at, node_port FROM database_clusters WHERE id = $1
 `
 
 func (q *Queries) GetDatabaseCluster(ctx context.Context, id uuid.UUID) (DatabaseCluster, error) {
@@ -87,12 +88,13 @@ func (q *Queries) GetDatabaseCluster(ctx context.Context, id uuid.UUID) (Databas
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodePort,
 	)
 	return i, err
 }
 
 const getDatabaseClusterForUpdate = `-- name: GetDatabaseClusterForUpdate :one
-SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at FROM database_clusters WHERE id = $1 FOR UPDATE
+SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at, node_port FROM database_clusters WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetDatabaseClusterForUpdate(ctx context.Context, id uuid.UUID) (DatabaseCluster, error) {
@@ -112,12 +114,13 @@ func (q *Queries) GetDatabaseClusterForUpdate(ctx context.Context, id uuid.UUID)
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodePort,
 	)
 	return i, err
 }
 
 const getLiveDatabaseClusterByName = `-- name: GetLiveDatabaseClusterByName :one
-SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at FROM database_clusters WHERE name = $1 AND state <> 'released'
+SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at, node_port FROM database_clusters WHERE name = $1 AND state <> 'released'
 `
 
 func (q *Queries) GetLiveDatabaseClusterByName(ctx context.Context, name string) (DatabaseCluster, error) {
@@ -137,12 +140,13 @@ func (q *Queries) GetLiveDatabaseClusterByName(ctx context.Context, name string)
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodePort,
 	)
 	return i, err
 }
 
 const getLiveDedicatedDatabaseCluster = `-- name: GetLiveDedicatedDatabaseCluster :one
-SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at FROM database_clusters
+SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at, node_port FROM database_clusters
 WHERE claim_id = $1 AND class = 'dedicated' AND state <> 'released'
 `
 
@@ -163,12 +167,13 @@ func (q *Queries) GetLiveDedicatedDatabaseCluster(ctx context.Context, claimID *
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodePort,
 	)
 	return i, err
 }
 
 const getLiveEnvironmentDatabaseCluster = `-- name: GetLiveEnvironmentDatabaseCluster :one
-SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at FROM database_clusters
+SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at, node_port FROM database_clusters
 WHERE engine = $1 AND major = $2 AND environment_id = $3
   AND class = 'environment' AND state <> 'released'
 `
@@ -196,12 +201,13 @@ func (q *Queries) GetLiveEnvironmentDatabaseCluster(ctx context.Context, arg Get
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodePort,
 	)
 	return i, err
 }
 
 const getLiveSharedDatabaseCluster = `-- name: GetLiveSharedDatabaseCluster :one
-SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at FROM database_clusters
+SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at, node_port FROM database_clusters
 WHERE engine = $1 AND major = $2 AND class = 'shared' AND state <> 'released'
 `
 
@@ -230,12 +236,39 @@ func (q *Queries) GetLiveSharedDatabaseCluster(ctx context.Context, arg GetLiveS
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodePort,
 	)
 	return i, err
 }
 
+const listAllocatedNodePorts = `-- name: ListAllocatedNodePorts :many
+SELECT node_port FROM database_clusters
+WHERE node_port IS NOT NULL AND state <> 'released'
+ORDER BY node_port
+`
+
+func (q *Queries) ListAllocatedNodePorts(ctx context.Context) ([]*int32, error) {
+	rows, err := q.db.Query(ctx, listAllocatedNodePorts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*int32
+	for rows.Next() {
+		var node_port *int32
+		if err := rows.Scan(&node_port); err != nil {
+			return nil, err
+		}
+		items = append(items, node_port)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveDatabaseClusters = `-- name: ListLiveDatabaseClusters :many
-SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at FROM database_clusters WHERE state <> 'released' ORDER BY name
+SELECT id, name, engine, major, class, environment_id, claim_id, instances, storage_bytes, image, state, created_at, updated_at, node_port FROM database_clusters WHERE state <> 'released' ORDER BY name
 `
 
 func (q *Queries) ListLiveDatabaseClusters(ctx context.Context) ([]DatabaseCluster, error) {
@@ -261,6 +294,7 @@ func (q *Queries) ListLiveDatabaseClusters(ctx context.Context) ([]DatabaseClust
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NodePort,
 		); err != nil {
 			return nil, err
 		}
@@ -270,6 +304,28 @@ func (q *Queries) ListLiveDatabaseClusters(ctx context.Context) ([]DatabaseClust
 		return nil, err
 	}
 	return items, nil
+}
+
+const setDatabaseClusterNodePort = `-- name: SetDatabaseClusterNodePort :execrows
+UPDATE database_clusters
+SET node_port = $2, updated_at = now()
+WHERE id = $1 AND node_port IS NULL
+`
+
+type SetDatabaseClusterNodePortParams struct {
+	ID       uuid.UUID
+	NodePort *int32
+}
+
+// Local-platform loopback port allocation. The IS NULL guard makes a lost
+// allocation race a 0-row no-op; the caller re-reads and retries. The
+// partial unique index rejects double allocation of the same port.
+func (q *Queries) SetDatabaseClusterNodePort(ctx context.Context, arg SetDatabaseClusterNodePortParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setDatabaseClusterNodePort, arg.ID, arg.NodePort)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setDatabaseClusterShape = `-- name: SetDatabaseClusterShape :execrows

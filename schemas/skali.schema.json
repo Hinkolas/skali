@@ -62,6 +62,21 @@
               "type": "string"
             }
           },
+          "commands": {
+            "type": "object",
+            "description": "Named host-side commands run with the application's resolved environment via skali dev run.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+            }
+          },
           "deployment": {
             "type": "object",
             "description": "Release and rollout behavior.",
@@ -116,6 +131,34 @@
                   }
                 },
                 "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "dev": {
+            "type": "object",
+            "description": "Local dev server mode: skali dev runs this command on the host instead of building the application.",
+            "properties": {
+              "command": {
+                "type": "array",
+                "description": "Host command that starts the dev server.",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "ports": {
+                "type": "object",
+                "description": "Application port name mapped to the host port the dev server listens on.",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+                }
               }
             },
             "additionalProperties": false

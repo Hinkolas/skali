@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/plan"
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/revision"
@@ -127,6 +129,41 @@ type BuildInput struct {
 	Platform   string `json:"platform"`
 }
 
+// LocalApplication declares one application the client runs on the host
+// during a dev session: it builds nothing and ships no artifact, and the
+// reconciler intercepts its Service to the declared host ports instead of
+// running a Deployment. Ports is keyed by manifest port name.
+type LocalApplication struct {
+	Ports map[string]int32 `json:"ports,omitempty"`
+}
+
+// LocalApplicationsUnsupportedError: the request declared local
+// applications in a context that cannot intercept them.
+type LocalApplicationsUnsupportedError struct{ Reason string }
+
+func (e *LocalApplicationsUnsupportedError) Error() string {
+	return "deploy: local applications " + e.Reason
+}
+
+// UnknownLocalApplicationError: a declared local application is not in the
+// definition.
+type UnknownLocalApplicationError struct{ Application string }
+
+func (e *UnknownLocalApplicationError) Error() string {
+	return "deploy: local application " + e.Application + " is not declared in the project definition"
+}
+
+// InvalidInterceptPortsError: the declared host ports cannot cover the
+// application's rendered service ports.
+type InvalidInterceptPortsError struct {
+	Application string
+	Detail      string
+}
+
+func (e *InvalidInterceptPortsError) Error() string {
+	return "deploy: local application " + e.Application + " " + e.Detail
+}
+
 // ArtifactAction is one per-application decision taken at open: reuse a
 // verified artifact, build, or import. Stored on the deployment row so
 // completion re-reads decisions instead of trusting the client.
@@ -165,6 +202,14 @@ type PlanInput struct {
 	// application builds again and every image source re-imports, so moved
 	// upstream tags and refreshed base images are picked up.
 	Rebuild bool
+	// LocalApplications declares the applications this deploy runs on the
+	// host (skali dev interception). The set REPLACES the environment's
+	// stored intercepts at promotion; an absent map clears them.
+	LocalApplications map[string]LocalApplication
+	// ManagedCluster rejects LocalApplications outright: interception
+	// exists only on the local platform, where CLI and server versions are
+	// locked together.
+	ManagedCluster bool
 }
 
 // Preview is a computed plan with its artifact decisions; nothing is
@@ -216,6 +261,9 @@ type Opened struct {
 // never stores values, never moves targets).
 func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, error) {
 	if in.FromEnvironmentID != uuid.Nil {
+		if len(in.LocalApplications) > 0 {
+			return nil, &LocalApplicationsUnsupportedError{Reason: "cannot be combined with a promotion"}
+		}
 		src, err := s.loadPromotionSource(ctx, in.EnvironmentID, in.FromEnvironmentID)
 		if err != nil {
 			return nil, err
@@ -225,10 +273,17 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 		if err != nil {
 			return nil, err
 		}
-		return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true)
+		changed, err := s.interceptsChanged(ctx, env.ID, nil)
+		if err != nil {
+			return nil, err
+		}
+		return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, nil, changed)
 	}
 	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateLocalApplications(definition, in); err != nil {
 		return nil, err
 	}
 	return s.preview(ctx, env, definitionVersion, definition, in)
@@ -242,6 +297,9 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	var src *promotionSource
 	if in.FromEnvironmentID != uuid.Nil {
+		if len(in.LocalApplications) > 0 {
+			return nil, &LocalApplicationsUnsupportedError{Reason: "cannot be combined with a promotion"}
+		}
 		var err error
 		if src, err = s.loadPromotionSource(ctx, in.EnvironmentID, in.FromEnvironmentID); err != nil {
 			return nil, err
@@ -250,6 +308,9 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	}
 	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateLocalApplications(definition, in.PlanInput); err != nil {
 		return nil, err
 	}
 	// The in-flight gate first: with a window already open, every other
@@ -268,7 +329,10 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	}
 	var preview *Preview
 	if src != nil {
-		preview, err = s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true)
+		var changed bool
+		if changed, err = s.interceptsChanged(ctx, env.ID, nil); err == nil {
+			preview, err = s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, nil, changed)
+		}
 	} else {
 		preview, err = s.preview(ctx, env, definitionVersion, definition, in.PlanInput)
 	}
@@ -353,6 +417,12 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 	if err != nil {
 		return nil, fmt.Errorf("deploy: encode actions: %w", err)
 	}
+	var encodedLocals json.RawMessage
+	if len(in.LocalApplications) > 0 {
+		if encodedLocals, err = json.Marshal(in.LocalApplications); err != nil {
+			return nil, fmt.Errorf("deploy: encode local applications: %w", err)
+		}
+	}
 	deployment, err := s.CreateDeployment(ctx, NewDeployment{
 		ProjectID:           env.ProjectID,
 		EnvironmentID:       env.ID,
@@ -363,6 +433,7 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 		BuildExecutor:       in.BuildExecutor,
 		Actions:             encodedActions,
 		Restart:             in.Force,
+		LocalApplications:   encodedLocals,
 	})
 	if err != nil {
 		return nil, err
@@ -495,6 +566,14 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 	if deployment.CandidateID != nil {
 		candidateID = *deployment.CandidateID
 	}
+	// The intercept set is re-read from the row, like actions: completion
+	// never trusts the client's view of what was opened.
+	var locals map[string]LocalApplication
+	if len(deployment.LocalApplications) > 0 {
+		if err := json.Unmarshal(deployment.LocalApplications, &locals); err != nil {
+			return nil, fmt.Errorf("deploy: decode local applications: %w", err)
+		}
+	}
 	result, err := s.runStages(ctx, runID, ExecuteInput{
 		ProjectID:           deployment.ProjectID,
 		EnvironmentID:       deployment.EnvironmentID,
@@ -505,6 +584,7 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 		Actor:               deployment.Actor,
 		Restart:             deployment.Restart,
 		DeploymentID:        deploymentID,
+		LocalApplications:   locals,
 	})
 	if err != nil {
 		// Promotion marks the deployment promoted inside its own
@@ -652,6 +732,12 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 	artifacts := make(map[string]revision.Artifact, len(definition.Applications))
 	allReuse := true
 	for _, key := range utils.SortedKeys(definition.Applications) {
+		if _, ok := in.LocalApplications[key]; ok {
+			// Local applications build nothing and ship no artifact; the
+			// revision records their absence and the kernel intercepts
+			// their Service instead of running a Deployment.
+			continue
+		}
 		source := definition.Applications[key].Source
 		if source.Kind == "image" {
 			upstream := source.Image
@@ -728,7 +814,62 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 		}
 	}
 
-	return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, actions, artifacts, allReuse)
+	changed, err := s.interceptsChanged(ctx, env.ID, in.LocalApplications)
+	if err != nil {
+		return nil, err
+	}
+	return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, actions, artifacts, allReuse, in.LocalApplications, changed)
+}
+
+// validateLocalApplications gates a request's local-application set: the
+// local platform only, every key declared, and the declared host ports must
+// cover the application's rendered service ports.
+func validateLocalApplications(definition compiler.ProjectDefinition, in PlanInput) error {
+	if len(in.LocalApplications) == 0 {
+		return nil
+	}
+	if in.ManagedCluster {
+		return &LocalApplicationsUnsupportedError{Reason: "are only supported on the local platform"}
+	}
+	for _, key := range utils.SortedKeys(in.LocalApplications) {
+		application, ok := definition.Applications[key]
+		if !ok {
+			return &UnknownLocalApplicationError{Application: key}
+		}
+		if _, err := kubernetes.ResolveInterceptPorts(application, in.LocalApplications[key].Ports); err != nil {
+			return &InvalidInterceptPortsError{Application: key, Detail: err.Error()}
+		}
+	}
+	return nil
+}
+
+// interceptsChanged compares the requested local-application set with the
+// environment's stored intercept rows. Any difference forces a real
+// deployment window even when the revision checksum is unchanged: a
+// ports-only change would otherwise strand stale routing, and clearing
+// intercepts must re-render the Deployments.
+func (s *Service) interceptsChanged(ctx context.Context, environmentID uuid.UUID, requested map[string]LocalApplication) (bool, error) {
+	rows, err := s.st.ListEnvironmentIntercepts(ctx, environmentID)
+	if err != nil {
+		return false, fmt.Errorf("deploy: list intercepts: %w", err)
+	}
+	if len(rows) != len(requested) {
+		return true, nil
+	}
+	for _, row := range rows {
+		local, ok := requested[row.ApplicationKey]
+		if !ok {
+			return true, nil
+		}
+		var ports map[string]int32
+		if err := json.Unmarshal(row.Ports, &ports); err != nil {
+			return true, nil
+		}
+		if !maps.Equal(ports, local.Ports) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // finishPreview resolves the target environment's values, builds the
@@ -738,18 +879,20 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 	definitionVersion store.DefinitionVersion, definition compiler.ProjectDefinition,
 	candidateID uuid.UUID, actions []ArtifactAction,
-	artifacts map[string]revision.Artifact, allReuse bool) (*Preview, error) {
+	artifacts map[string]revision.Artifact, allReuse bool,
+	locals map[string]LocalApplication, interceptsChanged bool) (*Preview, error) {
 
 	secretVersions, orphaned, err := s.resolveValues(ctx, env.ID, candidateID, definition.RequiredVariables)
 	if err != nil {
 		return nil, err
 	}
 	candidate, err := revision.Build(revision.Input{
-		Result:          &compiler.Result{Hash: definitionVersion.DefinitionHash, Definition: definition},
-		Environment:     env.Name,
-		SecretVersions:  secretVersions,
-		Artifacts:       artifacts,
-		CompilerVersion: s.version,
+		Result:            &compiler.Result{Hash: definitionVersion.DefinitionHash, Definition: definition},
+		Environment:       env.Name,
+		SecretVersions:    secretVersions,
+		Artifacts:         artifacts,
+		CompilerVersion:   s.version,
+		LocalApplications: localNames(locals),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("deploy: build candidate revision: %w", err)
@@ -772,10 +915,23 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 	return &Preview{
 		Plan:      plan.Diff(active, candidate),
 		Actions:   actions,
-		UpToDate:  allReuse && active != nil && candidate.Checksum == activeChecksum,
+		UpToDate:  allReuse && !interceptsChanged && active != nil && candidate.Checksum == activeChecksum,
 		Candidate: candidate,
 		Orphaned:  orphaned,
 	}, nil
+}
+
+// localNames projects a local-application set to the name set revision.Build
+// consumes for its artifact leniency.
+func localNames(locals map[string]LocalApplication) map[string]bool {
+	if len(locals) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(locals))
+	for key := range locals {
+		names[key] = true
+	}
+	return names
 }
 
 // promotionSource is a source environment's active revision prepared for

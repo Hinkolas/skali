@@ -79,6 +79,10 @@ type PrepareInput struct {
 	// environment's current values unchanged.
 	CandidateID uuid.UUID
 	Resolver    ArtifactResolver
+	// LocalApplications are host-run intercepts: no artifact resolves for
+	// them and Promote replaces the environment's intercept rows with the
+	// set (empty clears them).
+	LocalApplications map[string]LocalApplication
 }
 
 // Prepared carries everything Promote needs; it exists only in memory.
@@ -101,6 +105,9 @@ type Prepared struct {
 	// target. uuid.Nil promotes outside that flow (Execute, tests) and
 	// touches no deployment row.
 	DeploymentID uuid.UUID
+	// LocalApplications is the intercept set Promote writes; it always
+	// replaces the environment's stored rows, so an empty set clears them.
+	LocalApplications map[string]LocalApplication
 }
 
 // Prepare loads and re-validates the inputs, resolves artifacts outside any
@@ -140,6 +147,10 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	artifacts := make(map[string]revision.Artifact, len(definition.Applications))
 	artifactIDs := make([]uuid.UUID, 0, len(definition.Applications))
 	for _, key := range utils.SortedKeys(definition.Applications) {
+		if _, ok := in.LocalApplications[key]; ok {
+			// Host-run intercepts resolve no artifact.
+			continue
+		}
 		source := definition.Applications[key].Source
 		resolved, err := in.Resolver.Resolve(ctx, key, source)
 		if err != nil {
@@ -150,11 +161,12 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	}
 
 	built, err := revision.Build(revision.Input{
-		Result:          &compiler.Result{Hash: definitionVersion.DefinitionHash, Definition: definition},
-		Environment:     env.Name,
-		SecretVersions:  secretVersions,
-		Artifacts:       artifacts,
-		CompilerVersion: s.version,
+		Result:            &compiler.Result{Hash: definitionVersion.DefinitionHash, Definition: definition},
+		Environment:       env.Name,
+		SecretVersions:    secretVersions,
+		Artifacts:         artifacts,
+		CompilerVersion:   s.version,
+		LocalApplications: localNames(in.LocalApplications),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("deploy: build revision: %w", err)
@@ -172,6 +184,7 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 		CandidateID:         in.CandidateID,
 		ArtifactIDs:         artifactIDs,
 		Orphaned:            orphaned,
+		LocalApplications:   in.LocalApplications,
 	}
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		id, err := uuid.NewV7()
@@ -239,6 +252,24 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 		}
 		if err := s.values.PromoteTx(ctx, q, p.EnvironmentID, p.CandidateID); err != nil {
 			return err
+		}
+		// Replace the environment's intercept set: every deploy states the
+		// whole truth, so a deploy without local applications clears it.
+		if err := q.DeleteEnvironmentIntercepts(ctx, p.EnvironmentID); err != nil {
+			return fmt.Errorf("deploy: clear intercepts: %w", err)
+		}
+		for _, key := range utils.SortedKeys(p.LocalApplications) {
+			ports, err := json.Marshal(p.LocalApplications[key].Ports)
+			if err != nil {
+				return fmt.Errorf("deploy: encode intercept ports: %w", err)
+			}
+			if err := q.InsertEnvironmentIntercept(ctx, store.InsertEnvironmentInterceptParams{
+				EnvironmentID:  p.EnvironmentID,
+				ApplicationKey: key,
+				Ports:          ports,
+			}); err != nil {
+				return fmt.Errorf("deploy: insert intercept: %w", err)
+			}
 		}
 		if _, err := q.AdvanceProjectDraft(ctx, store.AdvanceProjectDraftParams{
 			ProjectID:           p.ProjectID,

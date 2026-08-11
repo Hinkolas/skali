@@ -113,6 +113,10 @@ var prunableKinds = map[schema.GroupKind]bool{
 	// Job is always in the desired set, so a finished release is never
 	// pruned into a re-run.
 	{Group: "batch", Kind: "Job"}: true,
+	// Intercept EndpointSlices: desired exactly while their application is
+	// intercepted, pruned as soon as the intercept clears so the Service's
+	// restored selector takes over routing again.
+	{Group: "discovery.k8s.io", Kind: "EndpointSlice"}: true,
 }
 
 // planPrune lists observed objects of the environment that are prunable and
