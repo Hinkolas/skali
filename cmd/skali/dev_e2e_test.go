@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -764,10 +766,11 @@ ENTRYPOINT ["/hello-build"]
 func TestDevLocalDev(t *testing.T) {
 	h := newE2EHarnessFor(t, "dev-loop", "dev-loop.localhost")
 
-	// A throwaway host port for the dev server, so a developer's real vite
-	// on 5173 never collides with the suite.
-	const devPort = 15173
-	manifest := fmt.Sprintf(`version: "1"
+	// The host port is auto-allocated and handed to the dev command via
+	// ${PORT}, so nothing here can collide with a developer's real dev
+	// servers.
+	manifestFor := func(devBlock string) string {
+		return fmt.Sprintf(`version: "1"
 name: dev-loop
 applications:
   web:
@@ -787,16 +790,30 @@ applications:
     commands:
       hello: [sh, -c, "echo hello-from-dev-run domain=$APP_DOMAIN"]
     dev:
-      command: [python3, -m, http.server, "%d", --bind, "0.0.0.0"]
-      ports:
-        web: %d
-`, devPort, devPort)
+%s
+`, devBlock)
+	}
+	manifest := manifestFor(`      command: [python3, -m, http.server, "${PORT}", --bind, "0.0.0.0"]`)
 	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "skali.yml"), []byte(manifest), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "index.html"),
 		[]byte("dev-loop-host-marker\n"), 0o644))
 
+	// A pinned port that is already bound fails before any platform or
+	// server work instead of drifting away from the intercept.
+	blocker, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	defer blocker.Close()
+	blockedPort := blocker.Addr().(*net.TCPAddr).Port
+	pinned := manifestFor(fmt.Sprintf(
+		"      command: [python3, -m, http.server, \"${PORT}\", --bind, \"0.0.0.0\"]\n      ports:\n        web: %d", blockedPort))
+	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "skali.yml"), []byte(pinned), 0o644))
+	out, code := h.runExit("", "dev", "--skalid-image", "skalid:dev")
+	require.NotZero(t, code)
+	require.Contains(t, out, "already in use")
+	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "skali.yml"), []byte(manifest), 0o644))
+
 	// A detached session cannot host local dev processes.
-	out, code := h.runExit("", "dev", "-d", "--skalid-image", "skalid:dev")
+	out, code = h.runExit("", "dev", "-d", "--skalid-image", "skalid:dev")
 	require.NotZero(t, code)
 	require.Contains(t, out, "--detach cannot host local dev processes")
 
@@ -852,6 +869,14 @@ applications:
 
 	waitForOutput("following logs", 15*time.Minute)
 	require.Contains(t, output.String(), "intercepted to the host dev process")
+	// The ready line carries the auto-allocated port; it must come from the
+	// allocation range.
+	portMatch := regexp.MustCompile(`web=localhost:(\d+)`).FindStringSubmatch(output.String())
+	require.NotNil(t, portMatch, "no allocated port in session output:\n%s", output.String())
+	devPort, err := strconv.Atoi(portMatch[1])
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, devPort, 20000)
+	require.Less(t, devPort, 25000)
 	h.waitRoute("dev-loop-host-marker", 3*time.Minute)
 	// The host server's access log lines arrive multiplexed with the app
 	// prefix (waitRoute above guarantees at least one request).

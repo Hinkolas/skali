@@ -16,6 +16,37 @@ func expressionProject() manifest.Project {
 	}
 }
 
+func TestExpandVariables(t *testing.T) {
+	t.Parallel()
+	lookup := func(name string) (string, bool) {
+		values := map[string]string{"PORT": "20417", "SKALI_PORT_WEB": "20417"}
+		value, ok := values[name]
+		return value, ok
+	}
+
+	for raw, expected := range map[string]string{
+		"":                        "",
+		"plain":                   "plain",
+		"--port=${PORT}":          "--port=20417",
+		"${PORT}":                 "20417",
+		"${MISSING:-fallback}":    "fallback",
+		"${PORT:-5173}":           "20417",
+		"$HOME and {x} and $":     "$HOME and {x} and $",
+		"--format {{.ID}}":        "--format {{.ID}}",
+		"stray }} passes through": "stray }} passes through",
+	} {
+		expanded, err := ExpandVariables(raw, lookup)
+		require.NoError(t, err, raw)
+		require.Equal(t, expected, expanded, raw)
+	}
+
+	_, err := ExpandVariables("${MISSING}", lookup)
+	require.ErrorContains(t, err, "unknown variable ${MISSING}")
+
+	_, err = ExpandVariables("${PORT", lookup)
+	require.ErrorContains(t, err, "unterminated")
+}
+
 // Text without well-formed tokens passes through untouched: lone $, single
 // braces, and shell syntax are literal, and the empty string is one empty
 // literal part (the shape the canonical hashes depend on).

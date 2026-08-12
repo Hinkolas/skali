@@ -16,8 +16,10 @@ manifest:
 - `skali dev` is the paved path: it ensures the disposable local platform
   and deploys the project. Applications with a `dev:` block are not built;
   their dev command runs on this machine with the real resolved
-  environment, and the cluster's routes reach the host process. Ctrl-C
-  pauses the project; `d` detaches (host dev processes still stop).
+  environment, and the cluster's routes reach the host process on
+  auto-allocated ports (injected as `SKALI_PORT_<NAME>` and `PORT`,
+  usable as `${PORT}` in the dev command). Ctrl-C pauses the project;
+  `d` detaches (host dev processes still stop).
 - `skali dev --preview` deploys everything in the cluster, exactly like a
   remote deploy would, ignoring dev blocks.
 - `skali dev run <name>` runs a named command from the manifest

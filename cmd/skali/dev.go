@@ -19,6 +19,8 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/devports"
+	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/localdev"
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/utils"
@@ -78,6 +80,24 @@ func newDevCommand() *cobra.Command {
 					"use --preview for a detached full deployment",
 					strings.Join(utils.SortedKeys(devApps), ", "))
 			}
+			// Host ports are resolved up front so a busy pin fails before
+			// any platform or server work: manifest pins verbatim, every
+			// other service port deterministically auto-allocated. One
+			// allocator spans the session so applications never collide.
+			devPorts := map[string]map[string]int{}
+			if len(devApps) > 0 {
+				allocator := devports.Default()
+				for _, key := range utils.SortedKeys(devApps) {
+					allocated, err := allocator.Allocate(
+						project.Result.Definition.Name, key,
+						kubernetes.InterceptPortNames(project.Result.Definition.Applications[key]),
+						devApps[key].Ports)
+					if err != nil {
+						return err
+					}
+					devPorts[key] = allocated
+				}
+			}
 
 			if _, err := ensureLocalPlatform(command, skalidImage, false); err != nil {
 				if sessionCtx.Err() != nil {
@@ -94,7 +114,7 @@ func newDevCommand() *cobra.Command {
 					mux = newLogMux(command.OutOrStdout())
 					var err error
 					children, err = startDevChildren(sessionCtx, mux, command.OutOrStdout(),
-						api, environmentID, project.Root, devApps)
+						api, environmentID, project.Root, devApps, devPorts)
 					if err != nil {
 						if sessionCtx.Err() != nil {
 							return finishInterrupted(command, window.Load().(string), detach)
@@ -110,7 +130,7 @@ func newDevCommand() *cobra.Command {
 			// or cancel it when --force asked for a fresh deploy. A failed
 			// environment lookup means nothing is deployed yet.
 			attachToRunning := func(api *client.Client, environmentID string) error {
-				if err := printDevReady(command, devApps); err != nil {
+				if err := printDevReady(command, devPorts); err != nil {
 					return err
 				}
 				if detach {
@@ -154,8 +174,8 @@ func newDevCommand() *cobra.Command {
 			}
 			if len(devApps) > 0 {
 				opts.LocalApplications = make(map[string]client.LocalApplication, len(devApps))
-				for key, dev := range devApps {
-					opts.LocalApplications[key] = client.LocalApplication{Ports: dev.Ports}
+				for key := range devApps {
+					opts.LocalApplications[key] = client.LocalApplication{Ports: devPorts[key]}
 				}
 			}
 			var outcome string
@@ -195,7 +215,7 @@ func newDevCommand() *cobra.Command {
 					return attachToRunning(api, environmentID)
 				}
 			}
-			if err := printDevReady(command, devApps); err != nil {
+			if err := printDevReady(command, devPorts); err != nil {
 				return err
 			}
 			if detach || outcome == deployOutcomeDetached {
@@ -1017,16 +1037,16 @@ func runDevReset(command *cobra.Command, yes bool) error {
 	return nil
 }
 
-func printDevReady(command *cobra.Command, devApps map[string]manifest.Dev) error {
+func printDevReady(command *cobra.Command, devPorts map[string]map[string]int) error {
 	out := command.OutOrStdout()
 	style := clirender.StyleFor(out)
 	fmt.Fprintf(out, "  %s  %s\n", style.Dim("dashboard"), style.Cyan(localdev.MasterURL()))
 	fmt.Fprintf(out, "  %s     http://<domain>:%d for your manifest's *.localhost domains\n",
 		style.Dim("routes"), localdev.HTTPPort())
-	for _, key := range utils.SortedKeys(devApps) {
-		ports := make([]string, 0, len(devApps[key].Ports))
-		for _, name := range utils.SortedKeys(devApps[key].Ports) {
-			ports = append(ports, fmt.Sprintf("%s=localhost:%d", name, devApps[key].Ports[name]))
+	for _, key := range utils.SortedKeys(devPorts) {
+		ports := make([]string, 0, len(devPorts[key]))
+		for _, name := range utils.SortedKeys(devPorts[key]) {
+			ports = append(ports, fmt.Sprintf("%s=localhost:%d", name, devPorts[key][name]))
 		}
 		fmt.Fprintf(out, "  %s  %s intercepted to the host dev process (%s)\n",
 			style.Dim("local"), key, strings.Join(ports, ", "))

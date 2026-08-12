@@ -141,7 +141,7 @@
             "properties": {
               "command": {
                 "type": "array",
-                "description": "Host command that starts the dev server.",
+                "description": "Host command that starts the dev server; ${VAR} expands from the command's environment, including the injected port variables.",
                 "items": {
                   "type": "string"
                 },
@@ -149,7 +149,7 @@
               },
               "ports": {
                 "type": "object",
-                "description": "Application port name mapped to the host port the dev server listens on.",
+                "description": "Optional pins: application port name mapped to a fixed host port. Unmapped service ports are auto-allocated and injected as SKALI_PORT_\u003cNAME\u003e (plus PORT when the application has a single port).",
                 "additionalProperties": {
                   "type": "integer",
                   "minimum": 1,

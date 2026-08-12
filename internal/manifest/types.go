@@ -114,10 +114,13 @@ type Application struct {
 // Dev describes an application's local dev server. When present, skali dev
 // skips building the application and runs the command on the host with the
 // application's resolved environment, while cluster routes are intercepted to
-// reach the host process.
+// reach the host process. Every service port without a pin gets a
+// deterministic auto-allocated host port; the chosen ports are injected into
+// the command's environment as SKALI_PORT_<NAME> (plus PORT for a single
+// port) and are available as ${VAR} in the command elements.
 type Dev struct {
-	Command []string       `yaml:"command,omitempty" json:"command,omitempty" jsonschema:"Host command that starts the dev server."`
-	Ports   map[string]int `yaml:"ports,omitempty" json:"ports,omitempty" jsonschema:"Application port name mapped to the host port the dev server listens on."`
+	Command []string       `yaml:"command,omitempty" json:"command,omitempty" jsonschema:"Host command that starts the dev server; ${VAR} expands from the command's environment, including the injected port variables."`
+	Ports   map[string]int `yaml:"ports,omitempty" json:"ports,omitempty" jsonschema:"Optional pins: application port name mapped to a fixed host port. Unmapped service ports are auto-allocated and injected as SKALI_PORT_<NAME> (plus PORT when the application has a single port)."`
 }
 
 type Build struct {

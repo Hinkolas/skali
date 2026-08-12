@@ -68,10 +68,7 @@ func runDevRun(command *cobra.Command, args []string) error {
 
 	child := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	child.Dir = project.Root
-	environ := os.Environ()
-	for _, name := range utils.SortedKeys(resolved.Values) {
-		environ = append(environ, name+"="+resolved.Values[name])
-	}
+	environ, _ := devChildEnviron(resolved.Values, nil)
 	child.Env = environ
 	// One-shot commands own the terminal directly: interactive tools work,
 	// and Ctrl-C reaches the child through the shared foreground process

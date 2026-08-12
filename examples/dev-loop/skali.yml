@@ -32,10 +32,9 @@ applications:
 
     # Local dev mode: bare skali dev skips building this application and
     # runs the command below on this machine; the cluster route above is
-    # intercepted to reach it. The dev server must listen on the declared
-    # host port and accept non-loopback connections (the cluster gateway
-    # connects from the container network).
+    # intercepted to reach it. The host port is auto-allocated and handed
+    # to the command as ${PORT}. The dev server must accept non-loopback
+    # connections (the cluster gateway connects from the container
+    # network), hence --bind 0.0.0.0.
     dev:
-      command: [python3, -m, http.server, "5173", --bind, "0.0.0.0"]
-      ports:
-        web: 5173
+      command: [python3, -m, http.server, "${PORT}", --bind, "0.0.0.0"]

@@ -229,9 +229,7 @@ databases and buckets; see `architecture.md`.
       seed: [bun, run, db:seed]
       migrate: [bun, run, db:migrate]
     dev:                     # local dev server mode (skali dev)
-      command: [bun, run, dev]
-      ports:
-        web: 5173            # application port name -> host port
+      command: [bun, run, dev, --, --port, "${PORT}", --host]
 ```
 
 Both blocks are client-only authoring surface: they never enter the
@@ -247,9 +245,19 @@ database live here. Keys are stable keys like every other name.
 A `dev` block switches the application to local dev mode: bare `skali dev`
 skips building it and runs `command` on the host instead, while the
 cluster's routes and sibling services are intercepted to reach the host
-process at the declared ports. `ports` maps the application's declared
-port names to the host ports the dev server actually listens on; every
-service port needs a mapping. `skali dev --preview` ignores dev blocks and
+process. Host ports are auto-allocated: every service port gets a
+deterministic free port (range 20000-24999, override the base with
+`SKALI_DEV_PORT_BASE`), stable per project, so concurrent projects never
+collide. The chosen ports are injected into the command's environment as
+`SKALI_PORT_<NAME>` (port name uppercased, hyphens to underscores) plus
+plain `PORT` when the application has exactly one port, and `${VAR}`
+expands inside `command` elements, so hand the port to tools that only
+take a flag as shown above. The dev server must bind non-loopback
+(`--host` for vite) because the cluster gateway connects from the
+container network; the session warns when the port stays loopback-only or
+silent. `dev.ports` (application port name -> host port) pins specific
+ports instead; a pinned port that is already in use fails the session
+rather than drifting. `skali dev --preview` ignores dev blocks and
 deploys everything in the cluster; remote deploys always do. Note that an
 intercepted application runs no release command, so run migrations through
 `commands` while iterating locally.

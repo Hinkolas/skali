@@ -68,6 +68,19 @@ func loopbackPortArgs() []string {
 	return args
 }
 
+// ReservedHostPorts lists the host ports the local platform occupies or
+// maps even while idle: the edge, the registry, and the loopback service
+// range k3d publishes at cluster create time. Dev port allocation must
+// never hand these out, because a stopped cluster leaves them bindable.
+func ReservedHostPorts() []int {
+	ports := []int{HTTPPort(), RegistryPort()}
+	base := LoopbackPortBase()
+	for offset := range loopbackNodePortCount {
+		ports = append(ports, base+offset)
+	}
+	return ports
+}
+
 // RegistryHost() names the registry in artifact references; valid from the
 // host (buildx push through the port mapping) and from containerd (the
 // registries.yaml mirror below).

@@ -98,6 +98,37 @@ func parseExpression(raw string, project manifest.Project, allowOutputs bool) (E
 	return Expression{Parts: parts}, nil
 }
 
+// ExpandVariables substitutes ${NAME} and ${NAME:-default} tokens using
+// lookup and leaves all other text untouched, including {{...}} tokens
+// and a lone $. It shares scanProjectVariable with the manifest grammar
+// so the two ${...} surfaces can never drift. A lookup miss without a
+// default is an error, so typos never pass through silently.
+func ExpandVariables(raw string, lookup func(name string) (string, bool)) (string, error) {
+	var expanded strings.Builder
+	pos := 0
+	for pos < len(raw) {
+		if !strings.HasPrefix(raw[pos:], "${") {
+			expanded.WriteByte(raw[pos])
+			pos++
+			continue
+		}
+		part, next, err := scanProjectVariable(raw, pos)
+		if err != nil {
+			return "", err
+		}
+		value, ok := lookup(part.Name)
+		if !ok {
+			if !part.HasDefault {
+				return "", fmt.Errorf("unknown variable ${%s}", part.Name)
+			}
+			value = part.Default
+		}
+		expanded.WriteString(value)
+		pos = next
+	}
+	return expanded.String(), nil
+}
+
 // scanProjectVariable scans one ${NAME} or ${NAME:-default} token whose "${"
 // marker sits at start; next is the position after the closing brace. The
 // default runs to the first "}" and may be empty; nesting is not supported.
