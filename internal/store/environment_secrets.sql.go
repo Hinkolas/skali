@@ -52,13 +52,14 @@ func (q *Queries) GetEnvironmentSecretCiphertext(ctx context.Context, arg GetEnv
 }
 
 const listCurrentEnvironmentSecretCiphertexts = `-- name: ListCurrentEnvironmentSecretCiphertexts :many
-SELECT name, ciphertext FROM environment_secrets
+SELECT name, version, ciphertext FROM environment_secrets
 WHERE environment_id = $1 AND state = 'current'
 ORDER BY name
 `
 
 type ListCurrentEnvironmentSecretCiphertextsRow struct {
 	Name       string
+	Version    int64
 	Ciphertext []byte
 }
 
@@ -71,7 +72,7 @@ func (q *Queries) ListCurrentEnvironmentSecretCiphertexts(ctx context.Context, e
 	var items []ListCurrentEnvironmentSecretCiphertextsRow
 	for rows.Next() {
 		var i ListCurrentEnvironmentSecretCiphertextsRow
-		if err := rows.Scan(&i.Name, &i.Ciphertext); err != nil {
+		if err := rows.Scan(&i.Name, &i.Version, &i.Ciphertext); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

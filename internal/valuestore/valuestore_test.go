@@ -78,6 +78,80 @@ func TestStagePromoteRoundtrip(t *testing.T) {
 	}, summary)
 }
 
+// Re-submitting an unchanged value reuses the current version instead of
+// staging a duplicate row, so the revision checksum stays stable across
+// repeated deployments of the same .env.
+func TestStageUnchangedReusesCurrentVersion(t *testing.T) {
+	t.Parallel()
+	svc, st, envID := newTestEnvironment(t)
+	ctx := context.Background()
+
+	values := map[string]string{
+		"APP_DOMAIN":     "demo.localhost",
+		"SESSION_SECRET": "s3cr3t-plant-value",
+	}
+	first, err := svc.Stage(ctx, envID, values)
+	require.NoError(t, err)
+	require.NoError(t, st.WithTx(ctx, func(q *store.Queries) error {
+		return svc.PromoteTx(ctx, q, envID, first.ID)
+	}))
+
+	// An identical resubmission reports the current versions and inserts
+	// nothing.
+	repeat, err := svc.Stage(ctx, envID, values)
+	require.NoError(t, err)
+	require.Equal(t, []string{"APP_DOMAIN", "SESSION_SECRET"}, repeat.Names)
+	require.Equal(t, map[string]int64{"APP_DOMAIN": 1, "SESSION_SECRET": 1}, repeat.Versions)
+	var staged int
+	require.NoError(t, st.Pool.QueryRow(ctx,
+		"SELECT count(*) FROM environment_secrets WHERE state = 'staged'").Scan(&staged))
+	require.Zero(t, staged)
+
+	// Promoting the empty batch leaves the current generation untouched.
+	require.NoError(t, st.WithTx(ctx, func(q *store.Queries) error {
+		return svc.PromoteTx(ctx, q, envID, repeat.ID)
+	}))
+	current, err := svc.CurrentVersions(ctx, envID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"APP_DOMAIN": 1, "SESSION_SECRET": 1}, current)
+
+	// A mixed batch bumps only the changed name.
+	mixed, err := svc.Stage(ctx, envID, map[string]string{
+		"APP_DOMAIN":     "demo.localhost",
+		"SESSION_SECRET": "rotated-plant-value",
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"APP_DOMAIN": 1, "SESSION_SECRET": 2}, mixed.Versions)
+	require.NoError(t, st.WithTx(ctx, func(q *store.Queries) error {
+		return svc.PromoteTx(ctx, q, envID, mixed.ID)
+	}))
+	current, err = svc.CurrentVersions(ctx, envID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"APP_DOMAIN": 1, "SESSION_SECRET": 2}, current)
+}
+
+// Only the current generation is reusable: a value equal to a superseded
+// version stages a fresh row and continues the sequence.
+func TestStageMatchingSupersededStagesNew(t *testing.T) {
+	t.Parallel()
+	svc, st, envID := newTestEnvironment(t)
+	ctx := context.Background()
+
+	stagePromote := func(value string) {
+		candidate, err := svc.Stage(ctx, envID, map[string]string{"NAME": value})
+		require.NoError(t, err)
+		require.NoError(t, st.WithTx(ctx, func(q *store.Queries) error {
+			return svc.PromoteTx(ctx, q, envID, candidate.ID)
+		}))
+	}
+	stagePromote("first-plant-value")
+	stagePromote("second-plant-value")
+
+	back, err := svc.Stage(ctx, envID, map[string]string{"NAME": "first-plant-value"})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"NAME": 3}, back.Versions)
+}
+
 func TestValuesAreEncryptedAtRest(t *testing.T) {
 	t.Parallel()
 	svc, st, envID := newTestEnvironment(t)

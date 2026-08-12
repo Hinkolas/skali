@@ -20,7 +20,7 @@ WHERE environment_id = $1 AND candidate_id = $2 AND state = 'staged'
 ORDER BY name;
 
 -- name: ListCurrentEnvironmentSecretCiphertexts :many
-SELECT name, ciphertext FROM environment_secrets
+SELECT name, version, ciphertext FROM environment_secrets
 WHERE environment_id = $1 AND state = 'current'
 ORDER BY name;
 

@@ -64,6 +64,10 @@ type Candidate struct {
 // empty string is a real value and stages like any other. Nothing current
 // changes; promotion or discard decides the batch's fate. An empty map still
 // allocates a candidate so deployments can carry an empty batch.
+//
+// A provided value whose plaintext equals the current one stages no row: the
+// candidate reports the current version, so re-submitting an unchanged .env
+// keeps the revision checksum stable instead of forcing a deployment.
 func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, provided map[string]string) (*Candidate, error) {
 	if err := s.environmentExists(ctx, environmentID); err != nil {
 		return nil, err
@@ -77,7 +81,16 @@ func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, provided m
 		Versions: make(map[string]int64, len(provided)),
 	}
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+		unchanged, err := s.currentMatches(ctx, q, environmentID, provided)
+		if err != nil {
+			return err
+		}
 		for _, name := range utils.SortedKeys(provided) {
+			if version, ok := unchanged[name]; ok {
+				candidate.Names = append(candidate.Names, name)
+				candidate.Versions[name] = version
+				continue
+			}
 			ciphertext, err := crypt.Encrypt(s.key, []byte(provided[name]))
 			if err != nil {
 				return fmt.Errorf("valuestore: encrypt %s: %w", name, err)
@@ -105,6 +118,36 @@ func (s *Service) Stage(ctx context.Context, environmentID uuid.UUID, provided m
 		return nil, err
 	}
 	return candidate, nil
+}
+
+// currentMatches returns the provided names whose plaintext equals the
+// environment's current value, mapped to the current version. Runs inside
+// the staging transaction so the compared row is the one a concurrent
+// promotion would supersede. A ciphertext that fails to decrypt never
+// matches; the fresh row simply continues the version sequence.
+func (s *Service) currentMatches(ctx context.Context, q *store.Queries, environmentID uuid.UUID, provided map[string]string) (map[string]int64, error) {
+	if len(provided) == 0 {
+		return nil, nil
+	}
+	rows, err := q.ListCurrentEnvironmentSecretCiphertexts(ctx, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("valuestore: list current values: %w", err)
+	}
+	matches := make(map[string]int64)
+	for _, row := range rows {
+		value, ok := provided[row.Name]
+		if !ok {
+			continue
+		}
+		plaintext, err := crypt.Decrypt(s.key, row.Ciphertext)
+		if err != nil {
+			continue
+		}
+		if string(plaintext) == value {
+			matches[row.Name] = row.Version
+		}
+	}
+	return matches, nil
 }
 
 // CurrentVersions returns the current generation of every set value.
