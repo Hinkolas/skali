@@ -127,6 +127,13 @@ type API struct {
 	// labels.
 	ManagedCluster bool `env:"SKALI_MANAGED_CLUSTER,default=false"`
 
+	// CertManager reports that the installation runs cert-manager and the
+	// managed ClusterIssuer: routes render explicit Certificates, the
+	// kernel watches their issuance, and deploys gate on it. Local
+	// development leaves it false; the Certificate CRD does not exist
+	// there and the edge stays HTTP-only.
+	CertManager bool `env:"SKALI_CERT_MANAGER,default=false"`
+
 	// Capabilities lists what this installation can run, separated by
 	// semicolons; deployments whose revisions require more are rejected
 	// with a clear error instead of stalling. R3 installations serve

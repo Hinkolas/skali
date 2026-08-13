@@ -3,7 +3,7 @@
   "project": "hello-world",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "9bbe35e68acd9a8ebc71f6b4f5f2fb2e65cf9b9c0fc1651e38b43b6d4c0f9ddc",
+  "definitionHash": "c31734ca877c8aa0947f3b0451fc5fba7b5ee46ff9edf3fd9111165ccc9117a1",
   "definition": {
     "version": "1",
     "name": "hello-world",
@@ -37,7 +37,8 @@
             "port": {
               "name": "http"
             },
-            "tls": "automatic"
+            "tls": "automatic",
+            "strategy": "round-robin"
           }
         },
         "health": {
@@ -104,5 +105,5 @@
     "application",
     "edge"
   ],
-  "checksum": "5982c655963ea5b97f030106713f4d87f8bd939043314ecdbacd748911833dd1"
+  "checksum": "9df7a59b2236e682e625d6beeaa6c1986d56ff474a8fb5d389ae3b7083de29f3"
 }

@@ -46,6 +46,117 @@ func pod(name string, ready bool, reason string, restarts int32) module.Observed
 	}
 }
 
+// decodeRoutes builds a TLS-capable service whose application declares one
+// automatic route; the expected certificate name is proj-web-public-tls.
+func decodeRoutes(t *testing.T, certificates bool, tls string) module.Service {
+	t.Helper()
+	definition := compiler.ProjectDefinition{
+		Name: "proj",
+		Applications: map[string]compiler.Application{
+			"web": {
+				Source: compiler.ApplicationSource{Kind: "image", Image: "example.invalid/web:1"},
+				Routes: map[string]compiler.Route{"public": {
+					Path: "/", TLS: tls, Strategy: "round-robin",
+				}},
+			},
+		},
+	}
+	svc, err := Module{Certificates: certificates}.Decode(definition, "web")
+	require.NoError(t, err)
+	return svc
+}
+
+func certificate(status module.CertificateStatus) module.ObservedResource {
+	return module.ObservedResource{
+		Kind: module.KindCertificate, Name: "proj-web-public-tls",
+		Certificate: &status,
+	}
+}
+
+func TestEvaluateCertificateGate(t *testing.T) {
+	t.Parallel()
+	healthyWorkload := []module.ObservedResource{freshSource(), workload(1, 1, 1)}
+
+	t.Run("unobserved certificate keeps the service progressing", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(healthyWorkload)
+		require.Equal(t, module.HealthProgressing, evaluation.Health)
+		require.Equal(t, "certificate-unobserved", evaluation.Diagnostics[0].Code,
+			"the -unobserved suffix drives the kernel's watch refresh")
+	})
+
+	t.Run("pending issuance blocks activation and leads the diagnostics", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload,
+			certificate(module.CertificateStatus{Issuing: true, Reason: "Pending",
+				Message: "waiting for the ACME challenge"})))
+		require.Equal(t, module.HealthProgressing, evaluation.Health)
+		require.Equal(t, "certificate-pending", evaluation.Diagnostics[0].Code)
+		require.Contains(t, evaluation.Diagnostics[0].Message, "waiting for the ACME challenge",
+			"the failed verify step surfaces exactly this message")
+	})
+
+	t.Run("failed attempts become an error while still progressing", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload,
+			certificate(module.CertificateStatus{FailedAttempts: 2, Reason: "Failed",
+				Message: "ACME authorization failed"})))
+		require.Equal(t, module.HealthProgressing, evaluation.Health)
+		require.Equal(t, "certificate-failing", evaluation.Diagnostics[0].Code)
+		require.Equal(t, "error", evaluation.Diagnostics[0].Severity)
+	})
+
+	t.Run("issued certificate leaves health untouched", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload,
+			certificate(module.CertificateStatus{Ready: true,
+				NotAfter: time.Now().Add(60 * 24 * time.Hour)})))
+		require.Equal(t, module.HealthHealthy, evaluation.Health)
+		require.Empty(t, evaluation.Diagnostics)
+	})
+
+	t.Run("failing renewal warns without blocking", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload,
+			certificate(module.CertificateStatus{Ready: false, Reason: "Failed",
+				NotAfter: time.Now().Add(10 * 24 * time.Hour)})))
+		require.Equal(t, module.HealthHealthy, evaluation.Health,
+			"a valid certificate with a failing renewal must never block a deploy")
+		require.Equal(t, "certificate-renewal-failing", evaluation.Diagnostics[0].Code)
+		require.Equal(t, "warning", evaluation.Diagnostics[0].Severity)
+	})
+
+	t.Run("expired certificate degrades the service", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload,
+			certificate(module.CertificateStatus{Ready: false,
+				NotAfter: time.Now().Add(-time.Hour)})))
+		require.Equal(t, module.HealthDegraded, evaluation.Health)
+		require.Equal(t, "certificate-expired", evaluation.Diagnostics[0].Code)
+	})
+
+	t.Run("workload trouble keeps its own story first", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate([]module.ObservedResource{
+			freshSource(), workload(1, 1, 0),
+		})
+		require.Equal(t, module.HealthProgressing, evaluation.Health)
+		require.Equal(t, "rolling-update", evaluation.Diagnostics[0].Code,
+			"the certificate only leads when it is what changed the verdict")
+	})
+
+	t.Run("disabled routes and local installations ignore certificates", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "disabled").Evaluate(healthyWorkload)
+		require.Equal(t, module.HealthHealthy, evaluation.Health)
+		require.Empty(t, evaluation.Diagnostics)
+
+		evaluation = decodeRoutes(t, false, "automatic").Evaluate(healthyWorkload)
+		require.Equal(t, module.HealthHealthy, evaluation.Health)
+		require.Empty(t, evaluation.Diagnostics)
+	})
+}
+
 func TestEvaluateStaleSourceIsUnknown(t *testing.T) {
 	t.Parallel()
 	svc := decode(t)

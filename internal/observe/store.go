@@ -36,11 +36,12 @@ type Object struct {
 	// can decide ownership transitions without a request-time read.
 	ManagedFields []metav1.ManagedFieldsEntry
 
-	Workload   *module.WorkloadStatus
-	Pod        *module.PodStatus
-	Autoscaler *module.AutoscalerStatus
-	Claim      *module.ClaimStatus
-	Job        *JobStatus
+	Workload    *module.WorkloadStatus
+	Pod         *module.PodStatus
+	Autoscaler  *module.AutoscalerStatus
+	Claim       *module.ClaimStatus
+	Job         *JobStatus
+	Certificate *module.CertificateStatus
 
 	// SharedKey links platform-scoped objects (Environment == uuid.Nil,
 	// e.g. a database pool) to the environment-owned objects that reference
@@ -416,7 +417,7 @@ func (s Snapshot) ForService(key string) []module.ObservedResource {
 		case module.KindWorkload, module.KindPod, module.KindAutoscaler,
 			module.KindService, module.KindIngress, module.KindVolume,
 			module.KindDatabaseClaim, module.KindDatabaseTenant,
-			module.KindBucketClaim, module.KindBucket:
+			module.KindBucketClaim, module.KindBucket, module.KindCertificate:
 			resources = append(resources, module.ObservedResource{
 				Kind:           obj.Kind,
 				Name:           obj.Name,
@@ -427,6 +428,7 @@ func (s Snapshot) ForService(key string) []module.ObservedResource {
 				Claim:          obj.Claim,
 				DatabaseTenant: obj.DatabaseTenant,
 				Bucket:         obj.Bucket,
+				Certificate:    obj.Certificate,
 			})
 			if obj.SharedKey != "" {
 				shared[obj.SharedKey] = true

@@ -23,6 +23,11 @@ type UpgradePlan struct {
 	// datastore).
 	K3sDrifted   bool
 	K3sDowngrade bool
+	// K3sMinorSkip means the pin is more than one Kubernetes minor ahead of
+	// the installed k3s. Control planes must upgrade one minor at a time, so
+	// such a jump is refused; reinstalling on the new version is the
+	// supported path.
+	K3sMinorSkip bool
 
 	BundleFrom string
 	BundleTo   string
@@ -43,8 +48,17 @@ func PlanUpgrade(status *Status, imageTar bool) UpgradePlan {
 		BundleTo: version.Version,
 	}
 	plan.K3sDrifted = !status.K3sCurrent
-	if cmp, ok := compareK3sVersions(status.Host.K3sVersion, K3sVersion); ok && cmp > 0 {
-		plan.K3sDowngrade = true
+	if cmp, ok := compareK3sVersions(status.Host.K3sVersion, K3sVersion); ok {
+		if cmp > 0 {
+			plan.K3sDowngrade = true
+		}
+		if cmp < 0 {
+			installed, _ := parseK3sVersion(status.Host.K3sVersion)
+			pinned, _ := parseK3sVersion(K3sVersion)
+			if pinned[0] != installed[0] || pinned[1]-installed[1] > 1 {
+				plan.K3sMinorSkip = true
+			}
+		}
 	}
 	if status.Host.Record != nil && status.Host.Record.Node.Role == layout.RoleServer {
 		plan.BundleFrom = status.BundleVersion
@@ -181,7 +195,7 @@ func UpgradeSequence(status *Status) []NodeUpgradeStep {
 	return steps
 }
 
-// compareK3sVersions orders two k3s version strings such as v1.33.3+k3s1:
+// compareK3sVersions orders two k3s version strings such as v1.36.3+k3s1:
 // numeric on major.minor.patch, then on the k3s packaging suffix. ok is
 // false when either side does not parse; callers then skip ordering-based
 // guards rather than misjudge.

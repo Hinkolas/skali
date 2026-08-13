@@ -110,6 +110,10 @@ type Config struct {
 	// ManagedCluster pins application pods to application-capable nodes.
 	// Local development leaves it false.
 	ManagedCluster bool
+	// Certificates renders explicit cert-manager Certificates for TLS
+	// routes and gates rollout health on their issuance. Local development
+	// leaves it false: no cert-manager, HTTP-only edge.
+	Certificates bool
 }
 
 type Kernel struct {

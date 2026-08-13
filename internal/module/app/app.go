@@ -15,30 +15,41 @@ import (
 	"time"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // memberDiagnosticLimit bounds how many not-ready members one evaluation
 // names; the count-based message already carries the totals.
 const memberDiagnosticLimit = 5
 
-type Module struct{}
+type Module struct {
+	// Certificates mirrors the installation's cert-manager capability: when
+	// set, TLS routes gate health on their certificate's issuance, so a
+	// deploy only activates once the route actually terminates TLS. Local
+	// installations leave it false and route certificates are ignored.
+	Certificates bool
+}
 
 func (Module) Type() string { return "application" }
 
-func (Module) Decode(definition compiler.ProjectDefinition, key string) (module.Service, error) {
+func (m Module) Decode(definition compiler.ProjectDefinition, key string) (module.Service, error) {
 	application, ok := definition.Applications[key]
 	if !ok {
 		return nil, fmt.Errorf("app: application %s is not defined", key)
 	}
 	dependencies := definition.Dependencies["applications."+key]
-	return &service{key: key, application: application, dependencies: dependencies}, nil
+	return &service{key: key, project: definition.Name, application: application,
+		dependencies: dependencies, certificates: m.Certificates}, nil
 }
 
 type service struct {
 	key          string
+	project      string
 	application  compiler.Application
 	dependencies []string
+	certificates bool
 }
 
 func (s *service) Key() string  { return s.key }
@@ -78,14 +89,27 @@ func (s *service) Removal() module.Removal {
 	}
 }
 
-// Evaluate projects application health from the observed snapshot. The
-// distinctions it draws: progressing while a rollout is still moving
-// (controller lag or members not yet updated), degraded or unhealthy by
-// ready count once it is not, and unknown when observation cannot support
-// a verdict (stale source, missing workload, zero desired members). Member
-// and controller-condition diagnostics ride along so a degraded state
-// always names its reason.
+// Evaluate projects application health from the observed snapshot: the
+// workload verdict below, gated by route-certificate issuance on
+// TLS-capable installations. A pending certificate keeps an otherwise
+// healthy service progressing, so activation (and therefore the deploy
+// run) waits for issuance and the rollout deadline turns a certificate
+// that never issues into a failed run naming the reason.
 func (s *service) Evaluate(observed []module.ObservedResource) module.Evaluation {
+	evaluation := s.evaluateWorkload(observed)
+	if !s.certificates || evaluation.Health == module.HealthUnknown {
+		return evaluation
+	}
+	return s.applyCertificateGate(observed, evaluation, time.Now())
+}
+
+// evaluateWorkload draws the workload distinctions: progressing while a
+// rollout is still moving (controller lag or members not yet updated),
+// degraded or unhealthy by ready count once it is not, and unknown when
+// observation cannot support a verdict (stale source, missing workload,
+// zero desired members). Member and controller-condition diagnostics ride
+// along so a degraded state always names its reason.
+func (s *service) evaluateWorkload(observed []module.ObservedResource) module.Evaluation {
 	if source := module.StaleSource(observed); source != nil {
 		message := "observation source state is " + source.State
 		if !source.StaleSince.IsZero() {
@@ -149,6 +173,105 @@ func (s *service) Evaluate(observed []module.ObservedResource) module.Evaluation
 		return module.Evaluation{Health: module.HealthDegraded, Diagnostics: prepend(diagnostics,
 			warnDiag("partial-availability", fmt.Sprintf("%d/%d members ready", ready, desired), s.key))}
 	}
+}
+
+// applyCertificateGate folds route-certificate issuance into the workload
+// verdict. Issuance in flight floors health to progressing, an expired
+// certificate floors it to degraded (the route is genuinely down), and a
+// failing renewal of a still-valid certificate stays a warning so it never
+// blocks a later deploy. When the certificate is the only blocker its
+// diagnostic leads, because the run journal and the failed verify step
+// surface exactly the first diagnostic.
+func (s *service) applyCertificateGate(observed []module.ObservedResource, evaluation module.Evaluation, now time.Time) module.Evaluation {
+	health := evaluation.Health
+	var blockers, notes []module.Diagnostic
+	for _, routeKey := range utils.SortedKeys(s.application.Routes) {
+		route := s.application.Routes[routeKey]
+		if route.TLS == "disabled" {
+			continue
+		}
+		name := kubernetes.RouteTLSName(s.project, s.key, routeKey)
+		certificate := findCertificate(observed, name)
+		switch {
+		case certificate == nil:
+			// The rendered Certificate has not reached the snapshot; the
+			// -unobserved suffix asks the kernel to bounce the watch in case
+			// it fell into an establishment gap.
+			blockers = append(blockers, infoDiag("certificate-unobserved",
+				"certificate "+name+" is not observed yet", name))
+			health = floorHealth(health, module.HealthProgressing)
+		case certificate.NotAfter.IsZero():
+			// Never issued. Failed attempts make it an error so the deadline
+			// failure names a cause, not a wait.
+			message := "certificate " + name + " is not issued yet"
+			if detail := certificateDetail(certificate); detail != "" {
+				message += ": " + detail
+			}
+			if certificate.FailedAttempts > 0 {
+				blockers = append(blockers, errorDiag("certificate-failing", message, name))
+			} else {
+				blockers = append(blockers, infoDiag("certificate-pending", message, name))
+			}
+			health = floorHealth(health, module.HealthProgressing)
+		case now.After(certificate.NotAfter):
+			blockers = append(blockers, errorDiag("certificate-expired",
+				"certificate "+name+" expired "+certificate.NotAfter.UTC().Format(time.RFC3339), name))
+			health = floorHealth(health, module.HealthDegraded)
+		case !certificate.Ready:
+			// Still valid, renewal failing: post-activation this must never
+			// gate, only warn.
+			message := "certificate " + name + " renewal is failing"
+			if detail := certificateDetail(certificate); detail != "" {
+				message += ": " + detail
+			}
+			notes = append(notes, warnDiag("certificate-renewal-failing", message, name))
+		}
+	}
+	diagnostics := evaluation.Diagnostics
+	if health != evaluation.Health {
+		// The certificates are what blocks; their story leads.
+		diagnostics = append(append([]module.Diagnostic{}, blockers...), diagnostics...)
+	} else {
+		diagnostics = append(diagnostics, blockers...)
+	}
+	diagnostics = append(diagnostics, notes...)
+	return module.Evaluation{Health: health, Diagnostics: diagnostics}
+}
+
+func findCertificate(observed []module.ObservedResource, name string) *module.CertificateStatus {
+	for _, resource := range observed {
+		if resource.Kind == module.KindCertificate && resource.Name == name && resource.Certificate != nil {
+			return resource.Certificate
+		}
+	}
+	return nil
+}
+
+func certificateDetail(certificate *module.CertificateStatus) string {
+	parts := []string{}
+	if certificate.Reason != "" {
+		parts = append(parts, certificate.Reason)
+	}
+	if certificate.Message != "" {
+		parts = append(parts, certificate.Message)
+	}
+	return strings.Join(parts, ": ")
+}
+
+// floorHealth caps health at the given ceiling: a healthy service becomes
+// progressing when issuance is in flight, while an already worse verdict
+// keeps its own story.
+func floorHealth(current, ceiling module.Health) module.Health {
+	rank := map[module.Health]int{
+		module.HealthHealthy:     3,
+		module.HealthProgressing: 2,
+		module.HealthDegraded:    1,
+		module.HealthUnhealthy:   0,
+	}
+	if rank[current] < rank[ceiling] {
+		return current
+	}
+	return ceiling
 }
 
 func findWorkload(observed []module.ObservedResource, key string) *module.WorkloadStatus {

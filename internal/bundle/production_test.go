@@ -62,7 +62,13 @@ func TestLocalRenderFrozen(t *testing.T) {
 		"local-bootstrap.yaml": 8,
 	}
 	for name, index := range frozen {
-		golden, err := os.ReadFile(filepath.Join("testdata", name))
+		path := filepath.Join("testdata", name)
+		// Refresh deliberately with UPDATE_GOLDEN=1 go test ./internal/bundle;
+		// remember the refreshed bundle rolls a converge on every dev machine.
+		if os.Getenv("UPDATE_GOLDEN") != "" {
+			require.NoError(t, os.WriteFile(path, []byte(sources[index]), 0o644))
+		}
+		golden, err := os.ReadFile(path)
 		require.NoError(t, err, name)
 		require.Equal(t, string(golden), sources[index], name)
 	}
@@ -74,7 +80,11 @@ func TestLocalRenderFrozen(t *testing.T) {
 
 	// The full hash including the vendored operator manifests is frozen
 	// too: cert-manager must not leak into the local fingerprint.
-	hashGolden, err := os.ReadFile(filepath.Join("testdata", "local-hash.txt"))
+	hashPath := filepath.Join("testdata", "local-hash.txt")
+	if os.Getenv("UPDATE_GOLDEN") != "" {
+		require.NoError(t, os.WriteFile(hashPath, []byte(Hash(profile)+"\n"), 0o644))
+	}
+	hashGolden, err := os.ReadFile(hashPath)
 	require.NoError(t, err)
 	require.Equal(t, strings.TrimSpace(string(hashGolden)), Hash(profile))
 }
@@ -137,30 +147,52 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.Contains(t, string(raw), `"SKALI_CAPABILITIES"`)
 	require.Contains(t, string(raw), "application;database;object-storage;registry;edge")
 
-	ingress := objects.Skalid[6]
-	require.Equal(t, "Ingress", ingress.GetKind())
-	require.Equal(t, IssuerName, ingress.GetAnnotations()["cert-manager.io/cluster-issuer"])
-	tls, _, _ := unstructured.NestedSlice(ingress.Object, "spec", "tls")
-	require.Len(t, tls, 1)
-	entry := tls[0].(map[string]any)
-	require.Equal(t, "skalid-tls", entry["secretName"])
-	require.Equal(t, []any{"skali.example.com"}, entry["hosts"])
-	rules, _, _ := unstructured.NestedSlice(ingress.Object, "spec", "rules")
-	require.Equal(t, "skali.example.com", rules[0].(map[string]any)["host"])
-	// The platform domain splits by path: /api to the daemon (listed first,
-	// Traefik matches the longer path), everything else to the web console.
-	skalidIngressJSON, err := ingress.MarshalJSON()
+	// The platform edge: an explicit Certificate for the api domain and a
+	// websecure IngressRoute splitting the platform domain by path, /api to
+	// the daemon and everything else to the web console (Traefik prioritizes
+	// the longer match), plus the plain-HTTP redirect router.
+	certificate := objects.Skalid[6]
+	require.Equal(t, "Certificate", certificate.GetKind())
+	require.Equal(t, "skalid-tls", certificate.GetName())
+	certSecret, _, _ := unstructured.NestedString(certificate.Object, "spec", "secretName")
+	require.Equal(t, "skalid-tls", certSecret)
+	certIssuer, _, _ := unstructured.NestedString(certificate.Object, "spec", "issuerRef", "name")
+	require.Equal(t, IssuerName, certIssuer)
+	certNames, _, _ := unstructured.NestedStringSlice(certificate.Object, "spec", "dnsNames")
+	require.Equal(t, []string{"skali.example.com"}, certNames)
+
+	route := objects.Skalid[7]
+	require.Equal(t, "IngressRoute", route.GetKind())
+	require.Equal(t, "skalid", route.GetName())
+	points, _, _ := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
+	require.Equal(t, []string{"websecure"}, points)
+	routeSecret, _, _ := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
+	require.Equal(t, "skalid-tls", routeSecret)
+	skalidRoutes, _, _ := unstructured.NestedSlice(route.Object, "spec", "routes")
+	require.Len(t, skalidRoutes, 2)
+	apiRule := skalidRoutes[0].(map[string]any)
+	require.Equal(t, "Host(`skali.example.com`) && PathPrefix(`/api`)", apiRule["match"],
+		"/api must be listed first; Traefik prioritizes the longer match")
+	require.Equal(t, "skalid", apiRule["services"].([]any)[0].(map[string]any)["name"])
+	webRule := skalidRoutes[1].(map[string]any)
+	require.Equal(t, "Host(`skali.example.com`) && PathPrefix(`/`)", webRule["match"])
+	require.Equal(t, "skali-web", webRule["services"].([]any)[0].(map[string]any)["name"])
+
+	redirect := objects.Skalid[8]
+	require.Equal(t, "IngressRoute", redirect.GetKind())
+	require.Equal(t, "skalid-http", redirect.GetName())
+	redirectPoints, _, _ := unstructured.NestedStringSlice(redirect.Object, "spec", "entryPoints")
+	require.Equal(t, []string{"web"}, redirectPoints)
+	redirectJSON, err := redirect.MarshalJSON()
 	require.NoError(t, err)
-	require.Contains(t, string(skalidIngressJSON), `"path":"/api"`)
-	require.Contains(t, string(skalidIngressJSON), `"path":"/"`)
-	require.Contains(t, string(skalidIngressJSON), `"name":"skali-web"`)
-	require.Less(t, strings.Index(string(skalidIngressJSON), `"path":"/api"`),
-		strings.Index(string(skalidIngressJSON), `"path":"/"`))
+	require.Contains(t, string(redirectJSON), `"middlewares":[{"name":"redirect-https"}]`)
 
 	// Registry: token secret first, then the four base objects, the public
-	// ingress last.
-	require.Len(t, objects.Registry, 6)
-	var pvc, registryDeployment, tokenSecret, registryConfig, registryIngress *unstructured.Unstructured
+	// edge objects (shared redirect Middleware, Certificate, both routers)
+	// last.
+	require.Len(t, objects.Registry, 9)
+	var pvc, registryDeployment, tokenSecret, registryConfig *unstructured.Unstructured
+	var registryCertificate, registryRoute, registryRedirect, middleware *unstructured.Unstructured
 	for index := range objects.Registry {
 		switch objects.Registry[index].GetKind() {
 		case "PersistentVolumeClaim":
@@ -171,8 +203,16 @@ func TestRenderProductionObjects(t *testing.T) {
 			tokenSecret = &objects.Registry[index]
 		case "ConfigMap":
 			registryConfig = &objects.Registry[index]
-		case "Ingress":
-			registryIngress = &objects.Registry[index]
+		case "Certificate":
+			registryCertificate = &objects.Registry[index]
+		case "Middleware":
+			middleware = &objects.Registry[index]
+		case "IngressRoute":
+			if objects.Registry[index].GetName() == "skali-registry-http" {
+				registryRedirect = &objects.Registry[index]
+			} else {
+				registryRoute = &objects.Registry[index]
+			}
 		}
 	}
 	require.NotNil(t, pvc)
@@ -201,19 +241,24 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.Contains(t, string(deploymentJSON), "/etc/skali/registry-token")
 	require.Contains(t, string(deploymentJSON), "skali-registry-token")
 
-	// The registry ingress binds the registry domain with its own
-	// certificate and routes the token realm to skalid.
-	require.NotNil(t, registryIngress)
-	require.Equal(t, IssuerName, registryIngress.GetAnnotations()["cert-manager.io/cluster-issuer"])
-	registryTLS, _, _ := unstructured.NestedSlice(registryIngress.Object, "spec", "tls")
-	require.Len(t, registryTLS, 1)
-	registryTLSEntry := registryTLS[0].(map[string]any)
-	require.Equal(t, "skali-registry-tls", registryTLSEntry["secretName"])
-	require.Equal(t, []any{"registry.example.com"}, registryTLSEntry["hosts"])
-	ingressJSON, err := registryIngress.MarshalJSON()
-	require.NoError(t, err)
-	require.Contains(t, string(ingressJSON), `"path":"/token"`)
-	require.Contains(t, string(ingressJSON), `"name":"skalid"`)
+	// The registry edge binds the registry domain with its own explicit
+	// certificate and routes the token realm to skalid; the shared redirect
+	// Middleware rides this stage because it converges before skalid's.
+	require.NotNil(t, registryCertificate)
+	require.Equal(t, "skali-registry-tls", registryCertificate.GetName())
+	registryCertNames, _, _ := unstructured.NestedStringSlice(registryCertificate.Object, "spec", "dnsNames")
+	require.Equal(t, []string{"registry.example.com"}, registryCertNames)
+	require.NotNil(t, registryRoute)
+	registrySecret, _, _ := unstructured.NestedString(registryRoute.Object, "spec", "tls", "secretName")
+	require.Equal(t, "skali-registry-tls", registrySecret)
+	registryRoutes, _, _ := unstructured.NestedSlice(registryRoute.Object, "spec", "routes")
+	require.Len(t, registryRoutes, 2)
+	tokenRule := registryRoutes[0].(map[string]any)
+	require.Equal(t, "Host(`registry.example.com`) && PathPrefix(`/token`)", tokenRule["match"])
+	require.Equal(t, "skalid", tokenRule["services"].([]any)[0].(map[string]any)["name"])
+	require.NotNil(t, registryRedirect)
+	require.NotNil(t, middleware)
+	require.Equal(t, "redirect-https", middleware.GetName())
 
 	// Skalid learns the signing key and node secret from the token secret,
 	// and hands build clients push refs on the public registry domain.

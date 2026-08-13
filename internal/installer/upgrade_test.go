@@ -2,6 +2,7 @@ package installer
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ import (
 func upgradeStatus(role string, k3sCurrent, bundleCurrent bool, bundleVersion string) *Status {
 	installed := K3sVersion
 	if !k3sCurrent {
-		installed = "v1.33.2+k3s1"
+		installed = "v1.36.2+k3s1"
 	}
 	return &Status{
 		Host: &Host{
@@ -39,7 +40,7 @@ func TestPlanUpgrade(t *testing.T) {
 		require.True(t, plan.K3sDrifted)
 		require.False(t, plan.K3sDowngrade)
 		require.True(t, plan.BundleDrifted)
-		require.Equal(t, "v1.33.2+k3s1", plan.K3sFrom)
+		require.Equal(t, "v1.36.2+k3s1", plan.K3sFrom)
 		require.Equal(t, K3sVersion, plan.K3sTo)
 		require.Equal(t, "1.0.0", plan.BundleFrom)
 		require.Equal(t, version.Version, plan.BundleTo)
@@ -85,6 +86,32 @@ func TestPlanUpgrade(t *testing.T) {
 		status.Host.K3sVersion = "v9.99.9+k3s9"
 		plan := PlanUpgrade(status, false)
 		require.True(t, plan.K3sDowngrade)
+		require.False(t, plan.K3sMinorSkip)
+	})
+
+	t.Run("minor skip is flagged", func(t *testing.T) {
+		pinned, ok := parseK3sVersion(K3sVersion)
+		require.True(t, ok)
+		cases := []struct {
+			installed string
+			skip      bool
+		}{
+			// One minor behind upgrades in place; two minors or a major
+			// boundary require a reinstall. Same-minor patch hops never skip.
+			{fmt.Sprintf("v%d.%d.0+k3s1", pinned[0], pinned[1]-1), false},
+			{fmt.Sprintf("v%d.%d.0+k3s1", pinned[0], pinned[1]-2), true},
+			{"v1.33.3+k3s1", true},
+			{fmt.Sprintf("v%d.%d.0+k3s1", pinned[0]-1, pinned[1]), true},
+			{fmt.Sprintf("v%d.%d.0+k3s1", pinned[0], pinned[1]), false},
+			{"unparseable", false},
+		}
+		for _, c := range cases {
+			status := upgradeStatus(layout.RoleServer, false, true, version.Version)
+			status.Host.K3sVersion = c.installed
+			plan := PlanUpgrade(status, false)
+			require.Equal(t, c.skip, plan.K3sMinorSkip, "installed %s", c.installed)
+			require.False(t, plan.K3sDowngrade, "installed %s", c.installed)
+		}
 	})
 
 	t.Run("agent counts only k3s", func(t *testing.T) {

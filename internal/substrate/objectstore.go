@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/store"
@@ -162,7 +163,7 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		objects = append(objects, seaweed.RenderDevS3NodePort(Namespace))
 	}
 	if c.cfg.Managed && c.cfg.S3Domain != "" {
-		objects = append(objects, seaweed.RenderS3Ingress(Namespace, c.cfg.S3Domain))
+		objects = append(objects, seaweed.RenderS3Edge(Namespace, c.cfg.S3Domain)...)
 	}
 	objects = append(objects, seaweed.RenderFence(Namespace)...)
 	if cidrs, err := c.deps.Cluster.ProxyCIDRs(ctx); err != nil {
@@ -270,6 +271,12 @@ func (c *Controller) releaseObjectStore(ctx context.Context, row store.ObjectSto
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, Namespace: Namespace, Name: "seaweed-s3-bootstrap"},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, Namespace: Namespace, Name: seaweed.FilerStoreSecret},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, Namespace: Namespace, Name: "seaweed-data"},
+		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3"},
+		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3-http"},
+		{GVK: edge.MiddlewareGVK, Namespace: Namespace, Name: edge.RedirectMiddlewareName},
+		{GVK: edge.CertificateGVK, Namespace: Namespace, Name: "seaweed-s3-tls"},
+		// Stores published before the IngressRoute rework carried a plain
+		// Ingress under the same name; deleting an absent kind is a no-op.
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"}, Namespace: Namespace, Name: "seaweed-s3"},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-internal"},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-s3-open"},

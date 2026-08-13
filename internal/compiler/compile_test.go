@@ -79,6 +79,52 @@ func TestSameDomainSupportsDistinctRoutePaths(t *testing.T) {
 	require.Equal(t, "/api", result.Definition.Applications["api"].Routes["public"].Path)
 }
 
+func TestRoutePolicyDefaultsAndBounds(t *testing.T) {
+	t.Parallel()
+	result, err := compileManifest(t, `
+version: "1"
+name: route-policies
+applications:
+  api:
+    image: example.invalid/api:1
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: api.example.com
+        port: http
+      admin:
+        domain: admin.example.com
+        port: http
+        tls: optional
+        strategy: least-requests
+`)
+	require.NoError(t, err)
+	routes := result.Definition.Applications["api"].Routes
+	require.Equal(t, "automatic", routes["public"].TLS)
+	require.Equal(t, "round-robin", routes["public"].Strategy)
+	require.Equal(t, "optional", routes["admin"].TLS)
+	require.Equal(t, "least-requests", routes["admin"].Strategy)
+
+	_, err = compileManifest(t, `
+version: "1"
+name: route-policies
+applications:
+  api:
+    image: example.invalid/api:1
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: api.example.com
+        port: http
+        strategy: fastest
+`)
+	require.ErrorContains(t, err, "must be round-robin or least-requests")
+}
+
 func TestProjectVariableDefault(t *testing.T) {
 	t.Parallel()
 	expression, err := parseExpression("${POSTGRES_USER:-app}", manifest.Project{}, false)

@@ -38,12 +38,12 @@ func TestLimaRunEnvRidesEnvPrefix(t *testing.T) {
 	}}
 	_, err := limaOn(fake).Run(context.Background(), Command{
 		Name: "sh", Args: []string{"/tmp/script"},
-		Env: []string{"INSTALL_K3S_VERSION=v1.33.3+k3s1"},
+		Env: []string{"INSTALL_K3S_VERSION=v1.36.3+k3s1"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"shell", "--workdir", "/", "skali", "--",
-		"sudo", "env", "INSTALL_K3S_VERSION=v1.33.3+k3s1", "sh", "/tmp/script",
+		"sudo", "env", "INSTALL_K3S_VERSION=v1.36.3+k3s1", "sh", "/tmp/script",
 	}, fake.Commands[0].Args)
 }
 

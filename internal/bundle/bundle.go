@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/registrytoken"
 )
@@ -43,7 +44,7 @@ const (
 	// CertManagerVersion pins the vendored cert-manager release. The asset
 	// is embedded even though the local profile never applies it; roughly
 	// one megabyte of CLI weight buys one shared bundle package.
-	CertManagerVersion = "1.20.1"
+	CertManagerVersion = "1.21.1"
 	RegistryImage      = "registry:2.8.3"
 	// RegistryNodePort is the stable node port the host maps its loopback
 	// registry port onto.
@@ -64,10 +65,10 @@ const (
 	// registry NodePort through registries.yaml, exactly like
 	// localhost:5510 locally.
 	RegistryInternalHost = "registry.skali.internal"
-	// IssuerName is the ClusterIssuer every `tls: automatic` route binds
-	// to; the project renderer annotates ingresses with it, so the name is
-	// contract.
-	IssuerName = "skali"
+	// IssuerName is the ClusterIssuer every issued route certificate binds
+	// to; the edge package owns the name, re-exported here for the bundle's
+	// callers.
+	IssuerName = edge.IssuerName
 	// ACMEProductionServer is the default ACME directory.
 	ACMEProductionServer = "https://acme-v02.api.letsencrypt.org/directory"
 	// RecordName and RecordKey locate the in-cluster installation record
@@ -102,7 +103,7 @@ func CNPGManifest() []byte {
 		[]byte("imagePullPolicy: IfNotPresent"), 1)
 }
 
-//go:embed assets/cert-manager-1.20.1.yaml
+//go:embed assets/cert-manager-1.21.1.yaml
 var certManagerManifest []byte
 
 // CertManagerManifest is the pinned cert-manager install manifest; applied
@@ -607,44 +608,77 @@ data:
 		base64.StdEncoding.EncodeToString([]byte(production.NodePullSecret)))
 }
 
-// registryIngressYAML publishes the registry on its own domain. The /token
-// path routes to skalid (the realm must be reachable by exactly the
-// clients that can reach the registry); Traefik matches the longer path
-// first.
+// registryIngressYAML publishes the registry on its own domain through the
+// Traefik edge. The /token route targets skalid (the realm must be
+// reachable by exactly the clients that can reach the registry); Traefik
+// prioritizes the longer match. Plain HTTP redirects through the shared
+// skali-system Middleware the skalid stage renders, and the certificate is
+// explicit like every managed route's.
 func registryIngressYAML(production *Production) string {
 	return fmt.Sprintf(`---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: %[1]s
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: skali-registry-tls
+  namespace: %[1]s
+spec:
+  secretName: skali-registry-tls
+  dnsNames:
+    - %[3]s
+  issuerRef:
+    kind: ClusterIssuer
+    name: %[2]s
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
 metadata:
   name: skali-registry
   namespace: %[1]s
-  annotations:
-    cert-manager.io/cluster-issuer: %[2]s
 spec:
-  ingressClassName: %[4]s
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`+"`%[3]s`"+`) && PathPrefix(`+"`/token`"+`)
+      kind: Rule
+      services:
+        - name: skalid
+          port: 80
+    - match: Host(`+"`%[3]s`"+`) && PathPrefix(`+"`/`"+`)
+      kind: Rule
+      services:
+        - name: skali-registry
+          port: 5000
   tls:
-    - hosts:
-        - %[3]s
-      secretName: skali-registry-tls
-  rules:
-    - host: %[3]s
-      http:
-        paths:
-          - path: /token
-            pathType: Prefix
-            backend:
-              service:
-                name: skalid
-                port:
-                  number: 80
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: skali-registry
-                port:
-                  number: 5000
-`, Namespace, IssuerName, production.RegistryDomain, production.ingressClassName())
+    secretName: skali-registry-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: skali-registry-http
+  namespace: %[1]s
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`+"`%[3]s`"+`) && PathPrefix(`+"`/`"+`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+      services:
+        - name: skali-registry
+          port: 5000
+`, Namespace, IssuerName, production.RegistryDomain)
 }
 
 func skalidYAML(profile Profile) string {
@@ -676,28 +710,34 @@ func skalidYAML(profile Profile) string {
 	// bucket onto the single all-in-one dev object store, so the
 	// capabilities are always present.
 	capabilitiesEnv := "\n            - name: SKALI_CAPABILITIES\n              value: application;edge;database;object-storage"
-	ingressAnnotations := ""
-	ingressTLS := ""
-	ingressHost := "skali.localhost"
-	ingressClass := "traefik"
-	// Locally the daemon owns the whole host; production splits the platform
-	// domain, /api to skalid (which also answers root paths for in-cluster
-	// clients) and the rest to the web console. Traefik matches the longer
-	// path first.
-	ingressPaths := `
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: skalid
-                port:
-                  number: 80`
+	// Locally the daemon owns the whole host on the plain web entrypoint;
+	// production splits the platform domain on websecure, /api to skalid
+	// (which also answers root paths for in-cluster clients) and the rest
+	// to the web console (Traefik prioritizes the longer match), with a
+	// shared redirect Middleware answering plain HTTP and an explicit
+	// Certificate for the platform domain.
+	edgeSuffix := fmt.Sprintf(`---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: skalid
+  namespace: %[1]s
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`+"`skali.localhost`"+`) && PathPrefix(`+"`/`"+`)
+      kind: Rule
+      services:
+        - name: skalid
+          port: 80
+`, Namespace)
 	if production := profile.Production; production != nil {
 		// Production states the installation's capability union. The token
 		// signing key and node pull secret ride the same production block:
 		// with them set, skalid serves the registry token realm. The push
 		// host is the public registry domain: build clients push through the
-		// ingress while artifact references stay on the internal name.
+		// edge while artifact references stay on the internal name.
 		capabilitiesEnv = "\n            - name: SKALI_CAPABILITIES\n              value: " +
 			strings.Join(production.Capabilities, ";") +
 			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
@@ -706,27 +746,64 @@ func skalidYAML(profile Profile) string {
 		if production.S3Domain != "" {
 			capabilitiesEnv += "\n            - name: SKALI_S3_DOMAIN\n              value: " + production.S3Domain
 		}
-		capabilitiesEnv += "\n            - name: SKALI_MANAGED_CLUSTER\n              value: \"true\""
-		ingressAnnotations = "\n  annotations:\n    cert-manager.io/cluster-issuer: " + IssuerName
-		ingressTLS = "\n  tls:\n    - hosts:\n        - " + production.IngressHost +
-			"\n      secretName: skalid-tls"
-		ingressHost = production.IngressHost
-		ingressClass = production.ingressClassName()
-		ingressPaths = `
-          - path: /api
-            pathType: Prefix
-            backend:
-              service:
-                name: skalid
-                port:
-                  number: 80
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: skali-web
-                port:
-                  number: 80`
+		capabilitiesEnv += "\n            - name: SKALI_MANAGED_CLUSTER\n              value: \"true\"" +
+			"\n            - name: SKALI_CERT_MANAGER\n              value: \"true\""
+		// The shared redirect-https Middleware rides the registry stage,
+		// which converges first; both platform -http routers reference it.
+		edgeSuffix = fmt.Sprintf(`---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: skalid-tls
+  namespace: %[1]s
+spec:
+  secretName: skalid-tls
+  dnsNames:
+    - %[2]s
+  issuerRef:
+    kind: ClusterIssuer
+    name: %[3]s
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: skalid
+  namespace: %[1]s
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`+"`%[2]s`"+`) && PathPrefix(`+"`/api`"+`)
+      kind: Rule
+      services:
+        - name: skalid
+          port: 80
+    - match: Host(`+"`%[2]s`"+`) && PathPrefix(`+"`/`"+`)
+      kind: Rule
+      services:
+        - name: skali-web
+          port: 80
+  tls:
+    secretName: skalid-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: skalid-http
+  namespace: %[1]s
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`+"`%[2]s`"+`) && PathPrefix(`+"`/`"+`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+      services:
+        - name: skalid
+          port: 80
+`, Namespace, production.IngressHost, IssuerName)
 	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
@@ -747,6 +824,12 @@ rules:
     verbs: ["*"]
   - apiGroups: [networking.k8s.io]
     resources: [ingresses, networkpolicies]
+    verbs: ["*"]
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares]
+    verbs: ["*"]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
     verbs: ["*"]
   - apiGroups: [discovery.k8s.io]
     resources: [endpointslices]
@@ -858,20 +941,8 @@ spec:
   ports:
     - port: 80
       targetPort: 7070
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: skalid
-  namespace: %[1]s%[7]s
-spec:
-  ingressClassName: %[10]s%[8]s
-  rules:
-    - host: %[9]s
-      http:
-        paths:%[11]s
 `, Namespace, profile.SkalidImage, base64.StdEncoding.EncodeToString([]byte(profile.AuthSecret)), profile.RegistryHost,
-		podAnnotations, capabilitiesEnv, ingressAnnotations, ingressTLS, ingressHost, ingressClass, ingressPaths)
+		podAnnotations, capabilitiesEnv) + edgeSuffix
 }
 
 // webYAML renders the web console: the SvelteKit BFF that serves the

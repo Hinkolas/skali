@@ -11,10 +11,11 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
 )
@@ -34,12 +35,17 @@ func TestRenderHelloWorldGolden(t *testing.T) {
 		BuildImages: map[string]string{
 			"web": "localhost:5510/skali/hello-world/web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		},
+		// The golden freezes the TLS-capable shape: the shared redirect
+		// Middleware, both routers, and the explicit Certificate.
+		Certificates: true,
 	})
 	require.NoError(t, err)
-	require.Len(t, objects, 3)
-	require.Equal(t, "Deployment", objects[0].GetObjectKind().GroupVersionKind().Kind)
-	require.Equal(t, "Service", objects[1].GetObjectKind().GroupVersionKind().Kind)
-	require.Equal(t, "Ingress", objects[2].GetObjectKind().GroupVersionKind().Kind)
+	kinds := make([]string, 0, len(objects))
+	for _, object := range objects {
+		kinds = append(kinds, object.GetObjectKind().GroupVersionKind().Kind)
+	}
+	require.Equal(t, []string{"Middleware", "Deployment", "Service",
+		"IngressRoute", "IngressRoute", "Certificate"}, kinds)
 
 	actual, err := MarshalYAML(objects)
 	require.NoError(t, err)
@@ -60,15 +66,25 @@ func TestRenderClusterPlacementOptions(t *testing.T) {
 	result, err := compiler.Compile(document)
 	require.NoError(t, err)
 
-	// Local dev: no pull secret, no capability placement, traefik routes.
+	// Local dev: no pull secret, no capability placement, and the HTTP-only
+	// edge shape (a single web-entrypoint IngressRoute, no Certificate, no
+	// redirect Middleware) even though the route declares tls: automatic.
 	managed, err := Render(result, Options{
 		Namespace:   "skali-hello-world",
 		Variables:   map[string]string{"APP_DOMAIN": "hello.localhost"},
 		BuildImages: map[string]string{"web": "localhost:5510/skali/hello-world/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"},
 	})
 	require.NoError(t, err)
+	require.Len(t, managed, 3)
 	require.Nil(t, managed[0].(*appsv1.Deployment).Spec.Template.Spec.ImagePullSecrets)
-	require.Equal(t, "traefik", *managed[2].(*networkingv1.Ingress).Spec.IngressClassName)
+	route := managed[2].(*unstructured.Unstructured)
+	require.Equal(t, edge.IngressRouteGVK, route.GroupVersionKind())
+	points, _, err := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
+	require.NoError(t, err)
+	require.Equal(t, []string{edge.EntryPointWeb}, points)
+	_, hasTLS, err := unstructured.NestedMap(route.Object, "spec", "tls")
+	require.NoError(t, err)
+	require.False(t, hasTLS, "the local edge never terminates TLS")
 
 	managed, err = Render(result, Options{
 		Namespace: "skali-hello-world", ManagedCluster: true,
@@ -81,6 +97,94 @@ func TestRenderClusterPlacementOptions(t *testing.T) {
 	require.Equal(t, map[string]string{
 		layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 	}, managed[0].(*appsv1.Deployment).Spec.Template.Spec.NodeSelector)
+}
+
+// The three TLS policies and the strategy knob shape the edge objects: an
+// automatic route redirects plain HTTP, an optional route serves it, a
+// disabled route never leaves the web entrypoint, and least-requests becomes
+// Traefik's p2c on the backend reference.
+func TestRenderRoutePolicies(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+version: "1"
+name: policies
+applications:
+  api:
+    image: example.invalid/api:1
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: api.example.com
+        port: http
+        strategy: least-requests
+      relaxed:
+        domain: relaxed.example.com
+        port: http
+        tls: optional
+      internal:
+        domain: internal.example.com
+        port: http
+        tls: disabled
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	objects, err := Render(result, Options{Namespace: "skali-policies", Certificates: true})
+	require.NoError(t, err)
+	byName := map[string]*unstructured.Unstructured{}
+	for _, object := range objects {
+		if typed, ok := object.(*unstructured.Unstructured); ok {
+			byName[typed.GetKind()+"/"+typed.GetName()] = typed
+		}
+	}
+
+	// tls automatic + least-requests: websecure router with p2c, redirecting
+	// http companion, certificate.
+	public := byName["IngressRoute/policies-api-public"]
+	require.NotNil(t, public)
+	routes, _, err := unstructured.NestedSlice(public.Object, "spec", "routes")
+	require.NoError(t, err)
+	service := routes[0].(map[string]any)["services"].([]any)[0].(map[string]any)
+	require.Equal(t, "p2c", service["strategy"])
+	secret, _, err := unstructured.NestedString(public.Object, "spec", "tls", "secretName")
+	require.NoError(t, err)
+	require.Equal(t, "policies-api-public-tls", secret)
+	publicHTTP := byName["IngressRoute/policies-api-public-http"]
+	require.NotNil(t, publicHTTP)
+	httpRoutes, _, err := unstructured.NestedSlice(publicHTTP.Object, "spec", "routes")
+	require.NoError(t, err)
+	require.Contains(t, httpRoutes[0].(map[string]any), "middlewares",
+		"automatic routes redirect plain HTTP")
+	require.NotNil(t, byName["Certificate/policies-api-public-tls"])
+	require.NotNil(t, byName["Middleware/redirect-https"])
+
+	// tls optional: both routers serve, no redirect.
+	relaxedHTTP := byName["IngressRoute/policies-api-relaxed-http"]
+	require.NotNil(t, relaxedHTTP)
+	relaxedRoutes, _, err := unstructured.NestedSlice(relaxedHTTP.Object, "spec", "routes")
+	require.NoError(t, err)
+	require.NotContains(t, relaxedRoutes[0].(map[string]any), "middlewares",
+		"optional routes keep serving plain HTTP")
+	require.NotNil(t, byName["Certificate/policies-api-relaxed-tls"])
+
+	// tls disabled: one web router, no certificate, default strategy.
+	internal := byName["IngressRoute/policies-api-internal"]
+	require.NotNil(t, internal)
+	points, _, err := unstructured.NestedStringSlice(internal.Object, "spec", "entryPoints")
+	require.NoError(t, err)
+	require.Equal(t, []string{edge.EntryPointWeb}, points)
+	require.Nil(t, byName["IngressRoute/policies-api-internal-http"])
+	require.Nil(t, byName["Certificate/policies-api-internal-tls"])
+	internalRoutes, _, err := unstructured.NestedSlice(internal.Object, "spec", "routes")
+	require.NoError(t, err)
+	internalService := internalRoutes[0].(map[string]any)["services"].([]any)[0].(map[string]any)
+	require.NotContains(t, internalService, "strategy")
+
+	// RouteTLSName mirrors the renderer's composition.
+	require.Equal(t, "policies-api-public-tls", RouteTLSName("policies", "api", "public"))
 }
 
 // A forced deployment's restart stamp becomes a pod-template annotation so
@@ -478,8 +582,9 @@ applications:
 }
 
 // An intercepted application renders no workload: Service without selector,
-// a managed EndpointSlice targeting the host, and its Ingress; Deployment,
-// HPA, and release Job are absent. A build source needs no prepared image.
+// a managed EndpointSlice targeting the host, and its IngressRoute;
+// Deployment, HPA, and release Job are absent. A build source needs no
+// prepared image.
 func TestRenderInterceptedApplication(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
@@ -498,7 +603,7 @@ func TestRenderInterceptedApplication(t *testing.T) {
 	for _, object := range objects {
 		kinds = append(kinds, object.GetObjectKind().GroupVersionKind().Kind)
 	}
-	require.Equal(t, []string{"Service", "EndpointSlice", "Ingress"}, kinds)
+	require.Equal(t, []string{"Service", "EndpointSlice", "IngressRoute"}, kinds)
 
 	service := objects[0].(*corev1.Service)
 	require.Nil(t, service.Spec.Selector, "intercepted Services drop their selector")

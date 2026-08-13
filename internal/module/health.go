@@ -62,6 +62,10 @@ const (
 	// shared-key mechanism.
 	KindObjectStore = "object-store"
 	KindBucket      = "bucket"
+	// KindCertificate projects cert-manager Certificates through the dynamic
+	// CRD watch; the app module gates route health on their issuance. The
+	// watch registers only on installations that run cert-manager.
+	KindCertificate = "certificate"
 )
 
 // Observation source states. Anything but fresh means the projection may lag
@@ -95,6 +99,25 @@ type ObservedResource struct {
 	DatabaseTenant  *DatabaseTenantStatus
 	ObjectStore     *ObjectStoreStatus
 	Bucket          *BucketStatus
+	Certificate     *CertificateStatus
+}
+
+// CertificateStatus projects one cert-manager Certificate: its Ready and
+// Issuing conditions plus the issuance bookkeeping the app module and the
+// status projection read. A zero NotAfter means the certificate was never
+// issued.
+type CertificateStatus struct {
+	Ready   bool
+	Issuing bool
+	// Reason and Message carry the Ready condition's explanation, falling
+	// back to the Issuing condition while issuance is in flight.
+	Reason         string
+	Message        string
+	NotAfter       time.Time
+	RenewalTime    time.Time
+	FailedAttempts int32
+	SecretName     string
+	DNSNames       []string
 }
 
 // SourceStatus describes the freshness of the observation source itself.

@@ -80,7 +80,8 @@ func Schema() (*jsonschema.Schema, error) {
 	route.Properties["domain"].MinLength = new(1)
 	route.Properties["path"].Pattern = "^/"
 	route.Properties["port"] = portTargetSchema()
-	route.Properties["tls"].Enum = utils.AnySlice("automatic", "disabled")
+	route.Properties["tls"].Enum = utils.AnySlice("automatic", "optional", "disabled")
+	route.Properties["strategy"].Enum = utils.AnySlice("round-robin", "least-requests")
 
 	resourceValues := application.Properties["resources"].Properties["requests"]
 	resourceValues.Properties["cpu"] = cpuSchema()

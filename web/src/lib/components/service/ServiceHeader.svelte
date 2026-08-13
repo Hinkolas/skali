@@ -15,12 +15,16 @@
 	const health = $derived(live?.health ?? 'unknown');
 
 	// The first route whose domain renders to a plain literal becomes the
-	// "Open app" target; expression-typed domains cannot be resolved here.
+	// "Open app" target; for expression-typed domains the live status
+	// carries the resolved value once a certificate observed it.
 	const appDomain = $derived.by(() => {
 		if (service.type !== 'application') return null;
 		for (const route of Object.values(service.config.routes ?? {})) {
 			const domain = renderExpression(route.domain);
 			if (domain && !domain.includes('${')) return domain;
+		}
+		for (const route of live?.routes ?? []) {
+			if (route.domain && !route.domain.includes('${')) return route.domain;
 		}
 		return null;
 	});

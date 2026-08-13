@@ -3,7 +3,7 @@
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "c958075f686d42798f414059e3f009a53bce677608f08764a367d8adbeb22438",
+  "definitionHash": "780ddc000e37f91a21565c0ca777a14291d49859e1a895d26e1c278fc6f86497",
   "definition": {
     "version": "1",
     "name": "file-sharing",
@@ -164,7 +164,8 @@
             "port": {
               "name": "http"
             },
-            "tls": "automatic"
+            "tls": "automatic",
+            "strategy": "round-robin"
           }
         },
         "health": {
@@ -314,5 +315,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "cddcc8f972240778712ee105e38c517a22daf3eec3ea61fbdca2899f057a625b"
+  "checksum": "dca8708a464bdafffba105378c7b77fcf776c4c6e21bf68f8bfb7f2541dd76f9"
 }

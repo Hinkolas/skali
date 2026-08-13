@@ -14,7 +14,7 @@ values   ./.env (2 staged; local values never leave this machine)
 
 Local platform is not running. Creating it now.
   ok  Check prerequisites: docker 27.4
-  ok  Create k3d cluster skali-dev (k3s v1.33.3+k3s1, pinned)
+  ok  Create k3d cluster skali-dev (k3s v1.36.3+k3s1, pinned)
   ok  Install system bundle (local profile)
         ok  Blessed operators: CNPG, Traefik
         ok  Bootstrap database (tier: single)
@@ -109,9 +109,10 @@ Pinned by this transcript:
 
 ```console
 $ skali dev status
-platform   running (cluster skali-dev, k3s v1.33.3+k3s1)
+platform   running (cluster skali-dev, k3s v1.36.3+k3s1)
 project    file-sharing, active revision 4c19f2aa
   applications.web   healthy   2/2 ready
+    http://files.localhost
   databases.data     healthy   single instance
   buckets.files      healthy   quota 3% used
 

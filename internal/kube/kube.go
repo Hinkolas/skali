@@ -262,6 +262,15 @@ func (c *Client) prepare(obj runtime.Object) (*unstructured.Unstructured, dynami
 
 func (c *Client) resource(gvk schema.GroupVersionKind, namespace string) (dynamic.ResourceInterface, error) {
 	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if meta.IsNoMatchError(err) {
+		// A CRD established after the discovery cache warmed (the Traefik
+		// chart racing skalid on a fresh cluster) stays a cache miss until
+		// the mapper resets; one reset per miss keeps the path cheap.
+		if resettable, ok := c.Mapper.(interface{ Reset() }); ok {
+			resettable.Reset()
+			mapping, err = c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("kube: map %s: %w", gvk.Kind, err)
 	}

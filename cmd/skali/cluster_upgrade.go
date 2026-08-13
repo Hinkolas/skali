@@ -99,6 +99,10 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		return fmt.Errorf("this installer pins k3s %s but the host runs %s; a newer installer must run this upgrade",
 			plan.K3sTo, plan.K3sFrom)
 	}
+	if plan.K3sMinorSkip {
+		return fmt.Errorf("this installer pins k3s %s but the host runs %s; in-place upgrades cross at most one Kubernetes minor, so reinstall this cluster on the new version",
+			plan.K3sTo, plan.K3sFrom)
+	}
 	// A host installed before the registry required authentication has no
 	// node pull credential in registries.yaml; upgrade is its migration
 	// path, so the gap keeps the flow going even with no version drift.

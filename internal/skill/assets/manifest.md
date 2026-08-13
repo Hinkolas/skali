@@ -120,14 +120,27 @@ always excluded.
         domain: "${APP_DOMAIN}"   # required; ${} expressions allowed, service outputs not
         path: /                   # default /, must start with /
         port: http                # named port from this app, or a number
-        tls: automatic            # automatic | disabled, default automatic
+        tls: automatic            # automatic | optional | disabled, default automatic
+        strategy: round-robin     # round-robin | least-requests, default round-robin
 ```
 
 Each route's domain and path pair must be unique across the whole
 project; the same domain with different paths on different applications
-is fine. `tls: automatic` provisions certificates through the platform
-edge in production; local development serves routes over plain HTTP on
-`*.localhost` domains.
+is fine. `tls: automatic` provisions a certificate through the platform
+edge in production and redirects plain HTTP to HTTPS; `tls: optional`
+provisions the certificate but keeps answering plain HTTP without a
+redirect (for consumers that cannot follow redirects); `tls: disabled`
+serves plain HTTP only. Local development serves every route over plain
+HTTP on `*.localhost` domains regardless of the policy. On production, a
+first deploy of a route waits for its certificate: the run fails at the
+rollout deadline with the issuance reason if DNS does not point at the
+cluster yet, and a redeploy after fixing DNS picks the certificate up.
+
+`strategy` selects how the edge balances requests across an application's
+replicas: `round-robin` rotates evenly, `least-requests` sends each
+request to the less busy of two randomly chosen replicas (better when
+request durations vary, e.g. long streams next to fast calls). It only
+matters above one replica.
 
 ### Health
 

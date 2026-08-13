@@ -39,11 +39,13 @@ func (silentProgress) Note(string)  {}
 // policy, the bootstrap database sized to its tier, the managed registry,
 // and skalid with the in-cluster installation record. It never applies the
 // bootstrap-user stage (see EnsureAdminUser) and never waits on TLS
-// issuance: certificates converge asynchronously while the edge refuses
-// handshakes for hosts without an issued certificate (strict SNI), so
-// health proofs must go through skalid readiness, not chain validity.
-// Converge does not stamp the bundle hash; the caller stamps via StampHash
-// after its own end-to-end health proof.
+// issuance: the platform certificates converge asynchronously while the
+// edge refuses handshakes for hosts without an issued certificate (strict
+// SNI), so health proofs must go through skalid readiness, not chain
+// validity. (Project deploys are the exception: the reconcile kernel gates
+// application rollouts on their route certificates.) Converge does not
+// stamp the bundle hash; the caller stamps via StampHash after its own
+// end-to-end health proof.
 func Converge(ctx context.Context, client *kube.Client, profile Profile, progress Progress) error {
 	if progress == nil {
 		progress = silentProgress{}
@@ -120,8 +122,12 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	}
 	progress.Done(fmt.Sprintf("tier %s, %d instance(s)", tier, instances))
 
+	// The registry and skalid stages now carry Traefik CRs (and, under
+	// production, Certificates), so both ride the same CRD-establishment
+	// retry as the edge stage: on a fresh cluster the traefik-crd chart may
+	// not have registered IngressRoute yet, locally included.
 	progress.Start("Apply managed registry")
-	if err := applier.ApplyObjects(ctx, objects.Registry); err != nil {
+	if err := applier.ApplyObjectsRetry(ctx, objects.Registry, 2*time.Minute); err != nil {
 		return err
 	}
 	if err := applier.WaitDeploymentReady(ctx, Namespace, "skali-registry"); err != nil {
@@ -130,7 +136,7 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	progress.Done(profile.RegistryHost)
 
 	progress.Start("Apply skalid")
-	if err := applier.ApplyObjects(ctx, objects.Skalid); err != nil {
+	if err := applier.ApplyObjectsRetry(ctx, objects.Skalid, 2*time.Minute); err != nil {
 		return err
 	}
 	// The record lands before the skalid wait so a first-boot import

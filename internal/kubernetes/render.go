@@ -16,13 +16,13 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
@@ -59,11 +59,18 @@ type Options struct {
 	// ManagedCluster enables capability placement on Skali-labeled nodes.
 	ManagedCluster bool
 
+	// Certificates enables TLS issuance: routes not opting out render a
+	// websecure IngressRoute, an explicit cert-manager Certificate, and a
+	// plain-HTTP companion (redirecting on `automatic`). False keeps every
+	// route on the plain web entrypoint; local installations run no
+	// cert-manager, and offline rendering has no way to know.
+	Certificates bool
+
 	// Intercepts marks applications served by a local dev process on the
 	// host instead of a Deployment: application key to rendered service
 	// port name to host port. Intercepted applications render their
 	// Service without a selector plus a managed EndpointSlice targeting
-	// InterceptHostIP, keep their Ingresses and PVCs, and render no
+	// InterceptHostIP, keep their IngressRoutes and PVCs, and render no
 	// Deployment, HPA, or release Job.
 	Intercepts map[string]map[string]int32
 	// InterceptHostIP is the address in-cluster traffic uses to reach the
@@ -90,6 +97,19 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 		return nil, fmt.Errorf("missing project variables: %s", strings.Join(missing, ", "))
 	}
 	var objects []runtime.Object
+	// One shared redirect Middleware serves every `tls: automatic` route of
+	// the environment; it carries no service label, so it joins pruning and
+	// teardown without ever entering a service snapshot.
+	if options.Certificates && needsRedirect(result.Definition) {
+		labels := map[string]string{
+			LabelManaged: "true",
+			LabelProject: result.Definition.Name,
+		}
+		if options.EnvironmentID != "" {
+			labels[LabelEnvironment] = options.EnvironmentID
+		}
+		objects = append(objects, edge.RedirectMiddleware(options.Namespace, labels))
+	}
 	for _, key := range utils.SortedKeys(result.Definition.Applications) {
 		rendered, err := renderApplication(result.Definition, key, options)
 		if err != nil {
@@ -98,6 +118,25 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 		objects = append(objects, rendered...)
 	}
 	return objects, nil
+}
+
+// needsRedirect reports whether any route wants the HTTP-to-HTTPS redirect.
+func needsRedirect(project compiler.ProjectDefinition) bool {
+	for _, application := range project.Applications {
+		for _, route := range application.Routes {
+			if route.TLS == "automatic" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RouteTLSName names one route's Certificate and the Secret it issues into,
+// composed exactly as the renderer composes it so the app module can match
+// observed Certificates against manifest routes.
+func RouteTLSName(projectName, applicationKey, routeKey string) string {
+	return objectName(objectName(projectName, applicationKey), routeKey, "tls")
 }
 
 func renderApplication(project compiler.ProjectDefinition, key string, options Options) ([]runtime.Object, error) {
@@ -266,47 +305,48 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		}
 	}
 
-	// Every rendered route uses the managed k3s edge.
-	ingressClass := "traefik"
+	// Every rendered route uses the managed Traefik edge, addressed through
+	// its IngressRoute CRD so the balancing strategy and the HTTP redirect
+	// are first-class. Certificates render only on installations that run
+	// cert-manager; without them every route serves plain HTTP, exactly the
+	// local dev contract.
 	for _, routeKey := range utils.SortedKeys(application.Routes) {
 		route := application.Routes[routeKey]
 		domain, err := compiler.ResolveExpression(route.Domain, options.Variables)
 		if err != nil {
 			return nil, fmt.Errorf("route %s domain: %w", routeKey, err)
 		}
-		pathType := networkingv1.PathTypePrefix
-		ingress := &networkingv1.Ingress{
-			TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      objectName(name, routeKey),
-				Namespace: options.Namespace,
-				Labels:    maps.Clone(labels),
-			},
-			Spec: networkingv1.IngressSpec{
-				IngressClassName: new(ingressClass),
-				Rules: []networkingv1.IngressRule{{
-					Host: domain,
-					IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
-						Paths: []networkingv1.HTTPIngressPath{{
-							Path:     route.Path,
-							PathType: &pathType,
-							Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
-								Name: name,
-								Port: ingressPort(route.Port),
-							}},
-						}},
-					}},
-				}},
-			},
+		match := edge.HostMatch(domain, route.Path)
+		backend := edge.Service{Name: name}
+		if route.Port.Name != "" {
+			backend.PortName = route.Port.Name
+		} else {
+			backend.PortNumber = route.Port.Number
 		}
-		if route.TLS == "automatic" {
-			ingress.Annotations = map[string]string{"cert-manager.io/cluster-issuer": "skali"}
-			ingress.Spec.TLS = []networkingv1.IngressTLS{{
-				Hosts:      []string{domain},
-				SecretName: objectName(name, routeKey, "tls"),
-			}}
+		if route.Strategy == "least-requests" {
+			backend.Strategy = edge.StrategyP2C
 		}
-		objects = append(objects, ingress)
+		if options.Certificates && route.TLS != "disabled" {
+			secretName := objectName(name, routeKey, "tls")
+			objects = append(objects, edge.IngressRoute(options.Namespace, objectName(name, routeKey),
+				maps.Clone(labels), []string{edge.EntryPointWebSecure},
+				[]edge.Route{{Match: match, Service: backend}}, secretName))
+			// The plain-HTTP router redirects on `automatic` and serves the
+			// backend directly on `optional`, the per-route escape hatch for
+			// consumers that cannot follow redirects.
+			httpRoute := edge.Route{Match: match, Service: backend}
+			if route.TLS == "automatic" {
+				httpRoute.Middlewares = []string{edge.RedirectMiddlewareName}
+			}
+			objects = append(objects, edge.IngressRoute(options.Namespace, objectName(name, routeKey, "http"),
+				maps.Clone(labels), []string{edge.EntryPointWeb},
+				[]edge.Route{httpRoute}, ""))
+			objects = append(objects, edge.Certificate(options.Namespace, secretName, domain, maps.Clone(labels)))
+		} else {
+			objects = append(objects, edge.IngressRoute(options.Namespace, objectName(name, routeKey),
+				maps.Clone(labels), []string{edge.EntryPointWeb},
+				[]edge.Route{{Match: match, Service: backend}}, ""))
+		}
 	}
 
 	if autoscalingEnabled {
@@ -558,13 +598,6 @@ func renderSpread(labels map[string]string, placement compiler.Placement) *corev
 	return constraint
 }
 
-func ingressPort(target compiler.PortTarget) networkingv1.ServiceBackendPort {
-	if target.Name != "" {
-		return networkingv1.ServiceBackendPort{Name: target.Name}
-	}
-	return networkingv1.ServiceBackendPort{Number: int32(target.Number)}
-}
-
 func targetPort(target compiler.PortTarget) intstr.IntOrString {
 	if target.Name != "" {
 		return intstr.FromString(target.Name)
@@ -611,8 +644,9 @@ func objectName(parts ...string) string {
 // composed: NAME=v<version> lines, sorted, sha256[:8]. Plaintext never
 // enters the hash. Empty when the environment references no variables.
 // Excluded by design: service outputs (their Secrets rotate through their
-// own lifecycle), route domains and paths (Ingress-only; hashing them would
-// roll pods on edge-only changes), command, probe, and mount paths (they
+// own lifecycle), route domains and paths (edge-only, they resolve into
+// IngressRoutes; hashing them would roll pods on edge-only changes),
+// command, probe, and mount paths (they
 // resolve into the pod template, so a change rolls naturally), and build
 // arguments (they flow into the image digest).
 func valuesIdentity(application compiler.Application, options Options) string {

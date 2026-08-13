@@ -46,7 +46,7 @@ func linuxHost() *host.Fake {
 func withK3s(fake *host.Fake, unit string, active bool) *host.Fake {
 	fake.FS["/usr/local/bin/k3s"] = []byte("binary")
 	fake.Handlers["k3s"] = func(host.Command) (host.Result, error) {
-		return host.Result{Stdout: "k3s version v1.33.3+k3s1 (0000)\ngo version go1.24\n"}, nil
+		return host.Result{Stdout: "k3s version v1.36.3+k3s1 (0000)\ngo version go1.24\n"}, nil
 	}
 	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
 		if len(cmd.Args) != 2 || cmd.Args[1] != unit {
@@ -152,7 +152,7 @@ func TestDetectGathersFacts(t *testing.T) {
 	require.Equal(t, "cp-1", detected.Hostname)
 	require.Equal(t, "Ubuntu 24.04.2 LTS", detected.OS)
 	require.Equal(t, "aarch64", detected.Arch)
-	require.Equal(t, "v1.33.3+k3s1", detected.K3sVersion)
+	require.Equal(t, "v1.36.3+k3s1", detected.K3sVersion)
 	require.True(t, detected.K3sActive)
 	require.NotNil(t, detected.Record)
 	require.Equal(t, "production", detected.Record.Cluster)

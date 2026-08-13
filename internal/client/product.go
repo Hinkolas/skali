@@ -536,6 +536,28 @@ type ServiceStatus struct {
 		Ready bool   `json:"ready"`
 		Phase string `json:"phase"`
 	} `json:"pods"`
+	Routes []RouteStatus `json:"routes,omitempty"`
+}
+
+// RouteStatus is one public route with its edge policies; Certificate is
+// nil where none exists by design (tls disabled, local installation).
+type RouteStatus struct {
+	Key         string             `json:"key"`
+	Domain      string             `json:"domain"`
+	Path        string             `json:"path"`
+	TLS         string             `json:"tls"`
+	Strategy    string             `json:"strategy"`
+	Certificate *CertificateStatus `json:"certificate,omitempty"`
+}
+
+type CertificateStatus struct {
+	Name        string     `json:"name"`
+	SecretName  string     `json:"secret_name"`
+	State       string     `json:"state"` // pending | issuing | active | failing | expired
+	Reason      string     `json:"reason,omitempty"`
+	Message     string     `json:"message,omitempty"`
+	NotAfter    *time.Time `json:"not_after"`
+	RenewalTime *time.Time `json:"renewal_time"`
 }
 
 // ValueEntry is one stored environment value; values are write-only, so an

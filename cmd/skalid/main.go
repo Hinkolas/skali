@@ -34,6 +34,7 @@ import (
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/edge/edgeobserve"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
@@ -188,7 +189,7 @@ func runServe() error {
 
 	// The production service modules.
 	registry := module.NewRegistry()
-	if err := registry.Register(app.Module{}); err != nil {
+	if err := registry.Register(app.Module{Certificates: cfg.CertManager}); err != nil {
 		return fmt.Errorf("register application module: %w", err)
 	}
 	if err := registry.Register(database.Module{}); err != nil {
@@ -206,7 +207,7 @@ func runServe() error {
 			Resync:         cfg.ReconcileResync,
 			StaleThreshold: cfg.StaleThreshold,
 			Enqueue:        func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
-			Dynamic:        cnpg.ObserveKinds(),
+			Dynamic:        append(cnpg.ObserveKinds(), edgeobserve.Kinds(cfg.CertManager)...),
 		})
 	}
 	kernelDeps := reconcile.Deps{
@@ -273,6 +274,7 @@ func runServe() error {
 		RolloutDeadline: cfg.RolloutDeadline,
 		StaleThreshold:  cfg.StaleThreshold,
 		ManagedCluster:  cfg.ManagedCluster,
+		Certificates:    cfg.CertManager,
 	}
 	kernel = reconcile.New(kernelDeps, reconcileCfg)
 	deploySvc.SetEnqueuer(kernel)

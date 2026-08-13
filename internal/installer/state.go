@@ -327,7 +327,7 @@ func probeK3sVersion(ctx context.Context, runner host.Runner) string {
 	if err != nil || result.ExitCode != 0 {
 		return ""
 	}
-	// First line: "k3s version v1.33.3+k3s1 (hash)".
+	// First line: "k3s version v1.36.3+k3s1 (hash)".
 	line, _, _ := strings.Cut(result.Stdout, "\n")
 	for field := range strings.FieldsSeq(line) {
 		if strings.HasPrefix(field, "v") && strings.Contains(field, "k3s") {

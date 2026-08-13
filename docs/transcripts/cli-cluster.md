@@ -19,7 +19,7 @@ before other hosts enroll:
 
 ```console
 $ sudo skali cluster create --config node.yaml
-  ok  Install k3s v1.33.3+k3s1 (server)
+  ok  Install k3s v1.36.3+k3s1 (server)
   ok  Bootstrap cluster coordinator
 
 $ sudo skali cluster token --role server
@@ -175,7 +175,7 @@ migrate these clusters.
 $ sudo skali cluster
 Skali cluster
   version  2.0.0
-  k3s      v1.33.3+k3s1 (pinned)
+  k3s      v1.36.3+k3s1 (pinned)
 
 ◆ cp-1
   status     fresh
@@ -200,7 +200,7 @@ This host is not part of a Skali installation. Install one?
 ◆ tls issuer email
 └ ops@example.com
 
-  ok  Install k3s v1.33.3+k3s1 (server)
+  ok  Install k3s v1.36.3+k3s1 (server)
   ok  Stamp capability labels on node cp-1
   ok  Write /var/lib/skali/installation.yaml
 
@@ -332,7 +332,7 @@ stores SSH credentials or reaches into other machines):
 ```console
 $ sudo skali cluster join --token-file /root/token --capabilities database
   ok  Validate https://cp-1.internal:6443 CA and agent credential
-  ok  Install k3s v1.33.3+k3s1 (agent)
+  ok  Install k3s v1.36.3+k3s1 (agent)
   ok  Join cluster "production"
   ok  Stamp capability labels on node db-1
   ok  Write /var/lib/skali/installation.yaml
@@ -362,7 +362,7 @@ note: this join would make 2 servers; etcd quorum prefers one or three
 ```console
 $ sudo skali cluster join --token-file /root/token --capabilities edge
   ok  Validate https://cp-1.internal:6443 CA and server credential
-  ok  Install k3s v1.33.3+k3s1 (server)
+  ok  Install k3s v1.36.3+k3s1 (server)
   ok  Join cluster "production"
   ok  Stamp capability labels on node cp-2
   ok  Write /var/lib/skali/installation.yaml
@@ -481,11 +481,11 @@ its status and moves both versions through the explicit upgrade command:
 $ sudo skali cluster status
 Skali cluster
   version  2.1.0
-  k3s      v1.33.4+k3s1 (pinned)
+  k3s      v1.36.3+k3s1 (pinned)
 
 ◆ cp-1
   status     healthy · Skali server (cluster "production")
-  k3s        v1.33.3+k3s1 (expected v1.33.4+k3s1)
+  k3s        v1.36.2+k3s1 (expected v1.36.3+k3s1)
   bundle     2.0.0 (skali is 2.1.0)
   nodes      7 joined
   bootstrap  database healthy, registry healthy, skalid healthy
@@ -493,24 +493,24 @@ Skali cluster
 $ sudo skali cluster upgrade
 Skali cluster
   version  2.1.0
-  k3s      v1.33.4+k3s1 (pinned)
+  k3s      v1.36.3+k3s1 (pinned)
 
 upgrade plan for host cp-1 (cluster "production")
-  k3s     v1.33.3+k3s1 -> v1.33.4+k3s1
+  k3s     v1.36.2+k3s1 -> v1.36.3+k3s1
   bundle  2.0.0 -> 2.1.0
   skalid  ghcr.io/hinkolas/skalid:2.1.0
 
 ◆ Continue with this upgrade?
 └ Yes
 
-  ok  Upgrade k3s to v1.33.4+k3s1 (server)
-  ok  Wait for k3s v1.33.4+k3s1 ready
+  ok  Upgrade k3s to v1.36.3+k3s1 (server)
+  ok  Wait for k3s v1.36.3+k3s1 ready
 cluster layout
   ...
   ok  Wait for skalid ready
 
 upgrade complete:
-  k3s     v1.33.4+k3s1
+  k3s     v1.36.3+k3s1
   bundle  2.1.0
 
 Install logs: /var/lib/skali/logs/init-20260722-104501.log
@@ -533,14 +533,16 @@ id must roll skalid.
 Agent nodes carry no bundle, so upgrade moves only k3s there. Upgrade the
 servers first, one at a time, waiting for ready between them, then each
 agent; a `skali` older than the installed k3s refuses rather than
-downgrade. On a multi-node cluster the plan prints the ordered per-host
+downgrade, and a pin more than one Kubernetes minor ahead of the host
+refuses too, naming reinstall as the supported path. On a multi-node
+cluster the plan prints the ordered per-host
 sequence, and a completed upgrade names what is still drifted:
 
 ```console
 cluster upgrade order (run per host, one at a time, wait for ready between servers):
-  1. cp-1   server  v1.33.3+k3s1 -> v1.33.4+k3s1  (this host)
-  2. cp-2   server  v1.33.3+k3s1 -> v1.33.4+k3s1  run there: sudo skali cluster upgrade
-  3. db-1   agent   v1.33.3+k3s1 -> v1.33.4+k3s1  run there: sudo skali cluster upgrade
+  1. cp-1   server  v1.36.2+k3s1 -> v1.36.3+k3s1  (this host)
+  2. cp-2   server  v1.36.2+k3s1 -> v1.36.3+k3s1  run there: sudo skali cluster upgrade
+  3. db-1   agent   v1.36.2+k3s1 -> v1.36.3+k3s1  run there: sudo skali cluster upgrade
 ...
 next: run sudo skali cluster upgrade on cp-2, then db-1
 ```
@@ -570,7 +572,7 @@ registry challenges.
 $ sudo skali cluster
 ◆ cp-1
   status     healthy · Skali server (cluster "production")
-  k3s        v1.33.3+k3s1 (current)
+  k3s        v1.36.3+k3s1 (current)
   bundle     2.0.0 (current)
   nodes      7 joined, 7 expected
   bootstrap  database healthy (synchronous), registry healthy, skalid healthy
@@ -679,7 +681,7 @@ suggested action
 ◆ Restart the k3s service. Workload containers keep running through the restart. Continue?
 └ Yes
   ok  Restart k3s
-  ok  Wait for k3s v1.33.3+k3s1 ready
+  ok  Wait for k3s v1.36.3+k3s1 ready
 
 host cp-1: Skali server (cluster "production")
   ok    k3s service: active
@@ -786,7 +788,7 @@ is started before any question is answered.
 $ skali cluster
 Skali cluster
   version  2.0.0
-  k3s      v1.33.3+k3s1 (pinned)
+  k3s      v1.36.3+k3s1 (pinned)
 
 ◆ minis-01
   status     fresh
@@ -821,7 +823,7 @@ This host is not part of a Skali installation. Install one?
 ◆ What should this node run?
 └ application, database
 
-  ok  Install k3s v1.33.3+k3s1 (agent)
+  ok  Install k3s v1.36.3+k3s1 (agent)
   ok  Join cluster "production"
   ok  Stamp capability labels on node minis-01
   ok  Write /var/lib/skali/installation.yaml
@@ -852,7 +854,7 @@ privileged commands verbatim and runs after a single confirmation.
 $ skali cluster install --config node.yaml
 Skali cluster
   version  2.0.0
-  k3s      v1.33.3+k3s1 (pinned)
+  k3s      v1.36.3+k3s1 (pinned)
 
 this Mac is missing dependencies for the "bridged" network:
   1. install Lima v2.2.0 into ~/.local/share/skali/lima (rootless)
@@ -904,12 +906,12 @@ VM:
 $ skali cluster status
 Skali cluster
   version  2.0.0
-  k3s      v1.33.3+k3s1 (pinned)
+  k3s      v1.36.3+k3s1 (pinned)
 
 ◆ minis-01
   status     Skali agent (cluster "production")
   vm         skali (Lima, network bridged)
-  k3s        v1.33.3+k3s1 (current)
+  k3s        v1.36.3+k3s1 (current)
   ...
 ```
 

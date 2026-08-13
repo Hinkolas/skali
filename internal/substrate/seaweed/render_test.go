@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestRenderProductionShape(t *testing.T) {
@@ -78,15 +79,48 @@ func TestRenderDevServicesSelectAllInOne(t *testing.T) {
 	require.True(t, names[MasterService] && names[FilerService] && names[S3Service])
 }
 
-func TestRenderS3Ingress(t *testing.T) {
+func TestRenderS3Edge(t *testing.T) {
 	t.Parallel()
-	ingress := RenderS3Ingress("skali-platform", "s3.example.com")
-	require.Equal(t, "skali", ingress.Annotations["cert-manager.io/cluster-issuer"])
-	require.Equal(t, "s3.example.com", ingress.Spec.Rules[0].Host)
-	require.Equal(t, []string{"s3.example.com"}, ingress.Spec.TLS[0].Hosts)
-	backend := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0].Backend.Service
-	require.Equal(t, S3Service, backend.Name)
-	require.EqualValues(t, S3Port, backend.Port.Number)
+	objects := RenderS3Edge("skali-platform", "s3.example.com")
+	byName := map[string]*unstructured.Unstructured{}
+	for _, object := range objects {
+		typed := object.(*unstructured.Unstructured)
+		byName[typed.GetKind()+"/"+typed.GetName()] = typed
+	}
+	require.Len(t, byName, 4)
+
+	route := byName["IngressRoute/seaweed-s3"]
+	require.NotNil(t, route)
+	points, _, err := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
+	require.NoError(t, err)
+	require.Equal(t, []string{"websecure"}, points)
+	secret, _, err := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
+	require.NoError(t, err)
+	require.Equal(t, "seaweed-s3-tls", secret)
+	routes, _, err := unstructured.NestedSlice(route.Object, "spec", "routes")
+	require.NoError(t, err)
+	rule := routes[0].(map[string]any)
+	require.Equal(t, "Host(`s3.example.com`) && PathPrefix(`/`)", rule["match"])
+	backend := rule["services"].([]any)[0].(map[string]any)
+	require.Equal(t, S3Service, backend["name"])
+	require.EqualValues(t, S3Port, backend["port"])
+
+	certificate := byName["Certificate/seaweed-s3-tls"]
+	require.NotNil(t, certificate)
+	issuer, _, err := unstructured.NestedString(certificate.Object, "spec", "issuerRef", "name")
+	require.NoError(t, err)
+	require.Equal(t, "skali", issuer)
+	names, _, err := unstructured.NestedStringSlice(certificate.Object, "spec", "dnsNames")
+	require.NoError(t, err)
+	require.Equal(t, []string{"s3.example.com"}, names)
+
+	httpRoute := byName["IngressRoute/seaweed-s3-http"]
+	require.NotNil(t, httpRoute)
+	httpRoutes, _, err := unstructured.NestedSlice(httpRoute.Object, "spec", "routes")
+	require.NoError(t, err)
+	require.Contains(t, httpRoutes[0].(map[string]any), "middlewares",
+		"plain HTTP redirects to the S3 endpoint's canonical scheme")
+	require.NotNil(t, byName["Middleware/redirect-https"])
 }
 
 func TestTopologyDerivation(t *testing.T) {

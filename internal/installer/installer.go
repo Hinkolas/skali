@@ -14,7 +14,7 @@ import "github.com/Hinkolas/skali/internal/bundle"
 // release pins exactly one; it must agree with the k3d image pin in
 // internal/localdev (guarded by a test). A var only so e2e test builds can
 // rebase the pin via -ldflags -X; release builds never set it.
-var K3sVersion = "v1.33.3+k3s1"
+var K3sVersion = "v1.36.3+k3s1"
 
 const (
 	// StateDir is the root-owned installation state directory.

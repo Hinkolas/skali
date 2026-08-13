@@ -27,7 +27,7 @@ import (
 
 // The pinned local topology (section 11.2 and the cli-dev transcript).
 const (
-	K3sImage   = "rancher/k3s:v1.33.3-k3s1"
+	K3sImage   = "rancher/k3s:v1.36.3-k3s1"
 	AdminEmail = "dev@skali.localhost"
 )
 

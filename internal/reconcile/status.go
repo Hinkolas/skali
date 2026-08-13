@@ -5,14 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Hinkolas/skali/internal/compiler"
+	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/revision"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // Status is one environment's topology and health projection, assembled
@@ -39,11 +43,39 @@ type ServiceStatus struct {
 	Health      module.Health
 	Diagnostics []module.Diagnostic
 	Pods        []PodInfo
+	// Routes projects the application's public routes with their edge
+	// policies and, on TLS-capable installations, the observed certificate.
+	Routes []RouteStatus
 	// Intercepted marks an application served by a local dev process on
 	// the host instead of a Deployment; its health is synthesized healthy
 	// so activation and batch gating never wait on a workload that
 	// deliberately does not exist.
 	Intercepted bool
+}
+
+// RouteStatus is one public route of an application. Certificate is nil
+// where no certificate exists by design: tls disabled, or an installation
+// without cert-manager.
+type RouteStatus struct {
+	Key      string
+	Domain   string
+	Path     string
+	TLS      string
+	Strategy string
+
+	Certificate *CertificateInfo
+}
+
+// CertificateInfo projects one route certificate's lifecycle for status
+// surfaces. State is one of pending, issuing, active, failing, expired.
+type CertificateInfo struct {
+	Name        string
+	SecretName  string
+	State       string
+	Reason      string
+	Message     string
+	NotAfter    time.Time
+	RenewalTime time.Time
 }
 
 type PodInfo struct {
@@ -148,6 +180,7 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 		status := ServiceStatus{Key: item.key, Type: item.serviceType}
 		if item.withPods {
 			status.Pods = podsFor(snapshot, item.key)
+			status.Routes = routesFor(rev.Definition, snapshot, item.key)
 		}
 		if _, ok := intercepts[item.key]; ok && item.serviceType == "application" {
 			// Synthesized at the kernel, not in the app module: the module
@@ -189,6 +222,86 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 		statuses = append(statuses, status)
 	}
 	return statuses
+}
+
+// routesFor joins the application's declared routes with the observed
+// certificates, keyed by the rendered certificate name. The domain prefers
+// the certificate's dnsNames (the resolved value); a route whose
+// certificate is absent falls back to the manifest expression.
+func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot, key string) []RouteStatus {
+	application, ok := definition.Applications[key]
+	if !ok || len(application.Routes) == 0 {
+		return nil
+	}
+	certificates := map[string]*module.CertificateStatus{}
+	for index := range snapshot.Objects {
+		obj := &snapshot.Objects[index]
+		if obj.Kind == module.KindCertificate && obj.Service == key && obj.Certificate != nil {
+			certificates[obj.Name] = obj.Certificate
+		}
+	}
+	routes := make([]RouteStatus, 0, len(application.Routes))
+	for _, routeKey := range utils.SortedKeys(application.Routes) {
+		route := application.Routes[routeKey]
+		status := RouteStatus{
+			Key:      routeKey,
+			Domain:   expressionDisplay(route.Domain),
+			Path:     route.Path,
+			TLS:      route.TLS,
+			Strategy: route.Strategy,
+		}
+		name := rendering.RouteTLSName(definition.Name, key, routeKey)
+		if certificate := certificates[name]; certificate != nil {
+			if len(certificate.DNSNames) > 0 {
+				status.Domain = certificate.DNSNames[0]
+			}
+			status.Certificate = &CertificateInfo{
+				Name:        name,
+				SecretName:  certificate.SecretName,
+				State:       certificateState(certificate, time.Now()),
+				Reason:      certificate.Reason,
+				Message:     certificate.Message,
+				NotAfter:    certificate.NotAfter,
+				RenewalTime: certificate.RenewalTime,
+			}
+		}
+		routes = append(routes, status)
+	}
+	return routes
+}
+
+// certificateState derives the display state of one certificate.
+func certificateState(certificate *module.CertificateStatus, now time.Time) string {
+	switch {
+	case !certificate.NotAfter.IsZero() && now.After(certificate.NotAfter):
+		return "expired"
+	case certificate.Ready:
+		return "active"
+	case certificate.FailedAttempts > 0:
+		return "failing"
+	case certificate.Issuing:
+		return "issuing"
+	case !certificate.NotAfter.IsZero():
+		// Not ready with a valid certificate on hand: a renewal that is
+		// not succeeding, which failing describes better than pending.
+		return "failing"
+	default:
+		return "pending"
+	}
+}
+
+// expressionDisplay renders a compiled expression for status output:
+// literals verbatim, everything else as its ${NAME} placeholder.
+func expressionDisplay(expression compiler.Expression) string {
+	var builder strings.Builder
+	for _, part := range expression.Parts {
+		if part.Kind == "literal" {
+			builder.WriteString(part.Value)
+			continue
+		}
+		builder.WriteString("${" + part.Name + "}")
+	}
+	return builder.String()
 }
 
 func podsFor(snapshot observe.Snapshot, service string) []PodInfo {

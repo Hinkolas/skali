@@ -1,6 +1,6 @@
 #!/bin/sh
-# Vendored copy of https://get.k3s.io, fetched 2026-07-21 for the pinned
-# k3s release v1.33.3+k3s1. Refresh this asset whenever the pin in
+# Vendored copy of https://get.k3s.io, fetched 2026-08-13 for the pinned
+# k3s release v1.36.3+k3s1. Refresh this asset whenever the pin in
 # internal/installer/installer.go moves.
 set -e
 set -o noglob
@@ -608,11 +608,14 @@ setup_selinux() {
         rpm_target=sle
         rpm_site_infix=microos
         package_installer=zypper
-        if [ "${ID_LIKE:-}" = suse ] && ( [ "${VARIANT_ID:-}" = sle-micro ] || [ "${ID:-}" = sle-micro ] ); then
-            rpm_target=sle
+
+        # SleMicro 6.2 and SLEs 16 uses the same ID and same VERSION_ID in case the ID and VERSION_ID changes we will catch SLEMicro 6.2 using VARIANT_ID transactional
+        if [ "${ID:-}" = sles ] && [ -n "${VERSION_ID}" ] && [ "${VERSION_ID%%.*}" -ge 16 ]; then
             rpm_site_infix=slemicro
-            package_installer=zypper
+        elif [ "${VARIANT_ID:-}" = sle-micro ] || [ "${VARIANT_ID:-}" = transactional ] || [ "${ID:-}" = sle-micro ] || [ "${ID:-}" = sl-micro ] || [ "${ID:-}" = sle-micro-rancher ]; then
+            rpm_site_infix=slemicro
         fi
+
     # cover any atomic fedora flavors using rpm-ostree
     elif  { [ "${ID:-}" = fedora ] || [ "${ID_LIKE:-}" = fedora ]; } && [ -n "${OSTREE_VERSION:-}" ]; then
         rpm_target=coreos

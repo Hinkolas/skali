@@ -948,6 +948,9 @@ func runDevStatus(command *cobra.Command, args []string) error {
 			service.Type+"."+service.Key,
 			stateColor(style, fmt.Sprintf("%-11s", service.Health)),
 			replicaDots(style, ready, len(service.Pods)), ready, len(service.Pods))
+		for _, route := range service.Routes {
+			fmt.Fprintf(out, "    %s\n", routeLine(style, route))
+		}
 		for _, diagnostic := range service.Diagnostics {
 			fmt.Fprintf(out, "    %s %s\n",
 				severityColor(style, diagnostic.Severity+":"), diagnostic.Message)
@@ -956,15 +959,40 @@ func runDevStatus(command *cobra.Command, args []string) error {
 	return nil
 }
 
+// routeLine renders one public route: its URL, a non-default strategy, and
+// the certificate state on TLS-capable installations. Local platforms have
+// no certificates, so the line stays a bare http URL.
+func routeLine(style *clirender.Style, route client.RouteStatus) string {
+	scheme := "http"
+	if route.Certificate != nil {
+		scheme = "https"
+	}
+	line := scheme + "://" + route.Domain
+	if route.Path != "" && route.Path != "/" {
+		line += route.Path
+	}
+	if route.Strategy == "least-requests" {
+		line += " (least-requests)"
+	}
+	if certificate := route.Certificate; certificate != nil {
+		detail := stateColor(style, certificate.State)
+		if certificate.State != "active" && certificate.Reason != "" {
+			detail += " (" + certificate.Reason + ")"
+		}
+		line += "  cert " + detail
+	}
+	return line
+}
+
 // stateColor paints a lifecycle word by its meaning; padding around the
 // word survives because the switch trims before matching.
 func stateColor(style *clirender.Style, state string) string {
 	switch strings.TrimSpace(state) {
 	case "running", "healthy", "active", "succeeded", "ready":
 		return style.Green(state)
-	case "stopped", "down", "releasing", "progressing", "degraded", "waiting", "pending":
+	case "stopped", "down", "releasing", "progressing", "degraded", "waiting", "pending", "issuing":
 		return style.Yellow(state)
-	case "failed", "unhealthy", "error", "cancelled":
+	case "failed", "unhealthy", "error", "cancelled", "failing", "expired":
 		return style.Red(state)
 	}
 	return state

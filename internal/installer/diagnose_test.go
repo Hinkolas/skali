@@ -154,7 +154,7 @@ func TestDiagnoseVersionDriftWarns(t *testing.T) {
 	record.Versions.Bundle = "test"
 	require.NoError(t, SaveRecord(context.Background(), fake, record))
 	fake.Handlers["k3s"] = func(cmd host.Command) (host.Result, error) {
-		return host.Result{Stdout: "k3s version v1.33.2+k3s1 (0000)\n"}, nil
+		return host.Result{Stdout: "k3s version v1.36.2+k3s1 (0000)\n"}, nil
 	}
 	client := diagnoseClient(
 		[]runtime.Object{liveProfileNode(), healthyDeployment("skali-registry"), healthyDeployment("skalid"), healthyDeployment("skali-web")},

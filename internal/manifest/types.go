@@ -139,7 +139,10 @@ type Route struct {
 	Domain string `yaml:"domain" json:"domain" jsonschema:"Public hostname. Project variable expressions are allowed."`
 	Path   string `yaml:"path,omitempty" json:"path,omitempty" jsonschema:"Segment-aware path prefix. Defaults to /."`
 	Port   Text   `yaml:"port" json:"port" jsonschema:"Named application port or numeric target port."`
-	TLS    string `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"TLS policy: automatic or disabled."`
+	TLS    string `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"TLS policy: automatic (certificate plus HTTP-to-HTTPS redirect), optional (certificate, plain HTTP still served), or disabled."`
+	// Strategy selects how the edge balances requests across the
+	// application's replicas; it only matters above one replica.
+	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"Load-balancing strategy: round-robin (default) or least-requests."`
 }
 
 type Health struct {

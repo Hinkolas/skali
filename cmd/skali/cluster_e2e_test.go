@@ -34,7 +34,7 @@ const (
 	// e2eOlderK3s is the pin of the simulated older installer build the
 	// upgrade phase moves away from; it must be a real k3s release older
 	// than the current installer.K3sVersion pin.
-	e2eOlderK3s = "v1.33.2+k3s1"
+	e2eOlderK3s = "v1.36.2+k3s1"
 )
 
 type installerHarness struct {
@@ -285,14 +285,16 @@ web:
 	require.NotEmpty(t, health)
 	h.vmOK("sudo", "k3s", "kubectl", "get", "configmap", "-n", "skali-system", "skali-installation")
 
-	// The single public surface through the Traefik edge (plain HTTP on the
-	// web entrypoint; certificates stay pending by design): the console owns
-	// the domain root and the daemon answers behind /api.
-	edgeHealth := h.vmOK("curl", "-s", "--resolve", "skali.e2e.test:80:127.0.0.1",
-		"http://skali.e2e.test/api/healthz")
-	require.Contains(t, edgeHealth, `"status":"ok"`)
-	consoleHTML := h.vmOK("curl", "-sL", "--resolve", "skali.e2e.test:80:127.0.0.1",
-		"http://skali.e2e.test/")
+	// The single public surface through the Traefik edge: the web
+	// entrypoint answers a permanent redirect to HTTPS preserving host and
+	// path. Certificates stay pending by design (strict SNI refuses the
+	// TLS side), so content proofs go through the service proxy instead:
+	// the console owns the domain root and the daemon answers behind /api.
+	edgeRedirect := h.vmOK("curl", "-s", "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}",
+		"--resolve", "skali.e2e.test:80:127.0.0.1", "http://skali.e2e.test/api/healthz")
+	require.Regexp(t, `^30[18] https://skali\.e2e\.test/api/healthz`, edgeRedirect)
+	consoleHTML := h.vmOK("sudo", "k3s", "kubectl", "get", "--raw",
+		"/api/v1/namespaces/skali-system/services/skali-web:80/proxy/")
 	require.Contains(t, strings.ToLower(consoleHTML), "<!doctype html")
 
 	statusOut, code = h.vm("sudo", "/tmp/skali-a", "cluster", "status")
@@ -384,14 +386,15 @@ web:
 
 	skalidIP := strings.TrimSpace(h.vmOK("sudo", "k3s", "kubectl", "get", "svc",
 		"-n", "skali-system", "skalid", "-o", "jsonpath={.spec.clusterIP}"))
-	// Login traverses the real edge (/api path, strip wrapper); the token
-	// mint below stays on the ClusterIP root, proving root paths still work
-	// exactly as the registry-domain ingress delivers them to the realm.
+	// Login exercises skalid's /api-prefixed surface exactly as the edge
+	// forwards it (the websecure router keeps the path; plain HTTP only
+	// redirects now); the token mint below stays on the ClusterIP root,
+	// proving root paths still work exactly as the registry-domain route
+	// delivers them to the realm.
 	loginJSON := h.vmOK("curl", "-s", "-X", "POST",
 		"-H", "Content-Type: application/json",
-		"--resolve", "skali.e2e.test:80:127.0.0.1",
 		"-d", `{"email":"admin@skali.e2e.test","password":"e2e-admin-password"}`,
-		"http://skali.e2e.test/api/v1/auth/login")
+		"http://"+skalidIP+"/api/v1/auth/login")
 	var login struct {
 		Session struct {
 			Token string `json:"token"`

@@ -53,7 +53,30 @@ type serviceStatusPayload struct {
 	Health      string                    `json:"health"`
 	Diagnostics []healthDiagnosticPayload `json:"diagnostics"`
 	Pods        []podPayload              `json:"pods"`
+	Routes      []routeStatusPayload      `json:"routes,omitempty"`
 	Intercepted bool                      `json:"intercepted,omitempty"`
+}
+
+// routeStatusPayload projects one public route with its edge policies and,
+// on TLS-capable installations, the observed certificate. certificate is
+// null where none exists by design (tls disabled, local installation).
+type routeStatusPayload struct {
+	Key         string              `json:"key"`
+	Domain      string              `json:"domain"`
+	Path        string              `json:"path"`
+	TLS         string              `json:"tls"`
+	Strategy    string              `json:"strategy"`
+	Certificate *certificatePayload `json:"certificate,omitempty"`
+}
+
+type certificatePayload struct {
+	Name        string     `json:"name"`
+	SecretName  string     `json:"secret_name"`
+	State       string     `json:"state"` // pending | issuing | active | failing | expired
+	Reason      string     `json:"reason,omitempty"`
+	Message     string     `json:"message,omitempty"`
+	NotAfter    *time.Time `json:"not_after"`
+	RenewalTime *time.Time `json:"renewal_time"`
 }
 
 type environmentStatusPayload struct {
@@ -124,6 +147,34 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 				podEntry.StartedAt = &started
 			}
 			servicePayload.Pods = append(servicePayload.Pods, podEntry)
+		}
+		for _, route := range service.Routes {
+			routeEntry := routeStatusPayload{
+				Key:      route.Key,
+				Domain:   route.Domain,
+				Path:     route.Path,
+				TLS:      route.TLS,
+				Strategy: route.Strategy,
+			}
+			if route.Certificate != nil {
+				certificate := &certificatePayload{
+					Name:       route.Certificate.Name,
+					SecretName: route.Certificate.SecretName,
+					State:      route.Certificate.State,
+					Reason:     route.Certificate.Reason,
+					Message:    route.Certificate.Message,
+				}
+				if !route.Certificate.NotAfter.IsZero() {
+					notAfter := route.Certificate.NotAfter
+					certificate.NotAfter = &notAfter
+				}
+				if !route.Certificate.RenewalTime.IsZero() {
+					renewal := route.Certificate.RenewalTime
+					certificate.RenewalTime = &renewal
+				}
+				routeEntry.Certificate = certificate
+			}
+			servicePayload.Routes = append(servicePayload.Routes, routeEntry)
 		}
 		payload.Services = append(payload.Services, servicePayload)
 	}

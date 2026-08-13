@@ -181,11 +181,18 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		if tls == "" {
 			tls = "automatic"
 		}
-		if !oneOf(tls, "automatic", "disabled") {
-			b.add(path+".tls", "must be automatic or disabled")
+		if !oneOf(tls, "automatic", "optional", "disabled") {
+			b.add(path+".tls", "must be automatic, optional, or disabled")
+		}
+		strategy := route.Strategy
+		if strategy == "" {
+			strategy = "round-robin"
+		}
+		if !oneOf(strategy, "round-robin", "least-requests") {
+			b.add(path+".strategy", "must be round-robin or least-requests")
 		}
 		target := b.portTarget(path+".port", string(route.Port), source.Ports)
-		compiled := Route{Domain: domain, Path: routePath, Port: target, TLS: tls}
+		compiled := Route{Domain: domain, Path: routePath, Port: target, TLS: tls, Strategy: strategy}
 		conflictKey := canonicalExpression(domain) + "|" + routePath
 		if previous, exists := b.routes[conflictKey]; exists {
 			b.add(path, "conflicts with route %s; domain and path pairs must be unique", previous)

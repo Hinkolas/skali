@@ -115,11 +115,13 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	rolloutInFlight := target.ActiveRevisionID == nil || *target.ActiveRevisionID != *target.TargetRevisionID
 	releaseWaiting := make(map[string]string)
 
-	// Environment-scoping objects first: namespace, then the values Secret.
+	// Environment-scoping objects first: namespace, the values Secret, then
+	// the shared edge objects no single service owns.
 	envOps := []Op{
 		{Kind: OpApply, Object: desired.namespace},
 		{Kind: OpApply, Object: desired.secret},
 	}
+	envOps = append(envOps, applyAll(desired.environment)...)
 	envChanged, err := k.executeOps(ctx, envOps)
 	if err != nil {
 		k.journalOpFailure(ctx, attachment, "apply:environment", "Apply environment resources", envChanged, err)
@@ -527,6 +529,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		SecretVersions:          refs,
 		ProgressDeadlineSeconds: int64(k.cfg.RolloutDeadline / time.Second),
 		ManagedCluster:          k.cfg.ManagedCluster,
+		Certificates:            k.cfg.Certificates,
 		Intercepts:              interceptPorts,
 		InterceptHostIP:         interceptHostIP,
 	}
@@ -547,8 +550,12 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		kube.ObjectRef{GVK: namespace.GroupVersionKind(), Name: namespace.Name},
 		kube.ObjectRef{GVK: secret.GroupVersionKind(), Namespace: secret.Namespace, Name: secret.Name},
 	)
+	// Objects rendered without a service label (the shared redirect
+	// Middleware) belong to the environment pass, not to any batch.
+	shared := services[""]
+	delete(services, "")
 	return &desiredSet{namespace: namespace, secret: secret,
-		services: services, refs: refsList}, nil
+		environment: shared.rest, services: services, refs: refsList}, nil
 }
 
 // ensureClaims records the revision's infrastructure claims (databases and

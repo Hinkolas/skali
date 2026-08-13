@@ -69,49 +69,49 @@ func TestSeedInitInputsNilEndpointsPromptsAll(t *testing.T) {
 
 func TestPrintUpgradePlanVariants(t *testing.T) {
 	drifted := installer.UpgradePlan{
-		K3sFrom: "v1.33.2+k3s1", K3sTo: "v1.33.3+k3s1", K3sDrifted: true,
+		K3sFrom: "v1.36.2+k3s1", K3sTo: "v1.36.3+k3s1", K3sDrifted: true,
 		BundleFrom: "1.0.0", BundleTo: "1.1.0", BundleDrifted: true,
 	}
 	var out bytes.Buffer
 	printUpgradePlan(&out, drifted, layout.RoleServer, "", "skalid:dev", true, "skali-web:dev", true, false)
 	require.Equal(t, ""+
-		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n"+
+		"  k3s     v1.36.2+k3s1 -> v1.36.3+k3s1\n"+
 		"  bundle  1.0.0 -> 1.1.0\n"+
 		"  skalid  skalid:dev (imported from tar)\n"+
 		"  web     skali-web:dev (imported from tar)\n\n", out.String())
 
 	tarForced := installer.UpgradePlan{
-		K3sFrom: "v1.33.3+k3s1", K3sTo: "v1.33.3+k3s1",
+		K3sFrom: "v1.36.3+k3s1", K3sTo: "v1.36.3+k3s1",
 		BundleFrom: "1.1.0", BundleTo: "1.1.0", ImageForced: true,
 	}
 	out.Reset()
 	printUpgradePlan(&out, tarForced, layout.RoleServer, "", "skalid:dev", true, "skali-web:dev", true, false)
 	require.Equal(t, ""+
-		"  k3s     v1.33.3+k3s1 (current)\n"+
+		"  k3s     v1.36.3+k3s1 (current)\n"+
 		"  bundle  1.1.0 (reconverge for the new skalid image)\n"+
 		"  skalid  skalid:dev (imported from tar)\n"+
 		"  web     skali-web:dev (imported from tar)\n\n", out.String())
 
 	k3sOnly := installer.UpgradePlan{
-		K3sFrom: "v1.33.2+k3s1", K3sTo: "v1.33.3+k3s1", K3sDrifted: true,
+		K3sFrom: "v1.36.2+k3s1", K3sTo: "v1.36.3+k3s1", K3sDrifted: true,
 		BundleFrom: "1.1.0", BundleTo: "1.1.0",
 	}
 	out.Reset()
 	printUpgradePlan(&out, k3sOnly, layout.RoleServer, "", "ghcr.io/hinkolas/skalid:1.1.0", false,
 		"ghcr.io/hinkolas/skali-web:1.1.0", false, false)
 	require.Equal(t, ""+
-		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n"+
+		"  k3s     v1.36.2+k3s1 -> v1.36.3+k3s1\n"+
 		"  bundle  1.1.0 (reconverge to republish the record)\n"+
 		"  skalid  ghcr.io/hinkolas/skalid:1.1.0\n"+
 		"  web     ghcr.io/hinkolas/skali-web:1.1.0\n\n", out.String())
 
 	agent := installer.UpgradePlan{
-		K3sFrom: "v1.33.2+k3s1", K3sTo: "v1.33.3+k3s1", K3sDrifted: true,
+		K3sFrom: "v1.36.2+k3s1", K3sTo: "v1.36.3+k3s1", K3sDrifted: true,
 	}
 	out.Reset()
 	printUpgradePlan(&out, agent, layout.RoleAgent, "", "", false, "", false, false)
 	require.Equal(t, ""+
-		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n\n"+
+		"  k3s     v1.36.2+k3s1 -> v1.36.3+k3s1\n\n"+
 		"This node is an agent: upgrade the servers first, one at a time, then each agent.\n\n",
 		out.String())
 
@@ -120,7 +120,7 @@ func TestPrintUpgradePlanVariants(t *testing.T) {
 	out.Reset()
 	printUpgradePlan(&out, k3sOnly, layout.RoleServer, "cp-1", "", false, "", false, false)
 	require.Equal(t, ""+
-		"  k3s     v1.33.2+k3s1 -> v1.33.3+k3s1\n"+
+		"  k3s     v1.36.2+k3s1 -> v1.36.3+k3s1\n"+
 		"  bundle  maintained on cp-1\n\n", out.String())
 
 	// A pre-token-auth host: the credential line names the restart only
@@ -141,10 +141,10 @@ func TestUpgradeSequenceOrdering(t *testing.T) {
 	status := &installer.Status{
 		Host: &installer.Host{Hostname: "cp-2"},
 		Nodes: []installer.NodeStatus{
-			{Name: "cp-1", Role: layout.RoleServer, K3sVersion: "v1.33.2+k3s1"},
-			{Name: "cp-2", Role: layout.RoleServer, K3sVersion: "v1.33.2+k3s1"},
-			{Name: "cp-3", Role: layout.RoleServer, K3sVersion: "v1.33.3+k3s1", Current: true},
-			{Name: "db-1", Role: layout.RoleAgent, K3sVersion: "v1.33.2+k3s1"},
+			{Name: "cp-1", Role: layout.RoleServer, K3sVersion: "v1.36.2+k3s1"},
+			{Name: "cp-2", Role: layout.RoleServer, K3sVersion: "v1.36.2+k3s1"},
+			{Name: "cp-3", Role: layout.RoleServer, K3sVersion: "v1.36.3+k3s1", Current: true},
+			{Name: "db-1", Role: layout.RoleAgent, K3sVersion: "v1.36.2+k3s1"},
 		},
 	}
 	steps := installer.UpgradeSequence(status)

@@ -2995,12 +2995,68 @@ components:
         pods:
           type: array
           items: { $ref: "#/components/schemas/PodStatus" }
+        routes:
+          type: array
+          items: { $ref: "#/components/schemas/RouteStatus" }
+          description: >
+            The application's public routes with their edge policies and,
+            on TLS-capable installations, the observed certificate. Absent
+            for services without routes.
         intercepted:
           type: boolean
           description: >
             The application is served by a local dev process on the host
             (skali dev interception); its health is synthesized healthy and
             no Deployment exists for it.
+
+    RouteStatus:
+      type: object
+      required: [key, domain, path, tls, strategy]
+      properties:
+        key:
+          type: string
+        domain:
+          type: string
+          description: >
+            The route's public hostname: the resolved value when the
+            certificate carries it, otherwise the manifest expression.
+        path:
+          type: string
+        tls:
+          type: string
+          enum: [automatic, optional, disabled]
+        strategy:
+          type: string
+          enum: [round-robin, least-requests]
+        certificate:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/CertificateStatus"
+          description: >
+            Null where no certificate exists by design: tls disabled, or an
+            installation without cert-manager (local development).
+
+    CertificateStatus:
+      type: object
+      required: [name, secret_name, state, not_after, renewal_time]
+      properties:
+        name:
+          type: string
+        secret_name:
+          type: string
+        state:
+          type: string
+          enum: [pending, issuing, active, failing, expired]
+        reason:
+          type: string
+        message:
+          type: string
+        not_after:
+          type: [string, "null"]
+          format: date-time
+        renewal_time:
+          type: [string, "null"]
+          format: date-time
 
     EnvironmentStatus:
       type: object

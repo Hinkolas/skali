@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/Hinkolas/skali/internal/bundle"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
@@ -609,44 +610,35 @@ func RenderFence(namespace string) []runtime.Object {
 	return []runtime.Object{internal, open}
 }
 
-// RenderS3Ingress publishes the S3 API on the public domain through the
-// edge with ACME TLS (the skali ClusterIssuer, same as application routes).
-// Requests hairpin through the edge for in-cluster consumers too, which is
-// what lets presigned URLs work everywhere: the signature bakes in the one
-// public host.
-func RenderS3Ingress(namespace, domain string) *networkingv1.Ingress {
-	pathType := networkingv1.PathTypePrefix
-	ingressClass := "traefik"
-	ingress := &networkingv1.Ingress{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
-		ObjectMeta: objectMeta(namespace, "seaweed-s3", FilerService),
-		Spec: networkingv1.IngressSpec{
-			IngressClassName: &ingressClass,
-			TLS: []networkingv1.IngressTLS{{
-				Hosts:      []string{domain},
-				SecretName: "seaweed-s3-tls",
-			}},
-			Rules: []networkingv1.IngressRule{{
-				Host: domain,
-				IngressRuleValue: networkingv1.IngressRuleValue{
-					HTTP: &networkingv1.HTTPIngressRuleValue{
-						Paths: []networkingv1.HTTPIngressPath{{
-							Path:     "/",
-							PathType: &pathType,
-							Backend: networkingv1.IngressBackend{
-								Service: &networkingv1.IngressServiceBackend{
-									Name: S3Service,
-									Port: networkingv1.ServiceBackendPort{Number: S3Port},
-								},
-							},
-						}},
-					},
-				},
-			}},
-		},
-	}
-	ingress.Annotations = map[string]string{"cert-manager.io/cluster-issuer": "skali"}
-	return ingress
+// RenderS3Edge publishes the S3 API on the public domain through the
+// Traefik edge with an explicit Certificate off the skali ClusterIssuer,
+// same as application routes. Requests hairpin through the edge for
+// in-cluster consumers too, which is what lets presigned URLs work
+// everywhere: the signature bakes in the one public host. Plain HTTP
+// redirects through the substrate's own Middleware (S3 clients follow
+// redirects poorly, but they should never speak HTTP to begin with; the
+// published endpoint is https).
+func RenderS3Edge(namespace, domain string) []runtime.Object {
+	meta := objectMeta(namespace, "seaweed-s3", FilerService)
+	labels := meta.Labels
+	route := edge.IngressRoute(namespace, "seaweed-s3", labels,
+		[]string{edge.EntryPointWebSecure},
+		[]edge.Route{{
+			Match:   edge.HostMatch(domain, "/"),
+			Service: edge.Service{Name: S3Service, PortNumber: int(S3Port)},
+		}},
+		"seaweed-s3-tls")
+	redirect := edge.RedirectMiddleware(namespace, labels)
+	httpRoute := edge.IngressRoute(namespace, "seaweed-s3-http", labels,
+		[]string{edge.EntryPointWeb},
+		[]edge.Route{{
+			Match:       edge.HostMatch(domain, "/"),
+			Service:     edge.Service{Name: S3Service, PortNumber: int(S3Port)},
+			Middlewares: []string{edge.RedirectMiddlewareName},
+		}},
+		"")
+	certificate := edge.Certificate(namespace, "seaweed-s3-tls", domain, labels)
+	return []runtime.Object{redirect, certificate, route, httpRoute}
 }
 
 // RenderAccessPolicy admits skalid's traffic (via the API server's service

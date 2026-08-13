@@ -84,10 +84,11 @@ type PortTarget struct {
 }
 
 type Route struct {
-	Domain Expression "json:\"domain\""
-	Path   string     "json:\"path\""
-	Port   PortTarget "json:\"port\""
-	TLS    string     "json:\"tls\""
+	Domain   Expression "json:\"domain\""
+	Path     string     "json:\"path\""
+	Port     PortTarget "json:\"port\""
+	TLS      string     "json:\"tls\""
+	Strategy string     "json:\"strategy\""
 }
 
 type Health struct {

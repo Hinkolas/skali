@@ -107,8 +107,15 @@ func applyAll(objects []runtime.Object) []Op {
 var prunableKinds = map[schema.GroupKind]bool{
 	{Group: "apps", Kind: "Deployment"}:                     true,
 	{Group: "", Kind: "Service"}:                            true,
-	{Group: "networking.k8s.io", Kind: "Ingress"}:           true,
 	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}: true,
+	// The edge objects routes render to. The plain Ingress stays listed
+	// (and watched) although nothing renders it anymore: environments
+	// deployed before the IngressRoute rework still carry one, and its
+	// absence from the desired set is what deletes it.
+	{Group: "traefik.io", Kind: "IngressRoute"}:     true,
+	{Group: "traefik.io", Kind: "Middleware"}:       true,
+	{Group: "cert-manager.io", Kind: "Certificate"}: true,
+	{Group: "networking.k8s.io", Kind: "Ingress"}:   true,
 	// Completed release Jobs of superseded revisions; the current revision's
 	// Job is always in the desired set, so a finished release is never
 	// pruned into a re-run.
@@ -211,8 +218,12 @@ func splitService(dotted string) (collection, key string) {
 type desiredSet struct {
 	namespace *corev1.Namespace
 	secret    *corev1.Secret
-	services  map[string]serviceObjects
-	refs      []kube.ObjectRef // every desired object, for prune planning
+	// environment holds rendered objects owned by no single service (the
+	// shared redirect Middleware): they apply with the namespace and the
+	// values Secret, ahead of every service batch.
+	environment []runtime.Object
+	services    map[string]serviceObjects
+	refs        []kube.ObjectRef // every desired object, for prune planning
 }
 
 // groupObjects splits the flat rendered object list per service key.

@@ -18,6 +18,12 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [ingresses, networkpolicies]
     verbs: ["*"]
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares]
+    verbs: ["*"]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    verbs: ["*"]
   - apiGroups: [discovery.k8s.io]
     resources: [endpointslices]
     verbs: ["*"]
@@ -133,21 +139,17 @@ spec:
     - port: 80
       targetPort: 7070
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
 metadata:
   name: skalid
   namespace: skali-system
 spec:
-  ingressClassName: traefik
-  rules:
-    - host: skali.localhost
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: skalid
-                port:
-                  number: 80
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`skali.localhost`) && PathPrefix(`/`)
+      kind: Rule
+      services:
+        - name: skalid
+          port: 80

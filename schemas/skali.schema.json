@@ -508,11 +508,20 @@
                     }
                   ]
                 },
+                "strategy": {
+                  "type": "string",
+                  "description": "Load-balancing strategy: round-robin (default) or least-requests.",
+                  "enum": [
+                    "round-robin",
+                    "least-requests"
+                  ]
+                },
                 "tls": {
                   "type": "string",
-                  "description": "TLS policy: automatic or disabled.",
+                  "description": "TLS policy: automatic (certificate plus HTTP-to-HTTPS redirect), optional (certificate, plain HTTP still served), or disabled.",
                   "enum": [
                     "automatic",
+                    "optional",
                     "disabled"
                   ]
                 }

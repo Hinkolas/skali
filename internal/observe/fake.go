@@ -200,6 +200,23 @@ func (f *Fake) SetObjectStore(name string, status module.ObjectStoreStatus) {
 	})
 }
 
+// SetCertificate records one route certificate's issuance projection. The
+// object name must match the rendered Certificate name (RouteTLSName).
+func (f *Fake) SetCertificate(environmentID uuid.UUID, namespace, objectName, service string, status module.CertificateStatus) {
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Group: "cert-manager.io", Version: "v1", Kind: "Certificate"},
+			Namespace: namespace,
+			Name:      objectName,
+		},
+		Kind:        module.KindCertificate,
+		Name:        objectName,
+		Environment: environmentID,
+		Service:     service,
+		Certificate: &status,
+	})
+}
+
 // SetEndpointSlice records an intercept EndpointSlice projection (local
 // dev) so pruning sees it when the intercept clears.
 func (f *Fake) SetEndpointSlice(environmentID uuid.UUID, namespace, objectName, service string) {
