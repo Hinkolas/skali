@@ -176,6 +176,16 @@ func TestPlainOutputHasNoANSI(t *testing.T) {
 	require.NotContains(t, out.String(), "\x1b[")
 }
 
+// KNOWN FAILURE: this test panics inside charm.land/huh/v2 v2.0.3 with
+// "interface conversion: tea.Model is nil, not compat.ViewModel". The
+// terminal() helper feeds huh a fake reader/writer pair instead of a real
+// PTY; when bubbletea fails to start on that input it returns a nil model,
+// and huh's Form.run (form.go:708) type-asserts the model before checking
+// the error, masking the real failure with a panic. v2.0.3 is the newest
+// huh release, so there is no fix to pull yet. Options when this needs to
+// go green: drive these cases through a real PTY like the tests at the
+// bottom of this file, patch huh with a replace directive, or bump huh
+// once a release checks the error first.
 func TestTerminalTextEditingKeys(t *testing.T) {
 	t.Run("home end and backspace", func(t *testing.T) {
 		session, _, ctx, cancel := terminal("roduction\x1b[Hp\x1b[F!\x7f\r")
