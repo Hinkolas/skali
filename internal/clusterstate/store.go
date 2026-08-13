@@ -282,28 +282,38 @@ func (s *Store) persistResources(ctx context.Context, state *State) error {
 	return nil
 }
 
+// upsertResource writes one last-writer-wins mirror ConfigMap. Mirrors are
+// written by every actor that mutates the singleton (coordinator heartbeats,
+// operations), so both the update and the create can race; conflicts re-read
+// and retry rather than failing the mutation that triggered the mirror.
 func (s *Store) upsertResource(ctx context.Context, name, label, key, value string) error {
 	configMaps := s.Client.CoreV1().ConfigMaps(Namespace)
-	current, err := configMaps.Get(ctx, name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = configMaps.Create(ctx, &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name, Labels: map[string]string{label: "true"},
-			},
-			Data: map[string]string{key: value},
-		}, metav1.CreateOptions{})
+	resource := schema.GroupResource{Resource: "configmaps"}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := configMaps.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = configMaps.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name, Labels: map[string]string{label: "true"},
+				},
+				Data: map[string]string{key: value},
+			}, metav1.CreateOptions{})
+			if apierrors.IsAlreadyExists(err) {
+				return apierrors.NewConflict(resource, name, err)
+			}
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if current.Data[key] == value {
+			return nil
+		}
+		current = current.DeepCopy()
+		current.Data[key] = value
+		_, err = configMaps.Update(ctx, current, metav1.UpdateOptions{})
 		return err
-	}
-	if err != nil {
-		return err
-	}
-	if current.Data[key] == value {
-		return nil
-	}
-	current = current.DeepCopy()
-	current.Data[key] = value
-	_, err = configMaps.Update(ctx, current, metav1.UpdateOptions{})
-	return err
+	})
 }
 
 func (s *Store) Trust(ctx context.Context) (Trust, error) {
