@@ -142,7 +142,7 @@ go run ./cmd/skalid user create --email you@example.com
 task dev
 
 # 5. CLI
-go run ./cmd/skali remote add http://localhost:7070
+go run ./cmd/skali remote add dev http://localhost:7070
 go run ./cmd/skali remote status
 
 # 6. Web UI (vite dev server on :5173, BFF → API)

@@ -1642,9 +1642,9 @@ terminal, build-engine, or local-machine access:
 - Maintain the per-checkout deploy-target binding in `.skali/`.
 - Submit definitions/revisions through the public Skali API.
 
-Named remotes are managed by the `skali remote` group. `skali remote add <url>`
-creates the remote, named after the URL host by default, and performs the
-initial login; `skali remote login` re-authenticates an existing remote. The
+Named remotes are managed by the `skali remote` group. `skali remote add
+<name> <url>` creates the remote and performs the initial login;
+`skali remote login` re-authenticates an existing remote. The
 `local` remote is owned exclusively by `skali dev`: it is hidden from
 listings, never becomes the current remote, and `use`, `login`, `logout`,
 and `remove` refuse it. Without a selected remote the workflow commands

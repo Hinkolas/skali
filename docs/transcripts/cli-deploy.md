@@ -1,8 +1,9 @@
 # Remote plan and deploy transcripts
 
-Context: the developer has an authenticated remote `skali.example.com` for
+Context: the developer has an authenticated remote `example` for
 the installation at `https://skali.example.com/api` (added once with
-`skali remote add`, see `cli-remote.md`), and the project checkout
+`skali remote add example skali.example.com`, see `cli-remote.md`), and the
+project checkout
 contains `skali.yml` plus a gitignored `.env.production`.
 
 The first successful plan or deploy links the checkout to its target in
@@ -14,10 +15,10 @@ it appears; once linked, the bound target applies without the note.
 
 ```console
 $ skali plan --environment production --env-file ./.env.production
-remote       skali.example.com (https://skali.example.com/api)
+remote       example (https://skali.example.com/api)
 project      file-sharing (skali.yml)
 environment  production
-linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
+linked to remote example, project file-sharing, environment production; stored in .skali/
 
 .env.production: 2 values (validated, not shown)
 
@@ -42,12 +43,12 @@ override:
 
 ```console
 $ skali deploy --build=local
-remote       skali.example.com (https://skali.example.com/api)
+remote       example (https://skali.example.com/api)
 project      file-sharing (skali.yml)
 ◆ Which environment should Skali use?
 └ production
 environment  production
-linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
+linked to remote example, project file-sharing, environment production; stored in .skali/
 
 ◆ Override production with a local env file?
 └ .env.production
@@ -136,16 +137,16 @@ and links the checkout:
 
 ```console
 $ skali deploy --build=local
-remote       skali.example.com (https://skali.example.com/api)
+remote       example (https://skali.example.com/api)
 project      file-sharing (skali.yml)
-◆ Create project file-sharing on skali.example.com?
+◆ Create project file-sharing on example?
 └ Yes
 ◆ Environment name
 └ production
 ◆ Create environment production in project file-sharing?
 └ Yes
 environment  production
-linked to remote skali.example.com, project file-sharing, environment production; stored in .skali/
+linked to remote example, project file-sharing, environment production; stored in .skali/
 
 plan for the initial deployment
 ...

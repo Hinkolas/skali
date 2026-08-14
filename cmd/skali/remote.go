@@ -34,38 +34,35 @@ creates one and logs in; "skali remote login" re-authenticates.`,
 }
 
 func newRemoteAddCmd() *cobra.Command {
-	var name, email string
+	var email string
 	cmd := &cobra.Command{
-		Use:   "add <host or url>",
+		Use:   "add <name> <host or url>",
 		Short: "Add a remote and log in to it",
-		Long: `Add a named remote for a skali master and perform the initial login.
-A bare hostname tries https then http and targets the cluster's /api path
+		Long: `Add a named remote for a skali master and perform the initial login,
+like "skali remote add example https://skali.example.com". A bare hostname
+tries https then http and targets the cluster's /api path
 (skali.example.com becomes https://skali.example.com/api); an explicit URL
-is used verbatim. The name defaults to the host; override it with --name.
-On success the new remote becomes the current one; on failure nothing is
-stored.`,
-		Args: cobra.ExactArgs(1),
+is used verbatim. On success the new remote becomes the current one; on
+failure nothing is stored.`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := cliconfig.Load()
 			if err != nil {
 				return err
 			}
-			derived, candidates, err := masterCandidates(args[0])
+			remoteName := args[0]
+			if strings.Contains(remoteName, "://") {
+				return fmt.Errorf("the name comes first: `skali remote add <name> %s`", remoteName)
+			}
+			if remoteName == localRemoteName {
+				return errors.New("remote name \"local\" is reserved for the local dev platform; it is managed by skali dev")
+			}
+			candidates, err := masterCandidates(args[1])
 			if err != nil {
 				return err
 			}
-			remoteName := name
-			if remoteName == "" {
-				remoteName = derived
-			}
-			if remoteName == localRemoteName {
-				if name == "" {
-					return fmt.Errorf("the derived name %q is reserved for the local dev platform; pick one with --name", derived)
-				}
-				return errors.New("remote name \"local\" is reserved for the local dev platform; it is managed by skali dev")
-			}
 			if cfg.Remotes[remoteName] != nil {
-				return fmt.Errorf("remote %q already exists; run `skali remote login %s` to re-authenticate, or pick another name with --name", remoteName, remoteName)
+				return fmt.Errorf("remote %q already exists; run `skali remote login %s` to re-authenticate, or pick another name", remoteName, remoteName)
 			}
 			// Probe before prompting so a typo'd URL never asks for a
 			// password. /healthz is unauthenticated on every skali master;
@@ -101,7 +98,6 @@ stored.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "", "remote name (default: the URL host)")
 	cmd.Flags().StringVar(&email, "email", "", "login email (prompted when omitted)")
 	return cmd
 }
@@ -129,7 +125,7 @@ current when the login succeeds. Remotes are created with "skali remote add".`,
 				}
 				target = cfg.Remotes[name]
 				if target == nil {
-					return fmt.Errorf("remote %q does not exist; run `skali remote add <url>`", name)
+					return fmt.Errorf("remote %q does not exist; run `skali remote add %s <url>`", name, name)
 				}
 			} else {
 				name, target, err = cfg.Current()
@@ -250,7 +246,7 @@ func runRemoteList(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(names) == 0 {
-		fmt.Println("no remotes; run `skali remote add <url>`")
+		fmt.Println("no remotes; run `skali remote add <name> <url>`")
 		return nil
 	}
 	sort.Strings(names)
@@ -429,43 +425,40 @@ func newRemoteRemoveCmd() *cobra.Command {
 // serves its API under (the daemon strips /api itself, so the suffix also
 // works against a directly exposed daemon). A schemeless input carrying a
 // path keeps that path instead.
-func masterCandidates(raw string) (name string, candidates []string, err error) {
+func masterCandidates(raw string) ([]string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if strings.Contains(trimmed, "://") {
-		name, master, err := parseMasterURL(trimmed)
+		master, err := parseMasterURL(trimmed)
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
-		return name, []string{master}, nil
+		return []string{master}, nil
 	}
 	u, parseErr := url.Parse("https://" + trimmed)
 	if parseErr != nil || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", nil, fmt.Errorf("invalid master %q: expected a hostname like skali.example.com or a full URL", raw)
+		return nil, fmt.Errorf("invalid master %q: expected a hostname like skali.example.com or a full URL", raw)
 	}
 	if u.User != nil {
-		return "", nil, fmt.Errorf("invalid master %q: credentials do not belong in the URL", raw)
+		return nil, fmt.Errorf("invalid master %q: credentials do not belong in the URL", raw)
 	}
 	path := strings.TrimRight(u.Path, "/")
 	if path == "" {
 		path = "/api"
 	}
-	return strings.ToLower(u.Host),
-		[]string{"https://" + u.Host + path, "http://" + u.Host + path}, nil
+	return []string{"https://" + u.Host + path, "http://" + u.Host + path}, nil
 }
 
-// parseMasterURL validates a master URL and derives the default remote name
-// from its host, including any non-standard port (http://localhost:7070
-// becomes "localhost:7070").
-func parseMasterURL(raw string) (name, master string, err error) {
+// parseMasterURL validates an explicit master URL.
+func parseMasterURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	u, parseErr := url.Parse(trimmed)
 	if parseErr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", "", fmt.Errorf("invalid master URL %q: expected something like https://skali.example.com", raw)
+		return "", fmt.Errorf("invalid master URL %q: expected something like https://skali.example.com", raw)
 	}
 	if u.User != nil {
-		return "", "", fmt.Errorf("invalid master URL %q: credentials do not belong in the URL", raw)
+		return "", fmt.Errorf("invalid master URL %q: credentials do not belong in the URL", raw)
 	}
-	return strings.ToLower(u.Host), strings.TrimRight(trimmed, "/"), nil
+	return strings.TrimRight(trimmed, "/"), nil
 }
 
 // loginSession collects credentials (the email is prompted unless provided),

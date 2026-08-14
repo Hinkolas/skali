@@ -121,18 +121,17 @@ func TestRemoteTokenCommandNotLoggedIn(t *testing.T) {
 func TestParseMasterURL(t *testing.T) {
 	cases := []struct {
 		raw    string
-		name   string
 		master string
 		fails  bool
 	}{
-		{raw: "https://skali.khz.dev", name: "skali.khz.dev", master: "https://skali.khz.dev"},
-		{raw: "https://skali.khz.dev/", name: "skali.khz.dev", master: "https://skali.khz.dev"},
+		{raw: "https://skali.khz.dev", master: "https://skali.khz.dev"},
+		{raw: "https://skali.khz.dev/", master: "https://skali.khz.dev"},
 		// The single-surface cluster API lives behind a path prefix; the
-		// path survives round-tripping while the name stays host-only.
-		{raw: "https://skali.khz.dev/api", name: "skali.khz.dev", master: "https://skali.khz.dev/api"},
-		{raw: "https://skali.khz.dev/api/", name: "skali.khz.dev", master: "https://skali.khz.dev/api"},
-		{raw: "http://localhost:7070", name: "localhost:7070", master: "http://localhost:7070"},
-		{raw: "https://SKALI.Example.Com", name: "skali.example.com", master: "https://SKALI.Example.Com"},
+		// path survives round-tripping.
+		{raw: "https://skali.khz.dev/api", master: "https://skali.khz.dev/api"},
+		{raw: "https://skali.khz.dev/api/", master: "https://skali.khz.dev/api"},
+		{raw: "http://localhost:7070", master: "http://localhost:7070"},
+		{raw: "https://SKALI.Example.Com", master: "https://SKALI.Example.Com"},
 		{raw: "skali.khz.dev", fails: true},
 		{raw: "", fails: true},
 		{raw: "https://", fails: true},
@@ -140,13 +139,12 @@ func TestParseMasterURL(t *testing.T) {
 		{raw: "https://user:pw@skali.khz.dev", fails: true},
 	}
 	for _, tc := range cases {
-		name, master, err := parseMasterURL(tc.raw)
+		master, err := parseMasterURL(tc.raw)
 		if tc.fails {
 			require.Error(t, err, tc.raw)
 			continue
 		}
 		require.NoError(t, err, tc.raw)
-		require.Equal(t, tc.name, name, tc.raw)
 		require.Equal(t, tc.master, master, tc.raw)
 	}
 }
@@ -154,24 +152,23 @@ func TestParseMasterURL(t *testing.T) {
 func TestMasterCandidates(t *testing.T) {
 	cases := []struct {
 		raw        string
-		name       string
 		candidates []string
 		fails      bool
 	}{
 		// Bare hostnames get https-then-http and the cluster's /api path.
-		{raw: "skali.khz.dev", name: "skali.khz.dev",
+		{raw: "skali.khz.dev",
 			candidates: []string{"https://skali.khz.dev/api", "http://skali.khz.dev/api"}},
-		{raw: "skali.khz.dev/", name: "skali.khz.dev",
+		{raw: "skali.khz.dev/",
 			candidates: []string{"https://skali.khz.dev/api", "http://skali.khz.dev/api"}},
-		{raw: "localhost:7070", name: "localhost:7070",
+		{raw: "localhost:7070",
 			candidates: []string{"https://localhost:7070/api", "http://localhost:7070/api"}},
 		// A schemeless input carrying a path keeps that path.
-		{raw: "skali.khz.dev/custom", name: "skali.khz.dev",
+		{raw: "skali.khz.dev/custom",
 			candidates: []string{"https://skali.khz.dev/custom", "http://skali.khz.dev/custom"}},
 		// Explicit URLs are verbatim, single candidate.
-		{raw: "https://skali.khz.dev/api", name: "skali.khz.dev",
+		{raw: "https://skali.khz.dev/api",
 			candidates: []string{"https://skali.khz.dev/api"}},
-		{raw: "http://localhost:7070", name: "localhost:7070",
+		{raw: "http://localhost:7070",
 			candidates: []string{"http://localhost:7070"}},
 		{raw: "", fails: true},
 		{raw: "user:pw@skali.khz.dev", fails: true},
@@ -179,13 +176,12 @@ func TestMasterCandidates(t *testing.T) {
 		{raw: "ftp://skali.khz.dev", fails: true},
 	}
 	for _, tc := range cases {
-		name, candidates, err := masterCandidates(tc.raw)
+		candidates, err := masterCandidates(tc.raw)
 		if tc.fails {
 			require.Error(t, err, tc.raw)
 			continue
 		}
 		require.NoError(t, err, tc.raw)
-		require.Equal(t, tc.name, name, tc.raw)
 		require.Equal(t, tc.candidates, candidates, tc.raw)
 	}
 }
@@ -209,7 +205,7 @@ func TestRemoteAddBareHostname(t *testing.T) {
 	err := withStdin(t, "password\n", func() error {
 		var runErr error
 		output, runErr = runCapturingStdout(t, func() error {
-			return execute(newRemoteAddCmd(), host, "--name", "bare", "--email", "dana@example.com")
+			return execute(newRemoteAddCmd(), "bare", host, "--email", "dana@example.com")
 		})
 		return runErr
 	})
@@ -224,19 +220,26 @@ func TestRemoteAddBareHostname(t *testing.T) {
 func TestRemoteAddReservedName(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	// Explicit --name local, and a URL whose derived name is "local"; both
-	// refuse before any network access, so no server exists here.
-	err := execute(newRemoteAddCmd(), "https://skali.example.com", "--name", "local")
+	// The reserved name refuses before any network access, so no server
+	// exists here.
+	err := execute(newRemoteAddCmd(), "local", "https://skali.example.com")
 	require.ErrorContains(t, err, "reserved")
 	require.ErrorContains(t, err, "skali dev")
-
-	err = execute(newRemoteAddCmd(), "http://local")
-	require.ErrorContains(t, err, "reserved")
-	require.ErrorContains(t, err, "--name")
 
 	cfg := loadConfig(t)
 	require.Empty(t, cfg.Remotes)
 	require.Empty(t, cfg.CurrentRemote)
+}
+
+func TestRemoteAddSwappedArguments(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	// A URL in the name slot is the old argument order; the error teaches
+	// the new one before any network access.
+	err := execute(newRemoteAddCmd(), "https://skali.example.com", "example")
+	require.ErrorContains(t, err, "the name comes first")
+	require.ErrorContains(t, err, "skali remote add <name> https://skali.example.com")
+	require.Empty(t, loadConfig(t).Remotes)
 }
 
 func TestRemoteAddDuplicate(t *testing.T) {
@@ -250,7 +253,7 @@ func TestRemoteAddDuplicate(t *testing.T) {
 
 	// The duplicate check precedes the reachability probe, so the
 	// unroutable master is never contacted.
-	err := execute(newRemoteAddCmd(), "https://skali.example.com")
+	err := execute(newRemoteAddCmd(), "skali.example.com", "https://skali.example.com")
 	require.ErrorContains(t, err, "already exists")
 	require.ErrorContains(t, err, "skali remote login skali.example.com")
 }
@@ -258,7 +261,7 @@ func TestRemoteAddDuplicate(t *testing.T) {
 func TestRemoteAddUnreachable(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	err := execute(newRemoteAddCmd(), deadURL(t))
+	err := execute(newRemoteAddCmd(), "dead", deadURL(t))
 	require.ErrorContains(t, err, "not reachable")
 
 	cfg := loadConfig(t)
@@ -278,7 +281,7 @@ func TestRemoteAddSuccess(t *testing.T) {
 	err := withStdin(t, "password\n", func() error {
 		var runErr error
 		output, runErr = runCapturingStdout(t, func() error {
-			return execute(newRemoteAddCmd(), srv.URL, "--name", "myremote", "--email", "dana@example.com")
+			return execute(newRemoteAddCmd(), "myremote", srv.URL, "--email", "dana@example.com")
 		})
 		return runErr
 	})
@@ -308,7 +311,7 @@ func TestRemoteAddTwoFactor(t *testing.T) {
 
 	err := withStdin(t, "password\n123456\n", func() error {
 		_, runErr := runCapturingStdout(t, func() error {
-			return execute(newRemoteAddCmd(), srv.URL, "--name", "myremote", "--email", "dana@example.com")
+			return execute(newRemoteAddCmd(), "myremote", srv.URL, "--email", "dana@example.com")
 		})
 		return runErr
 	})
@@ -328,7 +331,7 @@ func TestRemoteAddFailedLoginLeavesNothing(t *testing.T) {
 	srv := fakeMaster(t, mux)
 
 	err := withStdin(t, "wrong\n", func() error {
-		return execute(newRemoteAddCmd(), srv.URL, "--name", "myremote", "--email", "dana@example.com")
+		return execute(newRemoteAddCmd(), "myremote", srv.URL, "--email", "dana@example.com")
 	})
 	require.ErrorContains(t, err, "not added")
 	require.ErrorContains(t, err, "invalid_credentials")
@@ -403,7 +406,7 @@ func TestRemoteListAndBareRemote(t *testing.T) {
 		return execute(newRemoteListCmd())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "no remotes; run `skali remote add <url>`")
+	require.Contains(t, output, "no remotes; run `skali remote add <name> <url>`")
 
 	seedConfig(t, &cliconfig.Config{
 		CurrentRemote: "b",
@@ -447,7 +450,7 @@ func TestRemoteListHidesLocal(t *testing.T) {
 		return execute(newRemoteListCmd())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "no remotes; run `skali remote add <url>`")
+	require.Contains(t, output, "no remotes; run `skali remote add <name> <url>`")
 }
 
 func TestRemoteUseLocalRefused(t *testing.T) {

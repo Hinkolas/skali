@@ -53,7 +53,7 @@ func resolveQueryRemote(start, override string) (string, *checkout.Target, *clie
 	if binding != nil {
 		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
 		if !ok {
-			return "", nil, nil, fmt.Errorf("no remote for %s on this machine; run skali remote add %s",
+			return "", nil, nil, fmt.Errorf("no remote for %s on this machine; run skali remote add <name> %s",
 				binding.Master, binding.Master)
 		}
 		remoteName, remote = name, found

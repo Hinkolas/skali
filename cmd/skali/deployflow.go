@@ -887,7 +887,7 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 	case binding != nil:
 		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
 		if !ok {
-			return nil, fmt.Errorf("no remote for %s on this machine; run skali remote add %s",
+			return nil, fmt.Errorf("no remote for %s on this machine; run skali remote add <name> %s",
 				binding.Master, binding.Master)
 		}
 		remoteName, remote = name, found

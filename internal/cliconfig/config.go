@@ -109,7 +109,7 @@ func (c *Config) Current() (string, *Remote, error) {
 				return "", nil, errors.New("no remote selected; run `skali remote use <name>`")
 			}
 		}
-		return "", nil, errors.New("no remote selected; run `skali remote add <url>` first")
+		return "", nil, errors.New("no remote selected; run `skali remote add <name> <url>` first")
 	}
 	remote, ok := c.Remotes[c.CurrentRemote]
 	if !ok {

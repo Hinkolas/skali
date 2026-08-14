@@ -10,26 +10,25 @@ re-authenticates an existing entry, and the `local` remote belongs to
 ## 1. Add the first remote
 
 ```console
-$ skali remote add skali.example.com
+$ skali remote add example skali.example.com
 ◆ Email
 └ dana@example.com
 ◆ Password
 └ entered
-logged in to https://skali.example.com/api as dana@example.com (remote "skali.example.com")
+logged in to https://skali.example.com/api as dana@example.com (remote "example")
 ```
 
-A bare hostname tries https then http and targets the cluster's `/api`
-path; an explicit URL (`http://localhost:7070`) is used verbatim. The name
-defaults to the host, including any non-standard port
-(`http://localhost:7070` becomes `localhost:7070`). The new remote becomes
-the current one. A failed add creates nothing: the URL is validated and the
-master probed for reachability before any credential prompt, and the entry is
-only written after the login succeeds.
+The name comes first and the master second, like `git remote add`. A bare
+hostname tries https then http and targets the cluster's `/api` path; an
+explicit URL (`http://localhost:7070`) is used verbatim. The new remote
+becomes the current one. A failed add creates nothing: the URL is validated
+and the master probed for reachability before any credential prompt, and the
+entry is only written after the login succeeds.
 
-## 2. Add a second remote with an explicit name and TOTP
+## 2. Add a second remote with TOTP
 
 ```console
-$ skali remote add https://staging.example.com --name staging --email dana@example.com
+$ skali remote add staging https://staging.example.com --email dana@example.com
 ◆ Password
 └ entered
 ◆ Two-factor code
@@ -37,10 +36,9 @@ $ skali remote add https://staging.example.com --name staging --email dana@examp
 logged in to https://staging.example.com as dana@example.com (remote "staging")
 ```
 
-`--name` overrides the derived name; the name `local` is refused because it is
-reserved for the local development platform. Text and masked fields accept
-Left/Right, Home/End, Backspace, and Delete while active; passwords are never
-copied into settled output.
+The name `local` is refused because it is reserved for the local development
+platform. Text and masked fields accept Left/Right, Home/End, Backspace, and
+Delete while active; passwords are never copied into settled output.
 
 ## 3. List and switch
 
@@ -48,18 +46,18 @@ Bare `skali remote` lists; `*` marks the current remote:
 
 ```console
 $ skali remote
-  skali.example.com  https://skali.example.com/api  [logged in]
-* staging            https://staging.example.com  [logged in]
+  example  https://skali.example.com/api  [logged in]
+* staging  https://staging.example.com  [logged in]
 
-$ skali remote use skali.example.com
-switched to remote "skali.example.com"
+$ skali remote use example
+switched to remote "example"
 ```
 
 ## 4. Status
 
 ```console
 $ skali remote status
-remote:  skali.example.com
+remote:  example
 master:  https://skali.example.com/api
 health:  ok
 user:    dana@example.com (Dana)
@@ -73,7 +71,7 @@ When the master is unreachable, status stops after the health line.
 
 ```console
 $ skali remote status
-remote:  skali.example.com
+remote:  example
 master:  https://skali.example.com/api
 health:  ok
 session: expired or revoked; run `skali remote login`
@@ -83,12 +81,12 @@ $ skali remote login
 └ dana@example.com
 ◆ Password
 └ entered
-logged in to https://skali.example.com/api as dana@example.com (remote "skali.example.com")
+logged in to https://skali.example.com/api as dana@example.com (remote "example")
 ```
 
 `skali remote login staging` logs in to a named remote and makes it current on
 success. Login never creates a remote; an unknown name points at
-`skali remote add <url>`.
+`skali remote add <name> <url>`.
 
 ## 6. Registry access
 
