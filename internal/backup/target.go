@@ -115,6 +115,20 @@ func (s *TargetStore) Get(ctx context.Context, name string) (*Target, error) {
 	return targetFromRow(row), nil
 }
 
+// Delete removes a target and its sealed credentials. Snapshots already
+// written to the bucket are untouched: durable history lives in the S3
+// manifests, so configuring the same location again brings them back.
+func (s *TargetStore) Delete(ctx context.Context, name string) error {
+	rows, err := s.st.DeleteBackupTarget(ctx, name)
+	if err != nil {
+		return fmt.Errorf("backup: delete target: %w", err)
+	}
+	if rows == 0 {
+		return ErrTargetNotFound
+	}
+	return nil
+}
+
 // Credentials is the target plus its decrypted secret access key. It exists
 // in memory only, for the controller and worker-secret rendering.
 type Credentials struct {

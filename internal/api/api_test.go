@@ -670,5 +670,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 66, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 67, routes, "route count changed; update the OpenAPI spec and this number")
 }

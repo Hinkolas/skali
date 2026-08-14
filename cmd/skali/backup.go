@@ -218,7 +218,47 @@ func newBackupTargetCommand() *cobra.Command {
 		Use:   "target",
 		Short: "Manage the external S3 backup target",
 	}
-	command.AddCommand(newBackupTargetSetCommand(), newBackupTargetShowCommand())
+	command.AddCommand(newBackupTargetSetCommand(), newBackupTargetShowCommand(),
+		newBackupTargetUnsetCommand())
+	return command
+}
+
+func newBackupTargetUnsetCommand() *cobra.Command {
+	var remote string
+	command := &cobra.Command{
+		Use:   "unset",
+		Short: "Remove the configured backup target",
+		Long: "Removes the backup target and its stored credentials. Admin only.\n" +
+			"Snapshots already written to the bucket are untouched; setting the\n" +
+			"same target again makes them listable and restorable once more.",
+		Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			ctx := command.Context()
+			out := command.OutOrStdout()
+			api, err := queryClient(remote)
+			if err != nil {
+				return err
+			}
+			err = api.DeleteBackupTarget(ctx)
+			if isReauthRequired(err) {
+				if err = reauthForAdmin(ctx, command, out, api); err != nil {
+					return err
+				}
+				err = api.DeleteBackupTarget(ctx)
+			}
+			if err != nil {
+				if isNotFound(err) {
+					return errors.New("no backup target configured")
+				}
+				return err
+			}
+			style := clirender.StyleFor(out)
+			fmt.Fprintf(out, "%sbackup target removed\n", style.Check())
+			return nil
+		},
+	}
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command
 }
 

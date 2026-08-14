@@ -347,6 +347,7 @@ func NewRouter(d Deps) http.Handler {
 							bth := &backupTargetHandlers{targets: d.BackupTargets}
 							r.Get("/system/backup-target", bth.get)
 							r.Put("/system/backup-target", bth.put)
+							r.Delete("/system/backup-target", bth.delete)
 						}
 					})
 				})

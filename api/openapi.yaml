@@ -1593,6 +1593,25 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: deleteBackupTarget
+      summary: Remove the configured backup target
+      description: |
+        Admin only, sudo mode. Removes the target and its stored
+        credentials. Snapshots already written to the bucket are untouched;
+        configuring the same location again makes them listable and
+        restorable once more.
+      tags: [backups]
+      responses:
+        "204":
+          description: The target was removed.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No backup target is configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/nodes:
     get:

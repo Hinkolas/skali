@@ -53,6 +53,18 @@ func (h *backupTargetHandlers) get(w http.ResponseWriter, r *http.Request) {
 	}{newBackupTargetPayload(target)})
 }
 
+func (h *backupTargetHandlers) delete(w http.ResponseWriter, r *http.Request) {
+	if err := h.targets.Delete(r.Context(), backup.DefaultTargetName); err != nil {
+		if errors.Is(err, backup.ErrTargetNotFound) {
+			writeError(w, http.StatusNotFound, codeNotFound, "backup target not configured")
+			return
+		}
+		writeInternalError(r.Context(), w, "delete backup target", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *backupTargetHandlers) put(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Endpoint        string `json:"endpoint"`

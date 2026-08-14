@@ -657,6 +657,12 @@ func (c *Client) PutBackupTarget(ctx context.Context, input BackupTargetInput) (
 	return &res.Target, nil
 }
 
+// DeleteBackupTarget removes the configured backup target and its stored
+// credentials. Snapshots already written to the bucket stay untouched.
+func (c *Client) DeleteBackupTarget(ctx context.Context) error {
+	return c.do(ctx, http.MethodDelete, "/v1/system/backup-target", nil, nil)
+}
+
 // BackupSnapshot is one listable snapshot, read from its S3 manifest.
 type BackupSnapshot struct {
 	ID               string `json:"id"`

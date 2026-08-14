@@ -27,6 +27,7 @@ func TestBackupTargetRequireAdmin(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{"GET", "/v1/system/backup-target"},
 		{"PUT", "/v1/system/backup-target"},
+		{"DELETE", "/v1/system/backup-target"},
 	} {
 		status, body := a.do(tc.method, tc.path, member, nil)
 		require.Equal(t, http.StatusForbidden, status, "%s %s", tc.method, tc.path)
@@ -77,6 +78,30 @@ func TestBackupTargetPutAndGet(t *testing.T) {
 	status, body = a.do("PUT", "/v1/system/backup-target", admin, replacement)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "other-bucket", body["target"].(map[string]any)["bucket"])
+}
+
+func TestBackupTargetDelete(t *testing.T) {
+	a := newTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+
+	// Deleting an unconfigured target is a 404, matching reads.
+	status, body := a.do("DELETE", "/v1/system/backup-target", admin, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errorCode(t, body))
+
+	status, _ = a.do("PUT", "/v1/system/backup-target", admin, validBackupTarget())
+	require.Equal(t, http.StatusOK, status)
+
+	status, _ = a.do("DELETE", "/v1/system/backup-target", admin, nil)
+	require.Equal(t, http.StatusNoContent, status)
+
+	// The target is gone for reads and repeat deletes alike.
+	status, body = a.do("GET", "/v1/system/backup-target", admin, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errorCode(t, body))
+	status, _ = a.do("DELETE", "/v1/system/backup-target", admin, nil)
+	require.Equal(t, http.StatusNotFound, status)
 }
 
 func TestBackupTargetValidation(t *testing.T) {
