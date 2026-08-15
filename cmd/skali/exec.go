@@ -70,11 +70,7 @@ func newExecCommand() *cobra.Command {
 			reauth := func(ctx context.Context) error {
 				return reauthForAdmin(ctx, command, command.OutOrStdout(), target.api)
 			}
-			scope := target.environment
-			if target.project != "" {
-				scope = target.project + "/" + target.environment
-			}
-			prompt := shellPrompt(target.remoteName, service, inv, scope)
+			prompt := shellPrompt(target.remoteName, service, inv, target.project+"/"+target.environment)
 			return runExecSession(command, target.api, target.environmentID, inv, service, argv, prompt, reauth)
 		},
 	}

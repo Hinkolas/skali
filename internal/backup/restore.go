@@ -27,10 +27,11 @@ const (
 	reconvergePollInterval = 3 * time.Second
 )
 
-// CreateRestore accepts a stop-first restore of one snapshot into the
-// environment. The environment must be active with a target revision: the
-// restore stops it, moves data, and resumes exactly that revision. The
-// snapshot manifest is verified to exist before anything is accepted.
+// CreateRestore accepts a stop-first restore of one of the project's
+// snapshots into the environment. The environment must be active with a
+// target revision: the restore stops it, moves data, and resumes exactly
+// that revision. The snapshot manifest is verified to exist before
+// anything is accepted.
 func (c *Controller) CreateRestore(ctx context.Context, environmentID uuid.UUID, snapshotID, actor string) (*CreateResult, error) {
 	names, err := c.environmentNames(ctx, environmentID)
 	if err != nil {
@@ -47,20 +48,17 @@ func (c *Controller) CreateRestore(ctx context.Context, environmentID uuid.UUID,
 		return nil, ErrEnvironmentNotActive
 	}
 
-	credentials, err := c.deps.Targets.credentials(ctx, DefaultTargetName)
+	// The snapshot may come from any environment of the project: a
+	// production snapshot restores into staging just as well, since
+	// components match by service key and the manifest carries absolute
+	// object keys.
+	credentials, targetStore, err := c.openTarget(ctx)
 	if err != nil {
 		return nil, err
 	}
-	targetStore, err := newObjectStore(targetLocation(credentials))
+	manifestObjectKey, err := c.findSnapshot(ctx, targetStore, credentials.Prefix, names.project, snapshotID)
 	if err != nil {
 		return nil, err
-	}
-	manifestObjectKey := manifestKey(credentials.Prefix, names.project, names.environment, snapshotID)
-	if _, err := targetStore.Stat(ctx, manifestObjectKey); err != nil {
-		if errors.Is(err, errNotFound) {
-			return nil, ErrSnapshotNotFound
-		}
-		return nil, &TargetUnreachableError{Err: err}
 	}
 
 	run, err := c.deps.Journal.CreateRun(ctx, journal.RunInput{

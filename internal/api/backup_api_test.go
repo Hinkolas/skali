@@ -135,10 +135,13 @@ func TestBackupCreatePreconditions(t *testing.T) {
 	a.createAdmin("admin@example.com", "hunter2hunter2")
 	token := a.login("dev@example.com", "hunter2hunter2")
 	admin := a.login("admin@example.com", "hunter2hunter2")
-	_, envID := a.createEnvironment(t, token)
+	projectID, envID := a.createEnvironment(t, token)
 
-	// Unknown environment.
+	// Unknown environment and project.
 	status, body := a.do("POST", "/v1/environments/00000000-0000-0000-0000-000000000000/backups", token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errorCode(t, body))
+	status, body = a.do("GET", "/v1/projects/00000000-0000-0000-0000-000000000000/backups", token, nil)
 	require.Equal(t, http.StatusNotFound, status)
 	require.Equal(t, "not_found", errorCode(t, body))
 
@@ -152,6 +155,9 @@ func TestBackupCreatePreconditions(t *testing.T) {
 	status, body = a.do("GET", "/v1/environments/"+envID+"/backups", token, nil)
 	require.Equal(t, http.StatusServiceUnavailable, status)
 	require.Equal(t, "backup_target_unconfigured", errorCode(t, body))
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/backups", token, nil)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "backup_target_unconfigured", errorCode(t, body))
 
 	// With a target configured but unreachable, listing reports it.
 	status, _ = a.do("PUT", "/v1/system/backup-target", admin, map[string]string{
@@ -160,6 +166,9 @@ func TestBackupCreatePreconditions(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, status)
 	status, body = a.do("GET", "/v1/environments/"+envID+"/backups", token, nil)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "backup_target_unreachable", errorCode(t, body))
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/backups", token, nil)
 	require.Equal(t, http.StatusServiceUnavailable, status)
 	require.Equal(t, "backup_target_unreachable", errorCode(t, body))
 }

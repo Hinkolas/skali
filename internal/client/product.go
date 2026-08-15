@@ -666,6 +666,7 @@ func (c *Client) DeleteBackupTarget(ctx context.Context) error {
 // BackupSnapshot is one listable snapshot, read from its S3 manifest.
 type BackupSnapshot struct {
 	ID               string `json:"id"`
+	Environment      string `json:"environment"`
 	CreatedAt        string `json:"created_at"`
 	RevisionChecksum string `json:"revision_checksum"`
 	Encryption       string `json:"encryption"`
@@ -701,9 +702,21 @@ func (c *Client) ListBackups(ctx context.Context, environmentID string) ([]Backu
 	return res.Snapshots, nil
 }
 
-// RestoreBackup requests a stop-first restore of one snapshot into the
-// environment; the environment stops, data is replaced, and the current
-// revision resumes.
+// ListProjectBackups returns the snapshots of every environment of the
+// project, newest first.
+func (c *Client) ListProjectBackups(ctx context.Context, projectID string) ([]BackupSnapshot, error) {
+	var res struct {
+		Snapshots []BackupSnapshot `json:"snapshots"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+projectID+"/backups", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Snapshots, nil
+}
+
+// RestoreBackup requests a stop-first restore of one of the project's
+// snapshots into the environment; the environment stops, data is replaced,
+// and the current revision resumes.
 func (c *Client) RestoreBackup(ctx context.Context, environmentID, snapshotID string) (string, error) {
 	var res struct {
 		RunID string `json:"run_id"`

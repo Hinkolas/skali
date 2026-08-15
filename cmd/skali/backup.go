@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -37,11 +40,13 @@ func newBackupRestoreCommand() *cobra.Command {
 	)
 	command := &cobra.Command{
 		Use:   "restore SNAPSHOT-ID",
-		Short: "Restore a snapshot's data into the environment",
+		Short: "Restore a snapshot's data into an environment",
 		Long: "Stops the environment, replaces every matching database, bucket,\n" +
 			"and volume with the snapshot's data, then resumes the current\n" +
 			"revision. Current data is overwritten. The environment must be\n" +
-			"deployed first; restore moves data, not configuration.",
+			"deployed first; restore moves data, not configuration.\n\n" +
+			"The snapshot restores into the environment it was taken from unless\n" +
+			"--environment names another environment of the same project.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
@@ -52,7 +57,15 @@ func newBackupRestoreCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(ctx, start, environment, remote)
+			scope, err := resolveQueryProject(ctx, start, environment, remote)
+			if err != nil {
+				return err
+			}
+			snapshot, err := findSnapshot(ctx, scope, snapshotID)
+			if err != nil {
+				return err
+			}
+			targetEnvironment, err := restoreEnvironment(scope, snapshot, environment)
 			if err != nil {
 				return err
 			}
@@ -62,10 +75,11 @@ func newBackupRestoreCommand() *cobra.Command {
 				}
 				session := promptSession(out, bufio.NewReader(command.InOrStdin()))
 				confirmed, err := session.ConfirmTyped(ctx,
-					fmt.Sprintf("Restore snapshot %s into %s?", snapshotID, target.environment),
-					"The environment stops, its current data is replaced with the "+
-						"snapshot's, and the current revision resumes.",
-					target.environment)
+					fmt.Sprintf("Restore snapshot %s into %s?", snapshotID, targetEnvironment.Name),
+					fmt.Sprintf("The snapshot was taken from %s on %s. The environment stops, its "+
+						"current data is replaced with the snapshot's, and the current "+
+						"revision resumes.", snapshot.Environment, snapshotTime(snapshot)),
+					targetEnvironment.Name)
 				if err != nil {
 					return err
 				}
@@ -73,19 +87,19 @@ func newBackupRestoreCommand() *cobra.Command {
 					return errors.New("aborted")
 				}
 			}
-			runID, err := target.api.RestoreBackup(ctx, target.environmentID, snapshotID)
+			runID, err := scope.api.RestoreBackup(ctx, targetEnvironment.ID, snapshotID)
 			if isReauthRequired(err) {
-				if err = reauthForAdmin(ctx, command, out, target.api); err != nil {
+				if err = reauthForAdmin(ctx, command, out, scope.api); err != nil {
 					return err
 				}
-				runID, err = target.api.RestoreBackup(ctx, target.environmentID, snapshotID)
+				runID, err = scope.api.RestoreBackup(ctx, targetEnvironment.ID, snapshotID)
 			}
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "%s %s  restore %s into %s\n", style.Dim("run"),
-				style.Bold(runID), snapshotID, target.environment)
-			status, err := attachRun(ctx, out, target.api, runID, remote)
+			fmt.Fprintf(out, "%s %s  restore %s (%s) into %s\n", style.Dim("run"),
+				style.Bold(runID), snapshotID, snapshot.Environment, targetEnvironment.Name)
+			status, err := attachRun(ctx, out, scope.api, runID, remote)
 			if err != nil {
 				return err
 			}
@@ -102,11 +116,57 @@ func newBackupRestoreCommand() *cobra.Command {
 			}
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "environment to restore; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "environment", "",
+		"environment to restore into; defaults to the environment the snapshot was taken from")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().BoolVar(&yes, "yes", false, "skip the typed confirmation")
 	return command
+}
+
+// findSnapshot locates a snapshot by id among the project's snapshots on
+// the backup target.
+func findSnapshot(ctx context.Context, scope *queryProject, snapshotID string) (*client.BackupSnapshot, error) {
+	snapshots, err := scope.api.ListProjectBackups(ctx, scope.project.ID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range snapshots {
+		if snapshots[i].ID == snapshotID {
+			return &snapshots[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no snapshot %s in project %s on %s; see skali backup ls",
+		snapshotID, scope.project.Name, scope.api.Master())
+}
+
+// restoreEnvironment picks the environment a snapshot restores into: the
+// explicitly named one, else the environment the snapshot was taken from.
+// Either must currently exist in the project.
+func restoreEnvironment(scope *queryProject, snapshot *client.BackupSnapshot, explicit string) (*client.Environment, error) {
+	if explicit != "" {
+		if resolved := findEnvironment(scope.environments, explicit); resolved != nil {
+			return resolved, nil
+		}
+		return nil, fmt.Errorf("environment %s does not exist in project %s on %s",
+			explicit, scope.project.Name, scope.api.Master())
+	}
+	if resolved := findEnvironment(scope.environments, snapshot.Environment); resolved != nil {
+		return resolved, nil
+	}
+	return nil, fmt.Errorf("environment %s, which the snapshot was taken from, does not exist in project %s on %s; "+
+		"deploy it again or pass --environment to restore into another environment",
+		snapshot.Environment, scope.project.Name, scope.api.Master())
+}
+
+// snapshotTime renders a snapshot's creation time as a local timestamp,
+// falling back to the raw value the API returned.
+func snapshotTime(snapshot *client.BackupSnapshot) string {
+	created, err := time.Parse(time.RFC3339, snapshot.CreatedAt)
+	if err != nil {
+		return snapshot.CreatedAt
+	}
+	return created.Local().Format("2006-01-02 15:04")
 }
 
 func newBackupCreateCommand() *cobra.Command {
@@ -174,8 +234,12 @@ func newBackupLsCommand() *cobra.Command {
 	var environment, remote string
 	command := &cobra.Command{
 		Use:   "ls",
-		Short: "List the environment's snapshots on the backup target",
-		Args:  cobra.NoArgs,
+		Short: "List the project's snapshots on the backup target",
+		Long: "Lists the snapshots of every environment of the project, newest\n" +
+			"first, as the backup target holds them; --environment narrows the\n" +
+			"list to one environment. Snapshots of environments that no longer\n" +
+			"exist are listed too and can be restored into another environment.",
+		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			ctx := command.Context()
 			out := command.OutOrStdout()
@@ -184,33 +248,59 @@ func newBackupLsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			target, err := resolveQueryTarget(ctx, start, environment, remote)
+			scope, err := resolveQueryProject(ctx, start, environment, remote)
 			if err != nil {
 				return err
 			}
-			snapshots, err := target.api.ListBackups(ctx, target.environmentID)
+			snapshots, err := scope.api.ListProjectBackups(ctx, scope.project.ID)
 			if err != nil {
 				return err
 			}
+			if environment != "" {
+				snapshots = slices.DeleteFunc(snapshots, func(snapshot client.BackupSnapshot) bool {
+					return snapshot.Environment != environment
+				})
+			}
+			fmt.Fprintf(out, "%s  %s %s\n\n", style.Dim("project"),
+				scope.project.Name, style.Dim("("+scope.remoteName+")"))
 			if len(snapshots) == 0 {
-				fmt.Fprintln(out, style.Dim("no snapshots"))
+				if environment != "" {
+					fmt.Fprintln(out, style.Dim("no snapshots of environment "+environment))
+				} else {
+					fmt.Fprintln(out, style.Dim("no snapshots"))
+				}
 				return nil
 			}
-			for _, snapshot := range snapshots {
-				fmt.Fprintf(out, "%s  %s  %s  %s  %s\n",
-					snapshot.ID,
-					snapshot.CreatedAt,
-					utils.ShortChecksum(snapshot.RevisionChecksum),
-					fmt.Sprintf("%dd/%db/%dv", snapshot.Databases, snapshot.Buckets, snapshot.Volumes),
-					utils.FormatBytes(snapshot.Bytes))
-			}
+			renderSnapshotTable(out, snapshots)
 			return nil
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "environment to list; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "environment", "", "only list snapshots of this environment")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command
+}
+
+// renderSnapshotTable prints snapshots as one table with a header row: the
+// id first (it is what restore takes), then where and when the snapshot was
+// taken, the revision that was running, and what it holds.
+func renderSnapshotTable(out io.Writer, snapshots []client.BackupSnapshot) {
+	environmentWidth := len("ENVIRONMENT")
+	for _, snapshot := range snapshots {
+		environmentWidth = max(environmentWidth, len(snapshot.Environment))
+	}
+	row := func(id, environment, created, revision, databases, buckets, volumes, size string) {
+		fmt.Fprintf(out, "%-36s  %-*s  %-16s  %-12s  %-9s  %-7s  %-7s  %s\n",
+			id, environmentWidth, environment, created, revision, databases, buckets, volumes, size)
+	}
+	row("SNAPSHOT", "ENVIRONMENT", "CREATED", "REVISION", "DATABASES", "BUCKETS", "VOLUMES", "SIZE")
+	for i := range snapshots {
+		snapshot := &snapshots[i]
+		row(snapshot.ID, snapshot.Environment, snapshotTime(snapshot),
+			utils.ShortChecksum(snapshot.RevisionChecksum),
+			strconv.Itoa(snapshot.Databases), strconv.Itoa(snapshot.Buckets), strconv.Itoa(snapshot.Volumes),
+			utils.FormatBytes(snapshot.Bytes))
+	}
 }
 
 func newBackupTargetCommand() *cobra.Command {

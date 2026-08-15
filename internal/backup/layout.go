@@ -22,8 +22,18 @@ import (
 // format version inside the documents.
 const layoutVersion = "v1"
 
+func projectBase(prefix, project string) string {
+	return path.Join(strings.Trim(prefix, "/"), "skali", layoutVersion, project)
+}
+
 func environmentBase(prefix, project, environment string) string {
-	return path.Join(strings.Trim(prefix, "/"), "skali", layoutVersion, project, environment)
+	return path.Join(projectBase(prefix, project), environment)
+}
+
+// environmentFromBase inverts environmentBase for a listed environment
+// prefix ("<base>/<environment>/" -> "<environment>").
+func environmentFromBase(environmentPrefix string) string {
+	return path.Base(strings.TrimSuffix(environmentPrefix, "/"))
 }
 
 func snapshotPrefix(prefix, project, environment string) string {

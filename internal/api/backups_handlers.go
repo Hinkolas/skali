@@ -72,6 +72,37 @@ func (h *backupsHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}{snapshots})
 }
 
+// GET /v1/projects/{id}/backups: every environment's snapshots for the
+// project, newest first, read from the backup target. Environments are
+// discovered from the bucket's key layout, so a fresh installation lists
+// snapshots of environments it has never seen.
+func (h *backupsHandlers) listProject(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	project, err := h.st.GetProjectByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, codeNotFound, "project not found")
+			return
+		}
+		writeInternalError(r.Context(), w, "get project", err)
+		return
+	}
+	snapshots, err := h.backups.ListProjectSnapshots(r.Context(), project.Name)
+	if err != nil {
+		writeBackupError(r.Context(), w, err)
+		return
+	}
+	if snapshots == nil {
+		snapshots = []backup.SnapshotSummary{}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Snapshots []backup.SnapshotSummary `json:"snapshots"`
+	}{snapshots})
+}
+
 // POST /v1/environments/{id}/restore: accept a stop-first restore of one
 // snapshot. Destructive (current data is replaced), so the route sits
 // behind sudo mode.

@@ -1791,6 +1791,44 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/projects/{id}/backups:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listProjectBackups
+      summary: List the snapshots of every environment of the project
+      description: |
+        Every environment's snapshots for the project, newest first, read
+        from the backup target's manifests. Environments are discovered
+        from the bucket's key layout, not the control-plane database, so
+        snapshots of environments this installation has never seen are
+        listed too; each snapshot names the environment it was taken from.
+      tags: [backups]
+      responses:
+        "200":
+          description: Snapshots on the backup target.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [snapshots]
+                properties:
+                  snapshots:
+                    type: array
+                    items: { $ref: "#/components/schemas/BackupSnapshot" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: |
+            No backup target is configured (`backup_target_unconfigured`)
+            or it did not answer (`backup_target_unreachable`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/environments/{id}/restore:
     parameters:
       - name: id
@@ -1804,8 +1842,10 @@ paths:
         Destructive: stops the environment, replaces every matching
         database, bucket, and volume with the snapshot's data, then
         resumes the current revision, all as a journaled run of kind
-        `restore`. Components whose service key no longer exists are
-        skipped visibly. The environment must be active; on failure it
+        `restore`. The snapshot may come from any environment of the
+        project (ids are unique across environments), so a production
+        snapshot restores into staging. Components whose service key no
+        longer exists are skipped visibly. The environment must be active; on failure it
         deliberately stays down rather than resuming over partial data.
         Requires recent authentication (sudo mode).
       tags: [backups]
@@ -3168,10 +3208,13 @@ components:
     BackupSnapshot:
       type: object
       description: One snapshot on the backup target, read from its manifest.
-      required: [id, created_at, revision_checksum, encryption, bytes]
+      required: [id, environment, created_at, revision_checksum, encryption, bytes]
       properties:
         id:
           type: string
+        environment:
+          type: string
+          description: Name of the environment the snapshot was taken from.
         created_at:
           type: string
           format: date-time

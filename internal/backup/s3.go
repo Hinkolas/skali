@@ -22,6 +22,9 @@ type objectStore interface {
 	Stat(ctx context.Context, key string) (objectStat, error)
 	// List calls fn for every object under prefix; fn errors abort.
 	List(ctx context.Context, prefix string, fn func(objectInfo) error) error
+	// ListPrefixes returns the immediate "directories" under prefix (the
+	// common prefixes one level down), each ending in a slash.
+	ListPrefixes(ctx context.Context, prefix string) ([]string, error)
 	Remove(ctx context.Context, key string) error
 	// Reachable verifies the bucket exists and answers.
 	Reachable(ctx context.Context) error
@@ -140,6 +143,22 @@ func (s *minioStore) List(ctx context.Context, prefix string, fn func(objectInfo
 		}
 	}
 	return nil
+}
+
+func (s *minioStore) ListPrefixes(ctx context.Context, prefix string) ([]string, error) {
+	var prefixes []string
+	for object := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: false,
+	}) {
+		if object.Err != nil {
+			return nil, fmt.Errorf("backup: list %s: %w", prefix, object.Err)
+		}
+		if strings.HasSuffix(object.Key, "/") {
+			prefixes = append(prefixes, object.Key)
+		}
+	}
+	return prefixes, nil
 }
 
 func (s *minioStore) Remove(ctx context.Context, key string) error {

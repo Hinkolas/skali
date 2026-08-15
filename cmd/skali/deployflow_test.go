@@ -212,13 +212,14 @@ type fakeInstall struct {
 	mu       sync.Mutex
 	projects []client.Project
 	envs     map[string][]client.Environment
+	backups  map[string][]client.BackupSnapshot
 	posts    []string
 	srv      *httptest.Server
 }
 
 func newFakeInstall(t *testing.T) *fakeInstall {
 	t.Helper()
-	f := &fakeInstall{envs: map[string][]client.Environment{}}
+	f := &fakeInstall{envs: map[string][]client.Environment{}, backups: map[string][]client.BackupSnapshot{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/projects", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -237,9 +238,17 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 		_ = json.NewEncoder(w).Encode(map[string]any{"projects": f.projects})
 	})
 	mux.HandleFunc("/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
-		projectID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/projects/"), "/environments")
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if projectID, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/v1/projects/"), "/backups"); ok {
+			snapshots := f.backups[projectID]
+			if snapshots == nil {
+				snapshots = []client.BackupSnapshot{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"snapshots": snapshots})
+			return
+		}
+		projectID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/projects/"), "/environments")
 		if r.Method == http.MethodPost {
 			var req struct {
 				Name string `json:"name"`

@@ -291,6 +291,7 @@ func NewRouter(d Deps) http.Handler {
 					bkh := &backupsHandlers{backups: d.Backups, st: d.Store}
 					r.Post("/environments/{id}/backups", bkh.create)
 					r.Get("/environments/{id}/backups", bkh.list)
+					r.Get("/projects/{id}/backups", bkh.listProject)
 				}
 
 				// Run journal reads; the SSE stream lives outside this group.

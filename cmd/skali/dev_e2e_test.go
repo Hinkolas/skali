@@ -624,8 +624,13 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 	run = h.run(false, "", "backup", "create", "--remote", "local", "--environment", "local")
 	require.Contains(t, run, "backup complete")
 
-	run = h.run(false, "", "backup", "ls", "--remote", "local", "--environment", "local")
-	match := regexp.MustCompile(`(?m)^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})  `).
+	// The listing is project-wide (the checkout's manifest names the
+	// project, no environment needed) with a header row; each row names
+	// the environment the snapshot was taken from.
+	run = h.run(false, "", "backup", "ls", "--remote", "local")
+	require.Contains(t, run, "SNAPSHOT")
+	require.Contains(t, run, "ENVIRONMENT")
+	match := regexp.MustCompile(`(?m)^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})  local `).
 		FindStringSubmatch(run)
 	require.NotNil(t, match, "no snapshot id in:\n%s", run)
 	snapshot := match[1]
@@ -654,8 +659,12 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 	// comes purely from the S3 manifests.
 	run = h.run(false, "", "backup", "ls", "--remote", "local", "--environment", "local")
 	require.Contains(t, run, snapshot)
+	run = h.run(false, "", "backup", "ls", "--remote", "local", "--environment", "nothing")
+	require.Contains(t, run, "no snapshots of environment nothing")
 
-	run = h.run(false, "", "backup", "restore", snapshot, "--remote", "local", "--environment", "local", "--yes")
+	// Restore defaults to the environment the snapshot was taken from.
+	run = h.run(false, "", "backup", "restore", snapshot, "--remote", "local", "--yes")
+	require.Contains(t, run, "restore "+snapshot+" (local) into local")
 	require.Contains(t, run, "restore complete")
 
 	// Every data kind is back: the dump's rows (plus this read's insert),

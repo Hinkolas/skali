@@ -152,6 +152,7 @@ func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 // SnapshotSummary is one listable snapshot, read from its S3 manifest.
 type SnapshotSummary struct {
 	ID               string    `json:"id"`
+	Environment      string    `json:"environment"`
 	CreatedAt        time.Time `json:"created_at"`
 	RevisionChecksum string    `json:"revision_checksum"`
 	Encryption       string    `json:"encryption"`
@@ -164,6 +165,7 @@ type SnapshotSummary struct {
 func summarize(m *Manifest) SnapshotSummary {
 	summary := SnapshotSummary{
 		ID:               m.SnapshotID,
+		Environment:      m.Environment,
 		CreatedAt:        m.CreatedAt,
 		RevisionChecksum: m.RevisionChecksum,
 		Encryption:       m.Encryption,
@@ -182,23 +184,102 @@ func summarize(m *Manifest) SnapshotSummary {
 	return summary
 }
 
-// ListSnapshots enumerates the environment's snapshots from S3, newest
-// first. The control-plane database is deliberately not consulted: after a
-// reinstall it knows nothing, and the bucket is the truth.
-func (c *Controller) ListSnapshots(ctx context.Context, project, environment string) ([]SnapshotSummary, error) {
+// openTarget resolves the configured backup target and proves it answers.
+func (c *Controller) openTarget(ctx context.Context) (*Credentials, objectStore, error) {
 	credentials, err := c.deps.Targets.credentials(ctx, DefaultTargetName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	target, err := newObjectStore(targetLocation(credentials))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := target.Reachable(ctx); err != nil {
+		return nil, nil, &TargetUnreachableError{Err: err}
+	}
+	return credentials, target, nil
+}
+
+// ListSnapshots enumerates one environment's snapshots from S3, newest
+// first. The control-plane database is deliberately not consulted: after a
+// reinstall it knows nothing, and the bucket is the truth.
+func (c *Controller) ListSnapshots(ctx context.Context, project, environment string) ([]SnapshotSummary, error) {
+	credentials, target, err := c.openTarget(ctx)
+	if err != nil {
+		return nil, err
+	}
+	summaries, err := c.listSnapshotsUnder(ctx, target, snapshotPrefix(credentials.Prefix, project, environment))
+	if err != nil {
+		return nil, err
+	}
+	sortNewestFirst(summaries)
+	return summaries, nil
+}
+
+// ListProjectSnapshots enumerates the snapshots of every environment the
+// bucket holds for the project, newest first. Environments are discovered
+// from the key layout, so snapshots of environments the control plane no
+// longer knows are listed too.
+func (c *Controller) ListProjectSnapshots(ctx context.Context, project string) ([]SnapshotSummary, error) {
+	credentials, target, err := c.openTarget(ctx)
+	if err != nil {
+		return nil, err
+	}
+	environments, err := c.projectEnvironments(ctx, target, credentials.Prefix, project)
+	if err != nil {
+		return nil, err
+	}
+	var summaries []SnapshotSummary
+	for _, environment := range environments {
+		found, err := c.listSnapshotsUnder(ctx, target, snapshotPrefix(credentials.Prefix, project, environment))
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, found...)
+	}
+	sortNewestFirst(summaries)
+	return summaries, nil
+}
+
+// projectEnvironments lists the environment names that have a key prefix
+// under the project's base in the bucket.
+func (c *Controller) projectEnvironments(ctx context.Context, target objectStore, prefix, project string) ([]string, error) {
+	prefixes, err := target.ListPrefixes(ctx, projectBase(prefix, project)+"/")
+	if err != nil {
 		return nil, &TargetUnreachableError{Err: err}
 	}
+	environments := make([]string, 0, len(prefixes))
+	for _, environmentPrefix := range prefixes {
+		environments = append(environments, environmentFromBase(environmentPrefix))
+	}
+	sort.Strings(environments)
+	return environments, nil
+}
+
+// findSnapshot locates a snapshot's manifest key anywhere in the project:
+// snapshot ids are unique across environments, so the id alone identifies
+// it. Returns ErrSnapshotNotFound when no environment holds it.
+func (c *Controller) findSnapshot(ctx context.Context, target objectStore, prefix, project, snapshotID string) (string, error) {
+	environments, err := c.projectEnvironments(ctx, target, prefix, project)
+	if err != nil {
+		return "", err
+	}
+	for _, environment := range environments {
+		key := manifestKey(prefix, project, environment, snapshotID)
+		if _, err := target.Stat(ctx, key); err != nil {
+			if errors.Is(err, errNotFound) {
+				continue
+			}
+			return "", &TargetUnreachableError{Err: err}
+		}
+		return key, nil
+	}
+	return "", ErrSnapshotNotFound
+}
+
+func (c *Controller) listSnapshotsUnder(ctx context.Context, target objectStore, prefix string) ([]SnapshotSummary, error) {
 	var keys []string
-	err = target.List(ctx, snapshotPrefix(credentials.Prefix, project, environment), func(info objectInfo) error {
+	err := target.List(ctx, prefix, func(info objectInfo) error {
 		keys = append(keys, info.Key)
 		return nil
 	})
@@ -218,10 +299,13 @@ func (c *Controller) ListSnapshots(ctx context.Context, project, environment str
 		}
 		summaries = append(summaries, summarize(manifest))
 	}
+	return summaries, nil
+}
+
+func sortNewestFirst(summaries []SnapshotSummary) {
 	sort.Slice(summaries, func(i, j int) bool {
 		return summaries[i].CreatedAt.After(summaries[j].CreatedAt)
 	})
-	return summaries, nil
 }
 
 func (c *Controller) readManifest(ctx context.Context, target objectStore, key string) (*Manifest, error) {

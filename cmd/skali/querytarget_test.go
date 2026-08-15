@@ -60,7 +60,7 @@ func TestResolveQueryTargetUnboundScansCurrentRemote(t *testing.T) {
 	target, err := resolveQueryTarget(context.Background(), t.TempDir(), "production", "")
 	require.NoError(t, err)
 	require.Equal(t, "r", target.remoteName)
-	require.Empty(t, target.project)
+	require.Equal(t, "flowdemo", target.project)
 	require.Equal(t, "p2-e1", target.environmentID)
 
 	_, err = resolveQueryTarget(context.Background(), t.TempDir(), "missing", "")
@@ -109,4 +109,40 @@ func TestResolveQueryTargetUnknownBoundMaster(t *testing.T) {
 	_, err := resolveQueryTarget(context.Background(), project.Root, "", "")
 	require.ErrorContains(t, err, "no remote for https://gone.example.com on this machine")
 	require.ErrorContains(t, err, "skali remote add")
+}
+
+func TestResolveQueryProjectFallsBackToManifestName(t *testing.T) {
+	bound := newFakeInstall(t)
+	bound.seed("p1", "flowdemo", "production")
+	local := newFakeInstall(t)
+	local.seed("p9", "flowdemo", "local")
+	empty := newFakeInstall(t)
+	stageRemotes(t, "", map[string]*cliconfig.Remote{
+		"bound": {Master: bound.srv.URL},
+		"local": {Master: local.srv.URL},
+		"empty": {Master: empty.srv.URL},
+	})
+	project := testFlowProject(t)
+	require.NoError(t, checkout.Save(project.Root, &checkout.Target{
+		Master: bound.srv.URL, Project: "flowdemo", Environment: "production"}))
+
+	// A remote override ignores the binding, but the checkout's manifest
+	// still names the project, so no environment is needed to scope a
+	// project-wide read.
+	scope, err := resolveQueryProject(context.Background(), project.Root, "", "local")
+	require.NoError(t, err)
+	require.Equal(t, "local", scope.remoteName)
+	require.Equal(t, "p9", scope.project.ID)
+	require.Nil(t, scope.binding)
+	require.Len(t, scope.environments, 1)
+
+	_, err = resolveQueryProject(context.Background(), project.Root, "", "empty")
+	require.ErrorContains(t, err, "project flowdemo does not exist on "+empty.srv.URL)
+
+	// Outside any checkout the environment is the only handle.
+	_, err = resolveQueryProject(context.Background(), t.TempDir(), "", "local")
+	require.ErrorContains(t, err, "--environment is required")
+	scope, err = resolveQueryProject(context.Background(), t.TempDir(), "local", "local")
+	require.NoError(t, err)
+	require.Equal(t, "p9", scope.project.ID)
 }
