@@ -76,7 +76,6 @@ func startDevChildren(ctx context.Context, mux *logMux, out io.Writer, api *clie
 			return nil, err
 		}
 		group.children = append(group.children, child)
-		fmt.Fprintf(out, "  %s      %s\n", style.Dim("local"), key+": "+strings.Join(argv, " "))
 		go watchDevChild(ctx, mux, child)
 		go probeDevPorts(ctx, mux, child, ports[key])
 	}

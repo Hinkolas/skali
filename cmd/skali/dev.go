@@ -130,9 +130,7 @@ func newDevCommand() *cobra.Command {
 			// or cancel it when --force asked for a fresh deploy. A failed
 			// environment lookup means nothing is deployed yet.
 			attachToRunning := func(api *client.Client, environmentID string) error {
-				if err := printDevReady(command, devPorts); err != nil {
-					return err
-				}
+				printDevReady(command, api, environmentID, devPorts)
 				if detach {
 					return nil
 				}
@@ -171,6 +169,7 @@ func newDevCommand() *cobra.Command {
 				Rebuild:            rebuild,
 				OnDeploymentOpened: func(id string) { window.Store(id) },
 				OnDeploymentClosed: func() { window.Store("") },
+				SkipReadySummary:   true,
 			}
 			if len(devApps) > 0 {
 				opts.LocalApplications = make(map[string]client.LocalApplication, len(devApps))
@@ -215,15 +214,13 @@ func newDevCommand() *cobra.Command {
 					return attachToRunning(api, environmentID)
 				}
 			}
-			if err := printDevReady(command, devPorts); err != nil {
-				return err
-			}
-			if detach || outcome == deployOutcomeDetached {
-				return nil
-			}
 			api, environmentID, err := localProjectEnvironment(command)
 			if err != nil {
 				return err
+			}
+			printDevReady(command, api, environmentID, devPorts)
+			if detach || outcome == deployOutcomeDetached {
+				return nil
 			}
 			return followWithChildren(api, environmentID)
 		},
@@ -1065,19 +1062,14 @@ func runDevReset(command *cobra.Command, yes bool) error {
 	return nil
 }
 
-func printDevReady(command *cobra.Command, devPorts map[string]map[string]int) error {
-	out := command.OutOrStdout()
-	style := clirender.StyleFor(out)
-	fmt.Fprintf(out, "  %s  %s\n", style.Dim("dashboard"), style.Cyan(localdev.MasterURL()))
-	fmt.Fprintf(out, "  %s     http://<domain>:%d for your manifest's *.localhost domains\n",
-		style.Dim("routes"), localdev.HTTPPort())
-	for _, key := range utils.SortedKeys(devPorts) {
-		ports := make([]string, 0, len(devPorts[key]))
-		for _, name := range utils.SortedKeys(devPorts[key]) {
-			ports = append(ports, fmt.Sprintf("%s=localhost:%d", name, devPorts[key][name]))
-		}
-		fmt.Fprintf(out, "  %s  %s intercepted to the host dev process (%s)\n",
-			style.Dim("local"), key, strings.Join(ports, ", "))
-	}
-	return nil
+// printDevReady prints the local ready summary: the dashboard, every
+// route as a clickable localhost URL, and the host dev process behind an
+// intercepted application.
+func printDevReady(command *cobra.Command, api *client.Client, environmentID string,
+	devPorts map[string]map[string]int) {
+	printReadySummary(command.Context(), command.OutOrStdout(), api, environmentID, readySummary{
+		Dashboard: localdev.MasterURL(),
+		HTTPPort:  localdev.HTTPPort(),
+		DevPorts:  devPorts,
+	})
 }

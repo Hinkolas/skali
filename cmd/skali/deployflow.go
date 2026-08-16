@@ -78,6 +78,9 @@ type deployOptions struct {
 	// --preview leave it nil, so those flows build dev-block apps exactly
 	// like any other.
 	LocalApplications map[string]client.LocalApplication
+	// SkipReadySummary leaves the route summary under the ready line to the
+	// caller; dev prints its own with the dashboard and host dev processes.
+	SkipReadySummary bool
 }
 
 // project bundles everything the flow knows about the local checkout.
@@ -1218,6 +1221,9 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	switch status {
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
+		if !opts.SkipReadySummary {
+			printReadySummary(ctx, out, api, environmentID, remoteReadySummary(target.remoteName))
+		}
 		return deployOutcomeReady, nil
 	case "failed":
 		return "", fmt.Errorf("run %s failed", opened.Deployment.RunID)

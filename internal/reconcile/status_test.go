@@ -43,3 +43,13 @@ func TestExpressionDisplay(t *testing.T) {
 	}}
 	require.Equal(t, "api.${APP_DOMAIN}", expressionDisplay(expression))
 }
+
+func TestRouteDomain(t *testing.T) {
+	t.Parallel()
+	expression := compiler.Expression{Parts: []compiler.ExpressionPart{
+		{Kind: "literal", Value: "api."},
+		{Kind: "project_variable", Name: "APP_DOMAIN"},
+	}}
+	require.Equal(t, "api.example.com", routeDomain(expression, map[string]string{"APP_DOMAIN": "example.com"}))
+	require.Equal(t, "api.${APP_DOMAIN}", routeDomain(expression, nil), "unresolvable keeps the placeholder")
+}

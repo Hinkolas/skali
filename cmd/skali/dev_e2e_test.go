@@ -877,10 +877,12 @@ applications:
 	}
 
 	waitForOutput("following logs", 15*time.Minute)
-	require.Contains(t, output.String(), "intercepted to the host dev process")
-	// The ready line carries the auto-allocated port; it must come from the
-	// allocation range.
-	portMatch := regexp.MustCompile(`web=localhost:(\d+)`).FindStringSubmatch(output.String())
+	require.Contains(t, output.String(), "-> dev process on localhost:")
+	// The ready summary lists the route as a URL on the local edge port and
+	// carries the auto-allocated port; it must come from the allocation
+	// range.
+	require.Contains(t, output.String(), "http://dev-loop.localhost:")
+	portMatch := regexp.MustCompile(`-> dev process on localhost:(\d+)`).FindStringSubmatch(output.String())
 	require.NotNil(t, portMatch, "no allocated port in session output:\n%s", output.String())
 	devPort, err := strconv.Atoi(portMatch[1])
 	require.NoError(t, err)
@@ -913,7 +915,7 @@ applications:
 	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, "index.html"),
 		[]byte("dev-loop-preview-marker\n"), 0o644))
 	out = h.run(false, "", "dev", "--preview", "-d", "--skalid-image", "skalid:dev")
-	require.NotContains(t, out, "intercepted to the host dev process")
+	require.NotContains(t, out, "-> dev process on")
 	h.waitRoute("dev-loop-preview-marker", 10*time.Minute)
 
 	h.run(false, "", "dev", "down")

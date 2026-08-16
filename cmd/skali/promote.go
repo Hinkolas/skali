@@ -273,6 +273,7 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	switch status {
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
+		printReadySummary(ctx, out, api, environmentID, remoteReadySummary(promote.remoteName))
 		return deployOutcomeReady, nil
 	case "failed":
 		return "", fmt.Errorf("run %s failed", opened.Deployment.RunID)

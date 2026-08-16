@@ -38,8 +38,8 @@ run 01J9W1KD  deploy file-sharing to local
   ok  Activate revision
 
 ready
-  http://files.localhost:8080   ->  applications.web
-  dashboard                     http://skali.localhost:8080
+  dashboard  http://skali.localhost:8080
+  web        http://files.localhost:8080
 
 following logs; Ctrl-C pauses the project (skali dev -d keeps it running)
   web-6d9f7b-1  listening on :8080
@@ -52,9 +52,13 @@ Pinned by this transcript:
 - `./.env` is used automatically when present and announced; `--env-file`
   overrides it.
 - The local edge publishes HTTP on host port 8080; routes use `*.localhost`
-  names. The local platform is HTTP-only: TLS issuance is a production
-  concern, and unsupported production guarantees (TLS, real failover,
-  multi-node placement) are simply absent, not simulated.
+  names. The block under `ready` is the same route summary `skali deploy`
+  prints, with the local host port on every URL and the dashboard first;
+  an application served by a host dev process (a `dev:` block) carries
+  `-> dev process on localhost:<port>` after its route. The local platform
+  is HTTP-only: TLS issuance is a production concern, and unsupported
+  production guarantees (TLS, real failover, multi-node placement) are
+  simply absent, not simulated.
 
 ## 2. Repeat run without changes
 
@@ -68,7 +72,8 @@ artifact for web is current (context unchanged, sha256:5b77e0a1...)
 definition, values, and artifacts match active revision 4c19f2aa
 
 nothing to deploy; attaching
-  http://files.localhost:8080   ->  applications.web
+  dashboard  http://skali.localhost:8080
+  web        http://files.localhost:8080
 ```
 
 An unchanged deploy reuses the artifact and creates no meaningless revision.
@@ -88,6 +93,7 @@ a deployment is already in flight; attaching to run 01J9W2R4
 
 ready
   dashboard  http://skali.localhost:8080
+  web        http://files.localhost:8080
 
 following logs; Ctrl-C pauses the project (skali dev -d keeps it running)
   web-6d9f7b-1  listening on :8080

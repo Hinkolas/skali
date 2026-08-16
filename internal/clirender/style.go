@@ -57,6 +57,17 @@ func (s *Style) Dim(text string) string     { return s.wrap("2", text) }
 func (s *Style) Bold(text string) string    { return s.wrap("1", text) }
 func (s *Style) BoldRed(text string) string { return s.wrap("1;31", text) }
 
+// Link renders a URL as a cyan OSC 8 hyperlink so terminals that support
+// it open the target on click; the URL text itself stays visible, so
+// terminals without OSC 8 still auto-detect it. Plain output is the bare
+// URL.
+func (s *Style) Link(url string) string {
+	if !s.on() || url == "" {
+		return url
+	}
+	return "\x1b]8;;" + url + "\x1b\\" + s.Cyan(url) + "\x1b]8;;\x1b\\"
+}
+
 // spinnerFrames animate running work; every frame is one terminal cell.
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 

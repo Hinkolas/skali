@@ -88,9 +88,17 @@ run 01J9V2E8  deploy file-sharing to production
   ok  Verify revision health
   ok  Activate revision
 
-active revision 8d1e15b3 (previously 2a91a76b)
-  https://files.example.com  ->  applications.web
+ready
+  web  https://files.example.com
 ```
+
+The block under `ready` lists every public route of the environment as a
+clickable URL, one row per application (a second route continues on the
+next line). A route whose certificate is not active yet carries its state
+(`cert issuing (Pending)`) so an https link that does not answer yet is no
+surprise. Applications without routes are omitted; a deployment with no
+routes at all ends on the bare `ready` line. `promote` and `rollback` end
+on the same block.
 
 While a choice is active, the same block shows its keyboard hint and choices;
 it settles to the compact `◆`/`└` form above before deployment rendering

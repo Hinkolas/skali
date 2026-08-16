@@ -132,9 +132,44 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		if err != nil {
 			return nil, err
 		}
-		status.Services = k.evaluateServices(targetRevision, k.deps.Observed.Snapshot(environmentID), intercepts)
+		variables, err := k.routeVariables(ctx, environmentID, targetRevision)
+		if err != nil {
+			return nil, err
+		}
+		status.Services = k.evaluateServices(targetRevision, k.deps.Observed.Snapshot(environmentID),
+			intercepts, variables)
 	}
 	return status, nil
+}
+
+// routeVariables loads the plaintexts of exactly the project variables the
+// revision's route domains reference, so the status projection can show
+// each route's resolved public hostname instead of its ${NAME} placeholder.
+// A hostname is public by construction, so nothing beyond what the edge
+// already serves leaves the store; every other value stays untouched.
+func (k *Kernel) routeVariables(ctx context.Context, environmentID uuid.UUID,
+	rev *revision.Revision) (map[string]string, error) {
+	refs := map[string]int{}
+	for _, application := range rev.Definition.Applications {
+		for _, route := range application.Routes {
+			for _, part := range route.Domain.Parts {
+				if part.Kind != "project_variable" {
+					continue
+				}
+				if secret, ok := rev.Secrets[part.Name]; ok {
+					refs[part.Name] = secret.Version
+				}
+			}
+		}
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	variables, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
+	if err != nil {
+		return nil, fmt.Errorf("reconcile: resolve route variables: %w", err)
+	}
+	return variables, nil
 }
 
 // SubscribeStatus delivers invalidation nudges for one environment; the
@@ -150,7 +185,7 @@ func (k *Kernel) SubscribeStatus(environmentID uuid.UUID) (<-chan observe.Invali
 // projections use the dotted form so keys can never collide across
 // collections.
 func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snapshot,
-	intercepts map[string]map[string]int32) []ServiceStatus {
+	intercepts map[string]map[string]int32, variables map[string]string) []ServiceStatus {
 	type entry struct {
 		key         string
 		serviceType string
@@ -180,7 +215,7 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 		status := ServiceStatus{Key: item.key, Type: item.serviceType}
 		if item.withPods {
 			status.Pods = podsFor(snapshot, item.key)
-			status.Routes = routesFor(rev.Definition, snapshot, item.key)
+			status.Routes = routesFor(rev.Definition, snapshot, item.key, variables)
 		}
 		if _, ok := intercepts[item.key]; ok && item.serviceType == "application" {
 			// Synthesized at the kernel, not in the app module: the module
@@ -226,9 +261,11 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 
 // routesFor joins the application's declared routes with the observed
 // certificates, keyed by the rendered certificate name. The domain prefers
-// the certificate's dnsNames (the resolved value); a route whose
-// certificate is absent falls back to the manifest expression.
-func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot, key string) []RouteStatus {
+// the certificate's dnsNames (the value the edge actually serves), then
+// the expression resolved against the revision's pinned variables; only
+// when neither resolves does it fall back to the manifest expression.
+func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot, key string,
+	variables map[string]string) []RouteStatus {
 	application, ok := definition.Applications[key]
 	if !ok || len(application.Routes) == 0 {
 		return nil
@@ -245,7 +282,7 @@ func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot,
 		route := application.Routes[routeKey]
 		status := RouteStatus{
 			Key:      routeKey,
-			Domain:   expressionDisplay(route.Domain),
+			Domain:   routeDomain(route.Domain, variables),
 			Path:     route.Path,
 			TLS:      route.TLS,
 			Strategy: route.Strategy,
@@ -288,6 +325,15 @@ func certificateState(certificate *module.CertificateStatus, now time.Time) stri
 	default:
 		return "pending"
 	}
+}
+
+// routeDomain resolves a route domain against the pinned variables and
+// falls back to the placeholder rendering when a variable is missing.
+func routeDomain(expression compiler.Expression, variables map[string]string) string {
+	if domain, err := compiler.ResolveExpression(expression, variables); err == nil {
+		return domain
+	}
+	return expressionDisplay(expression)
 }
 
 // expressionDisplay renders a compiled expression for status output:

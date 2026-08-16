@@ -135,7 +135,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	// Pre-pass health gates later batches: a dependency that is not ready
 	// produces a visible waiting step, not an opaque retry.
-	preHealth := healthByService(k.evaluateServices(rev, snapshot, intercepts))
+	preHealth := healthByService(k.evaluateServices(rev, snapshot, intercepts, nil))
 	var unhealthyEarlier []string
 	for _, batch := range batches {
 		blockedOn := strings.Join(unhealthyEarlier, ", ")
@@ -257,7 +257,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
-	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID), intercepts)
+	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID), intercepts, nil)
 	// A service blocked on a projection the observation never delivered
 	// cannot be healed by waiting: the object exists on the cluster but its
 	// creation fell into an informer-establishment gap, and no further

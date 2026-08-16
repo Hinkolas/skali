@@ -128,6 +128,7 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 	switch status {
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
+		printReadySummary(ctx, out, target.api, target.environmentID, remoteReadySummary(target.remoteName))
 		return nil
 	case "failed":
 		return fmt.Errorf("run %s failed", result.RunID)
