@@ -326,6 +326,118 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.NotEqual(t, revisionID, body["revision_id"])
 }
 
+// deployAPIManifestNoSecret drops the ${SESSION_SECRET} reference; the
+// stored value becomes orphaned.
+const deployAPIManifestNoSecret = `version: "1"
+name: demo
+applications:
+  web:
+    build:
+      context: .
+    ports:
+      http:
+        port: 8080
+        protocol: http
+    volumes:
+      data:
+        mountPath: /data
+        size: 1GB
+`
+
+// completeDeployment opens a deployment for the definition, verifies its
+// build artifact when one is wanted, completes it, and settles the rollout
+// (run finished, revision activated). Extra request fields are merged in.
+func (a *testAPI) completeDeployment(t *testing.T, token, envID, definitionVersion string, extra map[string]any) map[string]any {
+	t.Helper()
+	request := map[string]any{
+		"definition_version_id": definitionVersion,
+		"builds":                buildsPayload(),
+	}
+	for key, value := range extra {
+		request[key] = value
+	}
+	status, body := a.do("POST", "/v1/environments/"+envID+"/deployments", token, request)
+	require.Equal(t, http.StatusCreated, status, "%v", body)
+	deployment := body["deployment"].(map[string]any)
+	deploymentID := deployment["id"].(string)
+	action := body["actions"].([]any)[0].(map[string]any)
+	if action["action"] == "build" {
+		a.registryHolds("skali/demo/web", webDigest)
+		status, body = a.do("POST", "/v1/artifacts/"+action["artifact_id"].(string)+"/verify", token, map[string]any{
+			"deployment_id": deploymentID, "digest": webDigest,
+		})
+		require.Equal(t, http.StatusOK, status, "%v", body)
+	}
+	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	a.finishRun(t, deployment["run_id"].(string))
+	a.activate(t, envID)
+	return body
+}
+
+// Pruning is a deployment concern: the plan reports orphaned stored values
+// as an advisory until the request asks to prune, at which point they turn
+// into plan rows, force a window on an otherwise unchanged environment,
+// and completion unsets them.
+func TestDeploymentPruneValues(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("prune@example.com", "hunter2hunter2")
+	token := a.login("prune@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+
+	withSecret := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	candidate := a.stageValues(t, token, envID, withSecret, "prune-plant-value")
+	a.completeDeployment(t, token, envID, withSecret, map[string]any{"candidate_id": candidate})
+
+	// The reference goes away; the value stays stored and orphaned.
+	noSecret := a.submitDefinition(t, token, projectID, deployAPIManifestNoSecret)
+	status, body := a.do("POST", "/v1/environments/"+envID+"/plan", token, map[string]any{
+		"definition_version_id": noSecret,
+		"builds":                buildsPayload(),
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, []any{"SESSION_SECRET"}, body["orphaned"])
+	a.completeDeployment(t, token, envID, noSecret, nil)
+
+	// Unchanged: up to date, still advisory, no plan rows.
+	status, body = a.do("POST", "/v1/environments/"+envID+"/plan", token, map[string]any{
+		"definition_version_id": noSecret,
+		"builds":                buildsPayload(),
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.True(t, body["up_to_date"].(bool))
+	require.Equal(t, []any{"SESSION_SECRET"}, body["orphaned"])
+	require.Nil(t, body["plan"].(map[string]any)["values"])
+
+	// Asked to prune: a plan row, no advisory, and a real window.
+	status, body = a.do("POST", "/v1/environments/"+envID+"/plan", token, map[string]any{
+		"definition_version_id": noSecret,
+		"builds":                buildsPayload(),
+		"prune_values":          true,
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.False(t, body["up_to_date"].(bool))
+	require.NotContains(t, body, "orphaned")
+	require.Equal(t, []any{map[string]any{"name": "SESSION_SECRET", "action": "prune"}},
+		body["plan"].(map[string]any)["values"])
+
+	a.completeDeployment(t, token, envID, noSecret, map[string]any{"prune_values": true})
+	status, body = a.do("GET", "/v1/environments/"+envID+"/values", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, body["values"])
+
+	// Nothing left: pruning again is a no-op and the environment is up to
+	// date.
+	status, body = a.do("POST", "/v1/environments/"+envID+"/plan", token, map[string]any{
+		"definition_version_id": noSecret,
+		"builds":                buildsPayload(),
+		"prune_values":          true,
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.True(t, body["up_to_date"].(bool))
+	require.NotContains(t, body, "orphaned")
+}
+
 func TestDeploymentDestructiveGate(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("destructive@example.com", "hunter2hunter2")

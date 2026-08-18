@@ -2,9 +2,9 @@
 INSERT INTO deployments (
     id, project_id, environment_id, definition_version_id,
     candidate_id, run_id, actor, build_executor, actions, restart,
-    local_applications
+    local_applications, prune_values
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
 -- name: GetDeploymentByID :one

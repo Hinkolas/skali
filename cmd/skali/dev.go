@@ -32,7 +32,7 @@ const localEnvironmentName = "local"
 
 func newDevCommand() *cobra.Command {
 	var envFile, skalidImage, platform string
-	var detach, force, rebuild, preview bool
+	var detach, force, rebuild, preview, pruneValues bool
 	command := &cobra.Command{
 		Use:   "dev",
 		Short: "Run the project on the local skali platform",
@@ -167,6 +167,7 @@ func newDevCommand() *cobra.Command {
 				Platform:           platform,
 				Force:              force || rebuild,
 				Rebuild:            rebuild,
+				PruneValues:        pruneValues,
 				OnDeploymentOpened: func(id string) { window.Store(id) },
 				OnDeploymentClosed: func() { window.Store("") },
 				SkipReadySummary:   true,
@@ -238,6 +239,8 @@ func newDevCommand() *cobra.Command {
 		"rebuild and re-import artifacts without caches, picking up moved base images (implies --force)")
 	command.Flags().BoolVar(&preview, "preview", false,
 		"build and deploy every application in the cluster, ignoring dev blocks; no local dev processes run")
+	command.Flags().BoolVar(&pruneValues, "prune-values", false,
+		"remove stored values the manifest no longer references as part of this deployment")
 
 	up := &cobra.Command{
 		Use:   "up",
@@ -363,7 +366,7 @@ func newDevCommand() *cobra.Command {
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
 	command.AddCommand(up, upgrade, status, logs, newDevExecCommand(), newDevRunCommand(),
-		down, ls, stop, start, reset)
+		newDevValuesCommand(), down, ls, stop, start, reset)
 	return command
 }
 

@@ -231,6 +231,7 @@ type Deployment struct {
 	UpdatedAt           time.Time
 	Restart             bool
 	LocalApplications   []byte
+	PruneValues         bool
 }
 
 type Environment struct {

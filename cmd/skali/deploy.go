@@ -85,6 +85,8 @@ func addDeployFlags(command *cobra.Command, opts *deployOptions) {
 		"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
 	command.Flags().StringVar(&opts.From, "from", "",
 		"promote the active revision of another environment of this project; nothing builds and no manifest is read")
+	command.Flags().BoolVar(&opts.PruneValues, "prune-values", false,
+		"remove stored values the manifest no longer references as part of this deployment")
 }
 
 // validateFromFlags rejects build machinery combined with a promotion:

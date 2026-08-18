@@ -308,6 +308,10 @@ type DeployRequest struct {
 	// Service to the declared host ports. Each deploy replaces the
 	// environment's intercept set, so an absent map clears it.
 	LocalApplications map[string]LocalApplication `json:"local_applications,omitempty"`
+	// PruneValues removes the stored values the definition no longer
+	// references as part of the deployment; they show as prune rows in the
+	// plan instead of the orphaned advisory.
+	PruneValues bool `json:"prune_values,omitempty"`
 }
 
 // LocalApplication maps an application's manifest port names to the host
@@ -336,6 +340,9 @@ func (c *Client) Plan(ctx context.Context, environmentID string, req DeployReque
 	}
 	if len(req.LocalApplications) > 0 {
 		body["local_applications"] = req.LocalApplications
+	}
+	if req.PruneValues {
+		body["prune_values"] = true
 	}
 	if err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/plan", body, &res); err != nil {
 		return nil, err
@@ -575,12 +582,6 @@ func (c *Client) EnvironmentValues(ctx context.Context, environmentID string) ([
 		return nil, err
 	}
 	return res.Values, nil
-}
-
-// UnsetEnvironmentValue tombstones one stored value: the next deployment no
-// longer includes it, while pinned revisions keep resolving.
-func (c *Client) UnsetEnvironmentValue(ctx context.Context, environmentID, name string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/environments/"+environmentID+"/values/"+name, nil, nil)
 }
 
 func (c *Client) EnvironmentStatus(ctx context.Context, environmentID string) (*EnvironmentStatus, error) {

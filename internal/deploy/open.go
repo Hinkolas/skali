@@ -210,6 +210,12 @@ type PlanInput struct {
 	// exists only on the local platform, where CLI and server versions are
 	// locked together.
 	ManagedCluster bool
+	// PruneValues removes the stored values the definition no longer
+	// references as part of this deployment: they show as prune rows in
+	// the plan instead of the orphaned advisory, force a real deployment
+	// window even when nothing else changed, and are unset in the
+	// promotion transaction.
+	PruneValues bool
 }
 
 // Preview is a computed plan with its artifact decisions; nothing is
@@ -224,7 +230,8 @@ type Preview struct {
 	// checksum is only real when no placeholder artifacts were needed.
 	Candidate *revision.Revision
 	// Orphaned lists stored value names the definition no longer
-	// references; they are ignored by deployments. Advisory only.
+	// references; they are ignored by deployments. Advisory only, and
+	// empty when the plan prunes them instead.
 	Orphaned []string
 }
 
@@ -277,7 +284,7 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 		if err != nil {
 			return nil, err
 		}
-		return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, nil, changed)
+		return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, nil, changed, in.PruneValues)
 	}
 	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 	if err != nil {
@@ -331,7 +338,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	if src != nil {
 		var changed bool
 		if changed, err = s.interceptsChanged(ctx, env.ID, nil); err == nil {
-			preview, err = s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, nil, changed)
+			preview, err = s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, nil, changed, in.PruneValues)
 		}
 	} else {
 		preview, err = s.preview(ctx, env, definitionVersion, definition, in.PlanInput)
@@ -434,6 +441,7 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 		Actions:             encodedActions,
 		Restart:             in.Force,
 		LocalApplications:   encodedLocals,
+		PruneValues:         in.PruneValues,
 	})
 	if err != nil {
 		return nil, err
@@ -585,6 +593,7 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 		Restart:             deployment.Restart,
 		DeploymentID:        deploymentID,
 		LocalApplications:   locals,
+		PruneValues:         deployment.PruneValues,
 	})
 	if err != nil {
 		// Promotion marks the deployment promoted inside its own
@@ -818,7 +827,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 	if err != nil {
 		return nil, err
 	}
-	return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, actions, artifacts, allReuse, in.LocalApplications, changed)
+	return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, actions, artifacts, allReuse, in.LocalApplications, changed, in.PruneValues)
 }
 
 // validateLocalApplications gates a request's local-application set: the
@@ -880,11 +889,15 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 	definitionVersion store.DefinitionVersion, definition compiler.ProjectDefinition,
 	candidateID uuid.UUID, actions []ArtifactAction,
 	artifacts map[string]revision.Artifact, allReuse bool,
-	locals map[string]LocalApplication, interceptsChanged bool) (*Preview, error) {
+	locals map[string]LocalApplication, interceptsChanged, pruneValues bool) (*Preview, error) {
 
 	secretVersions, orphaned, err := s.resolveValues(ctx, env.ID, candidateID, definition.RequiredVariables)
 	if err != nil {
 		return nil, err
+	}
+	var pruned []string
+	if pruneValues {
+		pruned, orphaned = orphaned, nil
 	}
 	candidate, err := revision.Build(revision.Input{
 		Result:            &compiler.Result{Hash: definitionVersion.DefinitionHash, Definition: definition},
@@ -912,10 +925,14 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 		activeChecksum = active.Checksum
 	}
 
+	document := plan.Diff(active, candidate)
+	document.Prune(pruned)
+	// Pruning is a change the deployment makes to the environment even
+	// when the revision is unchanged, so it must open a real window.
 	return &Preview{
-		Plan:      plan.Diff(active, candidate),
+		Plan:      document,
 		Actions:   actions,
-		UpToDate:  allReuse && !interceptsChanged && active != nil && candidate.Checksum == activeChecksum,
+		UpToDate:  allReuse && !interceptsChanged && len(pruned) == 0 && active != nil && candidate.Checksum == activeChecksum,
 		Candidate: candidate,
 		Orphaned:  orphaned,
 	}, nil

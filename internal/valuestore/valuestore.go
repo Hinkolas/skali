@@ -222,6 +222,23 @@ func (s *Service) Unset(ctx context.Context, environmentID uuid.UUID, names []st
 	return rows, nil
 }
 
+// UnsetTx is Unset inside the caller's transaction, used by deploy
+// promotion to prune the names a definition no longer references in the
+// same transaction that moves the target. Names without a current row are
+// silently skipped.
+func (s *Service) UnsetTx(ctx context.Context, q *store.Queries, environmentID uuid.UUID, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	if _, err := q.UnsetCurrentEnvironmentSecrets(ctx, store.UnsetCurrentEnvironmentSecretsParams{
+		EnvironmentID: environmentID,
+		Names:         names,
+	}); err != nil {
+		return fmt.Errorf("valuestore: unset values: %w", err)
+	}
+	return nil
+}
+
 // Redactor decrypts the environment's current values, plus the staged batch
 // of candidateID when it is not uuid.Nil, in memory only, and returns the
 // matcher the journal writer uses. The map is keyed by plaintext, so a

@@ -217,12 +217,14 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		CandidateID:       candidateID,
 		BuildExecutor:     "local",
 		Force:             opts.Force,
+		PruneValues:       opts.PruneValues,
 	}
 	planned, err := api.Plan(ctx, environmentID, request)
 	if err != nil {
 		return "", err
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
+	printOrphanedValues(out, planned.Orphaned)
 	if planOnly {
 		return deployOutcomePlanned, nil
 	}

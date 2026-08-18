@@ -47,6 +47,9 @@ type ExecuteInput struct {
 	// applications that resolve no artifact. Promotion replaces the
 	// environment's stored intercepts with it; empty clears them.
 	LocalApplications map[string]LocalApplication
+	// PruneValues unsets the stored values the definition no longer
+	// references at promotion instead of ignoring them.
+	PruneValues bool
 }
 
 type ExecuteResult struct {
@@ -116,6 +119,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		CandidateID:         in.CandidateID,
 		Resolver:            in.Resolver,
 		LocalApplications:   in.LocalApplications,
+		PruneValues:         in.PruneValues,
 	})
 	if err != nil {
 		_ = writer.Error(ctx, "preparation failed: "+err.Error())
@@ -152,6 +156,9 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	prepared.DeploymentID = in.DeploymentID
 	if in.Restart {
 		_ = promoteWriter.Info(ctx, "forced deployment: application workloads will restart")
+	}
+	if len(prepared.Pruned) > 0 {
+		_ = promoteWriter.Info(ctx, "pruning stored values not referenced by this definition: "+strings.Join(prepared.Pruned, ", "))
 	}
 	if err := s.Promote(ctx, prepared); err != nil {
 		_ = promoteWriter.Error(ctx, "promotion failed: "+err.Error())

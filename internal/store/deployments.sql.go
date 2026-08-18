@@ -16,10 +16,10 @@ const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (
     id, project_id, environment_id, definition_version_id,
     candidate_id, run_id, actor, build_executor, actions, restart,
-    local_applications
+    local_applications, prune_values
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values
 `
 
 type CreateDeploymentParams struct {
@@ -34,6 +34,7 @@ type CreateDeploymentParams struct {
 	Actions             []byte
 	Restart             bool
 	LocalApplications   []byte
+	PruneValues         bool
 }
 
 func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error) {
@@ -49,6 +50,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.Actions,
 		arg.Restart,
 		arg.LocalApplications,
+		arg.PruneValues,
 	)
 	var i Deployment
 	err := row.Scan(
@@ -67,12 +69,13 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.UpdatedAt,
 		&i.Restart,
 		&i.LocalApplications,
+		&i.PruneValues,
 	)
 	return i, err
 }
 
 const getDeploymentByID = `-- name: GetDeploymentByID :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications FROM deployments WHERE id = $1
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeploymentByID(ctx context.Context, id uuid.UUID) (Deployment, error) {
@@ -94,12 +97,13 @@ func (q *Queries) GetDeploymentByID(ctx context.Context, id uuid.UUID) (Deployme
 		&i.UpdatedAt,
 		&i.Restart,
 		&i.LocalApplications,
+		&i.PruneValues,
 	)
 	return i, err
 }
 
 const getDeploymentByRunID = `-- name: GetDeploymentByRunID :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications FROM deployments WHERE run_id = $1
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values FROM deployments WHERE run_id = $1
 `
 
 func (q *Queries) GetDeploymentByRunID(ctx context.Context, runID *uuid.UUID) (Deployment, error) {
@@ -121,12 +125,13 @@ func (q *Queries) GetDeploymentByRunID(ctx context.Context, runID *uuid.UUID) (D
 		&i.UpdatedAt,
 		&i.Restart,
 		&i.LocalApplications,
+		&i.PruneValues,
 	)
 	return i, err
 }
 
 const getDeploymentForUpdate = `-- name: GetDeploymentForUpdate :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications FROM deployments WHERE id = $1 FOR UPDATE
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values FROM deployments WHERE id = $1 FOR UPDATE
 `
 
 // Row lock so status transitions are guarded under the lifecycle machine.
@@ -149,12 +154,13 @@ func (q *Queries) GetDeploymentForUpdate(ctx context.Context, id uuid.UUID) (Dep
 		&i.UpdatedAt,
 		&i.Restart,
 		&i.LocalApplications,
+		&i.PruneValues,
 	)
 	return i, err
 }
 
 const getPreparingDeploymentForEnvironment = `-- name: GetPreparingDeploymentForEnvironment :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications FROM deployments WHERE environment_id = $1 AND status = 'preparing'
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values FROM deployments WHERE environment_id = $1 AND status = 'preparing'
 `
 
 func (q *Queries) GetPreparingDeploymentForEnvironment(ctx context.Context, environmentID uuid.UUID) (Deployment, error) {
@@ -176,12 +182,13 @@ func (q *Queries) GetPreparingDeploymentForEnvironment(ctx context.Context, envi
 		&i.UpdatedAt,
 		&i.Restart,
 		&i.LocalApplications,
+		&i.PruneValues,
 	)
 	return i, err
 }
 
 const listDeploymentsForEnvironment = `-- name: ListDeploymentsForEnvironment :many
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications FROM deployments
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values FROM deployments
 WHERE environment_id = $1
 ORDER BY created_at DESC
 LIMIT $2
@@ -217,6 +224,7 @@ func (q *Queries) ListDeploymentsForEnvironment(ctx context.Context, arg ListDep
 			&i.UpdatedAt,
 			&i.Restart,
 			&i.LocalApplications,
+			&i.PruneValues,
 		); err != nil {
 			return nil, err
 		}
@@ -229,7 +237,7 @@ func (q *Queries) ListDeploymentsForEnvironment(ctx context.Context, arg ListDep
 }
 
 const listStalePreparingDeployments = `-- name: ListStalePreparingDeployments :many
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications FROM deployments WHERE status = 'preparing' AND updated_at < $1
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values FROM deployments WHERE status = 'preparing' AND updated_at < $1
 `
 
 func (q *Queries) ListStalePreparingDeployments(ctx context.Context, updatedAt time.Time) ([]Deployment, error) {
@@ -257,6 +265,7 @@ func (q *Queries) ListStalePreparingDeployments(ctx context.Context, updatedAt t
 			&i.UpdatedAt,
 			&i.Restart,
 			&i.LocalApplications,
+			&i.PruneValues,
 		); err != nil {
 			return nil, err
 		}

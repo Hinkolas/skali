@@ -83,6 +83,9 @@ type PrepareInput struct {
 	// them and Promote replaces the environment's intercept rows with the
 	// set (empty clears them).
 	LocalApplications map[string]LocalApplication
+	// PruneValues turns the orphaned stored values into Pruned: Promote
+	// unsets them in the promotion transaction instead of ignoring them.
+	PruneValues bool
 }
 
 // Prepared carries everything Promote needs; it exists only in memory.
@@ -95,8 +98,13 @@ type Prepared struct {
 	CandidateID         uuid.UUID
 	ArtifactIDs         []uuid.UUID
 	// Orphaned lists stored value names the definition no longer references;
-	// they were ignored, not deployed. Advisory only.
+	// they were ignored, not deployed. Advisory only. Empty when pruning:
+	// the same names travel in Pruned instead.
 	Orphaned []string
+	// Pruned lists the stored value names Promote unsets: the orphaned set
+	// of a deployment that asked to prune. Pinned revisions keep resolving
+	// their versions; only the current generation goes.
+	Pruned []string
 	// Restart makes Promote stamp a workload restart on the target (a
 	// forced deployment); Prepare never sets it, the caller does.
 	Restart bool
@@ -186,6 +194,9 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 		Orphaned:            orphaned,
 		LocalApplications:   in.LocalApplications,
 	}
+	if in.PruneValues {
+		prepared.Orphaned, prepared.Pruned = nil, orphaned
+	}
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		id, err := uuid.NewV7()
 		if err != nil {
@@ -251,6 +262,11 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 			}
 		}
 		if err := s.values.PromoteTx(ctx, q, p.EnvironmentID, p.CandidateID); err != nil {
+			return err
+		}
+		// Pruning follows promotion so a staged batch can never resurrect a
+		// name this deployment was asked to remove.
+		if err := s.values.UnsetTx(ctx, q, p.EnvironmentID, p.Pruned); err != nil {
 			return err
 		}
 		// Replace the environment's intercept set: every deploy states the

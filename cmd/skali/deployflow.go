@@ -53,6 +53,10 @@ type deployOptions struct {
 	// Rebuild ignores artifact reuse and disables build caches so moved
 	// upstream tags and refreshed base images are picked up.
 	Rebuild bool
+	// PruneValues removes the stored values the manifest no longer
+	// references as part of this deployment (plan rows instead of the
+	// orphaned warning).
+	PruneValues bool
 	// Platform overrides the build platform(s); empty follows the
 	// server-reported cluster architecture.
 	Platform string
@@ -451,13 +455,30 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 		}
 	}
 	for _, value := range plan.Values {
-		fmt.Fprintf(out, "  %s %-24s %s\n", actionColor(style, "value"), value.Name, value.Action)
+		detail := value.Action
+		if value.Action == "prune" {
+			detail = "prune stored value"
+		}
+		fmt.Fprintf(out, "  %s %-24s %s\n", actionColor(style, "value"), value.Name, detail)
 	}
 	if plan.Empty() {
 		fmt.Fprintln(out, "  "+style.Dim("no changes"))
 	} else if !plan.Destructive() {
 		fmt.Fprintln(out, "\n"+style.Dim("no destructive changes"))
 	}
+}
+
+// printOrphanedValues surfaces the stored values the manifest no longer
+// references. Deployments ignore them; --prune-values turns them into plan
+// rows and removes them, so the hint names that flag in every flow that
+// prints a plan (deploy, dev, promote) instead of a separate command.
+func printOrphanedValues(out io.Writer, orphaned []string) {
+	if len(orphaned) == 0 {
+		return
+	}
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "\n  %s\n", style.Yellow("warning: ignoring stored values no longer referenced by the manifest: "+
+		strings.Join(orphaned, ", ")+" (re-run with --prune-values to remove them)"))
 }
 
 // healthHints names the applications whose compiled definition declares no
@@ -1144,6 +1165,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		Force:               opts.Force,
 		Rebuild:             opts.Rebuild,
 		LocalApplications:   opts.LocalApplications,
+		PruneValues:         opts.PruneValues,
 	}
 
 	activeChecksum := ""
@@ -1155,10 +1177,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
-	if len(planned.Orphaned) > 0 {
-		fmt.Fprintf(out, "\n  %s\n", style.Yellow("warning: ignoring stored values no longer referenced by the manifest: "+
-			strings.Join(planned.Orphaned, ", ")+" (remove them with skali values unset)"))
-	}
+	printOrphanedValues(out, planned.Orphaned)
 	printHealthHints(out, project.Result)
 	if planOnly {
 		return deployOutcomePlanned, nil

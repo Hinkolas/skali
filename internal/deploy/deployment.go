@@ -65,6 +65,9 @@ type NewDeployment struct {
 	// the row instead of trusting the client a second time. Empty means
 	// this deploy clears the environment's intercepts.
 	LocalApplications json.RawMessage
+	// PruneValues records that promotion unsets the stored values the
+	// definition no longer references.
+	PruneValues bool
 }
 
 // CreateDeployment inserts the coordination row in preparing. The partial
@@ -95,6 +98,7 @@ func (s *Service) CreateDeployment(ctx context.Context, in NewDeployment) (*stor
 		Actions:             actions,
 		Restart:             in.Restart,
 		LocalApplications:   in.LocalApplications,
+		PruneValues:         in.PruneValues,
 	})
 	if err != nil {
 		if store.IsUniqueViolation(err) {

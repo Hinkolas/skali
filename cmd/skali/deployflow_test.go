@@ -541,7 +541,10 @@ func TestPrintPlanShape(t *testing.T) {
 			{Service: "databases.data", Action: "remove", Destructive: true,
 				Detail: "deletes the logical database and its data"},
 		},
-		Values: []client.PlanValueChange{{Name: "SESSION_SECRET", Action: "update"}},
+		Values: []client.PlanValueChange{
+			{Name: "OLD_SECRET", Action: "prune"},
+			{Name: "SESSION_SECRET", Action: "update"},
+		},
 	}, []client.ArtifactAction{{Application: "web", Action: "build"}}, "8d1e15b3aaaa")
 
 	rendered := out.String()
@@ -549,6 +552,7 @@ func TestPrintPlanShape(t *testing.T) {
 	require.Contains(t, rendered, "artifact will be rebuilt")
 	require.Contains(t, rendered, "DESTRUCTIVE: deletes the logical database")
 	require.Contains(t, rendered, "SESSION_SECRET")
+	require.Contains(t, rendered, "value   OLD_SECRET               prune stored value")
 	require.NotContains(t, rendered, "no destructive changes")
 
 	// Each reason renders on its own line: the change row carries the first

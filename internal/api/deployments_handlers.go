@@ -149,6 +149,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		Builds              map[string]buildInputPayload       `json:"builds"`
 		Rebuild             bool                               `json:"rebuild"`
 		LocalApplications   map[string]localApplicationPayload `json:"local_applications"`
+		PruneValues         bool                               `json:"prune_values"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -178,6 +179,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		Rebuild:             req.Rebuild,
 		LocalApplications:   decodeLocalApplications(req.LocalApplications),
 		ManagedCluster:      h.managed,
+		PruneValues:         req.PruneValues,
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)
@@ -207,6 +209,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		Force               bool                               `json:"force"`
 		Rebuild             bool                               `json:"rebuild"`
 		LocalApplications   map[string]localApplicationPayload `json:"local_applications"`
+		PruneValues         bool                               `json:"prune_values"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -234,6 +237,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 			Rebuild:             req.Rebuild,
 			LocalApplications:   decodeLocalApplications(req.LocalApplications),
 			ManagedCluster:      h.managed,
+			PruneValues:         req.PruneValues,
 		},
 		Actor:              user.ID.String(),
 		BuildExecutor:      req.BuildExecutor,

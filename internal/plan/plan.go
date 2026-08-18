@@ -21,6 +21,11 @@ const (
 	ActionCreate Action = "create"
 	ActionUpdate Action = "update"
 	ActionRemove Action = "remove"
+	// ActionPrune applies to values only: the stored value is removed from
+	// the environment because the definition no longer references it. It
+	// is a store change, not a revision change, and only appears when the
+	// deployment was asked to prune.
+	ActionPrune Action = "prune"
 )
 
 type Change struct {
@@ -52,6 +57,17 @@ func (p *Plan) Destructive() bool {
 		}
 	}
 	return false
+}
+
+// Prune records the stored values a pruning deployment removes. The rows
+// sit next to the revision-level value changes, sorted by name; a name that
+// is both dropped from the revision and pruned from the store keeps both
+// rows, since they are two distinct facts.
+func (p *Plan) Prune(names []string) {
+	for _, name := range names {
+		p.Values = append(p.Values, ValueChange{Name: name, Action: ActionPrune})
+	}
+	sort.SliceStable(p.Values, func(i, j int) bool { return p.Values[i].Name < p.Values[j].Name })
 }
 
 // Diff compares the active revision with a candidate. A nil active revision

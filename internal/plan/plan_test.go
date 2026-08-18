@@ -140,6 +140,31 @@ func TestSecretVersionBumpIsAValueUpdate(t *testing.T) {
 	require.Equal(t, []ValueChange{{Name: "SESSION_SECRET", Action: ActionUpdate}}, result.Values)
 }
 
+func TestPruneAddsValueRowsWithoutTouchingDestructive(t *testing.T) {
+	t.Parallel()
+	active := buildRevision(t, baseManifest, nil)
+	candidate := buildRevision(t, baseManifest, func(input *revision.Input) {
+		input.SecretVersions = map[string]int{"SESSION_SECRET": 2}
+	})
+
+	result := Diff(active, candidate)
+	result.Prune([]string{"ZZ_OLD", "AA_OLD"})
+	// Sorted by name alongside the revision-level rows; prune is a store
+	// change, never a destructive one.
+	require.Equal(t, []ValueChange{
+		{Name: "AA_OLD", Action: ActionPrune},
+		{Name: "SESSION_SECRET", Action: ActionUpdate},
+		{Name: "ZZ_OLD", Action: ActionPrune},
+	}, result.Values)
+	require.False(t, result.Destructive())
+	require.False(t, result.Empty())
+
+	// Pruning nothing changes nothing.
+	unchanged := Diff(active, active)
+	unchanged.Prune(nil)
+	require.True(t, unchanged.Empty())
+}
+
 func TestVolumeRemovalIsDestructive(t *testing.T) {
 	t.Parallel()
 	withVolume := `

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/plan"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
@@ -452,6 +453,105 @@ applications:
 	require.Equal(t, []string{"SESSION_SECRET"}, second.Orphaned)
 	require.NotContains(t, second.Revision.Secrets, "SESSION_SECRET")
 	require.NoError(t, f.deploy.Promote(ctx, second))
+}
+
+// Pruning turns the orphaned advisory into a store change: the plan carries
+// prune rows, an otherwise unchanged environment is no longer up to date,
+// and promotion unsets the names in the same transaction while pinned
+// revisions keep resolving.
+func TestPruneValuesRemovesOrphanedAtPromotion(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	definitionVersion := f.submit(t, testManifest, 0)
+	candidate := f.stage(t,
+		map[string]string{"APP_DOMAIN": "demo.example.com", "SESSION_SECRET": "prune-plant-value"})
+	resolver := &artifactstore.Fake{Store: f.artifacts, ProjectID: f.projectID}
+	first, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: definitionVersion,
+		CandidateID: candidate.ID, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.deploy.Promote(ctx, first))
+
+	withoutSecret := `version: "1"
+name: demo
+applications:
+  web:
+    image: ghcr.io/example/web:3.0.0
+    ports:
+      http:
+        port: 8080
+        protocol: http
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN}"
+`
+	changedVersion, _, err := f.projects.SubmitCandidate(ctx, f.projectID, []byte(withoutSecret), "yaml")
+	require.NoError(t, err)
+
+	// Deploy the reference-free manifest without pruning: the value stays
+	// stored and orphaned.
+	second, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: changedVersion,
+		Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"SESSION_SECRET"}, second.Orphaned)
+	require.Empty(t, second.Pruned)
+	require.NoError(t, f.deploy.Promote(ctx, second))
+	rows, err := f.st.SetEnvironmentActiveRevision(ctx, store.SetEnvironmentActiveRevisionParams{
+		EnvironmentID: f.environmentID, ActiveRevisionID: &second.RevisionID,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+
+	// Same definition, nothing changed: up to date, orphaned advisory.
+	preview, err := f.deploy.PlanPreview(ctx, PlanInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: changedVersion,
+	})
+	require.NoError(t, err)
+	require.True(t, preview.UpToDate)
+	require.Equal(t, []string{"SESSION_SECRET"}, preview.Orphaned)
+	require.Empty(t, preview.Plan.Values)
+
+	// Asked to prune: the advisory becomes a plan row and forces a window.
+	preview, err = f.deploy.PlanPreview(ctx, PlanInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: changedVersion, PruneValues: true,
+	})
+	require.NoError(t, err)
+	require.False(t, preview.UpToDate)
+	require.Empty(t, preview.Orphaned)
+	require.Equal(t, []plan.ValueChange{{Name: "SESSION_SECRET", Action: plan.ActionPrune}}, preview.Plan.Values)
+	require.False(t, preview.Plan.Destructive())
+
+	third, err := f.deploy.Prepare(ctx, PrepareInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: changedVersion,
+		Resolver: resolver, PruneValues: true,
+	})
+	require.NoError(t, err)
+	require.Empty(t, third.Orphaned)
+	require.Equal(t, []string{"SESSION_SECRET"}, third.Pruned)
+	require.NoError(t, f.deploy.Promote(ctx, third))
+
+	current, err := f.values.CurrentVersions(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"APP_DOMAIN": 1}, current)
+
+	// The pinned revision still resolves its version.
+	require.Equal(t, 1, first.Revision.Secrets["SESSION_SECRET"].Version)
+	document, err := f.deploy.GetRevision(ctx, first.RevisionID)
+	require.NoError(t, err)
+	require.Equal(t, 1, document.Secrets["SESSION_SECRET"].Version)
+
+	// Nothing left to prune: the flag is a no-op and the environment is up
+	// to date again.
+	preview, err = f.deploy.PlanPreview(ctx, PlanInput{
+		EnvironmentID: f.environmentID, DefinitionVersionID: changedVersion, PruneValues: true,
+	})
+	require.NoError(t, err)
+	require.Empty(t, preview.Plan.Values)
+	require.Empty(t, preview.Orphaned)
 }
 
 // recordingEnqueuer captures kernel handoffs.

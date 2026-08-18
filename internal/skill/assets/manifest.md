@@ -79,10 +79,12 @@ Values are supplied per environment: stored values are the default, and a
 dotenv file can be staged at deploy (`--env-file`) or picked up
 automatically from `./.env` by `skali dev`. Keys the manifest does not
 reference are skipped with a warning, never an error. An empty value in
-a dotenv file is stored as a real empty string; removing a value is
-explicit (`skali values unset NAME` or the console). Stored values the
+a dotenv file is stored as a real empty string. Stored values the
 manifest no longer references are ignored by deployments and reported as
-orphaned. `.env` and `.env.*` files never enter build contexts.
+orphaned; deploying with `--prune-values` (also on `skali dev`) removes
+them as part of the plan. `skali values` and `skali dev values` list
+what is stored by name and version. `.env` and `.env.*` files never
+enter build contexts.
 
 ## Applications
 
