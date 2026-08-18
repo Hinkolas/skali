@@ -38,6 +38,12 @@ been tagged.
 
 The goal of this block: I can put a paying workload on skali and sleep.
 
+- [ ] Permission system: instance role plus per-project membership with an
+      access level per environment (`none | read | deploy`), environment
+      settings for member default, promote-only protection with an explicit
+      recorded admin bypass, and environment priority (`normal | high`,
+      instance admins only) rendered as PriorityClasses. Model and route
+      classification in [`docs/permissions.md`](docs/permissions.md).
 - [ ] Tag a first release. Prove goreleaser, `install.sh`, published images,
       and `skali cluster upgrade` from a released binary end to end.
 - [ ] Skali's own state is backed up off-cluster (system database, values
@@ -62,7 +68,9 @@ The goal of this block: I can put a paying workload on skali and sleep.
       full, backup failed, certificate not renewing. Delivery can start as
       email or webhook.
 - [ ] Sensible defaults for resource requests/limits and a way to see who is
-      using what.
+      using what; per-priority defaults, a cap on normal-priority
+      consumption, and database placement by environment priority (the
+      `priority` field comes with the permission system).
 - [ ] Documented recovery runbook: lost node, lost disk, lost control plane,
       lost skalid database. Each path tried once.
 - [ ] Move a real kilohertz workload onto khz and leave it there.
@@ -92,7 +100,7 @@ Ordered loosely by how often I have wanted them.
 
 - [ ] Push-to-deploy: git integration and a managed builder so a push
       deploys without a laptop CLI.
-- [ ] API/CI tokens and per-project membership.
+- [ ] API/CI tokens (membership already exists, tokens become subjects).
 - [ ] Credential rotation for databases and buckets.
 - [ ] Scheduled jobs (cron) and one-off commands per application.
 - [ ] Sidecars or multiple processes per application, if a real app needs
