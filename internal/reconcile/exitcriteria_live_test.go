@@ -1,4 +1,4 @@
-// The R2 exit-criteria suite (REWORK_V2 section 16). Each test names one
+// The reconciliation exit-criteria suite. Each test names one
 // criterion and runs against the live k3d cluster (task k3d:up), gated on
 // TEST_KUBECONFIG plus TEST_DATABASE_URL.
 package reconcile

@@ -1,6 +1,6 @@
 -- +goose Up
 
--- The object-storage substrate (REWORK_V2 sections 10.5, 16 R6): the physical
+-- The object-storage substrate: the physical
 -- SeaweedFS system, logical bucket claims, and their allocations. Mirrors
 -- 00010: these tables are authoritative desired/durable state below product
 -- services; live SeaweedFS topology (masters, volumes, usage) is never
@@ -78,7 +78,7 @@ CREATE INDEX bucket_claims_environment_idx ON bucket_claims (environment_id);
 -- The generated bucket identity on a store: S3 bucket name, access key id,
 -- the NAME of the credential Secret in skali-platform, and the published
 -- endpoint. Secret access keys live only in Kubernetes Secrets and their
--- environment mirrors, never in rows (REWORK_V2 5.8); credential_version
+-- environment mirrors, never in rows; credential_version
 -- counts rotations so consumers can roll on change. With one live store per
 -- installation the allocation's store reference is the placement; a
 -- placements table arrives only if multi-store ever does.

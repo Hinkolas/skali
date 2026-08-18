@@ -14,7 +14,7 @@ import (
 
 // databasesHandlers serves database-service connection projections. The
 // connection endpoint reads durable rows only; credential reveal is the one
-// sanctioned request-time cluster read (REWORK_V2 7.4) and sits behind
+// sanctioned request-time cluster read and sits behind
 // fresh authentication. Credential values are returned once and never
 // journaled or logged.
 type databasesHandlers struct {

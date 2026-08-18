@@ -372,7 +372,7 @@ func runServe() error {
 	}
 	if substrateCtl != nil {
 		go substrateCtl.Run(loopCtx)
-		// The SeaweedFS provider observer (REWORK_V2 7.4): poll-based, its
+		// The SeaweedFS provider observer : poll-based, its
 		// own named source, so a seaweed outage degrades bucket health
 		// without touching cluster observation.
 		seaweedPoll := observe.NewPollSource(observed, substrateCtl.SeaweedProbe(), observe.PollOptions{

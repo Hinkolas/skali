@@ -1,5 +1,4 @@
-// Package module defines the service-module contract from REWORK_V2
-// section 6.7: each service kind (application, database, bucket, ...) is a
+// Package module defines the service-module contract: each service kind (application, database, bucket, ...) is a
 // module that owns decoding, validation, dependency declaration, artifact
 // needs, execution steps, removal consequences, and pure health evaluation.
 // The generic deployment machinery knows service keys and these interfaces,

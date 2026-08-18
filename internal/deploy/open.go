@@ -51,7 +51,7 @@ func (e *UnsupportedCapabilitiesError) Error() string {
 }
 
 // UnsupportedBucketPolicyError: an authored bucket field whose policy has
-// not landed yet (REWORK_V2 10.5: public access, versioning, and lifecycle
+// not landed yet (public access, versioning, and lifecycle
 // rules remain later policies built on the same substrate). Rejected fast
 // at deploy open, like a missing capability; the authoring schema keeps the
 // field so definitions stay portable.

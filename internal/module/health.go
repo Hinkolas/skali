@@ -3,7 +3,7 @@ package module
 import "time"
 
 // Health is the projected condition of one service, derived purely from
-// prepared intent plus observed state (REWORK_V2 section 7.5).
+// prepared intent plus observed state.
 type Health string
 
 const (
@@ -40,7 +40,7 @@ const (
 	KindIngress    = "ingress"
 	KindVolume     = "volume"
 	// KindDatabaseClaim is the substrate's provider observation of one
-	// claim's durable phase (REWORK_V2 7.4): published by the substrate
+	// claim's durable phase: published by the substrate
 	// controller, not by a Kubernetes watch, so evaluation stays pure over
 	// observed input.
 	KindDatabaseClaim = "database-claim"
@@ -57,7 +57,7 @@ const (
 	// exist so pruning sees them; no module evaluates their health.
 	KindEndpointSlice = "endpointslice"
 	// KindObjectStore/KindBucket project the SeaweedFS system and per-bucket
-	// usage through the poll-based provider observer (REWORK_V2 7.4). Store
+	// usage through the poll-based provider observer. Store
 	// projections are platform-scoped and join service snapshots through the
 	// shared-key mechanism.
 	KindObjectStore = "object-store"

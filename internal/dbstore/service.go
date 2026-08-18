@@ -1,6 +1,5 @@
 // Package dbstore persists the shared database substrate's durable state:
-// claims, physical clusters, placements, and tenants (REWORK_V2 sections
-// 10.2 and 10.3). Every claim phase change is guarded by the internal/claim
+// claims, physical clusters, placements, and tenants. Every claim phase change is guarded by the internal/claim
 // machine and every cluster state change by ClusterStates, both under row
 // locks. User and system claims are one table and one code path; owner kind
 // is data, never a branch. Credential values never pass through this

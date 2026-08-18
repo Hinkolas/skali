@@ -6,29 +6,15 @@ primitives instead of raw containers. skali is a **product control plane on
 Kubernetes (k3s)**: user intent lives in Postgres, a controller compiles it
 into k8s objects (server-side apply) and reads status back; k3s and a small
 set of blessed operators (CloudNativePG, Traefik, cert-manager) do all
-generic orchestration. The v2 architecture and rationale live in
-[`REWORK_V2.md`](REWORK_V2.md).
+generic orchestration.
 
-**Status:** V2 rearchitecture. R0 (architecture contract) is accepted; R1
-(domain and persistence kernel), R2 (observation and reconciliation
-kernel), and R3 (CLI-managed local installation and application slice) are
-implemented. On top of the R1/R2 kernels (immutable revisions, encrypted
-values, LIST/WATCH observation with explicit freshness, server-side apply
-with field-ownership discipline, health-gated activation), skali is now
-usable end to end on one machine: bare `skali dev` creates a disposable
-k3d cluster, installs the in-cluster skali-system bundle (skalid, CNPG
-Postgres, CNCF Distribution registry; Traefik ships with k3s), builds
-build-sourced applications locally through BuildKit and
-imports image sources digest-preservingly, verifies every digest against
-the managed registry server-side, deploys through the public deployment
-API (plan, destructive gate, artifact window, atomic promotion, journaled
-rollout), and renders the full run tree live in the terminal, with runtime
-log streaming and explicit cancel/automatic-fallback semantics. Cloud
-builds, the production installer, and the registry token protocol are R4.
-The R0 workflow transcripts (deploy, local development, installer) live in
-[`docs/transcripts/`](docs/transcripts/); the supported build features are
-in [`docs/build-matrix.md`](docs/build-matrix.md). The current
-architecture and roadmap are in [`REWORK_V2.md`](REWORK_V2.md).
+**Status:** usable for local development and staging; production
+hardening in progress. `skali dev` runs a project on a disposable local k3d
+platform, `skali deploy` ships it to a remote installation, and `skali
+cluster` installs and maintains the k3s hosts. Applications, managed
+Postgres, S3 buckets, TLS routes, backups, exec, and a web console are all
+in place. What comes next lives in [`ROADMAP.md`](ROADMAP.md); the
+supported build features are in [`docs/build-matrix.md`](docs/build-matrix.md).
 
 Distinct product and operational roles:
 
@@ -150,9 +136,6 @@ cd web && cp .env.example .env && npm install
 task dev:web
 ```
 
-The planned local Kubernetes workflow and parity boundaries are defined in the
-[V2 local-development section](REWORK_V2.md#11-local-development-and-cli).
-
 The OpenAPI contract is served at `GET /openapi.yaml` (on a cluster:
 `/api/openapi.yaml`) and lives in [`api/openapi.yaml`](api/openapi.yaml); a
 router-walk test keeps it honest.
@@ -229,39 +212,15 @@ internal/
   testdb/        ephemeral Postgres database per test
   values/        dotenv import and the value contract check
   valuestore/    versioned write-only environment values, encrypted, staging
-web/           SvelteKit BFF (adapter-node); lib/mock is the services design
-               spec being promoted to the real API milestone by milestone
-.plan/         superseded first Kubernetes rework plan; historical context only
+web/           SvelteKit BFF (adapter-node)
 ```
-
-Current package boundaries and planned subsystems are defined in
-[`REWORK_V2.md`](REWORK_V2.md); `.plan/` must not be used as the V2
-implementation contract.
 
 ## Roadmap
 
-The authoritative milestones and exit criteria are in
-[`REWORK_V2.md`](REWORK_V2.md). The short form is:
-
-- **R0 — architecture contract:** schemas, fixtures, ownership, artifacts, and
-  installer/local-runtime contracts.
-- **R1 — domain and persistence:** immutable revisions, environment values,
-  artifacts, run journals, and service-module contracts.
-- **R2 — observation and reconciliation:** LIST/WATCH state, health, generic
-  apply/prune, resync, and healing.
-- **R3 — local application slice:** in-cluster local Skali, `skali dev`, builds,
-  deploys, logs, and application health.
-- **R4 — installer and remote delivery:** K3s/bootstrap maintenance, production
-  registry, remote deployment, and cloud builds.
-- **R5/R6 — managed data services:** shared database substrate followed by
-  object storage and bucket services.
-- **R7/R8 — product completion:** web UI, durability, recovery, compatibility,
-  and release hardening.
-
-History note: `.plan/` records the first Kubernetes rearchitecture that preceded
-V2. It is retained for historical rationale—especially the substrate decision—
-but its schemas and M0–M4 roadmap are superseded. The older custom orchestrator
-also remains available through git history.
+[`ROADMAP.md`](ROADMAP.md) is the plan of record: a functionality-level list
+ordered by production confidence, console catch-up, product features,
+platform operations, and housekeeping. Earlier architecture plans were
+removed from the tree on 2026-08-19 and live only in git history.
 
 ## Tests
 

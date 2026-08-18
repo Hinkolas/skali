@@ -21,8 +21,8 @@ func ClaimRef(claimID uuid.UUID) kube.ObjectRef {
 	return kube.ObjectRef{GVK: claimGVK, Name: "claim-" + claimID.String()}
 }
 
-// ClaimObject builds the provider observation of one database claim
-// (REWORK_V2 7.4). Service carries the dotted "databases.<key>" form so
+// ClaimObject builds the provider observation of one database claim.
+// Service carries the dotted "databases.<key>" form so
 // claim projections can never collide with an application of the same key.
 func ClaimObject(environmentID uuid.UUID, service string, claimID uuid.UUID, status module.ClaimStatus) Object {
 	return Object{

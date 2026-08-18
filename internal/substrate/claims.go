@@ -171,7 +171,7 @@ func defaultWait(phase claim.Phase) string {
 	}
 }
 
-// publishClaim upserts the claim's provider observation (REWORK_V2 7.4) so
+// publishClaim upserts the claim's provider observation so
 // health evaluation stays pure over observed input; released claims leave
 // the store.
 func (c *Controller) publishClaim(row store.DatabaseClaim) {

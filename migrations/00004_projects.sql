@@ -1,6 +1,6 @@
 -- +goose Up
 
--- Product definition plane (REWORK_V2 sections 5 and 6): projects, their
+-- Product definition plane: projects, their
 -- environments, and versioned project definitions. Runtime state lives in
 -- later migrations; nothing here mirrors cluster objects.
 CREATE TABLE projects (

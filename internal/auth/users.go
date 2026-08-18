@@ -13,8 +13,7 @@ import (
 // Instance-wide roles — the whole permission model for now. Roles are code,
 // not data: the DB stores which role a user has, never what a role means.
 // Admins additionally manage users and instance settings; members have full
-// access to all projects. Per-project scoping layers on later (see
-// .plan/08-auth-and-security.md).
+// access to all projects. Per-project scoping layers on later.
 const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"

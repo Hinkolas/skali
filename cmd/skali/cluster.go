@@ -13,8 +13,8 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-// newClusterCommand builds the privileged installation and recovery group
-// (transcripts: docs/transcripts/cli-cluster.md). It owns host-level k3s
+// newClusterCommand builds the privileged installation and recovery group.
+// It owns host-level k3s
 // lifecycle and the installer-owned Skali system bundle; it never depends
 // on the Skali API or product database, and no other skali command can
 // perform any action offered here. Interactive by default: running it bare

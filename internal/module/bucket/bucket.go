@@ -15,8 +15,8 @@ import (
 	"github.com/Hinkolas/skali/internal/module"
 )
 
-// sourceName selects the provider observation the module opts into by name
-// (REWORK_V2 7.4): its staleness degrades bucket health without blocking
+// sourceName selects the provider observation the module opts into by name:
+// its staleness degrades bucket health without blocking
 // any other module's evaluation.
 const sourceName = "seaweedfs"
 

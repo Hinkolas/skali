@@ -13,7 +13,7 @@ import (
 const kindNamespace = "namespace"
 
 // SourceKubernetes is the cluster watch source, registered by every store.
-// Provider observers (REWORK_V2 7.4) register additional named sources; all
+// Provider observers register additional named sources; all
 // sources share one fresh/stale/unknown model but fail independently, so one
 // provider's outage never poisons another source's projections.
 const SourceKubernetes = "kubernetes"

@@ -18,7 +18,7 @@ var (
 	bucketGVK      = schema.GroupVersionKind{Group: "seaweed.skali.dev", Version: "v1", Kind: "Bucket"}
 )
 
-// SeaweedProbe returns the provider observation probe (REWORK_V2 7.4): one
+// SeaweedProbe returns the provider observation probe: one
 // pass reports the platform-scoped store status plus per-bucket existence
 // and usage, and enforces storage quotas by flipping per-bucket read-only
 // flags on the same cadence.

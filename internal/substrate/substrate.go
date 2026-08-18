@@ -1,5 +1,4 @@
-// Package substrate is the shared database substrate controller (REWORK_V2
-// section 10.2): it places claims onto pools, ensures the CNPG objects and
+// Package substrate is the shared database substrate controller: it places claims onto pools, ensures the CNPG objects and
 // credentials behind them, mirrors connection outputs into environment
 // namespaces, and drives claim phases. It owns everything in the
 // skali-platform namespace under the skalid-platform field manager. The

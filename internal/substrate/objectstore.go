@@ -19,8 +19,8 @@ import (
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
 
-// MetadataClaimKey is the object-storage subsystem's system database claim
-// (REWORK_V2 10.3): the filer's metadata store is an ordinary internal
+// MetadataClaimKey is the object-storage subsystem's system database claim:
+// the filer's metadata store is an ordinary internal
 // consumer of the database substrate, there is no object-storage-specific
 // provisioner.
 const MetadataClaimKey = "object-storage/metadata"

@@ -576,7 +576,7 @@ func TestDevGuestbookDatabase(t *testing.T) {
 }
 
 // TestDevGuestbookBackupRestore is the backup slice's acceptance loop, the
-// REWORK_V2 17.3 destroy-and-restore requirement in miniature: snapshot an
+// destroy-and-restore requirement in miniature: snapshot an
 // environment bearing all three data kinds to an external S3 target, purge
 // the environment completely, redeploy it empty, and restore the data by
 // snapshot id, with the fresh installation learning about the snapshot

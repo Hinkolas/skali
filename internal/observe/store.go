@@ -1,8 +1,7 @@
 // Package observe maintains the in-memory observed-state store: the freshest
 // known projection of the cluster, fed by LIST/WATCH sources, rebuilt on
 // every startup, and never persisted. Consumers read typed projections with
-// explicit source freshness; nothing here is authoritative intent
-// (REWORK_V2 sections 5.1, 5.3, 7).
+// explicit source freshness; nothing here is authoritative intent.
 package observe
 
 import (

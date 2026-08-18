@@ -12,8 +12,7 @@ import (
 // ReplaceSource reconciles the store to it.
 type Probe func(ctx context.Context) ([]Object, error)
 
-// PollOptions configures one poll-based provider source (REWORK_V2 7.4:
-// systems without a useful watch API update the same ObservedStore contract
+// PollOptions configures one poll-based provider source (systems without a useful watch API update the same ObservedStore contract
 // with explicit freshness at their own cadence).
 type PollOptions struct {
 	// Source is the registered source name, e.g. "seaweedfs".

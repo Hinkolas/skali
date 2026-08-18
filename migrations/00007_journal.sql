@@ -1,6 +1,6 @@
 -- +goose Up
 
--- The run journal (REWORK_V2 section 9): runs -> steps -> attempts -> logs.
+-- The run journal: runs -> steps -> attempts -> logs.
 -- Runs explain reconciliation but never drive it: no authoritative table
 -- references these rows, and deleting any or all of them must not change
 -- targets, recovery, or controller behavior.

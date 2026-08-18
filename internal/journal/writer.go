@@ -12,8 +12,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// Retention caps (fixed with the R1 journal persistence; see REWORK_V2
-// section 20). Package constants for now; promoted to configuration if a
+// Retention caps. Package constants for now; promoted to configuration if a
 // deployment ever needs different limits.
 const (
 	// MaxEntriesPerAttempt bounds one attempt's log; the final slot holds a

@@ -59,7 +59,7 @@ func poolPrefix(engine string, major int) string {
 }
 
 // place selects or creates the pool a claim lands on and binds the claim to
-// it. Placement policy (REWORK_V2 10.2, decisions 2026-07-29): dumb packing
+// it. Placement policy (decided 2026-07-29): dumb packing
 // per isolation class on managed clusters; on local dev every isolation
 // collapses onto the single dev pool, which is the documented parity
 // boundary.
@@ -88,7 +88,7 @@ func (c *Controller) place(ctx context.Context, claim store.DatabaseClaim) (*sto
 
 	// A pool sized below the claim's availability intent cannot honor it;
 	// tier upgrades are explicit operations, never side effects of a claim
-	// arriving (REWORK_V2 14.3).
+	// arriving.
 	if c.cfg.Managed && int(pool.Instances) < requiredNodes(claim.Availability) {
 		return nil, errWaiting{reason: fmt.Sprintf(
 			"pool %s runs %d instances, below availability %s; a tier upgrade is an explicit operation",
@@ -131,7 +131,7 @@ func (c *Controller) selectPool(ctx context.Context, claim store.DatabaseClaim, 
 			return nil, err
 		}
 		// The shared pool sizes from the database-capable node count, the
-		// same derivation as the bootstrap database (REWORK_V2 14.3).
+		// same derivation as the bootstrap database.
 		tier := layout.DeriveTier(capable)
 		if !c.cfg.Managed {
 			tier = layout.TierSingle

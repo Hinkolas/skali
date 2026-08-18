@@ -1,6 +1,6 @@
 -- +goose Up
 
--- The shared database substrate (REWORK_V2 sections 10.2, 10.3, 13): claims,
+-- The shared database substrate: claims,
 -- physical clusters, placements, tenants, and backup records. These tables are
 -- authoritative desired/durable state below product services; live CNPG
 -- topology (instances, primaries, readiness) is never mirrored here, it
@@ -88,7 +88,7 @@ CREATE UNIQUE INDEX database_claims_system_key
     WHERE owner_kind = 'system' AND phase <> 'released';
 CREATE INDEX database_claims_environment_idx ON database_claims (environment_id);
 
--- System-owned assignment from claim to cluster (REWORK_V2 10.2): not part of
+-- System-owned assignment from claim to cluster: not part of
 -- the portable definition or any revision, because the platform may relocate
 -- a tenant without changing user intent. Relocation supersedes rather than
 -- rewrites, so placement history explains where a tenant has lived.
@@ -107,7 +107,7 @@ CREATE INDEX database_placements_cluster_idx ON database_placements (cluster_id)
 -- A logical database inside a cluster: generated identity, the NAME of the
 -- credential Secret in skali-platform, and the non-secret connection outputs.
 -- Credential values live only in Kubernetes Secrets and their environment
--- mirrors, never in rows (REWORK_V2 5.8); credential_version counts
+-- mirrors, never in rows; credential_version counts
 -- rotations so consumers can roll on change.
 CREATE TABLE database_tenants (
     id                 UUID PRIMARY KEY,

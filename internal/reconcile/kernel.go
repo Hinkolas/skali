@@ -1,6 +1,6 @@
 // Package reconcile is the level-triggered reconciliation kernel: it
 // compares each environment's target revision with current observation and
-// performs idempotent work toward it (REWORK_V2 sections 5.2 and 8).
+// performs idempotent work toward it.
 // Nothing required for recovery lives only in the queue; a restart performs
 // an observation sync and continues toward the same target. Runs and steps
 // explain what the kernel does but never drive it: deleting every journal

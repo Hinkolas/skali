@@ -1,5 +1,5 @@
 // Package seaweed pins and speaks to the blessed SeaweedFS system, the
-// object-storage engine (REWORK_V2 10.5). Like internal/substrate/cnpg for
+// object-storage engine. Like internal/substrate/cnpg for
 // databases, it owns the engine facts (image pin, ports, filer paths), the
 // identity generators, pure rendering, and the admin client behind the
 // substrate's external ensures. It deliberately imports nothing
@@ -74,7 +74,7 @@ const (
 	BootstrapSecretKey    = "skali-bootstrap-deny-grants-nothing-000"
 )
 
-// SourceName is the provider observation source (REWORK_V2 7.4).
+// SourceName is the provider observation source.
 const SourceName = "seaweedfs"
 
 // SharedKey is the observe shared key linking the platform-scoped store
