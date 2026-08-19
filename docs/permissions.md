@@ -11,135 +11,175 @@ levels. The motivating team:
 
 - The sysadmin sets up skali and the hosts and may do everything.
 - A programmer works on customer projects but must not reach every project,
-  and on the projects they work on they deploy to staging while production
-  is locked or promote-only.
+  and on the projects they work on they maintain staging while production
+  is read-only or promote-only for them.
 - A colleague without infra knowledge hosts small internal tools. They own
-  their own projects and must not see production projects at all.
+  their own projects and are a member nowhere else.
 
 Principles:
 
-- Few concepts: instance role, project membership, an access level per
-  environment, environment settings. No permission matrices per action.
-- The environment is the boundary. Everything with a blast radius or a
-  secret (deployments, runs, logs, values, exec, credentials, backups,
-  routes) is environment scoped, so access is granted per environment. The
-  project is a thin container.
+- One ladder of roles, used at the environment and at the project level
+  with the same words. No permission matrices per action.
+- The environment is the smallest unit of control. Everything with a blast
+  radius or a secret (deployments, runs, logs, values, exec, credentials,
+  backups, routes) is environment scoped. The project is the container and
+  the place where the defaults come from.
 - Access (who may act) and policy (which kind of act is allowed for anyone)
   are separate axes. Protection applies to admins too; admins bypass it only
   explicitly and it is recorded.
 - Deny by default, enforced server-side in one place. The console and CLI
-  hide and explain, they never enforce.
-- Roles are code, not data: the database stores which role or level a user
-  has, never what it means.
+  hide, disable, and explain; they never enforce.
+- Roles are code, not data: the database stores which role a user has,
+  never what a role means.
 - Nothing lives in `skali.yml`. The manifest is environment-agnostic and
-  whoever can deploy could edit it, so protection, priority, and access are
+  whoever can deploy could edit it, so roles, protection, and priority are
   server-side settings.
+
+## The ladder
+
+`none < read < deploy < maintain < admin`. Each step includes everything
+below it. The question that places an action on a step: what is the
+smallest thing this person needs to change?
+
+| role | on an environment |
+|---|---|
+| `none` | locked. The environment still appears in the project's environment list (id, name, the fact that it is locked) so names and their collisions are visible, but everything inside it answers 403: no status, runs, deployments, values, settings. |
+| `read` | everything visible: status and health, deployments, revisions, runs and run logs (redacted), runtime logs, value names and versions, routes, database and bucket connection info without secrets, backups list, environment settings, who has access to it. |
+| `deploy` | change only what code runs: promote into this environment, rollback, restart, run cancel, backup create, and direct deploys whose definition is unchanged (the manifest compiles to the environment's currently active definition version, so only image digests differ). |
+| `maintain` | the full blast radius of `skali.yml`: direct deploys that change the definition (services, routes, databases, buckets, including `--allow-destructive`), set and prune values, restore, and the secret-bearing reads: exec, resolved application environment, credential reveal. |
+| `admin` | management outside the yaml: this environment's protection policy and role ceiling, other users' roles on this environment, lowering priority, delete and teardown, bypassing protection. |
+
+Notes on the placement:
+
+- `deploy` is a change-control boundary, not a secret boundary. A `deploy`
+  user ships code that runs with the environment's values, so values and
+  the secret-bearing reads live together one step up in `maintain`:
+  whoever may change the configuration may also read it. What `deploy`
+  gives is "devs ship code, maintainers own topology and config" and
+  "anyone may release the tested staging revision to production".
+- "Definition unchanged" is an equality check: definitions are
+  content-addressed, so the server compares the submitted definition
+  version with the environment's active one. No diffing. Consequences: the
+  first deploy into an empty environment needs `maintain` (nothing to be
+  unchanged against), `--env-file` and `--prune-values` are refused for
+  `deploy`, and a promotion may carry a definition change because a
+  maintainer already made that revision real in the source environment.
+- Raising priority to `high` is not on the ladder; it is an instance-admin
+  act (see Priority).
 
 ## Instance layer
 
 `users.role` stays `admin | member`.
 
-- `admin`: everything. Implicit project admin of every project, `deploy` on
-  every environment. Manages users, nodes, system, backup targets. Only
-  instance admins create or raise environments to high priority.
+- `admin`: everything. Effective `admin` on every project and environment.
+  Manages users, nodes, system, backup targets. Only instance admins create
+  or raise environments to `high` priority.
 - `member`: nothing until granted through project membership.
 
-One extra per-user permission bit for members: `create_projects` (default
-off, set by instance admins). Creating a project makes the creator that
-project's admin. Instance admins always may create projects and also get an
-explicit admin membership row on projects they create, so a later demotion
-to member keeps their own projects.
+One extra per-user permission for members: `create_projects` (default off,
+set by instance admins). Creating a project makes the creator that
+project's `admin`. Instance admins always may create projects and also get
+an explicit `admin` membership row on projects they create, so a later
+demotion to member keeps their own projects.
 
 Invariants kept from today: at least one instance admin must remain
-(`ErrLastAdmin`), users cannot change their own role or delete themselves,
-`skalid user set-role` is the lost-admin recovery path (`skalid user delete`
-must go through `auth.DeleteUser` so it honors the last-admin guard; today it
-bypasses it).
+(`ErrLastAdmin`), users cannot change their own instance role or delete
+themselves, `skalid user set-role` is the lost-admin recovery path
+(`skalid user delete` must go through `auth.DeleteUser` so it honors the
+last-admin guard; today it bypasses it).
 
-## Projects
+## Project level
 
-Membership: `(project, user) -> role: admin | member`, plus for members a
-default access level (see below). Non-members do not see the project:
-lists are filtered, direct access answers 404, exactly like a project that
-does not exist.
+Membership: `(project, user) -> role` on the same ladder (`read | deploy |
+maintain | admin`; `none` is not a project role, a non-member simply has no
+row). Non-members do not see the project: lists are filtered, direct access
+answers 404, exactly like a project that does not exist. A colliding name
+at project creation answers 409 as today.
 
-- Project admin: manages members and access cells, environment settings
-  (member default, protection, lowering priority), deletes the project,
-  deletes or tears down any environment. Has `deploy` on every environment
-  of the project and cannot be restricted per environment; to restrict
-  someone, make them a member.
-- Member: no rights of their own; everything comes from environment access.
+The project role is the user's default role on every environment of the
+project, and each step adds the project-level rights that are not an
+environment:
 
-Project-level reads (name, environments you can see, definition history,
-draft, backups list filtered by environment) need a membership row or
-instance admin. Project-level writes that belong to deploying (submitting a
-definition, writing the draft, registry push, artifact verify, build
-heartbeat) need "deployer": `deploy` on at least one environment of the
-project.
+| project role | default environment role | adds at project level |
+|---|---|---|
+| `read` | `read` | the project is visible; list environments (locked ones included); read definitions and the draft; members list; project-wide backups list filtered to environments with at least `read`; registry pull |
+| `deploy` | `deploy` | submit definitions and write the draft, registry push: what a code-only deploy needs |
+| `maintain` | `maintain` | create environments; the creator gets an explicit `admin` cell on the environment they created, so they manage and delete their own test environments without a project admin |
+| `admin` | `admin` | members and cells, project settings, delete project |
+
+Deployer: anyone whose effective role is `deploy` or higher on at least one
+environment of the project, however they got it. Deployers may submit
+definitions, write the draft, push to the project's registry repositories,
+and drive artifact verification and build heartbeats. This makes a `read`
+member with a `deploy` cell on staging able to actually deploy there.
 
 There is no "last project admin" invariant: instance admins are implicit
-admins everywhere, so a project can end up with zero explicit admins.
+admins everywhere, so a project may end up with zero explicit admins.
 
-## Environments
+## Cells, ceiling, effective role
 
-Access level per `(member, environment)`: `none | read | deploy`.
+Picture a project's access as a grid: one row per member, one column per
+environment, each box the role that person has on that environment. Most
+boxes are not stored; they are the member's project role repeated across
+the columns. Two kinds of exceptions exist:
 
-- `none`: the environment does not exist for this user. Not listed, direct
-  access 404, its runs, deployments, and backups are filtered out of
-  project-wide lists.
-- `read`: status and health, deployments, revisions, runs and run logs
-  (redacted), runtime logs, value names and versions, routes, database and
-  bucket connection projections (no secrets), backups list, environment
-  settings.
-- `deploy`: `read` plus plan, deploy, promote into it, rollback, set and
-  prune values, backup create, restore into it, run cancel, exec, resolved
-  application environment, credential reveal, teardown and delete when the
-  environment is normal priority. Deploy is the secret boundary: exec alone
-  reveals every value.
+- A **cell** is one box filled in by hand: `(environment, user) -> role`,
+  any step of the ladder including `none`. It overrides the project role
+  for that one person on that one environment, up or down (`read` member
+  with `maintain` on staging; `maintain` member with `none` on production).
+- The **ceiling** is one environment setting, `max_role`, that caps the role
+  members inherit from their project role on that environment. Default
+  `admin` (no cap). "Production is read-only for everyone unless named" is
+  `max_role: read` once, instead of one cell per member. Cells are not
+  capped; they are the way to name exceptions above the ceiling.
 
-Effective level for a member on an environment:
+Effective role of a user on an environment, first match wins:
 
-    cell(member, env)                            if an explicit cell exists
-    min(member.default_access, env.member_access) otherwise
+    1. instance admin                       -> admin
+    2. a cell exists for (user, environment) -> the cell
+    3. project role is admin                 -> admin   (project admins are never capped)
+    4. otherwise                             -> min(project role, environment max_role)
 
-Both defaults are ceilings; the explicit cell is the exception in either
-direction (grant `deploy` on a locked environment, or `none` on an open
-one). Project admins and instance admins are always `deploy` and ignore all
-three inputs.
+Example:
 
-Environment settings (server-side, edited by project admins unless noted):
+                    staging     production   feat-x
+    alice (admin)   admin       admin        admin
+    bob (maintain)  maintain    read*        maintain
+    carol (read)    read        read         deploy*
 
-- `member_access: none | read | deploy` (default depends on priority at
-  creation, see below): the ceiling for members without an explicit cell.
+Starred boxes are cells. Bob on production is rule 2 (`read`), on staging
+rule 4 (`maintain`, no cap). Carol on feat-x is rule 2, on staging rule 4.
+If production's ceiling were `read` and bob had no cell there, rule 4 would
+give him `read` as well. Every check the server makes ("is this at least
+`deploy`?") is made against the effective role.
+
+## Environment settings
+
+Server-side, edited by environment admins unless noted:
+
+- `max_role: none | read | deploy | maintain | admin` (default `admin`, see
+  creation defaults): the ceiling above.
 - `deploy_policy: direct | promote-only` (default `direct`) and
   `promote_from: [<environment names>]` (empty = any environment of the
-  project): the protection policy, see below.
-- `priority: normal | high` (default `normal`): the resource priority, see
-  below. Raising to `high` or creating with `high` is instance admin only;
-  lowering is project admin.
+  project): the protection policy.
+- `priority: normal | high` (default `normal`). Creating with `high` or
+  raising to `high` is instance admin only; lowering is environment admin.
 
-Creation: project admins, instance admins, and deployers (members with
-`deploy` on at least one environment of the project) create environments;
-the creator gets an explicit `deploy` cell on it, so a member locked out of
-production still creates feature environments and always can use what they
-create. Implicit creation on first deploy (`skali deploy --environment
-feat-x`) is always `normal` priority; `high` needs an explicit create or a
-later raise by an instance admin.
+Creation: project `maintain` and up create environments; the creator gets an
+explicit `admin` cell. Implicit creation on first deploy (`skali deploy
+--environment feat-x`) follows the same rule and is always `normal`
+priority. Creation defaults by priority: `normal` starts with `max_role:
+admin` (open, a shared scratch environment); `high` starts with `max_role:
+read` and the CLI and console suggest `promote-only`. Creation-time
+defaults only; the settings are independent afterwards.
 
-Creation defaults keyed by priority: `normal` environments start with
-`member_access: deploy` (open, like a shared scratch environment); `high`
-environments start with `member_access: read` and the CLI and console
-suggest `promote-only` protection. Creation-time defaults only; the settings
-are independent afterwards.
-
-Deletion and teardown: `deploy` on the environment when it is `normal`
-priority, project admin when it is `high`. Both stay behind sudo mode and
-confirmation.
+Deletion and teardown: environment `admin`, behind sudo mode and
+confirmation as today.
 
 ## Protection policy
 
-`deploy_policy: promote-only` means the running revision of the environment
-only changes through:
+`deploy_policy: promote-only` means the running revision of the
+environment only changes through:
 
 - promote from an environment in `promote_from` (or any environment of the
   project when the list is empty); the promoter needs `read` on the source
@@ -151,65 +191,60 @@ A direct deploy is refused with `403 environment_protected` and a message
 that names the promote command. The check runs in plan as well as in open,
 so the CLI refuses before anything is built. Values changes, restore, exec,
 and backups are not policy-gated: the policy is about untested code
-reaching the environment, and those are configuration, data, and access.
+reaching the environment; those are configuration, data, and access, and
+have their own roles.
 
-The policy applies to everyone including project and instance admins.
-Bypass: request field `bypass_protection: true` (`skali deploy
---bypass-protection`; `--force` already means "restart even when nothing
-changed" and keeps that meaning). Allowed for project admins and instance
-admins, requires a fresh session (sudo mode, `403 reauth_required`
-otherwise, the CLI reauths and retries), recorded on the run and the
-deployment, shown in the ready summary and the console.
+The policy applies to everyone including admins. Bypass: request field
+`bypass_protection: true` (`skali deploy --bypass-protection`; `--force`
+already means "restart even when nothing changed" and keeps that meaning).
+Requires environment `admin` (project admins and instance admins included)
+and a fresh session (sudo mode, `403 reauth_required` otherwise, the CLI
+reauths and retries). Recorded on the run and the deployment, shown in the
+ready summary and the console.
 
 ## Priority
 
 `priority: high` marks environments that must keep running when resources
 are tight; `normal` environments yield. Only instance admins create or
 raise environments to `high` because it is a cluster-wide resource decision,
-not a project decision; project admins may lower.
+not a project decision.
 
-What priority drives, in the permission slice: two PriorityClasses in the
-system bundle (`skali-high` preempts `skali-normal`), rendered as
-`priorityClassName` on application pods. The scheduler evicts normal-priority
-pods when a high-priority pod cannot be placed, and the kubelet evicts
-normal-priority pods first under node pressure. Later, under the roadmap's
-resource item and referencing this field: request/limit defaults per
-priority, an optional cluster-wide cap on normal-priority consumption via a
+In the permission slice, priority drives two PriorityClasses in the system
+bundle (`skali-high` preempts `skali-normal`), rendered as
+`priorityClassName` on application pods: the scheduler evicts
+normal-priority pods when a high-priority pod cannot be placed, and the
+kubelet evicts normal-priority pods first under node pressure. It also
+selects the creation defaults above. Later, under the roadmap's resource
+item and referencing this field: request and limit defaults per priority,
+an optional cluster-wide cap on normal-priority consumption via a
 priority-scoped ResourceQuota, database placement (high on the production
 pool, normal on the shared pool), and a graceful scale-down controller if
-preemption proves too blunt.
-
-Priority also selects the creation defaults and the delete/teardown rule
-above. It does not imply protection; that stays an explicit setting.
+preemption proves too blunt. Priority does not imply protection; that is
+an explicit setting.
 
 ## Who may do what
 
-Legend: IA instance admin, PA project admin, D deployer (member with
-`deploy` on at least one environment), M member with the named level on the
-environment in question, S sudo mode required.
+Legend: IA instance admin; P:x project role x or higher; E:x effective
+role x or higher on the environment in question; D deployer; S sudo mode.
 
 | action | who |
 |---|---|
-| create project | IA, or member with `create_projects` (creator becomes PA) |
+| create project | IA, or member with `create_projects` (creator becomes P:admin) |
 | list projects | memberships only (IA: all) |
-| read project, definitions, draft, members list | any member, IA |
-| update project (display name), delete project (S) | PA, IA |
-| submit definition, write draft | D, PA, IA |
-| manage members and access cells (S) | PA, IA |
-| environment settings: member default, protection (S) | PA, IA |
-| priority raise to high or create high (S) | IA |
-| priority lower (S) | PA, IA |
-| create environment (normal) | D, PA, IA |
-| list environments | filtered by level > none |
-| environment status, deployments, revisions, runs, run logs, runtime logs, values (names), connection info, backups list, settings | M read |
-| plan, deploy, promote into, rollback, values set/prune, backup create, restore into (S), run cancel | M deploy |
-| exec (S), resolved application environment (S), credential reveal (S) | M deploy |
-| delete/teardown normal-priority environment (S) | M deploy, PA, IA |
-| delete/teardown high-priority environment (S) | PA, IA |
-| bypass protection (S) | PA, IA |
-| registry push `skali/<project>/<app>` | D, PA, IA |
-| registry pull `skali/<project>/<app>` | any member of the project, IA |
-| registry push/pull `cache/...` | D anywhere, IA |
+| read project, definitions, draft, members list, environment list | P:read |
+| update project settings, delete project (S) | P:admin |
+| manage members and cells (S) | P:admin (cells of one environment also E:admin) |
+| submit definition, write draft, registry push, artifact verify, build heartbeat | D |
+| registry pull | P:read |
+| create environment (`normal`) | P:maintain |
+| create or raise environment to `high` (S) | IA |
+| environment settings: ceiling, protection, lower priority (S) | E:admin |
+| delete, teardown (S) | E:admin |
+| status, deployments, revisions, runs, run logs, runtime logs, value names, connection info, backups list, settings, access list | E:read |
+| promote into, rollback, restart, run cancel, backup create, direct deploy with unchanged definition | E:deploy |
+| direct deploy with definition changes, values set/prune, restore (S) | E:maintain |
+| exec (S), resolved application environment (S), credential reveal (S) | E:maintain |
+| bypass protection (S) | E:admin |
 | users, nodes, system observation, backup target (S for writes) | IA |
 | own account, sessions, 2FA, `/system/meta`, `/auth/session` | any authenticated user |
 
@@ -217,9 +252,12 @@ environment in question, S sudo mode required.
 
 Every route carries exactly one classification and a router-walk test fails
 on any route without one, so a route added later cannot be open by
-accident. Non-member or `none` answers 404 `not_found`; an insufficient
-level answers 403 `forbidden` with a message naming the required level
-("deploy access on environment production required").
+accident. Error semantics: non-member of the project answers 404
+`not_found`; a locked environment or an insufficient role answers 403
+`forbidden` with a message naming the required role ("maintain on
+environment production required: this deploy changes the definition");
+protection answers 403 `environment_protected`; a bypass without a fresh
+session answers 403 `reauth_required`.
 
 Public: `GET /healthz`, `GET /openapi.yaml`, `GET /token` (registry realm,
 Basic auth per request as today).
@@ -237,92 +275,96 @@ today, the console only hides them), `GET /users`; sudo: `POST /users`,
 
 Project scoped:
 
-| route | level |
+| route | requirement |
 |---|---|
 | `POST /projects` | IA or `create_projects` |
-| `GET /projects` | filtered |
-| `GET /projects/{id}` | project read |
-| `PATCH /projects/{id}` | project admin |
-| `DELETE /projects/{id}` (S) | project admin |
-| `GET /projects/{id}/draft` | project read |
-| `PUT /projects/{id}/draft`, `POST /projects/{id}/definitions` | deployer |
-| `POST /projects/{id}/environments` | deployer or admin; `high` IA |
-| `GET /projects/{id}/environments` | filtered by level |
-| `GET /projects/{id}/backups` | filtered by level |
-| `GET /projects/{id}/members` (new) | project read |
-| `PUT|DELETE /projects/{id}/members/{user}` (new, S) | project admin |
-| `POST /artifacts/{id}/verify`, `POST /builds/{id}/heartbeat` | deployer of the owning project, plus today's actor rule |
+| `GET /projects` | filtered to memberships |
+| `GET /projects/{id}` | P:read |
+| `PATCH /projects/{id}` | P:admin |
+| `DELETE /projects/{id}` (S) | P:admin |
+| `GET /projects/{id}/draft` | P:read |
+| `PUT /projects/{id}/draft`, `POST /projects/{id}/definitions` | D |
+| `POST /projects/{id}/environments` | P:maintain; `priority: high` IA |
+| `GET /projects/{id}/environments` | P:read; locked environments carry only id, name, `access: none` |
+| `GET /projects/{id}/backups` | P:read; filtered to environments with E:read |
+| `GET /projects/{id}/members` (new) | P:read |
+| `PUT|DELETE /projects/{id}/members/{user}` (new, S) | P:admin |
+| `POST /artifacts/{id}/verify`, `POST /builds/{id}/heartbeat` | D of the owning project, plus today's actor rule |
 
-Environment scoped (resource ids resolve to their environment first: runs,
-steps, deployments, revisions):
+Environment scoped (runs, steps, deployments, and revisions resolve to
+their environment first):
 
-| route | level |
+| route | requirement |
 |---|---|
-| `GET /environments/{id}` | read |
-| `PATCH /environments/{id}` (new: settings, S) | project admin; priority high IA |
-| `PUT|DELETE /environments/{id}/access/{user}` (new, S) | project admin |
-| `DELETE /environments/{id}`, `POST .../teardown` (S) | deploy if normal, project admin if high |
-| `GET .../values` | read |
-| `PUT .../values`, `DELETE .../values/{name}` | deploy |
-| `GET .../revisions`, `GET /revisions/{id}`, `GET .../target` | read |
-| `PUT .../target` (rollback) | deploy (allowed under promote-only) |
-| `POST .../plan`, `POST .../deployments` | deploy, plus policy and bypass rules |
-| `GET /deployments/{id}` | read |
-| `POST /deployments/{id}/complete`, `.../fail` | deploy, plus actor rule |
-| `POST /runs/{id}/cancel` | deploy |
-| `POST /runs/{id}/steps`, `PATCH /steps/{id}`, `POST /steps/{id}/logs` | deploy, plus today's actor rule and artifacts-subtree rule |
-| `GET .../status`, `.../status/stream` | read |
-| `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream` | read |
-| `GET .../logs/stream` (runtime logs) | read |
-| `GET .../exec` (S) | deploy |
-| `GET .../databases/{key}/connection`, `.../buckets/{key}/connection` | read |
-| `POST .../credentials/reveal` (S) | deploy |
-| `GET .../applications/{key}/environment` (S) | deploy |
-| `POST .../backups` | deploy |
-| `GET .../backups` | read |
-| `POST .../restore` (S) | deploy on target, read on the snapshot's environment |
+| `GET /environments/{id}` | P:read; locked answers the minimal shape (id, name, project, `access: none`) |
+| `PATCH /environments/{id}` (new: settings, S) | E:admin; `priority: high` IA |
+| `GET /environments/{id}/access` (new) | E:read |
+| `PUT|DELETE /environments/{id}/access/{user}` (new, S) | E:admin |
+| `DELETE /environments/{id}`, `POST .../teardown` (S) | E:admin |
+| `GET .../values` | E:read |
+| `PUT .../values`, `DELETE .../values/{name}` | E:maintain |
+| `GET .../revisions`, `GET /revisions/{id}`, `GET .../target` | E:read |
+| `PUT .../target` (rollback) | E:deploy (allowed under promote-only) |
+| `POST .../plan`, `POST .../deployments` | E:deploy when the definition is unchanged, E:maintain when it changes, plus policy and bypass rules; promote needs E:read on the source |
+| `GET /deployments/{id}` | E:read |
+| `POST /deployments/{id}/complete`, `.../fail` | E:deploy, plus actor rule |
+| `POST /runs/{id}/cancel` | E:deploy |
+| `POST /runs/{id}/steps`, `PATCH /steps/{id}`, `POST /steps/{id}/logs` | E:deploy, plus today's actor rule and artifacts-subtree rule |
+| `GET .../status`, `.../status/stream` | E:read |
+| `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream` | E:read |
+| `GET .../logs/stream` (runtime logs) | E:read |
+| `GET .../exec` (S) | E:maintain |
+| `GET .../databases/{key}/connection`, `.../buckets/{key}/connection` | E:read |
+| `POST .../credentials/reveal` (S) | E:maintain |
+| `GET .../applications/{key}/environment` (S) | E:maintain |
+| `POST .../backups` | E:deploy |
+| `GET .../backups` | E:read |
+| `POST .../restore` (S) | E:maintain on the target, E:read on the snapshot's environment |
 
 ## Registry token scope
 
 `userActions` becomes access-aware: `skali/<project>/<app>` grants push and
-pull to deployers, pull only to other members, nothing to non-members
-(404-equivalent: the repository does not exist for them). `cache/...`
-grants push and pull to anyone who is a deployer somewhere, nothing
-otherwise. The `skali-node` pull credential is unchanged.
+pull to deployers of the project, pull only to other members, nothing to
+non-members (the repository does not exist for them). `cache/...` grants
+push and pull to anyone who is a deployer somewhere, nothing otherwise. The
+`skali-node` pull credential is unchanged.
 
 ## What the API tells clients
 
-So the CLI and console can hint and hide without extra calls, and so
-`skali` can explain refusals before doing work:
+So the CLI and console can hint, disable, and explain without extra calls,
+and so `skali` can refuse before doing work:
 
 - `GET /auth/session` gains `create_projects`.
-- Project payloads gain `access: {role: admin|member, environments: {name:
-  read|deploy}}` for the caller (instance admins report `admin`); the map
-  lists only visible environments.
-- Environment payloads gain `access: read|deploy` and `settings:
-  {member_access, deploy_policy, promote_from, priority}`.
-- Plan responses report the policy verdict (`protected`, allowed sources,
-  whether the caller may bypass) so `skali deploy` refuses before building.
-- Runs and deployments carry `bypass_protection` and the actor.
+- Project payloads gain `access: {role, environments: {name: role}}` for
+  the caller, with effective roles (instance admins report `admin`
+  everywhere); locked environments appear with `none`.
+- Environment payloads gain `access: <effective role>` and `settings:
+  {max_role, deploy_policy, promote_from, priority}`.
+- Plan responses report `required_role` (`deploy` or `maintain`, from
+  whether the definition changed) and the policy verdict (`protected`,
+  allowed sources, whether the caller may bypass), so `skali deploy`
+  refuses before building and the console disables the right buttons.
+- Runs and deployments carry the actor and `bypass_protection`.
 
 ## Management surfaces
 
 API first; then console and CLI, both thin over the same routes.
 
 Console: users page gets the `create_projects` toggle; a project gets a
-Members tab showing the members x environments matrix (default access, cells,
-effective level) with editing for project admins; environment settings
-(member default, protection, priority for instance admins); badges for
-protected and high-priority environments; deploy/rollback/exec controls
-follow `access`; nodes/system/users only for instance admins server-side,
-not just hidden.
+Members tab showing the grid (members x environments, project role, cells,
+effective role) with editing for project admins; environment settings
+(ceiling, protection, priority for instance admins); the environment
+dropdown lists locked environments disabled with a lock icon; badges for
+protected and high-priority environments; deploy, rollback, values, exec
+controls follow `access`; nodes, system, and users only for instance admins
+server-side, not just hidden.
 
-CLI (names open): `skali project members ls|add|set|rm`,
-`skali env ls|create|set|rm|access` (`set` for member default, protection,
-priority), `skali deploy --bypass-protection`, `skali remote status` shows
-role and `create_projects`. Refusals print the reason and, for protection,
-the promote command. Interactive first-deploy environment creation stays,
-always `normal` priority.
+CLI (names open): `skali project members ls|add|set|rm`, `skali env
+ls|create|set|rm|access` (`set` for ceiling, protection, priority; `access`
+for cells), `skali deploy --bypass-protection`, `skali remote status` shows
+role and `create_projects`. Refusals print the required role and, for
+protection, the promote command. Interactive first-deploy environment
+creation stays, always `normal` priority.
 
 `skali dev` is unaffected: the local skalid has one dev user who is an
 instance admin.
@@ -336,13 +378,15 @@ deferred until something needs to read it.
 
 ## Schema
 
-- `project_members(project_id, user_id, role, default_access, created_at,
-  updated_at)`, primary key `(project_id, user_id)`, cascades from both.
-- `environment_access(environment_id, user_id, access)`, primary key
-  `(environment_id, user_id)`, cascades from both.
-- `environments`: `member_access` (default `deploy`), `deploy_policy`
-  (default `direct`), `promote_from` (text array, default empty),
-  `priority` (default `normal`), all `CHECK`-constrained.
+- `project_members(project_id, user_id, role, created_at, updated_at)`,
+  primary key `(project_id, user_id)`, cascades from both; `role` checked
+  against `read | deploy | maintain | admin`.
+- `environment_access(environment_id, user_id, role, created_at,
+  updated_at)`, primary key `(environment_id, user_id)`, cascades from
+  both; `role` checked against `none | read | deploy | maintain | admin`.
+- `environments`: `max_role` (default `admin`), `deploy_policy` (default
+  `direct`), `promote_from` (text array, default empty), `priority`
+  (default `normal`), all `CHECK`-constrained.
 - `users.create_projects` boolean default false.
 - Bootstrap unchanged: `skalid user create --role admin`.
 
@@ -351,23 +395,26 @@ Backfill of existing installations: see open decisions.
 ## Enforcement shape
 
 One resolver in a new `internal/authz` package: `Resolve(ctx, user,
-projectID)` reads membership, cells, and environment settings in one query
-and returns the role, the effective level per environment, and the derived
-predicates (deployer, may create environments, may bypass). Instance admin
-short-circuits. Handlers ask the resolver; middleware attaches only the
-user, as today. List endpoints filter with the resolver's visible set.
-`RequireAdmin` and `RequireFresh` stay for instance routes and sudo. The
-policy gate lives beside the existing in-flight and destructive gates in
-deploy open and in plan preview. Registry `userActions` calls the same
-resolver.
+projectID)` reads the membership, cells, and environment settings in one
+query and returns the project role, the effective role per environment,
+and the derived predicates (deployer, may create environments, may bypass
+on a given environment). Instance admin short-circuits. Handlers ask the
+resolver; middleware attaches only the user, as today. List endpoints
+filter or mark with the resolver's result. `RequireAdmin` and
+`RequireFresh` stay for instance routes and sudo. The definition-unchanged
+check and the policy gate live beside the existing in-flight and
+destructive gates in deploy open and in plan preview. Registry
+`userActions` calls the same resolver.
 
 ## Testing
 
-Resolver unit tests over the precedence table; router-walk test asserting
-every route is classified; handler tests for 404 versus 403 and for
-filtered lists; registry scope tests; the dev e2e gains a member scenario
-(create a member, grant staging deploy, production 404, promote-only refusal
-and bypass, environment creation by a deployer); console checks for hidden
+Resolver unit tests over the effective-role rules; router-walk test
+asserting every route is classified; handler tests for 404 versus 403,
+locked listings, and filtered lists; registry scope tests; the dev e2e
+gains a member scenario (create a member, project `read` plus a `deploy`
+cell on staging, code-only deploy allowed, definition change refused with
+the required role, production locked by ceiling, promote-only refusal and
+bypass, environment creation by `maintain`); console checks for disabled
 versus enforced.
 
 ## Deferred on purpose
@@ -384,14 +431,17 @@ mapping.
 - Sysadmin: instance admin. Sees and does everything, still cannot deploy
   directly into a promote-only production without `--bypass-protection` and
   a fresh session, and the run says so.
-- Programmer on a customer site: member of that project, default `deploy`;
-  production has `member_access: read` and `promote-only` from staging. They
-  deploy staging, create feature environments, read production, and cannot
+- Programmer on a customer site: project `maintain`; production has
+  `max_role: read` and `promote-only` from staging. They maintain staging,
+  create feature environments (admin on those), read production, and cannot
   put untested code there. Give them a `deploy` cell on production and they
-  promote; they still cannot deploy directly.
-- Log watcher: member, default `none`, cell `read` on staging. Production
-  does not exist for them.
-- Internal-tools colleague: `create_projects` on, admin of their own
+  promote; they still cannot deploy directly or touch production values.
+- Release manager: project `read` plus a `deploy` cell on production. They
+  promote the tested staging revision to production and roll back, and
+  change nothing else.
+- Log watcher: project `read` plus a `none` cell on production. Production
+  shows up locked in their list; its contents answer 403.
+- Internal-tools colleague: `create_projects` on, `admin` of their own
   projects, member nowhere else. Their environments are `normal` priority
   and yield to production; they cannot raise them.
 
@@ -399,23 +449,26 @@ mapping.
 
 Written into the model above as proposals; each can still be flipped.
 
-1. Runtime logs at `read` (as written) or at `deploy` because application
+1. Runtime logs at `read` (as written) or at `maintain` because application
    logs are raw pass-through and may print secrets. Run logs are redacted
    either way.
-2. Default access for a newly added member: `read` (as written) or `deploy`.
-3. Bypass flag name: `--bypass-protection` (as written) or something
+2. Backup create at `deploy` (as written, operational and non-destructive)
+   or `maintain` (it writes to the backup target).
+3. Environment creation at project `maintain` (as written) or an explicit
+   per-member permission on top of the role, for sandboxes of lower roles.
+4. Bypass flag name: `--bypass-protection` (as written) or something
    shorter.
-4. Backfill on upgrade: no memberships (least privilege; existing `member`
+5. Backfill on upgrade: no memberships (least privilege; existing `member`
    users lose product access until granted; nothing changes for admins) or
-   preserve today's behavior by granting every existing member `deploy` on
-   every existing project. Lean: no memberships; the khz installation has
-   only the admin today.
-5. Sudo for rollback and restore into a protected environment, in addition
+   preserve today's behavior by granting every existing member `maintain`
+   on every existing project. Lean: no memberships; the khz installation
+   has only the admin today.
+6. Sudo for rollback and restore into a protected environment, in addition
    to what is sudo today. Lean: yes for both, they are cheap and rare.
-6. Should protection also refuse teardown and delete of the protected
-   environment, or is priority `high` (admin-only teardown) enough. Lean:
-   priority is enough; keep protection about revisions.
-7. Order of the management surfaces after the API: console first (as
+7. Should protection also refuse teardown and delete of the protected
+   environment (both are environment `admin` already). Lean: no; keep
+   protection about revisions.
+8. Order of the management surfaces after the API: console first (as
    written) or CLI first.
-8. CLI naming: `skali project members ...` and `skali env ...`, or fold
-   both under one `skali access` group.
+9. CLI naming: `skali project members ...` and `skali env ...`, or one
+   `skali access` group.

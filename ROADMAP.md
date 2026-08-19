@@ -38,12 +38,13 @@ been tagged.
 
 The goal of this block: I can put a paying workload on skali and sleep.
 
-- [ ] Permission system: instance role plus per-project membership with an
-      access level per environment (`none | read | deploy`), environment
-      settings for member default, promote-only protection with an explicit
-      recorded admin bypass, and environment priority (`normal | high`,
-      instance admins only) rendered as PriorityClasses. Model and route
-      classification in [`docs/permissions.md`](docs/permissions.md).
+- [ ] Permission system: one role ladder (`none | read | deploy | maintain |
+      admin`) used per project (the default) and per environment (cells and
+      a ceiling), locked environments stay listed, promote-only protection
+      with an explicit recorded admin bypass, environment priority
+      (`normal | high`, instance admins only) rendered as PriorityClasses.
+      Model and route classification in
+      [`docs/permissions.md`](docs/permissions.md).
 - [ ] Tag a first release. Prove goreleaser, `install.sh`, published images,
       and `skali cluster upgrade` from a released binary end to end.
 - [ ] Skali's own state is backed up off-cluster (system database, values
