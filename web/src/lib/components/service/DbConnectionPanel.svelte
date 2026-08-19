@@ -1,5 +1,8 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { api, ApiError } from '$lib/api/client';
+	import { requiredTitle, roleAtLeast } from '$lib/access';
+	import type { Environment } from '$lib/types/project';
 	import type { DatabaseView } from '$lib/models/service';
 	import type { DatabaseConnection, DatabaseCredentials } from '$lib/types/connections';
 	import { modal } from '$lib/stores/modal.svelte';
@@ -22,6 +25,13 @@
 	} = $props();
 
 	let revealing = $state(false);
+
+	// Credentials are configuration: maintain on the environment reveals them.
+	const env = $derived(page.data.env as Environment | null);
+	const mayReveal = $derived(roleAtLeast(env?.access, 'maintain'));
+	const revealTitle = $derived(
+		mayReveal ? undefined : requiredTitle('maintain', 'environment', env?.name ?? '')
+	);
 
 	// Sudo-gated one-time reveal; the interceptor in the api client handles
 	// the reauth prompt. Values go straight into the modal props and nowhere
@@ -62,7 +72,13 @@
 			private network
 		</span>
 		<div class="ml-auto">
-			<Button size="sm" busy={revealing} disabled={!connection?.host} onclick={reveal}>
+			<Button
+				size="sm"
+				busy={revealing}
+				disabled={!connection?.host || !mayReveal}
+				title={revealTitle}
+				onclick={reveal}
+			>
 				Reveal credentials
 			</Button>
 		</div>

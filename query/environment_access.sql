@@ -13,6 +13,10 @@ JOIN users u ON u.id = a.user_id
 WHERE a.environment_id = $1
 ORDER BY lower(u.email);
 
+-- Every cell of one project, the members grid's second read.
+-- name: ListEnvironmentAccessForProject :many
+SELECT environment_id, user_id, role FROM environment_access WHERE project_id = $1;
+
 -- Every cell of one user, the resolver's second read.
 -- name: ListEnvironmentAccessForUser :many
 SELECT * FROM environment_access WHERE user_id = $1;

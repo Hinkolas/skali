@@ -8,9 +8,11 @@ RETURNING *;
 -- name: GetProjectMember :one
 SELECT * FROM project_members WHERE project_id = $1 AND user_id = $2;
 
--- One project's members with the user columns the access surfaces show.
+-- One project's members with the user columns the access surfaces show;
+-- the instance role travels along so the members grid can report instance
+-- admins as admin everywhere.
 -- name: ListProjectMembers :many
-SELECT m.project_id, m.user_id, m.role, m.created_at, m.updated_at, u.email, u.name
+SELECT m.project_id, m.user_id, m.role, m.created_at, m.updated_at, u.email, u.name, u.role AS instance_role
 FROM project_members m
 JOIN users u ON u.id = m.user_id
 WHERE m.project_id = $1

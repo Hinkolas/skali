@@ -3,7 +3,9 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Lock from '@lucide/svelte/icons/lock';
 	import Plus from '@lucide/svelte/icons/plus';
+	import { CREATE_PROJECTS_TITLE, canCreateProject, requiredTitle, roleAtLeast } from '$lib/access';
 	import type { OrgView } from '$lib/models/org';
 	import type { ServiceView } from '$lib/models/service';
 	import type { Environment, Project } from '$lib/types/project';
@@ -12,7 +14,9 @@
 	import Menu from '$lib/components/ui/Menu.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuSeparator from '$lib/components/ui/MenuSeparator.svelte';
+	import Pill from '$lib/components/ui/Pill.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
+	import type { AuthUser } from '$lib/types/auth';
 	import NewProjectModal, {
 		modalOptions as newProjectModalOptions
 	} from '$lib/components/project/NewProjectModal.svelte';
@@ -25,6 +29,7 @@
 	// introduce colliding keys would break both consumers.
 	const data = $derived(
 		page.data as {
+			user: AuthUser | null;
 			org: OrgView;
 			projects: Project[];
 			project?: Project;
@@ -36,6 +41,8 @@
 	);
 
 	const env = $derived(data.env?.name ?? null);
+	const mayCreateProject = $derived(canCreateProject(data.user));
+	const mayCreateEnvironment = $derived(roleAtLeast(data.project?.access.role, 'maintain'));
 
 	const crumbTrigger =
 		'flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-base font-medium transition-colors hover:bg-white/4';
@@ -78,6 +85,8 @@
 			<MenuSeparator />
 			<MenuItem
 				icon={Plus}
+				disabled={!mayCreateProject}
+				title={mayCreateProject ? undefined : CREATE_PROJECTS_TITLE}
 				onselect={() => modal.open(NewProjectModal, {}, newProjectModalOptions)}
 			>
 				New project
@@ -95,13 +104,35 @@
 					/>
 				{/snippet}
 				{#each data.environments ?? [] as e (e.id)}
-					<MenuItem selected={e.name === env} onselect={() => switchEnv(e.name)}>
+					{@const locked = e.access === 'none'}
+					<MenuItem
+						selected={e.name === env}
+						disabled={locked}
+						title={locked ? 'locked for you' : undefined}
+						onselect={() => switchEnv(e.name)}
+					>
 						<span class="font-mono text-md">{e.name}</span>
+						{#if locked}
+							<Lock size={12} class="text-text-ghost ml-auto flex-none" />
+						{:else if e.settings?.deploy_policy === 'promote-only' || e.settings?.priority === 'high'}
+							<span class="ml-auto flex gap-1">
+								{#if e.settings.deploy_policy === 'promote-only'}
+									<Pill text="protected" tone="warning" />
+								{/if}
+								{#if e.settings.priority === 'high'}
+									<Pill text="high" tone="warning" />
+								{/if}
+							</span>
+						{/if}
 					</MenuItem>
 				{/each}
 				<MenuSeparator />
 				<MenuItem
 					icon={Plus}
+					disabled={!mayCreateEnvironment}
+					title={mayCreateEnvironment
+						? undefined
+						: requiredTitle('maintain', 'project', project.name)}
 					onselect={() => modal.open(NewEnvironmentModal, { project }, newEnvironmentModalOptions)}
 				>
 					New environment

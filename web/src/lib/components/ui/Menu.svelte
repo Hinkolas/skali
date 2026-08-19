@@ -30,8 +30,11 @@
 	// Items self-close on select via this context (see MenuItem).
 	setContext('menu', { close: () => (open = false) });
 
+	// Disabled items stay visible but leave the roving focus order.
 	function items(): HTMLElement[] {
-		return root ? [...root.querySelectorAll<HTMLElement>('[role="menuitem"]')] : [];
+		return root
+			? [...root.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')]
+			: [];
 	}
 
 	function focusItem(index: number) {

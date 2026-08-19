@@ -16,7 +16,6 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
-	"github.com/Hinkolas/skali/internal/localdev"
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
@@ -57,7 +56,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveQueryProject(ctx, start, environment, remote)
+			scope, err := resolveQueryProject(ctx, start, "", environment, remote)
 			if err != nil {
 				return err
 			}
@@ -89,7 +88,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			}
 			runID, err := scope.api.RestoreBackup(ctx, targetEnvironment.ID, snapshotID)
 			if isReauthRequired(err) {
-				if err = reauthForAdmin(ctx, command, out, scope.api); err != nil {
+				if err = reauthSession(ctx, out, bufio.NewReader(command.InOrStdin()), scope.api); err != nil {
 					return err
 				}
 				runID, err = scope.api.RestoreBackup(ctx, targetEnvironment.ID, snapshotID)
@@ -248,7 +247,7 @@ func newBackupLsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveQueryProject(ctx, start, environment, remote)
+			scope, err := resolveQueryProject(ctx, start, "", environment, remote)
 			if err != nil {
 				return err
 			}
@@ -331,7 +330,7 @@ func newBackupTargetUnsetCommand() *cobra.Command {
 			}
 			err = api.DeleteBackupTarget(ctx)
 			if isReauthRequired(err) {
-				if err = reauthForAdmin(ctx, command, out, api); err != nil {
+				if err = reauthSession(ctx, out, bufio.NewReader(command.InOrStdin()), api); err != nil {
 					return err
 				}
 				err = api.DeleteBackupTarget(ctx)
@@ -400,7 +399,7 @@ func newBackupTargetSetCommand() *cobra.Command {
 			}
 			target, err := api.PutBackupTarget(ctx, input)
 			if isReauthRequired(err) {
-				if err = reauthForAdmin(ctx, command, out, api); err != nil {
+				if err = reauthSession(ctx, out, bufio.NewReader(command.InOrStdin()), api); err != nil {
 					return err
 				}
 				target, err = api.PutBackupTarget(ctx, input)
@@ -442,7 +441,7 @@ func newBackupTargetShowCommand() *cobra.Command {
 			}
 			target, err := api.GetBackupTarget(ctx)
 			if isReauthRequired(err) {
-				if err = reauthForAdmin(ctx, command, out, api); err != nil {
+				if err = reauthSession(ctx, out, bufio.NewReader(command.InOrStdin()), api); err != nil {
 					return err
 				}
 				target, err = api.GetBackupTarget(ctx)
@@ -470,25 +469,4 @@ func newBackupTargetShowCommand() *cobra.Command {
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command
-}
-
-// reauthForAdmin refreshes the sudo window for an admin-gated call: the
-// local platform reuses its recorded bootstrap password, every other remote
-// prompts for the account password.
-func reauthForAdmin(ctx context.Context, command *cobra.Command, out io.Writer, api *client.Client) error {
-	if api.Master() == localdev.MasterURL() {
-		return reauthLocal(ctx, api)
-	}
-	if !cliprompt.Interactive() {
-		return errors.New("recent authentication required; re-run in a terminal to confirm your password")
-	}
-	session := promptSession(out, bufio.NewReader(command.InOrStdin()))
-	password, err := session.Secret(ctx, cliprompt.SecretOptions{Title: "Confirm your password"})
-	if err != nil {
-		return err
-	}
-	if err := api.Reauthenticate(ctx, password); err != nil {
-		return fmt.Errorf("reauthenticate: %w", err)
-	}
-	return nil
 }

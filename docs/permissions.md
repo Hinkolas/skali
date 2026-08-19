@@ -2,10 +2,13 @@
 
 Status: design agreed 2026-08-19. The server side (schema, resolver, every
 route classified and enforced, registry scope, members/cells/settings API,
-payload additions) is implemented; the console and CLI management surfaces,
-the promote-only policy enforcement with its bypass, and the PriorityClass
-rendering are pending. This file is the description of how access works;
-the "Open decisions" section at the end disappears as they are settled.
+payload additions) and the management surfaces (`skali access`, `skali env`,
+the deploy flow consulting `access`, the console's members grid, environment
+settings, locked environments, gated controls, and the `create_projects`
+toggle) are implemented; the promote-only policy enforcement with its bypass
+and the PriorityClass rendering are pending. This file is the description of
+how access works; the "Open decisions" section at the end disappears as they
+are settled.
 
 ## Why
 
@@ -349,6 +352,12 @@ and so `skali` can refuse before doing work:
   everywhere); locked environments appear with `none`.
 - Environment payloads gain `access: <effective role>` and `settings:
   {max_role, deploy_policy, promote_from, priority}`.
+- The members listing renders the grid: each member carries
+  `instance_admin` and `environments: {name: {role, cell}}`, the effective
+  role per environment computed by the same `Effective` that gates
+  requests, with the explicit cell (null when inherited). Only environments
+  the caller may read appear, so neither client re-implements the rules
+  (and the CLI binary stays free of the database packages).
 - Plan responses report `required_role` (`deploy` or `maintain`, from
   whether the definition changed) and the policy verdict (`protected`,
   allowed sources, whether the caller may bypass), so `skali deploy`
@@ -357,27 +366,60 @@ and so `skali` can refuse before doing work:
 
 ## Management surfaces
 
-API first; then console and CLI, both thin over the same routes.
+API first; then CLI and console, both thin over the same routes.
 
-Console: users page gets the `create_projects` toggle; a project gets a
-Members tab showing the grid (members x environments, project role, cells,
-effective role) with editing for project admins; environment settings
-(ceiling, protection, priority for instance admins); the environment
-dropdown lists locked environments disabled with a lock icon; badges for
-protected and high-priority environments; deploy, rollback, values, exec
-controls follow `access`; nodes, system, and users only for instance admins
-server-side, not just hidden.
+CLI (settled 2026-08-19): one ladder, one verb set, the level picked by
+`--environment`:
 
-CLI (names open): `skali project members ls|add|set|rm`, `skali env
-ls|create|set|rm|access` (`set` for ceiling, protection, priority; `access`
-for cells), `skali deploy --bypass-protection`, `skali remote status` shows
-role and `create_projects`. Refusals print the required role and, for
-protection, the promote command. Interactive first-deploy environment
-creation stays, always `normal` priority.
+- `skali access ls` prints the grid (members as rows, environments as
+  columns, `*` marks an explicit per-environment role, `-` an environment
+  the caller may not read, `(locked)` in its header).
+- `skali access set <user> <role> [--environment ENV]` sets the project
+  role (read..admin; adds the membership) or, with `--environment`, the
+  explicit role on that environment (none..admin; the user must already be
+  a member, the 409 prints the hint). `<user>` is an email or a user id.
+- `skali access rm <user> [--environment ENV]` removes the membership
+  (confirmed, `--yes` to skip; the cells go with it) or only the explicit
+  role on one environment.
+- `skali env ls|create|set|rm`: `ls` shows access, priority, policy,
+  ceiling, creation time (locked rows show `locked`); `create <name>
+  [--priority high]`; `set [--environment ENV] --max-role --deploy-policy
+  --promote-from a,b|any --priority`; `rm <name>` is the purge teardown
+  behind a red banner and confirmation (the raw DELETE leaves cluster state
+  orphaned and has no command).
+- All take `--project` (default: the checkout's binding or manifest) and
+  `--remote`. Sudo-gated writes confirm the password (or the second factor)
+  when the login has aged; on a pipe the answer is read from stdin, so
+  scripts work.
+- `skali deploy` / `plan` / `promote` consult the environment's `access`
+  before any work: below `deploy` they refuse at once; below `maintain` an
+  explicit `--env-file` or `--prune-values` is refused with the required
+  role and a discovered env file is skipped ("values stored (deploy role
+  cannot stage values)"), so a deploy-role user deploys code with the
+  stored values. The plan output names the role the server required.
+  Interactive first-deploy environment creation stays, always `normal`
+  priority.
+- `skalid user create --create-projects` seeds a member who may create
+  projects; `skali remote status` shows the instance role and the flag.
+- `skali dev` is unaffected: the local platform's admin is an instance
+  admin.
 
-`skali dev` is unaffected: the local skalid has one dev user who is an
-instance admin. `skali remote status` prints the instance role and whether
-the user may create projects.
+Console (settled 2026-08-19): the users page's create and edit modals carry
+the `create_projects` toggle (members only; the list marks them); project
+settings gain a Members tab with the grid, editable inline by project admins
+(role pickers per membership and per cell, "inherit" drops a cell, add by
+email, remove with confirmation); the Environments card shows the caller's
+role, `locked` / `protected` / `high` pills, and an inline settings form per
+environment (ceiling, deploy policy, promotion sources, priority with `high`
+for instance admins only); the environment dropdown lists locked
+environments disabled with a lock icon and marks protected and high ones;
+the default environment prefers an unlocked one; a locked environment's
+operational pages show a lock state while settings stay reachable; New
+project, New environment, display name, delete, teardown, purge, rollback,
+values, and credential reveal follow `access` (disabled with the required
+role as title); nodes, system, and users answer 403 to members server-side.
+Sudo-gated writes run from pages, never from inside a modal, because the
+reauth prompt needs the single modal slot.
 
 ## Journal and audit
 
@@ -446,12 +488,18 @@ asserting every route is classified; an access matrix test probing every
 route with one fixture per rung (non-member 404, locked 403, one step
 below 403 naming the role, allowed not refused); handler tests for locked
 listings, filtered lists, members and cells, creation defaults, the
-deploy/maintain boundary on plan and open; registry scope tests; the dev
-e2e gains a member scenario (create a member, project `read` plus a `deploy`
-cell on staging, code-only deploy allowed, definition change refused with
-the required role, production locked by ceiling, promote-only refusal and
-bypass, environment creation by `maintain`); console checks for disabled
-versus enforced.
+deploy/maintain boundary on plan and open, the members grid; registry scope
+tests; CLI unit tests over a fake installation (grid rendering, membership
+versus cell routing, confirmations, the settings patch, purge, reauth once
+with the password on stdin and the second factor, the staging policy); the
+dev e2e member scenario `TestDevAccess` (a member created in-cluster and
+logged in under a second remote, project `read` plus a `deploy` cell on
+staging, code-only deploy allowed, env file and definition change refused
+with the required role, local locked by the ceiling and then by a `none`
+cell, environment creation by `maintain` with the creator administering,
+changing, and purging it); promote-only refusal and bypass join it with the
+protection slice. Console checks are svelte-check, build, and SSR smoke
+(403 on nodes/system/users for members); there is no console test harness.
 
 ## Deferred on purpose
 
@@ -498,7 +546,6 @@ reflects the lean:
 3. Should protection also refuse teardown and delete of the protected
    environment (both are environment `admin` already). Lean: no; keep
    protection about revisions. (Protection slice.)
-4. Order of the management surfaces after the API: console first (as
-   written) or CLI first. (Management slice.)
-5. CLI naming: `skali project members ...` and `skali env ...`, or one
-   `skali access` group. (Management slice.)
+
+Settled 2026-08-19 (management slice): CLI first, then console; CLI naming
+is `skali access` plus `skali env` (see Management surfaces).

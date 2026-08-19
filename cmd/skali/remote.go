@@ -514,17 +514,7 @@ func loginSession(ctx context.Context, prompts *cliprompt.Session, master, email
 			Title:       "Two-factor code",
 			Description: "Enter the six-digit code from your authenticator.",
 			CharLimit:   6,
-			Validate: func(value string) error {
-				if len(value) != 6 {
-					return errors.New("enter a six-digit code")
-				}
-				for _, digit := range value {
-					if digit < '0' || digit > '9' {
-						return errors.New("enter a six-digit code")
-					}
-				}
-				return nil
-			},
+			Validate:    validateTOTPCode,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("read code: %w", err)

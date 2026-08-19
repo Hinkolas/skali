@@ -1,5 +1,8 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { api, ApiError } from '$lib/api/client';
+	import { requiredTitle, roleAtLeast } from '$lib/access';
+	import type { Environment } from '$lib/types/project';
 	import type { BucketView, ServiceView } from '$lib/models/service';
 	import type { StatCardData } from '$lib/models/view';
 	import type { BucketConnection, BucketCredentials } from '$lib/types/connections';
@@ -28,6 +31,13 @@
 	} = $props();
 
 	let revealing = $state(false);
+
+	// Credentials are configuration: maintain on the environment reveals them.
+	const env = $derived(page.data.env as Environment | null);
+	const mayReveal = $derived(roleAtLeast(env?.access, 'maintain'));
+	const revealTitle = $derived(
+		mayReveal ? undefined : requiredTitle('maintain', 'environment', env?.name ?? '')
+	);
 
 	async function reveal() {
 		if (!envId) return;
@@ -86,7 +96,13 @@
 		<div class="mb-4 flex items-center gap-2.5">
 			<h3 class="text-text-primary text-xl font-semibold">S3 connection</h3>
 			<div class="ml-auto">
-				<Button size="sm" busy={revealing} disabled={!connection?.endpoint} onclick={reveal}>
+				<Button
+					size="sm"
+					busy={revealing}
+					disabled={!connection?.endpoint || !mayReveal}
+					title={revealTitle}
+					onclick={reveal}
+				>
 					Reveal keypair
 				</Button>
 			</div>

@@ -78,6 +78,37 @@ func (q *Queries) ListEnvironmentAccess(ctx context.Context, environmentID uuid.
 	return items, nil
 }
 
+const listEnvironmentAccessForProject = `-- name: ListEnvironmentAccessForProject :many
+SELECT environment_id, user_id, role FROM environment_access WHERE project_id = $1
+`
+
+type ListEnvironmentAccessForProjectRow struct {
+	EnvironmentID uuid.UUID
+	UserID        uuid.UUID
+	Role          string
+}
+
+// Every cell of one project, the members grid's second read.
+func (q *Queries) ListEnvironmentAccessForProject(ctx context.Context, projectID uuid.UUID) ([]ListEnvironmentAccessForProjectRow, error) {
+	rows, err := q.db.Query(ctx, listEnvironmentAccessForProject, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEnvironmentAccessForProjectRow
+	for rows.Next() {
+		var i ListEnvironmentAccessForProjectRow
+		if err := rows.Scan(&i.EnvironmentID, &i.UserID, &i.Role); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentAccessForUser = `-- name: ListEnvironmentAccessForUser :many
 SELECT environment_id, project_id, user_id, role, created_at, updated_at FROM environment_access WHERE user_id = $1
 `

@@ -9,6 +9,7 @@
 		type = 'button',
 		disabled = false,
 		busy = false,
+		title,
 		class: className = '',
 		onclick,
 		children
@@ -19,6 +20,8 @@
 		type?: 'button' | 'submit';
 		disabled?: boolean;
 		busy?: boolean;
+		/** Tooltip; on a disabled button it carries the explanation. */
+		title?: string;
 		class?: string;
 		onclick?: (e: MouseEvent) => void;
 		children: Snippet;
@@ -46,11 +49,11 @@
 
 {#if href}
 	<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- pass-through: callers hand in resolved hrefs -->
-	<a {href} class={classes} {onclick}>
+	<a {href} {title} class={classes} {onclick}>
 		{@render children()}
 	</a>
 {:else}
-	<button {type} disabled={disabled || busy} class={classes} {onclick}>
+	<button {type} disabled={disabled || busy} {title} class={classes} {onclick}>
 		{#if busy}
 			<LoaderCircle class="size-4 animate-spin" />
 		{/if}

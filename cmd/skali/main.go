@@ -34,7 +34,8 @@ func main() {
 	root.AddCommand(newRemoteCmd(), newValidateCmd(), newCompileCmd(),
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
 		newDevCommand(), newRunCommand(), newLogsCommand(), newExecCommand(),
-		newValuesCommand(), newBackupCommand(), newClusterCommand(), newSkillCommand())
+		newValuesCommand(), newBackupCommand(), newEnvCommand(), newAccessCommand(),
+		newClusterCommand(), newSkillCommand())
 
 	if err := root.Execute(); err != nil {
 		// A remote exec command's own exit status is a result, not an

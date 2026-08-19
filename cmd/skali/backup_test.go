@@ -82,7 +82,7 @@ func TestBackupLsEnvironmentFilters(t *testing.T) {
 
 func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {
 	seedBackupScope(t)
-	scope, err := resolveQueryProject(context.Background(), ".", "", "")
+	scope, err := resolveQueryProject(context.Background(), ".", "", "", "")
 	require.NoError(t, err)
 
 	// Without --environment the snapshot goes back where it was taken.

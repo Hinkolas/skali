@@ -8,9 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -206,21 +208,61 @@ func TestLookupRemoteByMaster(t *testing.T) {
 	require.False(t, ok)
 }
 
-// fakeInstall is a minimal stateful projects/environments API for target
-// resolution tests, recording creations.
+// fakeInstall is a minimal stateful projects/environments/access API for
+// target resolution and management command tests, recording writes in
+// posts ("project:name", "environment:p1:name", "member:p1:bob:read",
+// "cell:p1-e1:bob:deploy", "settings:p1-e1", "teardown:p1-e1:purge", ...).
 type fakeInstall struct {
 	mu       sync.Mutex
 	projects []client.Project
 	envs     map[string][]client.Environment
 	backups  map[string][]client.BackupSnapshot
+	members  map[string][]client.Member
 	posts    []string
-	srv      *httptest.Server
+	// reauthRequired makes every gated write answer reauth_required until
+	// the session reauthenticates once; reauths counts those calls.
+	reauthRequired bool
+	reauths        int
+	twoFactor      bool
+	srv            *httptest.Server
 }
 
 func newFakeInstall(t *testing.T) *fakeInstall {
 	t.Helper()
-	f := &fakeInstall{envs: map[string][]client.Environment{}, backups: map[string][]client.BackupSnapshot{}}
+	f := &fakeInstall{
+		envs:    map[string][]client.Environment{},
+		backups: map[string][]client.BackupSnapshot{},
+		members: map[string][]client.Member{},
+	}
+	writeError := func(w http.ResponseWriter, status int, code, message string) {
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code, "message": message}})
+	}
+	// gate answers reauth_required once when the fixture demands it.
+	gate := func(w http.ResponseWriter) bool {
+		if f.reauthRequired {
+			writeError(w, http.StatusForbidden, "reauth_required", "recent authentication required")
+			return false
+		}
+		return true
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/auth/session", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(client.SessionInfo{User: client.User{Email: "me@example.com", TwoFactorEnabled: f.twoFactor}})
+	})
+	mux.HandleFunc("/v1/auth/reauth", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		var req map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req["password"] == "" && req["code"] == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "password or code is required")
+			return
+		}
+		f.reauths++
+		f.reauthRequired = false
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("/v1/projects", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -229,7 +271,8 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 				Name string `json:"name"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			created := client.Project{ID: fmt.Sprintf("p%d", len(f.projects)+1), Name: req.Name}
+			created := client.Project{ID: fmt.Sprintf("p%d", len(f.projects)+1), Name: req.Name,
+				Access: client.ProjectAccess{Role: "admin", Environments: map[string]string{}}}
 			f.projects = append(f.projects, created)
 			f.posts = append(f.posts, "project:"+req.Name)
 			_ = json.NewEncoder(w).Encode(map[string]any{"project": created})
@@ -240,46 +283,176 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 	mux.HandleFunc("/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if projectID, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/v1/projects/"), "/backups"); ok {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/projects/"), "/")
+		projectID := parts[0]
+		sub := ""
+		if len(parts) > 1 {
+			sub = parts[1]
+		}
+		switch {
+		case sub == "backups":
 			snapshots := f.backups[projectID]
 			if snapshots == nil {
 				snapshots = []client.BackupSnapshot{}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"snapshots": snapshots})
-			return
-		}
-		projectID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/projects/"), "/environments")
-		if r.Method == http.MethodPost {
+		case sub == "members" && len(parts) == 2:
+			members := f.members[projectID]
+			if members == nil {
+				members = []client.Member{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"members": members})
+		case sub == "members" && len(parts) == 3:
+			if !gate(w) {
+				return
+			}
+			user, _ := url.PathUnescape(parts[2])
+			if r.Method == http.MethodDelete {
+				before := len(f.members[projectID])
+				f.members[projectID] = slices.DeleteFunc(f.members[projectID], func(m client.Member) bool {
+					return m.Email == user
+				})
+				if len(f.members[projectID]) == before {
+					writeError(w, http.StatusNotFound, "not_found", "not a member")
+					return
+				}
+				f.posts = append(f.posts, "member-rm:"+projectID+":"+user)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			var req struct {
-				Name string `json:"name"`
+				Role string `json:"role"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			created := client.Environment{ID: fmt.Sprintf("e%d", len(f.envs[projectID])+1),
-				ProjectID: projectID, Name: req.Name}
+			member := client.Member{UserID: "u-" + user, Email: user, Role: req.Role}
+			f.members[projectID] = append(f.members[projectID], member)
+			f.posts = append(f.posts, "member:"+projectID+":"+user+":"+req.Role)
+			_ = json.NewEncoder(w).Encode(map[string]any{"member": member})
+		case sub == "environments" && r.Method == http.MethodPost:
+			var req struct {
+				Name     string `json:"name"`
+				Priority string `json:"priority"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			created := newFakeEnvironment(fmt.Sprintf("e%d", len(f.envs[projectID])+1), projectID, req.Name)
+			if req.Priority == "high" {
+				created.Settings.Priority, created.Settings.MaxRole = "high", "read"
+			}
 			f.envs[projectID] = append(f.envs[projectID], created)
 			f.posts = append(f.posts, "environment:"+projectID+":"+req.Name)
 			_ = json.NewEncoder(w).Encode(map[string]any{"environment": created})
+		default:
+			envs := f.envs[projectID]
+			if envs == nil {
+				envs = []client.Environment{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"environments": envs})
+		}
+	})
+	mux.HandleFunc("/v1/environments/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/environments/"), "/")
+		env := f.environment(parts[0])
+		if env == nil {
+			writeError(w, http.StatusNotFound, "not_found", "not found")
 			return
 		}
-		envs := f.envs[projectID]
-		if envs == nil {
-			envs = []client.Environment{}
+		sub := ""
+		if len(parts) > 1 {
+			sub = parts[1]
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"environments": envs})
+		switch {
+		case sub == "" && r.Method == http.MethodPatch:
+			if !gate(w) {
+				return
+			}
+			var patch client.EnvironmentSettingsPatch
+			_ = json.NewDecoder(r.Body).Decode(&patch)
+			if patch.MaxRole != nil {
+				env.Settings.MaxRole = *patch.MaxRole
+			}
+			if patch.DeployPolicy != nil {
+				env.Settings.DeployPolicy = *patch.DeployPolicy
+			}
+			if patch.PromoteFrom != nil {
+				env.Settings.PromoteFrom = *patch.PromoteFrom
+			}
+			if patch.Priority != nil {
+				env.Settings.Priority = *patch.Priority
+			}
+			f.posts = append(f.posts, "settings:"+env.ID)
+			_ = json.NewEncoder(w).Encode(map[string]any{"environment": env})
+		case sub == "":
+			_ = json.NewEncoder(w).Encode(map[string]any{"environment": env})
+		case sub == "access" && len(parts) == 3:
+			if !gate(w) {
+				return
+			}
+			user, _ := url.PathUnescape(parts[2])
+			if r.Method == http.MethodDelete {
+				f.posts = append(f.posts, "cell-rm:"+env.ID+":"+user)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			var req struct {
+				Role string `json:"role"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if !slices.ContainsFunc(f.members[env.ProjectID], func(m client.Member) bool { return m.Email == user }) {
+				writeError(w, http.StatusConflict, "conflict", "user is not a member of the project")
+				return
+			}
+			f.posts = append(f.posts, "cell:"+env.ID+":"+user+":"+req.Role)
+			_ = json.NewEncoder(w).Encode(map[string]any{"access": client.Member{Email: user, Role: req.Role}})
+		case sub == "teardown":
+			if !gate(w) {
+				return
+			}
+			var req map[string]bool
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.posts = append(f.posts, fmt.Sprintf("teardown:%s:%v", env.ID, req["purge"]))
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-" + env.ID, "purge": req["purge"]})
+		default:
+			writeError(w, http.StatusNotFound, "not_found", "not found")
+		}
 	})
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
 }
 
-// seed installs a project with the given environments.
+// environment finds an environment by id across projects (under f.mu).
+func (f *fakeInstall) environment(id string) *client.Environment {
+	for projectID := range f.envs {
+		for i := range f.envs[projectID] {
+			if f.envs[projectID][i].ID == id {
+				return &f.envs[projectID][i]
+			}
+		}
+	}
+	return nil
+}
+
+// newFakeEnvironment is an open normal environment the caller administers.
+func newFakeEnvironment(id, projectID, name string) client.Environment {
+	return client.Environment{ID: id, ProjectID: projectID, Name: name, Access: "admin",
+		Settings: &client.EnvironmentSettings{MaxRole: "admin", DeployPolicy: "direct", PromoteFrom: []string{}, Priority: "normal"}}
+}
+
+// seed installs a project with the given environments, all administered by
+// the caller.
 func (f *fakeInstall) seed(projectID, projectName string, envNames ...string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.projects = append(f.projects, client.Project{ID: projectID, Name: projectName})
+	access := client.ProjectAccess{Role: "admin", Environments: map[string]string{}}
+	for _, name := range envNames {
+		access.Environments[name] = "admin"
+	}
+	f.projects = append(f.projects, client.Project{ID: projectID, Name: projectName, Access: access})
 	for i, name := range envNames {
-		f.envs[projectID] = append(f.envs[projectID],
-			client.Environment{ID: fmt.Sprintf("%s-e%d", projectID, i+1), ProjectID: projectID, Name: name})
+		f.envs[projectID] = append(f.envs[projectID], newFakeEnvironment(fmt.Sprintf("%s-e%d", projectID, i+1), projectID, name))
 	}
 }
 
@@ -569,4 +742,26 @@ func TestPrintPlanShape(t *testing.T) {
 	require.NotContains(t, lines[web], "artifact will be rebuilt")
 	require.Contains(t, lines[web+1], "artifact will be rebuilt")
 	require.NotContains(t, lines[web+1], "applications.web")
+}
+
+func TestValuesStagingFollowsAccess(t *testing.T) {
+	// maintain and above stage; an unreported role (older fakes) passes.
+	for _, role := range []string{"maintain", "admin", ""} {
+		stage, err := valuesStagingAllowed(role, "production", &deployOptions{EnvFile: ".env", PruneValues: true})
+		require.NoError(t, err, role)
+		require.True(t, stage, role)
+	}
+	// deploy: a discovered file is skipped, an explicit one refused.
+	stage, err := valuesStagingAllowed("deploy", "production", &deployOptions{})
+	require.NoError(t, err)
+	require.False(t, stage)
+	_, err = valuesStagingAllowed("deploy", "production", &deployOptions{EnvFile: ".env"})
+	require.ErrorContains(t, err, "staging values needs maintain on environment production (your role: deploy)")
+	_, err = valuesStagingAllowed("deploy", "production", &deployOptions{PruneValues: true})
+	require.ErrorContains(t, err, "pruning values needs maintain on environment production (your role: deploy)")
+
+	require.NoError(t, checkDeployAccess("deploy", "production"))
+	require.NoError(t, checkDeployAccess("", "production"))
+	require.ErrorContains(t, checkDeployAccess("read", "production"), "deploy on environment production required (your role: read)")
+	require.ErrorContains(t, checkDeployAccess("none", "production"), "deploy on environment production required (your role: none)")
 }

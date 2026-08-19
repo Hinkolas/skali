@@ -31,6 +31,19 @@ export interface Member {
 	email: string;
 	name: string;
 	role: AccessRole;
+	/** Instance admins are admin everywhere; the membership is informational. */
+	instance_admin?: boolean;
+	/**
+	 * Members listing only: effective role per environment name with the
+	 * explicit cell (null when inherited). Environments the caller cannot
+	 * read are absent.
+	 */
+	environments?: Record<string, MemberEnvironmentAccess>;
+}
+
+export interface MemberEnvironmentAccess {
+	role: AccessRole;
+	cell: AccessRole | null;
 }
 
 export interface Project {

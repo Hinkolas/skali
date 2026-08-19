@@ -140,6 +140,14 @@
 					>
 						{user.role}
 					</span>
+					{#if user.role === 'member' && user.create_projects}
+						<span
+							class="font-mono bg-white/6 text-text-muted ml-1.5 rounded-full px-2 py-0.5 text-2xs"
+							title="May create projects and becomes admin of them"
+						>
+							creates projects
+						</span>
+					{/if}
 				</div>
 				<div>
 					{#if user.two_factor_enabled}

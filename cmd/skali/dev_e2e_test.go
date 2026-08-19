@@ -920,3 +920,116 @@ applications:
 
 	h.run(false, "", "dev", "down")
 }
+
+// TestDevAccess walks the permission model through the CLI on one local
+// platform with a second, non-admin user: membership and cells granted by
+// the admin, code-only deploys allowed and definition or value changes
+// refused with the required role, a ceiling and a lock, and environment
+// creation by a maintainer who then administers what they created.
+func TestDevAccess(t *testing.T) {
+	h := newE2EHarness(t)
+	const memberEmail, memberPassword = "member@skali.localhost", "member-pass-e2e"
+	master := fmt.Sprintf("http://skali.localhost:%d", e2eHTTPPort)
+
+	h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
+	h.waitRoute("hello from skali", 5*time.Minute)
+
+	// A member exists only through the operator command inside the cluster;
+	// the CLI then logs in as them under a second remote name (the reserved
+	// "local" remote is the admin's).
+	kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+	created, err := exec.Command("kubectl", "--kubeconfig", kubeconfig, "exec", "-n", "skali-system",
+		"deploy/skalid", "--", "sh", "-c",
+		fmt.Sprintf("printf '%%s' '%s' | skalid user create --email %s --role member --password-stdin",
+			memberPassword, memberEmail)).CombinedOutput()
+	require.NoError(t, err, string(created))
+	out := h.run(false, memberPassword+"\n", "remote", "add", "member", master, "--email", memberEmail)
+	require.Contains(t, out, "logged in to "+master+" as "+memberEmail)
+
+	// Nothing is granted yet: the project is invisible to the member.
+	out = h.run(true, "", "env", "ls", "--remote", "member")
+	require.Contains(t, out, "project hello-world does not exist")
+
+	// Staging gets its own domain so both environments route side by side.
+	require.NoError(t, os.WriteFile(filepath.Join(h.projectDir, ".env.staging"),
+		[]byte("APP_DOMAIN=staging."+h.host+"\n"), 0o644))
+
+	t.Run("grant", func(t *testing.T) {
+		out := h.run(false, "", "env", "create", "staging", "--remote", "local")
+		require.Contains(t, out, "created environment staging in project hello-world")
+		out = h.run(false, "", "deploy", "--remote", "local", "--environment", "staging", "--env-file", ".env.staging", "--yes")
+		require.Contains(t, out, "ready")
+		out = h.run(false, "", "access", "set", memberEmail, "read", "--remote", "local")
+		require.Contains(t, out, memberEmail+"  read on project hello-world")
+		out = h.run(false, "", "access", "set", memberEmail, "deploy", "--environment", "staging", "--remote", "local")
+		require.Contains(t, out, memberEmail+"  deploy on environment staging")
+		out = h.run(false, "", "env", "set", "--environment", "local", "--max-role", "read", "--remote", "local")
+		require.Contains(t, out, "max role       read")
+		out = h.run(false, "", "access", "ls", "--remote", "local")
+		require.Regexp(t, `(?m)^MEMBER +PROJECT +local +staging$`, out)
+		require.Regexp(t, `(?m)^`+memberEmail+` +read +read +deploy\*$`, out)
+		out = h.run(false, "", "env", "ls", "--remote", "local")
+		require.Regexp(t, `(?m)^local +admin +normal +direct +read `, out)
+	})
+
+	t.Run("member deploys code only", func(t *testing.T) {
+		out := h.run(false, "", "env", "ls", "--remote", "member")
+		require.Regexp(t, `(?m)^local +read `, out)
+		require.Regexp(t, `(?m)^staging +deploy `, out)
+		// The same definition redeploys (a forced restart), with the stored
+		// values because a deploy role cannot stage any.
+		out = h.run(false, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force")
+		require.Contains(t, out, "stored (deploy role cannot stage values)")
+		require.Contains(t, out, "ready")
+		// An explicit env file is refused before anything is built.
+		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--env-file", ".env.staging", "--yes")
+		require.Contains(t, out, "staging values needs maintain on environment staging (your role: deploy)")
+		// A definition change needs maintain: refused by the plan, so
+		// nothing is built either.
+		manifestPath := filepath.Join(h.projectDir, "skali.yml")
+		original, err := os.ReadFile(manifestPath)
+		require.NoError(t, err)
+		require.Contains(t, string(original), "min: 3")
+		require.NoError(t, os.WriteFile(manifestPath, []byte(strings.Replace(string(original), "min: 3", "min: 2", 1)), 0o644))
+		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--yes")
+		require.Contains(t, out, "maintain on environment staging required: this deploy changes the definition")
+		require.NoError(t, os.WriteFile(manifestPath, original, 0o644))
+		// Under the read ceiling the member cannot deploy into local at all,
+		// but reads it.
+		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "local", "--yes")
+		require.Contains(t, out, "deploy on environment local required (your role: read)")
+		out = h.run(false, "", "values", "--remote", "member", "--environment", "local")
+		require.Contains(t, out, "APP_DOMAIN")
+	})
+
+	t.Run("lock", func(t *testing.T) {
+		h.run(false, "", "access", "set", memberEmail, "none", "--environment", "local", "--remote", "local")
+		out := h.run(false, "", "env", "ls", "--remote", "member")
+		require.Regexp(t, `(?m)^local +locked `, out)
+		out = h.run(true, "", "values", "--remote", "member", "--environment", "local")
+		require.Contains(t, out, "read on environment local required")
+		out = h.run(false, "", "access", "ls", "--remote", "member")
+		require.Contains(t, out, "local (locked)")
+	})
+
+	t.Run("maintainer creates and administers", func(t *testing.T) {
+		h.run(false, "", "access", "set", memberEmail, "maintain", "--remote", "local")
+		out := h.run(false, "", "env", "create", "feature", "--remote", "member")
+		require.Contains(t, out, "created environment feature in project hello-world")
+		// Environments list by name: feature, local (locked), staging.
+		out = h.run(false, "", "access", "ls", "--remote", "member")
+		require.Regexp(t, `(?m)^`+memberEmail+` +maintain +admin\* +- +deploy\*$`, out)
+		// Sudo-gated writes on a non-local remote confirm the password on
+		// stdin when the login has aged; a fresh login passes straight
+		// through, so the answer is supplied either way.
+		out = h.run(false, memberPassword+"\n", "env", "set", "--environment", "feature", "--max-role", "read", "--remote", "member")
+		require.Contains(t, out, "max role       read")
+		out = h.run(false, memberPassword+"\n", "env", "rm", "feature", "--yes", "--remote", "member")
+		require.Contains(t, out, "purge started")
+		// Production-like environments stay out of reach: no cell, read ceiling.
+		out = h.run(true, "", "env", "set", "--environment", "staging", "--max-role", "read", "--remote", "member")
+		require.Contains(t, out, "admin on environment staging required")
+	})
+
+	h.run(false, "", "dev", "down")
+}

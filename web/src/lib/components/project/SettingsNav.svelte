@@ -10,7 +10,8 @@
 	const base = $derived(`/projects/${project.name}/settings`);
 	const tabs = $derived([
 		{ label: 'General', path: base },
-		{ label: 'Values', path: `${base}/values` }
+		{ label: 'Values', path: `${base}/values` },
+		{ label: 'Members', path: `${base}/members` }
 	]);
 </script>
 

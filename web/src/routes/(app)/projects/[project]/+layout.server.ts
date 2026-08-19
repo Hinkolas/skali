@@ -21,11 +21,14 @@ export const load: LayoutServerLoad = async ({ params, url, parent, locals, fetc
 
 	// Reading ?env= registers the search-param dependency: switching the
 	// environment re-runs this load and everything below it. An unknown or
-	// absent value falls back to production, then the first environment.
+	// absent value falls back to production, then the first environment the
+	// caller may read, then the first at all (a locked one renders as such).
 	const requested = url.searchParams.get('env');
+	const open = environments.filter((e) => e.access !== 'none');
 	const env =
 		environments.find((e) => e.name === requested) ??
-		environments.find((e) => e.name === 'production') ??
+		open.find((e) => e.name === 'production') ??
+		open[0] ??
 		environments[0] ??
 		null;
 

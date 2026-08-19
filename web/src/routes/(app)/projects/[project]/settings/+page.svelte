@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
+	import Lock from '@lucide/svelte/icons/lock';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { api, ApiError } from '$lib/api/client';
+	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
 	import { formatDateTime, relativeTime } from '$lib/format';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { modal } from '$lib/stores/modal.svelte';
@@ -21,10 +24,52 @@
 		modalOptions as newEnvironmentModalOptions
 	} from '$lib/components/project/NewEnvironmentModal.svelte';
 	import SettingsNav from '$lib/components/project/SettingsNav.svelte';
+	import EnvironmentSettingsForm from '$lib/components/access/EnvironmentSettingsForm.svelte';
+	import type { AuthUser } from '$lib/types/auth';
+	import type { Environment } from '$lib/types/project';
 	import type { Target } from '$lib/types/revisions';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	// Access: the project role gates project settings and environment
+	// creation; each environment's effective role gates its own controls.
+	const user = $derived(page.data.user as AuthUser | null);
+	const instanceAdmin = $derived(isInstanceAdmin(user));
+	const projectAdmin = $derived(roleAtLeast(data.project.access.role, 'admin'));
+	const projectMaintain = $derived(roleAtLeast(data.project.access.role, 'maintain'));
+	const projectAdminTitle = $derived(requiredTitle('admin', 'project', data.project.name));
+	const envLocked = $derived(data.env?.access === 'none');
+
+	// One environment's settings editor open at a time.
+	let openSettings = $state<string | null>(null);
+
+	function environmentPills(environment: Environment) {
+		const pills: { text: string; tone: 'success' | 'warning' | 'neutral'; title: string }[] = [];
+		if (environment.access === 'none') {
+			pills.push({
+				text: 'locked',
+				tone: 'neutral',
+				title: 'Locked for you: listed by name only.'
+			});
+			return pills;
+		}
+		if (environment.settings?.deploy_policy === 'promote-only') {
+			pills.push({
+				text: 'protected',
+				tone: 'warning',
+				title: 'promote-only: direct deploys are refused'
+			});
+		}
+		if (environment.settings?.priority === 'high') {
+			pills.push({
+				text: 'high',
+				tone: 'warning',
+				title: 'high priority: keeps running when resources are tight'
+			});
+		}
+		return pills;
+	}
 
 	// Writable derived: resets to the loaded value whenever the project data
 	// changes (save, env switch), while staying editable in between.
@@ -119,10 +164,15 @@
 				description="Shown in lists and headers; empty falls back to the name."
 			>
 				<div class="flex gap-2">
-					<TextInput bind:value={displayName} placeholder={data.project.name} />
+					<TextInput
+						bind:value={displayName}
+						placeholder={data.project.name}
+						disabled={!projectAdmin}
+					/>
 					<Button
 						busy={savingName}
-						disabled={displayName === data.project.display_name}
+						disabled={!projectAdmin || displayName === data.project.display_name}
+						title={projectAdmin ? undefined : projectAdminTitle}
 						onclick={saveDisplayName}
 					>
 						Save
@@ -138,6 +188,10 @@
 			<div class="ml-auto">
 				<Button
 					size="sm"
+					disabled={!projectMaintain}
+					title={projectMaintain
+						? undefined
+						: requiredTitle('maintain', 'project', data.project.name)}
 					onclick={() =>
 						modal.open(NewEnvironmentModal, { project: data.project }, newEnvironmentModalOptions)}
 				>
@@ -147,34 +201,69 @@
 		</div>
 		<div class="flex flex-col">
 			{#each data.environments as environment (environment.id)}
-				<div class="border-border-subtle flex items-center gap-3 border-b py-2.75 last:border-0">
-					<span class="font-mono text-text-primary text-md">{environment.name}</span>
-					{#if environment.id === data.env?.id}
-						<Pill text="current" tone="success" />
-					{/if}
-					{#if environment.created_at}
-						<span class="font-mono text-text-ghost text-xs">
-							created {relativeTime(environment.created_at)}
+				{@const locked = environment.access === 'none'}
+				{@const envAdmin = roleAtLeast(environment.access, 'admin')}
+				{@const envAdminTitle = requiredTitle('admin', 'environment', environment.name)}
+				<div class="border-border-subtle border-b py-2.75 last:border-0">
+					<div class="flex items-center gap-3">
+						{#if locked}
+							<Lock size={13} class="text-text-ghost flex-none" />
+						{/if}
+						<span class="font-mono text-text-primary text-md">{environment.name}</span>
+						{#if environment.id === data.env?.id}
+							<Pill text="current" tone="success" />
+						{/if}
+						{#each environmentPills(environment) as pill (pill.text)}
+							<span title={pill.title}><Pill text={pill.text} tone={pill.tone} /></span>
+						{/each}
+						<span class="font-mono text-text-ghost text-xs" title="your effective role here">
+							{environment.access}
 						</span>
-					{:else}
-						<span class="font-mono text-text-ghost text-xs">locked</span>
-					{/if}
-					<div class="ml-auto flex gap-2">
-						<Button
-							size="sm"
-							variant="ghost"
-							onclick={() => teardown(environment.id, environment.name, false)}
-						>
-							Tear down
-						</Button>
-						<Button
-							size="sm"
-							variant="danger"
-							onclick={() => teardown(environment.id, environment.name, true)}
-						>
-							Purge
-						</Button>
+						{#if environment.created_at}
+							<span class="font-mono text-text-ghost text-xs">
+								created {relativeTime(environment.created_at)}
+							</span>
+						{/if}
+						<div class="ml-auto flex gap-2">
+							{#if !locked}
+								<Button
+									size="sm"
+									variant="ghost"
+									onclick={() =>
+										(openSettings = openSettings === environment.id ? null : environment.id)}
+								>
+									{openSettings === environment.id ? 'Hide settings' : 'Settings'}
+								</Button>
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={!envAdmin}
+									title={envAdmin ? undefined : envAdminTitle}
+									onclick={() => teardown(environment.id, environment.name, false)}
+								>
+									Tear down
+								</Button>
+								<Button
+									size="sm"
+									variant="danger"
+									disabled={!envAdmin}
+									title={envAdmin ? undefined : envAdminTitle}
+									onclick={() => teardown(environment.id, environment.name, true)}
+								>
+									Purge
+								</Button>
+							{/if}
+						</div>
 					</div>
+					{#if openSettings === environment.id && environment.settings}
+						<EnvironmentSettingsForm
+							{environment}
+							environments={data.environments}
+							canEdit={envAdmin}
+							{instanceAdmin}
+							onclose={() => (openSettings = null)}
+						/>
+					{/if}
 				</div>
 			{:else}
 				<div class="font-mono text-text-ghost py-2 text-xs">no environments yet</div>
@@ -190,9 +279,15 @@
 			{/if}
 		</div>
 		<div class="flex flex-col">
+			{#if envLocked}
+				<div class="font-mono text-text-ghost flex items-center gap-1.5 py-2 text-xs">
+					<Lock size={12} /> this environment is locked for you
+				</div>
+			{/if}
 			{#each data.revisions as revision (revision.id)}
 				{@const isTarget = revision.id === data.target?.target_revision_id}
 				{@const isActive = revision.id === data.target?.active_revision_id}
+				{@const mayRollback = roleAtLeast(data.env?.access, 'deploy')}
 				<div class="border-border-subtle flex items-center gap-3 border-b py-2.75 last:border-0">
 					<span class="font-mono text-text-primary text-md" title={revision.id}>
 						{revision.checksum.slice(0, 10)}
@@ -211,16 +306,26 @@
 					</span>
 					<div class="ml-auto">
 						{#if !isTarget}
-							<Button size="sm" variant="ghost" onclick={() => rollback(revision.id)}>
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={!mayRollback}
+								title={mayRollback
+									? undefined
+									: requiredTitle('deploy', 'environment', data.env?.name ?? '')}
+								onclick={() => rollback(revision.id)}
+							>
 								Roll back
 							</Button>
 						{/if}
 					</div>
 				</div>
 			{:else}
-				<div class="font-mono text-text-ghost py-2 text-xs">
-					no revisions yet · the first deploy creates one
-				</div>
+				{#if !envLocked}
+					<div class="font-mono text-text-ghost py-2 text-xs">
+						no revisions yet · the first deploy creates one
+					</div>
+				{/if}
 			{/each}
 		</div>
 	</Card>
@@ -236,6 +341,8 @@
 			<div class="ml-auto">
 				<Button
 					variant="danger"
+					disabled={!projectAdmin}
+					title={projectAdmin ? undefined : projectAdminTitle}
 					onclick={() =>
 						modal.open(DeleteProjectModal, { project: data.project }, deleteProjectModalOptions)}
 				>

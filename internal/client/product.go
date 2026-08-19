@@ -29,8 +29,9 @@ type Environment struct {
 	Name      string `json:"name"`
 	// Access is the caller's effective role; "none" marks a locked
 	// environment, which carries nothing else.
-	Access   string               `json:"access"`
-	Settings *EnvironmentSettings `json:"settings,omitempty"`
+	Access    string               `json:"access"`
+	CreatedAt *time.Time           `json:"created_at,omitempty"`
+	Settings  *EnvironmentSettings `json:"settings,omitempty"`
 }
 
 // Locked: the caller may see the environment's name and nothing inside.
@@ -53,12 +54,22 @@ type EnvironmentSettingsPatch struct {
 }
 
 // Member is one user's role on a project (membership) or on an environment
-// (cell).
+// (cell). The members listing also carries InstanceAdmin and the effective
+// role per environment name (only environments the caller may read).
 type Member struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
-	Name   string `json:"name"`
-	Role   string `json:"role"`
+	UserID        string                       `json:"user_id"`
+	Email         string                       `json:"email"`
+	Name          string                       `json:"name"`
+	Role          string                       `json:"role"`
+	InstanceAdmin bool                         `json:"instance_admin"`
+	Environments  map[string]MemberEnvironment `json:"environments"`
+}
+
+// MemberEnvironment is one grid cell: the effective role and the explicit
+// per-environment role when one exists (empty when inherited).
+type MemberEnvironment struct {
+	Role string  `json:"role"`
+	Cell *string `json:"cell"`
 }
 
 type DefinitionVersion struct {
@@ -135,6 +146,9 @@ type PlanResult struct {
 	// Orphaned lists stored value names the definition no longer
 	// references; deployments ignore them. Advisory only.
 	Orphaned []string `json:"orphaned"`
+	// RequiredRole is the environment role this deploy needs (deploy for
+	// code-only, maintain when it changes the definition or values).
+	RequiredRole string `json:"required_role"`
 }
 
 type Deployment struct {
@@ -149,11 +163,12 @@ type Deployment struct {
 }
 
 type OpenedDeployment struct {
-	Deployment *Deployment      `json:"deployment"`
-	Plan       *PlanDocument    `json:"plan"`
-	Actions    []ArtifactAction `json:"actions"`
-	UpToDate   bool             `json:"up_to_date"`
-	Orphaned   []string         `json:"orphaned"`
+	Deployment   *Deployment      `json:"deployment"`
+	Plan         *PlanDocument    `json:"plan"`
+	Actions      []ArtifactAction `json:"actions"`
+	UpToDate     bool             `json:"up_to_date"`
+	Orphaned     []string         `json:"orphaned"`
+	RequiredRole string           `json:"required_role"`
 }
 
 type CompletedDeployment struct {
@@ -378,6 +393,13 @@ func (c *Client) TeardownEnvironment(ctx context.Context, environmentID string, 
 // the account password, unlocking the destructive endpoints.
 func (c *Client) Reauthenticate(ctx context.Context, password string) error {
 	return c.do(ctx, http.MethodPost, "/v1/auth/reauth", map[string]string{"password": password}, nil)
+}
+
+// ReauthenticateWithCode is the second-factor variant for accounts with
+// two-factor authentication enrolled, which the server requires over the
+// password.
+func (c *Client) ReauthenticateWithCode(ctx context.Context, code string) error {
+	return c.do(ctx, http.MethodPost, "/v1/auth/reauth", map[string]string{"code": code}, nil)
 }
 
 // --- deployment flow ---

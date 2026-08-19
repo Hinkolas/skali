@@ -44,6 +44,8 @@ by the operator.
 Access is per project and per environment on one role ladder
 (`none < read < deploy < maintain < admin`): memberships, per-environment
 overrides, and an environment ceiling, with instance admins above all of it.
+`skali access ls|set|rm` and `skali env ls|create|set|rm` manage it from the
+CLI, the console's project settings from the browser.
 See [`docs/permissions.md`](docs/permissions.md).
 
 ## Reconciled cluster workflow

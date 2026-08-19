@@ -170,13 +170,19 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	if opts.Environment == "" && promote.binding != nil {
 		opts.Environment = promote.binding.Environment
 	}
-	environmentID, err := resolveEnvironmentTarget(ctx, out, bufio.NewReader(os.Stdin), api,
+	environmentID, access, err := resolveEnvironmentTarget(ctx, out, bufio.NewReader(os.Stdin), api,
 		promote.projectID, promote.projectName, promote.master, opts, planOnly, prompts)
 	if err != nil {
 		return "", err
 	}
 	if environmentID == promote.source.ID {
 		return "", errors.New("--from and the target environment name the same environment; pass --environment")
+	}
+	if err := checkDeployAccess(access, opts.Environment); err != nil {
+		return "", err
+	}
+	if _, err := valuesStagingAllowed(access, opts.Environment, opts); err != nil {
+		return "", err
 	}
 
 	candidateID := ""
@@ -225,6 +231,9 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
 	printOrphanedValues(out, planned.Orphaned)
+	if planOnly {
+		printRequiredRole(out, planned.RequiredRole)
+	}
 	if planOnly {
 		return deployOutcomePlanned, nil
 	}

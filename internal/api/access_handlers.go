@@ -26,10 +26,22 @@ type memberPayload struct {
 	Email  string `json:"email"`
 	Name   string `json:"name"`
 	Role   string `json:"role"`
+	// InstanceAdmin marks instance admins; their membership is informational
+	// (they are admin everywhere by instance role).
+	InstanceAdmin bool `json:"instance_admin,omitempty"`
+	// Environments is the member's effective role per environment name, with
+	// the explicit cell when one exists. Only the members listing fills it,
+	// and only for environments the caller may read.
+	Environments map[string]memberEnvironmentPayload `json:"environments,omitempty"`
+}
+
+type memberEnvironmentPayload struct {
+	Role string  `json:"role"`
+	Cell *string `json:"cell"`
 }
 
 func newMemberPayload(m *project.Member) memberPayload {
-	return memberPayload{UserID: m.UserID.String(), Email: m.Email, Name: m.Name, Role: m.Role.String()}
+	return memberPayload{UserID: m.UserID.String(), Email: m.Email, Name: m.Name, Role: m.Role.String(), InstanceAdmin: m.InstanceAdmin}
 }
 
 func newCellPayload(c *project.Cell) memberPayload {
@@ -78,9 +90,41 @@ func (h *accessHandlers) listMembers(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(r.Context(), w, err)
 		return
 	}
+	cells, err := h.projects.ListProjectCells(r.Context(), id)
+	if err != nil {
+		writeProjectError(r.Context(), w, err)
+		return
+	}
+	cellOf := make(map[uuid.UUID]map[uuid.UUID]authz.Role, len(members))
+	for _, cell := range cells {
+		if cellOf[cell.UserID] == nil {
+			cellOf[cell.UserID] = map[uuid.UUID]authz.Role{}
+		}
+		cellOf[cell.UserID][cell.EnvironmentID] = cell.Role
+	}
+	// The grid is rendered here so both clients stay thin: the same
+	// Effective that gates every request fills every cell, and only the
+	// environments the caller may read appear in it.
+	grant := grantFrom(r.Context())
 	payload := make([]memberPayload, len(members))
 	for i := range members {
 		payload[i] = newMemberPayload(&members[i])
+		payload[i].Environments = make(map[string]memberEnvironmentPayload, len(grant.Environments))
+		for _, env := range grant.Environments {
+			if env.Locked() {
+				continue
+			}
+			var cell *authz.Role
+			if role, ok := cellOf[members[i].UserID][env.ID]; ok {
+				cell = &role
+			}
+			effective := authz.Effective(members[i].InstanceAdmin, true, members[i].Role, cell, env.Settings.MaxRole)
+			entry := memberEnvironmentPayload{Role: effective.String()}
+			if cell != nil {
+				entry.Cell = new(cell.String())
+			}
+			payload[i].Environments[env.Name] = entry
+		}
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Members []memberPayload `json:"members"`

@@ -214,12 +214,53 @@ func TestMembersAndCellsAPI(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "deploy", body["project"].(map[string]any)["access"].(map[string]any)["environments"].(map[string]any)["feat-x"])
 
-	// Removing the member drops the cells.
+	// The members listing renders the grid: effective role per environment
+	// with the explicit cell, for the environments the caller may read.
+	grid := func(token string) map[string]map[string]any {
+		status, body := a.do("GET", "/v1/projects/"+projectID+"/members", token, nil)
+		require.Equal(t, http.StatusOK, status, "%v", body)
+		out := map[string]map[string]any{}
+		for _, raw := range body["members"].([]any) {
+			m := raw.(map[string]any)
+			out[m["email"].(string)] = m
+		}
+		return out
+	}
+	members := grid(owner)
+	require.Equal(t, map[string]any{
+		"production": map[string]any{"role": "read", "cell": "read"},
+		"staging":    map[string]any{"role": "read", "cell": nil},
+		"feat-x":     map[string]any{"role": "admin", "cell": "admin"},
+	}, members["bob@example.com"]["environments"])
+	require.Equal(t, map[string]any{
+		"production": map[string]any{"role": "read", "cell": nil},
+		"staging":    map[string]any{"role": "read", "cell": nil},
+		"feat-x":     map[string]any{"role": "deploy", "cell": "deploy"},
+	}, members["carol@example.com"]["environments"])
+	require.Nil(t, members["bob@example.com"]["instance_admin"])
+	// An instance admin who is also a member is admin everywhere, and a
+	// reader locked out of production does not see that column.
+	a.createAdmin("root@example.com", "hunter2hunter2")
+	a.grantMember(t, projectID, "root@example.com", "read")
+	a.setCell(t, prodID, "carol@example.com", "none")
+	members = grid(carol)
+	require.Equal(t, true, members["root@example.com"]["instance_admin"])
+	require.Equal(t, map[string]any{
+		"staging": map[string]any{"role": "admin", "cell": nil},
+		"feat-x":  map[string]any{"role": "admin", "cell": nil},
+	}, members["root@example.com"]["environments"])
+	require.Equal(t, map[string]any{
+		"staging": map[string]any{"role": "read", "cell": nil},
+		"feat-x":  map[string]any{"role": "deploy", "cell": "deploy"},
+	}, members["carol@example.com"]["environments"])
+
+	// Removing the member drops the cells (carol's none cell stays).
 	status, _ = a.do("DELETE", "/v1/projects/"+projectID+"/members/bob@example.com", owner, nil)
 	require.Equal(t, http.StatusNoContent, status)
 	status, body = a.do("GET", "/v1/environments/"+prodID+"/access", owner, nil)
 	require.Equal(t, http.StatusOK, status)
-	require.Empty(t, body["access"])
+	require.Len(t, body["access"], 1)
+	require.Equal(t, "carol@example.com", body["access"].([]any)[0].(map[string]any)["email"])
 	status, _ = a.do("GET", "/v1/projects/"+projectID, bob, nil)
 	require.Equal(t, http.StatusNotFound, status)
 	status, _ = a.do("DELETE", "/v1/projects/"+projectID+"/members/bob@example.com", owner, nil)

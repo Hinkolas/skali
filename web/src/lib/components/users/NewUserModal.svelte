@@ -12,6 +12,7 @@
 	import type { Role } from '$lib/types/auth';
 	import Button from '$lib/components/ui/Button.svelte';
 	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
+	import Toggle from '$lib/components/ui/Toggle.svelte';
 
 	let { close }: { close: (created?: boolean) => void } = $props();
 
@@ -19,6 +20,7 @@
 	let name = $state('');
 	let password = $state('');
 	let role = $state<Role>('member');
+	let createProjects = $state(false);
 	let busy = $state(false);
 
 	const valid = $derived(email.trim() !== '' && password.length >= 8);
@@ -31,7 +33,8 @@
 				email: email.trim(),
 				name: name.trim(),
 				password,
-				role
+				role,
+				create_projects: role === 'member' && createProjects
 			});
 			toast.success(`Created ${email.trim()}`, {
 				description: 'Share the initial password with them securely.'
@@ -104,9 +107,17 @@
 			{/each}
 		</div>
 		<p class="text-text-ghost text-md leading-relaxed">
-			Admins additionally manage users and instance settings.
+			Admins see every project and additionally manage users, nodes, and instance settings. Members
+			see only the projects they are granted.
 		</p>
 	</div>
+	{#if role === 'member'}
+		<Toggle
+			bind:checked={createProjects}
+			label="May create projects"
+			description="They become admin of the projects they create; everything else stays invisible until granted."
+		/>
+	{/if}
 
 	<!-- Hidden submit so Enter works; the visible buttons live in the footer. -->
 	<button type="submit" class="hidden" aria-hidden="true"></button>

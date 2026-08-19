@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import KeyRound from '@lucide/svelte/icons/key-round';
+	import Lock from '@lucide/svelte/icons/lock';
 	import { api, ApiError } from '$lib/api/client';
+	import { requiredTitle, roleAtLeast } from '$lib/access';
 	import type { StageValuesResult } from '$lib/types/values';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
@@ -26,13 +28,19 @@
 
 	// Runtime variables are the storable contract; build-only variables
 	// resolve from a local env file at deploy time and have no stored row.
-	const declared = $derived(
-		data.definition?.requiredVariables ?? []
-	);
+	const declared = $derived(data.definition?.requiredVariables ?? []);
 	const entryByName = $derived(new Map(data.values.map((v) => [v.name, v])));
 	const declaredNames = $derived(new Set(declared.map((d) => d.name)));
 	const orphanedEntries = $derived(data.values.filter((v) => !declaredNames.has(v.name)));
 	const dirtyCount = $derived(Object.keys(dirty).length);
+
+	// Values are configuration: maintain on the environment edits them,
+	// read sees names and versions only, none sees nothing.
+	const envLocked = $derived(data.env?.access === 'none');
+	const mayEdit = $derived(roleAtLeast(data.env?.access, 'maintain'));
+	const editTitle = $derived(
+		mayEdit ? undefined : requiredTitle('maintain', 'environment', data.env?.name ?? '')
+	);
 
 	async function save() {
 		if (!data.env || dirtyCount === 0) return;
@@ -106,7 +114,13 @@
 		{data.project.name} · environment values
 	{/snippet}
 	{#snippet actions()}
-		<Button variant="primary" busy={saving} disabled={dirtyCount === 0} onclick={save}>
+		<Button
+			variant="primary"
+			busy={saving}
+			disabled={!mayEdit || dirtyCount === 0}
+			title={editTitle}
+			onclick={save}
+		>
 			Stage {dirtyCount > 0 ? dirtyCount : ''} change{dirtyCount === 1 ? '' : 's'}
 		</Button>
 	{/snippet}
@@ -119,6 +133,12 @@
 		icon={KeyRound}
 		title="No environment"
 		description="create an environment first; values are stored per environment"
+	/>
+{:else if envLocked}
+	<EmptyState
+		icon={Lock}
+		title="This environment is locked for you"
+		description="Your role on {data.env.name} is none; ask a project admin for access."
 	/>
 {:else if declared.length === 0 && orphanedEntries.length === 0}
 	<EmptyState
@@ -141,6 +161,9 @@
 				<h3 class="text-text-primary text-xl font-semibold">Variables</h3>
 				<span class="text-text-ghost text-md">
 					environment {data.env.name} · write-only · staged values apply with the next deployment
+					{#if !mayEdit}
+						· {editTitle} to change
+					{/if}
 				</span>
 			</div>
 			<div class="flex flex-col">
@@ -163,6 +186,7 @@
 								type="password"
 								autocomplete="off"
 								mono
+								disabled={!mayEdit}
 								placeholder={entry
 									? `set · v${entry.version} · type to overwrite`
 									: variable.hasDefault
@@ -180,7 +204,7 @@
 								<Button size="sm" variant="ghost" onclick={() => delete dirty[variable.name]}>
 									Keep
 								</Button>
-							{:else if pending === undefined}
+							{:else if pending === undefined && mayEdit}
 								<Button size="sm" variant="ghost" onclick={() => (dirty[variable.name] = '')}>
 									Set empty
 								</Button>
@@ -217,7 +241,13 @@
 							<span class="font-mono text-text-primary text-md">{entry.name}</span>
 							<span class="font-mono text-text-ghost text-xs">v{entry.version}</span>
 							<div class="ml-auto">
-								<Button size="sm" variant="ghost" onclick={() => deleteOrphan(entry.name)}>
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={!mayEdit}
+									title={editTitle}
+									onclick={() => deleteOrphan(entry.name)}
+								>
 									Delete
 								</Button>
 							</div>

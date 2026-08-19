@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Plus from '@lucide/svelte/icons/plus';
+	import { CREATE_PROJECTS_TITLE, canCreateProject } from '$lib/access';
 	import { modal } from '$lib/stores/modal.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -12,6 +13,8 @@
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	const mayCreate = $derived(canCreateProject(data.user));
 </script>
 
 <svelte:head>
@@ -26,6 +29,8 @@
 	{#snippet actions()}
 		<Button
 			variant="primary"
+			disabled={!mayCreate}
+			title={mayCreate ? undefined : CREATE_PROJECTS_TITLE}
 			onclick={() => modal.open(NewProjectModal, {}, newProjectModalOptions)}
 		>
 			<Plus size={17} strokeWidth={2.5} />
@@ -44,8 +49,10 @@
 	<div class="pb-6">
 		<EmptyState
 			icon={FolderKanban}
-			title="No projects yet"
-			description="Create a project here or run `skali init` in a repository."
+			title={mayCreate ? 'No projects yet' : 'No projects you can see'}
+			description={mayCreate
+				? 'Create a project here or run skali deploy in a repository.'
+				: 'Projects appear once a project admin grants you a role on them.'}
 		/>
 	</div>
 {/if}

@@ -234,6 +234,49 @@ func lookupRemoteByMaster(cfg *cliconfig.Config, master string) (string, *clicon
 	return "", nil, false
 }
 
+// roleRank orders the access ladder for client-side hints. The server is
+// the authority; these checks only refuse before any work is done.
+var roleRank = map[string]int{"none": 0, "read": 1, "deploy": 2, "maintain": 3, "admin": 4}
+
+// roleAtLeast reports whether role reaches min. An empty role (the server
+// did not report access) passes: the server decides.
+func roleAtLeast(role, min string) bool {
+	if role == "" {
+		return true
+	}
+	rank, known := roleRank[role]
+	return !known || rank >= roleRank[min]
+}
+
+// checkDeployAccess refuses a deploy the server would refuse anyway, before
+// the definition is submitted: below deploy nothing can be deployed.
+func checkDeployAccess(access, environment string) error {
+	if roleAtLeast(access, "deploy") {
+		return nil
+	}
+	return fmt.Errorf("deploy on environment %s required (your role: %s)", environment, access)
+}
+
+// valuesStagingAllowed decides whether this invocation may stage values.
+// Staging needs maintain on the environment; an explicit --env-file or
+// --prune-values below that is refused up front, while a merely discovered
+// env file is skipped so a deploy-role user still deploys code with the
+// stored values.
+func valuesStagingAllowed(access, environment string, opts *deployOptions) (bool, error) {
+	if roleAtLeast(access, "maintain") {
+		return true, nil
+	}
+	if opts.EnvFile != "" {
+		return false, fmt.Errorf("staging values needs maintain on environment %s (your role: %s); "+
+			"drop --env-file to deploy with the stored values", environment, access)
+	}
+	if opts.PruneValues {
+		return false, fmt.Errorf("pruning values needs maintain on environment %s (your role: %s); "+
+			"drop --prune-values to deploy with the stored values", environment, access)
+	}
+	return false, nil
+}
+
 // selectValues decides the value source: an explicit --env-file, the bare-dev
 // automatic ./.env, an interactively selected override from the project
 // root's env files, or nil for the environment's stored values (the default).
@@ -472,6 +515,18 @@ func printPlan(out io.Writer, plan *client.PlanDocument, actions []client.Artifa
 // references. Deployments ignore them; --prune-values turns them into plan
 // rows and removes them, so the hint names that flag in every flow that
 // prints a plan (deploy, dev, promote) instead of a separate command.
+// printRequiredRole names the environment role the plan needs (deploy for
+// code-only, maintain when the definition or values change), when the
+// server reported it. Only skali plan prints it: a deploy that got this far
+// holds the role, and dev output stays lean.
+func printRequiredRole(out io.Writer, role string) {
+	if role == "" {
+		return
+	}
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "%s     %s\n", style.Dim("requires"), style.Dim(role+" on the environment"))
+}
+
 func printOrphanedValues(out io.Writer, orphaned []string) {
 	if len(orphaned) == 0 {
 		return
@@ -867,6 +922,10 @@ type deployTarget struct {
 	api           *client.Client
 	projectID     string
 	environmentID string
+	// access is the caller's effective role on the environment as the
+	// server reported it (admin for one just created); empty when the
+	// server did not say (older fakes), which disables client-side checks.
+	access string
 	// sessionToken doubles as the managed-registry push credential: the
 	// registry token endpoint accepts it as the Basic password, so builds
 	// and imports authenticate without any docker login.
@@ -973,7 +1032,7 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		projectID = created.ID
 	}
 
-	environmentID, err := resolveEnvironmentTarget(ctx, out, in, api,
+	environmentID, access, err := resolveEnvironmentTarget(ctx, out, in, api,
 		projectID, projectName, remote.Master, opts, planOnly, prompts)
 	if err != nil {
 		return nil, err
@@ -1001,6 +1060,7 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		api:           api,
 		projectID:     projectID,
 		environmentID: environmentID,
+		access:        access,
 		sessionToken:  remote.Token,
 	}, nil
 }
@@ -1009,21 +1069,21 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 // project: interactive deploy behind explicit confirmation, dev silently,
 // plan and non-interactive never) the environment named by opts.Environment,
 // prompting for a name when empty. It prints the environment line and
-// returns the environment id.
+// returns the environment id and the caller's access on it.
 func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Reader, api *client.Client,
-	projectID, projectName, master string, opts *deployOptions, planOnly, prompts bool) (string, error) {
+	projectID, projectName, master string, opts *deployOptions, planOnly, prompts bool) (string, string, error) {
 
 	style := clirender.StyleFor(out)
 	environments, err := api.ListEnvironments(ctx, projectID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if opts.Environment == "" {
 		switch {
 		case !prompts:
-			return "", errors.New("--environment is required")
+			return "", "", errors.New("--environment is required")
 		case len(environments) == 0 && planOnly:
-			return "", fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
+			return "", "", fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
 				projectName, master)
 		case len(environments) == 0:
 			opts.Environment, err = promptSession(out, in).Text(ctx, cliprompt.TextOptions{
@@ -1037,34 +1097,34 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 				},
 			})
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 		default:
 			environment, err := chooseEnvironment(out, in, environments)
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 			opts.Environment = environment
 		}
 	}
 
 	environment := findEnvironment(environments, opts.Environment)
-	environmentID := ""
+	environmentID, access := "", ""
 	switch {
 	case environment != nil:
-		environmentID = environment.ID
+		environmentID, access = environment.ID, environment.Access
 	case planOnly:
-		return "", fmt.Errorf("environment %s does not exist in project %s on %s; "+
+		return "", "", fmt.Errorf("environment %s does not exist in project %s on %s; "+
 			"skali plan never changes the installation, run skali deploy to create it",
 			opts.Environment, projectName, master)
 	case opts.CreateMissing:
 		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment, "")
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		environmentID = created.ID
+		environmentID, access = created.ID, created.Access
 	case !prompts:
-		return "", fmt.Errorf("environment %s does not exist in project %s on %s; "+
+		return "", "", fmt.Errorf("environment %s does not exist in project %s on %s; "+
 			"run skali deploy interactively to create it", opts.Environment, projectName, master)
 	default:
 		confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
@@ -1072,20 +1132,20 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 				opts.Environment, projectName),
 		})
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if !confirmed {
-			return "", errors.New("aborted")
+			return "", "", errors.New("aborted")
 		}
 		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment, "")
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		environmentID = created.ID
+		environmentID, access = created.ID, created.Access
 	}
 
 	fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), opts.Environment)
-	return environmentID, nil
+	return environmentID, access, nil
 }
 
 func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (string, error) {
@@ -1103,16 +1163,29 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 	api, projectID, environmentID := target.api, target.projectID, target.environmentID
+	if err := checkDeployAccess(target.access, opts.Environment); err != nil {
+		return "", err
+	}
+	mayStage, err := valuesStagingAllowed(target.access, opts.Environment, opts)
+	if err != nil {
+		return "", err
+	}
 	definitionVersion, err := api.SubmitDefinition(ctx, projectID, string(project.Source), "yaml")
 	if err != nil {
 		return "", err
 	}
 
 	// Values: an explicit or discovered local file stages a candidate;
-	// otherwise the environment's stored values apply.
-	file, err := selectValues(out, project, opts)
-	if err != nil {
-		return "", err
+	// otherwise the environment's stored values apply. Below maintain no
+	// file is consulted: the stored values are all this role may use.
+	var file *values.File
+	if mayStage {
+		if file, err = selectValues(out, project, opts); err != nil {
+			return "", err
+		}
+	} else {
+		fmt.Fprintf(out, "%s       %s\n", style.Dim("values"),
+			style.Dim(fmt.Sprintf("stored (%s role cannot stage values)", target.access)))
 	}
 	candidateID := ""
 	var excludeFiles []string
@@ -1178,6 +1251,9 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
 	printOrphanedValues(out, planned.Orphaned)
+	if planOnly {
+		printRequiredRole(out, planned.RequiredRole)
+	}
 	printHealthHints(out, project.Result)
 	if planOnly {
 		return deployOutcomePlanned, nil

@@ -129,20 +129,20 @@ func TestResolveQueryProjectFallsBackToManifestName(t *testing.T) {
 	// A remote override ignores the binding, but the checkout's manifest
 	// still names the project, so no environment is needed to scope a
 	// project-wide read.
-	scope, err := resolveQueryProject(context.Background(), project.Root, "", "local")
+	scope, err := resolveQueryProject(context.Background(), project.Root, "", "", "local")
 	require.NoError(t, err)
 	require.Equal(t, "local", scope.remoteName)
 	require.Equal(t, "p9", scope.project.ID)
 	require.Nil(t, scope.binding)
 	require.Len(t, scope.environments, 1)
 
-	_, err = resolveQueryProject(context.Background(), project.Root, "", "empty")
+	_, err = resolveQueryProject(context.Background(), project.Root, "", "", "empty")
 	require.ErrorContains(t, err, "project flowdemo does not exist on "+empty.srv.URL)
 
 	// Outside any checkout the environment is the only handle.
-	_, err = resolveQueryProject(context.Background(), t.TempDir(), "", "local")
+	_, err = resolveQueryProject(context.Background(), t.TempDir(), "", "", "local")
 	require.ErrorContains(t, err, "--environment is required")
-	scope, err = resolveQueryProject(context.Background(), t.TempDir(), "local", "local")
+	scope, err = resolveQueryProject(context.Background(), t.TempDir(), "", "local", "local")
 	require.NoError(t, err)
 	require.Equal(t, "p9", scope.project.ID)
 }

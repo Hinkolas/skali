@@ -56,12 +56,13 @@ func userCreate(ctx context.Context, st *store.Store, args []string) error {
 	email := fs.String("email", "", "login email (required)")
 	name := fs.String("name", "", "display name")
 	role := fs.String("role", auth.RoleMember, "instance role: admin or member (the first user needs admin)")
+	createProjects := fs.Bool("create-projects", false, "let a member create projects (they become admin of what they create)")
 	passwordStdin := fs.Bool("password-stdin", false, "read the password from stdin instead of prompting")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *email == "" {
-		return errors.New("usage: skalid user create --email <address> [--name <display>] [--role admin|member] [--password-stdin]")
+		return errors.New("usage: skalid user create --email <address> [--name <display>] [--role admin|member] [--create-projects] [--password-stdin]")
 	}
 
 	password, err := readPassword(ctx, *passwordStdin)
@@ -73,8 +74,24 @@ func userCreate(ctx context.Context, st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("created %s %s (%s)\n", user.Role, user.Email, user.ID)
+	if *createProjects {
+		updated, err := auth.SetUserCreateProjects(ctx, st, user.ID, true)
+		if err != nil {
+			return err
+		}
+		user = &updated
+	}
+	fmt.Printf("created %s %s (%s)%s\n", user.Role, user.Email, user.ID, createProjectsMarker(*user))
 	return nil
+}
+
+// createProjectsMarker flags members who may create projects; admins always
+// may, so the marker would be noise on them.
+func createProjectsMarker(user store.User) string {
+	if user.Role != auth.RoleAdmin && user.CreateProjects {
+		return "  [creates projects]"
+	}
+	return ""
 }
 
 // userSetRole is the operator override for role changes — unlike the API it
@@ -160,7 +177,7 @@ func userList(ctx context.Context, st *store.Store) error {
 		if u.TwoFactorEnabled {
 			twoFA = "  [2fa]"
 		}
-		fmt.Printf("%s  %-6s  %s  created %s%s\n", u.ID, u.Role, u.Email, u.CreatedAt.Format("2006-01-02"), twoFA)
+		fmt.Printf("%s  %-6s  %s  created %s%s%s\n", u.ID, u.Role, u.Email, u.CreatedAt.Format("2006-01-02"), twoFA, createProjectsMarker(u))
 	}
 	return nil
 }

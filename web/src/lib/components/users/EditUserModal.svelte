@@ -12,6 +12,7 @@
 	import type { AuthUser, Role } from '$lib/types/auth';
 	import Button from '$lib/components/ui/Button.svelte';
 	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
+	import Toggle from '$lib/components/ui/Toggle.svelte';
 
 	let {
 		user,
@@ -30,13 +31,16 @@
 	let name = $state(user.name);
 	// svelte-ignore state_referenced_locally
 	let role = $state<Role>(user.role);
+	// svelte-ignore state_referenced_locally
+	let createProjects = $state(user.create_projects);
 	let busy = $state(false);
 
 	async function save() {
 		if (busy) return;
-		const patch: { name?: string; role?: Role } = {};
+		const patch: { name?: string; role?: Role; create_projects?: boolean } = {};
 		if (name.trim() !== user.name) patch.name = name.trim();
 		if (!self && role !== user.role) patch.role = role;
+		if (createProjects !== user.create_projects) patch.create_projects = createProjects;
 		if (Object.keys(patch).length === 0) {
 			close(false);
 			return;
@@ -96,6 +100,13 @@
 			</p>
 		{/if}
 	</div>
+	{#if role === 'member'}
+		<Toggle
+			bind:checked={createProjects}
+			label="May create projects"
+			description="They become admin of the projects they create; everything else stays invisible until granted."
+		/>
+	{/if}
 
 	<button type="submit" class="hidden" aria-hidden="true"></button>
 </form>

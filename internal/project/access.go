@@ -18,11 +18,22 @@ import (
 // lives in internal/authz; this file only stores and validates rows.
 
 // Member is one project membership with the user's display columns.
+// InstanceAdmin marks members who are instance admins: their membership row
+// is informational, the instance role makes them admin everywhere.
 type Member struct {
-	UserID uuid.UUID
-	Email  string
-	Name   string
-	Role   authz.Role
+	UserID        uuid.UUID
+	Email         string
+	Name          string
+	Role          authz.Role
+	InstanceAdmin bool
+}
+
+// ProjectCell is one cell of a project without display columns: the members
+// grid joins it to the member rows it already holds.
+type ProjectCell struct {
+	EnvironmentID uuid.UUID
+	UserID        uuid.UUID
+	Role          authz.Role
 }
 
 // Cell is one per-environment override with the user's display columns.
@@ -48,9 +59,29 @@ func (s *Service) ListMembers(ctx context.Context, projectID uuid.UUID) ([]Membe
 		if !ok {
 			return nil, fmt.Errorf("project: unknown stored role %q", row.Role)
 		}
-		members = append(members, Member{UserID: row.UserID, Email: row.Email, Name: row.Name, Role: role})
+		members = append(members, Member{
+			UserID: row.UserID, Email: row.Email, Name: row.Name, Role: role,
+			InstanceAdmin: row.InstanceRole == "admin",
+		})
 	}
 	return members, nil
+}
+
+// ListProjectCells returns every cell of the project, for the members grid.
+func (s *Service) ListProjectCells(ctx context.Context, projectID uuid.UUID) ([]ProjectCell, error) {
+	rows, err := s.st.ListEnvironmentAccessForProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("project: list project cells: %w", err)
+	}
+	cells := make([]ProjectCell, 0, len(rows))
+	for _, row := range rows {
+		role, ok := authz.ParseRole(row.Role)
+		if !ok {
+			return nil, fmt.Errorf("project: unknown stored role %q", row.Role)
+		}
+		cells = append(cells, ProjectCell{EnvironmentID: row.EnvironmentID, UserID: row.UserID, Role: role})
+	}
+	return cells, nil
 }
 
 // SetMember adds or changes one membership.
@@ -73,7 +104,7 @@ func (s *Service) SetMember(ctx context.Context, projectID, userID uuid.UUID, ro
 	}); err != nil {
 		return nil, fmt.Errorf("project: set member: %w", err)
 	}
-	return &Member{UserID: user.ID, Email: user.Email, Name: user.Name, Role: role}, nil
+	return &Member{UserID: user.ID, Email: user.Email, Name: user.Name, Role: role, InstanceAdmin: user.Role == "admin"}, nil
 }
 
 // RemoveMember drops the membership; the user's cells on the project's

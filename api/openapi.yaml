@@ -772,7 +772,11 @@ paths:
     get:
       operationId: listProjectMembers
       summary: List the project's members
-      description: Project read. Memberships with the user's email and name, sorted by email.
+      description: >-
+        Project read. Memberships with the user's email and name, sorted by
+        email. Each entry also carries the member's effective role on every
+        environment the caller may read (the grid the CLI and console show),
+        with the explicit per-environment role when one exists.
       tags: [access]
       responses:
         "200":
@@ -2906,6 +2910,30 @@ components:
         name:
           type: string
         role: { $ref: "#/components/schemas/AccessRole" }
+        instance_admin:
+          type: boolean
+          description: >-
+            The user is an instance admin; the membership is informational
+            because the instance role makes them admin everywhere.
+        environments:
+          type: object
+          description: >-
+            Members listing only: the member's effective role per environment
+            name, with the explicit cell when one exists. Environments the
+            caller cannot read are absent.
+          additionalProperties:
+            $ref: "#/components/schemas/MemberEnvironmentAccess"
+
+    MemberEnvironmentAccess:
+      type: object
+      required: [role, cell]
+      properties:
+        role: { $ref: "#/components/schemas/AccessRole" }
+        cell:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AccessRole"
+          description: The explicit per-environment role, null when the role is inherited.
 
     User:
       type: object

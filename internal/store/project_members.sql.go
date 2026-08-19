@@ -80,7 +80,7 @@ func (q *Queries) ListMembersWithoutMembership(ctx context.Context) ([]string, e
 }
 
 const listProjectMembers = `-- name: ListProjectMembers :many
-SELECT m.project_id, m.user_id, m.role, m.created_at, m.updated_at, u.email, u.name
+SELECT m.project_id, m.user_id, m.role, m.created_at, m.updated_at, u.email, u.name, u.role AS instance_role
 FROM project_members m
 JOIN users u ON u.id = m.user_id
 WHERE m.project_id = $1
@@ -88,16 +88,19 @@ ORDER BY lower(u.email)
 `
 
 type ListProjectMembersRow struct {
-	ProjectID uuid.UUID
-	UserID    uuid.UUID
-	Role      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	Email     string
-	Name      string
+	ProjectID    uuid.UUID
+	UserID       uuid.UUID
+	Role         string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	Email        string
+	Name         string
+	InstanceRole string
 }
 
-// One project's members with the user columns the access surfaces show.
+// One project's members with the user columns the access surfaces show;
+// the instance role travels along so the members grid can report instance
+// admins as admin everywhere.
 func (q *Queries) ListProjectMembers(ctx context.Context, projectID uuid.UUID) ([]ListProjectMembersRow, error) {
 	rows, err := q.db.Query(ctx, listProjectMembers, projectID)
 	if err != nil {
@@ -115,6 +118,7 @@ func (q *Queries) ListProjectMembers(ctx context.Context, projectID uuid.UUID) (
 			&i.UpdatedAt,
 			&i.Email,
 			&i.Name,
+			&i.InstanceRole,
 		); err != nil {
 			return nil, err
 		}

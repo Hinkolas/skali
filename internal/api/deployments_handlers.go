@@ -242,7 +242,11 @@ func (h *deploymentsHandlers) requireDeployRole(w http.ResponseWriter, r *http.R
 		}
 	}
 	if !envGrant.Role.AtLeast(required) {
-		writeError(w, http.StatusForbidden, codeForbidden, authz.Required(required, "environment", envGrant.Name)+": "+reason)
+		message := authz.Required(required, "environment", envGrant.Name)
+		if reason != "" {
+			message += ": " + reason
+		}
+		writeError(w, http.StatusForbidden, codeForbidden, message)
 		return 0, false
 	}
 	return required, true

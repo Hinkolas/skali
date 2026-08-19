@@ -15,6 +15,8 @@ import (
 
 var errEnvironmentRequired = errors.New("--environment is required (or run inside a checkout linked by skali deploy)")
 
+var errProjectRequired = errors.New("--project or --environment is required (or run inside a checkout)")
+
 // queryTarget is the resolved read-only context of an inspection command:
 // the remote to query and the environment to query it about.
 type queryTarget struct {
@@ -79,40 +81,43 @@ func resolveQueryRemote(start, override string) (string, *checkout.Target, *clie
 }
 
 // resolveQueryProject resolves the remote and project that project-wide
-// reads work on. The checkout binding discovered at or above start names
-// the project; without a binding (or with an explicit remote override) the
-// checkout's manifest names it, since deploy always creates the project
-// under the manifest name. Outside any checkout an environment must be
-// named and the project holding it is found by scanning the remote.
-// Nothing is ever created or linked.
-func resolveQueryProject(ctx context.Context, start, environment, remote string) (*queryProject, error) {
+// reads work on. An explicit project name wins; otherwise the checkout
+// binding discovered at or above start names the project; without a
+// binding (or with an explicit remote override) the checkout's manifest
+// names it, since deploy always creates the project under the manifest
+// name. Outside any checkout an environment must be named and the project
+// holding it is found by scanning the remote. Nothing is ever created or
+// linked.
+func resolveQueryProject(ctx context.Context, start, project, environment, remote string) (*queryProject, error) {
 	remoteName, binding, api, err := resolveQueryRemote(start, remote)
 	if err != nil {
 		return nil, err
 	}
 	scope := &queryProject{remoteName: remoteName, api: api, binding: binding}
-	projectName := ""
-	if binding != nil {
+	projectName := project
+	if projectName == "" && binding != nil {
 		projectName = binding.Project
-	} else if projectName, err = checkoutProjectName(start); err != nil {
-		return nil, err
+	} else if projectName == "" {
+		if projectName, err = checkoutProjectName(start); err != nil {
+			return nil, err
+		}
 	}
 	if projectName != "" {
-		project, err := findProject(ctx, api, projectName)
+		found, err := findProject(ctx, api, projectName)
 		if err != nil {
 			return nil, err
 		}
-		if project == nil {
+		if found == nil {
 			return nil, fmt.Errorf("project %s does not exist on %s", projectName, api.Master())
 		}
-		scope.project = project
-		if scope.environments, err = api.ListEnvironments(ctx, project.ID); err != nil {
+		scope.project = found
+		if scope.environments, err = api.ListEnvironments(ctx, found.ID); err != nil {
 			return nil, err
 		}
 		return scope, nil
 	}
 	if environment == "" {
-		return nil, errEnvironmentRequired
+		return nil, errProjectRequired
 	}
 	if scope.project, scope.environments, err = projectOfEnvironment(ctx, api, environment); err != nil {
 		return nil, err
@@ -141,8 +146,11 @@ func checkoutProjectName(start string) (string, error) {
 // linked. Without a binding (or with an explicit remote override) the
 // environment must be named explicitly.
 func resolveQueryTarget(ctx context.Context, start, environment, remote string) (*queryTarget, error) {
-	scope, err := resolveQueryProject(ctx, start, environment, remote)
+	scope, err := resolveQueryProject(ctx, start, "", environment, remote)
 	if err != nil {
+		if errors.Is(err, errProjectRequired) {
+			return nil, errEnvironmentRequired
+		}
 		return nil, err
 	}
 	if environment == "" && scope.binding != nil {
