@@ -390,7 +390,9 @@ deferred until something needs to read it.
 - `users.create_projects` boolean default false.
 - Bootstrap unchanged: `skalid user create --role admin`.
 
-Backfill of existing installations: see open decisions.
+Backfill of existing installations: none. Existing `member` users keep
+their accounts and hold no project membership until an admin grants one;
+the migration prints a notice naming them. Existing admins are unaffected.
 
 ## Enforcement shape
 
@@ -447,28 +449,22 @@ mapping.
 
 ## Open decisions
 
-Written into the model above as proposals; each can still be flipped.
+Settled 2026-08-19: runtime logs at `read`, backup create at `deploy`,
+environment creation at project `maintain`, no membership backfill on
+upgrade (existing `member` users hold no product access until granted;
+`skalid migrate` prints a notice naming them).
 
-1. Runtime logs at `read` (as written) or at `maintain` because application
-   logs are raw pass-through and may print secrets. Run logs are redacted
-   either way.
-2. Backup create at `deploy` (as written, operational and non-destructive)
-   or `maintain` (it writes to the backup target).
-3. Environment creation at project `maintain` (as written) or an explicit
-   per-member permission on top of the role, for sandboxes of lower roles.
-4. Bypass flag name: `--bypass-protection` (as written) or something
-   shorter.
-5. Backfill on upgrade: no memberships (least privilege; existing `member`
-   users lose product access until granted; nothing changes for admins) or
-   preserve today's behavior by granting every existing member `maintain`
-   on every existing project. Lean: no memberships; the khz installation
-   has only the admin today.
-6. Sudo for rollback and restore into a protected environment, in addition
-   to what is sudo today. Lean: yes for both, they are cheap and rare.
-7. Should protection also refuse teardown and delete of the protected
+Still open, each can be settled in the slice it belongs to; the text above
+reflects the lean:
+
+1. Bypass flag name: `--bypass-protection` (as written) or something
+   shorter. (Protection slice.)
+2. Sudo for rollback and restore into a protected environment, in addition
+   to what is sudo today. Lean: yes for both. (Protection slice.)
+3. Should protection also refuse teardown and delete of the protected
    environment (both are environment `admin` already). Lean: no; keep
-   protection about revisions.
-8. Order of the management surfaces after the API: console first (as
-   written) or CLI first.
-9. CLI naming: `skali project members ...` and `skali env ...`, or one
-   `skali access` group.
+   protection about revisions. (Protection slice.)
+4. Order of the management surfaces after the API: console first (as
+   written) or CLI first. (Management slice.)
+5. CLI naming: `skali project members ...` and `skali env ...`, or one
+   `skali access` group. (Management slice.)
