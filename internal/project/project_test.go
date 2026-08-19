@@ -22,14 +22,14 @@ func TestProjectCRUD(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	proj, err := svc.Create(ctx, "demo", "Demo Project")
+	proj, err := svc.Create(ctx, "demo", "Demo Project", uuid.Nil)
 	require.NoError(t, err)
 	require.Equal(t, "demo", proj.Name)
 	require.Equal(t, "managed", proj.SourceMode)
 
-	_, err = svc.Create(ctx, "demo", "")
+	_, err = svc.Create(ctx, "demo", "", uuid.Nil)
 	require.ErrorIs(t, err, ErrProjectNameTaken)
-	_, err = svc.Create(ctx, "Not-Valid", "")
+	_, err = svc.Create(ctx, "Not-Valid", "", uuid.Nil)
 	require.ErrorIs(t, err, ErrInvalidName)
 
 	got, err := svc.Get(ctx, proj.ID)
@@ -62,18 +62,18 @@ func TestEnvironmentCRUD(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	proj, err := svc.Create(ctx, "demo", "")
+	proj, err := svc.Create(ctx, "demo", "", uuid.Nil)
 	require.NoError(t, err)
 
-	env, err := svc.CreateEnvironment(ctx, proj.ID, "production")
+	env, err := svc.CreateEnvironment(ctx, proj.ID, "production", EnvironmentOptions{})
 	require.NoError(t, err)
 	require.Equal(t, "production", env.Name)
 
-	_, err = svc.CreateEnvironment(ctx, proj.ID, "production")
+	_, err = svc.CreateEnvironment(ctx, proj.ID, "production", EnvironmentOptions{})
 	require.ErrorIs(t, err, ErrEnvironmentNameTaken)
-	_, err = svc.CreateEnvironment(ctx, proj.ID, "Bad Name")
+	_, err = svc.CreateEnvironment(ctx, proj.ID, "Bad Name", EnvironmentOptions{})
 	require.ErrorIs(t, err, ErrInvalidName)
-	_, err = svc.CreateEnvironment(ctx, uuid.New(), "production")
+	_, err = svc.CreateEnvironment(ctx, uuid.New(), "production", EnvironmentOptions{})
 	require.ErrorIs(t, err, ErrProjectNotFound)
 
 	list, err := svc.ListEnvironments(ctx, proj.ID)

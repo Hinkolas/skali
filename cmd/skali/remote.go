@@ -341,6 +341,13 @@ func newRemoteStatusCmd() *cobra.Command {
 				user += " (" + info.User.Name + ")"
 			}
 			fmt.Printf("user:    %s\n", user)
+			if info.User.Role != "" {
+				role := info.User.Role
+				if info.User.Role != "admin" && info.User.CreateProjects {
+					role += " (may create projects)"
+				}
+				fmt.Printf("role:    %s\n", role)
+			}
 			fmt.Printf("session: valid, expires %s\n", info.Session.ExpiresAt.Local().Format("2006-01-02 15:04"))
 			return nil
 		},

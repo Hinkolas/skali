@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/Hinkolas/skali/internal/yamldoc"
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +37,7 @@ func TestSubmitDraftAndGet(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	proj, err := svc.Create(ctx, "demo", "")
+	proj, err := svc.Create(ctx, "demo", "", uuid.Nil)
 	require.NoError(t, err)
 
 	_, err = svc.GetDraft(ctx, proj.ID)
@@ -82,7 +84,7 @@ func TestSubmitDraftInvalidWritesNothing(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	proj, err := svc.Create(ctx, "demo", "")
+	proj, err := svc.Create(ctx, "demo", "", uuid.Nil)
 	require.NoError(t, err)
 	_, err = svc.SubmitDraft(ctx, proj.ID, DraftSubmission{
 		Source: []byte(validManifest), Format: "yaml", ExpectedVersion: 0,
@@ -110,7 +112,7 @@ func TestSubmitDraftNameMismatch(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	proj, err := svc.Create(ctx, "other", "")
+	proj, err := svc.Create(ctx, "other", "", uuid.Nil)
 	require.NoError(t, err)
 	_, err = svc.SubmitDraft(ctx, proj.ID, DraftSubmission{
 		Source: []byte(validManifest), Format: "yaml", ExpectedVersion: 0,
@@ -123,7 +125,7 @@ func TestSubmitCandidateDoesNotMoveDraft(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	proj, err := svc.Create(ctx, "demo", "")
+	proj, err := svc.Create(ctx, "demo", "", uuid.Nil)
 	require.NoError(t, err)
 	_, err = svc.SubmitDraft(ctx, proj.ID, DraftSubmission{
 		Source: []byte(validManifest), Format: "yaml", ExpectedVersion: 0,

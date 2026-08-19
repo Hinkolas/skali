@@ -23,6 +23,10 @@ RETURNING *;
 UPDATE users SET name = $2, updated_at = now() WHERE id = $1
 RETURNING *;
 
+-- name: SetUserCreateProjects :one
+UPDATE users SET create_projects = $2, updated_at = now() WHERE id = $1
+RETURNING *;
+
 -- Locks the admin rows so concurrent demote/delete transactions serialize on
 -- the last-admin check instead of both passing it.
 -- name: CountAdminsForUpdate :one

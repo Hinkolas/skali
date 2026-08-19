@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/registrytoken"
@@ -33,23 +32,28 @@ func (f *fakeAuthenticator) Authenticate(_ context.Context, token string) (*stor
 	return &user, &store.Session{}, nil
 }
 
-// fakeProjects knows a fixed set of project names.
-type fakeProjects struct {
-	names map[string]bool
-	err   error
+// fakePolicy grants fixed actions per project name and for the cache.
+type fakePolicy struct {
+	projects map[string][]string
+	cache    []string
+	err      error
 }
 
-func (f *fakeProjects) GetProjectByName(_ context.Context, name string) (store.Project, error) {
+func (f *fakePolicy) ProjectActions(_ context.Context, _ *store.User, name string) ([]string, error) {
 	if f.err != nil {
-		return store.Project{}, f.err
+		return nil, f.err
 	}
-	if f.names[name] {
-		return store.Project{Name: name}, nil
-	}
-	return store.Project{}, pgx.ErrNoRows
+	return f.projects[name], nil
 }
 
-func newTokenHandler(t *testing.T, projects projectFinder) *registryTokenHandlers {
+func (f *fakePolicy) CacheActions(_ context.Context, _ *store.User) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.cache, nil
+}
+
+func newTokenHandler(t *testing.T, policy registryAuthorizer) *registryTokenHandlers {
 	t.Helper()
 	keyPEM, _, err := registrytoken.GenerateSigningKeypair()
 	require.NoError(t, err)
@@ -57,7 +61,7 @@ func newTokenHandler(t *testing.T, projects projectFinder) *registryTokenHandler
 	require.NoError(t, err)
 	return &registryTokenHandlers{
 		auth:       &fakeAuthenticator{token: "session-token", user: store.User{Email: "member@example.com"}},
-		projects:   projects,
+		policy:     policy,
 		signer:     signer,
 		nodeSecret: "node-secret",
 		now:        func() time.Time { return time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC) },
@@ -104,7 +108,10 @@ func tokenAccess(t *testing.T, recorder *httptest.ResponseRecorder) []registryto
 }
 
 func TestRegistryTokenGrants(t *testing.T) {
-	projects := &fakeProjects{names: map[string]bool{"demo": true}}
+	projects := &fakePolicy{
+		projects: map[string][]string{"demo": {"pull", "push"}, "readonly": {"pull"}},
+		cache:    []string{"pull", "push"},
+	}
 	tests := []struct {
 		name     string
 		scopes   []string
@@ -119,10 +126,16 @@ func TestRegistryTokenGrants(t *testing.T) {
 			access: []registrytoken.Access{{Type: "repository", Name: "skali/demo/web", Actions: []string{"push", "pull"}}},
 		},
 		{
-			name:     "unknown project earns nothing",
+			name:     "unknown or invisible project earns nothing",
 			scopes:   []string{"repository:skali/ghost/web:push,pull"},
 			username: "member@example.com", password: "session-token",
 			access: nil,
+		},
+		{
+			name:     "read-only membership pulls but cannot push",
+			scopes:   []string{"repository:skali/readonly/web:push,pull"},
+			username: "member@example.com", password: "session-token",
+			access: []registrytoken.Access{{Type: "repository", Name: "skali/readonly/web", Actions: []string{"pull"}}},
 		},
 		{
 			name:     "cache repositories are shared",
@@ -186,7 +199,7 @@ func TestRegistryTokenGrants(t *testing.T) {
 }
 
 func TestRegistryTokenRejections(t *testing.T) {
-	projects := &fakeProjects{names: map[string]bool{"demo": true}}
+	projects := &fakePolicy{projects: map[string][]string{"demo": {"pull", "push"}}}
 	scope := []string{"repository:skali/demo/web:pull"}
 	tests := []struct {
 		name     string
@@ -210,7 +223,7 @@ func TestRegistryTokenRejections(t *testing.T) {
 }
 
 func TestRegistryTokenNodeUserDisabled(t *testing.T) {
-	handler := newTokenHandler(t, &fakeProjects{})
+	handler := newTokenHandler(t, &fakePolicy{})
 	handler.nodeSecret = ""
 	recorder := issueToken(handler, registrytoken.Service,
 		[]string{"repository:skali/demo/web:pull"}, registrytoken.NodeUser, "anything")
@@ -218,7 +231,7 @@ func TestRegistryTokenNodeUserDisabled(t *testing.T) {
 }
 
 func TestRegistryTokenProjectLookupFailure(t *testing.T) {
-	handler := newTokenHandler(t, &fakeProjects{err: errors.New("database down")})
+	handler := newTokenHandler(t, &fakePolicy{err: errors.New("database down")})
 	recorder := issueToken(handler, registrytoken.Service,
 		[]string{"repository:skali/demo/web:pull"}, "member@example.com", "session-token")
 	require.Equal(t, http.StatusInternalServerError, recorder.Code)

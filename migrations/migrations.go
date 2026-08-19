@@ -14,15 +14,15 @@ import (
 //go:embed *.sql
 var FS embed.FS
 
-// Up applies all pending migrations. db must use a database/sql driver
-// (e.g. github.com/jackc/pgx/v5/stdlib).
-func Up(ctx context.Context, db *sql.DB) error {
+// Up applies all pending migrations and returns what it applied, so callers
+// can act on a specific migration having landed in this run. db must use a
+// database/sql driver (e.g. github.com/jackc/pgx/v5/stdlib).
+func Up(ctx context.Context, db *sql.DB) ([]*goose.MigrationResult, error) {
 	p, err := goose.NewProvider(goose.DialectPostgres, db, FS)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = p.Up(ctx)
-	return err
+	return p.Up(ctx)
 }
 
 // Status returns one line per migration with its applied state.

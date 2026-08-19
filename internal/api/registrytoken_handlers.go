@@ -12,14 +12,68 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// projectFinder is the one store read the token policy needs; the seam
-// keeps the handler testable without a database.
+// projectFinder is the one store read the token policy needs.
 type projectFinder interface {
 	GetProjectByName(ctx context.Context, name string) (store.Project, error)
+}
+
+// registryAuthorizer decides the actions a session user holds: on one
+// project's release repositories, and on the shared import cache. The seam
+// keeps the handler testable without a database.
+type registryAuthorizer interface {
+	ProjectActions(ctx context.Context, user *store.User, projectName string) ([]string, error)
+	CacheActions(ctx context.Context, user *store.User) ([]string, error)
+}
+
+// registryPolicy is the production authorizer: access follows project
+// membership (docs/permissions.md). Release repositories skali/<project>/<app>
+// are pull+push for the project's deployers and pull only for its other
+// members; non-members get nothing, so the repository does not exist for
+// them. The cache is pull+push for anyone who is a deployer somewhere.
+type registryPolicy struct {
+	resolver *authz.Resolver
+	projects projectFinder
+}
+
+func (p registryPolicy) ProjectActions(ctx context.Context, user *store.User, projectName string) ([]string, error) {
+	project, err := p.projects.GetProjectByName(ctx, projectName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	grant, err := p.resolver.Project(ctx, user, project.ID)
+	if err != nil {
+		if errors.Is(err, authz.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	switch {
+	case !grant.Visible():
+		return nil, nil
+	case grant.Deployer():
+		return []string{"pull", "push"}, nil
+	default:
+		return []string{"pull"}, nil
+	}
+}
+
+func (p registryPolicy) CacheActions(ctx context.Context, user *store.User) ([]string, error) {
+	deployer, err := p.resolver.DeployerAnywhere(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	if !deployer {
+		return nil, nil
+	}
+	return []string{"pull", "push"}, nil
 }
 
 // registryTokenHandlers serves the Docker registry token protocol realm.
@@ -29,7 +83,7 @@ type projectFinder interface {
 // RequireAuth: the protocol authenticates per request.
 type registryTokenHandlers struct {
 	auth       auth.Authenticator
-	projects   projectFinder
+	policy     registryAuthorizer
 	signer     *registrytoken.Signer
 	nodeSecret string
 	now        func() time.Time
@@ -55,6 +109,7 @@ func (h *registryTokenHandlers) issue(w http.ResponseWriter, r *http.Request) {
 
 	node := false
 	subject := ""
+	var user *store.User
 	if username == registrytoken.NodeUser {
 		if h.nodeSecret == "" ||
 			subtle.ConstantTimeCompare([]byte(password), []byte(h.nodeSecret)) != 1 {
@@ -64,7 +119,8 @@ func (h *registryTokenHandlers) issue(w http.ResponseWriter, r *http.Request) {
 		node = true
 		subject = registrytoken.NodeUser
 	} else {
-		user, _, err := h.auth.Authenticate(r.Context(), password)
+		var err error
+		user, _, err = h.auth.Authenticate(r.Context(), password)
 		if err != nil {
 			writeTokenError(w, http.StatusUnauthorized, "invalid credentials")
 			return
@@ -82,7 +138,7 @@ func (h *registryTokenHandlers) issue(w http.ResponseWriter, r *http.Request) {
 		if node {
 			granted = intersectActions(actions, []string{"pull"})
 		} else {
-			allowed, err := h.userActions(r.Context(), repository)
+			allowed, err := h.userActions(r.Context(), user, repository)
 			if err != nil {
 				writeTokenError(w, http.StatusInternalServerError, "authorization check failed")
 				return
@@ -110,25 +166,17 @@ func (h *registryTokenHandlers) issue(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// userActions is the authorization policy for session-authenticated
-// clients: release repositories of existing projects and the shared import
-// cache are writable, everything else is out of reach. Instance roles are
-// flat today (every member reaches every project), so the repository
-// prefix is the whole decision.
-func (h *registryTokenHandlers) userActions(ctx context.Context, repository string) ([]string, error) {
+// userActions maps a repository name onto the contract layout and asks the
+// policy: release repositories skali/<project>/<app> follow the user's
+// project access, the shared import cache follows the deployer predicate,
+// everything else is out of reach.
+func (h *registryTokenHandlers) userActions(ctx context.Context, user *store.User, repository string) ([]string, error) {
 	parts := strings.Split(repository, "/")
 	switch {
 	case parts[0] == "skali" && len(parts) == 3 && parts[1] != "" && parts[2] != "":
-		_, err := h.projects.GetProjectByName(ctx, parts[1])
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return []string{"pull", "push"}, nil
+		return h.policy.ProjectActions(ctx, user, parts[1])
 	case parts[0] == "cache" && len(parts) > 1:
-		return []string{"pull", "push"}, nil
+		return h.policy.CacheActions(ctx, user)
 	}
 	return nil, nil
 }

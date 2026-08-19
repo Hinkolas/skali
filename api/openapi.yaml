@@ -9,10 +9,19 @@ info:
 
     There is no registration endpoint: users are created by an instance
     admin (`/v1/users`) or by the server operator (`skalid user create`).
-    Every user carries an instance-wide role — `admin` (additionally
-    manages users and instance settings) or `member` — checked per
-    request. All error responses share the `Error` envelope; clients
-    should branch on `error.code`, not on messages.
+    Every user carries an instance-wide role, `admin` (everything,
+    including users, nodes, and instance settings) or `member` (nothing
+    until granted). Product access is per project and per environment on
+    one ladder of roles, `none < read < deploy < maintain < admin`: a
+    project membership is the member's default role on every environment
+    of the project, a per-environment cell overrides it for one user, and
+    an environment ceiling (`max_role`) caps what members inherit.
+    Non-members do not see a project at all (`404`); a locked environment
+    (`none`) is listed by name but its contents answer `403 forbidden`
+    naming the required role. Project and environment payloads carry the
+    caller's `access` so clients can disable and explain without guessing.
+    All error responses share the `Error` envelope; clients should branch
+    on `error.code`, not on messages.
 
     Security-critical operations sit behind sudo mode: they require the
     session to have proven the user's identity recently (within the
@@ -373,6 +382,9 @@ paths:
                   type: string
                   minLength: 8
                 role: { $ref: "#/components/schemas/Role" }
+                create_projects:
+                  type: boolean
+                  default: false
       responses:
         "201":
           description: User created.
@@ -391,7 +403,7 @@ paths:
   /v1/users/{id}:
     patch:
       operationId: updateUser
-      summary: Update a user's name or role
+      summary: Update a user's name, role, or create_projects
       description: |
         Admin only. Changing your own role is refused (`409`), as is
         demoting the last admin.
@@ -414,6 +426,8 @@ paths:
                 name:
                   type: string
                 role: { $ref: "#/components/schemas/Role" }
+                create_projects:
+                  type: boolean
       responses:
         "200":
           description: The updated user.
@@ -490,6 +504,9 @@ paths:
     post:
       operationId: createProject
       summary: Create a project
+      description: |
+        Instance admins always; members need `create_projects`. The
+        creator becomes the project's admin.
       tags: [projects]
       requestBody:
         required: true
@@ -512,6 +529,7 @@ paths:
               schema: { $ref: "#/components/schemas/ProjectResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
     get:
       operationId: listProjects
@@ -529,7 +547,9 @@ paths:
             plus worst service health) and draft service counts.
       responses:
         "200":
-          description: All projects, sorted by name.
+          description: |
+            The caller's projects (memberships; instance admins see all),
+            sorted by name.
           content:
             application/json:
               schema:
@@ -540,6 +560,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Project" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/projects/{id}:
     parameters:
@@ -560,6 +581,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ProjectResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateProject
@@ -590,6 +612,7 @@ paths:
               schema: { $ref: "#/components/schemas/ProjectResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteProject
@@ -624,6 +647,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DraftResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     put:
       operationId: submitProjectDraft
@@ -661,6 +685,7 @@ paths:
               schema: { $ref: "#/components/schemas/DraftResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
@@ -682,6 +707,11 @@ paths:
     post:
       operationId: createEnvironment
       summary: Create an environment
+      description: |
+        Project maintain and up. `priority: high` needs an instance admin.
+        A high environment starts with `max_role: read`; a normal one with
+        `max_role: admin`. The creator gets an explicit admin cell when
+        they are below project admin.
       tags: [environments]
       requestBody:
         required: true
@@ -694,6 +724,10 @@ paths:
                 name:
                   type: string
                   pattern: "^[a-z][a-z0-9-]{0,62}$"
+                priority:
+                  type: string
+                  enum: [normal, high]
+                  default: normal
       responses:
         "201":
           description: Environment created.
@@ -702,6 +736,7 @@ paths:
               schema: { $ref: "#/components/schemas/EnvironmentResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
     get:
@@ -710,7 +745,9 @@ paths:
       tags: [environments]
       responses:
         "200":
-          description: The project's environments, sorted by name.
+          description: |
+            The project's environments, sorted by name; locked ones carry
+            id, name, and `access: none` only.
           content:
             application/json:
               schema:
@@ -721,6 +758,155 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Environment" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/projects/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listProjectMembers
+      summary: List the project's members
+      description: Project read. Memberships with the user's email and name, sorted by email.
+      tags: [access]
+      responses:
+        "200":
+          description: The members.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MembersResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/projects/{id}/members/{user}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: path
+        required: true
+        description: The user's id or email address.
+        schema:
+          type: string
+    put:
+      operationId: setProjectMember
+      summary: Add or change a membership
+      description: |
+        Project admin, sudo mode. `role` is `read`, `deploy`, `maintain`,
+        or `admin`; remove the membership instead of setting `none`.
+      tags: [access]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessRoleRequest" }
+      responses:
+        "200":
+          description: The membership as stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: removeProjectMember
+      summary: Remove a membership
+      description: |
+        Project admin, sudo mode. The user's cells on the project's
+        environments go with the membership.
+      tags: [access]
+      responses:
+        "204":
+          description: Membership removed.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/access:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listEnvironmentAccess
+      summary: List the environment's cells
+      description: |
+        Environment read. The explicit per-user overrides on this
+        environment; members without a cell hold their project role,
+        capped by the ceiling.
+      tags: [access]
+      responses:
+        "200":
+          description: The cells.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentAccessListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/access/{user}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: path
+        required: true
+        description: The user's id or email address.
+        schema:
+          type: string
+    put:
+      operationId: setEnvironmentAccess
+      summary: Set a cell
+      description: |
+        Environment admin, sudo mode. The user must be a member of the
+        project (`409` otherwise). Any role including `none` (locked).
+      tags: [access]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessRoleRequest" }
+      responses:
+        "200":
+          description: The cell as stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentAccessResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: removeEnvironmentAccess
+      summary: Remove a cell
+      description: Environment admin, sudo mode. The user falls back to their project role.
+      tags: [access]
+      responses:
+        "204":
+          description: Cell removed.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/values:
@@ -751,6 +937,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/ValueEntry" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     put:
       operationId: submitEnvironmentValues
@@ -795,6 +982,7 @@ paths:
                     items: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
@@ -825,6 +1013,7 @@ paths:
           description: Value unset.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/revisions:
@@ -852,6 +1041,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/RevisionSummary" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/revisions/{id}:
@@ -883,6 +1073,7 @@ paths:
                   revision:
                     type: object
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/target:
@@ -908,6 +1099,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TargetResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     put:
       operationId: setEnvironmentTarget
@@ -946,6 +1138,7 @@ paths:
                     format: uuid
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
@@ -987,6 +1180,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Run" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/runs/{id}:
     parameters:
@@ -1017,6 +1211,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Step" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/steps/{id}/logs:
@@ -1062,6 +1257,7 @@ paths:
                     type: string
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       operationId: appendStepLogs
@@ -1134,6 +1330,7 @@ paths:
               schema:
                 type: string
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/status:
@@ -1161,6 +1358,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EnvironmentStatus" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
@@ -1196,6 +1394,7 @@ paths:
               schema:
                 type: string
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/runs/{id}/stream:
@@ -1225,6 +1424,7 @@ paths:
               schema:
                 type: string
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/runs/stream:
@@ -1254,6 +1454,7 @@ paths:
               schema:
                 type: string
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/databases/{key}/connection:
@@ -1296,6 +1497,7 @@ paths:
                   database: { type: string }
                   credential_version: { type: integer }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/databases/{key}/credentials/reveal:
@@ -1447,6 +1649,7 @@ paths:
                   region: { type: string }
                   credential_version: { type: integer }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/environments/{id}/buckets/{key}/credentials/reveal:
@@ -1502,6 +1705,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SystemObservation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/system/meta:
     get:
@@ -1637,6 +1841,7 @@ paths:
                     items: { $ref: "#/components/schemas/Node" }
                   observation: { $ref: "#/components/schemas/Observation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/environments/{id}:
     parameters:
@@ -1649,6 +1854,9 @@ paths:
     get:
       operationId: getEnvironment
       summary: Get an environment
+      description: |
+        Project read. A locked environment answers the minimal shape
+        (`access: none`).
       tags: [environments]
       responses:
         "200":
@@ -1657,6 +1865,43 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EnvironmentResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateEnvironmentSettings
+      summary: Update environment settings
+      description: |
+        Environment admin, sudo mode. Partial: absent properties keep
+        their value. Raising `priority` to `high` needs an instance admin;
+        `promote_from` must name other environments of the project.
+      tags: [environments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: At least one property must be present.
+              properties:
+                max_role: { $ref: "#/components/schemas/AccessRole" }
+                deploy_policy:
+                  type: string
+                  enum: [direct, promote-only]
+                promote_from:
+                  type: array
+                  items: { type: string }
+                priority:
+                  type: string
+                  enum: [normal, high]
+      responses:
+        "200":
+          description: The environment with its updated settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteEnvironment
@@ -1743,6 +1988,7 @@ paths:
                   run_id: { type: string, format: uuid }
                   backup_id: { type: string, format: uuid }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Another run is in flight (`backup_in_flight`).
@@ -1782,6 +2028,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/BackupSnapshot" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503":
           description: |
@@ -1820,6 +2067,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/BackupSnapshot" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503":
           description: |
@@ -1941,6 +2189,7 @@ paths:
                     type: string
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422":
           description: The manifest failed validation (`invalid_manifest`).
@@ -1979,6 +2228,7 @@ paths:
               schema: { $ref: "#/components/schemas/PlanResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
@@ -2029,11 +2279,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [up_to_date]
+                required: [up_to_date, required_role]
                 properties:
                   up_to_date:
                     type: boolean
                   plan: { $ref: "#/components/schemas/PlanDocument" }
+                  required_role: { $ref: "#/components/schemas/AccessRole" }
         "201":
           description: The opened deployment with its work list.
           content:
@@ -2041,6 +2292,7 @@ paths:
               schema: { $ref: "#/components/schemas/OpenDeploymentResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
@@ -2091,6 +2343,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/ArtifactAction" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/deployments/{id}/complete:
@@ -2127,6 +2380,7 @@ paths:
                     type: string
                     format: uuid
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
@@ -2158,6 +2412,7 @@ paths:
         "200":
           description: The deployment was failed.
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
@@ -2212,6 +2467,7 @@ paths:
                     type: string
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: "`digest_mismatch`: the registry does not hold the digest."
@@ -2252,6 +2508,7 @@ paths:
                   alive:
                     type: boolean
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/runs/{id}/cancel:
     parameters:
@@ -2286,6 +2543,7 @@ paths:
                   fallback:
                     type: boolean
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
@@ -2404,6 +2662,7 @@ paths:
               schema:
                 type: string
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503":
           description: "`node_unreachable`: no cluster is connected."
@@ -2526,14 +2785,18 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
       description: |
-        The caller is authenticated but lacks the admin role
-        (`error.code = forbidden`), or — on sudo-mode-gated writes — recent
-        authentication is required (`error.code = reauth_required`).
+        The caller is authenticated but lacks the role the operation needs
+        (`error.code = forbidden`; the message names it, for example
+        "maintain on environment production required"), or, on
+        sudo-mode-gated operations, recent authentication is required
+        (`error.code = reauth_required`).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     NotFound:
-      description: The resource does not exist or belongs to another user.
+      description: |
+        The resource does not exist, or the caller is not a member of the
+        project it belongs to (the two are indistinguishable by design).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -2574,13 +2837,79 @@ components:
     Role:
       type: string
       description: |
-        Instance-wide role. Admins additionally manage users and instance
-        settings; members have full access to all projects.
+        Instance-wide role. Admins may do everything and manage users,
+        nodes, and instance settings; members hold nothing until granted
+        project membership.
       enum: [admin, member]
+
+    AccessRole:
+      type: string
+      description: |
+        One step of the access ladder, each including everything below it.
+        `none` locks an environment (listed by name, contents refused);
+        `read` sees everything; `deploy` changes only what code runs
+        (promote, rollback, restart, cancel, backup create, direct deploys
+        whose definition is unchanged); `maintain` owns the blast radius of
+        skali.yml (definition changes, values, restore, exec, credential
+        reveal); `admin` manages settings, other users' roles, delete and
+        teardown. Project memberships use `read` and up.
+      enum: [none, read, deploy, maintain, admin]
+
+    ProjectAccess:
+      type: object
+      description: |
+        The caller's standing on a project: the membership role (instance
+        admins report `admin`) and the effective role per environment name
+        (locked environments report `none`).
+      required: [role, environments]
+      properties:
+        role: { $ref: "#/components/schemas/AccessRole" }
+        environments:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/AccessRole" }
+
+    EnvironmentSettings:
+      type: object
+      description: |
+        Server-side environment settings. `max_role` caps the role members
+        inherit from their project role (cells are not capped).
+        `deploy_policy` and `promote_from` are the protection policy:
+        `promote-only` means the running revision only changes through
+        promotion from an allowed source, rollback, or an explicit bypass.
+        `priority` marks environments that keep running when resources are
+        tight; creating with or raising to `high` is instance-admin only.
+      required: [max_role, deploy_policy, promote_from, priority]
+      properties:
+        max_role: { $ref: "#/components/schemas/AccessRole" }
+        deploy_policy:
+          type: string
+          enum: [direct, promote-only]
+        promote_from:
+          type: array
+          description: Environment names allowed as promotion sources; empty means any environment of the project.
+          items: { type: string }
+        priority:
+          type: string
+          enum: [normal, high]
+
+    Member:
+      type: object
+      description: One user's role on a project (membership) or on an environment (cell).
+      required: [user_id, email, name, role]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role: { $ref: "#/components/schemas/AccessRole" }
 
     User:
       type: object
-      required: [id, email, name, role, two_factor_enabled, created_at]
+      required: [id, email, name, role, create_projects, two_factor_enabled, created_at]
       properties:
         id:
           type: string
@@ -2591,6 +2920,9 @@ components:
         name:
           type: string
         role: { $ref: "#/components/schemas/Role" }
+        create_projects:
+          type: boolean
+          description: Whether a member may create projects (and so become their admin). Instance admins always may.
         two_factor_enabled:
           type: boolean
         created_at:
@@ -2704,7 +3036,7 @@ components:
 
     Project:
       type: object
-      required: [id, name, display_name, source_mode, created_at, updated_at]
+      required: [id, name, display_name, source_mode, created_at, updated_at, access]
       properties:
         id:
           type: string
@@ -2723,6 +3055,7 @@ components:
         updated_at:
           type: string
           format: date-time
+        access: { $ref: "#/components/schemas/ProjectAccess" }
         summary:
           $ref: "#/components/schemas/ProjectSummary"
 
@@ -2731,20 +3064,22 @@ components:
       description: |
         List rollup attached by `?include=summary`: environments with their
         pointer state and worst service health, plus the draft's per-type
-        service counts (zeros without a draft).
+        service counts (zeros without a draft). A locked environment
+        (`access: none`) carries id, name, and access only.
       required: [environments, service_counts]
       properties:
         environments:
           type: array
           items:
             type: object
-            required: [id, name, state, health]
+            required: [id, name, access]
             properties:
               id:
                 type: string
                 format: uuid
               name:
                 type: string
+              access: { $ref: "#/components/schemas/AccessRole" }
               state:
                 type: string
                 enum: [active, down, releasing]
@@ -2770,7 +3105,11 @@ components:
 
     Environment:
       type: object
-      required: [id, project_id, name, created_at]
+      description: |
+        An environment as the caller sees it. `access` is the caller's
+        effective role; a locked environment (`none`) carries id, project,
+        name, and access only.
+      required: [id, project_id, name, access]
       properties:
         id:
           type: string
@@ -2780,9 +3119,45 @@ components:
           format: uuid
         name:
           type: string
+        access: { $ref: "#/components/schemas/AccessRole" }
         created_at:
           type: string
           format: date-time
+        settings: { $ref: "#/components/schemas/EnvironmentSettings" }
+
+    MembersResponse:
+      type: object
+      required: [members]
+      properties:
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/Member" }
+
+    MemberResponse:
+      type: object
+      required: [member]
+      properties:
+        member: { $ref: "#/components/schemas/Member" }
+
+    EnvironmentAccessListResponse:
+      type: object
+      required: [access]
+      properties:
+        access:
+          type: array
+          items: { $ref: "#/components/schemas/Member" }
+
+    EnvironmentAccessResponse:
+      type: object
+      required: [access]
+      properties:
+        access: { $ref: "#/components/schemas/Member" }
+
+    AccessRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { $ref: "#/components/schemas/AccessRole" }
 
     EnvironmentResponse:
       type: object
@@ -3469,7 +3844,7 @@ components:
 
     PlanResponse:
       type: object
-      required: [plan, actions, up_to_date]
+      required: [plan, actions, up_to_date, required_role]
       properties:
         plan: { $ref: "#/components/schemas/PlanDocument" }
         actions:
@@ -3477,6 +3852,12 @@ components:
           items: { $ref: "#/components/schemas/ArtifactAction" }
         up_to_date:
           type: boolean
+        required_role:
+          $ref: "#/components/schemas/AccessRole"
+          description: |
+            `deploy` when the definition is unchanged (or a promotion),
+            `maintain` when it changes, is the first, stages values, or
+            prunes values. A caller below it receives `403 forbidden`.
         orphaned:
           type: array
           description: |
@@ -3567,7 +3948,7 @@ components:
 
     OpenDeploymentResponse:
       type: object
-      required: [deployment, plan, actions, up_to_date]
+      required: [deployment, plan, actions, up_to_date, required_role]
       properties:
         deployment: { $ref: "#/components/schemas/Deployment" }
         plan: { $ref: "#/components/schemas/PlanDocument" }
@@ -3576,6 +3957,7 @@ components:
           items: { $ref: "#/components/schemas/ArtifactAction" }
         up_to_date:
           type: boolean
+        required_role: { $ref: "#/components/schemas/AccessRole" }
         orphaned:
           type: array
           description: |

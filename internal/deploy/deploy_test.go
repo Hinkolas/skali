@@ -67,9 +67,9 @@ func newFixture(t *testing.T) *fixture {
 	require.NoError(t, err)
 	artifactSvc := artifactstore.New(st)
 
-	proj, err := projects.Create(ctx, "demo", "")
+	proj, err := projects.Create(ctx, "demo", "", uuid.Nil)
 	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production")
+	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 
 	return &fixture{
@@ -401,7 +401,7 @@ func TestRollback(t *testing.T) {
 	require.ErrorIs(t, err, ErrAlreadyTargeted)
 
 	// A revision of another environment is refused.
-	other, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging")
+	other, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging", project.EnvironmentOptions{})
 	require.NoError(t, err)
 	_, err = f.deploy.Rollback(ctx, RollbackInput{
 		EnvironmentID: other.ID, RevisionID: first.RevisionID,
@@ -663,7 +663,7 @@ func TestLoadPromotionSource(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, rows)
 
-	staging, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging")
+	staging, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging", project.EnvironmentOptions{})
 	require.NoError(t, err)
 
 	source, err := f.deploy.loadPromotionSource(ctx, staging.ID, f.environmentID)
@@ -685,13 +685,13 @@ func TestLoadPromotionSource(t *testing.T) {
 	require.ErrorIs(t, err, ErrSameEnvironment)
 	_, err = f.deploy.loadPromotionSource(ctx, staging.ID, uuid.New())
 	require.ErrorIs(t, err, ErrSourceEnvironmentNotFound)
-	empty, err := f.projects.CreateEnvironment(ctx, f.projectID, "empty")
+	empty, err := f.projects.CreateEnvironment(ctx, f.projectID, "empty", project.EnvironmentOptions{})
 	require.NoError(t, err)
 	_, err = f.deploy.loadPromotionSource(ctx, staging.ID, empty.ID)
 	require.ErrorIs(t, err, ErrNoActiveRevision)
-	otherProject, err := f.projects.Create(ctx, "other", "")
+	otherProject, err := f.projects.Create(ctx, "other", "", uuid.Nil)
 	require.NoError(t, err)
-	otherEnv, err := f.projects.CreateEnvironment(ctx, otherProject.ID, "production")
+	otherEnv, err := f.projects.CreateEnvironment(ctx, otherProject.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 	_, err = f.deploy.loadPromotionSource(ctx, otherEnv.ID, f.environmentID)
 	require.ErrorIs(t, err, ErrSourceProjectMismatch)

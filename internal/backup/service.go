@@ -258,11 +258,12 @@ func (c *Controller) projectEnvironments(ctx context.Context, target objectStore
 
 // findSnapshot locates a snapshot's manifest key anywhere in the project:
 // snapshot ids are unique across environments, so the id alone identifies
-// it. Returns ErrSnapshotNotFound when no environment holds it.
-func (c *Controller) findSnapshot(ctx context.Context, target objectStore, prefix, project, snapshotID string) (string, error) {
+// it. Returns the key and the environment holding it, or ErrSnapshotNotFound
+// when no environment does.
+func (c *Controller) findSnapshot(ctx context.Context, target objectStore, prefix, project, snapshotID string) (key, environment string, err error) {
 	environments, err := c.projectEnvironments(ctx, target, prefix, project)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for _, environment := range environments {
 		key := manifestKey(prefix, project, environment, snapshotID)
@@ -270,11 +271,11 @@ func (c *Controller) findSnapshot(ctx context.Context, target objectStore, prefi
 			if errors.Is(err, errNotFound) {
 				continue
 			}
-			return "", &TargetUnreachableError{Err: err}
+			return "", "", &TargetUnreachableError{Err: err}
 		}
-		return key, nil
+		return key, environment, nil
 	}
-	return "", ErrSnapshotNotFound
+	return "", "", ErrSnapshotNotFound
 }
 
 func (c *Controller) listSnapshotsUnder(ctx context.Context, target objectStore, prefix string) ([]SnapshotSummary, error) {

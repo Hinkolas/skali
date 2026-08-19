@@ -12,6 +12,11 @@ var (
 	ErrInvalidSourceMode    = errors.New("project: source mode must be managed or file")
 	ErrInvalidFormat        = errors.New("project: format must be yaml or json")
 	ErrNameMismatch         = errors.New("project: manifest name does not match the project name")
+	ErrUserNotFound         = errors.New("project: user not found")
+	// ErrNotMember: a cell needs a membership to hang off.
+	ErrNotMember       = errors.New("project: user is not a member of the project")
+	ErrInvalidRole     = errors.New("project: invalid role")
+	ErrInvalidSettings = errors.New("project: invalid environment settings")
 	// ErrVersionConflict is the optimistic-concurrency rejection: the caller's
 	// expected draft version is stale and the submission must not be merged.
 	ErrVersionConflict = errors.New("project: draft version conflict")

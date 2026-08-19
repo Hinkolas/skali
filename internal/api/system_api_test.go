@@ -12,8 +12,14 @@ import (
 
 func TestListNodes(t *testing.T) {
 	a := newTestAPI(t)
-	a.createUser("nick@example.com", "hunter2hunter2")
+	a.createAdmin("nick@example.com", "hunter2hunter2")
+	a.createUser("member@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
+
+	// Nodes are instance-wide: members are refused.
+	member := a.login("member@example.com", "hunter2hunter2")
+	status, _ := a.do("GET", "/v1/nodes", member, nil)
+	require.Equal(t, http.StatusForbidden, status)
 
 	// Empty cluster: an empty list plus the observation block.
 	status, body := a.do("GET", "/v1/nodes", token, nil)

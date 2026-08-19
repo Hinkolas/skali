@@ -138,7 +138,7 @@ func (q *Queries) ExtendSession(ctx context.Context, arg ExtendSessionParams) er
 }
 
 const getSessionAndUserByTokenHash = `-- name: GetSessionAndUserByTokenHash :one
-SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.created_at, sessions.updated_at, sessions.reauthenticated_at, users.id, users.email, users.name, users.two_factor_enabled, users.created_at, users.updated_at, users.role
+SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.expires_at, sessions.ip_address, sessions.user_agent, sessions.created_at, sessions.updated_at, sessions.reauthenticated_at, users.id, users.email, users.name, users.two_factor_enabled, users.created_at, users.updated_at, users.role, users.create_projects
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -169,6 +169,7 @@ func (q *Queries) GetSessionAndUserByTokenHash(ctx context.Context, tokenHash []
 		&i.User.CreatedAt,
 		&i.User.UpdatedAt,
 		&i.User.Role,
+		&i.User.CreateProjects,
 	)
 	return i, err
 }

@@ -48,10 +48,11 @@ func (h *usersHandlers) list(w http.ResponseWriter, r *http.Request) {
 // POST /v1/users
 func (h *usersHandlers) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string `json:"email"`
-		Name     string `json:"name"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Email          string `json:"email"`
+		Name           string `json:"name"`
+		Password       string `json:"password"`
+		Role           string `json:"role"`
+		CreateProjects bool   `json:"create_projects"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -70,6 +71,14 @@ func (h *usersHandlers) create(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(r.Context(), w, err)
 		return
 	}
+	if req.CreateProjects {
+		updated, err := auth.SetUserCreateProjects(r.Context(), h.st, user.ID, true)
+		if err != nil {
+			writeAuthError(r.Context(), w, err)
+			return
+		}
+		user = &updated
+	}
 	writeJSON(w, http.StatusCreated, struct {
 		User userPayload `json:"user"`
 	}{newUserPayload(user)})
@@ -82,15 +91,16 @@ func (h *usersHandlers) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name *string `json:"name"`
-		Role *string `json:"role"`
+		Name           *string `json:"name"`
+		Role           *string `json:"role"`
+		CreateProjects *bool   `json:"create_projects"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
 		return
 	}
-	if req.Name == nil && req.Role == nil {
-		writeError(w, http.StatusBadRequest, codeBadRequest, "nothing to update: provide name and/or role")
+	if req.Name == nil && req.Role == nil && req.CreateProjects == nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "nothing to update: provide name, role, and/or create_projects")
 		return
 	}
 	// Changing your own role is refused outright: it either locks you out of
@@ -110,6 +120,12 @@ func (h *usersHandlers) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Role != nil {
 		if user, err = auth.SetUserRole(r.Context(), h.st, id, *req.Role); err != nil {
+			writeAuthError(r.Context(), w, err)
+			return
+		}
+	}
+	if req.CreateProjects != nil {
+		if user, err = auth.SetUserCreateProjects(r.Context(), h.st, id, *req.CreateProjects); err != nil {
 			writeAuthError(r.Context(), w, err)
 			return
 		}

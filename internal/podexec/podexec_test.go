@@ -48,9 +48,9 @@ func testEnv(t *testing.T) (*Service, *observe.Fake, uuid.UUID, string) {
 	ctx := context.Background()
 	st := store.NewStore(testdb.New(t))
 	projects := project.New(st)
-	proj, err := projects.Create(ctx, "demo", "")
+	proj, err := projects.Create(ctx, "demo", "", uuid.Nil)
 	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production")
+	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 
 	observed := observe.NewFake()

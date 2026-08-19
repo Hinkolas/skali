@@ -28,9 +28,10 @@
 		degraded: 4,
 		unhealthy: 5
 	};
+	// Locked environments carry no health and stay out of the rollup.
 	const worst = $derived(
 		environments.reduce<ServiceHealth>(
-			(acc, e) => (rank[e.health] > rank[acc] ? e.health : acc),
+			(acc, e) => (e.health && rank[e.health] > rank[acc] ? e.health : acc),
 			environments.length ? 'healthy' : 'unknown'
 		)
 	);

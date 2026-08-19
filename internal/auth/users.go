@@ -10,10 +10,10 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// Instance-wide roles — the whole permission model for now. Roles are code,
-// not data: the DB stores which role a user has, never what a role means.
-// Admins additionally manage users and instance settings; members have full
-// access to all projects. Per-project scoping layers on later.
+// Instance-wide roles. Roles are code, not data: the DB stores which role a
+// user has, never what a role means. Admins may do everything and manage
+// users, nodes, and instance settings; members hold nothing until granted
+// project membership (internal/authz, docs/permissions.md).
 const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"
@@ -67,6 +67,19 @@ func SetUserRole(ctx context.Context, st *store.Store, userID uuid.UUID, role st
 // SetUserName updates a user's display name.
 func SetUserName(ctx context.Context, st *store.Store, userID uuid.UUID, name string) (store.User, error) {
 	user, err := st.SetUserName(ctx, store.SetUserNameParams{ID: userID, Name: name})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.User{}, ErrNotFound
+		}
+		return store.User{}, err
+	}
+	return user, nil
+}
+
+// SetUserCreateProjects grants or revokes a member's right to create
+// projects (instance admins always may).
+func SetUserCreateProjects(ctx context.Context, st *store.Store, userID uuid.UUID, allowed bool) (store.User, error) {
+	user, err := st.SetUserCreateProjects(ctx, store.SetUserCreateProjectsParams{ID: userID, CreateProjects: allowed})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return store.User{}, ErrNotFound

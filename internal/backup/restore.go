@@ -32,7 +32,19 @@ const (
 // target revision: the restore stops it, moves data, and resumes exactly
 // that revision. The snapshot manifest is verified to exist before
 // anything is accepted.
-func (c *Controller) CreateRestore(ctx context.Context, environmentID uuid.UUID, snapshotID, actor string) (*CreateResult, error) {
+// RestoreInput names what to restore and who asked. SourceAllowed, when set,
+// is consulted with the name of the environment holding the snapshot before
+// any data is read; an error it returns aborts the restore untouched (the API
+// uses it for the read-on-source access check).
+type RestoreInput struct {
+	EnvironmentID uuid.UUID
+	SnapshotID    string
+	Actor         string
+	SourceAllowed func(environment string) error
+}
+
+func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*CreateResult, error) {
+	environmentID, snapshotID, actor := in.EnvironmentID, in.SnapshotID, in.Actor
 	names, err := c.environmentNames(ctx, environmentID)
 	if err != nil {
 		return nil, err
@@ -56,9 +68,14 @@ func (c *Controller) CreateRestore(ctx context.Context, environmentID uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
-	manifestObjectKey, err := c.findSnapshot(ctx, targetStore, credentials.Prefix, names.project, snapshotID)
+	manifestObjectKey, sourceEnvironment, err := c.findSnapshot(ctx, targetStore, credentials.Prefix, names.project, snapshotID)
 	if err != nil {
 		return nil, err
+	}
+	if in.SourceAllowed != nil {
+		if err := in.SourceAllowed(sourceEnvironment); err != nil {
+			return nil, err
+		}
 	}
 
 	run, err := c.deps.Journal.CreateRun(ctx, journal.RunInput{

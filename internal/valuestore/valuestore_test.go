@@ -24,9 +24,9 @@ func newTestEnvironment(t *testing.T) (*Service, *store.Store, uuid.UUID) {
 	svc, err := New(st, testSecret)
 	require.NoError(t, err)
 	projects := project.New(st)
-	proj, err := projects.Create(context.Background(), "demo", "")
+	proj, err := projects.Create(context.Background(), "demo", "", uuid.Nil)
 	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(context.Background(), proj.ID, "production")
+	env, err := projects.CreateEnvironment(context.Background(), proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 	return svc, st, env.ID
 }

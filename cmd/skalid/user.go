@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/config"
@@ -173,12 +175,20 @@ func userDelete(ctx context.Context, st *store.Store, args []string) error {
 		return errors.New("usage: skalid user delete --email <address>")
 	}
 
-	n, err := st.DeleteUserByEmail(ctx, *email)
+	user, err := st.GetUserByEmail(ctx, *email)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("no user with email %q", *email)
+		}
 		return err
 	}
-	if n == 0 {
-		return fmt.Errorf("no user with email %q", *email)
+	// Through the service so the last-admin guard applies: the operator
+	// CLI is the recovery path, not a way around it.
+	if err := auth.DeleteUser(ctx, st, user.ID); err != nil {
+		if errors.Is(err, auth.ErrLastAdmin) {
+			return errors.New("refusing to delete the last admin; promote another user first")
+		}
+		return err
 	}
 	fmt.Printf("deleted user %s\n", *email)
 	return nil

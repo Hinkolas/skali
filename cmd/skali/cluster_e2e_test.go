@@ -422,7 +422,7 @@ web:
 	}
 
 	// The init transcript created no projects yet, so the granted
-	// repository rides the cache prefix every member may push to.
+	// repository rides the cache prefix; the admin is a deployer everywhere.
 	pushToken := mintUserToken("repository:cache/docker.io/library/alpine:push,pull")
 	require.Equal(t, "202", registryStatus(pushToken, "POST", "/v2/cache/docker.io/library/alpine/blobs/uploads/"),
 		"a skalid-minted token must clear the registry's offline verification")

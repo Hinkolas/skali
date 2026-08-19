@@ -22,6 +22,7 @@ type userPayload struct {
 	Email            string    `json:"email"`
 	Name             string    `json:"name"`
 	Role             string    `json:"role"`
+	CreateProjects   bool      `json:"create_projects"`
 	TwoFactorEnabled bool      `json:"two_factor_enabled"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -32,6 +33,7 @@ func newUserPayload(u *store.User) userPayload {
 		Email:            u.Email,
 		Name:             u.Name,
 		Role:             u.Role,
+		CreateProjects:   u.CreateProjects,
 		TwoFactorEnabled: u.TwoFactorEnabled,
 		CreatedAt:        u.CreatedAt,
 	}

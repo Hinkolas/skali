@@ -1058,7 +1058,7 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 			"skali plan never changes the installation, run skali deploy to create it",
 			opts.Environment, projectName, master)
 	case opts.CreateMissing:
-		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
+		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment, "")
 		if err != nil {
 			return "", err
 		}
@@ -1077,7 +1077,7 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 		if !confirmed {
 			return "", errors.New("aborted")
 		}
-		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment)
+		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment, "")
 		if err != nil {
 			return "", err
 		}

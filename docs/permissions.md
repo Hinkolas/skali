@@ -1,8 +1,11 @@
 # Permissions
 
-Status: design agreed 2026-08-19, not implemented yet. Once implemented this
-file stays as the description of how access works; the "Open decisions"
-section at the end disappears as they are settled.
+Status: design agreed 2026-08-19. The server side (schema, resolver, every
+route classified and enforced, registry scope, members/cells/settings API,
+payload additions) is implemented; the console and CLI management surfaces,
+the promote-only policy enforcement with its bypass, and the PriorityClass
+rendering are pending. This file is the description of how access works;
+the "Open decisions" section at the end disappears as they are settled.
 
 ## Why
 
@@ -104,14 +107,18 @@ environment:
 |---|---|---|
 | `read` | `read` | the project is visible; list environments (locked ones included); read definitions and the draft; members list; project-wide backups list filtered to environments with at least `read`; registry pull |
 | `deploy` | `deploy` | submit definitions and write the draft, registry push: what a code-only deploy needs |
-| `maintain` | `maintain` | create environments; the creator gets an explicit `admin` cell on the environment they created, so they manage and delete their own test environments without a project admin |
+| `maintain` | `maintain` | create environments; the creator gets an explicit `admin` cell on the environment they created (members below project `admin` only; admins are admin by rule anyway), so they manage and delete their own test environments without a project admin |
 | `admin` | `admin` | members and cells, project settings, delete project |
 
-Deployer: anyone whose effective role is `deploy` or higher on at least one
-environment of the project, however they got it. Deployers may submit
-definitions, write the draft, push to the project's registry repositories,
-and drive artifact verification and build heartbeats. This makes a `read`
-member with a `deploy` cell on staging able to actually deploy there.
+Deployer: a project role of `deploy` or higher, or any cell of `deploy` or
+higher, however obtained. Deployers may submit definitions, write the draft,
+push to the project's registry repositories, and drive artifact
+verification and build heartbeats. This makes a `read` member with a
+`deploy` cell on staging able to actually deploy there. The project role
+counts even when every environment is capped below `deploy` or none exists
+yet, so the first definition can land before the first environment;
+definition versions are content-addressed and pushing an image changes
+nothing that runs.
 
 There is no "last project admin" invariant: instance admins are implicit
 admins everywhere, so a project may end up with zero explicit admins.
@@ -127,6 +134,8 @@ the columns. Two kinds of exceptions exist:
   any step of the ladder including `none`. It overrides the project role
   for that one person on that one environment, up or down (`read` member
   with `maintain` on staging; `maintain` member with `none` on production).
+  A cell needs a membership to hang off: setting one for a non-member
+  answers 409, and removing the member drops their cells.
 - The **ceiling** is one environment setting, `max_role`, that caps the role
   members inherit from their project role on that environment. Default
   `admin` (no cap). "Production is read-only for everyone unless named" is
@@ -286,10 +295,10 @@ Project scoped:
 | `PUT /projects/{id}/draft`, `POST /projects/{id}/definitions` | D |
 | `POST /projects/{id}/environments` | P:maintain; `priority: high` IA |
 | `GET /projects/{id}/environments` | P:read; locked environments carry only id, name, `access: none` |
-| `GET /projects/{id}/backups` | P:read; filtered to environments with E:read |
+| `GET /projects/{id}/backups` | P:read; filtered to environments with E:read; snapshots of environments the control plane no longer has are shown to P:admin only |
 | `GET /projects/{id}/members` (new) | P:read |
 | `PUT|DELETE /projects/{id}/members/{user}` (new, S) | P:admin |
-| `POST /artifacts/{id}/verify`, `POST /builds/{id}/heartbeat` | D of the owning project, plus today's actor rule |
+| `POST /artifacts/{id}/verify`, `POST /builds/{id}/heartbeat` | D of the owning project (an artifact or build without one is instance-admin only) |
 
 Environment scoped (runs, steps, deployments, and revisions resolve to
 their environment first):
@@ -305,13 +314,13 @@ their environment first):
 | `PUT .../values`, `DELETE .../values/{name}` | E:maintain |
 | `GET .../revisions`, `GET /revisions/{id}`, `GET .../target` | E:read |
 | `PUT .../target` (rollback) | E:deploy (allowed under promote-only) |
-| `POST .../plan`, `POST .../deployments` | E:deploy when the definition is unchanged, E:maintain when it changes, plus policy and bypass rules; promote needs E:read on the source |
+| `POST .../plan`, `POST .../deployments` | E:deploy when the definition is unchanged or for a promotion, E:maintain when it changes, is the first, stages values (`candidate_id`), or prunes values; plus policy and bypass rules; promote needs E:read on the source (a source outside the project answers 404); refused before any preview work |
 | `GET /deployments/{id}` | E:read |
-| `POST /deployments/{id}/complete`, `.../fail` | E:deploy, plus actor rule |
+| `POST /deployments/{id}/complete`, `.../fail` | E:deploy |
 | `POST /runs/{id}/cancel` | E:deploy |
 | `POST /runs/{id}/steps`, `PATCH /steps/{id}`, `POST /steps/{id}/logs` | E:deploy, plus today's actor rule and artifacts-subtree rule |
 | `GET .../status`, `.../status/stream` | E:read |
-| `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream` | E:read |
+| `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream` | E:read (a run outside any environment is instance-admin only) |
 | `GET .../logs/stream` (runtime logs) | E:read |
 | `GET .../exec` (S) | E:maintain |
 | `GET .../databases/{key}/connection`, `.../buckets/{key}/connection` | E:read |
@@ -319,7 +328,7 @@ their environment first):
 | `GET .../applications/{key}/environment` (S) | E:maintain |
 | `POST .../backups` | E:deploy |
 | `GET .../backups` | E:read |
-| `POST .../restore` (S) | E:maintain on the target, E:read on the snapshot's environment |
+| `POST .../restore` (S) | E:maintain on the target, E:read on the snapshot's environment (a source the control plane no longer has is nobody's to protect) |
 
 ## Registry token scope
 
@@ -367,7 +376,8 @@ protection, the promote command. Interactive first-deploy environment
 creation stays, always `normal` priority.
 
 `skali dev` is unaffected: the local skalid has one dev user who is an
-instance admin.
+instance admin. `skali remote status` prints the instance role and whether
+the user may create projects.
 
 ## Journal and audit
 
@@ -381,9 +391,13 @@ deferred until something needs to read it.
 - `project_members(project_id, user_id, role, created_at, updated_at)`,
   primary key `(project_id, user_id)`, cascades from both; `role` checked
   against `read | deploy | maintain | admin`.
-- `environment_access(environment_id, user_id, role, created_at,
-  updated_at)`, primary key `(environment_id, user_id)`, cascades from
-  both; `role` checked against `none | read | deploy | maintain | admin`.
+- `environment_access(environment_id, project_id, user_id, role,
+  created_at, updated_at)`, primary key `(environment_id, user_id)`;
+  composite foreign keys to `environments(id, project_id)` and to
+  `project_members(project_id, user_id)`, both cascading, so a cell can
+  only reference an environment of the project whose membership it
+  extends and leaves with the member; `role` checked against `none | read
+  | deploy | maintain | admin`.
 - `environments`: `max_role` (default `admin`), `deploy_policy` (default
   `direct`), `promote_from` (text array, default empty), `priority`
   (default `normal`), all `CHECK`-constrained.
@@ -392,28 +406,48 @@ deferred until something needs to read it.
 
 Backfill of existing installations: none. Existing `member` users keep
 their accounts and hold no project membership until an admin grants one;
-the migration prints a notice naming them. Existing admins are unaffected.
+`skalid migrate up` prints a notice naming them when migration 00019
+lands (on a cluster that is the migrate init container's log). Existing
+admins are unaffected.
 
 ## Enforcement shape
 
-One resolver in a new `internal/authz` package: `Resolve(ctx, user,
-projectID)` reads the membership, cells, and environment settings in one
-query and returns the project role, the effective role per environment,
-and the derived predicates (deployer, may create environments, may bypass
-on a given environment). Instance admin short-circuits. Handlers ask the
-resolver; middleware attaches only the user, as today. List endpoints
-filter or mark with the resolver's result. `RequireAdmin` and
-`RequireFresh` stay for instance routes and sudo. The definition-unchanged
-check and the policy gate live beside the existing in-flight and
-destructive gates in deploy open and in plan preview. Registry
-`userActions` calls the same resolver.
+One resolver in `internal/authz`: `Project(ctx, user, projectID)` reads the
+membership, the project's environments with their settings, and the user's
+cells (three reads however many projects are asked for; `All` does the
+same for every visible project) and returns a grant: the project role, the
+effective role per environment, and the derived predicates (deployer, may
+create environments). Instance admin short-circuits. The meaning of a role
+is code (`authz.Effective`), never data.
+
+Every `/v1` route is registered in `internal/api/router.go` through
+`access.route` with exactly one route class (`project:read`,
+`environment:deploy`, `run:read`, `artifact:deployer`, ...). The class
+installs the scope middleware that parses the id, loads the addressed
+entity (environment-owned entities resolve to their environment first),
+resolves the grant, and answers 404 (unknown or not visible) or 403 (role
+too low, message naming the role) before the handler runs; on success the
+grant and the loaded row ride on the request context. Handlers refine
+where one route needs more than a minimum role: plan and open compare the
+submitted definition version with the active revision's, environment
+creation checks `priority: high` against the instance role, project
+creation checks `create_projects`. The router-walk test asserts every
+registered route carries a class, and the access matrix test probes every
+route with one fixture per rung. `RequireAdmin` and `RequireFresh` stay
+for instance routes and sudo; the access middleware sits inside the sudo
+groups, so a stale session answers `reauth_required` before 404 or 403
+(nothing leaks: the caller still has to prove identity to learn more).
+The registry token realm asks the same resolver.
 
 ## Testing
 
 Resolver unit tests over the effective-role rules; router-walk test
-asserting every route is classified; handler tests for 404 versus 403,
-locked listings, and filtered lists; registry scope tests; the dev e2e
-gains a member scenario (create a member, project `read` plus a `deploy`
+asserting every route is classified; an access matrix test probing every
+route with one fixture per rung (non-member 404, locked 403, one step
+below 403 naming the role, allowed not refused); handler tests for locked
+listings, filtered lists, members and cells, creation defaults, the
+deploy/maintain boundary on plan and open; registry scope tests; the dev
+e2e gains a member scenario (create a member, project `read` plus a `deploy`
 cell on staging, code-only deploy allowed, definition change refused with
 the required role, production locked by ceiling, promote-only refusal and
 bypass, environment creation by `maintain`); console checks for disabled

@@ -72,9 +72,9 @@ func TestLiveSeaweedObservation(t *testing.T) {
 	projects := project.New(st)
 
 	suffix := uuid.Must(uuid.NewV7()).String()[24:]
-	proj, err := projects.Create(ctx, "demo"+suffix, "")
+	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
 	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production")
+	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 
 	observed := observe.NewStore(nil)

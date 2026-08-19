@@ -48,9 +48,9 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	// Unique project name per run so environment namespaces never collide
 	// on a shared test cluster; the platform namespace is cleaned up below.
 	suffix := uuid.Must(uuid.NewV7()).String()[24:]
-	proj, err := projects.Create(ctx, "demo"+suffix, "")
+	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
 	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production")
+	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 
 	var poked []uuid.UUID

@@ -41,6 +41,10 @@ Auth is email+password (argon2id) with optional TOTP 2FA and backup codes;
 sessions are opaque bearer tokens (sha256-hashed at rest, 30-day sliding
 expiry, instant revocation). There is no signup endpoint — users are created
 by the operator.
+Access is per project and per environment on one role ladder
+(`none < read < deploy < maintain < admin`): memberships, per-environment
+overrides, and an environment ceiling, with instance admins above all of it.
+See [`docs/permissions.md`](docs/permissions.md).
 
 ## Reconciled cluster workflow
 

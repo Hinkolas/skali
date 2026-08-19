@@ -54,6 +54,9 @@ type testAPI struct {
 	registryHost string
 	// execFake scripts the exec surface per test; unscripted calls fail.
 	execFake *fakeExecService
+	// access is the router's authorization layer, exposed for the route
+	// classification tests.
+	access *access
 }
 
 // testPushHost is the public push host the test registry client carries;
@@ -128,7 +131,7 @@ func newTestAPI(t *testing.T) *testAPI {
 
 	// StripAPIPrefix wraps here exactly as in cmd/skalid, so every test
 	// doubles as proof that root paths pass through the /api wrapper.
-	srv := httptest.NewServer(StripAPIPrefix(NewRouter(Deps{
+	router, ac := newRouter(Deps{
 		Auth:               svc,
 		Store:              st,
 		DB:                 pool,
@@ -162,11 +165,12 @@ func newTestAPI(t *testing.T) *testAPI {
 				"secret_key": []byte("sk-" + name),
 			}, nil
 		},
-	})))
+	})
+	srv := httptest.NewServer(StripAPIPrefix(router))
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc,
 		observed: observed, held: held, registryHost: registryURL.Host,
-		execFake: execFake}
+		execFake: execFake, access: ac}
 }
 
 // exchangeToken drives the registry token realm with Basic credentials and
@@ -193,10 +197,52 @@ func (a *testAPI) registryHolds(repository, digest string) {
 	a.held.Store(repository+"@"+digest, true)
 }
 
+// createUser makes a member who may create projects, the shape most product
+// tests need: whatever they create they own as project admin.
 func (a *testAPI) createUser(email, password string) {
+	a.t.Helper()
+	user, err := auth.CreateUser(a.t.Context(), a.st, email, "", password, auth.RoleMember)
+	require.NoError(a.t, err)
+	_, err = auth.SetUserCreateProjects(a.t.Context(), a.st, user.ID, true)
+	require.NoError(a.t, err)
+}
+
+// createMember makes a plain member: no projects, no permissions.
+func (a *testAPI) createMember(email, password string) {
 	a.t.Helper()
 	_, err := auth.CreateUser(a.t.Context(), a.st, email, "", password, auth.RoleMember)
 	require.NoError(a.t, err)
+}
+
+// adminToken logs in a throwaway instance admin for fixture management.
+func (a *testAPI) adminToken() string {
+	a.t.Helper()
+	const email, password = "fixture-admin@example.com", "hunter2hunter2"
+	if _, err := a.st.GetUserByEmail(a.t.Context(), email); err != nil {
+		a.createAdmin(email, password)
+	}
+	return a.login(email, password)
+}
+
+// grantMember sets a project membership through the API as an instance admin.
+func (a *testAPI) grantMember(t *testing.T, projectID, email, role string) {
+	t.Helper()
+	status, body := a.do("PUT", "/v1/projects/"+projectID+"/members/"+email, a.adminToken(), map[string]string{"role": role})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+}
+
+// setCell sets a per-environment role through the API as an instance admin.
+func (a *testAPI) setCell(t *testing.T, envID, email, role string) {
+	t.Helper()
+	status, body := a.do("PUT", "/v1/environments/"+envID+"/access/"+email, a.adminToken(), map[string]string{"role": role})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+}
+
+// setEnvironmentSettings patches environment settings as an instance admin.
+func (a *testAPI) setEnvironmentSettings(t *testing.T, envID string, settings map[string]any) {
+	t.Helper()
+	status, body := a.do("PATCH", "/v1/environments/"+envID, a.adminToken(), settings)
+	require.Equal(t, http.StatusOK, status, "%v", body)
 }
 
 func (a *testAPI) createAdmin(email, password string) {
@@ -625,8 +671,9 @@ func TestAPIPrefixStrip(t *testing.T) {
 }
 
 // TestSpecCoversAllRoutes walks the chi routing tree and asserts every /v1
-// route appears in the embedded OpenAPI document — the cheap guard against
-// spec/handler drift.
+// route appears in the embedded OpenAPI document (the cheap guard against
+// spec/handler drift) and carries exactly one access class (the guard
+// against a route that is open by accident).
 func TestSpecCoversAllRoutes(t *testing.T) {
 	a := newTestAPI(t)
 
@@ -637,7 +684,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	require.NoError(t, err)
 	deploySvc := deploy.New(a.st, values, artifactstore.New(a.st), "test")
 	journalSvc := journal.NewService(a.st, uuid.NewString())
-	router := NewRouter(Deps{
+	router, ac := newRouter(Deps{
 		Auth:      a.svc,
 		Store:     a.st,
 		DB:        a.st.Pool,
@@ -657,10 +704,14 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 			Store: a.st, Journal: journalSvc, Values: values,
 			DB: dbstore.New(a.st), Deploy: deploySvc, Targets: backupTargets,
 		}, backup.Config{}),
-	}).(chi.Routes)
+	})
 
 	routes := 0
+	walked := map[string]bool{}
 	err = chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		walked[method+" "+route] = true
+		_, classified := ac.classes[method+" "+route]
+		require.True(t, classified, "route %s %s has no access class", method, route)
 		if !strings.HasPrefix(route, "/v1/") {
 			return nil
 		}
@@ -670,5 +721,8 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, 68, routes, "route count changed; update the OpenAPI spec and this number")
+	for route := range ac.classes {
+		require.True(t, walked[route], "classified route %s is not registered", route)
+	}
+	require.Equal(t, 75, routes, "route count changed; update the OpenAPI spec and this number")
 }

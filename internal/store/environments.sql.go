@@ -12,19 +12,27 @@ import (
 )
 
 const createEnvironment = `-- name: CreateEnvironment :one
-INSERT INTO environments (id, project_id, name)
-VALUES ($1, $2, $3)
-RETURNING id, project_id, name, created_at, updated_at
+INSERT INTO environments (id, project_id, name, max_role, priority)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority
 `
 
 type CreateEnvironmentParams struct {
 	ID        uuid.UUID
 	ProjectID uuid.UUID
 	Name      string
+	MaxRole   string
+	Priority  string
 }
 
 func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error) {
-	row := q.db.QueryRow(ctx, createEnvironment, arg.ID, arg.ProjectID, arg.Name)
+	row := q.db.QueryRow(ctx, createEnvironment,
+		arg.ID,
+		arg.ProjectID,
+		arg.Name,
+		arg.MaxRole,
+		arg.Priority,
+	)
 	var i Environment
 	err := row.Scan(
 		&i.ID,
@@ -32,6 +40,10 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MaxRole,
+		&i.DeployPolicy,
+		&i.PromoteFrom,
+		&i.Priority,
 	)
 	return i, err
 }
@@ -49,7 +61,7 @@ func (q *Queries) DeleteEnvironmentByID(ctx context.Context, id uuid.UUID) (int6
 }
 
 const getEnvironmentByID = `-- name: GetEnvironmentByID :one
-SELECT id, project_id, name, created_at, updated_at FROM environments WHERE id = $1
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority FROM environments WHERE id = $1
 `
 
 func (q *Queries) GetEnvironmentByID(ctx context.Context, id uuid.UUID) (Environment, error) {
@@ -61,12 +73,16 @@ func (q *Queries) GetEnvironmentByID(ctx context.Context, id uuid.UUID) (Environ
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MaxRole,
+		&i.DeployPolicy,
+		&i.PromoteFrom,
+		&i.Priority,
 	)
 	return i, err
 }
 
 const listEnvironments = `-- name: ListEnvironments :many
-SELECT id, project_id, name, created_at, updated_at FROM environments WHERE project_id = $1 ORDER BY name
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority FROM environments WHERE project_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]Environment, error) {
@@ -84,6 +100,45 @@ func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]
 			&i.Name,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MaxRole,
+			&i.DeployPolicy,
+			&i.PromoteFrom,
+			&i.Priority,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentsForProjects = `-- name: ListEnvironmentsForProjects :many
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority FROM environments WHERE project_id = ANY($1::uuid[]) ORDER BY project_id, name
+`
+
+// Environments of several projects at once, for the per-user access grant.
+func (q *Queries) ListEnvironmentsForProjects(ctx context.Context, projectIds []uuid.UUID) ([]Environment, error) {
+	rows, err := q.db.Query(ctx, listEnvironmentsForProjects, projectIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Environment
+	for rows.Next() {
+		var i Environment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.MaxRole,
+			&i.DeployPolicy,
+			&i.PromoteFrom,
+			&i.Priority,
 		); err != nil {
 			return nil, err
 		}
@@ -134,4 +189,42 @@ func (q *Queries) ListEnvironmentsWithTargets(ctx context.Context) ([]ListEnviro
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateEnvironmentSettings = `-- name: UpdateEnvironmentSettings :one
+UPDATE environments
+SET max_role = $2, deploy_policy = $3, promote_from = $4, priority = $5, updated_at = now()
+WHERE id = $1
+RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority
+`
+
+type UpdateEnvironmentSettingsParams struct {
+	ID           uuid.UUID
+	MaxRole      string
+	DeployPolicy string
+	PromoteFrom  []string
+	Priority     string
+}
+
+func (q *Queries) UpdateEnvironmentSettings(ctx context.Context, arg UpdateEnvironmentSettingsParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, updateEnvironmentSettings,
+		arg.ID,
+		arg.MaxRole,
+		arg.DeployPolicy,
+		arg.PromoteFrom,
+		arg.Priority,
+	)
+	var i Environment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.MaxRole,
+		&i.DeployPolicy,
+		&i.PromoteFrom,
+		&i.Priority,
+	)
+	return i, err
 }

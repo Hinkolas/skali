@@ -53,7 +53,7 @@ func New(t *testing.T) *pgxpool.Pool {
 	}
 	connCfg.Database = name
 	sqlDB := stdlib.OpenDB(*connCfg)
-	if err := migrations.Up(ctx, sqlDB); err != nil {
+	if _, err := migrations.Up(ctx, sqlDB); err != nil {
 		t.Fatalf("testdb: migrate: %v", err)
 	}
 	if err := sqlDB.Close(); err != nil {

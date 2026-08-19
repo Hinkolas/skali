@@ -106,9 +106,9 @@ func newLiveFixture(t *testing.T, cfg Config, config *rest.Config) *liveFixture 
 	deploySvc.SetEnqueuer(kernel)
 
 	projectName := "live-" + uuid.NewString()[:8]
-	proj, err := projects.Create(ctx, projectName, "")
+	proj, err := projects.Create(ctx, projectName, "", uuid.Nil)
 	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production")
+	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 	namespace := "skali-" + projectName + "-production"
 	t.Cleanup(func() {

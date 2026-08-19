@@ -1,6 +1,6 @@
 // Shapes mirror the skali API (api/openapi.yaml), snake_case included.
 
-/** Instance-wide role: admins additionally manage users and instance settings. */
+/** Instance-wide role: admins may do everything; members hold nothing until granted project membership. */
 export type Role = 'admin' | 'member';
 
 export interface AuthUser {
@@ -8,6 +8,8 @@ export interface AuthUser {
 	email: string;
 	name: string;
 	role: Role;
+	/** Whether a member may create projects; instance admins always may. */
+	create_projects: boolean;
 	two_factor_enabled: boolean;
 	created_at: string;
 }

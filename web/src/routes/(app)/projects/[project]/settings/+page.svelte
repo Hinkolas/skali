@@ -152,9 +152,13 @@
 					{#if environment.id === data.env?.id}
 						<Pill text="current" tone="success" />
 					{/if}
-					<span class="font-mono text-text-ghost text-xs">
-						created {relativeTime(environment.created_at)}
-					</span>
+					{#if environment.created_at}
+						<span class="font-mono text-text-ghost text-xs">
+							created {relativeTime(environment.created_at)}
+						</span>
+					{:else}
+						<span class="font-mono text-text-ghost text-xs">locked</span>
+					{/if}
 					<div class="ml-auto flex gap-2">
 						<Button
 							size="sm"

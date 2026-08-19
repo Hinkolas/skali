@@ -29,7 +29,7 @@ func (q *Queries) CountAdminsForUpdate(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, email, name, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role
+RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects
 `
 
 type CreateUserParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Role,
+		&i.CreateProjects,
 	)
 	return i, err
 }
@@ -84,7 +85,7 @@ func (q *Queries) DeleteUserByID(ctx context.Context, id uuid.UUID) (int64, erro
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, name, two_factor_enabled, created_at, updated_at, role FROM users WHERE lower(email) = lower($1)
+SELECT id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects FROM users WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
@@ -98,12 +99,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Role,
+		&i.CreateProjects,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, name, two_factor_enabled, created_at, updated_at, role FROM users WHERE id = $1
+SELECT id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -117,12 +119,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Role,
+		&i.CreateProjects,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, email, name, two_factor_enabled, created_at, updated_at, role FROM users ORDER BY created_at
+SELECT id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects FROM users ORDER BY created_at
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
@@ -142,6 +145,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Role,
+			&i.CreateProjects,
 		); err != nil {
 			return nil, err
 		}
@@ -153,9 +157,35 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 	return items, nil
 }
 
+const setUserCreateProjects = `-- name: SetUserCreateProjects :one
+UPDATE users SET create_projects = $2, updated_at = now() WHERE id = $1
+RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects
+`
+
+type SetUserCreateProjectsParams struct {
+	ID             uuid.UUID
+	CreateProjects bool
+}
+
+func (q *Queries) SetUserCreateProjects(ctx context.Context, arg SetUserCreateProjectsParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserCreateProjects, arg.ID, arg.CreateProjects)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.TwoFactorEnabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Role,
+		&i.CreateProjects,
+	)
+	return i, err
+}
+
 const setUserName = `-- name: SetUserName :one
 UPDATE users SET name = $2, updated_at = now() WHERE id = $1
-RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role
+RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects
 `
 
 type SetUserNameParams struct {
@@ -174,13 +204,14 @@ func (q *Queries) SetUserName(ctx context.Context, arg SetUserNameParams) (User,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Role,
+		&i.CreateProjects,
 	)
 	return i, err
 }
 
 const setUserRole = `-- name: SetUserRole :one
 UPDATE users SET role = $2, updated_at = now() WHERE id = $1
-RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role
+RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects
 `
 
 type SetUserRoleParams struct {
@@ -199,6 +230,7 @@ func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) (User,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Role,
+		&i.CreateProjects,
 	)
 	return i, err
 }

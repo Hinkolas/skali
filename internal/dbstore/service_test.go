@@ -34,9 +34,9 @@ func newFixture(t *testing.T) *fixture {
 	pool := testdb.New(t)
 	st := store.NewStore(pool)
 	projects := project.New(st)
-	proj, err := projects.Create(ctx, "demo", "")
+	proj, err := projects.Create(ctx, "demo", "", uuid.Nil)
 	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production")
+	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 	return &fixture{st: st, svc: New(st), projectID: proj.ID, environmentID: env.ID}
 }

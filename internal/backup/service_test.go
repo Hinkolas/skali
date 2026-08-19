@@ -37,7 +37,7 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	})
 	require.NoError(t, err)
 	environment, err := st.CreateEnvironment(ctx, store.CreateEnvironmentParams{
-		ID: uuid.New(), ProjectID: project.ID, Name: "production",
+		ID: uuid.New(), ProjectID: project.ID, Name: "production", MaxRole: "admin", Priority: "normal",
 	})
 	require.NoError(t, err)
 

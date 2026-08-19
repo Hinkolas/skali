@@ -138,9 +138,9 @@ func newKernelFixture(t *testing.T, cfg Config) *kernelFixture {
 	}, cfg)
 	deploySvc.SetEnqueuer(kernel)
 
-	proj, err := projects.Create(ctx, "demo", "")
+	proj, err := projects.Create(ctx, "demo", "", uuid.Nil)
 	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production")
+	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
 
 	return &kernelFixture{

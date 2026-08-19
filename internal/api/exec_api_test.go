@@ -99,11 +99,23 @@ func readTranscript(t *testing.T, conn *websocket.Conn) execTranscript {
 	}
 }
 
+// execEnvironment creates a project and environment and returns the
+// environment id: the scope middleware answers 404 for ids it cannot load
+// before the exec handler ever runs.
+func (a *testAPI) execEnvironment(t *testing.T, token string) uuid.UUID {
+	t.Helper()
+	_, envID := a.createEnvironment(t, token)
+	id, err := uuid.Parse(envID)
+	require.NoError(t, err)
+	return id
+}
+
 func TestExecHandshakeErrors(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
-	path := "/v1/environments/" + uuid.NewString() + "/exec?service=web"
+	_, envID := a.createEnvironment(t, token)
+	path := "/v1/environments/" + envID + "/exec?service=web"
 
 	// No token.
 	status, body := a.do("GET", path, "", nil)
@@ -152,7 +164,7 @@ func TestExecEchoSession(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
-	envID := uuid.New()
+	envID := a.execEnvironment(t, token)
 
 	var gotOpts podexec.Options
 	a.execFake.script(
@@ -203,7 +215,7 @@ func TestExecExitCode(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
-	envID := uuid.New()
+	envID := a.execEnvironment(t, token)
 
 	session := &podexec.Session{Namespace: "ns", Pod: "web-1", Container: "web", Command: []string{"false"}}
 	a.execFake.script(
@@ -226,7 +238,7 @@ func TestExecInfrastructureError(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
-	envID := uuid.New()
+	envID := a.execEnvironment(t, token)
 
 	session := &podexec.Session{Namespace: "ns", Pod: "web-1", Container: "web", Command: []string{"sh"}}
 	a.execFake.script(
@@ -250,7 +262,7 @@ func TestExecClientDisconnectCancelsStream(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
-	envID := uuid.New()
+	envID := a.execEnvironment(t, token)
 
 	cancelled := make(chan struct{})
 	session := &podexec.Session{Namespace: "ns", Pod: "web-1", Container: "web", Command: []string{"sh"}}
@@ -278,7 +290,7 @@ func TestExecResizeReachesQueue(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
-	envID := uuid.New()
+	envID := a.execEnvironment(t, token)
 
 	sizes := make(chan [2]uint16, 1)
 	a.execFake.script(

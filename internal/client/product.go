@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 )
@@ -12,12 +13,52 @@ import (
 type Project struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Access is the caller's standing: the project role and the effective
+	// role per environment name (locked environments report none).
+	Access ProjectAccess `json:"access"`
+}
+
+type ProjectAccess struct {
+	Role         string            `json:"role"`
+	Environments map[string]string `json:"environments"`
 }
 
 type Environment struct {
 	ID        string `json:"id"`
 	ProjectID string `json:"project_id"`
 	Name      string `json:"name"`
+	// Access is the caller's effective role; "none" marks a locked
+	// environment, which carries nothing else.
+	Access   string               `json:"access"`
+	Settings *EnvironmentSettings `json:"settings,omitempty"`
+}
+
+// Locked: the caller may see the environment's name and nothing inside.
+func (e Environment) Locked() bool { return e.Access == "none" }
+
+type EnvironmentSettings struct {
+	MaxRole      string   `json:"max_role"`
+	DeployPolicy string   `json:"deploy_policy"`
+	PromoteFrom  []string `json:"promote_from"`
+	Priority     string   `json:"priority"`
+}
+
+// EnvironmentSettingsPatch is a partial settings update; nil fields keep
+// their value.
+type EnvironmentSettingsPatch struct {
+	MaxRole      *string   `json:"max_role,omitempty"`
+	DeployPolicy *string   `json:"deploy_policy,omitempty"`
+	PromoteFrom  *[]string `json:"promote_from,omitempty"`
+	Priority     *string   `json:"priority,omitempty"`
+}
+
+// Member is one user's role on a project (membership) or on an environment
+// (cell).
+type Member struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+	Name   string `json:"name"`
+	Role   string `json:"role"`
 }
 
 type DefinitionVersion struct {
@@ -212,16 +253,91 @@ func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
 	return res.Projects, nil
 }
 
-func (c *Client) CreateEnvironment(ctx context.Context, projectID, name string) (*Environment, error) {
+// CreateEnvironment creates an environment; priority is normal or high
+// (empty means normal; high needs an instance admin).
+func (c *Client) CreateEnvironment(ctx context.Context, projectID, name, priority string) (*Environment, error) {
 	var res struct {
 		Environment Environment `json:"environment"`
 	}
-	err := c.do(ctx, http.MethodPost, "/v1/projects/"+projectID+"/environments",
-		map[string]string{"name": name}, &res)
+	body := map[string]string{"name": name}
+	if priority != "" {
+		body["priority"] = priority
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/projects/"+projectID+"/environments", body, &res)
 	if err != nil {
 		return nil, err
 	}
 	return &res.Environment, nil
+}
+
+// UpdateEnvironmentSettings patches environment settings. Requires a fresh
+// session and environment admin.
+func (c *Client) UpdateEnvironmentSettings(ctx context.Context, environmentID string, patch EnvironmentSettingsPatch) (*Environment, error) {
+	var res struct {
+		Environment Environment `json:"environment"`
+	}
+	if err := c.do(ctx, http.MethodPatch, "/v1/environments/"+environmentID, patch, &res); err != nil {
+		return nil, err
+	}
+	return &res.Environment, nil
+}
+
+// --- members and cells ---
+
+func (c *Client) ListMembers(ctx context.Context, projectID string) ([]Member, error) {
+	var res struct {
+		Members []Member `json:"members"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+projectID+"/members", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Members, nil
+}
+
+// SetMember adds or changes a membership; user is an id or an email.
+// Requires a fresh session and project admin.
+func (c *Client) SetMember(ctx context.Context, projectID, user, role string) (*Member, error) {
+	var res struct {
+		Member Member `json:"member"`
+	}
+	err := c.do(ctx, http.MethodPut, "/v1/projects/"+projectID+"/members/"+url.PathEscape(user),
+		map[string]string{"role": role}, &res)
+	if err != nil {
+		return nil, err
+	}
+	return &res.Member, nil
+}
+
+func (c *Client) RemoveMember(ctx context.Context, projectID, user string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/projects/"+projectID+"/members/"+url.PathEscape(user), nil, nil)
+}
+
+func (c *Client) ListEnvironmentAccess(ctx context.Context, environmentID string) ([]Member, error) {
+	var res struct {
+		Access []Member `json:"access"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/environments/"+environmentID+"/access", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Access, nil
+}
+
+// SetEnvironmentAccess sets a cell; user is an id or an email. Requires a
+// fresh session and environment admin.
+func (c *Client) SetEnvironmentAccess(ctx context.Context, environmentID, user, role string) (*Member, error) {
+	var res struct {
+		Access Member `json:"access"`
+	}
+	err := c.do(ctx, http.MethodPut, "/v1/environments/"+environmentID+"/access/"+url.PathEscape(user),
+		map[string]string{"role": role}, &res)
+	if err != nil {
+		return nil, err
+	}
+	return &res.Access, nil
+}
+
+func (c *Client) RemoveEnvironmentAccess(ctx context.Context, environmentID, user string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/environments/"+environmentID+"/access/"+url.PathEscape(user), nil, nil)
 }
 
 func (c *Client) ListEnvironments(ctx context.Context, projectID string) ([]Environment, error) {

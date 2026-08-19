@@ -428,6 +428,28 @@ func (s *Service) Target(ctx context.Context, environmentID uuid.UUID) (*store.E
 	return &row, nil
 }
 
+// ActiveDefinitionVersion is the definition version of the environment's
+// active revision; ok is false when nothing is active. Definition versions
+// are content-addressed per project, so equality with a submitted version
+// means "the manifest is unchanged" (the deploy-versus-maintain boundary).
+func (s *Service) ActiveDefinitionVersion(ctx context.Context, environmentID uuid.UUID) (id uuid.UUID, ok bool, err error) {
+	target, err := s.Target(ctx, environmentID)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if target.ActiveRevisionID == nil {
+		return uuid.Nil, false, nil
+	}
+	row, err := s.st.GetRevisionByID(ctx, *target.ActiveRevisionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, false, nil
+		}
+		return uuid.Nil, false, fmt.Errorf("deploy: get active revision: %w", err)
+	}
+	return row.DefinitionVersionID, true, nil
+}
+
 func (s *Service) ListRevisions(ctx context.Context, environmentID uuid.UUID) ([]store.ListRevisionsRow, error) {
 	rows, err := s.st.ListRevisions(ctx, environmentID)
 	if err != nil {

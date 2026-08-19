@@ -68,8 +68,14 @@ func TestEnvironmentStatus(t *testing.T) {
 
 func TestSystemObservation(t *testing.T) {
 	a := newTestAPI(t)
-	a.createUser("system@example.com", "hunter2hunter2")
+	a.createAdmin("system@example.com", "hunter2hunter2")
+	a.createUser("member@example.com", "hunter2hunter2")
 	token := a.login("system@example.com", "hunter2hunter2")
+
+	// The instance-wide view is admin only.
+	member := a.login("member@example.com", "hunter2hunter2")
+	status, _ := a.do("GET", "/v1/system/observation", member, nil)
+	require.Equal(t, http.StatusForbidden, status)
 
 	status, body := a.do("GET", "/v1/system/observation", token, nil)
 	require.Equal(t, http.StatusOK, status)

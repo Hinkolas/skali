@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/project"
@@ -19,12 +20,16 @@ import (
 )
 
 // projectsHandlers is the definition-plane surface: projects and their draft
-// documents. Every route sits behind RequireAuth; members have full project
-// access. The reconcile kernel is only consulted for the optional list
-// summary rollup.
+// documents. The scope middleware (access.go) has already answered 404 for
+// invisible projects and 403 for insufficient roles; handlers read the grant
+// back for payloads and for the checks only they can make (project creation
+// needs the create_projects permission, the list filters to memberships).
+// The reconcile kernel is only consulted for the optional list summary
+// rollup.
 type projectsHandlers struct {
 	projects  *project.Service
 	reconcile *reconcile.Kernel
+	resolver  *authz.Resolver
 }
 
 // pathID parses the {id} route param, writing a 404 on malformed ids so they
@@ -47,7 +52,19 @@ type projectPayload struct {
 	SourceMode  string                 `json:"source_mode"`
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
+	Access      projectAccessPayload   `json:"access"`
 	Summary     *projectSummaryPayload `json:"summary,omitempty"`
+}
+
+// projectAccessPayload is the caller's standing: the project role and the
+// effective role per environment (locked ones report none).
+type projectAccessPayload struct {
+	Role         string            `json:"role"`
+	Environments map[string]string `json:"environments"`
+}
+
+func newProjectAccessPayload(grant *authz.Grant) projectAccessPayload {
+	return projectAccessPayload{Role: grant.ProjectRole.String(), Environments: grant.Roles()}
 }
 
 type projectSummaryPayload struct {
@@ -55,11 +72,14 @@ type projectSummaryPayload struct {
 	ServiceCounts serviceCountsPayload        `json:"service_counts"`
 }
 
+// summaryEnvironmentPayload: a locked environment carries id, name, and
+// access only; state and health are part of its contents.
 type summaryEnvironmentPayload struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
-	State  string `json:"state"`
-	Health string `json:"health"`
+	Access string `json:"access"`
+	State  string `json:"state,omitempty"`
+	Health string `json:"health,omitempty"`
 }
 
 type serviceCountsPayload struct {
@@ -68,7 +88,7 @@ type serviceCountsPayload struct {
 	Buckets      int `json:"buckets"`
 }
 
-func newProjectPayload(p *store.Project) projectPayload {
+func newProjectPayload(p *store.Project, grant *authz.Grant) projectPayload {
 	return projectPayload{
 		ID:          p.ID.String(),
 		Name:        p.Name,
@@ -76,6 +96,7 @@ func newProjectPayload(p *store.Project) projectPayload {
 		SourceMode:  p.SourceMode,
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
+		Access:      newProjectAccessPayload(grant),
 	}
 }
 
@@ -148,17 +169,29 @@ func writeProjectError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, project.ErrNameMismatch):
 		writeError(w, http.StatusUnprocessableEntity, codeInvalidManifest,
 			"manifest name does not match the project name")
+	case errors.Is(err, project.ErrUserNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "user not found")
+	case errors.Is(err, project.ErrNotMember):
+		writeError(w, http.StatusConflict, codeConflict, "user is not a member of the project")
 	case errors.Is(err, project.ErrInvalidName),
 		errors.Is(err, project.ErrInvalidSourceMode),
-		errors.Is(err, project.ErrInvalidFormat):
+		errors.Is(err, project.ErrInvalidFormat),
+		errors.Is(err, project.ErrInvalidRole),
+		errors.Is(err, project.ErrInvalidSettings):
 		writeError(w, http.StatusBadRequest, codeBadRequest, strings.TrimPrefix(err.Error(), "project: "))
 	default:
 		writeInternalError(ctx, w, "project error", err)
 	}
 }
 
-// POST /v1/projects
+// POST /v1/projects: instance admins always, members with create_projects.
+// The creator becomes the project's admin.
 func (h *projectsHandlers) create(w http.ResponseWriter, r *http.Request) {
+	user := UserFrom(r.Context())
+	if !h.resolver.MayCreateProject(user) {
+		writeError(w, http.StatusForbidden, codeForbidden, "creating projects requires the create_projects permission")
+		return
+	}
 	var req struct {
 		Name        string `json:"name"`
 		DisplayName string `json:"display_name"`
@@ -171,29 +204,35 @@ func (h *projectsHandlers) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeBadRequest, "name is required")
 		return
 	}
-	proj, err := h.projects.Create(r.Context(), req.Name, req.DisplayName)
+	proj, err := h.projects.Create(r.Context(), req.Name, req.DisplayName, user.ID)
 	if err != nil {
 		writeProjectError(r.Context(), w, err)
+		return
+	}
+	grant, err := h.resolver.Project(r.Context(), user, proj.ID)
+	if err != nil {
+		writeInternalError(r.Context(), w, "resolve access", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, struct {
 		Project projectPayload `json:"project"`
-	}{newProjectPayload(proj)})
+	}{newProjectPayload(proj, grant)})
 }
 
-// GET /v1/projects
+// GET /v1/projects: the caller's memberships (instance admins: every
+// project), each with the caller's access.
 func (h *projectsHandlers) list(w http.ResponseWriter, r *http.Request) {
-	projects, err := h.projects.List(r.Context())
+	projects, grants, err := h.resolver.All(r.Context(), UserFrom(r.Context()))
 	if err != nil {
-		writeProjectError(r.Context(), w, err)
+		writeInternalError(r.Context(), w, "resolve access", err)
 		return
 	}
 	payload := make([]projectPayload, len(projects))
 	for i := range projects {
-		payload[i] = newProjectPayload(&projects[i])
+		payload[i] = newProjectPayload(&projects[i], grants[projects[i].ID])
 	}
 	if r.URL.Query().Get("include") == "summary" {
-		if err := h.attachSummaries(r.Context(), payload); err != nil {
+		if err := h.attachSummaries(r.Context(), payload, grants); err != nil {
 			writeProjectError(r.Context(), w, err)
 			return
 		}
@@ -215,8 +254,9 @@ var healthRank = map[module.Health]int{
 }
 
 // attachSummaries decorates the list payload with environments, states,
-// health rollups, and draft service counts.
-func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projectPayload) error {
+// health rollups, and draft service counts. Locked environments keep their
+// name and access only.
+func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projectPayload, grants map[uuid.UUID]*authz.Grant) error {
 	summaries, err := h.projects.ListSummaries(ctx)
 	if err != nil {
 		return err
@@ -227,6 +267,7 @@ func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projec
 			continue
 		}
 		summary := summaries[id]
+		grant := grants[id]
 		entry := &projectSummaryPayload{
 			Environments: make([]summaryEnvironmentPayload, 0, len(summary.Environments)),
 			ServiceCounts: serviceCountsPayload{
@@ -236,12 +277,19 @@ func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projec
 			},
 		}
 		for _, env := range summary.Environments {
-			entry.Environments = append(entry.Environments, summaryEnvironmentPayload{
-				ID:     env.ID.String(),
-				Name:   env.Name,
-				State:  env.State,
-				Health: string(h.environmentHealth(ctx, env.ID)),
-			})
+			item := summaryEnvironmentPayload{ID: env.ID.String(), Name: env.Name, Access: authz.None.String()}
+			if grant == nil {
+				entry.Environments = append(entry.Environments, item)
+				continue
+			}
+			if envGrant, ok := grant.Environment(env.ID); ok {
+				item.Access = envGrant.Role.String()
+				if !envGrant.Locked() {
+					item.State = env.State
+					item.Health = string(h.environmentHealth(ctx, env.ID))
+				}
+			}
+			entry.Environments = append(entry.Environments, item)
 		}
 		payload[i].Summary = entry
 	}
@@ -277,7 +325,7 @@ func (h *projectsHandlers) get(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Project projectPayload `json:"project"`
-	}{newProjectPayload(proj)})
+	}{newProjectPayload(proj, grantFrom(r.Context()))})
 }
 
 // PATCH /v1/projects/{id}
@@ -305,7 +353,7 @@ func (h *projectsHandlers) update(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Project projectPayload `json:"project"`
-	}{newProjectPayload(proj)})
+	}{newProjectPayload(proj, grantFrom(r.Context()))})
 }
 
 // DELETE /v1/projects/{id}

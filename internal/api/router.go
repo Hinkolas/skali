@@ -114,6 +114,13 @@ func StripAPIPrefix(next http.Handler) http.Handler {
 }
 
 func NewRouter(d Deps) http.Handler {
+	r, _ := newRouter(d)
+	return r
+}
+
+// newRouter builds the router and returns the access layer with it so tests
+// can read the route classification back.
+func newRouter(d Deps) (*chi.Mux, *access) {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -126,7 +133,11 @@ func NewRouter(d Deps) http.Handler {
 	// The request timeout is applied per group below, not globally: SSE
 	// streams must outlive it.
 
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	// Every route is registered through ac with one access class; the
+	// classes drive the scope middleware and the router-walk test.
+	ac := newAccess(d.Store)
+
+	ac.root(r, "GET", "/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := d.DB.Ping(r.Context()); err != nil {
 			writeError(w, http.StatusServiceUnavailable, codeInternal, "database unreachable")
 			return
@@ -134,7 +145,7 @@ func NewRouter(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	r.Get("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+	ac.root(r, "GET", "/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
 		_, _ = w.Write(apispec.OpenAPI)
 	})
@@ -144,10 +155,10 @@ func NewRouter(d Deps) http.Handler {
 	// the endpoint authenticates per request via Basic, never RequireAuth.
 	if d.RegistryToken != nil {
 		rt := &registryTokenHandlers{
-			auth: d.Auth, projects: d.Store, signer: d.RegistryToken,
-			nodeSecret: d.RegistryNodeSecret, now: time.Now,
+			auth: d.Auth, policy: registryPolicy{resolver: ac.resolver, projects: d.Store},
+			signer: d.RegistryToken, nodeSecret: d.RegistryNodeSecret, now: time.Now,
 		}
-		r.Get("/token", rt.issue)
+		ac.root(r, "GET", "/token", rt.issue)
 	}
 
 	h := &authHandlers{auth: d.Auth}
@@ -166,11 +177,11 @@ func NewRouter(d Deps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(RequireAuth(d.Auth))
 
-			r.Get("/steps/{id}/logs/stream", jh.streamLogs)
-			r.Get("/runs/{id}/stream", jh.streamRun)
-			r.Get("/environments/{id}/runs/stream", jh.streamRuns)
-			r.Get("/environments/{id}/status/stream", sh.stream)
-			r.Get("/environments/{id}/logs/stream", lh.stream)
+			ac.route(r, "GET", "/steps/{id}/logs/stream", classStepRead, jh.streamLogs)
+			ac.route(r, "GET", "/runs/{id}/stream", classRunRead, jh.streamRun)
+			ac.route(r, "GET", "/environments/{id}/runs/stream", classEnvRead, jh.streamRuns)
+			ac.route(r, "GET", "/environments/{id}/status/stream", classEnvRead, sh.stream)
+			ac.route(r, "GET", "/environments/{id}/logs/stream", classEnvRead, lh.stream)
 
 			// Exec sits with the streams (a session must outlive the
 			// request timeout) but behind the reauth gate: a shell in the
@@ -179,7 +190,7 @@ func NewRouter(d Deps) http.Handler {
 				xh := newExecHandlers(d.Exec)
 				r.Group(func(r chi.Router) {
 					r.Use(RequireFresh(d.Auth))
-					r.Get("/environments/{id}/exec", xh.open)
+					ac.route(r, "GET", "/environments/{id}/exec", classEnvMaintain, xh.open)
 				})
 			}
 		})
@@ -189,8 +200,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(middleware.Timeout(30 * time.Second))
 
 			// Public: everything a client can reach without a session.
-			r.Post("/auth/login", h.login)
-			r.Post("/auth/2fa/verify", h.verifyTwoFactor)
+			ac.route(r, "POST", "/auth/login", classPublic, h.login)
+			ac.route(r, "POST", "/auth/2fa/verify", classPublic, h.verifyTwoFactor)
 
 			// Bearer-protected. RequireAuth stays on this group only.
 			r.Group(func(r chi.Router) {
@@ -200,75 +211,82 @@ func NewRouter(d Deps) http.Handler {
 				// defensive, /auth/reauth is the gate's escape hatch, and
 				// 2fa/confirm carries its own proof (a code from the pending
 				// enrollment).
-				r.Post("/auth/logout", h.logout)
-				r.Post("/auth/reauth", h.reauthenticate)
-				r.Get("/auth/session", h.currentSession)
-				r.Get("/auth/sessions", h.listSessions)
-				r.Delete("/auth/sessions/{id}", h.revokeSession)
-				r.Post("/auth/2fa/confirm", h.confirmTwoFactor)
+				ac.route(r, "POST", "/auth/logout", classSelf, h.logout)
+				ac.route(r, "POST", "/auth/reauth", classSelf, h.reauthenticate)
+				ac.route(r, "GET", "/auth/session", classSelf, h.currentSession)
+				ac.route(r, "GET", "/auth/sessions", classSelf, h.listSessions)
+				ac.route(r, "DELETE", "/auth/sessions/{id}", classSelf, h.revokeSession)
+				ac.route(r, "POST", "/auth/2fa/confirm", classSelf, h.confirmTwoFactor)
 
 				// Sensitive self-service: sudo mode.
 				r.Group(func(r chi.Router) {
 					r.Use(RequireFresh(d.Auth))
 
-					r.Post("/auth/password", h.changePassword)
-					r.Post("/auth/2fa/enable", h.enableTwoFactor)
-					r.Post("/auth/2fa/disable", h.disableTwoFactor)
-					r.Post("/auth/2fa/backup-codes", h.regenerateBackupCodes)
+					ac.route(r, "POST", "/auth/password", classSelf, h.changePassword)
+					ac.route(r, "POST", "/auth/2fa/enable", classSelf, h.enableTwoFactor)
+					ac.route(r, "POST", "/auth/2fa/disable", classSelf, h.disableTwoFactor)
+					ac.route(r, "POST", "/auth/2fa/backup-codes", classSelf, h.regenerateBackupCodes)
 				})
 
-				// Product surface: projects, environments, drafts. Members have
-				// full access; only destructive deletes need sudo mode.
-				ph := &projectsHandlers{projects: d.Projects, reconcile: d.Reconcile}
+				// Product surface: projects, environments, drafts. Access is
+				// per project and per environment (docs/permissions.md);
+				// destructive deletes and access management need sudo mode.
+				ph := &projectsHandlers{projects: d.Projects, reconcile: d.Reconcile, resolver: ac.resolver}
 				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal}
-				r.Post("/projects", ph.create)
-				r.Get("/projects", ph.list)
-				r.Get("/projects/{id}", ph.get)
-				r.Patch("/projects/{id}", ph.update)
-				r.Get("/projects/{id}/draft", ph.getDraft)
-				r.Put("/projects/{id}/draft", ph.putDraft)
-				r.Post("/projects/{id}/environments", eh.create)
-				r.Get("/projects/{id}/environments", eh.list)
-				r.Get("/environments/{id}", eh.get)
+				ah := &accessHandlers{projects: d.Projects}
+				ac.route(r, "POST", "/projects", classProjectCreate, ph.create)
+				ac.route(r, "GET", "/projects", classProjectList, ph.list)
+				ac.route(r, "GET", "/projects/{id}", classProjectRead, ph.get)
+				ac.route(r, "PATCH", "/projects/{id}", classProjectAdmin, ph.update)
+				ac.route(r, "GET", "/projects/{id}/draft", classProjectRead, ph.getDraft)
+				ac.route(r, "PUT", "/projects/{id}/draft", classDeployer, ph.putDraft)
+				ac.route(r, "POST", "/projects/{id}/environments", classProjectMaintain, eh.create)
+				ac.route(r, "GET", "/projects/{id}/environments", classProjectRead, eh.list)
+				ac.route(r, "GET", "/projects/{id}/members", classProjectRead, ah.listMembers)
+				ac.route(r, "GET", "/environments/{id}", classEnvNone, eh.get)
+				ac.route(r, "GET", "/environments/{id}/access", classEnvRead, ah.listEnvironmentAccess)
 
-				r.Post("/projects/{id}/definitions", ph.submitDefinition)
+				ac.route(r, "POST", "/projects/{id}/definitions", classDeployer, ph.submitDefinition)
 
 				vh := &valuesHandlers{projects: d.Projects, values: d.Values, st: d.Store}
-				r.Get("/environments/{id}/values", vh.get)
-				r.Put("/environments/{id}/values", vh.put)
-				r.Delete("/environments/{id}/values/{name}", vh.del)
+				ac.route(r, "GET", "/environments/{id}/values", classEnvRead, vh.get)
+				ac.route(r, "PUT", "/environments/{id}/values", classEnvMaintain, vh.put)
+				ac.route(r, "DELETE", "/environments/{id}/values/{name}", classEnvMaintain, vh.del)
 
 				rh := &revisionsHandlers{deploy: d.Deploy, journal: d.Journal}
-				r.Get("/environments/{id}/revisions", rh.list)
-				r.Get("/revisions/{id}", rh.get)
-				r.Get("/environments/{id}/target", rh.getTarget)
-				r.Put("/environments/{id}/target", rh.putTarget)
+				ac.route(r, "GET", "/environments/{id}/revisions", classEnvRead, rh.list)
+				ac.route(r, "GET", "/revisions/{id}", classRevisionRead, rh.get)
+				ac.route(r, "GET", "/environments/{id}/target", classEnvRead, rh.getTarget)
+				ac.route(r, "PUT", "/environments/{id}/target", classEnvDeploy, rh.putTarget)
 
 				// The deployment coordination surface: plan, the artifact
-				// window, verification, and cancellation.
-				r.Post("/environments/{id}/plan", dh.plan)
-				r.Post("/environments/{id}/deployments", dh.open)
-				r.Get("/deployments/{id}", dh.get)
-				r.Post("/deployments/{id}/complete", dh.complete)
-				r.Post("/deployments/{id}/fail", dh.fail)
-				r.Post("/artifacts/{id}/verify", dh.verifyArtifact)
-				r.Post("/builds/{id}/heartbeat", dh.heartbeatBuild)
-				r.Post("/runs/{id}/cancel", dh.cancelRun)
+				// window, verification, and cancellation. Plan and open
+				// refine deploy to maintain when the definition changes.
+				ac.route(r, "POST", "/environments/{id}/plan", classEnvDeploy, dh.plan)
+				ac.route(r, "POST", "/environments/{id}/deployments", classEnvDeploy, dh.open)
+				ac.route(r, "GET", "/deployments/{id}", classDeploymentRead, dh.get)
+				ac.route(r, "POST", "/deployments/{id}/complete", classDeploymentDeploy, dh.complete)
+				ac.route(r, "POST", "/deployments/{id}/fail", classDeploymentDeploy, dh.fail)
+				ac.route(r, "POST", "/artifacts/{id}/verify", classArtifactDeployer, dh.verifyArtifact)
+				ac.route(r, "POST", "/builds/{id}/heartbeat", classBuildDeployer, dh.heartbeatBuild)
+				ac.route(r, "POST", "/runs/{id}/cancel", classRunDeploy, dh.cancelRun)
 
-				// Scoped client step writes (artifacts subtree only).
-				r.Post("/runs/{id}/steps", ch.ensureStep)
-				r.Patch("/steps/{id}", ch.setStepStatus)
-				r.Post("/steps/{id}/logs", ch.appendLogs)
+				// Scoped client step writes (artifacts subtree only, the
+				// run's own actor).
+				ac.route(r, "POST", "/runs/{id}/steps", classRunDeploy, ch.ensureStep)
+				ac.route(r, "PATCH", "/steps/{id}", classStepDeploy, ch.setStepStatus)
+				ac.route(r, "POST", "/steps/{id}/logs", classStepDeploy, ch.appendLogs)
 
 				// Observation projections: served from the observed store and
-				// database pointers, never a request-time cluster call.
-				r.Get("/environments/{id}/status", sh.get)
-				r.Get("/system/observation", sh.system)
-				r.Get("/nodes", sh.nodes)
+				// database pointers, never a request-time cluster call. The
+				// instance-wide views are admin-only.
+				ac.route(r, "GET", "/environments/{id}/status", classEnvRead, sh.get)
+				ac.route(r, "GET", "/system/observation", classInstanceAdmin, sh.system)
+				ac.route(r, "GET", "/nodes", classInstanceAdmin, sh.nodes)
 
 				// Instance facts: version, name, and identity.
 				mh := &systemHandlers{version: d.Version, instanceName: d.InstanceName, instanceID: d.InstanceID}
-				r.Get("/system/meta", mh.meta)
+				ac.route(r, "GET", "/system/meta", classSelf, mh.meta)
 
 				// Database and bucket connection projections; credential
 				// reveal is the one sanctioned request-time read and needs
@@ -276,12 +294,12 @@ func NewRouter(d Deps) http.Handler {
 				if d.Databases != nil {
 					dbh := &databasesHandlers{db: d.Databases, secrets: d.SecretReader}
 					bh := &bucketsHandlers{db: d.Databases, secrets: d.SecretReader}
-					r.Get("/environments/{id}/databases/{key}/connection", dbh.connection)
-					r.Get("/environments/{id}/buckets/{key}/connection", bh.connection)
+					ac.route(r, "GET", "/environments/{id}/databases/{key}/connection", classEnvRead, dbh.connection)
+					ac.route(r, "GET", "/environments/{id}/buckets/{key}/connection", classEnvRead, bh.connection)
 					r.Group(func(r chi.Router) {
 						r.Use(RequireFresh(d.Auth))
-						r.Post("/environments/{id}/databases/{key}/credentials/reveal", dbh.reveal)
-						r.Post("/environments/{id}/buckets/{key}/credentials/reveal", bh.reveal)
+						ac.route(r, "POST", "/environments/{id}/databases/{key}/credentials/reveal", classEnvMaintain, dbh.reveal)
+						ac.route(r, "POST", "/environments/{id}/buckets/{key}/credentials/reveal", classEnvMaintain, bh.reveal)
 					})
 				}
 
@@ -289,15 +307,15 @@ func NewRouter(d Deps) http.Handler {
 				// listing reads the S3 manifests.
 				if d.Backups != nil {
 					bkh := &backupsHandlers{backups: d.Backups, st: d.Store}
-					r.Post("/environments/{id}/backups", bkh.create)
-					r.Get("/environments/{id}/backups", bkh.list)
-					r.Get("/projects/{id}/backups", bkh.listProject)
+					ac.route(r, "POST", "/environments/{id}/backups", classEnvDeploy, bkh.create)
+					ac.route(r, "GET", "/environments/{id}/backups", classEnvRead, bkh.list)
+					ac.route(r, "GET", "/projects/{id}/backups", classProjectRead, bkh.listProject)
 				}
 
 				// Run journal reads; the SSE stream lives outside this group.
-				r.Get("/environments/{id}/runs", jh.list)
-				r.Get("/runs/{id}", jh.get)
-				r.Get("/steps/{id}/logs", jh.stepLogs)
+				ac.route(r, "GET", "/environments/{id}/runs", classEnvRead, jh.list)
+				ac.route(r, "GET", "/runs/{id}", classRunRead, jh.get)
+				ac.route(r, "GET", "/steps/{id}/logs", classStepRead, jh.stepLogs)
 				r.Group(func(r chi.Router) {
 					r.Use(RequireFresh(d.Auth))
 
@@ -310,17 +328,25 @@ func NewRouter(d Deps) http.Handler {
 						deploy: d.Deploy, values: d.Values, db: d.Databases,
 						secrets: d.SecretReader, managed: d.ManagedCluster,
 					}
-					r.Get("/environments/{id}/applications/{key}/environment", aeh.resolved)
+					ac.route(r, "GET", "/environments/{id}/applications/{key}/environment", classEnvMaintain, aeh.resolved)
 
-					r.Delete("/projects/{id}", ph.delete)
-					r.Delete("/environments/{id}", eh.delete)
-					r.Post("/environments/{id}/teardown", eh.teardown)
+					ac.route(r, "DELETE", "/projects/{id}", classProjectAdmin, ph.delete)
+					ac.route(r, "DELETE", "/environments/{id}", classEnvAdmin, eh.delete)
+					ac.route(r, "POST", "/environments/{id}/teardown", classEnvAdmin, eh.teardown)
+					ac.route(r, "PATCH", "/environments/{id}", classEnvAdmin, eh.update)
+
+					// Access management: members of a project, cells of an
+					// environment.
+					ac.route(r, "PUT", "/projects/{id}/members/{user}", classProjectAdmin, ah.putMember)
+					ac.route(r, "DELETE", "/projects/{id}/members/{user}", classProjectAdmin, ah.deleteMember)
+					ac.route(r, "PUT", "/environments/{id}/access/{user}", classEnvAdmin, ah.putEnvironmentAccess)
+					ac.route(r, "DELETE", "/environments/{id}/access/{user}", classEnvAdmin, ah.deleteEnvironmentAccess)
 
 					// Restore replaces the environment's data; like
 					// teardown it needs sudo mode.
 					if d.Backups != nil {
 						bkh := &backupsHandlers{backups: d.Backups, st: d.Store}
-						r.Post("/environments/{id}/restore", bkh.restore)
+						ac.route(r, "POST", "/environments/{id}/restore", classEnvMaintain, bkh.restore)
 					}
 				})
 
@@ -329,7 +355,7 @@ func NewRouter(d Deps) http.Handler {
 				r.Group(func(r chi.Router) {
 					r.Use(RequireAdmin)
 
-					r.Get("/users", uh.list)
+					ac.route(r, "GET", "/users", classInstanceAdmin, uh.list)
 
 					// Writes additionally need sudo mode. RequireAdmin sits
 					// outside RequireFresh so non-admins get "forbidden", never a
@@ -337,18 +363,18 @@ func NewRouter(d Deps) http.Handler {
 					r.Group(func(r chi.Router) {
 						r.Use(RequireFresh(d.Auth))
 
-						r.Post("/users", uh.create)
-						r.Patch("/users/{id}", uh.update)
-						r.Delete("/users/{id}", uh.delete)
-						r.Post("/users/{id}/password", uh.resetPassword)
+						ac.route(r, "POST", "/users", classInstanceAdmin, uh.create)
+						ac.route(r, "PATCH", "/users/{id}", classInstanceAdmin, uh.update)
+						ac.route(r, "DELETE", "/users/{id}", classInstanceAdmin, uh.delete)
+						ac.route(r, "POST", "/users/{id}/password", classInstanceAdmin, uh.resetPassword)
 
 						// The backup target holds external S3 credentials;
 						// reads and writes both stay behind sudo mode.
 						if d.BackupTargets != nil {
 							bth := &backupTargetHandlers{targets: d.BackupTargets}
-							r.Get("/system/backup-target", bth.get)
-							r.Put("/system/backup-target", bth.put)
-							r.Delete("/system/backup-target", bth.delete)
+							ac.route(r, "GET", "/system/backup-target", classInstanceAdmin, bth.get)
+							ac.route(r, "PUT", "/system/backup-target", classInstanceAdmin, bth.put)
+							ac.route(r, "DELETE", "/system/backup-target", classInstanceAdmin, bth.delete)
 						}
 					})
 				})
@@ -356,5 +382,5 @@ func NewRouter(d Deps) http.Handler {
 		})
 	})
 
-	return r
+	return r, ac
 }

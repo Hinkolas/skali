@@ -624,10 +624,13 @@ func TestRunCancellationPolicy(t *testing.T) {
 func TestClientStepAuthorization(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("owner@example.com", "hunter2hunter2")
-	a.createUser("intruder@example.com", "hunter2hunter2")
+	a.createMember("intruder@example.com", "hunter2hunter2")
+	a.createMember("stranger@example.com", "hunter2hunter2")
 	owner := a.login("owner@example.com", "hunter2hunter2")
 	intruder := a.login("intruder@example.com", "hunter2hunter2")
+	stranger := a.login("stranger@example.com", "hunter2hunter2")
 	projectID, envID := a.createEnvironment(t, owner)
+	a.grantMember(t, projectID, "intruder@example.com", "maintain")
 	definitionVersion := a.submitDefinition(t, owner, projectID, deployAPIManifest)
 	candidate := a.stageValues(t, owner, envID, definitionVersion, "authz-plant-value")
 
@@ -639,12 +642,18 @@ func TestClientStepAuthorization(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, "%v", body)
 	runID := body["deployment"].(map[string]any)["run_id"].(string)
 
-	// Another actor is shut out of the run entirely.
+	// Another actor, even a maintainer of the environment, is shut out of
+	// the run's client steps; a non-member does not see the run at all.
 	status, body = a.do("POST", "/v1/runs/"+runID+"/steps", intruder, map[string]any{
 		"key": "artifacts.web", "title": "web", "parent_key": "artifacts",
 	})
 	require.Equal(t, http.StatusForbidden, status)
 	require.Equal(t, "forbidden", errCode(body))
+	status, body = a.do("POST", "/v1/runs/"+runID+"/steps", stranger, map[string]any{
+		"key": "artifacts.web", "title": "web", "parent_key": "artifacts",
+	})
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errCode(body))
 
 	// The owner cannot leave the artifacts subtree.
 	status, body = a.do("POST", "/v1/runs/"+runID+"/steps", owner, map[string]any{

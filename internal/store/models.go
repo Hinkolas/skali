@@ -235,11 +235,24 @@ type Deployment struct {
 }
 
 type Environment struct {
-	ID        uuid.UUID
-	ProjectID uuid.UUID
-	Name      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           uuid.UUID
+	ProjectID    uuid.UUID
+	Name         string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	MaxRole      string
+	DeployPolicy string
+	PromoteFrom  []string
+	Priority     string
+}
+
+type EnvironmentAccess struct {
+	EnvironmentID uuid.UUID
+	ProjectID     uuid.UUID
+	UserID        uuid.UUID
+	Role          string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type EnvironmentIntercept struct {
@@ -310,6 +323,14 @@ type ProjectDraft struct {
 	Version             int64
 	DefinitionVersionID uuid.UUID
 	UpdatedAt           time.Time
+}
+
+type ProjectMember struct {
+	ProjectID uuid.UUID
+	UserID    uuid.UUID
+	Role      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type Revision struct {
@@ -392,4 +413,5 @@ type User struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	Role             string
+	CreateProjects   bool
 }

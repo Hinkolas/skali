@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/artifactstore"
+	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/deploy"
@@ -160,13 +161,12 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	env, err := h.st.GetEnvironmentByID(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, codeNotFound, "not found")
-			return
-		}
-		writeInternalError(r.Context(), w, "get environment", err)
+	env := environmentFrom(r.Context())
+	requiredRole, ok := h.requireDeployRole(w, r, deployRequest{
+		definitionVersionID: definitionVersionID, fromEnvironmentID: fromEnvironmentID,
+		candidateID: candidateID, pruneValues: req.PruneValues,
+	})
+	if !ok {
 		return
 	}
 	preview, err := h.deploy.PlanPreview(r.Context(), deploy.PlanInput{
@@ -186,11 +186,66 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Plan     *plan.Plan              `json:"plan"`
-		Actions  []artifactActionPayload `json:"actions"`
-		UpToDate bool                    `json:"up_to_date"`
-		Orphaned []string                `json:"orphaned,omitempty"`
-	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned})
+		Plan         *plan.Plan              `json:"plan"`
+		Actions      []artifactActionPayload `json:"actions"`
+		UpToDate     bool                    `json:"up_to_date"`
+		Orphaned     []string                `json:"orphaned,omitempty"`
+		RequiredRole string                  `json:"required_role"`
+	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned, requiredRole.String()})
+}
+
+// deployRequest is what decides the role a deployment needs.
+type deployRequest struct {
+	definitionVersionID uuid.UUID
+	fromEnvironmentID   uuid.UUID
+	candidateID         uuid.UUID
+	pruneValues         bool
+}
+
+// requireDeployRole places the request on the ladder and checks the
+// caller's grant: deploy changes only what code runs (promotion, rollback,
+// a direct deploy whose definition equals the active one); maintain is the
+// blast radius of skali.yml (a changed or first definition, staged values,
+// value pruning). A promotion additionally needs read on its source. The
+// scope middleware already granted deploy on the target; this refines.
+func (h *deploymentsHandlers) requireDeployRole(w http.ResponseWriter, r *http.Request, req deployRequest) (authz.Role, bool) {
+	grant := grantFrom(r.Context())
+	envGrant := environmentGrantFrom(r.Context())
+	required := authz.Deploy
+	reason := ""
+	switch {
+	case req.candidateID != uuid.Nil:
+		required, reason = authz.Maintain, "this deploy stages values"
+	case req.pruneValues:
+		required, reason = authz.Maintain, "this deploy prunes values"
+	case req.fromEnvironmentID != uuid.Nil:
+		source, ok := grant.Environment(req.fromEnvironmentID)
+		if !ok {
+			writeError(w, http.StatusNotFound, codeNotFound, "source environment not found")
+			return 0, false
+		}
+		if !source.Role.AtLeast(authz.Read) {
+			writeError(w, http.StatusForbidden, codeForbidden, authz.Required(authz.Read, "environment", source.Name)+": it is the promotion source")
+			return 0, false
+		}
+	default:
+		active, ok, err := h.deploy.ActiveDefinitionVersion(r.Context(), envGrant.ID)
+		if err != nil {
+			writeDeployError(r.Context(), w, err)
+			return 0, false
+		}
+		switch {
+		case !ok:
+			required, reason = authz.Maintain, "this is the first deploy into the environment"
+		case active != req.definitionVersionID:
+			required, reason = authz.Maintain, "this deploy changes the definition"
+		}
+	}
+	if !envGrant.Role.AtLeast(required) {
+		writeError(w, http.StatusForbidden, codeForbidden, authz.Required(required, "environment", envGrant.Name)+": "+reason)
+		return 0, false
+	}
+	return required, true
 }
 
 // POST /v1/environments/{id}/deployments
@@ -225,6 +280,13 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 			"build_executor must be local (cloud builders arrive with R4)")
 		return
 	}
+	requiredRole, ok := h.requireDeployRole(w, r, deployRequest{
+		definitionVersionID: definitionVersionID, fromEnvironmentID: fromEnvironmentID,
+		candidateID: candidateID, pruneValues: req.PruneValues,
+	})
+	if !ok {
+		return
+	}
 	user := UserFrom(r.Context())
 	opened, err := h.deploy.Open(r.Context(), deploy.OpenInput{
 		PlanInput: deploy.PlanInput{
@@ -253,22 +315,25 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	}
 	if opened.UpToDate {
 		writeJSON(w, http.StatusOK, struct {
-			UpToDate bool       `json:"up_to_date"`
-			Plan     *plan.Plan `json:"plan"`
-		}{true, opened.Plan})
+			UpToDate     bool       `json:"up_to_date"`
+			Plan         *plan.Plan `json:"plan"`
+			RequiredRole string     `json:"required_role"`
+		}{true, opened.Plan, requiredRole.String()})
 		return
 	}
 	writeJSON(w, http.StatusCreated, struct {
-		Deployment deploymentPayload       `json:"deployment"`
-		Plan       *plan.Plan              `json:"plan"`
-		Actions    []artifactActionPayload `json:"actions"`
-		UpToDate   bool                    `json:"up_to_date"`
-		Orphaned   []string                `json:"orphaned,omitempty"`
+		Deployment   deploymentPayload       `json:"deployment"`
+		Plan         *plan.Plan              `json:"plan"`
+		Actions      []artifactActionPayload `json:"actions"`
+		UpToDate     bool                    `json:"up_to_date"`
+		Orphaned     []string                `json:"orphaned,omitempty"`
+		RequiredRole string                  `json:"required_role"`
 	}{
-		Deployment: newDeploymentPayload(opened.Deployment),
-		Plan:       opened.Plan,
-		Actions:    h.actionPayloads(r.Context(), opened.Deployment.ProjectID, opened.Actions),
-		Orphaned:   opened.Orphaned,
+		Deployment:   newDeploymentPayload(opened.Deployment),
+		Plan:         opened.Plan,
+		Actions:      h.actionPayloads(r.Context(), opened.Deployment.ProjectID, opened.Actions),
+		Orphaned:     opened.Orphaned,
+		RequiredRole: requiredRole.String(),
 	})
 }
 

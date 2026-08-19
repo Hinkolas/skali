@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -25,7 +25,10 @@ func New(st *store.Store) *Service {
 	return &Service{st: st}
 }
 
-func (s *Service) Create(ctx context.Context, name, displayName string) (*store.Project, error) {
+// Create makes a project and, when creator is set, its first admin member.
+// uuid.Nil creates an ownerless project (system and test paths); every API
+// path passes the acting user so the creator can manage what they made.
+func (s *Service) Create(ctx context.Context, name, displayName string, creator uuid.UUID) (*store.Project, error) {
 	if err := naming.CheckKey(name); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
 	}
@@ -33,18 +36,33 @@ func (s *Service) Create(ctx context.Context, name, displayName string) (*store.
 	if err != nil {
 		return nil, fmt.Errorf("project: generate id: %w", err)
 	}
-	proj, err := s.st.CreateProject(ctx, store.CreateProjectParams{
-		ID:          id,
-		Name:        name,
-		DisplayName: displayName,
-		SourceMode:  "managed",
+	var proj store.Project
+	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+		var err error
+		proj, err = q.CreateProject(ctx, store.CreateProjectParams{
+			ID:          id,
+			Name:        name,
+			DisplayName: displayName,
+			SourceMode:  "managed",
+		})
+		if err != nil {
+			if store.IsUniqueViolation(err) {
+				return ErrProjectNameTaken
+			}
+			return fmt.Errorf("project: create: %w", err)
+		}
+		if creator == uuid.Nil {
+			return nil
+		}
+		if _, err := q.UpsertProjectMember(ctx, store.UpsertProjectMemberParams{
+			ProjectID: proj.ID, UserID: creator, Role: authz.Admin.String(),
+		}); err != nil {
+			return fmt.Errorf("project: add creator as admin: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
-			return nil, ErrProjectNameTaken
-		}
-		return nil, fmt.Errorf("project: create: %w", err)
+		return nil, err
 	}
 	return &proj, nil
 }
@@ -107,9 +125,29 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, name string) (*store.Environment, error) {
+// EnvironmentOptions shape a new environment. The zero value is an
+// ownerless normal-priority environment (system and test paths).
+type EnvironmentOptions struct {
+	// Creator gets an explicit admin cell when they are a member below
+	// project admin, so they manage and delete what they created without a
+	// project admin. Admins need no cell; an instance admin without
+	// membership cannot hold one (cells hang off the membership row).
+	Creator uuid.UUID
+	// Priority is normal or high; empty means normal. Whether the caller may
+	// ask for high is the API's decision (instance admins only).
+	Priority string
+}
+
+func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, name string, opts EnvironmentOptions) (*store.Environment, error) {
 	if err := naming.CheckKey(name); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
+	}
+	priority := opts.Priority
+	if priority == "" {
+		priority = authz.PriorityNormal
+	}
+	if !authz.ValidPriority(priority) {
+		return nil, fmt.Errorf("%w: priority must be normal or high", ErrInvalidSettings)
 	}
 	if _, err := s.Get(ctx, projectID); err != nil {
 		return nil, err
@@ -118,6 +156,13 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, na
 	if err != nil {
 		return nil, fmt.Errorf("project: generate id: %w", err)
 	}
+	// Creation defaults by priority: a normal environment starts open (a
+	// shared scratch space); a high one starts read-only for inheriting
+	// members so production is never accidentally wide open.
+	maxRole := authz.Admin
+	if priority == authz.PriorityHigh {
+		maxRole = authz.Read
+	}
 	var env store.Environment
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		var err error
@@ -125,10 +170,11 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, na
 			ID:        id,
 			ProjectID: projectID,
 			Name:      name,
+			MaxRole:   maxRole.String(),
+			Priority:  priority,
 		})
 		if err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
+			if store.IsUniqueViolation(err) {
 				return ErrEnvironmentNameTaken
 			}
 			return fmt.Errorf("project: create environment: %w", err)
@@ -137,6 +183,24 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, na
 		// deploy promotion and rollback ever set its target.
 		if err := q.CreateEnvironmentTarget(ctx, env.ID); err != nil {
 			return fmt.Errorf("project: create environment target: %w", err)
+		}
+		if opts.Creator == uuid.Nil {
+			return nil
+		}
+		member, err := q.GetProjectMember(ctx, store.GetProjectMemberParams{ProjectID: projectID, UserID: opts.Creator})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("project: get creator membership: %w", err)
+		}
+		if member.Role == authz.Admin.String() {
+			return nil
+		}
+		if _, err := q.UpsertEnvironmentAccess(ctx, store.UpsertEnvironmentAccessParams{
+			EnvironmentID: env.ID, ProjectID: projectID, UserID: opts.Creator, Role: authz.Admin.String(),
+		}); err != nil {
+			return fmt.Errorf("project: grant creator admin cell: %w", err)
 		}
 		return nil
 	})
