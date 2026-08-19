@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -100,6 +102,11 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 		),
 	}
 	t.Cleanup(func() {
+		// SKALI_E2E_KEEP=1 leaves the cluster for a post-mortem; delete it
+		// by hand afterwards (k3d cluster delete skali-dev-e2e).
+		if os.Getenv("SKALI_E2E_KEEP") != "" {
+			return
+		}
 		_ = exec.Command("k3d", "cluster", "delete", e2eCluster).Run()
 	})
 	return harness
@@ -1031,5 +1038,93 @@ func TestDevAccess(t *testing.T) {
 		require.Contains(t, out, "admin on environment staging required")
 	})
 
+	// State: the member is project maintain with a deploy cell on staging
+	// and a none cell on local; the current remote is member, so every
+	// command names its remote.
+	t.Run("protection", func(t *testing.T) {
+		out := h.run(false, "", "env", "set", "--environment", "staging", "--deploy-policy", "promote-only",
+			"--promote-from", "local", "--remote", "local")
+		require.Contains(t, out, "deploy policy  promote-only (from local)")
+		out = h.run(false, "", "env", "ls", "--remote", "local")
+		require.Regexp(t, `(?m)^staging +admin +normal +promote-only \(from local\) `, out)
+		// A direct deploy is refused before anything is submitted or built.
+		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force")
+		require.Contains(t, out, "environment staging is promote-only: promote with skali deploy --from local --environment staging")
+		require.NotContains(t, out, "plan against")
+		// The promotion source must be readable: local is locked for the
+		// member by the none cell.
+		out = h.run(true, "", "deploy", "--remote", "member", "--from", "local", "--environment", "staging", "--yes", "--force")
+		require.Contains(t, out, "environment local")
+		require.Contains(t, out, "required")
+		h.run(false, "", "access", "set", memberEmail, "read", "--environment", "local", "--remote", "local")
+		out = h.run(false, "", "deploy", "--remote", "member", "--from", "local", "--environment", "staging", "--yes", "--force")
+		require.Contains(t, out, "promote local to staging")
+		require.Contains(t, out, "ready")
+		require.NotContains(t, out, "bypassed")
+		// The bypass is for environment admins only; the policy binds the
+		// instance admin too, who then bypasses explicitly (the local admin
+		// reauthenticates silently) and the run records it.
+		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force", "--bypass-protection")
+		require.Contains(t, out, "bypassing protection needs admin on environment staging (your role: deploy)")
+		out = h.run(true, "", "deploy", "--remote", "local", "--environment", "staging", "--yes", "--force")
+		require.Contains(t, out, "environment staging is promote-only")
+		out = h.run(false, "", "deploy", "--remote", "local", "--environment", "staging", "--yes", "--force", "--bypass-protection")
+		require.Contains(t, out, "bypassed: environment staging is promote-only (recorded on the run)")
+		require.Contains(t, out, "ready")
+		require.Contains(t, out, "protection  bypassed (recorded on the run)")
+		out = h.run(false, "", "run", "list", "--remote", "local", "--environment", "staging")
+		require.Regexp(t, `(?m)^\S+ +deployment +\S+ +.*bypassed protection$`, out)
+	})
+
+	t.Run("priority", func(t *testing.T) {
+		classes, err := exec.Command("kubectl", "--kubeconfig", kubeconfig, "get", "priorityclass",
+			"skali-critical", "skali-high", "skali-normal", "-o", "jsonpath={range .items[*]}{.metadata.name}={.value}{\"\\n\"}{end}").CombinedOutput()
+		require.NoError(t, err, string(classes))
+		require.Equal(t, "skali-critical=100000000\nskali-high=1000000\nskali-normal=0\n", string(classes))
+		skalid, err := exec.Command("kubectl", "--kubeconfig", kubeconfig, "get", "deployment", "skalid", "-n", "skali-system",
+			"-o", "jsonpath={.spec.template.spec.priorityClassName}").CombinedOutput()
+		require.NoError(t, err, string(skalid))
+		require.Equal(t, "skali-critical", string(skalid))
+		managedClasses := func() []string {
+			raw, err := exec.Command("kubectl", "--kubeconfig", kubeconfig, "get", "deployment", "-A", "-l", "skali.dev/managed=true",
+				"-o", "jsonpath={range .items[*]}{.spec.template.spec.priorityClassName}{\"\\n\"}{end}").CombinedOutput()
+			require.NoError(t, err, string(raw))
+			classes := strings.Fields(string(raw))
+			sort.Strings(classes)
+			return classes
+		}
+		// local and staging, both normal.
+		require.Equal(t, []string{"skali-normal", "skali-normal"}, managedClasses())
+		out := h.run(false, "", "env", "set", "--environment", "staging", "--priority", "high", "--remote", "local")
+		require.Contains(t, out, "priority       high")
+		require.Contains(t, out, "application pods roll onto priority class skali-high")
+		// The kernel re-renders staging right away; its Deployment moves to
+		// the high class while local stays normal.
+		require.Eventually(t, func() bool {
+			return slices.Equal(managedClasses(), []string{"skali-high", "skali-normal"})
+		}, 2*time.Minute, 2*time.Second)
+		// Let the roll settle before the pause below tears local down.
+		h.waitManagedRollouts(t, kubeconfig)
+	})
+
 	h.run(false, "", "dev", "down")
+}
+
+// waitManagedRollouts blocks until every managed application Deployment
+// has rolled out, so a following step never lands in a switchover window.
+func (h *e2eHarness) waitManagedRollouts(t *testing.T, kubeconfig string) {
+	t.Helper()
+	names, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
+		"get", "deployment", "-A", "-l", "skali.dev/managed=true",
+		"-o", `jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}`).CombinedOutput()
+	require.NoError(t, err, string(names))
+	for line := range strings.SplitSeq(strings.TrimSpace(string(names)), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		status, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
+			"rollout", "status", "deployment", parts[1], "-n", parts[0], "--timeout=120s").CombinedOutput()
+		require.NoError(t, err, string(status))
+	}
 }

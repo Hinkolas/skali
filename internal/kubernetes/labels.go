@@ -19,7 +19,19 @@ const (
 	LabelPool = "skali.dev/pool"
 	// LabelClaim marks substrate objects belonging to one claim.
 	LabelClaim = "skali.dev/claim"
+
+	// EndpointSliceManagedBy is the kube endpointslice controller's
+	// ownership label; skali stamps its own value on intercept slices so the
+	// controller leaves them alone. The controller copies every Service
+	// label onto the slices it manages, the managed label included, so this
+	// value is the only thing telling skali's slices from the controller's.
+	LabelEndpointSliceManagedBy = "endpointslice.kubernetes.io/managed-by"
+	EndpointSliceManagedBySkali = "skali.dev"
 )
+
+// InterceptEndpointSliceSelector selects exactly the EndpointSlices skali
+// renders for intercepted applications.
+const InterceptEndpointSliceSelector = ManagedSelector + "," + LabelEndpointSliceManagedBy + "=" + EndpointSliceManagedBySkali
 
 // AnnotationRestartedAt marks application pod templates with the target's
 // restart stamp (kubectl rollout restart semantics): a forced deployment

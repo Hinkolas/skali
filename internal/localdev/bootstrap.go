@@ -283,6 +283,9 @@ func applyBundle(ctx context.Context, client *kube.Client, state *State, progres
 	if err := applier.ApplyObjects(ctx, objects.Namespace); err != nil {
 		return err
 	}
+	if err := applier.ApplyObjects(ctx, objects.Priority); err != nil {
+		return err
+	}
 	if err := applier.ApplyManifest(ctx, bundle.CNPGManifest()); err != nil {
 		return err
 	}

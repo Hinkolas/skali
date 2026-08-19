@@ -243,6 +243,10 @@ func (p *Production) ingressClassName() string {
 type Objects struct {
 	// Namespace precedes everything.
 	Namespace []unstructured.Unstructured
+	// Priority is the three PriorityClasses (skali-critical, skali-high,
+	// skali-normal); it precedes every pod that references one, which is
+	// every pod the bundle and skalid render.
+	Priority []unstructured.Unstructured
 	// Issuer is the ACME ClusterIssuer named skali (requires
 	// cert-manager); empty under the local profile.
 	Issuer []unstructured.Unstructured
@@ -272,6 +276,7 @@ type Objects struct {
 func stageSources(profile Profile) []string {
 	return []string{
 		namespaceYAML(),
+		priorityYAML(),
 		issuerYAML(profile),
 		edgeYAML(profile),
 		databaseYAML(profile),
@@ -293,6 +298,7 @@ func Render(profile Profile) (*Objects, error) {
 	objects := &Objects{}
 	targets := []*[]unstructured.Unstructured{
 		&objects.Namespace,
+		&objects.Priority,
 		&objects.Issuer,
 		&objects.Edge,
 		&objects.Database,
@@ -365,6 +371,39 @@ metadata:
   labels:
     skali.dev/system: "true"
 `
+}
+
+// priorityYAML renders the PriorityClasses. Values are immutable once the
+// classes exist (a change means delete and recreate during converge), so
+// they are final; none is the global default, every skali-rendered pod
+// names its class explicitly.
+func priorityYAML() string {
+	return fmt.Sprintf(`apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: %[1]s
+value: %[2]d
+globalDefault: false
+description: Skali itself (skalid, registry, console, object storage, managed databases); preempts application pods.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: %[3]s
+value: %[4]d
+globalDefault: false
+description: Applications of high priority environments; preempt normal ones when resources are tight.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: %[5]s
+value: %[6]d
+globalDefault: false
+description: Applications of normal priority environments; yield to high priority ones.
+`, layout.PriorityClassCritical, layout.PriorityClassCriticalValue,
+		layout.PriorityClassHigh, layout.PriorityClassHighValue,
+		layout.PriorityClassNormal, layout.PriorityClassNormalValue)
 }
 
 // issuerYAML renders the ACME ClusterIssuer every `tls: automatic` route
@@ -443,13 +482,14 @@ metadata:
 spec:
   imageName: %[6]s
   instances: %[2]d
+  priorityClassName: %[7]s
   storage:
     size: %[3]s%[4]s%[5]s
   bootstrap:
     initdb:
       database: skali
       owner: skali
-`, Namespace, instances, storage, affinity, synchronous, BootstrapPostgresImage)
+`, Namespace, instances, storage, affinity, synchronous, BootstrapPostgresImage, layout.PriorityClassCritical)
 }
 
 // recordYAML publishes the canonical installation record for skalid to
@@ -551,6 +591,7 @@ spec:
       labels:
         app.kubernetes.io/name: skali-registry
     spec:%[5]s
+      priorityClassName: %[9]s
       containers:
         - name: registry
           image: %[2]s
@@ -583,7 +624,7 @@ spec:
       targetPort: 5000
       nodePort: %[3]d
 `, Namespace, RegistryImage, RegistryNodePort, storage, nodeSelector,
-		authConfig, certMount, certVolume) + ingressSuffix
+		authConfig, certMount, certVolume, layout.PriorityClassCritical) + ingressSuffix
 }
 
 // registryTokenSecretYAML renders the token trust material: skalid reads
@@ -882,6 +923,7 @@ spec:
         app.kubernetes.io/name: skalid%[5]s
     spec:
       serviceAccountName: skalid
+      priorityClassName: `+layout.PriorityClassCritical+`
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -975,6 +1017,7 @@ spec:
       labels:
         app.kubernetes.io/name: skali-web%[3]s
     spec:
+      priorityClassName: `+layout.PriorityClassCritical+`
       containers:
         - name: skali-web
           image: %[2]s

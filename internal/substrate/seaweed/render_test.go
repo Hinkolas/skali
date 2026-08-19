@@ -39,8 +39,10 @@ func TestRenderProductionShape(t *testing.T) {
 			"seaweed-master-1.seaweed-master.skali-platform.svc.cluster.local:9333,"+
 			"seaweed-master-2.seaweed-master.skali-platform.svc.cluster.local:9333")
 	require.Equal(t, "true", sts.Spec.Template.Spec.NodeSelector["skali.dev/capability-object-storage"])
+	require.Equal(t, "skali-critical", sts.Spec.Template.Spec.PriorityClassName)
 
 	require.NotNil(t, daemon)
+	require.Equal(t, "skali-critical", daemon.Spec.Template.Spec.PriorityClassName)
 	require.Equal(t, VolumeHostPath, daemon.Spec.Template.Spec.Volumes[0].HostPath.Path)
 	require.Equal(t, "true", daemon.Spec.Template.Spec.NodeSelector["skali.dev/capability-object-storage"])
 

@@ -61,6 +61,11 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	if err := applier.ApplyObjects(ctx, objects.Namespace); err != nil {
 		return err
 	}
+	// The PriorityClasses precede every pod that names one, the bootstrap
+	// database included.
+	if err := applier.ApplyObjects(ctx, objects.Priority); err != nil {
+		return err
+	}
 	if err := applier.ApplyManifest(ctx, CNPGManifest()); err != nil {
 		return err
 	}

@@ -57,6 +57,9 @@ type RunInput struct {
 	ProjectID     uuid.UUID // uuid.Nil for installation-scoped runs
 	EnvironmentID uuid.UUID // uuid.Nil for runs outside an environment
 	Actor         string
+	// BypassProtection marks a deployment that entered a promote-only
+	// environment on an explicit admin bypass.
+	BypassProtection bool
 }
 
 func (s *Service) CreateRun(ctx context.Context, in RunInput) (*store.Run, error) {
@@ -64,7 +67,7 @@ func (s *Service) CreateRun(ctx context.Context, in RunInput) (*store.Run, error
 	if err != nil {
 		return nil, fmt.Errorf("journal: generate id: %w", err)
 	}
-	params := store.CreateRunParams{ID: id, Kind: in.Kind, Actor: in.Actor}
+	params := store.CreateRunParams{ID: id, Kind: in.Kind, Actor: in.Actor, BypassProtection: in.BypassProtection}
 	if in.ProjectID != uuid.Nil {
 		params.ProjectID = &in.ProjectID
 	}

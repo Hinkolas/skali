@@ -2217,7 +2217,12 @@ paths:
         destructive plan plus the per-application artifact actions (reuse,
         build, or import). Planning never mutates: no values are stored and
         no target moves. Build-sourced applications must submit their
-        client-computed input hashes so reuse can be decided.
+        client-computed input hashes so reuse can be decided. The plan
+        also runs the role and policy gates the open runs, so a client
+        refuses before building: `403 forbidden` names the missing role,
+        `403 environment_protected` a promote-only environment (the
+        message names the promotion sources; environment admins with a
+        fresh session may pass `bypass_protection`).
       tags: [deployments]
       requestBody:
         required: true
@@ -2269,7 +2274,12 @@ paths:
         returns `up_to_date` with nothing created unless `force` is set,
         which redeploys the unchanged revision and restarts the
         application workloads. One deployment prepares per environment at
-        a time (`deployment_in_flight`).
+        a time (`deployment_in_flight`). A promote-only environment
+        answers `403 environment_protected` to direct deploys and to
+        promotions from sources outside its `promote_from` list unless
+        `bypass_protection` is set by an environment admin with a fresh
+        session (`403 reauth_required` otherwise); a consumed bypass is
+        recorded on the deployment and its run.
       tags: [deployments]
       requestBody:
         required: true
@@ -2283,12 +2293,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [up_to_date, required_role]
+                required: [up_to_date, required_role, bypass_protection]
                 properties:
                   up_to_date:
                     type: boolean
                   plan: { $ref: "#/components/schemas/PlanDocument" }
                   required_role: { $ref: "#/components/schemas/AccessRole" }
+                  bypass_protection:
+                    type: boolean
         "201":
           description: The opened deployment with its work list.
           content:
@@ -3043,6 +3055,7 @@ components:
             - invalid_code
             - forbidden
             - reauth_required
+            - environment_protected
             - not_found
             - conflict
             - version_conflict
@@ -3226,7 +3239,7 @@ components:
     Run:
       type: object
       required: [id, kind, project_id, environment_id, actor, status,
-                 created_at, started_at, finished_at]
+                 created_at, started_at, finished_at, bypass_protection]
       properties:
         id:
           type: string
@@ -3234,6 +3247,11 @@ components:
         kind:
           type: string
           description: "deployment, rollback, reconcile, teardown, backup, or restore."
+        bypass_protection:
+          type: boolean
+          description: |
+            A deployment that entered a promote-only environment on an
+            environment admin's explicit bypass.
         project_id:
           type: [string, "null"]
           format: uuid
@@ -3860,6 +3878,19 @@ components:
             instead of running a Deployment. Each deploy replaces the
             environment's whole intercept set, so an absent map clears it.
             Local platform only; managed clusters reject it.
+        prune_values:
+          type: boolean
+          description: |
+            Plan the removal of stored values the definition no longer
+            references (they show as prune rows instead of the orphaned
+            advisory). Raises the required role to `maintain`.
+        bypass_protection:
+          type: boolean
+          description: |
+            Deploy into a promote-only environment anyway. Consumed only
+            when the policy would refuse (a direct deploy, or a promotion
+            from a source outside `promote_from`); then it takes
+            environment `admin` and a fresh session. Ignored otherwise.
 
     LocalApplication:
       type: object
@@ -3872,7 +3903,7 @@ components:
 
     PlanResponse:
       type: object
-      required: [plan, actions, up_to_date, required_role]
+      required: [plan, actions, up_to_date, required_role, bypass_protection]
       properties:
         plan: { $ref: "#/components/schemas/PlanDocument" }
         actions:
@@ -3886,6 +3917,11 @@ components:
             `deploy` when the definition is unchanged (or a promotion),
             `maintain` when it changes, is the first, stages values, or
             prunes values. A caller below it receives `403 forbidden`.
+        bypass_protection:
+          type: boolean
+          description: |
+            True when the request consumed an explicit bypass of the
+            environment's promote-only policy.
         orphaned:
           type: array
           description: |
@@ -3941,6 +3977,18 @@ components:
           description: |
             Ignore artifact reuse: builds run again and images re-import,
             picking up moved upstream tags and refreshed base images.
+        prune_values:
+          type: boolean
+          description: |
+            Remove stored values the definition no longer references as
+            part of this deployment. Raises the required role to
+            `maintain`.
+        bypass_protection:
+          type: boolean
+          description: |
+            Deploy into a promote-only environment anyway; see the same
+            field on PlanRequest. A consumed bypass is recorded on the
+            deployment and its run.
 
     Deployment:
       type: object
@@ -3948,7 +3996,7 @@ components:
         One deployment coordination row. The status machine is preparing to
         promoted, failed, or cancelled; one deployment prepares per
         environment at a time.
-      required: [id, project_id, environment_id, definition_version_id, status, build_executor]
+      required: [id, project_id, environment_id, definition_version_id, status, build_executor, bypass_protection]
       properties:
         id:
           type: string
@@ -3973,10 +4021,15 @@ components:
           format: uuid
         build_executor:
           type: string
+        bypass_protection:
+          type: boolean
+          description: |
+            The deployment entered a promote-only environment on an
+            environment admin's explicit bypass.
 
     OpenDeploymentResponse:
       type: object
-      required: [deployment, plan, actions, up_to_date, required_role]
+      required: [deployment, plan, actions, up_to_date, required_role, bypass_protection]
       properties:
         deployment: { $ref: "#/components/schemas/Deployment" }
         plan: { $ref: "#/components/schemas/PlanDocument" }
@@ -3986,6 +4039,8 @@ components:
         up_to_date:
           type: boolean
         required_role: { $ref: "#/components/schemas/AccessRole" }
+        bypass_protection:
+          type: boolean
         orphaned:
           type: array
           description: |

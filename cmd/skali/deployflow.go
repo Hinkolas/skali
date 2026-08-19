@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +51,11 @@ type deployOptions struct {
 	// Force deploys even when the environment is up to date; application
 	// workloads restart at promotion. Data is never touched.
 	Force bool
+	// BypassProtection deploys into a promote-only environment anyway. The
+	// server consumes it only when the policy would refuse, then requires
+	// environment admin and a recent login, and records it on the run.
+	// Force keeps its own meaning (restart even when nothing changed).
+	BypassProtection bool
 	// Rebuild ignores artifact reuse and disables build caches so moved
 	// upstream tags and refreshed base images are picked up.
 	Rebuild bool
@@ -275,6 +281,50 @@ func valuesStagingAllowed(access, environment string, opts *deployOptions) (bool
 			"drop --prune-values to deploy with the stored values", environment, access)
 	}
 	return false, nil
+}
+
+// checkDeployPolicy refuses what the server's protection policy would
+// refuse anyway, before the definition is submitted or a promotion source
+// is read: under promote-only a direct deploy, or a promotion from a
+// source outside the allowed list, needs the explicit bypass, and the
+// bypass needs admin on the environment. Returns whether the bypass will
+// be consumed (the server records it and the flow prints it). Nil settings
+// (locked environment, older server) disable the check; the server still
+// decides. source is the promotion source's name, empty for a direct
+// deploy.
+func checkDeployPolicy(settings *client.EnvironmentSettings, access, environment, source string, opts *deployOptions) (bool, error) {
+	if settings == nil || settings.DeployPolicy != "promote-only" {
+		return false, nil
+	}
+	if source != "" && (len(settings.PromoteFrom) == 0 || slices.Contains(settings.PromoteFrom, source)) {
+		return false, nil
+	}
+	if !opts.BypassProtection {
+		if source != "" {
+			return false, fmt.Errorf("environment %s accepts promotions from %s only, not from %s; "+
+				"environment admins may pass --bypass-protection",
+				environment, strings.Join(settings.PromoteFrom, " or "), source)
+		}
+		from := "<environment>"
+		if len(settings.PromoteFrom) > 0 {
+			from = strings.Join(settings.PromoteFrom, " or ")
+		}
+		return false, fmt.Errorf("environment %s is promote-only: promote with skali deploy --from %s --environment %s; "+
+			"environment admins may pass --bypass-protection", environment, from, environment)
+	}
+	if !roleAtLeast(access, "admin") {
+		return false, fmt.Errorf("bypassing protection needs admin on environment %s (your role: %s)", environment, access)
+	}
+	return true, nil
+}
+
+// printProtectionBypassed follows the plan when the server consumed the
+// bypass: the deploy goes into a promote-only environment on purpose and
+// the run says so.
+func printProtectionBypassed(out io.Writer, environment string) {
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "%s   %s\n", style.Dim("protection"),
+		style.Yellow("bypassed: environment "+environment+" is promote-only (recorded on the run)"))
 }
 
 // selectValues decides the value source: an explicit --env-file, the bare-dev
@@ -926,6 +976,10 @@ type deployTarget struct {
 	// server reported it (admin for one just created); empty when the
 	// server did not say (older fakes), which disables client-side checks.
 	access string
+	// settings are the environment's server-side settings (protection
+	// policy among them); nil when the environment is locked or the server
+	// did not say, which disables the client-side policy check.
+	settings *client.EnvironmentSettings
 	// sessionToken doubles as the managed-registry push credential: the
 	// registry token endpoint accepts it as the Basic password, so builds
 	// and imports authenticate without any docker login.
@@ -1032,7 +1086,7 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		projectID = created.ID
 	}
 
-	environmentID, access, err := resolveEnvironmentTarget(ctx, out, in, api,
+	environment, err := resolveEnvironmentTarget(ctx, out, in, api,
 		projectID, projectName, remote.Master, opts, planOnly, prompts)
 	if err != nil {
 		return nil, err
@@ -1059,8 +1113,9 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 		master:        remote.Master,
 		api:           api,
 		projectID:     projectID,
-		environmentID: environmentID,
-		access:        access,
+		environmentID: environment.ID,
+		access:        environment.Access,
+		settings:      environment.Settings,
 		sessionToken:  remote.Token,
 	}, nil
 }
@@ -1069,21 +1124,21 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 // project: interactive deploy behind explicit confirmation, dev silently,
 // plan and non-interactive never) the environment named by opts.Environment,
 // prompting for a name when empty. It prints the environment line and
-// returns the environment id and the caller's access on it.
+// returns the environment with the caller's access and its settings.
 func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Reader, api *client.Client,
-	projectID, projectName, master string, opts *deployOptions, planOnly, prompts bool) (string, string, error) {
+	projectID, projectName, master string, opts *deployOptions, planOnly, prompts bool) (*client.Environment, error) {
 
 	style := clirender.StyleFor(out)
 	environments, err := api.ListEnvironments(ctx, projectID)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	if opts.Environment == "" {
 		switch {
 		case !prompts:
-			return "", "", errors.New("--environment is required")
+			return nil, errors.New("--environment is required")
 		case len(environments) == 0 && planOnly:
-			return "", "", fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
+			return nil, fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
 				projectName, master)
 		case len(environments) == 0:
 			opts.Environment, err = promptSession(out, in).Text(ctx, cliprompt.TextOptions{
@@ -1097,34 +1152,30 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 				},
 			})
 			if err != nil {
-				return "", "", err
+				return nil, err
 			}
 		default:
 			environment, err := chooseEnvironment(out, in, environments)
 			if err != nil {
-				return "", "", err
+				return nil, err
 			}
 			opts.Environment = environment
 		}
 	}
 
 	environment := findEnvironment(environments, opts.Environment)
-	environmentID, access := "", ""
 	switch {
 	case environment != nil:
-		environmentID, access = environment.ID, environment.Access
 	case planOnly:
-		return "", "", fmt.Errorf("environment %s does not exist in project %s on %s; "+
+		return nil, fmt.Errorf("environment %s does not exist in project %s on %s; "+
 			"skali plan never changes the installation, run skali deploy to create it",
 			opts.Environment, projectName, master)
 	case opts.CreateMissing:
-		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment, "")
-		if err != nil {
-			return "", "", err
+		if environment, err = api.CreateEnvironment(ctx, projectID, opts.Environment, ""); err != nil {
+			return nil, err
 		}
-		environmentID, access = created.ID, created.Access
 	case !prompts:
-		return "", "", fmt.Errorf("environment %s does not exist in project %s on %s; "+
+		return nil, fmt.Errorf("environment %s does not exist in project %s on %s; "+
 			"run skali deploy interactively to create it", opts.Environment, projectName, master)
 	default:
 		confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
@@ -1132,20 +1183,18 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 				opts.Environment, projectName),
 		})
 		if err != nil {
-			return "", "", err
+			return nil, err
 		}
 		if !confirmed {
-			return "", "", errors.New("aborted")
+			return nil, errors.New("aborted")
 		}
-		created, err := api.CreateEnvironment(ctx, projectID, opts.Environment, "")
-		if err != nil {
-			return "", "", err
+		if environment, err = api.CreateEnvironment(ctx, projectID, opts.Environment, ""); err != nil {
+			return nil, err
 		}
-		environmentID, access = created.ID, created.Access
 	}
 
 	fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), opts.Environment)
-	return environmentID, access, nil
+	return environment, nil
 }
 
 func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (string, error) {
@@ -1157,8 +1206,11 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	}
 	style := clirender.StyleFor(out)
 	prompts := cliprompt.Interactive() && !opts.Yes
-	target, err := resolveDeployTarget(ctx, out, bufio.NewReader(os.Stdin),
-		project, opts, planOnly, prompts)
+	// One stdin reader for the whole flow: the environment prompts and a
+	// reauth prompt (a consumed protection bypass on an aged login) must
+	// not race each other for buffered lines.
+	in := bufio.NewReader(os.Stdin)
+	target, err := resolveDeployTarget(ctx, out, in, project, opts, planOnly, prompts)
 	if err != nil {
 		return "", err
 	}
@@ -1168,6 +1220,9 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	}
 	mayStage, err := valuesStagingAllowed(target.access, opts.Environment, opts)
 	if err != nil {
+		return "", err
+	}
+	if _, err := checkDeployPolicy(target.settings, target.access, opts.Environment, "", opts); err != nil {
 		return "", err
 	}
 	definitionVersion, err := api.SubmitDefinition(ctx, projectID, string(project.Source), "yaml")
@@ -1239,18 +1294,28 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		Rebuild:             opts.Rebuild,
 		LocalApplications:   opts.LocalApplications,
 		PruneValues:         opts.PruneValues,
+		BypassProtection:    opts.BypassProtection,
 	}
 
 	activeChecksum := ""
 	if envStatus != nil && envStatus.ActiveRevision != nil {
 		activeChecksum = envStatus.ActiveRevision.Checksum
 	}
-	planned, err := api.Plan(ctx, environmentID, request)
+	// Plan and open answer reauth_required only for a consumed protection
+	// bypass on an aged login; the retry confirms the password once.
+	var planned *client.PlanResult
+	err = withReauth(ctx, out, in, api, func() (err error) {
+		planned, err = api.Plan(ctx, environmentID, request)
+		return err
+	})
 	if err != nil {
 		return "", err
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
 	printOrphanedValues(out, planned.Orphaned)
+	if planned.BypassProtection {
+		printProtectionBypassed(out, opts.Environment)
+	}
 	if planOnly {
 		printRequiredRole(out, planned.RequiredRole)
 	}
@@ -1270,7 +1335,11 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 
-	opened, err := api.OpenDeployment(ctx, environmentID, request)
+	var opened *client.OpenedDeployment
+	err = withReauth(ctx, out, in, api, func() (err error) {
+		opened, err = api.OpenDeployment(ctx, environmentID, request)
+		return err
+	})
 	if err != nil {
 		return "", err
 	}
@@ -1317,7 +1386,9 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
 		if !opts.SkipReadySummary {
-			printReadySummary(ctx, out, api, environmentID, remoteReadySummary(target.remoteName))
+			summary := remoteReadySummary(target.remoteName)
+			summary.ProtectionBypassed = opened.BypassProtection
+			printReadySummary(ctx, out, api, environmentID, summary)
 		}
 		return deployOutcomeReady, nil
 	case "failed":

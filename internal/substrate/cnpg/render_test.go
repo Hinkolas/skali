@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/Hinkolas/skali/internal/layout"
 )
 
 func clusterSpec() ClusterSpec {
@@ -30,6 +32,8 @@ func TestRenderClusterSingle(t *testing.T) {
 	require.Equal(t, "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie", image)
 	size, _, _ := unstructured.NestedString(object, "spec", "storage", "size")
 	require.Equal(t, "10Gi", size)
+	class, _, _ := unstructured.NestedString(object, "spec", "priorityClassName")
+	require.Equal(t, layout.PriorityClassCritical, class)
 	hibernation, _, _ := unstructured.NestedString(object, "metadata", "annotations", HibernationAnnotation)
 	require.Equal(t, "off", hibernation,
 		"the annotation stays an explicit off for one release so SSA wakes previously hibernated pools")

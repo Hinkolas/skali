@@ -119,6 +119,9 @@ func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Clien
 		}
 		progress.Done(fmt.Sprintf("%d namespace(s)", deleted))
 	}
+	if err := removePriorityClasses(ctx, client, progress); err != nil {
+		return err
+	}
 
 	progress.Start("Update " + RecordPath)
 	record.Versions.Bundle = ""
@@ -126,6 +129,29 @@ func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Clien
 		return err
 	}
 	progress.Done("")
+	return nil
+}
+
+// removePriorityClasses deletes the bundle's cluster-scoped PriorityClasses
+// once no namespace references them; like the RBAC objects they would
+// otherwise survive a namespace-only uninstall.
+func removePriorityClasses(ctx context.Context, client *kube.Client, progress Progress) error {
+	progress.Start("Remove priority classes")
+	removed := 0
+	for _, name := range []string{layout.PriorityClassCritical, layout.PriorityClassHigh, layout.PriorityClassNormal} {
+		err := client.Clientset.SchedulingV1().PriorityClasses().Delete(ctx, name, metav1.DeleteOptions{})
+		switch {
+		case err == nil:
+			removed++
+		case !apierrors.IsNotFound(err):
+			return fmt.Errorf("remove priority class %s: %w", name, err)
+		}
+	}
+	if removed == 0 {
+		progress.Skip("nothing to remove")
+		return nil
+	}
+	progress.Done(fmt.Sprintf("%d class(es)", removed))
 	return nil
 }
 

@@ -47,6 +47,7 @@ const (
 	codePlatformMismatch        = "platform_mismatch"
 	codeInvalidValues           = "invalid_values"
 	codeUnsupportedSchema       = "unsupported_schema"
+	codeEnvironmentProtected    = "environment_protected"
 
 	// Backups.
 	codeBackupInFlight           = "backup_in_flight"

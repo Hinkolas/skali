@@ -236,7 +236,8 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					NodeSelector: capabilitySelector(),
+					NodeSelector:      capabilitySelector(),
+					PriorityClassName: layout.PriorityClassCritical,
 					Affinity: &corev1.Affinity{
 						// Quorum members apart from each other, preferred: a
 						// smaller fleet still schedules everything.
@@ -323,7 +324,8 @@ func renderVolumes(spec StoreSpec) *appsv1.DaemonSet {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					NodeSelector: nodeSelector,
+					NodeSelector:      nodeSelector,
+					PriorityClassName: layout.PriorityClassCritical,
 					Containers: []corev1.Container{{
 						Name:  "volume",
 						Image: Image,
@@ -403,6 +405,7 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					PriorityClassName: layout.PriorityClassCritical,
 					Affinity: &corev1.Affinity{
 						PodAntiAffinity: &corev1.PodAntiAffinity{
 							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
@@ -498,6 +501,7 @@ func renderAllInOne(spec StoreSpec) *appsv1.Deployment {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					PriorityClassName: layout.PriorityClassCritical,
 					Containers: []corev1.Container{{
 						Name:  "seaweed",
 						Image: Image,

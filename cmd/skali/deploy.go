@@ -87,6 +87,8 @@ func addDeployFlags(command *cobra.Command, opts *deployOptions) {
 		"promote the active revision of another environment of this project; nothing builds and no manifest is read")
 	command.Flags().BoolVar(&opts.PruneValues, "prune-values", false,
 		"remove stored values the manifest no longer references as part of this deployment")
+	command.Flags().BoolVar(&opts.BypassProtection, "bypass-protection", false,
+		"deploy into a promote-only environment anyway (environment admins with a recent login; recorded on the run)")
 }
 
 // validateFromFlags rejects build machinery combined with a promotion:

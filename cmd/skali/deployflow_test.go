@@ -765,3 +765,46 @@ func TestValuesStagingFollowsAccess(t *testing.T) {
 	require.ErrorContains(t, checkDeployAccess("read", "production"), "deploy on environment production required (your role: read)")
 	require.ErrorContains(t, checkDeployAccess("none", "production"), "deploy on environment production required (your role: none)")
 }
+
+// The client-side policy check mirrors the server: promote-only refuses a
+// direct deploy and a promotion from an unlisted source unless the bypass
+// is asked for by an environment admin; everything else passes untouched.
+func TestCheckDeployPolicy(t *testing.T) {
+	direct := &client.EnvironmentSettings{DeployPolicy: "direct", PromoteFrom: []string{"feat-x"}}
+	protected := &client.EnvironmentSettings{DeployPolicy: "promote-only", PromoteFrom: []string{"staging", "qa"}}
+	anySource := &client.EnvironmentSettings{DeployPolicy: "promote-only"}
+	plain, bypass := &deployOptions{}, &deployOptions{BypassProtection: true}
+
+	// Unprotected, unknown, and allowed promotions: no bypass consumed.
+	for _, tc := range []struct {
+		settings *client.EnvironmentSettings
+		source   string
+		opts     *deployOptions
+	}{
+		{nil, "", bypass}, {direct, "", plain}, {direct, "staging", bypass},
+		{protected, "staging", plain}, {protected, "qa", bypass}, {anySource, "feat-x", plain},
+	} {
+		consumed, err := checkDeployPolicy(tc.settings, "read", "production", tc.source, tc.opts)
+		require.NoError(t, err)
+		require.False(t, consumed)
+	}
+
+	_, err := checkDeployPolicy(protected, "admin", "production", "", plain)
+	require.EqualError(t, err, "environment production is promote-only: promote with skali deploy --from staging or qa "+
+		"--environment production; environment admins may pass --bypass-protection")
+	_, err = checkDeployPolicy(anySource, "admin", "production", "", plain)
+	require.ErrorContains(t, err, "skali deploy --from <environment> --environment production")
+	_, err = checkDeployPolicy(protected, "admin", "production", "feat-x", plain)
+	require.EqualError(t, err, "environment production accepts promotions from staging or qa only, not from feat-x; "+
+		"environment admins may pass --bypass-protection")
+	_, err = checkDeployPolicy(protected, "maintain", "production", "", bypass)
+	require.EqualError(t, err, "bypassing protection needs admin on environment production (your role: maintain)")
+	for _, role := range []string{"admin", ""} {
+		consumed, err := checkDeployPolicy(protected, role, "production", "", bypass)
+		require.NoError(t, err, role)
+		require.True(t, consumed, role)
+	}
+	consumed, err := checkDeployPolicy(protected, "admin", "production", "feat-x", bypass)
+	require.NoError(t, err)
+	require.True(t, consumed)
+}

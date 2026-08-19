@@ -188,9 +188,12 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertPlain(schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"}, module.KindIngress))
 
-	// Intercept EndpointSlices (local dev). Only managed slices match the
-	// selector; the endpointslice controller's own slices for ordinary
-	// Services never carry the label and stay invisible.
+	// Intercept EndpointSlices (local dev). The selector names skali's own
+	// managed-by value on top of the managed label: the endpointslice
+	// controller copies every Service label onto the slices it manages, so
+	// the managed label alone would expose every ordinary Service's slice
+	// as an undesired managed object and the kernel would prune it on every
+	// pass (the controller recreating it each time).
 	k.addObjectInformer("EndpointSlice", &discoveryv1.EndpointSlice{}, k.listWatch("EndpointSlice",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return k.client.Clientset.DiscoveryV1().EndpointSlices(all).List(context.Background(), o)
@@ -198,7 +201,7 @@ func (k *KubeSource) register() {
 		func(o metav1.ListOptions) (watch.Interface, error) {
 			return k.client.Clientset.DiscoveryV1().EndpointSlices(all).Watch(context.Background(), o)
 		},
-		managed, ""), convertPlain(schema.GroupVersionKind{Group: "discovery.k8s.io", Version: "v1", Kind: "EndpointSlice"}, module.KindEndpointSlice))
+		rendering.InterceptEndpointSliceSelector, ""), convertPlain(schema.GroupVersionKind{Group: "discovery.k8s.io", Version: "v1", Kind: "EndpointSlice"}, module.KindEndpointSlice))
 
 	k.addObjectInformer("PersistentVolumeClaim", &corev1.PersistentVolumeClaim{}, k.listWatch("PersistentVolumeClaim",
 		func(o metav1.ListOptions) (runtime.Object, error) {

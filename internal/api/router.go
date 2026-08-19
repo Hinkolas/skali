@@ -168,7 +168,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 	dh := &deploymentsHandlers{
 		st: d.Store, deploy: d.Deploy, artifacts: d.Artifacts, builds: d.Builds,
 		journal: d.Journal, registry: d.Registry, reconcile: d.Reconcile,
-		capabilities: d.Capabilities, managed: d.ManagedCluster,
+		capabilities: d.Capabilities, managed: d.ManagedCluster, auth: d.Auth,
 	}
 	ch := &clientStepsHandlers{st: d.Store, journal: d.Journal, values: d.Values}
 	r.Route("/v1", func(r chi.Router) {
@@ -232,7 +232,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				// per project and per environment (docs/permissions.md);
 				// destructive deletes and access management need sudo mode.
 				ph := &projectsHandlers{projects: d.Projects, reconcile: d.Reconcile, resolver: ac.resolver}
-				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal}
+				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal, reconcile: d.Reconcile}
 				ah := &accessHandlers{projects: d.Projects}
 				ac.route(r, "POST", "/projects", classProjectCreate, ph.create)
 				ac.route(r, "GET", "/projects", classProjectList, ph.list)

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/artifactstore"
+	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
@@ -36,6 +37,10 @@ type deploymentsHandlers struct {
 	reconcile    *reconcile.Kernel
 	capabilities []string
 	managed      bool
+	// auth answers session freshness for the protection bypass, which is
+	// sudo-gated inside the handler because plan and open themselves are
+	// not.
+	auth *auth.Service
 }
 
 type localApplicationPayload struct {
@@ -85,6 +90,7 @@ type deploymentPayload struct {
 	RevisionID          string `json:"revision_id,omitempty"`
 	RunID               string `json:"run_id,omitempty"`
 	BuildExecutor       string `json:"build_executor"`
+	BypassProtection    bool   `json:"bypass_protection"`
 }
 
 func (h *deploymentsHandlers) actionPayloads(ctx context.Context, projectID uuid.UUID, actions []deploy.ArtifactAction) []artifactActionPayload {
@@ -151,6 +157,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		Rebuild             bool                               `json:"rebuild"`
 		LocalApplications   map[string]localApplicationPayload `json:"local_applications"`
 		PruneValues         bool                               `json:"prune_values"`
+		BypassProtection    bool                               `json:"bypass_protection"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -162,10 +169,15 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	env := environmentFrom(r.Context())
-	requiredRole, ok := h.requireDeployRole(w, r, deployRequest{
+	request := deployRequest{
 		definitionVersionID: definitionVersionID, fromEnvironmentID: fromEnvironmentID,
-		candidateID: candidateID, pruneValues: req.PruneValues,
-	})
+		candidateID: candidateID, pruneValues: req.PruneValues, bypassProtection: req.BypassProtection,
+	}
+	requiredRole, ok := h.requireDeployRole(w, r, request)
+	if !ok {
+		return
+	}
+	bypassed, ok := h.requireDeployPolicy(w, r, request)
 	if !ok {
 		return
 	}
@@ -186,20 +198,23 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Plan         *plan.Plan              `json:"plan"`
-		Actions      []artifactActionPayload `json:"actions"`
-		UpToDate     bool                    `json:"up_to_date"`
-		Orphaned     []string                `json:"orphaned,omitempty"`
-		RequiredRole string                  `json:"required_role"`
-	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned, requiredRole.String()})
+		Plan             *plan.Plan              `json:"plan"`
+		Actions          []artifactActionPayload `json:"actions"`
+		UpToDate         bool                    `json:"up_to_date"`
+		Orphaned         []string                `json:"orphaned,omitempty"`
+		RequiredRole     string                  `json:"required_role"`
+		BypassProtection bool                    `json:"bypass_protection"`
+	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned, requiredRole.String(), bypassed})
 }
 
-// deployRequest is what decides the role a deployment needs.
+// deployRequest is what decides the role a deployment needs and whether
+// the environment's protection policy lets it through.
 type deployRequest struct {
 	definitionVersionID uuid.UUID
 	fromEnvironmentID   uuid.UUID
 	candidateID         uuid.UUID
 	pruneValues         bool
+	bypassProtection    bool
 }
 
 // requireDeployRole places the request on the ladder and checks the
@@ -252,6 +267,62 @@ func (h *deploymentsHandlers) requireDeployRole(w http.ResponseWriter, r *http.R
 	return required, true
 }
 
+// requireDeployPolicy applies the environment's protection after the role
+// check. Under promote-only only a promotion from an allowed source passes;
+// a direct deploy or a promotion from elsewhere is refused with
+// environment_protected unless the caller bypasses explicitly, which takes
+// environment admin and a fresh session (the sudo gate lives here because
+// plan and open are not sudo routes). The bypass is consumed only when the
+// policy would otherwise refuse; on an unprotected environment or an
+// allowed promotion the flag is ignored and nothing is recorded. Returns
+// whether a bypass was consumed.
+func (h *deploymentsHandlers) requireDeployPolicy(w http.ResponseWriter, r *http.Request, req deployRequest) (bool, bool) {
+	envGrant := environmentGrantFrom(r.Context())
+	if !envGrant.Protected() {
+		return false, true
+	}
+	sourceName := ""
+	if req.fromEnvironmentID != uuid.Nil {
+		// requireDeployRole already answered 404 for an unknown source.
+		if source, ok := grantFrom(r.Context()).Environment(req.fromEnvironmentID); ok {
+			sourceName = source.Name
+		}
+		if envGrant.AcceptsPromotionFrom(sourceName) {
+			return false, true
+		}
+	}
+	if !req.bypassProtection {
+		writeError(w, http.StatusForbidden, codeEnvironmentProtected, protectedMessage(envGrant, sourceName))
+		return false, false
+	}
+	if !envGrant.Role.AtLeast(authz.Admin) {
+		writeError(w, http.StatusForbidden, codeForbidden,
+			authz.Required(authz.Admin, "environment", envGrant.Name)+": bypassing protection")
+		return false, false
+	}
+	if sess := SessionFrom(r.Context()); sess == nil || !h.auth.IsSessionFresh(sess) {
+		writeError(w, http.StatusForbidden, codeReauthRequired, "recent authentication required")
+		return false, false
+	}
+	return true, true
+}
+
+// protectedMessage names the way in: the promote command with the allowed
+// sources, and the bypass for environment admins.
+func protectedMessage(env *authz.EnvironmentGrant, sourceName string) string {
+	sources := env.Settings.PromoteFrom
+	if sourceName != "" {
+		return "environment " + env.Name + " accepts promotions from " + strings.Join(sources, " or ") +
+			" only, not from " + sourceName + "; environment admins may pass --bypass-protection"
+	}
+	from := "<environment>"
+	if len(sources) > 0 {
+		from = strings.Join(sources, " or ")
+	}
+	return "environment " + env.Name + " is promote-only: promote with skali deploy --from " + from +
+		" --environment " + env.Name + "; environment admins may pass --bypass-protection"
+}
+
 // POST /v1/environments/{id}/deployments
 func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
@@ -269,6 +340,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		Rebuild             bool                               `json:"rebuild"`
 		LocalApplications   map[string]localApplicationPayload `json:"local_applications"`
 		PruneValues         bool                               `json:"prune_values"`
+		BypassProtection    bool                               `json:"bypass_protection"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -284,10 +356,15 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 			"build_executor must be local (cloud builders arrive with R4)")
 		return
 	}
-	requiredRole, ok := h.requireDeployRole(w, r, deployRequest{
+	request := deployRequest{
 		definitionVersionID: definitionVersionID, fromEnvironmentID: fromEnvironmentID,
-		candidateID: candidateID, pruneValues: req.PruneValues,
-	})
+		candidateID: candidateID, pruneValues: req.PruneValues, bypassProtection: req.BypassProtection,
+	}
+	requiredRole, ok := h.requireDeployRole(w, r, request)
+	if !ok {
+		return
+	}
+	bypassed, ok := h.requireDeployPolicy(w, r, request)
 	if !ok {
 		return
 	}
@@ -312,6 +389,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		RegistryConfigured: !h.registry.Disabled(),
 		Journal:            h.journal,
 		Force:              req.Force,
+		BypassProtection:   bypassed,
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)
@@ -319,25 +397,28 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	}
 	if opened.UpToDate {
 		writeJSON(w, http.StatusOK, struct {
-			UpToDate     bool       `json:"up_to_date"`
-			Plan         *plan.Plan `json:"plan"`
-			RequiredRole string     `json:"required_role"`
-		}{true, opened.Plan, requiredRole.String()})
+			UpToDate         bool       `json:"up_to_date"`
+			Plan             *plan.Plan `json:"plan"`
+			RequiredRole     string     `json:"required_role"`
+			BypassProtection bool       `json:"bypass_protection"`
+		}{true, opened.Plan, requiredRole.String(), bypassed})
 		return
 	}
 	writeJSON(w, http.StatusCreated, struct {
-		Deployment   deploymentPayload       `json:"deployment"`
-		Plan         *plan.Plan              `json:"plan"`
-		Actions      []artifactActionPayload `json:"actions"`
-		UpToDate     bool                    `json:"up_to_date"`
-		Orphaned     []string                `json:"orphaned,omitempty"`
-		RequiredRole string                  `json:"required_role"`
+		Deployment       deploymentPayload       `json:"deployment"`
+		Plan             *plan.Plan              `json:"plan"`
+		Actions          []artifactActionPayload `json:"actions"`
+		UpToDate         bool                    `json:"up_to_date"`
+		Orphaned         []string                `json:"orphaned,omitempty"`
+		RequiredRole     string                  `json:"required_role"`
+		BypassProtection bool                    `json:"bypass_protection"`
 	}{
-		Deployment:   newDeploymentPayload(opened.Deployment),
-		Plan:         opened.Plan,
-		Actions:      h.actionPayloads(r.Context(), opened.Deployment.ProjectID, opened.Actions),
-		Orphaned:     opened.Orphaned,
-		RequiredRole: requiredRole.String(),
+		Deployment:       newDeploymentPayload(opened.Deployment),
+		Plan:             opened.Plan,
+		Actions:          h.actionPayloads(r.Context(), opened.Deployment.ProjectID, opened.Actions),
+		Orphaned:         opened.Orphaned,
+		RequiredRole:     requiredRole.String(),
+		BypassProtection: bypassed,
 	})
 }
 
@@ -619,6 +700,7 @@ func newDeploymentPayload(deployment *store.Deployment) deploymentPayload {
 		DefinitionVersionID: deployment.DefinitionVersionID.String(),
 		Status:              deployment.Status,
 		BuildExecutor:       deployment.BuildExecutor,
+		BypassProtection:    deployment.BypassProtection,
 	}
 	if deployment.RevisionID != nil {
 		payload.RevisionID = deployment.RevisionID.String()

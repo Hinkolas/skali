@@ -114,6 +114,11 @@ func ApplyTier(ctx context.Context, runner host.Runner, record *Record, plan Tie
 	if err := applier.ApplyObjects(ctx, objects.Namespace); err != nil {
 		return err
 	}
+	// The database names a PriorityClass; a re-tier of a cluster converged
+	// before the classes existed must not leave it Pending.
+	if err := applier.ApplyObjects(ctx, objects.Priority); err != nil {
+		return err
+	}
 	if err := applier.ApplyObjects(ctx, objects.Database); err != nil {
 		return err
 	}

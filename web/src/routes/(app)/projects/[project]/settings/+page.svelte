@@ -55,10 +55,13 @@
 			return pills;
 		}
 		if (environment.settings?.deploy_policy === 'promote-only') {
+			const sources = environment.settings.promote_from;
 			pills.push({
 				text: 'protected',
 				tone: 'warning',
-				title: 'promote-only: direct deploys are refused'
+				title: `promote-only: direct deploys are refused; promote from ${
+					sources.length > 0 ? sources.join(' or ') : 'any environment'
+				}`
 			});
 		}
 		if (environment.settings?.priority === 'high') {

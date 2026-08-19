@@ -247,6 +247,10 @@ type OpenInput struct {
 	// stamps a workload restart so every application pod is recreated.
 	// Stateful services are untouched: force recreates pods, never data.
 	Force bool
+	// BypassProtection records that the API consumed an environment
+	// admin's explicit bypass of the promote-only policy; the handler has
+	// already verified role and session freshness.
+	BypassProtection bool
 }
 
 // Opened is one accepted deployment: the coordination row, its run, and
@@ -363,10 +367,11 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	}
 
 	run, err := in.Journal.CreateRun(ctx, journal.RunInput{
-		Kind:          "deployment",
-		ProjectID:     env.ProjectID,
-		EnvironmentID: env.ID,
-		Actor:         in.Actor,
+		Kind:             "deployment",
+		ProjectID:        env.ProjectID,
+		EnvironmentID:    env.ID,
+		Actor:            in.Actor,
+		BypassProtection: in.BypassProtection,
 	})
 	if err != nil {
 		return nil, err
@@ -442,6 +447,7 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 		Restart:             in.Force,
 		LocalApplications:   encodedLocals,
 		PruneValues:         in.PruneValues,
+		BypassProtection:    in.BypassProtection,
 	})
 	if err != nil {
 		return nil, err
@@ -546,6 +552,7 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 		run, err := jsvc.CreateRun(ctx, journal.RunInput{
 			Kind: "deployment", ProjectID: deployment.ProjectID,
 			EnvironmentID: deployment.EnvironmentID, Actor: deployment.Actor,
+			BypassProtection: deployment.BypassProtection,
 		})
 		if err != nil {
 			return nil, err

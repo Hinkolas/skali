@@ -431,6 +431,132 @@ func TestDeployRequiredRole(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
+// Protection: a promote-only environment refuses direct deploys and
+// promotions from sources outside promote_from with environment_protected
+// in plan and open; rollback stays open; the explicit bypass takes
+// environment admin and a fresh session and is recorded on the deployment
+// and its run; the flag is ignored where the policy would not refuse.
+func TestDeployProtection(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("owner@example.com", "hunter2hunter2")
+	a.createMember("dev@example.com", "hunter2hunter2")
+	a.createMember("maint@example.com", "hunter2hunter2")
+	owner := a.login("owner@example.com", "hunter2hunter2")
+	dev := a.login("dev@example.com", "hunter2hunter2")
+	maint := a.login("maint@example.com", "hunter2hunter2")
+	projectID, prodID := a.createEnvironment(t, owner)
+	createEnv := func(name string) string {
+		status, body := a.do("POST", "/v1/projects/"+projectID+"/environments", owner, map[string]any{"name": name})
+		require.Equal(t, http.StatusCreated, status, "%v", body)
+		return body["environment"].(map[string]any)["id"].(string)
+	}
+	stagingID, featID := createEnv("staging"), createEnv("feat-x")
+	a.grantMember(t, projectID, "dev@example.com", "read")
+	a.setCell(t, prodID, "dev@example.com", "deploy")
+	a.grantMember(t, projectID, "maint@example.com", "maintain")
+
+	// Every environment runs something: production twice (a rollback
+	// target), staging and feat-x once (promotion sources). All before the
+	// policy, which would refuse the owner's direct deploys too.
+	definitionVersion := a.submitDefinition(t, owner, projectID, deployAPIManifest)
+	first := a.deployAndActivate(t, owner, prodID, definitionVersion, a.stageValues(t, owner, prodID, definitionVersion, "prod-one"))
+	a.deployAndActivate(t, owner, prodID, definitionVersion, a.stageValues(t, owner, prodID, definitionVersion, "prod-two"))
+	a.deployAndActivate(t, owner, stagingID, definitionVersion, a.stageValues(t, owner, stagingID, definitionVersion, "staging-one"))
+	a.deployAndActivate(t, owner, featID, definitionVersion, a.stageValues(t, owner, featID, definitionVersion, "feat-one"))
+	a.setEnvironmentSettings(t, prodID, map[string]any{"deploy_policy": "promote-only", "promote_from": []string{"staging"}})
+
+	cancelIfOpened := func(status int, body map[string]any, token string) {
+		t.Helper()
+		if status != http.StatusCreated {
+			return
+		}
+		runID := body["deployment"].(map[string]any)["run_id"].(string)
+		status, cancelBody := a.do("POST", "/v1/runs/"+runID+"/cancel", token, nil)
+		require.Equal(t, http.StatusOK, status, "%v", cancelBody)
+	}
+
+	// Direct deploys are refused for everyone, plan and open alike, naming
+	// the way in.
+	for _, path := range []string{"/plan", "/deployments"} {
+		direct := map[string]any{"definition_version_id": definitionVersion, "builds": buildsPayload()}
+		if path == "/deployments" {
+			direct["force"] = true
+		}
+		status, body := a.do("POST", "/v1/environments/"+prodID+path, owner, direct)
+		require.Equal(t, http.StatusForbidden, status, "%s %v", path, body)
+		require.Equal(t, "environment_protected", errorCode(t, body))
+		require.Contains(t, errorMessage(t, body), "environment production is promote-only: promote with skali deploy --from staging --environment production")
+	}
+
+	// A promotion from the listed source passes on deploy; one from
+	// elsewhere is refused; an empty list admits any source.
+	status, body := a.do("POST", "/v1/environments/"+prodID+"/plan", dev, map[string]any{"from_environment_id": stagingID})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, "deploy", body["required_role"])
+	require.Equal(t, false, body["bypass_protection"])
+	status, body = a.do("POST", "/v1/environments/"+prodID+"/deployments", dev, map[string]any{"from_environment_id": stagingID})
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, status, "%v", body)
+	require.Equal(t, false, body["bypass_protection"])
+	cancelIfOpened(status, body, dev)
+	status, body = a.do("POST", "/v1/environments/"+prodID+"/plan", dev, map[string]any{"from_environment_id": featID})
+	require.Equal(t, http.StatusForbidden, status, "%v", body)
+	require.Equal(t, "environment_protected", errorCode(t, body))
+	require.Contains(t, errorMessage(t, body), "accepts promotions from staging only, not from feat-x")
+	a.setEnvironmentSettings(t, prodID, map[string]any{"promote_from": []string{}})
+	status, body = a.do("POST", "/v1/environments/"+prodID+"/plan", dev, map[string]any{"from_environment_id": featID})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	a.setEnvironmentSettings(t, prodID, map[string]any{"promote_from": []string{"staging"}})
+
+	// Rollback is not policy-gated: deploy on the environment suffices.
+	status, body = a.do("PUT", "/v1/environments/"+prodID+"/target", dev, map[string]any{"revision_id": first})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	status, body = a.do("POST", "/v1/runs/"+body["run_id"].(string)+"/cancel", dev, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+
+	// The bypass: below admin it is forbidden, as admin it needs a fresh
+	// session, then plan and open pass and record it on the deployment and
+	// the run.
+	bypass := map[string]any{
+		"definition_version_id": definitionVersion, "builds": buildsPayload(), "bypass_protection": true,
+	}
+	bypassOpen := map[string]any{
+		"definition_version_id": definitionVersion, "builds": buildsPayload(), "bypass_protection": true, "force": true,
+	}
+	status, body = a.do("POST", "/v1/environments/"+prodID+"/plan", maint, bypass)
+	require.Equal(t, http.StatusForbidden, status, "%v", body)
+	require.Equal(t, "forbidden", errorCode(t, body))
+	require.Equal(t, "admin on environment production required: bypassing protection", errorMessage(t, body))
+	a.staleAllSessions()
+	status, body = a.do("POST", "/v1/environments/"+prodID+"/plan", owner, bypass)
+	require.Equal(t, http.StatusForbidden, status, "%v", body)
+	require.Equal(t, "reauth_required", errorCode(t, body))
+	owner = a.login("owner@example.com", "hunter2hunter2")
+	status, body = a.do("POST", "/v1/environments/"+prodID+"/plan", owner, bypass)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, true, body["bypass_protection"])
+	status, body = a.do("POST", "/v1/environments/"+prodID+"/deployments", owner, bypassOpen)
+	require.Equal(t, http.StatusCreated, status, "%v", body)
+	require.Equal(t, true, body["bypass_protection"])
+	deployment := body["deployment"].(map[string]any)
+	require.Equal(t, true, deployment["bypass_protection"])
+	status, body = a.do("GET", "/v1/runs/"+deployment["run_id"].(string), owner, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, true, body["run"].(map[string]any)["bypass_protection"])
+	cancelIfOpened(http.StatusCreated, map[string]any{"deployment": deployment}, owner)
+
+	// Where the policy would not refuse, the flag is ignored: no freshness
+	// needed, nothing recorded.
+	a.staleAllSessions()
+	status, body = a.do("POST", "/v1/environments/"+stagingID+"/plan", owner, bypass)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, false, body["bypass_protection"])
+	status, body = a.do("POST", "/v1/environments/"+prodID+"/plan", dev, map[string]any{
+		"from_environment_id": stagingID, "bypass_protection": true,
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, false, body["bypass_protection"])
+}
+
 // Registry scope follows membership: deployers push, members pull,
 // non-members see no repository, the cache follows deployer-anywhere.
 func TestRegistryScopeFollowsMembership(t *testing.T) {

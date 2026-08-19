@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/Hinkolas/skali/internal/compiler"
@@ -38,6 +39,8 @@ func TestRenderHelloWorldGolden(t *testing.T) {
 		// The golden freezes the TLS-capable shape: the shared redirect
 		// Middleware, both routers, and the explicit Certificate.
 		Certificates: true,
+		// The kernel always names a class; the golden freezes the normal one.
+		PriorityClassName: layout.PriorityClassNormal,
 	})
 	require.NoError(t, err)
 	kinds := make([]string, 0, len(objects))
@@ -97,6 +100,33 @@ func TestRenderClusterPlacementOptions(t *testing.T) {
 	require.Equal(t, map[string]string{
 		layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 	}, managed[0].(*appsv1.Deployment).Spec.Template.Spec.NodeSelector)
+}
+
+// The environment's priority reaches every application pod as its
+// PriorityClass: Deployments and release Jobs alike. Without a class
+// (offline rendering) the field stays absent.
+func TestRenderPriorityClass(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "file-sharing", "skali.yml"))
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+	render := func(class string) []runtime.Object {
+		objects, err := Render(result, Options{
+			Namespace:         "skali-file-sharing",
+			Variables:         map[string]string{"APP_DOMAIN": "files.localhost", "SESSION_SECRET": "test-only"},
+			BuildImages:       map[string]string{"web": "registry.local/web@sha256:test"},
+			PriorityClassName: class,
+		})
+		require.NoError(t, err)
+		return objects
+	}
+	high := render(layout.PriorityClassHigh)
+	require.Equal(t, layout.PriorityClassHigh, high[0].(*batchv1.Job).Spec.Template.Spec.PriorityClassName)
+	require.Equal(t, layout.PriorityClassHigh, high[1].(*appsv1.Deployment).Spec.Template.Spec.PriorityClassName)
+	plain := render("")
+	require.Empty(t, plain[0].(*batchv1.Job).Spec.Template.Spec.PriorityClassName)
+	require.Empty(t, plain[1].(*appsv1.Deployment).Spec.Template.Spec.PriorityClassName)
 }
 
 // The three TLS policies and the strategy knob shape the edge objects: an
@@ -613,6 +643,16 @@ func TestRenderInterceptedApplication(t *testing.T) {
 	require.Equal(t, "true", slice.Labels[LabelManaged])
 	require.Equal(t, service.Name, slice.Labels["kubernetes.io/service-name"])
 	require.Equal(t, "skali.dev", slice.Labels["endpointslice.kubernetes.io/managed-by"])
+	// The observe informer lists exactly these slices; a controller-managed
+	// slice (every Service label copied, the controller's own managed-by)
+	// must stay outside the selector or the kernel prunes it every pass.
+	selector, err := labels.Parse(InterceptEndpointSliceSelector)
+	require.NoError(t, err)
+	require.True(t, selector.Matches(labels.Set(slice.Labels)))
+	controllerSlice := labels.Set{LabelManaged: "true", LabelEnvironment: "x",
+		"kubernetes.io/service-name": service.Name,
+		LabelEndpointSliceManagedBy:  "endpointslice-controller.k8s.io"}
+	require.False(t, selector.Matches(controllerSlice))
 	require.Equal(t, discoveryv1.AddressTypeIPv4, slice.AddressType)
 	require.Equal(t, []string{"192.0.2.10"}, slice.Endpoints[0].Addresses)
 	require.True(t, *slice.Endpoints[0].Conditions.Ready)

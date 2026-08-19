@@ -149,6 +149,9 @@ type PlanResult struct {
 	// RequiredRole is the environment role this deploy needs (deploy for
 	// code-only, maintain when it changes the definition or values).
 	RequiredRole string `json:"required_role"`
+	// BypassProtection reports that the server consumed an explicit bypass
+	// of the environment's promote-only policy for this request.
+	BypassProtection bool `json:"bypass_protection"`
 }
 
 type Deployment struct {
@@ -160,15 +163,17 @@ type Deployment struct {
 	RevisionID          string `json:"revision_id"`
 	RunID               string `json:"run_id"`
 	BuildExecutor       string `json:"build_executor"`
+	BypassProtection    bool   `json:"bypass_protection"`
 }
 
 type OpenedDeployment struct {
-	Deployment   *Deployment      `json:"deployment"`
-	Plan         *PlanDocument    `json:"plan"`
-	Actions      []ArtifactAction `json:"actions"`
-	UpToDate     bool             `json:"up_to_date"`
-	Orphaned     []string         `json:"orphaned"`
-	RequiredRole string           `json:"required_role"`
+	Deployment       *Deployment      `json:"deployment"`
+	Plan             *PlanDocument    `json:"plan"`
+	Actions          []ArtifactAction `json:"actions"`
+	UpToDate         bool             `json:"up_to_date"`
+	Orphaned         []string         `json:"orphaned"`
+	RequiredRole     string           `json:"required_role"`
+	BypassProtection bool             `json:"bypass_protection"`
 }
 
 type CompletedDeployment struct {
@@ -192,6 +197,9 @@ type Run struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	StartedAt     *time.Time `json:"started_at"`
 	FinishedAt    *time.Time `json:"finished_at"`
+	// BypassProtection marks a deployment that entered a promote-only
+	// environment on an environment admin's explicit bypass.
+	BypassProtection bool `json:"bypass_protection"`
 }
 
 type Attempt struct {
@@ -450,6 +458,10 @@ type DeployRequest struct {
 	// references as part of the deployment; they show as prune rows in the
 	// plan instead of the orphaned advisory.
 	PruneValues bool `json:"prune_values,omitempty"`
+	// BypassProtection asks to deploy into a promote-only environment
+	// anyway; the server consumes it only when the policy would refuse and
+	// then requires environment admin and a fresh session.
+	BypassProtection bool `json:"bypass_protection,omitempty"`
 }
 
 // LocalApplication maps an application's manifest port names to the host
@@ -481,6 +493,11 @@ func (c *Client) Plan(ctx context.Context, environmentID string, req DeployReque
 	}
 	if req.PruneValues {
 		body["prune_values"] = true
+	}
+	// Sent only when set: skalid rejects unknown fields, and a newer CLI
+	// must keep planning against an older installation.
+	if req.BypassProtection {
+		body["bypass_protection"] = true
 	}
 	if err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/plan", body, &res); err != nil {
 		return nil, err

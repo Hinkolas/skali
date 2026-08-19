@@ -68,6 +68,7 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 2
         resources: {}
+      priorityClassName: skali-normal
       terminationGracePeriodSeconds: 30
       topologySpreadConstraints:
       - labelSelector:

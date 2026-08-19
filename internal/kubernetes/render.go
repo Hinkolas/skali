@@ -77,6 +77,13 @@ type Options struct {
 	// host (host.k3d.internal resolved to an IP; kube-proxy ignores FQDN
 	// endpoints). Required when Intercepts is non-empty.
 	InterceptHostIP string
+
+	// PriorityClassName is the PriorityClass every application pod
+	// (Deployments and release Jobs) names, derived from the environment's
+	// priority setting and rendered live like RestartedAt rather than
+	// stored in the revision. Empty renders no field, so offline rendering
+	// and clusters without the bundle classes stay clean.
+	PriorityClassName string
 }
 
 // revisionHistoryLimit bounds retained ReplicaSets. Rollback re-renders old
@@ -255,6 +262,9 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		}
 		if options.ProgressDeadlineSeconds > 0 {
 			deployment.Spec.ProgressDeadlineSeconds = new(int32(options.ProgressDeadlineSeconds))
+		}
+		if options.PriorityClassName != "" {
+			deployment.Spec.Template.Spec.PriorityClassName = options.PriorityClassName
 		}
 		if options.ManagedCluster {
 			deployment.Spec.Template.Spec.NodeSelector = map[string]string{
@@ -455,6 +465,9 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, name, image strin
 				},
 			},
 		},
+	}
+	if options.PriorityClassName != "" {
+		job.Spec.Template.Spec.PriorityClassName = options.PriorityClassName
 	}
 	if options.ManagedCluster {
 		job.Spec.Template.Spec.NodeSelector = map[string]string{
@@ -716,7 +729,7 @@ func renderInterceptSlice(serviceName, namespace string, labels map[string]strin
 	}
 	sliceLabels := maps.Clone(labels)
 	sliceLabels["kubernetes.io/service-name"] = serviceName
-	sliceLabels["endpointslice.kubernetes.io/managed-by"] = "skali.dev"
+	sliceLabels[LabelEndpointSliceManagedBy] = EndpointSliceManagedBySkali
 	ready := true
 	return &discoveryv1.EndpointSlice{
 		TypeMeta: metav1.TypeMeta{APIVersion: "discovery.k8s.io/v1", Kind: "EndpointSlice"},

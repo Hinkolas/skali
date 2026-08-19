@@ -1,6 +1,6 @@
 -- name: CreateRun :one
-INSERT INTO runs (id, kind, project_id, environment_id, actor)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetRunByID :one

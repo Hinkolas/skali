@@ -1,14 +1,14 @@
 # Permissions
 
-Status: design agreed 2026-08-19. The server side (schema, resolver, every
-route classified and enforced, registry scope, members/cells/settings API,
-payload additions) and the management surfaces (`skali access`, `skali env`,
-the deploy flow consulting `access`, the console's members grid, environment
-settings, locked environments, gated controls, and the `create_projects`
-toggle) are implemented; the promote-only policy enforcement with its bypass
-and the PriorityClass rendering are pending. This file is the description of
-how access works; the "Open decisions" section at the end disappears as they
-are settled.
+Status: design agreed and implemented 2026-08-19, in three slices: the
+server side (schema, resolver, every route classified and enforced,
+registry scope, members/cells/settings API, payload additions), the
+management surfaces (`skali access`, `skali env`, the deploy flow
+consulting `access`, the console's members grid, environment settings,
+locked environments, gated controls, the `create_projects` toggle), and the
+protection policy with its recorded bypass plus the PriorityClasses. This
+file is the description of how access works; every decision it once listed
+as open is settled in the text.
 
 ## Why
 
@@ -195,24 +195,39 @@ environment only changes through:
 
 - promote from an environment in `promote_from` (or any environment of the
   project when the list is empty); the promoter needs `read` on the source
-  and `deploy` on the target;
-- rollback to a revision that was previously active in this environment;
+  and `deploy` on the target. `promote_from` is consulted only under
+  promote-only; a `direct` environment accepts promotions from any
+  environment of the project;
+- rollback to a revision of this environment (`PUT .../target`, `deploy`,
+  no sudo). That includes revisions created before the environment became
+  promote-only and revisions whose rollout failed and fell back; rollback
+  re-targets what the environment already holds and is not policy-gated;
 - an explicit bypass (below).
 
-A direct deploy is refused with `403 environment_protected` and a message
-that names the promote command. The check runs in plan as well as in open,
-so the CLI refuses before anything is built. Values changes, restore, exec,
-and backups are not policy-gated: the policy is about untested code
-reaching the environment; those are configuration, data, and access, and
-have their own roles.
+A direct deploy, and a promotion from a source outside the list, are
+refused with `403 environment_protected` and a message that names the way
+in ("environment production is promote-only: promote with skali deploy
+--from staging --environment production; environment admins may pass
+--bypass-protection"). The check runs in plan as well as in open, so the
+CLI refuses before anything is built (and, knowing the environment's
+settings, before it even submits the definition). Values changes, restore,
+exec, backups, teardown, and delete are not policy-gated: the policy is
+about untested code reaching the environment; those are configuration,
+data, access, and the environment's existence, and have their own roles
+(restore keeps the sudo it has as a maintain action; nothing gains sudo
+because of protection).
 
 The policy applies to everyone including admins. Bypass: request field
 `bypass_protection: true` (`skali deploy --bypass-protection`; `--force`
 already means "restart even when nothing changed" and keeps that meaning).
-Requires environment `admin` (project admins and instance admins included)
-and a fresh session (sudo mode, `403 reauth_required` otherwise, the CLI
-reauths and retries). Recorded on the run and the deployment, shown in the
-ready summary and the console.
+The server consumes it only when the policy would otherwise refuse; on a
+`direct` environment or an allowed promotion the flag is ignored, nothing
+is checked, nothing is recorded. A consumed bypass requires environment
+`admin` (project admins and instance admins included) and a fresh session
+(sudo mode, `403 reauth_required` otherwise, the CLI reauths and retries
+plan and open). It is recorded on the deployment and its run
+(`bypass_protection`), shown under the plan and in the ready summary, by
+`skali run list`, and by the console's run list and run panel.
 
 ## Priority
 
@@ -221,18 +236,39 @@ are tight; `normal` environments yield. Only instance admins create or
 raise environments to `high` because it is a cluster-wide resource decision,
 not a project decision.
 
-In the permission slice, priority drives two PriorityClasses in the system
-bundle (`skali-high` preempts `skali-normal`), rendered as
-`priorityClassName` on application pods: the scheduler evicts
-normal-priority pods when a high-priority pod cannot be placed, and the
-kubelet evicts normal-priority pods first under node pressure. It also
-selects the creation defaults above. Later, under the roadmap's resource
-item and referencing this field: request and limit defaults per priority,
-an optional cluster-wide cap on normal-priority consumption via a
-priority-scoped ResourceQuota, database placement (high on the production
-pool, normal on the shared pool), and a graceful scale-down controller if
-preemption proves too blunt. Priority does not imply protection; that is
-an explicit setting.
+Priority drives three PriorityClasses in the system bundle, none the
+global default, all with the default preemption policy:
+
+| class | value | who carries it |
+|---|---|---|
+| `skali-critical` | 100000000 | skali itself: skalid, the registry, the console, seaweed, the bootstrap database, and every managed CNPG cluster; preempts application pods |
+| `skali-high` | 1000000 | application pods (Deployments and release Jobs) of `priority: high` environments |
+| `skali-normal` | 0 | application pods of `priority: normal` environments; the rank of an unclassed pod, so introducing it changed nothing for existing workloads |
+
+The scheduler preempts lower classes when a higher one cannot be placed,
+and the kubelet evicts lower classes first under node pressure. The values
+are immutable once the classes exist (a later change means delete and
+recreate during converge), so they are final. Vendored operator pods (CNPG
+controller, cert-manager) and the backup and restore Jobs stay unclassed.
+
+The application class renders live from the environment row (like the
+restart stamp, not part of the revision): `skali env set --priority`
+re-renders the environment at once, the Deployments move onto the new
+class, and their pods roll; the CLI and console say so. Priority also
+selects the creation defaults above. Introducing the classes moved the
+bundle hash, so every installation re-converges once at the upgrade (`skali
+dev` by itself, production with `skali cluster upgrade`), and every pod
+template that gained a class rolled once: all application Deployments,
+skalid, registry, console, seaweed, and the CNPG clusters (rolling update;
+a single-instance database sees a brief outage, the dev all-in-one seaweed
+Deployment is `Recreate` and blinks).
+
+Later, under the roadmap's resource item and referencing this field:
+request and limit defaults per priority, an optional cluster-wide cap on
+normal-priority consumption via a priority-scoped ResourceQuota, database
+placement (high on the production pool, normal on the shared pool), and a
+graceful scale-down controller if preemption proves too blunt. Priority
+does not imply protection; that is an explicit setting.
 
 ## Who may do what
 
@@ -358,10 +394,13 @@ and so `skali` can refuse before doing work:
   requests, with the explicit cell (null when inherited). Only environments
   the caller may read appear, so neither client re-implements the rules
   (and the CLI binary stays free of the database packages).
-- Plan responses report `required_role` (`deploy` or `maintain`, from
-  whether the definition changed) and the policy verdict (`protected`,
-  allowed sources, whether the caller may bypass), so `skali deploy`
-  refuses before building and the console disables the right buttons.
+- Plan and open responses report `required_role` (`deploy` or `maintain`,
+  from whether the definition changed) and `bypass_protection` (whether
+  the request consumed the bypass). The policy verdict itself is the `403
+  environment_protected` message naming the allowed sources and the
+  bypass; clients already hold the environment's `settings` and `access`,
+  so `skali deploy` refuses before submitting anything and the console
+  explains without a call.
 - Runs and deployments carry the actor and `bypass_protection`.
 
 ## Management surfaces
@@ -391,14 +430,21 @@ CLI (settled 2026-08-19): one ladder, one verb set, the level picked by
   `--remote`. Sudo-gated writes confirm the password (or the second factor)
   when the login has aged; on a pipe the answer is read from stdin, so
   scripts work.
-- `skali deploy` / `plan` / `promote` consult the environment's `access`
-  before any work: below `deploy` they refuse at once; below `maintain` an
-  explicit `--env-file` or `--prune-values` is refused with the required
-  role and a discovered env file is skipped ("values stored (deploy role
-  cannot stage values)"), so a deploy-role user deploys code with the
-  stored values. The plan output names the role the server required.
-  Interactive first-deploy environment creation stays, always `normal`
-  priority.
+- `skali deploy` / `plan` / `deploy --from` consult the environment's
+  `access` and `settings` before any work: below `deploy` they refuse at
+  once; below `maintain` an explicit `--env-file` or `--prune-values` is
+  refused with the required role and a discovered env file is skipped
+  ("values stored (deploy role cannot stage values)"), so a deploy-role
+  user deploys code with the stored values; under promote-only a direct
+  deploy or a promotion from an unlisted source is refused with the promote
+  command, and `--bypass-protection` below environment admin with the role.
+  With the bypass, plan and open reauthenticate once when the login has
+  aged, the plan prints "protection bypassed: environment X is
+  promote-only (recorded on the run)", and the ready summary leads with
+  "protection bypassed". `skali run list` marks such runs; `skali env set
+  --priority` notes the class the application pods roll onto. The plan
+  output names the role the server required. Interactive first-deploy
+  environment creation stays, always `normal` priority.
 - `skalid user create --create-projects` seeds a member who may create
   projects; `skali remote status` shows the instance role and the flag.
 - `skali dev` is unaffected: the local platform's admin is an instance
@@ -411,7 +457,9 @@ settings gain a Members tab with the grid, editable inline by project admins
 email, remove with confirmation); the Environments card shows the caller's
 role, `locked` / `protected` / `high` pills, and an inline settings form per
 environment (ceiling, deploy policy, promotion sources, priority with `high`
-for instance admins only); the environment dropdown lists locked
+for instance admins only, and the note that a priority change rolls the
+application pods); the run list and the run panel mark a bypassed
+protection; the environment dropdown lists locked
 environments disabled with a lock icon and marks protected and high ones;
 the default environment prefers an unlocked one; a locked environment's
 operational pages show a lock state while settings stay reachable; New
@@ -497,8 +545,18 @@ logged in under a second remote, project `read` plus a `deploy` cell on
 staging, code-only deploy allowed, env file and definition change refused
 with the required role, local locked by the ceiling and then by a `none`
 cell, environment creation by `maintain` with the creator administering,
-changing, and purging it); promote-only refusal and bypass join it with the
-protection slice. Console checks are svelte-check, build, and SSR smoke
+changing, and purging it; then protection: promote-only refusing a direct
+deploy before any build and a promotion from a locked source, an allowed
+promotion, the bypass refused below admin and consumed by the instance
+admin with the run marked; then priority: the three classes present,
+skalid on the critical one, application Deployments on normal, and an
+environment raised to high rolling onto the high class). The protection
+policy also has an API test (refusals in plan and open, allowed and
+disallowed sources, the empty list, the bypass needing admin and a fresh
+session and landing on deployment and run, the flag ignored where the
+policy would not refuse, rollback open), bundle goldens pin the classes
+and the critical class on every bundle pod, and render goldens pin the
+application class. Console checks are svelte-check, build, and SSR smoke
 (403 on nodes/system/users for members); there is no console test harness.
 
 ## Deferred on purpose
@@ -528,24 +586,3 @@ mapping.
 - Internal-tools colleague: `create_projects` on, `admin` of their own
   projects, member nowhere else. Their environments are `normal` priority
   and yield to production; they cannot raise them.
-
-## Open decisions
-
-Settled 2026-08-19: runtime logs at `read`, backup create at `deploy`,
-environment creation at project `maintain`, no membership backfill on
-upgrade (existing `member` users hold no product access until granted;
-`skalid migrate` prints a notice naming them).
-
-Still open, each can be settled in the slice it belongs to; the text above
-reflects the lean:
-
-1. Bypass flag name: `--bypass-protection` (as written) or something
-   shorter. (Protection slice.)
-2. Sudo for rollback and restore into a protected environment, in addition
-   to what is sudo today. Lean: yes for both. (Protection slice.)
-3. Should protection also refuse teardown and delete of the protected
-   environment (both are environment `admin` already). Lean: no; keep
-   protection about revisions. (Protection slice.)
-
-Settled 2026-08-19 (management slice): CLI first, then console; CLI naming
-is `skali access` plus `skali env` (see Management surfaces).

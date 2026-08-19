@@ -57,7 +57,11 @@ func newRunCommand() *cobra.Command {
 				if run.StartedAt != nil {
 					started = utils.HumanSince(*run.StartedAt)
 				}
-				fmt.Fprintf(out, "%-36s  %-11s  %-9s  %s\n", run.ID, run.Kind, run.Status, started)
+				note := ""
+				if run.BypassProtection {
+					note = "  " + style.Yellow("bypassed protection")
+				}
+				fmt.Fprintf(out, "%-36s  %-11s  %-9s  %s%s\n", run.ID, run.Kind, run.Status, started, note)
 			}
 			return nil
 		},

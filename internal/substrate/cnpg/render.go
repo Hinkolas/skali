@@ -80,6 +80,9 @@ func RenderCluster(spec ClusterSpec) *unstructured.Unstructured {
 		"spec": map[string]any{
 			"instances": int64(spec.Instances),
 			"imageName": spec.Image,
+			// Databases are skali's own pods: they outrank every
+			// application when resources are tight.
+			"priorityClassName": layout.PriorityClassCritical,
 			"storage": map[string]any{
 				"size": resource.NewQuantity(spec.StorageBytes, resource.BinarySI).String(),
 			},

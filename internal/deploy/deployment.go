@@ -68,6 +68,9 @@ type NewDeployment struct {
 	// PruneValues records that promotion unsets the stored values the
 	// definition no longer references.
 	PruneValues bool
+	// BypassProtection records that this deployment went into a
+	// promote-only environment on an environment admin's explicit bypass.
+	BypassProtection bool
 }
 
 // CreateDeployment inserts the coordination row in preparing. The partial
@@ -99,6 +102,7 @@ func (s *Service) CreateDeployment(ctx context.Context, in NewDeployment) (*stor
 		Restart:             in.Restart,
 		LocalApplications:   in.LocalApplications,
 		PruneValues:         in.PruneValues,
+		BypassProtection:    in.BypassProtection,
 	})
 	if err != nil {
 		if store.IsUniqueViolation(err) {

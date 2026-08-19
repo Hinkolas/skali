@@ -30,17 +30,21 @@ type runPayload struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	StartedAt     *time.Time `json:"started_at"`
 	FinishedAt    *time.Time `json:"finished_at"`
+	// BypassProtection marks a deployment that entered a promote-only
+	// environment on an environment admin's explicit bypass.
+	BypassProtection bool `json:"bypass_protection"`
 }
 
 func newRunPayload(r *store.Run) runPayload {
 	payload := runPayload{
-		ID:         r.ID.String(),
-		Kind:       r.Kind,
-		Actor:      r.Actor,
-		Status:     r.Status,
-		CreatedAt:  r.CreatedAt,
-		StartedAt:  r.StartedAt,
-		FinishedAt: r.FinishedAt,
+		ID:               r.ID.String(),
+		Kind:             r.Kind,
+		Actor:            r.Actor,
+		Status:           r.Status,
+		CreatedAt:        r.CreatedAt,
+		StartedAt:        r.StartedAt,
+		FinishedAt:       r.FinishedAt,
+		BypassProtection: r.BypassProtection,
 	}
 	if r.ProjectID != nil {
 		id := r.ProjectID.String()

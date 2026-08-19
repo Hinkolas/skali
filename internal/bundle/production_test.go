@@ -52,14 +52,15 @@ func TestLocalRenderFrozen(t *testing.T) {
 	t.Parallel()
 	profile := localProfile()
 	sources := stageSources(profile)
-	require.Len(t, sources, 9)
+	require.Len(t, sources, 10)
 
 	frozen := map[string]int{
 		"local-namespace.yaml": 0,
-		"local-database.yaml":  3,
-		"local-registry.yaml":  4,
-		"local-skalid.yaml":    5,
-		"local-bootstrap.yaml": 8,
+		"local-priority.yaml":  1,
+		"local-database.yaml":  4,
+		"local-registry.yaml":  5,
+		"local-skalid.yaml":    6,
+		"local-bootstrap.yaml": 9,
 	}
 	for name, index := range frozen {
 		path := filepath.Join("testdata", name)
@@ -73,10 +74,10 @@ func TestLocalRenderFrozen(t *testing.T) {
 		require.Equal(t, string(golden), sources[index], name)
 	}
 	// Production-only stages contribute zero bytes locally.
-	require.Empty(t, sources[1], "issuer stage must be empty locally")
-	require.Empty(t, sources[2], "edge stage must be empty locally")
-	require.Empty(t, sources[6], "record stage must be empty locally")
-	require.Empty(t, sources[7], "web stage must be empty locally")
+	require.Empty(t, sources[2], "issuer stage must be empty locally")
+	require.Empty(t, sources[3], "edge stage must be empty locally")
+	require.Empty(t, sources[7], "record stage must be empty locally")
+	require.Empty(t, sources[8], "web stage must be empty locally")
 
 	// The full hash including the vendored operator manifests is frozen
 	// too: cert-manager must not leak into the local fingerprint.
@@ -99,9 +100,55 @@ func TestProductionDatabaseTiers(t *testing.T) {
 		profile := productionProfile()
 		profile.Production.DatabaseTier = tier
 		source := databaseYAML(profile)
-		expected, err := os.ReadFile(filepath.Join("testdata", golden))
+		path := filepath.Join("testdata", golden)
+		if os.Getenv("UPDATE_GOLDEN") != "" {
+			require.NoError(t, os.WriteFile(path, []byte(source), 0o644))
+		}
+		expected, err := os.ReadFile(path)
 		require.NoError(t, err, golden)
 		require.Equal(t, string(expected), source, golden)
+	}
+}
+
+// The PriorityClasses are API once pods name them: names, order, and the
+// immutable values are pinned; none is the global default.
+func TestPriorityClasses(t *testing.T) {
+	t.Parallel()
+	objects, err := Render(localProfile())
+	require.NoError(t, err)
+	require.Len(t, objects.Priority, 3)
+	values := map[string]int64{}
+	for _, object := range objects.Priority {
+		require.Equal(t, "PriorityClass", object.GetKind())
+		require.Equal(t, "scheduling.k8s.io/v1", object.GetAPIVersion())
+		require.Empty(t, object.GetNamespace(), "cluster-scoped")
+		// sigs.k8s.io/yaml decodes numbers as float64; the apply marshals
+		// them back as plain integers.
+		value, found := object.Object["value"].(float64)
+		require.True(t, found, object.GetName())
+		values[object.GetName()] = int64(value)
+		globalDefault, _, _ := unstructured.NestedBool(object.Object, "globalDefault")
+		require.False(t, globalDefault, object.GetName())
+	}
+	require.Equal(t, map[string]int64{
+		layout.PriorityClassCritical: layout.PriorityClassCriticalValue,
+		layout.PriorityClassHigh:     layout.PriorityClassHighValue,
+		layout.PriorityClassNormal:   layout.PriorityClassNormalValue,
+	}, values)
+	// Every bundle pod template names the critical class.
+	for _, stage := range [][]unstructured.Unstructured{objects.Database, objects.Registry, objects.Skalid} {
+		for _, object := range stage {
+			var class string
+			switch object.GetKind() {
+			case "Cluster":
+				class, _, _ = unstructured.NestedString(object.Object, "spec", "priorityClassName")
+			case "Deployment":
+				class, _, _ = unstructured.NestedString(object.Object, "spec", "template", "spec", "priorityClassName")
+			default:
+				continue
+			}
+			require.Equal(t, layout.PriorityClassCritical, class, object.GetKind()+"/"+object.GetName())
+		}
 	}
 }
 

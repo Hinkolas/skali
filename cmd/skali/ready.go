@@ -28,6 +28,9 @@ type readySummary struct {
 	// DevPorts maps intercepted applications to their host ports by port
 	// name; nil outside bare skali dev.
 	DevPorts map[string]map[string]int
+	// ProtectionBypassed marks a deploy that entered a promote-only
+	// environment on the explicit bypass; the first summary row says so.
+	ProtectionBypassed bool
 }
 
 // remoteReadySummary is the summary for a deploy, promote, or rollback
@@ -68,6 +71,9 @@ func readySummaryLines(style *clirender.Style, status *client.EnvironmentStatus,
 		lines []string
 	}
 	var rows []row
+	if summary.ProtectionBypassed {
+		rows = append(rows, row{label: "protection", lines: []string{style.Yellow("bypassed (recorded on the run)")}})
+	}
 	if summary.Dashboard != "" {
 		rows = append(rows, row{label: "dashboard", lines: []string{style.Link(summary.Dashboard)}})
 	}

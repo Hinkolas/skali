@@ -87,6 +87,20 @@ func TestReadySummaryLines(t *testing.T) {
 		require.Empty(t, readySummaryLines(style, bare, readySummary{}))
 	})
 
+	t.Run("a bypassed protection leads the summary", func(t *testing.T) {
+		t.Parallel()
+		remote := &client.EnvironmentStatus{Services: []client.ServiceStatus{
+			{Key: "web", Type: "application", Routes: []client.RouteStatus{
+				{Key: "public", Domain: "app.example.com", Path: "/"},
+			}},
+		}}
+		lines := readySummaryLines(style, remote, readySummary{ProtectionBypassed: true})
+		require.Equal(t, []string{
+			"  protection  bypassed (recorded on the run)",
+			"  web         http://app.example.com",
+		}, lines)
+	})
+
 	t.Run("intercepted application missing from status still lists its port", func(t *testing.T) {
 		t.Parallel()
 		lines := readySummaryLines(style, &client.EnvironmentStatus{}, readySummary{

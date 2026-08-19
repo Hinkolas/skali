@@ -13,17 +13,18 @@ import (
 )
 
 const createRun = `-- name: CreateRun :one
-INSERT INTO runs (id, kind, project_id, environment_id, actor)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection
 `
 
 type CreateRunParams struct {
-	ID            uuid.UUID
-	Kind          string
-	ProjectID     *uuid.UUID
-	EnvironmentID *uuid.UUID
-	Actor         string
+	ID               uuid.UUID
+	Kind             string
+	ProjectID        *uuid.UUID
+	EnvironmentID    *uuid.UUID
+	Actor            string
+	BypassProtection bool
 }
 
 func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, error) {
@@ -33,6 +34,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Actor,
+		arg.BypassProtection,
 	)
 	var i Run
 	err := row.Scan(
@@ -45,6 +47,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.BypassProtection,
 	)
 	return i, err
 }
@@ -104,7 +107,7 @@ func (q *Queries) DeletePendingRun(ctx context.Context, id uuid.UUID) (int64, er
 }
 
 const getRunByID = `-- name: GetRunByID :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at FROM runs WHERE id = $1
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRunByID(ctx context.Context, id uuid.UUID) (Run, error) {
@@ -120,12 +123,13 @@ func (q *Queries) GetRunByID(ctx context.Context, id uuid.UUID) (Run, error) {
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.BypassProtection,
 	)
 	return i, err
 }
 
 const getRunForUpdate = `-- name: GetRunForUpdate :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at FROM runs WHERE id = $1 FOR UPDATE
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection FROM runs WHERE id = $1 FOR UPDATE
 `
 
 // Row lock so status transitions are guarded under the lifecycle machine.
@@ -142,12 +146,13 @@ func (q *Queries) GetRunForUpdate(ctx context.Context, id uuid.UUID) (Run, error
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.BypassProtection,
 	)
 	return i, err
 }
 
 const getRunningRunByEnvironment = `-- name: GetRunningRunByEnvironment :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at FROM runs WHERE environment_id = $1 AND status = 'running'
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection FROM runs WHERE environment_id = $1 AND status = 'running'
 `
 
 // Journal attachment for the reconcile worker: adopt the environment's
@@ -166,12 +171,13 @@ func (q *Queries) GetRunningRunByEnvironment(ctx context.Context, environmentID 
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.BypassProtection,
 	)
 	return i, err
 }
 
 const listRunsByEnvironment = `-- name: ListRunsByEnvironment :many
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]Run, error) {
@@ -193,6 +199,7 @@ func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.BypassProtection,
 		); err != nil {
 			return nil, err
 		}

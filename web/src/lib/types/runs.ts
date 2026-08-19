@@ -19,6 +19,8 @@ export interface Run {
 	created_at: string;
 	started_at: string | null;
 	finished_at: string | null;
+	/** A deployment that entered a promote-only environment on an admin's explicit bypass. */
+	bypass_protection?: boolean;
 }
 
 export interface Attempt {

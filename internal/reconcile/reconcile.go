@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
+	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/redact"
@@ -70,7 +71,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		return 0, err
 	}
 
-	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, intercepts)
+	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, intercepts, env.Priority)
 	if err != nil {
 		// An unrenderable revision is permanent for this target: journal the
 		// diagnostic, never prune (compiler-error absence must not delete
@@ -449,8 +450,12 @@ func (k *Kernel) loadIntercepts(ctx context.Context, environmentID uuid.UUID) (m
 	return intercepts, nil
 }
 
+// desiredSet renders the target revision for the environment. priority is
+// the environment's live setting (normal or high); it selects the
+// PriorityClass of every application pod and, like the restart stamp, is
+// not part of the revision.
 func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
-	restartedAt *time.Time, intercepts map[string]map[string]int32) (*desiredSet, error) {
+	restartedAt *time.Time, intercepts map[string]map[string]int32, priority string) (*desiredSet, error) {
 	refs := make(map[string]int, len(rev.Secrets))
 	for name, secret := range rev.Secrets {
 		refs[name] = secret.Version
@@ -532,6 +537,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		Certificates:            k.cfg.Certificates,
 		Intercepts:              interceptPorts,
 		InterceptHostIP:         interceptHostIP,
+		PriorityClassName:       layout.PriorityClassFor(priority),
 	}
 	if restartedAt != nil {
 		renderOptions.RestartedAt = restartedAt.UTC().Format(time.RFC3339)

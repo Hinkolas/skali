@@ -68,6 +68,16 @@ func TestEnvSetBuildsPatch(t *testing.T) {
 	require.Equal(t, []string{}, install.envs["p1"][1].Settings.PromoteFrom)
 	install.mu.Unlock()
 	require.Equal(t, []string{"settings:p1-e1", "settings:p1-e2"}, install.posts)
+
+	// A priority change names the class the application pods roll onto; an
+	// unchanged priority does not.
+	out, err = runCommand(t, newEnvCommand(), "", "set", "--priority", "high")
+	require.NoError(t, err)
+	require.Contains(t, out, "priority       high")
+	require.Contains(t, out, "application pods roll onto priority class skali-high")
+	out, err = runCommand(t, newEnvCommand(), "", "set", "--priority", "high")
+	require.NoError(t, err)
+	require.NotContains(t, out, "application pods roll")
 }
 
 func TestEnvRmPurgesAfterConfirmation(t *testing.T) {

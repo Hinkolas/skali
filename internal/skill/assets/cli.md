@@ -45,5 +45,10 @@ manifest:
   the CLI asks for the password when it has aged.
 - A deploy needs `deploy` on the environment for an unchanged definition and
   `maintain` to change the definition or stage values; refusals name the
-  required role.
+  required role. A promote-only environment refuses direct deploys and
+  names the way in: `skali deploy --from <source> --environment <name>`
+  promotes a source's active revision (sources limited by `--promote-from`).
+  Environment admins may force a direct deploy with
+  `skali deploy --bypass-protection`; it asks for the password when the
+  login has aged and the run records the bypass.
 

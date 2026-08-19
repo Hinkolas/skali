@@ -9,6 +9,7 @@ import (
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -20,6 +21,9 @@ type environmentsHandlers struct {
 	projects *project.Service
 	deploy   *deploy.Service
 	journal  *journal.Service
+	// reconcile re-renders an environment whose priority changed so its
+	// application pods move onto the new PriorityClass right away.
+	reconcile *reconcile.Kernel
 }
 
 type environmentPayload struct {
@@ -206,6 +210,12 @@ func (h *environmentsHandlers) update(w http.ResponseWriter, r *http.Request) {
 	logAccessChange(r, "environment settings changed", "environment", env.ID.String(),
 		map[string]any{"max_role": env.MaxRole, "deploy_policy": env.DeployPolicy, "promote_from": env.PromoteFrom, "priority": env.Priority},
 		map[string]any{"max_role": updated.MaxRole, "deploy_policy": updated.DeployPolicy, "promote_from": updated.PromoteFrom, "priority": updated.Priority})
+	if updated.Priority != env.Priority && h.reconcile != nil {
+		// Priority renders live from the environment row: the kernel
+		// re-applies the application workloads with the new class and the
+		// Deployments roll.
+		h.reconcile.Enqueue(env.ID)
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Environment environmentPayload `json:"environment"`
 	}{newEnvironmentPayload(updated, environmentGrantFrom(r.Context()).Role)})

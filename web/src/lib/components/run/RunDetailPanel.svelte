@@ -88,6 +88,9 @@
 				{#if tree.run.started_at}
 					· {formatDuration(tree.run.started_at, tree.run.finished_at)}
 				{/if}
+				{#if tree.run.bypass_protection}
+					· <span class="text-status-warning">bypassed protection</span>
+				{/if}
 			</div>
 		{/if}
 	</div>

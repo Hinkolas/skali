@@ -6,6 +6,7 @@ metadata:
 spec:
   imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
   instances: 1
+  priorityClassName: skali-critical
   storage:
     size: 1Gi
   bootstrap:

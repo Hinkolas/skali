@@ -44,7 +44,7 @@
 		{ value: 'direct', hint: 'Deploys land directly; promote and rollback work too.' },
 		{
 			value: 'promote-only',
-			hint: 'Only promotions from the sources below, rollbacks, or an admin bypass change the running revision.'
+			hint: 'Only promotions from the sources below, rollbacks, or an environment admin with skali deploy --bypass-protection change the running revision.'
 		}
 	];
 	const priorityOptions = $derived<RoleOption[]>([
@@ -85,7 +85,12 @@
 		saving = true;
 		try {
 			await api.patch(`/v1/environments/${environment.id}`, patch);
-			toast.success(`Updated ${environment.name}`);
+			toast.success(
+				`Updated ${environment.name}`,
+				patch.priority
+					? { description: 'Application pods roll onto the new priority class.' }
+					: undefined
+			);
 			await invalidateAll();
 		} catch (err) {
 			toast.error(err instanceof ApiError ? err.message : 'Could not update the environment');
@@ -114,7 +119,7 @@
 		</Field>
 		<Field
 			label="Priority"
-			description="High marks environments that must keep running when resources are tight."
+			description="High marks environments that must keep running when resources are tight; a change rolls the environment's application pods."
 		>
 			<RolePicker
 				value={priority}
@@ -131,7 +136,7 @@
 		</Field>
 		<Field
 			label="Deploy policy"
-			description="promote-only refuses direct deploys: tested revisions arrive by promotion."
+			description="promote-only refuses direct deploys: tested revisions arrive by promotion, or by a recorded admin bypass."
 		>
 			<RolePicker
 				value={deployPolicy}

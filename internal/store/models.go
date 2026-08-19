@@ -232,6 +232,7 @@ type Deployment struct {
 	Restart             bool
 	LocalApplications   []byte
 	PruneValues         bool
+	BypassProtection    bool
 }
 
 type Environment struct {
@@ -348,15 +349,16 @@ type Revision struct {
 }
 
 type Run struct {
-	ID            uuid.UUID
-	Kind          string
-	ProjectID     *uuid.UUID
-	EnvironmentID *uuid.UUID
-	Actor         string
-	Status        string
-	CreatedAt     time.Time
-	StartedAt     *time.Time
-	FinishedAt    *time.Time
+	ID               uuid.UUID
+	Kind             string
+	ProjectID        *uuid.UUID
+	EnvironmentID    *uuid.UUID
+	Actor            string
+	Status           string
+	CreatedAt        time.Time
+	StartedAt        *time.Time
+	FinishedAt       *time.Time
+	BypassProtection bool
 }
 
 type RunLog struct {

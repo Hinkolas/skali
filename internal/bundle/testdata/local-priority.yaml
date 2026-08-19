@@ -1,0 +1,23 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: skali-critical
+value: 100000000
+globalDefault: false
+description: Skali itself (skalid, registry, console, object storage, managed databases); preempts application pods.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: skali-high
+value: 1000000
+globalDefault: false
+description: Applications of high priority environments; preempt normal ones when resources are tight.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: skali-normal
+value: 0
+globalDefault: false
+description: Applications of normal priority environments; yield to high priority ones.

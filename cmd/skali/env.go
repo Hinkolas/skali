@@ -198,6 +198,13 @@ func newEnvSetCommand() *cobra.Command {
 				return err
 			}
 			printEnvironmentSettings(out, scope, updated)
+			if patch.Priority != nil && scope.environment.Settings != nil &&
+				updated.Settings != nil && scope.environment.Settings.Priority != updated.Settings.Priority {
+				// Priority renders live: the kernel moves the application
+				// workloads onto the class now, which rolls their pods.
+				fmt.Fprintln(out, clirender.StyleFor(out).Dim(
+					"application pods roll onto priority class "+priorityClassName(updated.Settings.Priority)))
+			}
 			return nil
 		},
 	}
@@ -228,6 +235,16 @@ func resolveEnvScope(ctx context.Context, project, environment, remote string) (
 		}
 	}
 	return scope, nil
+}
+
+// priorityClassName mirrors the server's mapping of an environment priority
+// to the PriorityClass its application pods carry (internal/layout); the
+// CLI names it in its note without importing the cluster packages.
+func priorityClassName(priority string) string {
+	if priority == "high" {
+		return "skali-high"
+	}
+	return "skali-normal"
 }
 
 func printEnvironmentSettings(out io.Writer, scope *accessScope, environment *client.Environment) {

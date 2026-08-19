@@ -9,6 +9,7 @@
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import Pill from '$lib/components/ui/Pill.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
 	import RunDetailPanel from './RunDetailPanel.svelte';
@@ -85,9 +86,14 @@
 				<button
 					type="button"
 					onclick={() => openRun(run)}
-					class="font-mono text-text-primary cursor-pointer text-left text-md hover:underline"
+					class="font-mono text-text-primary flex cursor-pointer items-center gap-2 text-left text-md hover:underline"
 				>
 					{run.kind}
+					{#if run.bypass_protection}
+						<span title="deployed into a promote-only environment on an admin's explicit bypass">
+							<Pill text="bypassed protection" tone="warning" />
+						</span>
+					{/if}
 				</button>
 				<div class="text-text-muted truncate pr-2 text-md">{run.actor}</div>
 				<div class="font-mono text-text-muted text-sm">

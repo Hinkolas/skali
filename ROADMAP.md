@@ -71,7 +71,8 @@ The goal of this block: I can put a paying workload on skali and sleep.
 - [ ] Sensible defaults for resource requests/limits and a way to see who is
       using what; per-priority defaults, a cap on normal-priority
       consumption, and database placement by environment priority (the
-      `priority` field comes with the permission system).
+      `priority` field and the PriorityClasses `skali-critical`,
+      `skali-high`, `skali-normal` come with the permission system).
 - [ ] Documented recovery runbook: lost node, lost disk, lost control plane,
       lost skalid database. Each path tried once.
 - [ ] Move a real kilohertz workload onto khz and leave it there.

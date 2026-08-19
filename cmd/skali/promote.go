@@ -170,11 +170,13 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	if opts.Environment == "" && promote.binding != nil {
 		opts.Environment = promote.binding.Environment
 	}
-	environmentID, access, err := resolveEnvironmentTarget(ctx, out, bufio.NewReader(os.Stdin), api,
+	in := bufio.NewReader(os.Stdin)
+	environment, err := resolveEnvironmentTarget(ctx, out, in, api,
 		promote.projectID, promote.projectName, promote.master, opts, planOnly, prompts)
 	if err != nil {
 		return "", err
 	}
+	environmentID, access := environment.ID, environment.Access
 	if environmentID == promote.source.ID {
 		return "", errors.New("--from and the target environment name the same environment; pass --environment")
 	}
@@ -182,6 +184,9 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		return "", err
 	}
 	if _, err := valuesStagingAllowed(access, opts.Environment, opts); err != nil {
+		return "", err
+	}
+	if _, err := checkDeployPolicy(environment.Settings, access, opts.Environment, opts.From, opts); err != nil {
 		return "", err
 	}
 
@@ -224,13 +229,21 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		BuildExecutor:     "local",
 		Force:             opts.Force,
 		PruneValues:       opts.PruneValues,
+		BypassProtection:  opts.BypassProtection,
 	}
-	planned, err := api.Plan(ctx, environmentID, request)
+	var planned *client.PlanResult
+	err = withReauth(ctx, out, in, api, func() (err error) {
+		planned, err = api.Plan(ctx, environmentID, request)
+		return err
+	})
 	if err != nil {
 		return "", err
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
 	printOrphanedValues(out, planned.Orphaned)
+	if planned.BypassProtection {
+		printProtectionBypassed(out, opts.Environment)
+	}
 	if planOnly {
 		printRequiredRole(out, planned.RequiredRole)
 	}
@@ -248,7 +261,11 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		return "", err
 	}
 
-	opened, err := api.OpenDeployment(ctx, environmentID, request)
+	var opened *client.OpenedDeployment
+	err = withReauth(ctx, out, in, api, func() (err error) {
+		opened, err = api.OpenDeployment(ctx, environmentID, request)
+		return err
+	})
 	if err != nil {
 		return "", err
 	}
@@ -284,7 +301,9 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	switch status {
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
-		printReadySummary(ctx, out, api, environmentID, remoteReadySummary(promote.remoteName))
+		summary := remoteReadySummary(promote.remoteName)
+		summary.ProtectionBypassed = opened.BypassProtection
+		printReadySummary(ctx, out, api, environmentID, summary)
 		return deployOutcomeReady, nil
 	case "failed":
 		return "", fmt.Errorf("run %s failed", opened.Deployment.RunID)

@@ -42,6 +42,7 @@ spec:
       labels:
         app.kubernetes.io/name: skali-registry
     spec:
+      priorityClassName: skali-critical
       containers:
         - name: registry
           image: registry:2.8.3
