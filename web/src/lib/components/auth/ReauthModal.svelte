@@ -2,7 +2,8 @@
 	import type { ModalOptions } from '$lib/stores/modal.svelte';
 
 	export const modalOptions = {
-		label: 'Confirm access'
+		label: 'Confirm access',
+		archetype: 'checkpoint'
 	} satisfies ModalOptions;
 </script>
 
@@ -11,8 +12,9 @@
 	import { api, ApiError } from '$lib/api/client';
 	import { authState } from '$lib/stores/auth.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 
+	// The sudo gate. A checkpoint, not a form: centered ceremony, one secret,
+	// one button. A wrong secret shakes the input and stays.
 	let { close }: { close: (ok?: boolean) => void } = $props();
 
 	// 2FA users confirm with a TOTP/backup code; everyone else with their
@@ -22,6 +24,7 @@
 	let secret = $state('');
 	let busy = $state(false);
 	let message = $state('');
+	let attempt = $state(0);
 	let input = $state<HTMLInputElement | null>(null);
 
 	$effect(() => {
@@ -37,6 +40,7 @@
 			close(true);
 		} catch (err) {
 			message = err instanceof ApiError ? err.message : 'Could not confirm your identity';
+			attempt += 1;
 			secret = '';
 			busy = false;
 			input?.focus();
@@ -44,64 +48,86 @@
 	}
 </script>
 
-<ModalHeader title="Confirm access" icon={ShieldCheck}>
-	{#if twoFactor}
-		You're entering sudo mode. Enter the 6-digit code from your authenticator app, or one of your
-		backup codes (backup codes are spent when used).
-	{:else}
-		You're entering sudo mode. For security, enter your password to continue.
-	{/if}
-</ModalHeader>
+<div class="flex flex-col items-center px-6 pt-6 pb-3 text-center">
+	<div
+		class="border-accent/25 bg-accent/10 text-accent-light shadow-glow mb-3.5 flex size-11 items-center justify-center rounded-[13px] border"
+	>
+		<ShieldCheck size={22} strokeWidth={1.75} />
+	</div>
+	<h2 class="text-text-primary text-xl font-semibold tracking-tight">Confirm access</h2>
+	<p class="text-text-muted mt-1.5 text-base leading-relaxed">
+		{#if twoFactor}
+			You're entering sudo mode. Enter the 6-digit code from your authenticator app, or a backup
+			code (backup codes are spent when used).
+		{:else}
+			You're entering sudo mode. Enter your password to continue.
+		{/if}
+	</p>
+</div>
 
 <form
-	class="flex flex-col gap-3.5 px-5.5 py-4"
+	class="flex flex-col gap-3 px-6 pt-1 pb-6"
 	onsubmit={(e) => {
 		e.preventDefault();
 		confirm();
 	}}
 >
-	{#if twoFactor}
-		<label class="flex flex-col gap-1.5">
-			<span class="text-text-tertiary text-base font-medium">Code</span>
-			<input
-				bind:this={input}
-				bind:value={secret}
-				type="text"
-				required
-				inputmode="numeric"
-				autocomplete="one-time-code"
-				spellcheck="false"
-				placeholder="123456"
-				class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 font-mono text-lg tracking-[0.3em] transition-colors focus:outline-none"
-			/>
-		</label>
-	{:else}
-		<label class="flex flex-col gap-1.5">
-			<span class="text-text-tertiary text-base font-medium">Password</span>
-			<input
-				bind:this={input}
-				bind:value={secret}
-				type="password"
-				required
-				autocomplete="current-password"
-				placeholder="••••••••••"
-				class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
-			/>
-		</label>
-	{/if}
+	{#key attempt}
+		<div class={attempt > 0 ? 'checkpoint-shake' : ''}>
+			{#if twoFactor}
+				<input
+					bind:this={input}
+					bind:value={secret}
+					type="text"
+					required
+					inputmode="numeric"
+					autocomplete="one-time-code"
+					spellcheck="false"
+					placeholder="123456"
+					aria-label="Authentication code"
+					class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 focus:ring-3 focus:ring-accent/10 w-full rounded-[11px] border px-3.25 py-2.75 text-center font-mono text-lg tracking-[0.3em] transition-colors focus:outline-none"
+				/>
+			{:else}
+				<input
+					bind:this={input}
+					bind:value={secret}
+					type="password"
+					required
+					autocomplete="current-password"
+					placeholder="••••••••••"
+					aria-label="Password"
+					class="border-border-strong bg-surface-input text-text-primary focus:border-accent/50 focus:ring-3 focus:ring-accent/10 w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none"
+				/>
+			{/if}
+		</div>
+	{/key}
 
 	{#if message}
-		<div
-			class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[11px] border px-3 py-2 text-base"
-		>
-			{message}
-		</div>
+		<p class="text-status-danger text-center text-md" role="alert">{message}</p>
 	{/if}
 
-	<button type="submit" class="hidden" aria-hidden="true"></button>
+	<Button type="submit" variant="primary" disabled={!secret} {busy} class="mt-1 w-full">
+		Confirm
+	</Button>
+	<Button variant="ghost" onclick={() => close(false)} class="w-full">Cancel</Button>
 </form>
 
-<div class="border-border-subtle bg-surface-raised/50 flex justify-end gap-2 border-t px-5.5 py-3">
-	<Button variant="ghost" onclick={() => close(false)}>Cancel</Button>
-	<Button variant="primary" disabled={!secret} {busy} onclick={confirm}>Confirm</Button>
-</div>
+<style>
+	.checkpoint-shake {
+		animation: checkpoint-shake 320ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+	}
+	@keyframes checkpoint-shake {
+		20% {
+			transform: translateX(-6px);
+		}
+		40% {
+			transform: translateX(5px);
+		}
+		60% {
+			transform: translateX(-3px);
+		}
+		80% {
+			transform: translateX(2px);
+		}
+	}
+</style>

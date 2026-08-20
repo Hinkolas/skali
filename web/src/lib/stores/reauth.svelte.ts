@@ -1,6 +1,8 @@
 // Singleflight for the sudo-mode prompt: when several gated API calls fail
 // with reauth_required at once, they all share one ReauthModal and one
-// promise — every waiter replays its original request after a single confirm.
+// promise; every waiter replays its original request after a single confirm.
+// Pushed onto the modal stack so it layers above whatever gated modal
+// triggered the call instead of replacing it.
 
 import { modal } from '$lib/stores/modal.svelte';
 import ReauthModal, {
@@ -14,7 +16,7 @@ let inflight: Promise<boolean> | null = null;
 export function requireReauth(): Promise<boolean> {
 	if (!inflight) {
 		inflight = modal
-			.open<boolean>(ReauthModal, {}, reauthModalOptions)
+			.push<boolean>(ReauthModal, {}, reauthModalOptions)
 			.result.then((ok) => ok === true)
 			.finally(() => {
 				inflight = null;

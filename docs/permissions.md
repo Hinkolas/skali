@@ -293,8 +293,8 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | direct deploy with definition changes, values set/prune, restore (S) | E:maintain |
 | exec (S), resolved application environment (S), credential reveal (S) | E:maintain |
 | bypass protection (S) | E:admin |
-| users, nodes, system observation, backup target (S for writes) | IA |
-| own account, sessions, 2FA, `/system/meta`, `/auth/session` | any authenticated user |
+| user management writes, nodes, system observation, backup target (S for writes) | IA |
+| user directory (trimmed for non-admins), own account, sessions, 2FA, `/system/meta`, `/auth/session` | any authenticated user |
 
 ## Route classification
 
@@ -394,6 +394,11 @@ and so `skali` can refuse before doing work:
   requests, with the explicit cell (null when inherited). Only environments
   the caller may read appear, so neither client re-implements the rules
   (and the CLI binary stays free of the database packages).
+- `GET /users?q=` is the user directory, readable by any authenticated
+  user so project admins can find who to add as a member; `q` filters by
+  an email or name substring. Non-admins get only id, email, name, and
+  role; the account fields (`create_projects`, 2FA, timestamps) and every
+  user write stay instance-admin.
 - Plan and open responses report `required_role` (`deploy` or `maintain`,
   from whether the definition changed) and `bypass_protection` (whether
   the request consumed the bypass). The policy verdict itself is the `403

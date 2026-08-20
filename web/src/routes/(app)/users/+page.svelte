@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Plus from '@lucide/svelte/icons/plus';
+	import Search from '@lucide/svelte/icons/search';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -27,6 +28,34 @@
 	let { data }: { data: PageData } = $props();
 
 	const adminCount = $derived(data.users.filter((u) => u.role === 'admin').length);
+
+	// Directory search: the server's ?q= filter (email or name substring),
+	// debounced; an empty query falls back to the load's full list.
+	let query = $state('');
+	let searched = $state<AuthUser[] | null>(null);
+	let seq = 0;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const shown = $derived(searched ?? data.users);
+
+	function onSearch() {
+		clearTimeout(timer);
+		timer = setTimeout(() => {
+			const q = query.trim();
+			const mine = ++seq;
+			if (!q) {
+				searched = null;
+				return;
+			}
+			api
+				.get<{ users: AuthUser[] }>(`/v1/users?q=${encodeURIComponent(q)}`)
+				.then((res) => {
+					if (mine === seq) searched = res.users;
+				})
+				.catch(() => {
+					if (mine === seq) searched = [];
+				});
+		}, 200);
+	}
 
 	const userGrid = 'grid-cols-[2.2fr_0.9fr_0.9fr_1.1fr_121px]';
 
@@ -96,6 +125,26 @@
 			: 's'}
 	{/snippet}
 	{#snippet actions()}
+		<div class="relative hidden sm:block">
+			<Search
+				size={15}
+				class="text-text-ghost pointer-events-none absolute top-1/2 left-3 -translate-y-1/2"
+			/>
+			<input
+				bind:value={query}
+				type="search"
+				name="user-search"
+				autocomplete="off"
+				spellcheck="false"
+				data-1p-ignore
+				data-lpignore="true"
+				data-bwignore
+				placeholder="Search users…"
+				aria-label="Search users by name or email"
+				class="bg-surface-input text-text-primary border-border-strong focus:border-accent/50 focus:ring-3 focus:ring-accent/10 w-56 rounded-[11px] border py-2.25 pr-3 pl-8.5 text-base transition-[border-color,box-shadow] duration-150 focus:outline-none"
+				oninput={onSearch}
+			/>
+		</div>
 		<Button variant="primary" onclick={newUser}>
 			<Plus size={17} strokeWidth={2.5} />
 			New user
@@ -105,7 +154,12 @@
 
 <div class="pb-6">
 	<Table columns={['User', 'Role', '2FA', 'Created', '']} grid={userGrid}>
-		{#each data.users as user (user.id)}
+		{#if shown.length === 0}
+			<div class="text-text-ghost px-4.5 py-6 text-center text-base">
+				No user matches "{query.trim()}".
+			</div>
+		{/if}
+		{#each shown as user (user.id)}
 			{@const self = user.id === data.user.id}
 			<div
 				class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {userGrid}"

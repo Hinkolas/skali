@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import Lock from '@lucide/svelte/icons/lock';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { api, ApiError } from '$lib/api/client';
@@ -14,6 +15,8 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import Field from '$lib/components/ui/Field.svelte';
+	import Menu from '$lib/components/ui/Menu.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import TextInput from '$lib/components/ui/TextInput.svelte';
 	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
@@ -24,7 +27,9 @@
 		modalOptions as newEnvironmentModalOptions
 	} from '$lib/components/project/NewEnvironmentModal.svelte';
 	import SettingsNav from '$lib/components/project/SettingsNav.svelte';
-	import EnvironmentSettingsForm from '$lib/components/access/EnvironmentSettingsForm.svelte';
+	import EnvironmentSettingsModal, {
+		modalOptions as environmentSettingsModalOptions
+	} from '$lib/components/access/EnvironmentSettingsModal.svelte';
 	import type { AuthUser } from '$lib/types/auth';
 	import type { Environment } from '$lib/types/project';
 	import type { Target } from '$lib/types/revisions';
@@ -41,8 +46,19 @@
 	const projectAdminTitle = $derived(requiredTitle('admin', 'project', data.project.name));
 	const envLocked = $derived(data.env?.access === 'none');
 
-	// One environment's settings editor open at a time.
-	let openSettings = $state<string | null>(null);
+	function openEnvironmentSettings(environment: Environment) {
+		if (!environment.settings) return;
+		modal.open(
+			EnvironmentSettingsModal,
+			{
+				environment,
+				environments: data.environments,
+				canEdit: roleAtLeast(environment.access, 'admin'),
+				instanceAdmin
+			},
+			environmentSettingsModalOptions
+		);
+	}
 
 	function environmentPills(environment: Environment) {
 		const pills: { text: string; tone: 'success' | 'warning' | 'neutral'; title: string }[] = [];
@@ -100,6 +116,8 @@
 				: 'Removes the running workloads but keeps values, revisions, and volumes. The next deployment resurrects the environment.',
 			confirmLabel: purge ? 'Purge environment' : 'Tear down',
 			variant: 'danger',
+			// Purging is one-way; teardown is resurrectable and stays one-click.
+			typeToConfirm: purge ? envName : undefined,
 			onConfirm: async () => {
 				try {
 					const result = await api.post<{ run_id: string; purge: boolean }>(
@@ -207,66 +225,67 @@
 				{@const locked = environment.access === 'none'}
 				{@const envAdmin = roleAtLeast(environment.access, 'admin')}
 				{@const envAdminTitle = requiredTitle('admin', 'environment', environment.name)}
-				<div class="border-border-subtle border-b py-2.75 last:border-0">
-					<div class="flex items-center gap-3">
-						{#if locked}
-							<Lock size={13} class="text-text-ghost flex-none" />
-						{/if}
-						<span class="font-mono text-text-primary text-md">{environment.name}</span>
-						{#if environment.id === data.env?.id}
-							<Pill text="current" tone="success" />
-						{/if}
-						{#each environmentPills(environment) as pill (pill.text)}
-							<span title={pill.title}><Pill text={pill.text} tone={pill.tone} /></span>
-						{/each}
+				<div class="border-border-subtle flex items-center gap-3 border-b py-2 last:border-0">
+					{#if locked}
+						<Lock size={13} class="text-text-ghost flex-none" />
+					{/if}
+					<span class="font-mono text-text-primary text-md">{environment.name}</span>
+					{#if environment.id === data.env?.id}
+						<Pill text="current" tone="success" />
+					{/if}
+					{#each environmentPills(environment) as pill (pill.text)}
+						<span title={pill.title}><Pill text={pill.text} tone={pill.tone} /></span>
+					{/each}
+					<div class="ml-auto flex items-center gap-3">
 						<span class="font-mono text-text-ghost text-xs" title="your effective role here">
 							{environment.access}
 						</span>
 						{#if environment.created_at}
-							<span class="font-mono text-text-ghost text-xs">
-								created {relativeTime(environment.created_at)}
+							<span
+								class="font-mono text-text-ghost text-xs"
+								title="created {formatDateTime(environment.created_at)}"
+							>
+								{relativeTime(environment.created_at)}
 							</span>
 						{/if}
-						<div class="ml-auto flex gap-2">
-							{#if !locked}
-								<Button
-									size="sm"
-									variant="ghost"
-									onclick={() =>
-										(openSettings = openSettings === environment.id ? null : environment.id)}
-								>
-									{openSettings === environment.id ? 'Hide settings' : 'Settings'}
-								</Button>
-								<Button
-									size="sm"
-									variant="ghost"
+						{#if !locked}
+							<Button
+								size="sm"
+								variant="ghost"
+								onclick={() => openEnvironmentSettings(environment)}
+							>
+								Settings
+							</Button>
+							<Menu
+								label="Actions on {environment.name}"
+								align="end"
+								triggerClass="flex cursor-pointer items-center rounded-[8px] p-1.5 text-text-tertiary transition-colors hover:bg-white/5 hover:text-text-primary"
+							>
+								{#snippet trigger()}
+									<Ellipsis size={15} />
+								{/snippet}
+								<MenuItem
 									disabled={!envAdmin}
-									title={envAdmin ? undefined : envAdminTitle}
-									onclick={() => teardown(environment.id, environment.name, false)}
+									title={envAdmin
+										? 'Removes the running workloads but keeps values, revisions, and volumes.'
+										: envAdminTitle}
+									onselect={() => teardown(environment.id, environment.name, false)}
 								>
 									Tear down
-								</Button>
-								<Button
-									size="sm"
-									variant="danger"
+								</MenuItem>
+								<MenuItem
+									danger
 									disabled={!envAdmin}
-									title={envAdmin ? undefined : envAdminTitle}
-									onclick={() => teardown(environment.id, environment.name, true)}
+									title={envAdmin
+										? 'Destroys the namespace and deletes the environment. One-way.'
+										: envAdminTitle}
+									onselect={() => teardown(environment.id, environment.name, true)}
 								>
-									Purge
-								</Button>
-							{/if}
-						</div>
+									Purge environment
+								</MenuItem>
+							</Menu>
+						{/if}
 					</div>
-					{#if openSettings === environment.id && environment.settings}
-						<EnvironmentSettingsForm
-							{environment}
-							environments={data.environments}
-							canEdit={envAdmin}
-							{instanceAdmin}
-							onclose={() => (openSettings = null)}
-						/>
-					{/if}
 				</div>
 			{:else}
 				<div class="font-mono text-text-ghost py-2 text-xs">no environments yet</div>

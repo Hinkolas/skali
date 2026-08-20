@@ -29,12 +29,13 @@
 
 	const variantClass: Record<string, string> = {
 		primary:
-			'bg-linear-135 from-accent-from to-accent-to font-semibold text-surface-base shadow-glow transition-[filter] hover:brightness-108',
+			'bg-linear-135 from-accent-from to-accent-to font-semibold text-surface-base shadow-glow transition-[filter] hover:brightness-108 active:brightness-95',
 		secondary:
-			'border border-border-strong bg-white/2 font-medium text-text-secondary transition-colors hover:bg-white/5',
+			'border border-border-strong bg-white/2 font-medium text-text-secondary transition-colors hover:bg-white/5 active:bg-white/7',
 		ghost:
-			'font-medium text-text-tertiary transition-colors hover:bg-white/5 hover:text-text-primary',
-		danger: 'bg-status-danger font-semibold text-white transition-[filter] hover:brightness-108'
+			'font-medium text-text-tertiary transition-colors hover:bg-white/5 hover:text-text-primary active:bg-white/7',
+		danger:
+			'bg-status-danger font-semibold text-white transition-[filter] hover:brightness-108 active:brightness-95'
 	};
 
 	const sizeClass: Record<string, string> = {
@@ -43,7 +44,7 @@
 	};
 
 	const classes = $derived(
-		`inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap disabled:cursor-default disabled:opacity-60 ${variantClass[variant]} ${sizeClass[size]} ${className}`
+		`inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70 disabled:cursor-default disabled:opacity-60 ${variantClass[variant]} ${sizeClass[size]} ${className}`
 	);
 </script>
 

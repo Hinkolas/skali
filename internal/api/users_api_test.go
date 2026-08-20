@@ -14,7 +14,6 @@ func TestUsersRequireAdmin(t *testing.T) {
 	member := a.login("member@example.com", "hunter2hunter2")
 
 	for _, tc := range []struct{ method, path string }{
-		{"GET", "/v1/users"},
 		{"POST", "/v1/users"},
 		{"PATCH", "/v1/users/00000000-0000-0000-0000-000000000000"},
 		{"DELETE", "/v1/users/00000000-0000-0000-0000-000000000000"},
@@ -24,6 +23,46 @@ func TestUsersRequireAdmin(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, status, "%s %s", tc.method, tc.path)
 		require.Equal(t, "forbidden", errorCode(t, body))
 	}
+}
+
+// The user directory: readable by everyone authenticated, trimmed for
+// non-admins, filtered by q. It backs the console's add-member picker and
+// the admin user search.
+func TestUsersDirectory(t *testing.T) {
+	a := newTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	a.createMember("bob@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+	bob := a.login("bob@example.com", "hunter2hunter2")
+
+	// A member reads the directory subset: no account fields.
+	status, body := a.do("GET", "/v1/users", bob, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Len(t, body["users"], 2)
+	entry := body["users"].([]any)[0].(map[string]any)
+	require.Subset(t, entry, map[string]any{"email": "admin@example.com", "role": "admin"})
+	require.NotContains(t, entry, "create_projects")
+	require.NotContains(t, entry, "two_factor_enabled")
+	require.NotContains(t, entry, "created_at")
+
+	// Admins keep the full account payload, q filters for both.
+	status, body = a.do("GET", "/v1/users", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, body["users"].([]any)[0].(map[string]any), "create_projects")
+	status, body = a.do("GET", "/v1/users?q=BOB", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, body["users"], 1)
+	require.Equal(t, "bob@example.com", body["users"].([]any)[0].(map[string]any)["email"])
+
+	// The name matches too; ILIKE metacharacters stay literal.
+	status, body = a.do("PATCH", "/v1/users/"+body["users"].([]any)[0].(map[string]any)["id"].(string), admin, map[string]any{"name": "Robert Tables"})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	status, body = a.do("GET", "/v1/users?q=robert", bob, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, body["users"], 1)
+	status, body = a.do("GET", "/v1/users?q=%25", bob, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, body["users"])
 }
 
 func TestUsersListAndCreate(t *testing.T) {

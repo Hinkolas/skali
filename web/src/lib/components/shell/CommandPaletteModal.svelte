@@ -3,7 +3,8 @@
 
 	export const modalOptions = {
 		label: 'Command palette',
-		panelClass: 'mt-[12vh] flex max-h-[60vh] w-full flex-col self-start sm:max-w-xl'
+		archetype: 'palette',
+		size: 'lg'
 	} satisfies ModalOptions;
 </script>
 
@@ -21,6 +22,7 @@
 	let { close }: { close: () => void } = $props();
 
 	let query = $state('');
+	let active = $state(0);
 	let input = $state<HTMLInputElement | null>(null);
 
 	$effect(() => {
@@ -66,6 +68,19 @@
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- result hrefs are built with resolve() above
 		void goto(href);
 	}
+
+	function onKey(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			active = Math.min(active + 1, results.length - 1);
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			active = Math.max(active - 1, 0);
+		} else if (e.key === 'Enter' && results[active]) {
+			e.preventDefault();
+			go(results[active].href);
+		}
+	}
 </script>
 
 <div class="border-border-subtle flex items-center gap-2.5 border-b px-4 py-3">
@@ -73,15 +88,17 @@
 	<input
 		bind:this={input}
 		bind:value={query}
-		type="text"
+		type="search"
+		name="palette-search"
+		autocomplete="off"
+		spellcheck="false"
+		data-1p-ignore
+		data-lpignore="true"
+		data-bwignore
 		placeholder="Jump to a project or service…"
 		class="text-text-primary w-full bg-transparent text-lg focus:outline-none"
-		onkeydown={(e) => {
-			if (e.key === 'Enter' && results.length > 0) {
-				e.preventDefault();
-				go(results[0].href);
-			}
-		}}
+		oninput={() => (active = 0)}
+		onkeydown={onKey}
 	/>
 	<kbd
 		class="font-mono border-border-strong text-text-ghost flex-none rounded-[6px] border px-1.25 py-px text-xs"
@@ -91,11 +108,15 @@
 </div>
 
 <div class="min-h-0 flex-1 overflow-y-auto p-2">
-	{#each results as result (result.href)}
+	{#each results as result, i (result.href)}
 		<button
 			type="button"
 			onclick={() => go(result.href)}
-			class="flex w-full cursor-pointer items-center gap-2.5 rounded-[11px] px-3 py-2 text-left transition-colors hover:bg-white/4"
+			onpointerenter={() => (active = i)}
+			class="flex w-full cursor-pointer items-center gap-2.5 rounded-[11px] px-3 py-2 text-left transition-colors {i ===
+			active
+				? 'bg-white/6'
+				: 'hover:bg-white/4'}"
 		>
 			{#if result.kind}
 				<TypeBadge kind={result.kind} form="tile" />
@@ -108,4 +129,15 @@
 	{:else}
 		<div class="text-text-ghost px-3 py-6 text-center text-base">No matches</div>
 	{/each}
+</div>
+
+<div
+	class="border-border-subtle bg-surface-raised/50 text-text-ghost flex items-center gap-3 border-t px-4 py-2 text-xs"
+>
+	<span class="flex items-center gap-1">
+		<kbd class="font-mono border-border-strong rounded-[5px] border px-1 py-px">↑↓</kbd> navigate
+	</span>
+	<span class="flex items-center gap-1">
+		<kbd class="font-mono border-border-strong rounded-[5px] border px-1 py-px">↵</kbd> open
+	</span>
 </div>

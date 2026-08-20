@@ -3,7 +3,7 @@
 	import { roleAtLeast } from '$lib/access';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import SettingsNav from '$lib/components/project/SettingsNav.svelte';
-	import MembersGrid from '$lib/components/access/MembersGrid.svelte';
+	import MembersList from '$lib/components/access/MembersList.svelte';
 	import type { AuthUser } from '$lib/types/auth';
 	import type { PageData } from './$types';
 
@@ -25,12 +25,6 @@
 
 <SettingsNav project={data.project} />
 
-<div class="flex flex-col gap-3.5 pb-6">
-	<MembersGrid
-		project={data.project}
-		environments={data.environments}
-		members={data.members}
-		{canEdit}
-		self={user}
-	/>
+<div class="flex max-w-3xl flex-col gap-3.5 pb-6">
+	<MembersList project={data.project} members={data.members} {canEdit} self={user} />
 </div>

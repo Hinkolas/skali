@@ -157,3 +157,22 @@ body {
 ::placeholder {
 	color: var(--color-text-ghost);
 }
+
+/* Browser surfaces the design system owns too: the caret writes in the
+   accent, and scrollbars sit on the dark surfaces instead of shipping the
+   platform chrome. */
+input,
+textarea {
+	caret-color: var(--color-accent);
+}
+
+/* Search inputs opt out of autofill and password managers; the native
+   WebKit clear button would clash with the theme, Esc already clears. */
+input[type='search']::-webkit-search-cancel-button {
+	-webkit-appearance: none;
+}
+
+* {
+	scrollbar-width: thin;
+	scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+}

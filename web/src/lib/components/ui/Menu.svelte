@@ -27,6 +27,39 @@
 	let root = $state<HTMLDivElement | null>(null);
 	let triggerEl = $state<HTMLButtonElement | null>(null);
 
+	// The panel is position:fixed and placed from the trigger's viewport rect,
+	// so it escapes overflow-hidden/auto ancestors (cards, scrolling modal
+	// bodies) that would clip an absolutely positioned dropdown. Measured
+	// before opening; scrolling anywhere outside the menu closes it instead of
+	// dragging a stale position around.
+	let panelStyle = $state('');
+
+	function place() {
+		if (!triggerEl) return;
+		const r = triggerEl.getBoundingClientRect();
+		const gap = 6;
+		const parts: string[] = [];
+		if (side === 'top') {
+			parts.push(`bottom: ${window.innerHeight - r.top + gap}px`);
+			parts.push(`max-height: ${Math.max(r.top - gap - 8, 120)}px`);
+		} else {
+			parts.push(`top: ${r.bottom + gap}px`);
+			parts.push(`max-height: ${Math.max(window.innerHeight - r.bottom - gap - 8, 120)}px`);
+		}
+		if (align === 'end') parts.push(`right: ${window.innerWidth - r.right}px`);
+		else parts.push(`left: ${r.left}px`);
+		panelStyle = parts.join('; ');
+	}
+
+	function toggle() {
+		if (!open) place();
+		open = !open;
+	}
+
+	function onWindowScroll(e: Event) {
+		if (open && root && e.target instanceof Node && !root.contains(e.target)) open = false;
+	}
+
 	// Items self-close on select via this context (see MenuItem).
 	setContext('menu', { close: () => (open = false) });
 
@@ -43,6 +76,7 @@
 	}
 
 	async function openAndFocus(index: number) {
+		place();
 		open = true;
 		await tick();
 		focusItem(index);
@@ -102,7 +136,11 @@
 	}
 </script>
 
-<svelte:window onclick={onWindowClick} />
+<svelte:window
+	onclick={onWindowClick}
+	onresize={() => open && place()}
+	onscrollcapture={onWindowScroll}
+/>
 
 <div bind:this={root} class="relative">
 	<button
@@ -111,7 +149,7 @@
 		aria-haspopup="menu"
 		aria-expanded={open}
 		class={triggerClass}
-		onclick={() => (open = !open)}
+		onclick={toggle}
 		onkeydown={onTriggerKeydown}
 	>
 		{@render trigger({ open })}
@@ -123,10 +161,8 @@
 			tabindex="-1"
 			aria-label={label}
 			onkeydown={onPanelKeydown}
-			class="bg-surface-overlay border-border-default absolute z-30 flex flex-col gap-0.5 rounded-xl border p-1.5 shadow-lg {side ===
-			'top'
-				? 'bottom-full mb-1.5'
-				: 'top-full mt-1.5'} {align === 'end' ? 'right-0' : 'left-0'} {panelClass}"
+			style={panelStyle}
+			class="bg-surface-overlay border-border-default fixed z-80 flex flex-col gap-0.5 overflow-y-auto rounded-xl border p-1.5 shadow-lg {panelClass}"
 		>
 			{@render children()}
 		</div>

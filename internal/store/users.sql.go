@@ -157,6 +157,43 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 	return items, nil
 }
 
+const searchUsers = `-- name: SearchUsers :many
+SELECT id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects FROM users
+WHERE email ILIKE $1 OR name ILIKE $1
+ORDER BY lower(email)
+`
+
+// The user directory, filtered: email or name contains the pattern, which
+// arrives pre-escaped with wildcards attached (see the users handler).
+func (q *Queries) SearchUsers(ctx context.Context, pattern string) ([]User, error) {
+	rows, err := q.db.Query(ctx, searchUsers, pattern)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Name,
+			&i.TwoFactorEnabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Role,
+			&i.CreateProjects,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setUserCreateProjects = `-- name: SetUserCreateProjects :one
 UPDATE users SET create_projects = $2, updated_at = now() WHERE id = $1
 RETURNING id, email, name, two_factor_enabled, created_at, updated_at, role, create_projects

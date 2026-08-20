@@ -15,6 +15,13 @@ UPDATE users SET two_factor_enabled = $2, updated_at = now() WHERE id = $1;
 -- name: ListUsers :many
 SELECT * FROM users ORDER BY created_at;
 
+-- The user directory, filtered: email or name contains the pattern, which
+-- arrives pre-escaped with wildcards attached (see the users handler).
+-- name: SearchUsers :many
+SELECT * FROM users
+WHERE email ILIKE @pattern OR name ILIKE @pattern
+ORDER BY lower(email);
+
 -- name: SetUserRole :one
 UPDATE users SET role = $2, updated_at = now() WHERE id = $1
 RETURNING *;

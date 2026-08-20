@@ -339,12 +339,23 @@ paths:
   /v1/users:
     get:
       operationId: listUsers
-      summary: List all users
-      description: Admin only. Every user of the instance, oldest first.
+      summary: List users
+      description: >-
+        The user directory: any authenticated user, so project admins can
+        find who to add as a member. Admins receive the full account
+        payload, oldest first; everyone else the directory subset (id,
+        email, name, role). `q` filters by a case-insensitive substring of
+        email or name and sorts by email.
       tags: [users]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         "200":
-          description: All users.
+          description: The users.
           content:
             application/json:
               schema:
@@ -353,9 +364,11 @@ paths:
                 properties:
                   users:
                     type: array
-                    items: { $ref: "#/components/schemas/User" }
+                    items:
+                      anyOf:
+                        - $ref: "#/components/schemas/User"
+                        - $ref: "#/components/schemas/DirectoryUser"
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createUser
       summary: Create a user
@@ -2968,6 +2981,23 @@ components:
         created_at:
           type: string
           format: date-time
+
+    DirectoryUser:
+      type: object
+      description: >-
+        The user directory entry non-admins see: enough to find and address
+        a person, none of the account administration fields.
+      required: [id, email, name, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role: { $ref: "#/components/schemas/Role" }
 
     Session:
       type: object

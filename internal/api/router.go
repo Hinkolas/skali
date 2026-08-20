@@ -350,12 +350,15 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 					}
 				})
 
-				// Instance management, admins only.
+				// The user directory: any authenticated user may read it (it
+				// backs the console's add-member picker); the handler trims
+				// the payload to id, email, name, and role for non-admins.
 				uh := &usersHandlers{st: d.Store}
+				ac.route(r, "GET", "/users", classSelf, uh.list)
+
+				// Instance management, admins only.
 				r.Group(func(r chi.Router) {
 					r.Use(RequireAdmin)
-
-					ac.route(r, "GET", "/users", classInstanceAdmin, uh.list)
 
 					// Writes additionally need sudo mode. RequireAdmin sits
 					// outside RequireFresh so non-admins get "forbidden", never a

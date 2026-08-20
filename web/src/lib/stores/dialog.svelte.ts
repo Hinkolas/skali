@@ -14,20 +14,29 @@ export type DialogOptions = {
 	cancelLabel?: string;
 	variant?: DialogVariant;
 	alert?: boolean; // single acknowledge button, no cancel
-	size?: 'md' | 'lg';
+	/**
+	 * The name the user must type before the confirm button arms. Reserve it
+	 * for one-way destructions (purge, delete); reversible dangers stay
+	 * one-click.
+	 */
+	typeToConfirm?: string;
 	/** May be async: confirm button spins while pending; throwing keeps the dialog open. */
 	onConfirm?: () => void | Promise<void>;
 	onCancel?: () => void;
 };
 
 // Props handed to the <Dialog> content component (everything but the lifecycle hooks).
-export type DialogProps = Omit<DialogOptions, 'onCancel' | 'size'>;
+export type DialogProps = Omit<DialogOptions, 'onCancel'>;
 
+// Dialogs layer on the modal stack: a confirm asked from inside an open
+// modal (remove a member, tear down an environment) appears above it and
+// hands control back on close instead of destroying the form underneath.
+// The variant picks the shell archetype: dangers get the red-tinted chrome.
 function open(options: DialogOptions): ModalHandle<boolean> {
-	const { onCancel, size, ...props } = options;
-	return modal.open<boolean>(Dialog, props, {
+	const { onCancel, ...props } = options;
+	return modal.push<boolean>(Dialog, props, {
 		role: 'alertdialog',
-		size: size ?? 'md',
+		archetype: options.variant === 'danger' ? 'danger' : 'confirm',
 		label: options.title,
 		onClose: (result) => {
 			if (result !== true) onCancel?.();

@@ -38,7 +38,7 @@
 	}
 
 	const itemClass = $derived(
-		`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-base font-medium transition-colors ${
+		`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-base font-medium transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/70 ${
 			disabled
 				? 'cursor-default text-text-ghost'
 				: `cursor-pointer text-text-secondary hover:bg-white/5 ${

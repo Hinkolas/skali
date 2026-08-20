@@ -1,12 +1,13 @@
 <script lang="ts">
-	import X from '@lucide/svelte/icons/x';
-	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import type { DialogProps } from '$lib/stores/dialog.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
+	import TextInput from '$lib/components/ui/TextInput.svelte';
 
-	// Built-in content for the high-level `dialog` store: a simple title +
-	// description + confirm/cancel layout. Rendered through the modal system, so
-	// it only owns its body and receives `close` from the <Modal> host.
+	// Built-in content for the high-level `dialog` store. A confirm is a
+	// question, not a workbench: one compact block, buttons inline, no footer
+	// band (that band belongs to forms). The danger variant leads with the
+	// hazard tile and can demand the resource's name before the button arms.
 	let {
 		title,
 		description,
@@ -14,14 +15,18 @@
 		cancelLabel = 'Cancel',
 		variant = 'default',
 		alert = false,
+		typeToConfirm,
 		onConfirm,
 		close
 	}: DialogProps & { close: (result?: boolean) => void } = $props();
 
 	let busy = $state(false);
+	let typed = $state('');
+
+	const armed = $derived(!typeToConfirm || typed === typeToConfirm);
 
 	async function confirm() {
-		if (busy) return;
+		if (busy || !armed) return;
 		busy = true;
 		try {
 			await onConfirm?.();
@@ -34,54 +39,53 @@
 	}
 </script>
 
-<div class="flex items-start justify-between gap-4 px-5.5 pt-5 pb-5">
-	<div>
-		{#if variant === 'danger'}
+<div class="px-5.5 pt-5 pb-4.5">
+	{#if variant === 'danger'}
+		<div class="flex items-center gap-3">
 			<div
-				class="border-status-danger/25 bg-status-danger/10 text-status-danger mb-3 flex size-9 items-center justify-center rounded-[11px] border"
+				class="border-status-danger/25 bg-status-danger/10 text-status-danger flex size-8.5 flex-none items-center justify-center rounded-[10px] border"
 			>
-				<TriangleAlert size={20} strokeWidth={1.75} />
+				<TriangleAlert size={17} strokeWidth={1.75} />
 			</div>
-		{/if}
-		<h2 class="text-text-primary text-xl font-semibold tracking-tight">{title}</h2>
-		{#if description}
-			<p class="text-text-muted mt-1.5 text-base leading-relaxed">{description}</p>
-		{/if}
-	</div>
-	<button
-		type="button"
-		onclick={() => close(false)}
-		disabled={busy}
-		class="text-text-faint hover:text-text-primary -mt-1 -mr-2 shrink-0 cursor-pointer rounded-lg p-1.5 transition hover:bg-white/5 disabled:opacity-50"
-		aria-label="Close"
-	>
-		<X class="size-4" />
-	</button>
-</div>
-
-<div class="border-border-subtle bg-surface-raised/50 flex justify-end gap-2 border-t px-5.5 py-3">
-	{#if !alert}
-		<button
-			type="button"
-			onclick={() => close(false)}
-			disabled={busy}
-			class="text-text-tertiary hover:text-text-primary cursor-pointer rounded-[11px] px-3.5 py-2 text-lg font-medium transition hover:bg-white/5 disabled:opacity-50"
-		>
-			{cancelLabel}
-		</button>
+			<h2 class="text-text-primary text-lg font-semibold tracking-tight">{title}</h2>
+		</div>
+	{:else}
+		<h2 class="text-text-primary text-lg font-semibold tracking-tight">{title}</h2>
 	{/if}
-	<button
-		type="button"
-		onclick={confirm}
-		disabled={busy}
-		class="inline-flex cursor-pointer items-center gap-2 rounded-[11px] px-3.5 py-2 text-lg font-semibold transition-[filter] hover:brightness-108 disabled:opacity-60 {variant ===
-		'danger'
-			? 'bg-status-danger text-white'
-			: 'from-accent-from to-accent-to text-surface-base shadow-glow bg-linear-135'}"
-	>
-		{#if busy}
-			<LoaderCircle class="size-4 animate-spin" />
+
+	{#if description}
+		<p class="text-text-muted mt-2 text-base leading-relaxed">{description}</p>
+	{/if}
+
+	{#if typeToConfirm}
+		<label class="mt-3.5 flex flex-col gap-1.5">
+			<span class="text-text-tertiary text-md">
+				Type <span class="font-mono text-text-secondary">{typeToConfirm}</span> to confirm
+			</span>
+			<TextInput
+				bind:value={typed}
+				mono
+				autofocus
+				placeholder={typeToConfirm}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') void confirm();
+				}}
+			/>
+		</label>
+	{/if}
+
+	<div class="mt-5 flex justify-end gap-2">
+		{#if !alert}
+			<Button variant="ghost" disabled={busy} onclick={() => close(false)}>{cancelLabel}</Button>
 		{/if}
-		{confirmLabel}
-	</button>
+		<Button
+			variant={variant === 'danger' ? 'danger' : 'primary'}
+			{busy}
+			disabled={!armed}
+			title={armed ? undefined : `type ${typeToConfirm} to enable`}
+			onclick={confirm}
+		>
+			{confirmLabel}
+		</Button>
+	</div>
 </div>

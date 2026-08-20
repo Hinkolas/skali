@@ -9,6 +9,7 @@
 		disabled = false,
 		mono = false,
 		invalid = false,
+		autofocus = false,
 		class: className = '',
 		oninput,
 		onkeydown
@@ -21,13 +22,22 @@
 		disabled?: boolean;
 		mono?: boolean;
 		invalid?: boolean;
+		/** Focus on mount; done in an effect so modals can use it too. */
+		autofocus?: boolean;
 		class?: string;
 		oninput?: (e: Event) => void;
 		onkeydown?: (e: KeyboardEvent) => void;
 	} = $props();
+
+	let el = $state<HTMLInputElement | null>(null);
+
+	$effect(() => {
+		if (autofocus) el?.focus();
+	});
 </script>
 
 <input
+	bind:this={el}
 	bind:value
 	{type}
 	{placeholder}
@@ -36,7 +46,9 @@
 	{disabled}
 	{oninput}
 	{onkeydown}
-	class="bg-surface-input text-text-primary w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-colors focus:outline-none disabled:opacity-60 {invalid
-		? 'border-status-danger/60 focus:border-status-danger'
-		: 'border-border-strong focus:border-accent/50'} {mono ? 'font-mono text-md' : ''} {className}"
+	class="bg-surface-input text-text-primary w-full rounded-[11px] border px-3.25 py-2.75 text-lg transition-[border-color,box-shadow] duration-150 focus:outline-none disabled:opacity-60 {invalid
+		? 'border-status-danger/60 focus:border-status-danger focus:ring-3 focus:ring-status-danger/10'
+		: 'border-border-strong focus:border-accent/50 focus:ring-3 focus:ring-accent/10'} {mono
+		? 'font-mono text-md'
+		: ''} {className}"
 />
