@@ -218,4 +218,18 @@ func TestPromotionFlowEndToEnd(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	require.True(t, body["up_to_date"].(bool))
+
+	// The recorded promotion surfaces on the project listing: the source
+	// names the environment it was last promoted to, environments never
+	// promoted from carry nothing.
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/environments", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	lastTargets := map[string]any{}
+	for _, raw := range body["environments"].([]any) {
+		env := raw.(map[string]any)
+		lastTargets[env["id"].(string)] = env["last_promotion_target"]
+	}
+	require.Equal(t, "staging", lastTargets[sourceEnv])
+	require.Nil(t, lastTargets[targetEnv])
+	require.Nil(t, lastTargets[emptyEnv])
 }

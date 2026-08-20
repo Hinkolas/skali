@@ -71,6 +71,27 @@ type NewDeployment struct {
 	// BypassProtection records that this deployment went into a
 	// promote-only environment on an environment admin's explicit bypass.
 	BypassProtection bool
+	// FromEnvironmentID records the promotion source; uuid.Nil for a
+	// direct deploy.
+	FromEnvironmentID uuid.UUID
+}
+
+// LastPromotionTargets maps each source environment of the project to the
+// environment it was last promoted to, derived from the recorded
+// promotions. Any attempt counts: even a failed run states where the team
+// routes this source.
+func (s *Service) LastPromotionTargets(ctx context.Context, projectID uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	rows, err := s.st.LastPromotionTargets(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("deploy: last promotion targets: %w", err)
+	}
+	targets := make(map[uuid.UUID]uuid.UUID, len(rows))
+	for _, row := range rows {
+		if row.FromEnvironmentID != nil {
+			targets[*row.FromEnvironmentID] = row.EnvironmentID
+		}
+	}
+	return targets, nil
 }
 
 // CreateDeployment inserts the coordination row in preparing. The partial
@@ -103,6 +124,7 @@ func (s *Service) CreateDeployment(ctx context.Context, in NewDeployment) (*stor
 		LocalApplications:   in.LocalApplications,
 		PruneValues:         in.PruneValues,
 		BypassProtection:    in.BypassProtection,
+		FromEnvironmentID:   utils.NilWhenZero(in.FromEnvironmentID),
 	})
 	if err != nil {
 		if store.IsUniqueViolation(err) {

@@ -86,4 +86,6 @@ export interface Environment {
 	access: AccessRole;
 	created_at?: string;
 	settings?: EnvironmentSettings;
+	/** Name of the environment this one was last promoted to (project listing only). */
+	last_promotion_target?: string;
 }

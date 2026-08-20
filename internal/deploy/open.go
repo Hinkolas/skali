@@ -448,6 +448,7 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 		LocalApplications:   encodedLocals,
 		PruneValues:         in.PruneValues,
 		BypassProtection:    in.BypassProtection,
+		FromEnvironmentID:   in.FromEnvironmentID,
 	})
 	if err != nil {
 		return nil, err

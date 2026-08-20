@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
@@ -35,6 +37,10 @@ type environmentPayload struct {
 	Access    string                      `json:"access"`
 	CreatedAt *time.Time                  `json:"created_at,omitempty"`
 	Settings  *environmentSettingsPayload `json:"settings,omitempty"`
+	// LastPromotionTarget names the environment this one was last promoted
+	// to, derived from the recorded promotions; the console preselects it.
+	// Only on the project listing, and only for unlocked environments.
+	LastPromotionTarget string `json:"last_promotion_target,omitempty"`
 }
 
 type environmentSettingsPayload struct {
@@ -134,6 +140,15 @@ func (h *environmentsHandlers) list(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(r.Context(), w, err)
 		return
 	}
+	targets, err := h.deploy.LastPromotionTargets(r.Context(), projectID)
+	if err != nil {
+		writeProjectError(r.Context(), w, err)
+		return
+	}
+	names := make(map[uuid.UUID]string, len(environments))
+	for i := range environments {
+		names[environments[i].ID] = environments[i].Name
+	}
 	grant := grantFrom(r.Context())
 	payload := make([]environmentPayload, len(environments))
 	for i := range environments {
@@ -142,6 +157,13 @@ func (h *environmentsHandlers) list(w http.ResponseWriter, r *http.Request) {
 			role = envGrant.Role
 		}
 		payload[i] = newEnvironmentPayload(&environments[i], role)
+		// Environment names are visible even on locked rows, but a locked
+		// row carries nothing beyond its identity.
+		if role != authz.None {
+			if target, ok := targets[environments[i].ID]; ok {
+				payload[i].LastPromotionTarget = names[target]
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Environments []environmentPayload `json:"environments"`

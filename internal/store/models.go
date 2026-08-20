@@ -233,6 +233,7 @@ type Deployment struct {
 	LocalApplications   []byte
 	PruneValues         bool
 	BypassProtection    bool
+	FromEnvironmentID   *uuid.UUID
 }
 
 type Environment struct {

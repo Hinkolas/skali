@@ -2,9 +2,9 @@
 INSERT INTO deployments (
     id, project_id, environment_id, definition_version_id,
     candidate_id, run_id, actor, build_executor, actions, restart,
-    local_applications, prune_values, bypass_protection
+    local_applications, prune_values, bypass_protection, from_environment_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING *;
 
 -- name: GetDeploymentByID :one
@@ -43,3 +43,13 @@ UPDATE deployments SET updated_at = now() WHERE id = $1 AND status = 'preparing'
 
 -- name: ListStalePreparingDeployments :many
 SELECT * FROM deployments WHERE status = 'preparing' AND updated_at < $1;
+
+-- The environment each source was last promoted to, one row per source.
+-- Any promotion attempt counts: even a failed run states where the team
+-- routes this source.
+-- name: LastPromotionTargets :many
+SELECT DISTINCT ON (from_environment_id)
+    from_environment_id, environment_id
+FROM deployments
+WHERE project_id = $1 AND from_environment_id IS NOT NULL
+ORDER BY from_environment_id, created_at DESC;

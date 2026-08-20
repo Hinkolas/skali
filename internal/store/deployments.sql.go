@@ -16,10 +16,10 @@ const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (
     id, project_id, environment_id, definition_version_id,
     candidate_id, run_id, actor, build_executor, actions, restart,
-    local_applications, prune_values, bypass_protection
+    local_applications, prune_values, bypass_protection, from_environment_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id
 `
 
 type CreateDeploymentParams struct {
@@ -36,6 +36,7 @@ type CreateDeploymentParams struct {
 	LocalApplications   []byte
 	PruneValues         bool
 	BypassProtection    bool
+	FromEnvironmentID   *uuid.UUID
 }
 
 func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error) {
@@ -53,6 +54,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.LocalApplications,
 		arg.PruneValues,
 		arg.BypassProtection,
+		arg.FromEnvironmentID,
 	)
 	var i Deployment
 	err := row.Scan(
@@ -73,12 +75,13 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.LocalApplications,
 		&i.PruneValues,
 		&i.BypassProtection,
+		&i.FromEnvironmentID,
 	)
 	return i, err
 }
 
 const getDeploymentByID = `-- name: GetDeploymentByID :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection FROM deployments WHERE id = $1
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeploymentByID(ctx context.Context, id uuid.UUID) (Deployment, error) {
@@ -102,12 +105,13 @@ func (q *Queries) GetDeploymentByID(ctx context.Context, id uuid.UUID) (Deployme
 		&i.LocalApplications,
 		&i.PruneValues,
 		&i.BypassProtection,
+		&i.FromEnvironmentID,
 	)
 	return i, err
 }
 
 const getDeploymentByRunID = `-- name: GetDeploymentByRunID :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection FROM deployments WHERE run_id = $1
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments WHERE run_id = $1
 `
 
 func (q *Queries) GetDeploymentByRunID(ctx context.Context, runID *uuid.UUID) (Deployment, error) {
@@ -131,12 +135,13 @@ func (q *Queries) GetDeploymentByRunID(ctx context.Context, runID *uuid.UUID) (D
 		&i.LocalApplications,
 		&i.PruneValues,
 		&i.BypassProtection,
+		&i.FromEnvironmentID,
 	)
 	return i, err
 }
 
 const getDeploymentForUpdate = `-- name: GetDeploymentForUpdate :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection FROM deployments WHERE id = $1 FOR UPDATE
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments WHERE id = $1 FOR UPDATE
 `
 
 // Row lock so status transitions are guarded under the lifecycle machine.
@@ -161,12 +166,13 @@ func (q *Queries) GetDeploymentForUpdate(ctx context.Context, id uuid.UUID) (Dep
 		&i.LocalApplications,
 		&i.PruneValues,
 		&i.BypassProtection,
+		&i.FromEnvironmentID,
 	)
 	return i, err
 }
 
 const getPreparingDeploymentForEnvironment = `-- name: GetPreparingDeploymentForEnvironment :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection FROM deployments WHERE environment_id = $1 AND status = 'preparing'
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments WHERE environment_id = $1 AND status = 'preparing'
 `
 
 func (q *Queries) GetPreparingDeploymentForEnvironment(ctx context.Context, environmentID uuid.UUID) (Deployment, error) {
@@ -190,12 +196,49 @@ func (q *Queries) GetPreparingDeploymentForEnvironment(ctx context.Context, envi
 		&i.LocalApplications,
 		&i.PruneValues,
 		&i.BypassProtection,
+		&i.FromEnvironmentID,
 	)
 	return i, err
 }
 
+const lastPromotionTargets = `-- name: LastPromotionTargets :many
+SELECT DISTINCT ON (from_environment_id)
+    from_environment_id, environment_id
+FROM deployments
+WHERE project_id = $1 AND from_environment_id IS NOT NULL
+ORDER BY from_environment_id, created_at DESC
+`
+
+type LastPromotionTargetsRow struct {
+	FromEnvironmentID *uuid.UUID
+	EnvironmentID     uuid.UUID
+}
+
+// The environment each source was last promoted to, one row per source.
+// Any promotion attempt counts: even a failed run states where the team
+// routes this source.
+func (q *Queries) LastPromotionTargets(ctx context.Context, projectID uuid.UUID) ([]LastPromotionTargetsRow, error) {
+	rows, err := q.db.Query(ctx, lastPromotionTargets, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LastPromotionTargetsRow
+	for rows.Next() {
+		var i LastPromotionTargetsRow
+		if err := rows.Scan(&i.FromEnvironmentID, &i.EnvironmentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeploymentsForEnvironment = `-- name: ListDeploymentsForEnvironment :many
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection FROM deployments
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments
 WHERE environment_id = $1
 ORDER BY created_at DESC
 LIMIT $2
@@ -233,6 +276,7 @@ func (q *Queries) ListDeploymentsForEnvironment(ctx context.Context, arg ListDep
 			&i.LocalApplications,
 			&i.PruneValues,
 			&i.BypassProtection,
+			&i.FromEnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -245,7 +289,7 @@ func (q *Queries) ListDeploymentsForEnvironment(ctx context.Context, arg ListDep
 }
 
 const listStalePreparingDeployments = `-- name: ListStalePreparingDeployments :many
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection FROM deployments WHERE status = 'preparing' AND updated_at < $1
+SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments WHERE status = 'preparing' AND updated_at < $1
 `
 
 func (q *Queries) ListStalePreparingDeployments(ctx context.Context, updatedAt time.Time) ([]Deployment, error) {
@@ -275,6 +319,7 @@ func (q *Queries) ListStalePreparingDeployments(ctx context.Context, updatedAt t
 			&i.LocalApplications,
 			&i.PruneValues,
 			&i.BypassProtection,
+			&i.FromEnvironmentID,
 		); err != nil {
 			return nil, err
 		}

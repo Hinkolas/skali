@@ -1,6 +1,9 @@
 <script module lang="ts">
 	import type { ModalOptions } from '$lib/stores/modal.svelte';
 
+	// Finder anatomy like AddMemberModal: step one searches the project's
+	// environments, step two states the promotion and will grow the promote
+	// options when they exist.
 	export const modalOptions = {
 		label: 'Promote',
 		size: 'lg'
@@ -8,16 +11,18 @@
 </script>
 
 <script lang="ts">
-	// Promote flow started from the source environment: pick an eligible
-	// target, review the server's plan, confirm. A promotion reuses artifacts
-	// by construction, so the deployment is opened and completed right here
-	// and the run continues on the server, followed in the run side panel.
-	// The server stays the authority on eligibility; the list only explains
+	// Promote flow started from the source environment: find the target,
+	// review the server's plan, confirm. A promotion reuses artifacts by
+	// construction, so the deployment is opened and completed right here and
+	// the run continues on the server, followed in the run side panel. The
+	// server stays the authority on eligibility; the finder only explains
 	// the refusals it can already see.
+	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import Layers from '@lucide/svelte/icons/layers';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Lock from '@lucide/svelte/icons/lock';
+	import Search from '@lucide/svelte/icons/search';
 	import { api, ApiError } from '$lib/api/client';
 	import { requiredTitle, roleAtLeast } from '$lib/access';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
@@ -36,7 +41,7 @@
 		close
 	}: {
 		source: Environment;
-		/** All environments of the project, for the target list. */
+		/** All environments of the project, for the target finder. */
 		environments: Environment[];
 		close: (promoted?: boolean) => void;
 	} = $props();
@@ -59,6 +64,9 @@
 		return null;
 	}
 
+	let query = $state('');
+	let active = $state(0);
+	let input = $state<HTMLInputElement | null>(null);
 	let target = $state<Environment | null>(null);
 	let planning = $state(false);
 	let planError = $state('');
@@ -68,7 +76,32 @@
 	let targetRev = $state<string | null | undefined>(undefined);
 	let promoting = $state(false);
 
+	// A finder opens ready to type; refocus when Change returns to step one.
+	$effect(() => {
+		if (!target) input?.focus();
+	});
+
+	const matches = $derived.by(() => {
+		const q = query.trim().toLowerCase();
+		return candidates.filter((e) => !q || e.name.toLowerCase().includes(q));
+	});
+	// Keyboard navigation walks the pickable rows only.
+	const eligible = $derived(matches.filter((e) => !refusal(e)));
+
 	const short = (checksum: string) => checksum.slice(0, 8);
+
+	function onSearchKey(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			active = Math.min(active + 1, eligible.length - 1);
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			active = Math.max(active - 1, 0);
+		} else if (e.key === 'Enter' && eligible[active]) {
+			e.preventDefault();
+			pick(eligible[active]);
+		}
+	}
 
 	function pick(t: Environment) {
 		target = t;
@@ -100,6 +133,8 @@
 		target = null;
 		planned = null;
 		planError = '';
+		query = '';
+		active = 0;
 	}
 
 	const ready = $derived(
@@ -146,66 +181,119 @@
 		if (action === 'create' || action === 'set') return 'text-status-success';
 		return 'text-text-tertiary';
 	}
+
+	// The habitual route, recorded by the server on every promotion from
+	// this source. Open straight on it; Change returns to the finder,
+	// where a badge marks it.
+	// svelte-ignore state_referenced_locally
+	const lastUsed = candidates.find((e) => e.name === source.last_promotion_target) ?? null;
+	if (lastUsed && !refusal(lastUsed)) pick(lastUsed);
 </script>
 
-<ModalHeader title={source.name} mono>
-	Promote the revision running here to another environment.
-</ModalHeader>
-
 {#if !target}
-	<div class="flex flex-col gap-2 overflow-y-auto px-5.5 py-4">
-		<span class="text-text-primary text-base font-medium">Promote to</span>
-		{#if candidates.length}
-			<div class="border-border-subtle divide-border-subtle divide-y rounded-xl border">
-				{#each candidates as t (t.id)}
-					{@const reason = refusal(t)}
-					<button
-						type="button"
-						disabled={!!reason}
-						title={reason ?? undefined}
-						onclick={() => pick(t)}
-						class="flex min-h-11.5 w-full items-center gap-2 px-3 py-1.5 text-left transition-colors first:rounded-t-xl last:rounded-b-xl focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/70 {reason
-							? 'cursor-default'
-							: 'cursor-pointer hover:bg-white/4'}"
-					>
+	<div class="border-border-subtle flex items-center gap-2.5 border-b px-4 py-3">
+		<Search size={17} class="text-text-ghost flex-none" />
+		<input
+			bind:this={input}
+			bind:value={query}
+			type="search"
+			name="environment-search"
+			autocomplete="off"
+			spellcheck="false"
+			placeholder="Promote {source.name} to…"
+			aria-label="Search environments"
+			class="text-text-primary w-full bg-transparent text-lg focus:outline-none"
+			oninput={() => (active = 0)}
+			onkeydown={onSearchKey}
+		/>
+		<kbd
+			class="font-mono border-border-strong text-text-ghost flex-none rounded-[6px] border px-1.25 py-px text-xs"
+		>
+			esc
+		</kbd>
+	</div>
+
+	<div class="max-h-80 min-h-28 flex-1 overflow-y-auto p-2">
+		{#if candidates.length === 0}
+			<div class="flex flex-col items-center gap-1.5 px-3 py-7 text-center">
+				<Layers size={18} class="text-text-ghost" />
+				<p class="text-text-muted text-base">No other environments in this project yet.</p>
+			</div>
+		{:else if matches.length === 0}
+			<div class="flex flex-col items-center gap-1.5 px-3 py-7 text-center">
+				<Layers size={18} class="text-text-ghost" />
+				<p class="text-text-muted text-base">No environment matches this search.</p>
+			</div>
+		{:else}
+			{#each matches as t (t.id)}
+				{@const reason = refusal(t)}
+				{#if reason}
+					<div class="flex w-full items-center gap-2.5 rounded-[11px] px-3 py-2.25" title={reason}>
 						{#if t.access === 'none'}
 							<Lock size={12} class="text-text-ghost flex-none" />
 						{/if}
-						<span class="font-mono text-md {reason ? 'text-text-ghost' : 'text-text-primary'}">
-							{t.name}
-						</span>
+						<span class="font-mono text-text-ghost text-md">{t.name}</span>
+						<span class="text-text-faint ml-auto min-w-0 truncate text-sm">{reason}</span>
+					</div>
+				{:else}
+					{@const idx = eligible.indexOf(t)}
+					<button
+						type="button"
+						class="flex w-full cursor-pointer items-center gap-2.5 rounded-[11px] px-3 py-2.25 text-left transition-colors {idx ===
+						active
+							? 'bg-white/6'
+							: 'hover:bg-white/4'}"
+						onclick={() => pick(t)}
+						onpointerenter={() => (active = idx)}
+					>
+						<span class="font-mono text-text-primary text-md">{t.name}</span>
+						{#if t.id === lastUsed?.id}
+							<Pill text="last used" />
+						{/if}
 						{#if t.settings?.deploy_policy === 'promote-only'}
 							<Pill text="protected" tone="warning" />
 						{/if}
-						<span class="ml-auto flex items-center">
-							{#if reason}
-								<span class="text-text-faint text-sm">{reason}</span>
-							{:else}
-								<ChevronRight size={14} class="text-text-ghost flex-none" />
-							{/if}
-						</span>
+						<ArrowRight
+							size={13}
+							class="ml-auto flex-none transition-opacity {idx === active
+								? 'text-text-tertiary opacity-100'
+								: 'opacity-0'}"
+						/>
 					</button>
-				{/each}
-			</div>
-		{:else}
-			<span class="text-text-muted text-md">No other environments in this project yet.</span>
+				{/if}
+			{/each}
 		{/if}
 	</div>
 
 	<div
-		class="border-border-subtle bg-surface-raised/50 flex justify-end gap-2 border-t px-5.5 py-3"
+		class="border-border-subtle bg-surface-raised/50 text-text-ghost flex items-center gap-3 border-t px-4 py-2 text-xs"
 	>
-		<Button variant="secondary" onclick={() => close(false)}>Cancel</Button>
+		<span class="flex items-center gap-1">
+			<kbd class="font-mono border-border-strong rounded-[5px] border px-1 py-px">↑↓</kbd> navigate
+		</span>
+		<span class="flex items-center gap-1">
+			<kbd class="font-mono border-border-strong rounded-[5px] border px-1 py-px">↵</kbd> select
+		</span>
 	</div>
 {:else}
-	<div class="flex flex-col gap-3 overflow-y-auto px-5.5 py-4">
-		<div class="flex items-center gap-2.5">
-			<span class="font-mono text-text-secondary text-md">{source.name}</span>
-			<ArrowRight size={13} class="text-text-ghost flex-none" />
-			<span class="font-mono text-text-primary text-md">{target.name}</span>
-			{#if target.settings?.deploy_policy === 'promote-only'}
-				<Pill text="protected" tone="warning" />
-			{/if}
+	<ModalHeader
+		title="Promote {source.name} to {target.name}"
+		description="The revision running in {source.name} moves over; artifacts are reused, nothing rebuilds."
+	/>
+
+	<div class="flex flex-col gap-3.5 px-5.5 py-4">
+		<div class="border-border-subtle flex items-center gap-3 rounded-xl border px-3 py-2.5">
+			<span class="flex min-w-0 items-center gap-2.5">
+				<span class="font-mono text-text-secondary text-md">{source.name}</span>
+				<ArrowRight size={13} class="text-text-ghost flex-none" />
+				<span class="font-mono text-text-primary text-md">{target.name}</span>
+				{#if target.settings?.deploy_policy === 'promote-only'}
+					<Pill text="protected" tone="warning" />
+				{/if}
+			</span>
+			<Button size="sm" variant="ghost" class="ml-auto flex-none" onclick={back}>
+				<ArrowLeft size={13} /> Change
+			</Button>
 		</div>
 
 		{#if sourceRev}
@@ -268,7 +356,7 @@
 	<div
 		class="border-border-subtle bg-surface-raised/50 flex justify-end gap-2 border-t px-5.5 py-3"
 	>
-		<Button variant="ghost" disabled={promoting} onclick={back}>Back</Button>
+		<Button variant="ghost" onclick={() => close(false)}>Cancel</Button>
 		<Button variant="primary" busy={promoting} disabled={!ready} onclick={promote}>Promote</Button>
 	</div>
 {/if}

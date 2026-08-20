@@ -3195,6 +3195,12 @@ components:
           type: string
           format: date-time
         settings: { $ref: "#/components/schemas/EnvironmentSettings" }
+        last_promotion_target:
+          type: string
+          description: |
+            Name of the environment this one was last promoted to, derived
+            from the recorded promotions. Present on the project listing
+            only, for unlocked environments with at least one promotion.
 
     MembersResponse:
       type: object
