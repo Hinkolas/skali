@@ -17,10 +17,18 @@
 
 	let { data }: { data: PageData } = $props();
 
+	const status = $derived(envStatus.doc ?? data.status);
+
 	// Promote acts on the environment currently in view as the source; the
-	// modal owns target eligibility, the button only needs a second env.
+	// modal owns target eligibility, the button needs a second env and a
+	// running revision to move. With status unknown it stays enabled; the
+	// modal's blocked state and the server catch the rest.
 	const promoteTitle = $derived(
-		data.environments.length < 2 ? 'no other environments to promote to' : undefined
+		data.environments.length < 2
+			? 'no other environments to promote to'
+			: status && !status.active_revision
+				? `nothing is running in ${data.env?.name} yet; promotions move the running revision`
+				: undefined
 	);
 
 	function openPromote() {
@@ -32,7 +40,6 @@
 		);
 	}
 
-	const status = $derived(envStatus.doc ?? data.status);
 	const title = $derived(data.project.display_name || data.project.name);
 
 	const subtitleText = $derived.by(() => {
@@ -75,7 +82,7 @@
 		{#if data.env}
 			<Button
 				variant="secondary"
-				disabled={data.environments.length < 2}
+				disabled={!!promoteTitle}
 				title={promoteTitle}
 				onclick={openPromote}
 			>

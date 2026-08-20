@@ -22,6 +22,7 @@
 	import Layers from '@lucide/svelte/icons/layers';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Lock from '@lucide/svelte/icons/lock';
+	import Rocket from '@lucide/svelte/icons/rocket';
 	import Search from '@lucide/svelte/icons/search';
 	import { api, ApiError } from '$lib/api/client';
 	import { requiredTitle, roleAtLeast } from '$lib/access';
@@ -81,11 +82,15 @@
 		if (!target) input?.focus();
 	});
 
+	// Pickable targets first; refused rows sink below them, kept visible
+	// with their reasons so the routing policy stays legible.
 	const matches = $derived.by(() => {
 		const q = query.trim().toLowerCase();
-		return candidates.filter((e) => !q || e.name.toLowerCase().includes(q));
+		const named = candidates.filter((e) => !q || e.name.toLowerCase().includes(q));
+		return [...named.filter((e) => !refusal(e)), ...named.filter((e) => refusal(e))];
 	});
-	// Keyboard navigation walks the pickable rows only.
+	// Keyboard navigation walks the pickable rows only; they lead the list,
+	// so the active index counts from the top.
 	const eligible = $derived(matches.filter((e) => !refusal(e)));
 
 	const short = (checksum: string) => checksum.slice(0, 8);
@@ -108,14 +113,9 @@
 		planning = true;
 		planError = '';
 		planned = null;
-		sourceRev = undefined;
 		targetRev = undefined;
 		// The revision line is decoration next to the plan; a failed status
 		// read just leaves it out.
-		void api
-			.get<EnvironmentStatus>(`/v1/environments/${source.id}/status`)
-			.then((s) => (sourceRev = s.active_revision?.checksum ?? null))
-			.catch(() => (sourceRev = null));
 		void api
 			.get<EnvironmentStatus>(`/v1/environments/${t.id}/status`)
 			.then((s) => (targetRev = s.active_revision?.checksum ?? null))
@@ -182,6 +182,17 @@
 		return 'text-text-tertiary';
 	}
 
+	// One source status read on open: it renders the revision line and,
+	// when the source runs nothing, the blocked state that replaces the
+	// finder (a promotion moves the running revision, so no target can
+	// work). A failed read leaves the state unknown and the flow open; the
+	// server still refuses at plan time.
+	// svelte-ignore state_referenced_locally
+	void api
+		.get<EnvironmentStatus>(`/v1/environments/${source.id}/status`)
+		.then((s) => (sourceRev = s.active_revision?.checksum ?? null))
+		.catch(() => {});
+
 	// The habitual route, recorded by the server on every promotion from
 	// this source. Open straight on it; Change returns to the finder,
 	// where a badge marks it.
@@ -190,7 +201,25 @@
 	if (lastUsed && !refusal(lastUsed)) pick(lastUsed);
 </script>
 
-{#if !target}
+{#if sourceRev === null}
+	<ModalHeader title={source.name} mono>
+		Promote the revision running here to another environment.
+	</ModalHeader>
+	<div class="flex flex-col items-center gap-1.5 px-5.5 py-9 text-center">
+		<Rocket size={18} class="text-text-ghost" />
+		<p class="text-text-primary text-base font-medium">
+			Nothing is running in {source.name} yet.
+		</p>
+		<p class="text-text-muted text-md">
+			A promotion moves the running revision; deploy into {source.name} first.
+		</p>
+	</div>
+	<div
+		class="border-border-subtle bg-surface-raised/50 flex justify-end gap-2 border-t px-5.5 py-3"
+	>
+		<Button variant="secondary" onclick={() => close(false)}>Close</Button>
+	</div>
+{:else if !target}
 	<div class="border-border-subtle flex items-center gap-2.5 border-b px-4 py-3">
 		<Search size={17} class="text-text-ghost flex-none" />
 		<input
