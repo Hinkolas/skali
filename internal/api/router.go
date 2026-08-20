@@ -264,6 +264,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				// refine deploy to maintain when the definition changes.
 				ac.route(r, "POST", "/environments/{id}/plan", classEnvDeploy, dh.plan)
 				ac.route(r, "POST", "/environments/{id}/deployments", classEnvDeploy, dh.open)
+				ac.route(r, "POST", "/environments/{id}/restart", classEnvDeploy, dh.restart)
 				ac.route(r, "POST", "/environments/{id}/applications/{key}/restart", classEnvDeploy, dh.restart)
 				ac.route(r, "GET", "/deployments/{id}", classDeploymentRead, dh.get)
 				ac.route(r, "POST", "/deployments/{id}/complete", classDeploymentDeploy, dh.complete)

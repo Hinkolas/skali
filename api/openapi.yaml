@@ -2356,6 +2356,48 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/environments/{id}/restart:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: restartEnvironment
+      summary: Restart every application workload
+      description: |
+        The environment-wide form of the application restart below: stamps
+        the whole environment (the same stamp a forced deployment uses),
+        so every application's pods are recreated with the deployed
+        revision, values, and images. Stateful services are untouched.
+        Same run, role, and error semantics as the per-application
+        restart.
+      tags: [deployments]
+      responses:
+        "202":
+          description: Restart accepted; follow the run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id:
+                    type: string
+                    format: uuid
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            `deployment_in_flight`: another run is in flight. `conflict`:
+            the environment runs no revision to restart.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/environments/{id}/applications/{key}/restart:
     parameters:
       - name: id

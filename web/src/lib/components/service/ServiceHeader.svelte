@@ -23,8 +23,10 @@
 	const live = $derived(envStatus.service(service.type, service.key));
 	const health = $derived(live?.health ?? 'unknown');
 
-	// Restart acts on the environment in the breadcrumb; deploy on it is the
-	// rung the server checks. The server also refuses when nothing runs.
+	// Restarting one service is scoped here; the topbar Actions menu holds
+	// the environment-wide operations (promote, redeploy, restart all).
+	// Deploy on the environment is the rung the server checks; it also
+	// refuses when nothing runs.
 	const env = $derived((page.data as { env?: Environment | null }).env ?? null);
 	const restartTitle = $derived.by(() => {
 		if (!env) return 'no environment selected';

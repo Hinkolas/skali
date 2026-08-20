@@ -189,12 +189,27 @@ func TestRestartFlow(t *testing.T) {
 	require.Len(t, bumped, 1)
 	require.True(t, bumped[0].RestartedAt.After(stamps[0].RestartedAt))
 
+	// The environment-wide form stamps the whole environment (the forced
+	// deployment's stamp) under the same run kind.
+	require.Nil(t, a.targetOf(t, envID).RestartedAt)
+	status, body = a.do("POST", "/v1/environments/"+envID+"/restart", token, nil)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	allRunID := body["run_id"].(string)
+	status, body = a.do("GET", "/v1/runs/"+allRunID, token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "restart", body["run"].(map[string]any)["kind"])
+	require.NotNil(t, a.targetOf(t, envID).RestartedAt)
+	a.finishRun(t, allRunID)
+
 	// An environment that runs nothing has nothing to restart.
 	status, body = a.do("POST", "/v1/projects/"+projectID+"/environments", token,
 		map[string]any{"name": "staging"})
 	require.Equal(t, http.StatusCreated, status)
 	emptyEnv := body["environment"].(map[string]any)["id"].(string)
 	status, body = a.do("POST", "/v1/environments/"+emptyEnv+"/applications/web/restart", token, nil)
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	require.Equal(t, "conflict", errCode(body))
+	status, body = a.do("POST", "/v1/environments/"+emptyEnv+"/restart", token, nil)
 	require.Equal(t, http.StatusConflict, status, "%v", body)
 	require.Equal(t, "conflict", errCode(body))
 }

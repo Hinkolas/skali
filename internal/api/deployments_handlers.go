@@ -441,7 +441,9 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /v1/environments/{id}/applications/{key}/restart
+// POST /v1/environments/{id}/applications/{key}/restart and, without the
+// application segment, POST /v1/environments/{id}/restart (every
+// application: the environment-wide stamp).
 func (h *deploymentsHandlers) restart(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

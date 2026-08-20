@@ -207,8 +207,9 @@ environment only changes through:
   artifacts with the current values, so like rollback it introduces no
   new code and is not policy-gated. The values it picks up were gated by
   `maintain` when they were stored;
-- a restart (`POST .../applications/{key}/restart`, `deploy`, no sudo):
-  it recreates one application's pods with exactly what is deployed;
+- a restart (`POST .../applications/{key}/restart` for one application,
+  `POST .../restart` for all of them; `deploy`, no sudo): it recreates
+  application pods with exactly what is deployed;
 - an explicit bypass (below).
 
 A direct deploy, and a promotion from a source outside the list, are

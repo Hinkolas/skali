@@ -413,8 +413,9 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 // RestartInput describes one service restart: stamp the application's
 // restart and hand rollout to the kernel under a journaled run of kind
 // "restart". Revision, values, and artifacts are untouched; only the
-// pod-template restart annotation changes, so exactly this application's
-// workload rolls.
+// pod-template restart annotation changes, so exactly the addressed
+// workloads roll. An empty ApplicationKey restarts every application: it
+// stamps the environment-wide restart the forced deployment uses.
 type RestartInput struct {
 	EnvironmentID  uuid.UUID
 	ApplicationKey string
@@ -426,10 +427,11 @@ type RestartResult struct {
 	RunID uuid.UUID
 }
 
-// Restart stamps one application's restart and hands rollout to the kernel
-// like a promotion. The run is created before the stamp so a failed stamp
-// leaves a failed run and untouched state; the unique running-run index
-// serializes restarts against deployments.
+// Restart stamps one application's restart (or the whole environment's)
+// and hands rollout to the kernel like a promotion. The run is created
+// before the stamp so a failed stamp leaves a failed run and untouched
+// state; the unique running-run index serializes restarts against
+// deployments.
 func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult, error) {
 	target, err := s.st.GetEnvironmentTarget(ctx, in.EnvironmentID)
 	if err != nil {
@@ -445,8 +447,10 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := rev.Definition.Applications[in.ApplicationKey]; !ok {
-		return nil, ErrApplicationNotFound
+	if in.ApplicationKey != "" {
+		if _, ok := rev.Definition.Applications[in.ApplicationKey]; !ok {
+			return nil, ErrApplicationNotFound
+		}
 	}
 	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
 		return nil, ErrDeploymentInFlight
@@ -475,30 +479,44 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 		return nil, err
 	}
 
-	err = s.st.WithTx(ctx, func(q *store.Queries) error {
-		if _, err := q.StampApplicationRestart(ctx, store.StampApplicationRestartParams{
-			EnvironmentID:  in.EnvironmentID,
-			ApplicationKey: in.ApplicationKey,
-		}); err != nil {
-			return fmt.Errorf("deploy: stamp restart: %w", err)
+	if in.ApplicationKey == "" {
+		// The environment-wide stamp also touches updated_at itself, so the
+		// rollout-deadline clock restarts with it.
+		if _, err := s.st.StampEnvironmentRestart(ctx, in.EnvironmentID); err != nil {
+			return nil, finishRunFailed(ctx, in.Journal, run.ID,
+				fmt.Errorf("deploy: stamp restart: %w", err))
 		}
-		// The stamp begins a rollout without moving the target; touching the
-		// target row restarts the rollout-deadline clock for the adopted run.
-		if _, err := q.TouchEnvironmentTarget(ctx, in.EnvironmentID); err != nil {
-			return fmt.Errorf("deploy: touch target: %w", err)
+	} else {
+		err = s.st.WithTx(ctx, func(q *store.Queries) error {
+			if _, err := q.StampApplicationRestart(ctx, store.StampApplicationRestartParams{
+				EnvironmentID:  in.EnvironmentID,
+				ApplicationKey: in.ApplicationKey,
+			}); err != nil {
+				return fmt.Errorf("deploy: stamp restart: %w", err)
+			}
+			// The stamp begins a rollout without moving the target; touching
+			// the target row restarts the rollout-deadline clock for the
+			// adopted run.
+			if _, err := q.TouchEnvironmentTarget(ctx, in.EnvironmentID); err != nil {
+				return fmt.Errorf("deploy: touch target: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 
 	redactor, err := s.values.Redactor(ctx, in.EnvironmentID, uuid.Nil)
 	if err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
+	stamped := "restart stamped for " + in.ApplicationKey
+	if in.ApplicationKey == "" {
+		stamped = "restart stamped for every application"
+	}
 	if err := s.instantStep(ctx, in.Journal, run.ID, redactor, "restart", "Restart application",
-		"restart stamped for "+in.ApplicationKey); err != nil {
+		stamped); err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 	if s.enqueuer != nil {

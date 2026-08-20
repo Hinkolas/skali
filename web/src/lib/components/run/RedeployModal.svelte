@@ -16,7 +16,7 @@
 	// panel.
 	import CheckCircle2 from '@lucide/svelte/icons/circle-check-big';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
-	import RotateCw from '@lucide/svelte/icons/rotate-cw';
+	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import { api, ApiError } from '$lib/api/client';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
@@ -112,7 +112,7 @@
 		Re-run the revision deployed here with the current values.
 	</ModalHeader>
 	<div class="flex flex-col items-center gap-1.5 px-5.5 py-9 text-center">
-		<RotateCw size={18} class="text-text-ghost" />
+		<RefreshCw size={18} class="text-text-ghost" />
 		<p class="text-text-primary text-base font-medium">
 			Nothing is running in {env.name} yet.
 		</p>

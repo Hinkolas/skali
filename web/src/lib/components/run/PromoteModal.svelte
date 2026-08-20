@@ -196,7 +196,6 @@
 	// The habitual route, recorded by the server on every promotion from
 	// this source. Open straight on it; Change returns to the finder,
 	// where a badge marks it.
-	// svelte-ignore state_referenced_locally
 	const lastUsed = candidates.find((e) => e.name === source.last_promotion_target) ?? null;
 	if (lastUsed && !refusal(lastUsed)) pick(lastUsed);
 </script>
