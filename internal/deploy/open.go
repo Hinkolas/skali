@@ -191,6 +191,14 @@ type PlanInput struct {
 	// values resolve for the target environment. Mutually exclusive with
 	// DefinitionVersionID and BuildInputs.
 	FromEnvironmentID uuid.UUID
+	// Redeploy re-deploys the environment's own active revision: the same
+	// definition version and artifact set, re-rendered with the
+	// environment's current values. A promotion whose source is the target
+	// itself, so no bundle and no build machinery; unlike a promotion it
+	// preserves the environment's intercept set instead of clearing it.
+	// Mutually exclusive with DefinitionVersionID, FromEnvironmentID, and
+	// BuildInputs.
+	Redeploy bool
 	// CandidateID selects a staged values batch; uuid.Nil plans against
 	// current values.
 	CandidateID uuid.UUID
@@ -271,24 +279,20 @@ type Opened struct {
 // and destructive plan without mutating anything (transcript: planning
 // never stores values, never moves targets).
 func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, error) {
-	if in.FromEnvironmentID != uuid.Nil {
-		if len(in.LocalApplications) > 0 {
-			return nil, &LocalApplicationsUnsupportedError{Reason: "cannot be combined with a promotion"}
-		}
-		src, err := s.loadPromotionSource(ctx, in.EnvironmentID, in.FromEnvironmentID)
+	if in.FromEnvironmentID != uuid.Nil || in.Redeploy {
+		src, err := s.resolveReuseSource(ctx, &in)
 		if err != nil {
 			return nil, err
 		}
-		in.DefinitionVersionID = src.DefinitionVersionID
 		env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 		if err != nil {
 			return nil, err
 		}
-		changed, err := s.interceptsChanged(ctx, env.ID, nil)
+		changed, err := s.interceptsChanged(ctx, env.ID, in.LocalApplications)
 		if err != nil {
 			return nil, err
 		}
-		return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, nil, changed, in.PruneValues)
+		return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, in.LocalApplications, changed, in.PruneValues)
 	}
 	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 	if err != nil {
@@ -300,6 +304,62 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 	return s.preview(ctx, env, definitionVersion, definition, in)
 }
 
+// resolveReuseSource loads the artifact-reuse source of a promotion or a
+// redeploy and mutates the input in place: the definition version becomes
+// the source revision's, and a redeploy carries the environment's stored
+// intercept set forward (a promotion clears it, stating the whole truth
+// with an empty set). Callers pass in.LocalApplications on to the preview
+// and the deployment row.
+func (s *Service) resolveReuseSource(ctx context.Context, in *PlanInput) (*promotionSource, error) {
+	if len(in.LocalApplications) > 0 {
+		reason := "cannot be combined with a promotion"
+		if in.Redeploy {
+			reason = "cannot be combined with a redeploy"
+		}
+		return nil, &LocalApplicationsUnsupportedError{Reason: reason}
+	}
+	if in.Redeploy {
+		src, err := s.loadSourceRevision(ctx, in.EnvironmentID, in.EnvironmentID)
+		if err != nil {
+			return nil, err
+		}
+		locals, err := s.loadLocalApplications(ctx, in.EnvironmentID)
+		if err != nil {
+			return nil, err
+		}
+		in.DefinitionVersionID = src.DefinitionVersionID
+		in.LocalApplications = locals
+		return src, nil
+	}
+	src, err := s.loadPromotionSource(ctx, in.EnvironmentID, in.FromEnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	in.DefinitionVersionID = src.DefinitionVersionID
+	return src, nil
+}
+
+// loadLocalApplications reads the environment's stored intercept rows back
+// into the local-application set a redeploy carries forward.
+func (s *Service) loadLocalApplications(ctx context.Context, environmentID uuid.UUID) (map[string]LocalApplication, error) {
+	rows, err := s.st.ListEnvironmentIntercepts(ctx, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("deploy: list intercepts: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	locals := make(map[string]LocalApplication, len(rows))
+	for _, row := range rows {
+		var ports map[string]int32
+		if err := json.Unmarshal(row.Ports, &ports); err != nil {
+			return nil, fmt.Errorf("deploy: decode intercept ports for %s: %w", row.ApplicationKey, err)
+		}
+		locals[row.ApplicationKey] = LocalApplication{Ports: ports}
+	}
+	return locals, nil
+}
+
 // Open starts one deployment: it re-runs the plan gate, creates the run
 // and the coordination row, journals the validation and value steps, and
 // materializes pending artifact and build records for the client's work
@@ -307,15 +367,11 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 // untouched until completion.
 func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	var src *promotionSource
-	if in.FromEnvironmentID != uuid.Nil {
-		if len(in.LocalApplications) > 0 {
-			return nil, &LocalApplicationsUnsupportedError{Reason: "cannot be combined with a promotion"}
-		}
+	if in.FromEnvironmentID != uuid.Nil || in.Redeploy {
 		var err error
-		if src, err = s.loadPromotionSource(ctx, in.EnvironmentID, in.FromEnvironmentID); err != nil {
+		if src, err = s.resolveReuseSource(ctx, &in.PlanInput); err != nil {
 			return nil, err
 		}
-		in.DefinitionVersionID = src.DefinitionVersionID
 	}
 	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 	if err != nil {
@@ -341,8 +397,8 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	var preview *Preview
 	if src != nil {
 		var changed bool
-		if changed, err = s.interceptsChanged(ctx, env.ID, nil); err == nil {
-			preview, err = s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, nil, changed, in.PruneValues)
+		if changed, err = s.interceptsChanged(ctx, env.ID, in.LocalApplications); err == nil {
+			preview, err = s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, in.LocalApplications, changed, in.PruneValues)
 		}
 	} else {
 		preview, err = s.preview(ctx, env, definitionVersion, definition, in.PlanInput)
@@ -977,6 +1033,13 @@ func (s *Service) loadPromotionSource(ctx context.Context, environmentID, fromEn
 	if fromEnvironmentID == environmentID {
 		return nil, ErrSameEnvironment
 	}
+	return s.loadSourceRevision(ctx, environmentID, fromEnvironmentID)
+}
+
+// loadSourceRevision is the guard-free body shared by promotions and
+// redeploys (where source and target are deliberately the same
+// environment).
+func (s *Service) loadSourceRevision(ctx context.Context, environmentID, fromEnvironmentID uuid.UUID) (*promotionSource, error) {
 	env, err := s.st.GetEnvironmentByID(ctx, environmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

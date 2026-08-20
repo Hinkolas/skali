@@ -264,6 +264,12 @@ type EnvironmentIntercept struct {
 	CreatedAt      time.Time
 }
 
+type EnvironmentRestart struct {
+	EnvironmentID  uuid.UUID
+	ApplicationKey string
+	RestartedAt    time.Time
+}
+
 type EnvironmentSecret struct {
 	ID            uuid.UUID
 	EnvironmentID uuid.UUID

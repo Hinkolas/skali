@@ -15,4 +15,6 @@ export interface StageValuesResult {
 	candidate_id: string;
 	staged: string[];
 	skipped: string[];
+	/** True when the batch was promoted to current immediately (`apply`). */
+	applied: boolean;
 }

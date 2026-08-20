@@ -70,8 +70,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if err != nil {
 		return 0, err
 	}
+	appRestarts, err := k.loadAppRestarts(ctx, environmentID)
+	if err != nil {
+		return 0, err
+	}
 
-	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, intercepts, env.Priority)
+	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, intercepts, env.Priority)
 	if err != nil {
 		// An unrenderable revision is permanent for this target: journal the
 		// diagnostic, never prune (compiler-error absence must not delete
@@ -450,12 +454,31 @@ func (k *Kernel) loadIntercepts(ctx context.Context, environmentID uuid.UUID) (m
 	return intercepts, nil
 }
 
+// loadAppRestarts reads the environment's per-application restart stamps as
+// UTC RFC3339 strings ready for rendering; nil when nothing was ever
+// restarted.
+func (k *Kernel) loadAppRestarts(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
+	rows, err := k.deps.Store.ListEnvironmentRestarts(ctx, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("reconcile: list restarts: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	stamps := make(map[string]string, len(rows))
+	for _, row := range rows {
+		stamps[row.ApplicationKey] = row.RestartedAt.UTC().Format(time.RFC3339)
+	}
+	return stamps, nil
+}
+
 // desiredSet renders the target revision for the environment. priority is
 // the environment's live setting (normal or high); it selects the
-// PriorityClass of every application pod and, like the restart stamp, is
+// PriorityClass of every application pod and, like the restart stamps, is
 // not part of the revision.
 func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
-	restartedAt *time.Time, intercepts map[string]map[string]int32, priority string) (*desiredSet, error) {
+	restartedAt *time.Time, appRestarts map[string]string,
+	intercepts map[string]map[string]int32, priority string) (*desiredSet, error) {
 	refs := make(map[string]int, len(rev.Secrets))
 	for name, secret := range rev.Secrets {
 		refs[name] = secret.Version
@@ -538,6 +561,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		Intercepts:              interceptPorts,
 		InterceptHostIP:         interceptHostIP,
 		PriorityClassName:       layout.PriorityClassFor(priority),
+		AppRestartedAt:          appRestarts,
 	}
 	if restartedAt != nil {
 		renderOptions.RestartedAt = restartedAt.UTC().Format(time.RFC3339)

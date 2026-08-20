@@ -31,6 +31,14 @@ UPDATE environment_targets
 SET restarted_at = now(), updated_at = now()
 WHERE environment_id = $1 AND state <> 'releasing';
 
+-- A service restart begins a rollout without moving the target; touching
+-- updated_at restarts the rollout-deadline clock for the adopted restart
+-- run, exactly like a promotion does through SetEnvironmentTarget.
+-- name: TouchEnvironmentTarget :execrows
+UPDATE environment_targets
+SET updated_at = now()
+WHERE environment_id = $1 AND state <> 'releasing';
+
 -- name: ListEnvironmentTargets :many
 SELECT * FROM environment_targets;
 

@@ -69,6 +69,12 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 		// definition instead of the project draft, so a deploy can stage
 		// values for the exact manifest it is about to promote.
 		DefinitionVersionID string `json:"definition_version_id"`
+		// Apply promotes the batch to current immediately instead of leaving
+		// it staged for a deployment to promote. The console saves values
+		// this way: stored values are what the next deployment or redeploy
+		// resolves, matching how DELETE already removes them immediately.
+		// Running revisions keep the versions they pinned either way.
+		Apply bool `json:"apply"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -99,14 +105,25 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 		writeValuesError(r.Context(), w, err)
 		return
 	}
+	if req.Apply {
+		err := h.st.WithTx(r.Context(), func(q *store.Queries) error {
+			return h.values.PromoteTx(r.Context(), q, id, candidate.ID)
+		})
+		if err != nil {
+			writeValuesError(r.Context(), w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, struct {
 		CandidateID string   `json:"candidate_id"`
 		Staged      []string `json:"staged"`
 		Skipped     []string `json:"skipped"`
+		Applied     bool     `json:"applied"`
 	}{
 		CandidateID: candidate.ID.String(),
 		Staged:      nonNil(candidate.Names),
 		Skipped:     nonNil(skipped),
+		Applied:     req.Apply,
 	})
 }
 

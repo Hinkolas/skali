@@ -40,11 +40,18 @@ type Options struct {
 	EnvironmentID    string
 	RevisionChecksum string
 
-	// RestartedAt is the environment target's restart stamp (RFC3339);
+	// RestartedAt is the environment target's restart stamp (RFC3339, UTC);
 	// non-empty values become a pod-template annotation on application
 	// workloads so a forced deployment rolls them even when the revision is
 	// unchanged. Stateful services never carry it.
 	RestartedAt string
+
+	// AppRestartedAt carries per-application restart stamps (RFC3339, UTC)
+	// keyed by application key; a service restart stamps one application so
+	// only its workload rolls. Per application the later of RestartedAt and
+	// its own stamp wins, so environment-wide force and service restarts
+	// compose.
+	AppRestartedAt map[string]string
 
 	// SecretVersions carries the stored generation per secret variable for
 	// the per-application values identity; optional so offline rendering
@@ -251,7 +258,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels:      templateLabels,
-						Annotations: templateAnnotations(options, valuesIdentity(application, options)),
+						Annotations: templateAnnotations(options, key, valuesIdentity(application, options)),
 					},
 					Spec: corev1.PodSpec{
 						TerminationGracePeriodSeconds: &graceSeconds,
@@ -684,14 +691,16 @@ func valuesIdentity(application compiler.Application, options Options) string {
 
 // templateAnnotations carries the restart stamp and the values identity
 // into application pod templates; nil (no annotations at all) when neither
-// applies, so existing objects do not change shape.
-func templateAnnotations(options Options, valuesHash string) map[string]string {
-	if options.RestartedAt == "" && valuesHash == "" {
+// applies, so existing objects do not change shape. Both stamp sources are
+// UTC RFC3339, so the lexicographic maximum is the later stamp.
+func templateAnnotations(options Options, key, valuesHash string) map[string]string {
+	restartedAt := max(options.RestartedAt, options.AppRestartedAt[key])
+	if restartedAt == "" && valuesHash == "" {
 		return nil
 	}
 	annotations := map[string]string{}
-	if options.RestartedAt != "" {
-		annotations[AnnotationRestartedAt] = options.RestartedAt
+	if restartedAt != "" {
+		annotations[AnnotationRestartedAt] = restartedAt
 	}
 	if valuesHash != "" {
 		annotations[AnnotationValuesHash] = valuesHash

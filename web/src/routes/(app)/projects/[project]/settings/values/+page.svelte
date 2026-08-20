@@ -48,10 +48,11 @@
 		errorMessage = '';
 		try {
 			const res = await api.put<StageValuesResult>(`/v1/environments/${data.env.id}/values`, {
-				values: { ...dirty }
+				values: { ...dirty },
+				apply: true
 			});
-			toast.success('Values staged', {
-				description: 'They apply with the next deployment.'
+			toast.success('Values saved', {
+				description: 'Stored for the environment; hit Redeploy to roll them out.'
 			});
 			if (res.skipped.length > 0) {
 				toast.warning(`Skipped ${res.skipped.join(', ')}`, {
@@ -121,7 +122,7 @@
 			title={editTitle}
 			onclick={save}
 		>
-			Stage {dirtyCount > 0 ? dirtyCount : ''} change{dirtyCount === 1 ? '' : 's'}
+			Save {dirtyCount > 0 ? dirtyCount : ''} change{dirtyCount === 1 ? '' : 's'}
 		</Button>
 	{/snippet}
 </PageHeader>
@@ -160,7 +161,7 @@
 			<div class="mb-3.5 flex items-baseline gap-2.5">
 				<h3 class="text-text-primary text-xl font-semibold">Variables</h3>
 				<span class="text-text-muted text-md">
-					environment {data.env.name} · write-only · staged values apply with the next deployment
+					environment {data.env.name} · write-only · saved values roll out with Redeploy or the next deployment
 					{#if !mayEdit}
 						· {editTitle} to change
 					{/if}
@@ -171,19 +172,16 @@
 					{@const entry = entryByName.get(variable.name)}
 					{@const pending = dirty[variable.name]}
 					<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
-						<div class="w-44 flex-none">
-							<div class="font-mono text-text-primary truncate text-md" title={variable.name}>
-								{variable.name}
-							</div>
+						<div class="flex w-52 flex-none items-center gap-2" title={variable.name}>
+							<span class="font-mono text-text-primary truncate text-md">{variable.name}</span>
 							{#if variable.required && !variable.hasDefault}
-								<div class="mt-0.5 flex items-center gap-1.5">
-									<Pill text="required" tone="neutral" />
-								</div>
+								<Pill text="required" tone="neutral" />
 							{/if}
 						</div>
-						<div class="flex min-w-0 flex-1 items-center gap-2">
+						<div class="min-w-0 flex-1">
 							<TextInput
 								type="password"
+								size="sm"
 								autocomplete="off"
 								mono
 								disabled={!mayEdit}
@@ -199,8 +197,10 @@
 									else dirty[variable.name] = next;
 								}}
 							/>
+						</div>
+						<div class="flex w-36 flex-none items-center justify-end gap-1">
 							{#if pending === ''}
-								<span class="text-status-warning flex-none text-md">will set empty</span>
+								<span class="text-status-warning whitespace-nowrap text-md">will set empty</span>
 								<Button size="sm" variant="ghost" onclick={() => delete dirty[variable.name]}>
 									Keep
 								</Button>

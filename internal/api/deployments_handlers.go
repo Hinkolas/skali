@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -152,6 +153,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DefinitionVersionID string                             `json:"definition_version_id"`
 		FromEnvironmentID   string                             `json:"from_environment_id"`
+		Redeploy            bool                               `json:"redeploy"`
 		CandidateID         string                             `json:"candidate_id"`
 		Builds              map[string]buildInputPayload       `json:"builds"`
 		Rebuild             bool                               `json:"rebuild"`
@@ -164,14 +166,15 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	definitionVersionID, fromEnvironmentID, candidateID, ok := parseDeploymentSelector(w,
-		req.DefinitionVersionID, req.FromEnvironmentID, req.CandidateID, len(req.Builds), req.Rebuild)
+		req.DefinitionVersionID, req.FromEnvironmentID, req.CandidateID, len(req.Builds), req.Rebuild, req.Redeploy)
 	if !ok {
 		return
 	}
 	env := environmentFrom(r.Context())
 	request := deployRequest{
 		definitionVersionID: definitionVersionID, fromEnvironmentID: fromEnvironmentID,
-		candidateID: candidateID, pruneValues: req.PruneValues, bypassProtection: req.BypassProtection,
+		redeploy: req.Redeploy, candidateID: candidateID,
+		pruneValues: req.PruneValues, bypassProtection: req.BypassProtection,
 	}
 	requiredRole, ok := h.requireDeployRole(w, r, request)
 	if !ok {
@@ -185,6 +188,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID:       id,
 		DefinitionVersionID: definitionVersionID,
 		FromEnvironmentID:   fromEnvironmentID,
+		Redeploy:            req.Redeploy,
 		CandidateID:         candidateID,
 		BuildInputs:         decodeBuildInputs(req.Builds),
 		NodePlatforms:       h.reconcile.NodePlatforms(),
@@ -212,6 +216,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 type deployRequest struct {
 	definitionVersionID uuid.UUID
 	fromEnvironmentID   uuid.UUID
+	redeploy            bool
 	candidateID         uuid.UUID
 	pruneValues         bool
 	bypassProtection    bool
@@ -233,6 +238,10 @@ func (h *deploymentsHandlers) requireDeployRole(w http.ResponseWriter, r *http.R
 		required, reason = authz.Maintain, "this deploy stages values"
 	case req.pruneValues:
 		required, reason = authz.Maintain, "this deploy prunes values"
+	case req.redeploy:
+		// A redeploy re-runs the environment's own active revision with its
+		// current values: nothing but what code runs changes, so the deploy
+		// rung suffices, like a rollback.
 	case req.fromEnvironmentID != uuid.Nil:
 		source, ok := grant.Environment(req.fromEnvironmentID)
 		if !ok {
@@ -279,6 +288,13 @@ func (h *deploymentsHandlers) requireDeployRole(w http.ResponseWriter, r *http.R
 func (h *deploymentsHandlers) requireDeployPolicy(w http.ResponseWriter, r *http.Request, req deployRequest) (bool, bool) {
 	envGrant := environmentGrantFrom(r.Context())
 	if !envGrant.Protected() {
+		return false, true
+	}
+	if req.redeploy {
+		// A redeploy re-runs the definition and artifacts the environment
+		// already runs; promote-only guards where new code comes from, so it
+		// passes like an allowed promotion. The values it picks up were
+		// already gated by maintain when they were stored.
 		return false, true
 	}
 	sourceName := ""
@@ -332,6 +348,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DefinitionVersionID string                             `json:"definition_version_id"`
 		FromEnvironmentID   string                             `json:"from_environment_id"`
+		Redeploy            bool                               `json:"redeploy"`
 		CandidateID         string                             `json:"candidate_id"`
 		BuildExecutor       string                             `json:"build_executor"`
 		AllowDestructive    bool                               `json:"allow_destructive"`
@@ -347,7 +364,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	definitionVersionID, fromEnvironmentID, candidateID, ok := parseDeploymentSelector(w,
-		req.DefinitionVersionID, req.FromEnvironmentID, req.CandidateID, len(req.Builds), req.Rebuild)
+		req.DefinitionVersionID, req.FromEnvironmentID, req.CandidateID, len(req.Builds), req.Rebuild, req.Redeploy)
 	if !ok {
 		return
 	}
@@ -358,7 +375,8 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	}
 	request := deployRequest{
 		definitionVersionID: definitionVersionID, fromEnvironmentID: fromEnvironmentID,
-		candidateID: candidateID, pruneValues: req.PruneValues, bypassProtection: req.BypassProtection,
+		redeploy: req.Redeploy, candidateID: candidateID,
+		pruneValues: req.PruneValues, bypassProtection: req.BypassProtection,
 	}
 	requiredRole, ok := h.requireDeployRole(w, r, request)
 	if !ok {
@@ -374,6 +392,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 			EnvironmentID:       id,
 			DefinitionVersionID: definitionVersionID,
 			FromEnvironmentID:   fromEnvironmentID,
+			Redeploy:            req.Redeploy,
 			CandidateID:         candidateID,
 			BuildInputs:         decodeBuildInputs(req.Builds),
 			NodePlatforms:       h.reconcile.NodePlatforms(),
@@ -420,6 +439,28 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		RequiredRole:     requiredRole.String(),
 		BypassProtection: bypassed,
 	})
+}
+
+// POST /v1/environments/{id}/applications/{key}/restart
+func (h *deploymentsHandlers) restart(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	user := UserFrom(r.Context())
+	result, err := h.deploy.Restart(r.Context(), deploy.RestartInput{
+		EnvironmentID:  id,
+		ApplicationKey: chi.URLParam(r, "key"),
+		Actor:          user.ID.String(),
+		Journal:        h.journal,
+	})
+	if err != nil {
+		writeDeployError(r.Context(), w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, struct {
+		RunID string `json:"run_id"`
+	}{result.RunID.String()})
 }
 
 // GET /v1/deployments/{id}
@@ -737,10 +778,20 @@ func parseCandidateID(w http.ResponseWriter, candidate string) (uuid.UUID, bool)
 }
 
 // parseDeploymentSelector parses the revision selector shared by plan and
-// open: exactly one of definition_version_id (an ordinary deployment) or
-// from_environment_id (a promotion), plus the optional candidate.
+// open: exactly one of definition_version_id (an ordinary deployment),
+// from_environment_id (a promotion), or redeploy (the environment's own
+// active revision), plus the optional candidate.
 func parseDeploymentSelector(w http.ResponseWriter, definitionVersion, from, candidate string,
-	buildCount int, rebuild bool) (definitionVersionID, fromEnvironmentID, candidateID uuid.UUID, ok bool) {
+	buildCount int, rebuild, redeploy bool) (definitionVersionID, fromEnvironmentID, candidateID uuid.UUID, ok bool) {
+	if redeploy {
+		if definitionVersion != "" || from != "" || buildCount > 0 || rebuild {
+			writeError(w, http.StatusBadRequest, codeBadRequest,
+				"redeploy cannot be combined with definition_version_id, from_environment_id, builds, or rebuild")
+			return uuid.Nil, uuid.Nil, uuid.Nil, false
+		}
+		candidateID, ok = parseCandidateID(w, candidate)
+		return uuid.Nil, uuid.Nil, candidateID, ok
+	}
 	if from == "" {
 		definitionVersionID, candidateID, ok = parseDeploymentIDs(w, definitionVersion, candidate)
 		return definitionVersionID, uuid.Nil, candidateID, ok
@@ -808,6 +859,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
 	case errors.Is(err, deploy.ErrNoActiveRevision):
 		writeError(w, http.StatusConflict, codeConflict, "source environment has no active revision")
+	case errors.Is(err, deploy.ErrApplicationNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "the target revision declares no such application")
 	case errors.Is(err, deploy.ErrInvalidDeploymentTransition):
 		writeError(w, http.StatusConflict, codeConflict, trimDeployPrefix(err))
 	case errors.Is(err, deploy.ErrDefinitionMismatch):

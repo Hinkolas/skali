@@ -963,9 +963,9 @@ paths:
         Submits one flat name-to-value map. Every value is secret. Names
         the definition does not reference are skipped and reported, never
         an error. An empty string is stored as a real value; removal is
-        the DELETE operation. The staged candidate changes nothing until
-        a deployment promotes it; unpromoted candidates are
-        garbage-collected.
+        the DELETE operation. Without `apply` the staged candidate
+        changes nothing until a deployment promotes it; unpromoted
+        candidates are garbage-collected.
       tags: [values]
       requestBody:
         required: true
@@ -979,6 +979,14 @@ paths:
                   type: object
                   additionalProperties:
                     type: string
+                apply:
+                  type: boolean
+                  description: |
+                    Promote the batch to current immediately instead of
+                    leaving it staged: stored values become what the next
+                    deployment or redeploy resolves, matching how DELETE
+                    removes immediately. Running revisions keep the
+                    versions they pinned either way.
       responses:
         "201":
           description: Candidate staged; values are never echoed.
@@ -986,7 +994,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [candidate_id, staged, skipped]
+                required: [candidate_id, staged, skipped, applied]
                 properties:
                   candidate_id:
                     type: string
@@ -997,6 +1005,8 @@ paths:
                   skipped:
                     type: array
                     items: { type: string }
+                  applied:
+                    type: boolean
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -2346,6 +2356,63 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/environments/{id}/applications/{key}/restart:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Application key from the manifest.
+    post:
+      operationId: restartApplication
+      summary: Restart one application's workload
+      description: |
+        Recreates the application's pods without changing anything else:
+        revision, values, and artifacts stay exactly as deployed. The
+        restart is a persisted per-application stamp the reconciler
+        renders as a pod-template annotation, so it survives daemon
+        restarts and re-renders identically; only this application's
+        workload rolls. Runs under a journaled run of kind `restart`
+        that the rollout machinery tracks like a deployment. Requires
+        `deploy` on the environment. One run at a time per environment
+        (`deployment_in_flight`).
+      tags: [deployments]
+      responses:
+        "202":
+          description: Restart accepted; follow the run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id:
+                    type: string
+                    format: uuid
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: |
+            `not_found`: the environment does not exist, is out of reach,
+            or its target revision declares no such application.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: |
+            `deployment_in_flight`: another run is in flight. `conflict`:
+            the environment runs no revision to restart.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/deployments/{id}:
     parameters:
       - name: id
@@ -3282,7 +3349,7 @@ components:
           format: uuid
         kind:
           type: string
-          description: "deployment, rollback, reconcile, teardown, backup, or restore."
+          description: "deployment, rollback, restart, reconcile, teardown, backup, or restore."
         bypass_protection:
           type: boolean
           description: |
@@ -3876,8 +3943,8 @@ components:
     PlanRequest:
       type: object
       description: |
-        Exactly one of `definition_version_id` or `from_environment_id`
-        must be present.
+        Exactly one of `definition_version_id`, `from_environment_id`, or
+        `redeploy` must be present.
       properties:
         definition_version_id:
           type: string
@@ -3892,6 +3959,17 @@ components:
             `reuse`, and values resolve for this environment. Cannot be
             combined with `definition_version_id`, `builds`, or
             `rebuild`.
+        redeploy:
+          type: boolean
+          description: |
+            Re-deploy the environment's own active revision: the same
+            definition version and artifact set, re-rendered with the
+            environment's current values, so stored value changes take
+            effect. Deploy rung only, and it passes a promote-only
+            policy: it introduces no new code. Unlike a promotion it
+            preserves the environment's intercept set. Cannot be combined
+            with `definition_version_id`, `from_environment_id`,
+            `builds`, or `rebuild`.
         candidate_id:
           type: string
           format: uuid
@@ -3969,8 +4047,8 @@ components:
     OpenDeploymentRequest:
       type: object
       description: |
-        Exactly one of `definition_version_id` or `from_environment_id`
-        must be present.
+        Exactly one of `definition_version_id`, `from_environment_id`, or
+        `redeploy` must be present.
       properties:
         definition_version_id:
           type: string
@@ -3984,6 +4062,13 @@ components:
             `reuse`, so completion follows immediately; there is no
             artifact window. Cannot be combined with
             `definition_version_id`, `builds`, or `rebuild`.
+        redeploy:
+          type: boolean
+          description: |
+            Re-deploy the environment's own active revision with its
+            current values; see the same field on PlanRequest. Every
+            artifact action is `reuse`, so completion follows
+            immediately.
         candidate_id:
           type: string
           format: uuid

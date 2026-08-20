@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Breadcrumbs from './Breadcrumbs.svelte';
+	import EnvActions from './EnvActions.svelte';
 	import SearchButton from './SearchButton.svelte';
 	import UserMenu from './UserMenu.svelte';
 </script>
@@ -9,6 +10,9 @@
 <header class="flex h-14 flex-none items-center gap-3">
 	<Breadcrumbs />
 	<div class="flex-1"></div>
+	<!-- Environment-wide actions next to the environment the breadcrumb
+	     names, reachable from every page of the project. -->
+	<EnvActions />
 	<SearchButton />
 	<UserMenu />
 </header>

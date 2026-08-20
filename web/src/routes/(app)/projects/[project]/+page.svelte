@@ -4,41 +4,15 @@
 	import type { StatCardData } from '$lib/models/view';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { HEALTH_META } from '$lib/service-types';
-	import { modal } from '$lib/stores/modal.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import ServiceCard from '$lib/components/service/ServiceCard.svelte';
-	import PromoteModal, {
-		modalOptions as promoteModalOptions
-	} from '$lib/components/run/PromoteModal.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
 	const status = $derived(envStatus.doc ?? data.status);
-
-	// Promote acts on the environment currently in view as the source; the
-	// modal owns target eligibility, the button needs a second env and a
-	// running revision to move. With status unknown it stays enabled; the
-	// modal's blocked state and the server catch the rest.
-	const promoteTitle = $derived(
-		data.environments.length < 2
-			? 'no other environments to promote to'
-			: status && !status.active_revision
-				? `nothing is running in ${data.env?.name} yet; promotions move the running revision`
-				: undefined
-	);
-
-	function openPromote() {
-		if (!data.env) return;
-		modal.open(
-			PromoteModal,
-			{ source: data.env, environments: data.environments },
-			promoteModalOptions
-		);
-	}
 
 	const title = $derived(data.project.display_name || data.project.name);
 
@@ -73,25 +47,12 @@
 	<title>{title} — skali</title>
 </svelte:head>
 
+<!-- Promote and Redeploy are environment-wide and live in the topbar next
+     to the environment breadcrumb. -->
 <PageHeader {title}>
 	{#snippet subtitle()}
 		<span class="size-[8px] flex-none rounded-full {subtitleDot}"></span>
 		{subtitleText}
-	{/snippet}
-	{#snippet actions()}
-		{#if data.env}
-			<Button
-				variant="secondary"
-				disabled={!!promoteTitle}
-				title={promoteTitle}
-				onclick={openPromote}
-			>
-				Promote
-			</Button>
-		{/if}
-		<span title="Deploys run from the CLI for now: skali deploy">
-			<Button variant="primary" disabled>Deploy</Button>
-		</span>
 	{/snippet}
 </PageHeader>
 

@@ -38,6 +38,9 @@ var (
 	// ErrAlreadyTargeted: the environment already targets the requested
 	// revision.
 	ErrAlreadyTargeted = errors.New("deploy: the environment already targets this revision")
+	// ErrApplicationNotFound: the target revision declares no such
+	// application.
+	ErrApplicationNotFound = errors.New("deploy: application not found in the target revision")
 )
 
 // ArtifactResolver turns one application source into a verified artifact.
@@ -405,6 +408,110 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		return nil, err
 	}
 	return &RollbackResult{RunID: run.ID}, nil
+}
+
+// RestartInput describes one service restart: stamp the application's
+// restart and hand rollout to the kernel under a journaled run of kind
+// "restart". Revision, values, and artifacts are untouched; only the
+// pod-template restart annotation changes, so exactly this application's
+// workload rolls.
+type RestartInput struct {
+	EnvironmentID  uuid.UUID
+	ApplicationKey string
+	Actor          string
+	Journal        *journal.Service
+}
+
+type RestartResult struct {
+	RunID uuid.UUID
+}
+
+// Restart stamps one application's restart and hands rollout to the kernel
+// like a promotion. The run is created before the stamp so a failed stamp
+// leaves a failed run and untouched state; the unique running-run index
+// serializes restarts against deployments.
+func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult, error) {
+	target, err := s.st.GetEnvironmentTarget(ctx, in.EnvironmentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrEnvironmentNotFound
+		}
+		return nil, fmt.Errorf("deploy: get target: %w", err)
+	}
+	if target.TargetRevisionID == nil {
+		return nil, ErrNoActiveRevision
+	}
+	rev, err := s.GetRevision(ctx, *target.TargetRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := rev.Definition.Applications[in.ApplicationKey]; !ok {
+		return nil, ErrApplicationNotFound
+	}
+	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
+		return nil, ErrDeploymentInFlight
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
+	}
+	env, err := s.st.GetEnvironmentByID(ctx, in.EnvironmentID)
+	if err != nil {
+		return nil, fmt.Errorf("deploy: get environment: %w", err)
+	}
+
+	run, err := in.Journal.CreateRun(ctx, journal.RunInput{
+		Kind:          "restart",
+		ProjectID:     env.ProjectID,
+		EnvironmentID: in.EnvironmentID,
+		Actor:         in.Actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
+		discardUnstartedRun(ctx, in.Journal, run.ID)
+		if errors.Is(err, journal.ErrRunConflict) {
+			return nil, ErrDeploymentInFlight
+		}
+		return nil, err
+	}
+
+	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+		if _, err := q.StampApplicationRestart(ctx, store.StampApplicationRestartParams{
+			EnvironmentID:  in.EnvironmentID,
+			ApplicationKey: in.ApplicationKey,
+		}); err != nil {
+			return fmt.Errorf("deploy: stamp restart: %w", err)
+		}
+		// The stamp begins a rollout without moving the target; touching the
+		// target row restarts the rollout-deadline clock for the adopted run.
+		if _, err := q.TouchEnvironmentTarget(ctx, in.EnvironmentID); err != nil {
+			return fmt.Errorf("deploy: touch target: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+	}
+
+	redactor, err := s.values.Redactor(ctx, in.EnvironmentID, uuid.Nil)
+	if err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+	}
+	if err := s.instantStep(ctx, in.Journal, run.ID, redactor, "restart", "Restart application",
+		"restart stamped for "+in.ApplicationKey); err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+	}
+	if s.enqueuer != nil {
+		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); err != nil {
+			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+		}
+		s.enqueuer.Enqueue(in.EnvironmentID)
+		return &RestartResult{RunID: run.ID}, nil
+	}
+	if err := in.Journal.FinishRun(ctx, run.ID, journal.RunSucceeded); err != nil {
+		return nil, err
+	}
+	return &RestartResult{RunID: run.ID}, nil
 }
 
 // finishRunFailed concludes a run after a failure and returns the original

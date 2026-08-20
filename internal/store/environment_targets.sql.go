@@ -226,3 +226,20 @@ func (q *Queries) StampEnvironmentRestart(ctx context.Context, environmentID uui
 	}
 	return result.RowsAffected(), nil
 }
+
+const touchEnvironmentTarget = `-- name: TouchEnvironmentTarget :execrows
+UPDATE environment_targets
+SET updated_at = now()
+WHERE environment_id = $1 AND state <> 'releasing'
+`
+
+// A service restart begins a rollout without moving the target; touching
+// updated_at restarts the rollout-deadline clock for the adopted restart
+// run, exactly like a promotion does through SetEnvironmentTarget.
+func (q *Queries) TouchEnvironmentTarget(ctx context.Context, environmentID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, touchEnvironmentTarget, environmentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
