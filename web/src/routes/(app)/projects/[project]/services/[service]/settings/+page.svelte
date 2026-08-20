@@ -25,10 +25,7 @@
 				return [
 					{
 						title: 'Source',
-						rows: [
-							...source,
-							{ k: 'Command', v: c.command?.join(' ') || 'image default' }
-						]
+						rows: [...source, { k: 'Command', v: c.command?.join(' ') || 'image default' }]
 					},
 					{
 						title: 'Network',
@@ -120,7 +117,7 @@
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
 	<h2 class="text-text-primary text-xl font-semibold">Configuration</h2>
-	<div class="text-text-ghost text-md">
+	<div class="text-text-muted text-md">
 		read-only · edit skali.yaml and deploy to change any of this
 	</div>
 </div>

@@ -26,7 +26,7 @@
 				<TrendChip text={stat.chip.text} tone={stat.chip.tone} />
 			{/if}
 			{#if stat.note}
-				<span class="text-text-ghost text-md">{stat.note}</span>
+				<span class="text-text-muted text-md">{stat.note}</span>
 			{/if}
 		</div>
 	{/if}

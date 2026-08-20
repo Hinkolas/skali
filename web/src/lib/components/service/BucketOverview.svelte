@@ -119,7 +119,7 @@
 			>
 				<div class="flex flex-col gap-2 p-5 text-center">
 					<div class="text-text-muted text-base">Not provisioned yet</div>
-					<div class="font-mono text-text-ghost text-xs">
+					<div class="font-mono text-text-faint text-md">
 						phase {connection?.phase ?? 'unknown'} · connection facts appear once the claim settles
 					</div>
 				</div>
@@ -130,7 +130,7 @@
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
 	<h2 class="text-text-primary text-xl font-semibold">Connected applications</h2>
-	<div class="text-text-ghost text-md">keys injected as env values</div>
+	<div class="text-text-muted text-md">keys injected as env values</div>
 </div>
 
 <div class="pb-6">

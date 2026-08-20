@@ -57,11 +57,11 @@
 	class="bg-surface-canvas border-border-subtle max-h-56 overflow-y-auto rounded-[9px] border px-3 py-2"
 >
 	{#if entries.length === 0}
-		<div class="font-mono text-text-ghost py-1 text-xs">no log output</div>
+		<div class="font-mono text-text-faint py-1 text-md">no log output</div>
 	{:else}
 		{#each entries as entry (`${entry.attempt}:${entry.seq}`)}
 			<div class="flex gap-2.5 py-0.5">
-				<span class="font-mono text-text-ghost flex-none text-xs" title={formatDateTime(entry.ts)}>
+				<span class="font-mono text-text-faint flex-none text-xs" title={formatDateTime(entry.ts)}>
 					{new Date(entry.ts).toLocaleTimeString(undefined, { hour12: false })}
 				</span>
 				<span

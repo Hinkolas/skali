@@ -28,7 +28,7 @@
 		{/if}
 		<div class="text-text-muted text-lg font-medium">{title}</div>
 		{#if description}
-			<div class="font-mono text-text-ghost text-xs">{description}</div>
+			<div class="font-mono text-text-faint text-md">{description}</div>
 		{/if}
 		{#if action}
 			<div class="mt-2">{@render action()}</div>

@@ -17,7 +17,7 @@
 	>
 		<div class="flex flex-col gap-2 p-5 text-center">
 			<div class="text-text-muted text-base">Public access is disabled</div>
-			<div class="font-mono text-text-ghost text-xs">reachable only inside the cluster network</div>
+			<div class="font-mono text-text-faint text-md">reachable only inside the cluster network</div>
 		</div>
 	</div>
 </Card>

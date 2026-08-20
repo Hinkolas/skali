@@ -124,7 +124,7 @@
 				<FolderKanban size={15} class="text-text-tertiary flex-none" />
 			{/if}
 			<span class="text-text-secondary truncate text-base font-medium">{result.title}</span>
-			<span class="font-mono text-text-ghost ml-auto flex-none text-xs">{result.meta}</span>
+			<span class="font-mono text-text-faint ml-auto flex-none text-xs">{result.meta}</span>
 		</button>
 	{:else}
 		<div class="text-text-ghost px-3 py-6 text-center text-base">No matches</div>

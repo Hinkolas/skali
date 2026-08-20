@@ -67,7 +67,7 @@
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
 	<h2 class="text-text-primary text-xl font-semibold">Services</h2>
-	<div class="text-text-ghost text-md">
+	<div class="text-text-muted text-md">
 		{data.services.length === 0 ? 'defined in skali.yaml' : `env ${data.env?.name ?? 'none'}`}
 	</div>
 </div>

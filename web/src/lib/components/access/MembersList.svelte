@@ -80,7 +80,7 @@
 <Card class="p-5">
 	<div class="mb-3.5 flex items-center gap-2.5">
 		<h3 class="text-text-primary text-xl font-semibold">Members</h3>
-		<span class="text-text-ghost text-md">who may do what on {project.name}</span>
+		<span class="text-text-muted text-md">who may do what on {project.name}</span>
 		{#if canEdit}
 			<div class="ml-auto">
 				<Button
@@ -94,7 +94,7 @@
 	</div>
 
 	{#if members.length === 0}
-		<div class="font-mono text-text-ghost py-2 text-xs">
+		<div class="font-mono text-text-faint py-2 text-md">
 			no members yet · instance admins see every project without membership
 		</div>
 	{:else}
@@ -128,7 +128,7 @@
 					<span class="justify-self-end">
 						{#if explicit.length > 0}
 							<span
-								class="font-mono text-text-ghost text-xs"
+								class="font-mono text-text-faint text-xs"
 								title={explicit.map(([env, role]) => `${env}: ${role}`).join(', ')}
 							>
 								{explicit.length}
@@ -142,7 +142,7 @@
 								class="text-text-secondary font-mono inline-flex items-center px-2 py-1 text-md"
 								title="Instance admins are admin everywhere; the membership is informational."
 							>
-								admin <span class="text-text-ghost ml-1 text-xs">(instance)</span>
+								admin <span class="text-text-faint ml-1 text-xs">(instance)</span>
 							</span>
 						{:else}
 							<RolePicker
@@ -167,6 +167,6 @@
 	{/if}
 
 	{#if !canEdit}
-		<p class="text-text-ghost mt-3.5 text-xs">{readOnlyTitle} to change members.</p>
+		<p class="text-text-muted mt-3.5 text-md">{readOnlyTitle} to change members.</p>
 	{/if}
 </Card>

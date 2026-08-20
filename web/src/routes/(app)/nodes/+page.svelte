@@ -51,7 +51,7 @@
 							{node.internal_ip ?? 'unknown'}
 						</span>
 						{#if node.external_ip}
-							<span class="font-mono text-text-ghost text-xs">{node.external_ip} public</span>
+							<span class="font-mono text-text-faint text-xs">{node.external_ip} public</span>
 						{/if}
 					</div>
 					<div class="flex flex-wrap items-center gap-1">

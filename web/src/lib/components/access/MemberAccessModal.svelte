@@ -168,7 +168,7 @@
 							{/if}
 							<span class="font-mono text-text-primary text-md">{env.name}</span>
 							{#if env.settings && env.settings.max_role !== 'admin'}
-								<span class="font-mono text-text-ghost text-xs" title="ceiling for inherited roles">
+								<span class="font-mono text-text-faint text-xs" title="ceiling for inherited roles">
 									max {env.settings.max_role}
 								</span>
 							{/if}
@@ -181,13 +181,13 @@
 							{:else}
 								{#if cell.cell === null}
 									<span
-										class="text-text-ghost font-mono text-xs"
+										class="text-text-faint font-mono text-xs"
 										title="inherited from the project role, capped by the ceiling"
 									>
 										{cell.role}
 									</span>
 								{:else if cell.cell !== cell.role}
-									<span class="text-text-ghost font-mono text-xs">= {cell.role}</span>
+									<span class="text-text-faint font-mono text-xs">= {cell.role}</span>
 								{/if}
 								<RolePicker
 									value={cell.cell ?? INHERIT}
@@ -202,7 +202,7 @@
 						</span>
 					</div>
 				{:else}
-					<div class="font-mono text-text-ghost px-3 py-2 text-xs">no environments yet</div>
+					<div class="font-mono text-text-faint px-3 py-2 text-md">no environments yet</div>
 				{/each}
 			</div>
 			<span class="text-text-muted text-base">

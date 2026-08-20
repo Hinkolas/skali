@@ -237,12 +237,12 @@
 						<span title={pill.title}><Pill text={pill.text} tone={pill.tone} /></span>
 					{/each}
 					<div class="ml-auto flex items-center gap-3">
-						<span class="font-mono text-text-ghost text-xs" title="your effective role here">
+						<span class="font-mono text-text-faint text-xs" title="your effective role here">
 							{environment.access}
 						</span>
 						{#if environment.created_at}
 							<span
-								class="font-mono text-text-ghost text-xs"
+								class="font-mono text-text-faint text-xs"
 								title="created {formatDateTime(environment.created_at)}"
 							>
 								{relativeTime(environment.created_at)}
@@ -288,7 +288,7 @@
 					</div>
 				</div>
 			{:else}
-				<div class="font-mono text-text-ghost py-2 text-xs">no environments yet</div>
+				<div class="font-mono text-text-faint py-2 text-md">no environments yet</div>
 			{/each}
 		</div>
 	</Card>
@@ -297,12 +297,12 @@
 		<div class="mb-3.5 flex items-baseline gap-2.5">
 			<h3 class="text-text-primary text-xl font-semibold">Revisions</h3>
 			{#if data.env}
-				<span class="text-text-ghost text-md">environment {data.env.name}</span>
+				<span class="text-text-muted text-md">environment {data.env.name}</span>
 			{/if}
 		</div>
 		<div class="flex flex-col">
 			{#if envLocked}
-				<div class="font-mono text-text-ghost flex items-center gap-1.5 py-2 text-xs">
+				<div class="font-mono text-text-faint flex items-center gap-1.5 py-2 text-md">
 					<Lock size={12} /> this environment is locked for you
 				</div>
 			{/if}
@@ -321,7 +321,7 @@
 						<Pill text="active" tone="neutral" />
 					{/if}
 					<span
-						class="font-mono text-text-ghost text-xs"
+						class="font-mono text-text-faint text-xs"
 						title={formatDateTime(revision.created_at)}
 					>
 						{relativeTime(revision.created_at)}
@@ -344,7 +344,7 @@
 				</div>
 			{:else}
 				{#if !envLocked}
-					<div class="font-mono text-text-ghost py-2 text-xs">
+					<div class="font-mono text-text-faint py-2 text-md">
 						no revisions yet · the first deploy creates one
 					</div>
 				{/if}

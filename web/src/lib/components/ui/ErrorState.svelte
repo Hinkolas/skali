@@ -66,5 +66,5 @@
 		<Button variant="primary" href={resolve('/')}>Go to home</Button>
 	</div>
 
-	<div class="font-mono text-text-ghost mt-7 text-xs">{page.url.pathname}</div>
+	<div class="font-mono text-text-faint mt-7 text-xs">{page.url.pathname}</div>
 </div>

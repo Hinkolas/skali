@@ -76,7 +76,7 @@
 					</div>
 					<p class="text-text-secondary text-md leading-snug">{diagnostic.message}</p>
 					{#if diagnostic.resource}
-						<div class="font-mono text-text-ghost text-xs">{diagnostic.resource}</div>
+						<div class="font-mono text-text-faint text-xs">{diagnostic.resource}</div>
 					{/if}
 				</div>
 			{/each}

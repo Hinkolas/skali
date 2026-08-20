@@ -62,7 +62,7 @@
 			</a>
 			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 		{:else}
-			<div class="font-mono text-text-ghost py-1 text-xs">no dependencies declared</div>
+			<div class="font-mono text-text-faint py-1 text-md">no dependencies declared</div>
 		{/each}
 		<button
 			type="button"

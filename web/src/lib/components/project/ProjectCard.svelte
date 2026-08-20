@@ -67,7 +67,7 @@
 			<TypeBadge kind="bucket" count={counts.buckets} />
 		{/if}
 		{#if serviceCount === 0}
-			<span class="font-mono text-text-ghost text-xs">no services defined yet</span>
+			<span class="font-mono text-text-faint text-md">no services defined yet</span>
 		{/if}
 	</div>
 	<div class="font-mono text-text-faint border-border-subtle flex gap-3.5 border-t pt-3 text-xs">

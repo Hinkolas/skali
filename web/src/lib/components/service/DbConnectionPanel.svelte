@@ -98,7 +98,7 @@
 		>
 			<div class="flex flex-col gap-2 p-5 text-center">
 				<div class="text-text-muted text-base">Not provisioned yet</div>
-				<div class="font-mono text-text-ghost text-xs">
+				<div class="font-mono text-text-faint text-md">
 					phase {connection?.phase ?? 'unknown'} · connection facts appear once the claim settles
 				</div>
 			</div>

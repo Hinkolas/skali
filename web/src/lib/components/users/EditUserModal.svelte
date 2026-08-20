@@ -95,7 +95,7 @@
 			{/each}
 		</div>
 		{#if self}
-			<p class="text-text-ghost text-md leading-relaxed">
+			<p class="text-text-muted text-md leading-relaxed">
 				You cannot change your own role — ask another admin.
 			</p>
 		{/if}

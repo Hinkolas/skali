@@ -157,9 +157,9 @@
 		{/if}
 
 		<Card class="p-5">
-			<div class="mb-1 flex items-baseline gap-2.5">
+			<div class="mb-3.5 flex items-baseline gap-2.5">
 				<h3 class="text-text-primary text-xl font-semibold">Variables</h3>
-				<span class="text-text-ghost text-md">
+				<span class="text-text-muted text-md">
 					environment {data.env.name} · write-only · staged values apply with the next deployment
 					{#if !mayEdit}
 						· {editTitle} to change
@@ -170,8 +170,8 @@
 				{#each declared as variable (variable.name)}
 					{@const entry = entryByName.get(variable.name)}
 					{@const pending = dirty[variable.name]}
-					<div class="border-border-subtle flex items-center gap-3 border-b py-3 last:border-0">
-						<div class="w-56 flex-none">
+					<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
+						<div class="w-44 flex-none">
 							<div class="font-mono text-text-primary truncate text-md" title={variable.name}>
 								{variable.name}
 							</div>
@@ -227,9 +227,9 @@
 
 		{#if orphanedEntries.length > 0}
 			<Card class="p-5">
-				<div class="mb-1 flex items-baseline gap-2.5">
+				<div class="mb-3.5 flex items-baseline gap-2.5">
 					<h3 class="text-text-primary text-xl font-semibold">No longer referenced</h3>
-					<span class="text-text-ghost text-md">
+					<span class="text-text-muted text-md">
 						stored but not referenced by the current draft; ignored by deployments
 					</span>
 				</div>
@@ -239,7 +239,7 @@
 							class="border-border-subtle flex items-center gap-3 border-b py-2.75 last:border-0"
 						>
 							<span class="font-mono text-text-primary text-md">{entry.name}</span>
-							<span class="font-mono text-text-ghost text-xs">v{entry.version}</span>
+							<span class="font-mono text-text-faint text-xs">v{entry.version}</span>
 							<div class="ml-auto">
 								<Button
 									size="sm"

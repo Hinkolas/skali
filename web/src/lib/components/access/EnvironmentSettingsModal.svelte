@@ -186,7 +186,7 @@
 					{other.name}
 				</button>
 			{:else}
-				<span class="text-text-ghost font-mono text-xs">any</span>
+				<span class="text-text-faint font-mono text-md">any</span>
 			{/each}
 		</div>
 	</Field>

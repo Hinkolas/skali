@@ -69,7 +69,7 @@
 				<span class="flex flex-col">
 					<span class={textClass}>{option.label ?? option.value}</span>
 					{#if option.hint}
-						<span class="text-text-ghost text-xs font-normal">{option.hint}</span>
+						<span class="text-text-faint text-sm font-normal">{option.hint}</span>
 					{/if}
 				</span>
 			</MenuItem>

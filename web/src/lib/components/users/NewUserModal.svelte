@@ -106,7 +106,7 @@
 				</button>
 			{/each}
 		</div>
-		<p class="text-text-ghost text-md leading-relaxed">
+		<p class="text-text-muted text-md leading-relaxed">
 			Admins see every project and additionally manage users, nodes, and instance settings. Members
 			see only the projects they are granted.
 		</p>

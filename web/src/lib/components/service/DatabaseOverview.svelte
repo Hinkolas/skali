@@ -60,7 +60,7 @@
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
 	<h2 class="text-text-primary text-xl font-semibold">Connected applications</h2>
-	<div class="text-text-ghost text-md">via private network</div>
+	<div class="text-text-muted text-md">via private network</div>
 </div>
 
 <div class="pb-6">

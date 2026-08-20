@@ -30,7 +30,7 @@
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
 	<h2 class="text-text-primary text-xl font-semibold">Recent runs</h2>
-	<div class="text-text-ghost text-md">deploys land here from the CLI</div>
+	<div class="text-text-muted text-md">deploys land here from the CLI</div>
 </div>
 
 <div class="pb-6">

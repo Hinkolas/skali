@@ -170,7 +170,7 @@
 				<p class="text-text-muted text-base">
 					{query.trim() ? 'No user matches this search.' : 'Everyone already has a role here.'}
 				</p>
-				<p class="text-text-ghost text-md">
+				<p class="text-text-muted text-md">
 					Users are created by an instance admin on the Users page.
 				</p>
 			</div>
@@ -246,18 +246,22 @@
 		</div>
 
 		{#if selected.role === 'admin'}
-			<p class="text-text-ghost text-xs">
+			<p class="text-text-muted text-md">
 				This user is an instance admin and already admin everywhere; the membership is
 				informational.
 			</p>
 		{/if}
 
-		<div class="flex flex-col" role="radiogroup" aria-label="Role of the new member">
-			<span class="text-text-muted mb-1 text-sm font-medium">Choose a role</span>
+		<div class="flex flex-col gap-1" role="radiogroup" aria-label="Role of the new member">
+			<span class="text-text-tertiary mb-0.5 text-base font-medium">Choose a role</span>
 			{#each PROJECT_ROLES as option (option)}
 				{@const activeRole = role === option}
+				<!-- Rounded rows like the finder list; the chosen role carries the
+				     active-nav tint so the radio dot and the row agree. -->
 				<label
-					class="border-border-subtle hover:bg-white/3 flex cursor-pointer items-start gap-3 border-b px-2 py-2.5 transition-colors last:border-0"
+					class="flex cursor-pointer items-start gap-3 rounded-[11px] px-3 py-2.5 transition-colors {activeRole
+						? 'bg-accent/8 inset-ring inset-ring-accent/20'
+						: 'hover:bg-white/4'}"
 				>
 					<input
 						type="radio"
@@ -288,7 +292,7 @@
 								</span>
 							{/if}
 						</span>
-						<span class="text-text-ghost text-xs">{ROLE_HINT[option]}</span>
+						<span class="text-text-faint text-sm">{ROLE_HINT[option]}</span>
 					</span>
 				</label>
 			{/each}

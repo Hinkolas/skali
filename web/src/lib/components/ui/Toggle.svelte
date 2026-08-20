@@ -47,7 +47,7 @@
 	<span class="flex flex-col">
 		<span class="text-text-secondary text-base font-medium">{label}</span>
 		{#if description}
-			<span class="text-text-ghost text-md leading-relaxed">{description}</span>
+			<span class="text-text-muted text-md leading-relaxed">{description}</span>
 		{/if}
 	</span>
 </button>
