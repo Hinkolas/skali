@@ -29,33 +29,16 @@
 
 	const adminCount = $derived(data.users.filter((u) => u.role === 'admin').length);
 
-	// Directory search: the server's ?q= filter (email or name substring),
-	// debounced; an empty query falls back to the load's full list.
+	// Directory search: the load already holds every user, so filtering is
+	// local and instant (the API's ?q= stays for CLI use).
 	let query = $state('');
-	let searched = $state<AuthUser[] | null>(null);
-	let seq = 0;
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const shown = $derived(searched ?? data.users);
-
-	function onSearch() {
-		clearTimeout(timer);
-		timer = setTimeout(() => {
-			const q = query.trim();
-			const mine = ++seq;
-			if (!q) {
-				searched = null;
-				return;
-			}
-			api
-				.get<{ users: AuthUser[] }>(`/v1/users?q=${encodeURIComponent(q)}`)
-				.then((res) => {
-					if (mine === seq) searched = res.users;
-				})
-				.catch(() => {
-					if (mine === seq) searched = [];
-				});
-		}, 200);
-	}
+	const shown = $derived.by(() => {
+		const q = query.trim().toLowerCase();
+		if (!q) return data.users;
+		return data.users.filter(
+			(u) => u.email.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)
+		);
+	});
 
 	const userGrid = 'grid-cols-[2.2fr_0.9fr_0.9fr_1.1fr_121px]';
 
@@ -142,7 +125,6 @@
 				placeholder="Search users…"
 				aria-label="Search users by name or email"
 				class="bg-surface-input text-text-primary border-border-strong focus:border-accent/50 focus:ring-3 focus:ring-accent/10 w-56 rounded-[11px] border py-2.25 pr-3 pl-8.5 text-base transition-[border-color,box-shadow] duration-150 focus:outline-none"
-				oninput={onSearch}
 			/>
 		</div>
 		<Button variant="primary" onclick={newUser}>

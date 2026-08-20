@@ -57,35 +57,32 @@
 		input?.focus();
 	});
 
-	const candidates = $derived(users.filter((u) => !memberIds.has(u.id)));
-
-	// Out-of-order responses: only the latest search may write the list.
-	let seq = 0;
-	let timer: ReturnType<typeof setTimeout> | undefined;
-
-	async function search(q: string) {
-		const mine = ++seq;
-		try {
-			const res = await api.get<{ users: DirectoryUser[] }>(`/v1/users?q=${encodeURIComponent(q)}`);
-			if (mine !== seq) return;
+	// One directory fetch on open, filtered locally as you type: a
+	// self-hosted instance's user list is small, and instant filtering
+	// beats a round-trip per keystroke. The API's ?q= stays for CLI use.
+	api
+		.get<{ users: DirectoryUser[] }>('/v1/users')
+		.then((res) => {
 			users = res.users;
-			active = 0;
-			errorMessage = '';
-		} catch (err) {
-			if (mine !== seq) return;
-			errorMessage = err instanceof ApiError ? err.message : 'Could not search users.';
-		} finally {
-			if (mine === seq) loaded = true;
-		}
-	}
+		})
+		.catch((err) => {
+			errorMessage = err instanceof ApiError ? err.message : 'Could not load users.';
+		})
+		.finally(() => {
+			loaded = true;
+		});
 
-	// The empty query is a valid search: the whole directory, so small
-	// instances get a pick-list without typing.
-	void search('');
+	const candidates = $derived.by(() => {
+		const q = query.trim().toLowerCase();
+		return users.filter(
+			(u) =>
+				!memberIds.has(u.id) &&
+				(!q || u.email.toLowerCase().includes(q) || u.name.toLowerCase().includes(q))
+		);
+	});
 
 	function onInput() {
-		clearTimeout(timer);
-		timer = setTimeout(() => void search(query), 200);
+		active = 0;
 	}
 
 	function onSearchKey(e: KeyboardEvent) {
