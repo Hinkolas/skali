@@ -77,6 +77,13 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	if err := applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"); err != nil {
 		return err
 	}
+	// The Traefik metrics overlay rides the operators stage: it is chart
+	// configuration for the k3s edge, and the helm controller re-renders
+	// asynchronously (rolling Traefik once when the overlay changes), so
+	// there is nothing to wait on. The HelmChartConfig CRD ships with k3s.
+	if err := applier.ApplyObjects(ctx, objects.EdgeMetrics); err != nil {
+		return err
+	}
 	cnpgDetail := "CNPG " + CNPGVersion
 	operators := cnpgDetail + ", Traefik (k3s)"
 	if production != nil {

@@ -52,15 +52,16 @@ func TestLocalRenderFrozen(t *testing.T) {
 	t.Parallel()
 	profile := localProfile()
 	sources := stageSources(profile)
-	require.Len(t, sources, 10)
+	require.Len(t, sources, 11)
 
 	frozen := map[string]int{
-		"local-namespace.yaml": 0,
-		"local-priority.yaml":  1,
-		"local-database.yaml":  4,
-		"local-registry.yaml":  5,
-		"local-skalid.yaml":    6,
-		"local-bootstrap.yaml": 9,
+		"local-namespace.yaml":    0,
+		"local-priority.yaml":     1,
+		"local-database.yaml":     4,
+		"local-registry.yaml":     5,
+		"local-skalid.yaml":       6,
+		"local-edge-metrics.yaml": 9,
+		"local-bootstrap.yaml":    10,
 	}
 	for name, index := range frozen {
 		path := filepath.Join("testdata", name)

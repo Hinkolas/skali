@@ -304,6 +304,34 @@ type LoginChallenge struct {
 	CreatedAt time.Time
 }
 
+type MetricAppSample struct {
+	EnvironmentID  uuid.UUID
+	ApplicationKey string
+	SampledAt      time.Time
+	CpuMillicores  int64
+	MemoryBytes    int64
+	PodCount       int64
+}
+
+type MetricEdgeSample struct {
+	EnvironmentID  uuid.UUID
+	ApplicationKey string
+	RouteKey       string
+	SampledAt      time.Time
+	Requests       int64
+	RequestBytes   int64
+	ResponseBytes  int64
+}
+
+type MetricNodeSample struct {
+	NodeName                 string
+	SampledAt                time.Time
+	CpuMillicores            int64
+	MemoryBytes              int64
+	CpuAllocatableMillicores int64
+	MemoryAllocatableBytes   int64
+}
+
 type ObjectStore struct {
 	ID                 uuid.UUID
 	Name               string

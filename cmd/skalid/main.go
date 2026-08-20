@@ -37,6 +37,7 @@ import (
 	"github.com/Hinkolas/skali/internal/edge/edgeobserve"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/metrics"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/module/bucket"
@@ -304,6 +305,8 @@ func runServe() error {
 	}
 
 	runtimeLogs := &runtimelogs.Streamer{Observed: observed, Store: st}
+	// Reads work in API-only mode; only the sampler needs a cluster.
+	metricsSvc := &metrics.Service{Store: st}
 	// Exec needs the full kube client (the rest.Config drives the exec
 	// subresource transport); a nil client answers node_unreachable.
 	execSvc := &podexec.Service{Kube: kubeClient, Observed: observed, Store: st}
@@ -346,6 +349,7 @@ func runServe() error {
 			InstanceID:         instanceID.String(),
 			BackupTargets:      backupTargets,
 			Backups:            backupCtl,
+			Metrics:            metricsSvc,
 		})),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -397,6 +401,13 @@ func runServe() error {
 		slog.WarnContext(ctx, "sweep pending artifacts", "err", err)
 	}
 	go productSweepLoop(loopCtx, valueSvc, artifactSvc, deploySvc, journalSvc, cfg.BuildStaleTimeout)
+
+	// Usage telemetry: samples metrics-server readings into the platform
+	// database and prunes them by age. Absent in API-only mode.
+	if kubeClient != nil {
+		sampler := &metrics.Sampler{Store: st, Kube: kubeClient}
+		go sampler.Run(loopCtx)
+	}
 
 	slog.InfoContext(ctx, "starting", "service", serviceName, "http_addr", cfg.HTTPAddr)
 

@@ -74,6 +74,7 @@ export const SERVICE_TABS: Record<ServiceType, NavItemDef[]> = {
 	application: [
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },
 		{ label: 'Deployments', slug: 'deployments', icon: Rocket },
+		{ label: 'Metrics', slug: 'metrics', icon: Gauge },
 		{ label: 'Logs', slug: 'logs', icon: ScrollText, stub: true },
 		{ label: 'Environment', slug: 'environment', icon: KeyRound, stub: true },
 		{ label: 'Domains', slug: 'domains', icon: Globe, stub: true },

@@ -22,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/metrics"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
@@ -88,6 +89,9 @@ type Deps struct {
 	// Backups executes backup and restore operations; nil (API-only mode,
 	// no cluster) hides the backup routes.
 	Backups *backup.Controller
+	// Metrics serves usage series from stored samples; nil hides the
+	// routes (tests without a store).
+	Metrics *metrics.Service
 }
 
 // StripAPIPrefix serves the router both at the root and under /api: the
@@ -285,6 +289,13 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				ac.route(r, "GET", "/environments/{id}/status", classEnvRead, sh.get)
 				ac.route(r, "GET", "/system/observation", classInstanceAdmin, sh.system)
 				ac.route(r, "GET", "/nodes", classInstanceAdmin, sh.nodes)
+
+				// Usage series from stored samples; database reads only.
+				if d.Metrics != nil {
+					mrh := &metricsHandlers{metrics: d.Metrics}
+					ac.route(r, "GET", "/environments/{id}/metrics", classEnvRead, mrh.environment)
+					ac.route(r, "GET", "/nodes/metrics", classInstanceAdmin, mrh.nodes)
+				}
 
 				// Instance facts: version, name, and identity.
 				mh := &systemHandlers{version: d.Version, instanceName: d.InstanceName, instanceID: d.InstanceID}

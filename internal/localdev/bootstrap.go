@@ -289,6 +289,11 @@ func applyBundle(ctx context.Context, client *kube.Client, state *State, progres
 	if err := applier.ApplyManifest(ctx, bundle.CNPGManifest()); err != nil {
 		return err
 	}
+	// The Traefik metrics overlay for the edge-traffic sampler; the k3s helm
+	// controller re-renders asynchronously, nothing to wait on.
+	if err := applier.ApplyObjects(ctx, objects.EdgeMetrics); err != nil {
+		return err
+	}
 	if err := applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"); err != nil {
 		return err
 	}

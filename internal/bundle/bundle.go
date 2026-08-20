@@ -265,6 +265,10 @@ type Objects struct {
 	// Web is the web console deployment behind the platform domain root;
 	// empty under the local profile.
 	Web []unstructured.Unstructured
+	// EdgeMetrics opts the k3s Traefik chart into per-router Prometheus
+	// series and exposes the metrics port, feeding the skalid edge-traffic
+	// sampler. Both profiles.
+	EdgeMetrics []unstructured.Unstructured
 	// BootstrapUser creates the first operator user.
 	BootstrapUser []unstructured.Unstructured
 }
@@ -284,6 +288,9 @@ func stageSources(profile Profile) []string {
 		skalidYAML(profile),
 		recordYAML(profile),
 		webYAML(profile),
+		edgeMetricsYAML(),
+		// Bootstrap must stay last: Hash blanks the final source under
+		// production because the generated password never reproduces.
 		bootstrapYAML(profile),
 	}
 }
@@ -306,6 +313,7 @@ func Render(profile Profile) (*Objects, error) {
 		&objects.Skalid,
 		&objects.Record,
 		&objects.Web,
+		&objects.EdgeMetrics,
 		&objects.BootstrapUser,
 	}
 	for index, source := range stageSources(profile) {
@@ -453,6 +461,31 @@ metadata:
   namespace: ` + Namespace + `
 spec:
   sniStrict: true
+`
+}
+
+// edgeMetricsYAML overlays the k3s Traefik chart (helm-controller merges a
+// HelmChartConfig into the HelmChart's values): per-router Prometheus labels
+// on the metrics endpoint the chart already runs on :9100, plus that port on
+// the traefik Service so skalid can scrape it through the API server's
+// service proxy. Applying a changed overlay rolls the Traefik pod once.
+// skali owns this object; operator-authored traefik HelmChartConfigs are
+// unsupported. Both profiles: the local k3d edge is the same Traefik.
+func edgeMetricsYAML() string {
+	return `apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    metrics:
+      prometheus:
+        addRoutersLabels: true
+    ports:
+      metrics:
+        expose:
+          default: true
 `
 }
 
@@ -884,6 +917,9 @@ rules:
   - apiGroups: [postgresql.cnpg.io]
     resources: [clusters, databases]
     verbs: ["*"]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

@@ -29,6 +29,10 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Len(t, objects.Registry, 4)
 	require.Len(t, objects.Skalid, 7)
 	require.Empty(t, objects.Web, "the web console is production-only")
+	require.Len(t, objects.EdgeMetrics, 1)
+	require.Equal(t, "HelmChartConfig", objects.EdgeMetrics[0].GetKind())
+	require.Equal(t, "kube-system", objects.EdgeMetrics[0].GetNamespace(),
+		"the traefik chart overlay must land beside the k3s-owned HelmChart")
 	require.Len(t, objects.BootstrapUser, 2)
 
 	// Everything namespaced sits in skali-system; the admin password only

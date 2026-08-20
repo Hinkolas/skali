@@ -1870,6 +1870,71 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/nodes/metrics:
+    get:
+      operationId: getNodeMetrics
+      summary: Get bucketed node usage series
+      description: |
+        CPU and memory usage per cluster node over the requested window,
+        bucketed onto a fixed step grid, with the allocatable capacity of
+        each node as the denominator. Served from stored samples; empty
+        series before the sampler has written any.
+      tags: [status]
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [1h, 24h, 7d]
+            default: 24h
+      responses:
+        "200":
+          description: Node usage series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeMetrics" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/environments/{id}/metrics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getEnvironmentMetrics
+      summary: Get bucketed application usage series
+      description: |
+        CPU and memory usage per application of one environment over the
+        requested window, bucketed onto a fixed step grid. Every series
+        shares the `timestamps` array; a `null` value marks a bucket
+        without samples. The trailing bucket is the in-progress one, so
+        its value reflects current usage.
+      tags: [status]
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [1h, 24h, 7d]
+            default: 24h
+      responses:
+        "200":
+          description: Application usage series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvironmentMetrics" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/environments/{id}:
     parameters:
       - name: id
@@ -3825,6 +3890,89 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    EnvironmentMetrics:
+      type: object
+      description: |
+        Bucketed usage series for one environment's applications. All value
+        arrays are index-aligned with `timestamps`; null marks a bucket
+        without samples.
+      required: [window, step_seconds, timestamps, applications]
+      properties:
+        window: { type: string, enum: [1h, 24h, 7d] }
+        step_seconds: { type: integer }
+        timestamps:
+          type: array
+          items: { type: string, format: date-time }
+        applications:
+          type: array
+          items: { $ref: "#/components/schemas/ApplicationSeries" }
+
+    ApplicationSeries:
+      type: object
+      required: [key, cpu_millicores, memory_bytes]
+      properties:
+        key: { type: string }
+        cpu_millicores:
+          type: array
+          items: { type: integer, nullable: true }
+        memory_bytes:
+          type: array
+          items: { type: integer, nullable: true }
+        edge:
+          type: object
+          description: |
+            Traffic through the platform edge (Traefik), per bucket: request
+            counts and bytes that arrived within the bucket. Absent until
+            edge samples exist for the application; cluster-internal traffic
+            is not counted.
+          required: [requests, request_bytes, response_bytes]
+          properties:
+            requests:
+              type: array
+              items: { type: integer, nullable: true }
+            request_bytes:
+              type: array
+              items: { type: integer, nullable: true }
+            response_bytes:
+              type: array
+              items: { type: integer, nullable: true }
+
+    NodeMetrics:
+      type: object
+      description: |
+        Bucketed usage series per cluster node, with each node's allocatable
+        capacity from its newest sample. Value arrays are index-aligned with
+        `timestamps`; null marks a bucket without samples.
+      required: [window, step_seconds, timestamps, nodes]
+      properties:
+        window: { type: string, enum: [1h, 24h, 7d] }
+        step_seconds: { type: integer }
+        timestamps:
+          type: array
+          items: { type: string, format: date-time }
+        nodes:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                name,
+                cpu_allocatable_millicores,
+                memory_allocatable_bytes,
+                cpu_millicores,
+                memory_bytes,
+              ]
+            properties:
+              name: { type: string }
+              cpu_allocatable_millicores: { type: integer }
+              memory_allocatable_bytes: { type: integer }
+              cpu_millicores:
+                type: array
+                items: { type: integer, nullable: true }
+              memory_bytes:
+                type: array
+                items: { type: integer, nullable: true }
 
     Node:
       type: object

@@ -1,12 +1,16 @@
 import { error } from '@sveltejs/kit';
+import { apiFetch } from '$lib/server/api';
+import type { NodeMetrics } from '$lib/types/metrics';
 import type { PageServerLoad } from './$types';
 
 // Nodes are instance-admin territory: the API already answers 403 to members
 // (the shell layout degrades to an empty list), and the page refuses too so
 // the sidebar's hiding is not the only line.
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, fetch }) => {
 	if (locals.user?.role !== 'admin') {
 		error(403, 'You need the admin role to see nodes');
 	}
-	return {};
+	// Current usage per node; the shortest window carries the freshest bucket.
+	const res = await apiFetch(fetch, locals.token, '/v1/nodes/metrics?window=1h');
+	return { nodeMetrics: res.ok ? ((await res.json()) as NodeMetrics) : null };
 };

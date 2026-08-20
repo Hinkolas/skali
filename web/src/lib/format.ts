@@ -12,6 +12,24 @@ export function formatBytes(n: number): string {
 
 export const formatRate = (n: number) => `${formatBytes(n)}/s`;
 
+/** "982" / "1.4k" / "2.1M" — compact counts for stat tiles. */
+export function formatCount(n: number): string {
+	if (n < 1000) return `${Math.round(n)}`;
+	if (n < 1_000_000) {
+		const k = n / 1000;
+		return `${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
+	}
+	const m = n / 1_000_000;
+	return `${m >= 10 ? Math.round(m) : m.toFixed(1)}M`;
+}
+
+/** "250m" below one core, "1.5" / "12" cores above (kubectl-style). */
+export function formatCores(millicores: number): string {
+	if (millicores < 1000) return `${Math.round(millicores)}m`;
+	const cores = millicores / 1000;
+	return cores >= 10 ? `${Math.round(cores)}` : cores.toFixed(1);
+}
+
 export const formatPct = (n: number) => `${Math.round(n)}%`;
 
 /** "14:32" — sparse x-axis ticks. */

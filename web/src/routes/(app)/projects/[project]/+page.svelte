@@ -4,6 +4,8 @@
 	import type { StatCardData } from '$lib/models/view';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { HEALTH_META } from '$lib/service-types';
+	import { formatBytes, formatCount } from '$lib/format';
+	import { currentTotal, windowTotal } from '$lib/types/metrics';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
@@ -33,14 +35,47 @@
 		return HEALTH_META.degraded.dot;
 	});
 
-	// Placeholder telemetry: no metrics backend exists yet, so these are
-	// static sample values, marked as such.
-	const stats: StatCardData[] = [
-		{ label: 'REQUESTS', value: '1.4k', unit: '/min', chip: { text: 'sample', tone: 'neutral' } },
-		{ label: 'CLUSTER CPU', value: '34', unit: '%', chip: { text: 'sample', tone: 'neutral' } },
-		{ label: 'MEMORY', value: '6.1', unit: 'GiB', chip: { text: 'sample', tone: 'neutral' } },
-		{ label: 'EGRESS', value: '18', unit: 'GiB/d', chip: { text: 'sample', tone: 'neutral' } }
-	];
+	// All four tiles come from stored samples for the selected environment
+	// (24h window): usage from the newest bucket, traffic from the edge
+	// counters Traefik reports.
+	const stats = $derived.by((): StatCardData[] => {
+		const m = data.metrics;
+		const apps = m?.applications ?? [];
+		const noData: Pick<StatCardData, 'value' | 'note'> = { value: 'n/a', note: 'no data yet' };
+
+		const requests = currentTotal(apps, (a) => a.edge?.requests ?? []);
+		const requestsStat: StatCardData =
+			requests != null && m
+				? {
+						label: 'REQUESTS',
+						value: formatCount((requests / m.step_seconds) * 60),
+						unit: '/min'
+					}
+				: { label: 'REQUESTS', ...noData };
+
+		const cpu = currentTotal(apps, (a) => a.cpu_millicores);
+		const cpuStat: StatCardData =
+			cpu != null
+				? cpu >= 1000
+					? { label: 'CPU', value: (cpu / 1000).toFixed(1), unit: 'cores' }
+					: { label: 'CPU', value: `${Math.round(cpu)}`, unit: 'mCPU' }
+				: { label: 'CPU', ...noData };
+
+		const mem = currentTotal(apps, (a) => a.memory_bytes);
+		const memParts = mem != null ? formatBytes(mem).split(' ') : null;
+		const memStat: StatCardData = memParts
+			? { label: 'MEMORY', value: memParts[0], unit: memParts[1] }
+			: { label: 'MEMORY', ...noData };
+
+		// Response bytes served over the loaded 24h window: edge egress/day.
+		const egress = windowTotal(apps, (a) => a.edge?.response_bytes);
+		const egressParts = egress != null ? formatBytes(egress).split(' ') : null;
+		const egressStat: StatCardData = egressParts
+			? { label: 'EGRESS', value: egressParts[0], unit: `${egressParts[1]}/d` }
+			: { label: 'EGRESS', ...noData };
+
+		return [requestsStat, cpuStat, memStat, egressStat];
+	});
 </script>
 
 <svelte:head>
