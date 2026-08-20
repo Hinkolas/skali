@@ -27,7 +27,7 @@
 			case 'checkpoint':
 				return `${base} sm:max-w-[24rem]`;
 			default:
-				return `${base} ${size === 'lg' ? 'sm:max-w-lg' : 'sm:max-w-md'}`;
+				return `${base} ${size === 'lg' ? 'sm:max-w-[36rem]' : 'sm:max-w-[30rem]'}`;
 		}
 	}
 

@@ -11,12 +11,15 @@
 		description,
 		icon: Icon,
 		tone = 'accent',
+		mono = false,
 		children
 	}: {
 		title: string;
 		description?: string;
 		icon?: Component<IconProps, object, ''>;
 		tone?: 'accent' | 'danger';
+		/** Mono title, for modals headed by an identifier (env name, host). */
+		mono?: boolean;
 		/** Rich description markup; takes the place of `description`. */
 		children?: Snippet;
 	} = $props();
@@ -32,7 +35,9 @@
 			<Icon size={20} strokeWidth={1.75} />
 		</div>
 	{/if}
-	<h2 class="text-text-primary text-xl font-semibold tracking-tight">{title}</h2>
+	<h2 class="text-text-primary text-xl font-semibold tracking-tight {mono ? 'font-mono' : ''}">
+		{title}
+	</h2>
 	{#if description || children}
 		<p class="text-text-muted mt-1.5 text-base leading-relaxed">
 			{#if children}{@render children()}{:else}{description}{/if}
