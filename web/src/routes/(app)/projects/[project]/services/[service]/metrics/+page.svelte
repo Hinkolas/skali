@@ -144,6 +144,7 @@
 				<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">CPU</div>
 				<TimeSeriesChart
 					series={cpuSeries}
+					height={242}
 					formatValue={formatCores}
 					label="CPU usage over the selected window"
 				/>
@@ -152,6 +153,7 @@
 				<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">Memory</div>
 				<TimeSeriesChart
 					series={memSeries}
+					height={242}
 					formatValue={formatBytes}
 					label="Memory usage over the selected window"
 				/>
@@ -163,6 +165,7 @@
 					</div>
 					<TimeSeriesChart
 						series={requestSeries}
+						height={242}
 						formatValue={formatCount}
 						label="Edge requests per bucket over the selected window"
 					/>
@@ -173,6 +176,7 @@
 					</div>
 					<TimeSeriesChart
 						series={bandwidthSeries}
+						height={242}
 						formatValue={formatBytes}
 						label="Edge request and response bytes per bucket over the selected window"
 					/>

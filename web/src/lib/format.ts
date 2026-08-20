@@ -23,8 +23,10 @@ export function formatCount(n: number): string {
 	return `${m >= 10 ? Math.round(m) : m.toFixed(1)}M`;
 }
 
-/** "250m" below one core, "1.5" / "12" cores above (kubectl-style). */
+/** "250m" below one core, "1.5" / "12" cores above (kubectl-style). A
+ * decimal below 10m keeps tiny-usage axis ticks distinct ("0.5m" vs "1m"). */
 export function formatCores(millicores: number): string {
+	if (millicores < 10) return `${+millicores.toFixed(1)}m`;
 	if (millicores < 1000) return `${Math.round(millicores)}m`;
 	const cores = millicores / 1000;
 	return cores >= 10 ? `${Math.round(cores)}` : cores.toFixed(1);

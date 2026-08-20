@@ -35,6 +35,25 @@
 		return HEALTH_META.degraded.dot;
 	});
 
+	// Declared per-replica limits from the draft definition, scaled by the
+	// live pod count (falling back to minReplicas), summed across the apps
+	// that declare them: the tiles' at-a-glance denominator. An approximation
+	// when the running revision trails the draft, but honest enough for a
+	// headline number.
+	const limits = $derived.by(() => {
+		let cpu = 0;
+		let mem = 0;
+		for (const [key, app] of Object.entries(data.definition?.applications ?? {})) {
+			const declared = app.resources?.limits;
+			if (!declared) continue;
+			const live = status?.services.find((s) => s.type === 'application' && s.key === key);
+			const replicas = live?.pods?.length || app.scaling?.minReplicas || 1;
+			cpu += (declared.milliCpu ?? 0) * replicas;
+			mem += (declared.memoryBytes ?? 0) * replicas;
+		}
+		return { cpu: cpu || null, mem: mem || null };
+	});
+
 	// All four tiles come from stored samples for the selected environment
 	// (24h window): usage from the newest bucket, traffic from the edge
 	// counters Traefik reports.
@@ -54,18 +73,45 @@
 				: { label: 'REQUESTS', ...noData };
 
 		const cpu = currentTotal(apps, (a) => a.cpu_millicores);
-		const cpuStat: StatCardData =
-			cpu != null
-				? cpu >= 1000
-					? { label: 'CPU', value: (cpu / 1000).toFixed(1), unit: 'cores' }
-					: { label: 'CPU', value: `${Math.round(cpu)}`, unit: 'mCPU' }
-				: { label: 'CPU', ...noData };
+		let cpuStat: StatCardData = { label: 'CPU', ...noData };
+		if (cpu != null) {
+			// The limit picks the unit so numerator and denominator match.
+			if (limits.cpu != null) {
+				cpuStat =
+					limits.cpu >= 1000
+						? {
+								label: 'CPU',
+								value: (cpu / 1000).toFixed(cpu < 100 ? 2 : 1),
+								unit: `/ ${+(limits.cpu / 1000).toFixed(1)} cores`,
+								progress: { pct: Math.min(100, (cpu / limits.cpu) * 100), class: 'bg-accent' }
+							}
+						: {
+								label: 'CPU',
+								value: `${Math.round(cpu)}`,
+								unit: `/ ${Math.round(limits.cpu)} mCPU`,
+								progress: { pct: Math.min(100, (cpu / limits.cpu) * 100), class: 'bg-accent' }
+							};
+			} else if (cpu >= 1000) {
+				cpuStat = { label: 'CPU', value: (cpu / 1000).toFixed(1), unit: 'cores' };
+			} else {
+				cpuStat = { label: 'CPU', value: `${Math.round(cpu)}`, unit: 'mCPU' };
+			}
+		}
 
 		const mem = currentTotal(apps, (a) => a.memory_bytes);
-		const memParts = mem != null ? formatBytes(mem).split(' ') : null;
-		const memStat: StatCardData = memParts
-			? { label: 'MEMORY', value: memParts[0], unit: memParts[1] }
-			: { label: 'MEMORY', ...noData };
+		let memStat: StatCardData = { label: 'MEMORY', ...noData };
+		if (mem != null) {
+			const memParts = formatBytes(mem).split(' ');
+			memStat =
+				limits.mem != null
+					? {
+							label: 'MEMORY',
+							value: memParts[0],
+							unit: `${memParts[1]} / ${formatBytes(limits.mem)}`,
+							progress: { pct: Math.min(100, (mem / limits.mem) * 100), class: 'bg-accent' }
+						}
+					: { label: 'MEMORY', value: memParts[0], unit: memParts[1] };
+		}
 
 		// Response bytes served over the loaded 24h window: edge egress/day.
 		const egress = windowTotal(apps, (a) => a.edge?.response_bytes);
