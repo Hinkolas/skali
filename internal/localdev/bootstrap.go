@@ -182,6 +182,13 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	}
 	justStarted = justStarted || restarted
 
+	// Any node restart silently drops the host gateway entry k3d injected
+	// at creation (see hostgateway.go); skalid needs it to resolve, so it
+	// is verified on every pass, before the fast path can return.
+	if err := ensureHostGateway(ctx, client, progress); err != nil {
+		return nil, err
+	}
+
 	// The docker image ID is the content identity behind the mutable dev
 	// tag; a matching record means the cluster already holds these exact
 	// bits under this exact name (containerd resolves by tag, so a mere

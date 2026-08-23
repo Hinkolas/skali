@@ -52,6 +52,55 @@ func TestEquivalentYAMLAndJSONHaveSameHash(t *testing.T) {
 	require.Equal(t, yamlResult.Definition, jsonResult.Definition)
 }
 
+// The dockerfile value resolves against the build context (docker
+// convention); the compiled definition carries the project-root-relative
+// join. It may leave the context via "..", but never the project root.
+func TestDockerfileResolvesAgainstContext(t *testing.T) {
+	t.Parallel()
+	compile := func(t *testing.T, context, dockerfile string) (Build, error) {
+		t.Helper()
+		source := "version: \"1\"\nname: dockerfiles\napplications:\n  api:\n    build:\n      context: " + context + "\n"
+		if dockerfile != "" {
+			source += "      dockerfile: " + dockerfile + "\n"
+		}
+		document, err := manifest.Parse([]byte(source), "skali.yml")
+		require.NoError(t, err)
+		result, err := Compile(document)
+		if err != nil {
+			return Build{}, err
+		}
+		return result.Definition.Applications["api"].Source.Build, nil
+	}
+
+	resolved := map[string]struct{ context, dockerfile, want string }{
+		"root context default":    {".", "", "Dockerfile"},
+		"nested context default":  {"./web", "", "web/Dockerfile"},
+		"nested context explicit": {"./web", "deploy/Dockerfile", "web/deploy/Dockerfile"},
+		"outside context":         {"./services/worker", "../shared.Dockerfile", "services/shared.Dockerfile"},
+	}
+	for name, test := range resolved {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			build, err := compile(t, test.context, test.dockerfile)
+			require.NoError(t, err)
+			require.Equal(t, test.want, build.Dockerfile)
+		})
+	}
+
+	invalid := map[string]struct{ context, dockerfile, message string }{
+		"escapes root":  {".", "../Dockerfile", "must not escape the project root"},
+		"absolute path": {".", "/etc/Dockerfile", "must be relative to the build context"},
+		"names no file": {"./web", ".", "must name a file relative to the build context"},
+	}
+	for name, test := range invalid {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := compile(t, test.context, test.dockerfile)
+			require.ErrorContains(t, err, test.message)
+		})
+	}
+}
+
 func TestInvalidFixtures(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{

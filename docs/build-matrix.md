@@ -9,7 +9,7 @@ matrix documents what the R3 build schema and engine support.
 
 | Feature | Manifest surface | Engine behavior |
 | --- | --- | --- |
-| Dockerfile builds | `build.context`, `build.dockerfile` | Paths are project-root-relative and cannot escape the root; the Dockerfile may live outside the context directory. |
+| Dockerfile builds | `build.context`, `build.dockerfile` | The context is project-root-relative; the Dockerfile is context-relative (docker convention, default `Dockerfile`). Neither may escape the project root; the Dockerfile may live outside the context directory via `..`. |
 | Multi-stage targets | `build.target` | Passed as `--target`; part of the build configuration hash. |
 | Build arguments | `build.arguments` | Passed as `--build-arg` verbatim (literal strings, no `${NAME}` interpolation). Part of the configuration hash. |
 | Target platform | (derived) | `linux/<host arch>` in R3; recorded on the build and part of the input hash. Cross-platform selection is an R4 surface. |

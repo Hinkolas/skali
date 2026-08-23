@@ -109,7 +109,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		if dockerfile == "" {
 			dockerfile = "Dockerfile"
 		}
-		dockerfile = b.relativePath(base+".build.dockerfile", dockerfile, false)
+		dockerfile = b.dockerfilePath(base+".build.dockerfile", context, dockerfile)
 		arguments := make(map[string]string, len(source.Build.Arguments))
 		for _, name := range utils.SortedKeys(source.Build.Arguments) {
 			arguments[name] = string(source.Build.Arguments[name])
@@ -509,6 +509,27 @@ func (b *builder) relativePath(path, value string, allowDot bool) string {
 		b.add(path, "must name a file relative to the build context")
 	}
 	return filepath.ToSlash(cleaned)
+}
+
+// dockerfilePath resolves the context-relative dockerfile value to its
+// project-root-relative location (the form the build engine consumes),
+// following the docker and compose convention. The Dockerfile may leave
+// the context directory via "..", but never the project root.
+func (b *builder) dockerfilePath(path, context, value string) string {
+	if filepath.IsAbs(value) {
+		b.add(path, "must be relative to the build context")
+		return value
+	}
+	cleaned := filepath.Clean(value)
+	if cleaned == "." {
+		b.add(path, "must name a file relative to the build context")
+		return cleaned
+	}
+	joined := filepath.Join(filepath.FromSlash(context), cleaned)
+	if joined == ".." || strings.HasPrefix(joined, ".."+string(filepath.Separator)) {
+		b.add(path, "must not escape the project root")
+	}
+	return filepath.ToSlash(joined)
 }
 
 func (b *builder) bytes(path string, value manifest.Text) int64 {

@@ -3,7 +3,7 @@
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "780ddc000e37f91a21565c0ca777a14291d49859e1a895d26e1c278fc6f86497",
+  "definitionHash": "8edd57fa97fd3289fbcd0d4f1db76e1977fbd56ac229f49a7e18933cc7da0882",
   "definition": {
     "version": "1",
     "name": "file-sharing",
@@ -14,7 +14,7 @@
           "kind": "build",
           "build": {
             "context": "web",
-            "dockerfile": "deploy/Dockerfile",
+            "dockerfile": "web/deploy/Dockerfile",
             "target": "runtime"
           }
         },
@@ -315,5 +315,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "dca8708a464bdafffba105378c7b77fcf776c4c6e21bf68f8bfb7f2541dd76f9"
+  "checksum": "b4a6c1d596d1a63a5463816c8abd03af25e1c324dbb93912a9e1aa4e9a0f98a0"
 }

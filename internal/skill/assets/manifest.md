@@ -106,6 +106,8 @@ applications:
 
 `image` references are imported into the managed registry and pinned by
 digest. Build contexts may not be absolute paths and may not escape the
+project root. The dockerfile resolves against the context (docker
+convention) and may step outside it with `..`, but never outside the
 project root; `.dockerignore` in the context root filters files exactly
 as docker build would, and `.git/`, `.skali/`, `.env`, and `.env.*` are
 always excluded.
