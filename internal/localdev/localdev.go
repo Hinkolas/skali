@@ -409,6 +409,14 @@ func Create(ctx context.Context) error {
 		return fmt.Errorf("localdev: rename node container: %w\n%s", err, out)
 	}
 	removeToolsNode(ctx)
+	// The address docker allocated the node is an accident of creation
+	// order (the tools helper above usually held the first free one), yet
+	// k3s just registered it permanently; pin it as a static IPAM entry so
+	// a docker daemon restart cannot move the node off its registration
+	// and crash-loop k3s (see nodeip.go).
+	if err := pinNodeIP(ctx); err != nil {
+		return fmt.Errorf("localdev: pin node IP: %w", err)
+	}
 	return WriteKubeconfig(ctx)
 }
 

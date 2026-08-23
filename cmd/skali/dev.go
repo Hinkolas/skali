@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/devports"
+	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/localdev"
 	"github.com/Hinkolas/skali/internal/manifest"
@@ -770,14 +771,23 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 		skalidImage = defaultSkalidImage(ctx, tasks)
 	}
 	progress := &taskProgress{tasks: tasks}
-	state, err := localdev.Ensure(ctx, localdev.EnsureOptions{
+	opts := localdev.EnsureOptions{
 		SkalidImage:   skalidImage,
 		ForceConverge: forceConverge,
 		Progress:      progress,
-	})
+	}
+	state, err := localdev.Ensure(ctx, opts)
 	if err != nil {
 		progress.Abort()
-		return nil, err
+		// An unrepairable node has one remaining cure, the destructive
+		// reset; with a person present it is offered right here instead
+		// of round-tripping through the error text.
+		if unhealthy, ok := errors.AsType[*localdev.NodeUnhealthyError](err); ok && cliprompt.Interactive() {
+			state, err = offerPlatformRecreate(ctx, out, unhealthy, opts)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	// A released CLI ahead of the platform names the gap once per session;
 	// nothing here changes versions (that stays skali dev upgrade's job).
@@ -785,6 +795,42 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 		fmt.Fprintln(out, clirender.StyleFor(out).Yellow(hint))
 	}
 	if err := loginLocalRemote(ctx, state); err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
+// offerPlatformRecreate turns an unrepairable-node failure into the one
+// remaining cure when a person is present: the same destructive reset
+// skali dev reset performs, behind the same default-No confirm, followed
+// by one fresh Ensure. Declining keeps the original error.
+func offerPlatformRecreate(ctx context.Context, out io.Writer,
+	unhealthy *localdev.NodeUnhealthyError, opts localdev.EnsureOptions) (*localdev.State, error) {
+	style := clirender.StyleFor(out)
+	fmt.Fprintln(out, style.Red("The local platform cannot be repaired: "+unhealthy.Diagnosis+"."))
+	fmt.Fprintln(out, style.BoldRed("Recreating destroys the complete local installation:"))
+	fmt.Fprintf(out, "  cluster %s, its volumes, the local registry and its artifacts,\n", localdev.ClusterName())
+	fmt.Fprintln(out, "  local Skali state, and all locally deployed project data.")
+	fmt.Fprintln(out, "Nothing outside this machine is affected.")
+	confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{
+		Title: "Destroy and recreate the local installation?",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !confirmed {
+		return nil, unhealthy
+	}
+	if err := destroyLocalPlatform(ctx, out); err != nil {
+		return nil, err
+	}
+	// A fresh progress: the failed run's task list is settled and this is
+	// a new Ensure from nothing (the state wipe makes it a fresh create).
+	progress := &taskProgress{tasks: clirender.NewTasks(out)}
+	opts.Progress = progress
+	state, err := localdev.Ensure(ctx, opts)
+	if err != nil {
+		progress.Abort()
 		return nil, err
 	}
 	return state, nil
@@ -909,6 +955,20 @@ func runDevStatus(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Docker's running bit hides a crash-looping k3s; a node whose
+	// apiserver does not answer is reported as what it is, and the
+	// project section is skipped (it could only add connection errors).
+	if clusterStatus == localdev.ClusterRunning {
+		if health := devNodeHealth(ctx); !health.Ready {
+			detail := health.Detail
+			if detail == "" {
+				detail = "the kube apiserver does not answer"
+			}
+			fmt.Fprintf(out, "platform   %s (cluster %s, %s; skali dev repairs this)\n",
+				stateColor(style, "unhealthy"), localdev.ClusterName(), detail)
+			return nil
+		}
+	}
 	fmt.Fprintf(out, "platform   %s (cluster %s, %s)\n",
 		stateColor(style, string(clusterStatus)), localdev.ClusterName(), localdev.K3sImage)
 	if clusterStatus != localdev.ClusterRunning {
@@ -957,6 +1017,19 @@ func runDevStatus(command *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// devNodeHealth diagnoses the running node through the local kubeconfig;
+// without one (or an unloadable one) the docker-side inspection alone
+// answers.
+func devNodeHealth(ctx context.Context) localdev.NodeHealth {
+	var kubeClient *kube.Client
+	if path, err := localdev.KubeconfigPath(); err == nil {
+		if client, err := kube.New(path); err == nil {
+			kubeClient = client
+		}
+	}
+	return localdev.DiagnoseNode(ctx, kubeClient)
 }
 
 // routeLine renders one public route: its URL, a non-default strategy, and
@@ -1040,7 +1113,13 @@ func runDevReset(command *cobra.Command, yes bool) error {
 			return errors.New("aborted")
 		}
 	}
+	return destroyLocalPlatform(ctx, out)
+}
 
+// destroyLocalPlatform deletes the cluster and its volumes, removes the
+// local installation record, and drops the stored local remote;
+// confirmation is the caller's job.
+func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
 	tasks := clirender.NewTasks(out)
 	if status, err := localdev.Status(ctx); err == nil && status != localdev.ClusterAbsent {
 		task := tasks.Start("Delete cluster " + localdev.ClusterName() + " and volumes")

@@ -162,6 +162,26 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		}
 	}
 
+	kubeconfig, err := KubeconfigPath()
+	if err != nil {
+		return nil, err
+	}
+	client, err := kube.New(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+
+	// Docker's running bit says nothing about the apiserver; prove it
+	// answers (repairing the node-IP crash loop in place, see nodeip.go)
+	// before the imports docker-exec into the node and the converge
+	// applies against it. A repair reboots the node, so it widens the
+	// edge grace below like a fresh start.
+	restarted, err := ensureNodeReady(ctx, client, progress)
+	if err != nil {
+		return nil, err
+	}
+	justStarted = justStarted || restarted
+
 	// The docker image ID is the content identity behind the mutable dev
 	// tag; a matching record means the cluster already holds these exact
 	// bits under this exact name (containerd resolves by tag, so a mere
@@ -202,15 +222,6 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		progress.Done("")
 	} else {
 		progress.Skip("unchanged since last import")
-	}
-
-	kubeconfig, err := KubeconfigPath()
-	if err != nil {
-		return nil, err
-	}
-	client, err := kube.New(kubeconfig)
-	if err != nil {
-		return nil, err
 	}
 
 	// The fast path: on a running cluster with an unchanged image, a bundle

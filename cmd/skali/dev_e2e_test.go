@@ -476,6 +476,42 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "Bootstrap database")
 	})
 
+	t.Run("DockerRestartMovesNodeIPAndDevRecovers", func(t *testing.T) {
+		network := "k3d-" + e2eCluster
+		inspectIP := func(field string) string {
+			out, err := exec.Command("docker", "container", "inspect", e2eCluster, "-f",
+				"{{(index .NetworkSettings.Networks \""+network+"\")."+field+"}}").Output()
+			require.NoError(t, err)
+			return strings.TrimSpace(string(out))
+		}
+		pinned := inspectIP("IPAMConfig.IPv4Address")
+		require.NotEmpty(t, pinned, "create must pin the node address")
+		require.Equal(t, pinned, inspectIP("IPAddress"))
+
+		// Simulate the docker-daemon-restart drift: move the node to a
+		// different address on the cluster network. The pinned k3s
+		// re-registers the moved address on its next boot; clusters from
+		// before the k3s pin fatal instead ("failed to find interface
+		// with specified node ip") and ride the Repair node IP stage,
+		// which this suite cannot provoke on the current image (that
+		// path is covered by the nodeip unit tests).
+		moved := pinned[:strings.LastIndex(pinned, ".")] + ".99"
+		require.NoError(t, exec.Command("docker", "stop", e2eCluster).Run())
+		require.NoError(t, exec.Command("docker", "network", "disconnect", network, e2eCluster).Run())
+		require.NoError(t, exec.Command("docker", "network", "connect", "--ip", moved, network, e2eCluster).Run())
+		require.NoError(t, exec.Command("docker", "start", e2eCluster).Run())
+
+		// dev start waits out the moved node's boot instead of dying on
+		// an unready apiserver, and the comeback rides the fast path.
+		out := h.run(false, "", "dev", "start")
+		require.Contains(t, out, "state is retained")
+		require.Contains(t, out, "unchanged since last import")
+		require.Contains(t, out, "unchanged since last converge")
+		require.NotContains(t, out, "Bootstrap database",
+			"a node reboot must not pay the full converge")
+		h.waitRoute("hello again from skali", 3*time.Minute)
+	})
+
 	t.Run("PurgeRemovesEverything", func(t *testing.T) {
 		// Refused unless explicitly confirmed; No is the default.
 		h.run(true, "\n", "dev", "down", "--purge")
