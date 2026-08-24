@@ -7,13 +7,18 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/utils"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -127,7 +132,7 @@ func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly boo
 		return nil
 	}
 	fmt.Fprintln(out)
-	return runInteractiveInit(ctx, out, reader, record, nil, "")
+	return runInteractiveInit(ctx, out, reader, record, nil, "", nil)
 }
 
 // runInteractiveJoinFlow enrolls this host into an existing cluster in
@@ -290,9 +295,15 @@ func promptCapabilities(ctx context.Context, out *os.File, reader *bufio.Reader)
 // account only after skalid is ready (the engine calls Admin at exactly
 // that point).
 func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
-	record *installer.Record, asserted *layout.Layout, storageDriver string) error {
-	opts := installer.InitOptions{Out: out, Layout: asserted, StorageDriver: storageDriver}
+	record *installer.Record, asserted *layout.Layout, storageDriver string, platformPreference []string) error {
+	opts := installer.InitOptions{
+		Out: out, Layout: asserted,
+		StorageDriver: storageDriver, PlatformPreference: platformPreference,
+	}
 	if err := seedInitInputs(reader, true, record, &opts); err != nil {
+		return err
+	}
+	if err := promptPlatformPreference(ctx, reader, record, &opts); err != nil {
 		return err
 	}
 	if err := resolveSkalidImage(reader, true, &opts); err != nil {
@@ -450,6 +461,56 @@ func seedInitInputs(reader *bufio.Reader, promptAllowed bool,
 func missingRecordField(field string) error {
 	return fmt.Errorf("the installation record is missing the %s; "+
 		"run skali cluster upgrade interactively to provide it", field)
+}
+
+// promptPlatformPreference asks for a build platform preference when a
+// fresh initialization spans more than one CPU architecture among its
+// application-capable nodes. Asked only then: an existing cluster keeps
+// its recorded preference (init --platform-preference changes it), a
+// homogeneous cluster has nothing to prefer, and a node-listing failure
+// degrades to no prompt because init must not fail on a status nicety.
+func promptPlatformPreference(ctx context.Context, reader *bufio.Reader,
+	record *installer.Record, opts *installer.InitOptions) error {
+	if len(opts.PlatformPreference) > 0 || len(record.PlatformPreference) > 0 || record.Endpoints != nil {
+		return nil
+	}
+	client, err := installer.KubeClient(ctx, runner())
+	if err != nil {
+		return nil
+	}
+	nodes, err := client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil
+	}
+	archs := map[string]struct{}{}
+	for _, node := range nodes.Items {
+		capabilities := layout.CapabilitiesFromLabels(node.Labels)
+		if !slices.Contains(capabilities, layout.CapabilityApplication) {
+			continue
+		}
+		if arch := node.Status.NodeInfo.Architecture; arch != "" {
+			archs["linux/"+arch] = struct{}{}
+		}
+	}
+	if len(archs) < 2 {
+		return nil
+	}
+	present := utils.SortedKeys(archs)
+	answer, err := cliprompt.LineDefault(reader,
+		"  preferred build platform ("+strings.Join(present, " or ")+
+			", empty builds multi-arch images) []: ", "")
+	if err != nil {
+		return err
+	}
+	if answer == "" {
+		return nil
+	}
+	if !slices.Contains(manifest.KnownPlatforms, answer) {
+		return fmt.Errorf("platform preference must be %s, got %q",
+			strings.Join(manifest.KnownPlatforms, " or "), answer)
+	}
+	opts.PlatformPreference = []string{answer}
+	return nil
 }
 
 // resolveSkalidImage settles the control-plane image when no tar stages

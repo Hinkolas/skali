@@ -134,6 +134,7 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 			RegistryStorage:    DefaultRegistryStorage,
 			RegistryNode:       record.RegistryNode,
 			StorageDriver:      storageDriver,
+			PlatformPreference: record.PlatformPreference,
 			// Derived from the live topology exactly like Init, so the
 			// hash-match invariant holds by construction.
 			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),

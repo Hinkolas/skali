@@ -270,13 +270,14 @@ func runServe() error {
 		kernelDeps.Claims = substrateCtl
 	}
 	reconcileCfg := reconcile.Config{
-		Resync:          cfg.ReconcileResync,
-		Audit:           cfg.ReconcileAudit,
-		RolloutDeadline: cfg.RolloutDeadline,
-		StaleThreshold:  cfg.StaleThreshold,
-		ManagedCluster:  cfg.ManagedCluster,
-		StorageClass:    cfg.StorageClass,
-		Certificates:    cfg.CertManager,
+		Resync:             cfg.ReconcileResync,
+		Audit:              cfg.ReconcileAudit,
+		RolloutDeadline:    cfg.RolloutDeadline,
+		StaleThreshold:     cfg.StaleThreshold,
+		ManagedCluster:     cfg.ManagedCluster,
+		StorageClass:       cfg.StorageClass,
+		PlatformPreference: cfg.PlatformPreference,
+		Certificates:       cfg.CertManager,
 	}
 	kernel = reconcile.New(kernelDeps, reconcileCfg)
 	deploySvc.SetEnqueuer(kernel)

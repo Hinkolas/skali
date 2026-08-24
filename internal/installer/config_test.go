@@ -194,6 +194,37 @@ web:
 	require.ErrorContains(t, err, "storage.driver must be local or longhorn")
 }
 
+func TestParseInitConfigPlatformPreference(t *testing.T) {
+	t.Parallel()
+	base := `endpoints:
+  api: skali.example.com
+  registry: registry.example.com
+tls:
+  issuerEmail: ops@example.com
+admin:
+  email: a@example.com
+  passwordFile: /root/pw
+skalid:
+  image: skalid:dev
+web:
+  image: skali-web:dev
+`
+	config, err := ParseInitConfig([]byte(base))
+	require.NoError(t, err)
+	require.Empty(t, config.PlatformPreference(), "an omitted platforms block keeps the recorded preference")
+
+	config, err = ParseInitConfig([]byte(base + "platforms:\n  preference: [linux/arm64, linux/amd64]\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"linux/arm64", "linux/amd64"}, config.PlatformPreference(),
+		"the preference keeps its authored order")
+
+	_, err = ParseInitConfig([]byte(base + "platforms:\n  preference: [linux/riscv64]\n"))
+	require.ErrorContains(t, err, "platforms.preference")
+
+	_, err = ParseInitConfig([]byte(base + "platforms:\n  preference: [linux/arm64, linux/arm64]\n"))
+	require.ErrorContains(t, err, "twice")
+}
+
 func TestParseInitConfigRejections(t *testing.T) {
 	t.Parallel()
 	base := map[string]string{

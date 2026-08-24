@@ -30,6 +30,9 @@ type ComponentStatus struct {
 type NodeStatus struct {
 	Name string
 	Role string
+	// Arch is the node's CPU architecture in Go/OCI form (amd64, arm64),
+	// from the kubelet's node info.
+	Arch string
 	// Ready is the node's Ready condition.
 	Ready bool
 	// K3sVersion is the kubelet version, which on k3s carries the +k3s
@@ -150,6 +153,7 @@ func GatherStatus(ctx context.Context, runner host.Runner) (*Status, error) {
 		status.Nodes = append(status.Nodes, NodeStatus{
 			Name:       node.Name,
 			Role:       layout.RoleFromLabels(node.Labels),
+			Arch:       node.Status.NodeInfo.Architecture,
 			Ready:      ready,
 			K3sVersion: kubelet,
 			Current:    kubelet == K3sVersion,

@@ -61,9 +61,10 @@ type Application struct {
 }
 
 type ApplicationSource struct {
-	Kind  string "json:\"kind\""
-	Image string "json:\"image,omitempty\""
-	Build Build  "json:\"build,omitzero\""
+	Kind      string   "json:\"kind\""
+	Image     string   "json:\"image,omitempty\""
+	Build     Build    "json:\"build,omitzero\""
+	Platforms []string "json:\"platforms,omitempty\""
 }
 
 type Build struct {

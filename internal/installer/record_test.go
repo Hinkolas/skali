@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"io/fs"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -121,6 +122,16 @@ func TestRecordCanonicalYAML(t *testing.T) {
 	stamped, err := record.CanonicalYAML()
 	require.NoError(t, err)
 	require.Contains(t, stamped, "storageDriver: longhorn")
+
+	// The platform preference behaves the same way: absent until chosen,
+	// then a bundle-hash input in recorded order.
+	require.NotContains(t, first, "platformPreference")
+	record.PlatformPreference = []string{"linux/arm64", "linux/amd64"}
+	preferred, err := record.CanonicalYAML()
+	require.NoError(t, err)
+	require.Contains(t, preferred, "platformPreference:")
+	require.Less(t, strings.Index(preferred, "linux/arm64"), strings.Index(preferred, "linux/amd64"),
+		"the preference order must survive the canonical encoding")
 }
 
 // Agent records keep their enrollment bookkeeping across save and load.

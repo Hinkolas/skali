@@ -73,4 +73,20 @@ func TestPrintStatusUsesStructuredInstallerHeader(t *testing.T) {
 	require.Contains(t, text, "managed nodes")
 	require.Contains(t, text, "skali-dev-01")
 	require.NotContains(t, text, "managed    skali-dev-01")
+	require.NotContains(t, text, "platforms", "a homogeneous cluster shows no platform summary")
+}
+
+func TestNodeArchCounts(t *testing.T) {
+	t.Parallel()
+	status := &installer.Status{Nodes: []installer.NodeStatus{
+		{Name: "a", Arch: "arm64"},
+		{Name: "b", Arch: "arm64"},
+		{Name: "c", Arch: "amd64"},
+		{Name: "d"},
+	}}
+	require.Equal(t, []string{"2 arm64", "1 amd64"}, nodeArchCounts(status),
+		"counted descending, unknown archs skipped")
+	require.Equal(t, []string{"1 amd64"},
+		nodeArchCounts(&installer.Status{Nodes: []installer.NodeStatus{{Name: "c", Arch: "amd64"}}}))
+	require.Empty(t, nodeArchCounts(&installer.Status{}))
 }

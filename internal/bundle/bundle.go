@@ -23,6 +23,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/registrytoken"
 )
 
@@ -234,6 +235,13 @@ type Production struct {
 	// installation record, so converge always renders what the cluster
 	// was initialized with.
 	StorageDriver string
+	// PlatformPreference is the cluster's ordered build platform
+	// preference for mixed-architecture clusters, read from the
+	// installation record like StorageDriver. It reaches skalid as the
+	// SKALI_PLATFORM_PREFERENCE environment variable; order carries
+	// meaning and must never be sorted. Empty omits the variable and
+	// keeps multi-arch builds.
+	PlatformPreference []string
 	// StorageReplicas sizes the skali-app Longhorn storage class:
 	// min(3, application-capable nodes), never below 1. Derived from the
 	// live topology under both drivers so the profile hash stays stable
@@ -297,6 +305,11 @@ func (p *Production) validate() error {
 		return errors.New("bundle: production profile: web image is required")
 	case p.InstallationRecord == "":
 		return errors.New("bundle: production profile: installation record is required")
+	}
+	for _, platform := range p.PlatformPreference {
+		if platform != manifest.PlatformAMD64 && platform != manifest.PlatformARM64 {
+			return fmt.Errorf("bundle: production profile: unknown platform preference %q", platform)
+		}
 	}
 	return nil
 }
@@ -944,6 +957,12 @@ spec:
 			// the local driver the variable stays unset and claims keep
 			// the cluster default.
 			capabilitiesEnv += "\n            - name: SKALI_STORAGE_CLASS\n              value: " + StorageClassName
+		}
+		if len(production.PlatformPreference) > 0 {
+			// Ordered on purpose: the first preferred platform an
+			// application supports wins its single-arch build.
+			capabilitiesEnv += "\n            - name: SKALI_PLATFORM_PREFERENCE\n              value: " +
+				strings.Join(production.PlatformPreference, ";")
 		}
 		// The shared redirect-https Middleware rides the registry stage,
 		// which converges first; both platform -http routers reference it.

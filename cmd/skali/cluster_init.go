@@ -16,7 +16,7 @@ import (
 )
 
 func newClusterInitCmd() *cobra.Command {
-	var configPath, layoutPath, storageDriver string
+	var configPath, layoutPath, storageDriver, platformPreference string
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Skali on the joined cluster (run once on a server)",
@@ -58,13 +58,14 @@ func newClusterInitCmd() *cobra.Command {
 				asserted = &document.Layout
 			}
 
+			preference := splitPreferenceFlag(platformPreference)
 			if configPath == "" {
 				if !cliprompt.Interactive() {
 					return fmt.Errorf("non-interactive run requires --config")
 				}
 				banner(out)
 				reader := bufio.NewReader(os.Stdin)
-				return runInteractiveInit(ctx, out, reader, detected.Record, asserted, storageDriver)
+				return runInteractiveInit(ctx, out, reader, detected.Record, asserted, storageDriver, preference)
 			}
 
 			data, err := os.ReadFile(configPath)
@@ -93,8 +94,9 @@ func newClusterInitCmd() *cobra.Command {
 				SkalidImageID: config.Skalid.ImageID,
 				WebImage:      config.Web.Image,
 				WebImageID:    config.Web.ImageID,
-				Layout:        asserted,
-				StorageDriver: config.StorageDriver(),
+				Layout:             asserted,
+				StorageDriver:      config.StorageDriver(),
+				PlatformPreference: config.PlatformPreference(),
 				Admin: func(context.Context) (string, string, error) {
 					return config.Admin.Email, adminPassword, nil
 				},
@@ -103,6 +105,9 @@ func newClusterInitCmd() *cobra.Command {
 			}
 			if storageDriver != "" {
 				opts.StorageDriver = storageDriver
+			}
+			if len(preference) > 0 {
+				opts.PlatformPreference = preference
 			}
 			if err := installer.ValidateInitOptions(opts); err != nil {
 				progress.Abort()
@@ -172,5 +177,19 @@ func newClusterInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&layoutPath, "layout", "", "cluster-layout document asserting the expected membership")
 	cmd.Flags().StringVar(&storageDriver, "storage-driver", "",
 		"application storage driver: local (default) or longhorn; re-run init with longhorn to enable it on an existing cluster")
+	cmd.Flags().StringVar(&platformPreference, "platform-preference", "",
+		"ordered build platform preference for mixed-architecture clusters, comma-separated (for example linux/arm64); empty keeps the recorded choice")
 	return cmd
+}
+
+// splitPreferenceFlag splits the comma-separated --platform-preference
+// value preserving order; validation happens in ValidateInitOptions.
+func splitPreferenceFlag(value string) []string {
+	var preference []string
+	for part := range strings.SplitSeq(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			preference = append(preference, part)
+		}
+	}
+	return preference
 }

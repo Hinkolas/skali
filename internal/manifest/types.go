@@ -19,6 +19,18 @@ import (
 // update the static const in schemas/skali.schema.json in lockstep.
 const CurrentVersion = "1"
 
+// Platform identifiers accepted in applications.<name>.platforms. The list is
+// the single source of truth for every platform-validating surface: manifest
+// validation, the generated JSON Schema, and the installer's platform
+// preference checks all reference it.
+const (
+	PlatformAMD64 = "linux/amd64"
+	PlatformARM64 = "linux/arm64"
+)
+
+// KnownPlatforms lists every platform skali can build for and schedule on.
+var KnownPlatforms = []string{PlatformAMD64, PlatformARM64}
+
 // Text accepts a YAML/JSON string or number and preserves its textual form.
 // It is useful for author-friendly values such as cpu: 0.2 and version: 17.
 type Text string
@@ -91,6 +103,7 @@ type Project struct {
 type Application struct {
 	Image       string            `yaml:"image,omitempty" json:"image,omitempty" jsonschema:"Existing OCI image reference. Mutually exclusive with build."`
 	Build       Build             `yaml:"build,omitempty" json:"build,omitempty" jsonschema:"Project source build. Mutually exclusive with image."`
+	Platforms   []string          `yaml:"platforms,omitempty" json:"platforms,omitempty" jsonschema:"Platforms the application's image supports: linux/amd64, linux/arm64. Unordered; empty means every cluster platform."`
 	Command     []string          `yaml:"command,omitempty" json:"command,omitempty" jsonschema:"Container command and arguments."`
 	Environment map[string]Scalar `yaml:"environment,omitempty" json:"environment,omitempty" jsonschema:"Environment variables exposed to the application."`
 	Ports       map[string]Port   `yaml:"ports,omitempty" json:"ports,omitempty" jsonschema:"Named application ports."`

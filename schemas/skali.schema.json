@@ -359,6 +359,18 @@
             },
             "additionalProperties": false
           },
+          "platforms": {
+            "type": "array",
+            "description": "Platforms the application's image supports: linux/amd64, linux/arm64. Unordered; empty means every cluster platform.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "linux/amd64",
+                "linux/arm64"
+              ]
+            },
+            "uniqueItems": true
+          },
           "ports": {
             "type": "object",
             "description": "Named application ports.",

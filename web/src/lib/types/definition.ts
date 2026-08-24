@@ -56,6 +56,7 @@ export interface ApplicationSource {
 	kind: string;
 	image?: string;
 	build?: Build;
+	platforms?: string[];
 }
 
 export interface Build {

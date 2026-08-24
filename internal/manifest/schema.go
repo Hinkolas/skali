@@ -60,6 +60,10 @@ func Schema() (*jsonschema.Schema, error) {
 	}})
 	application.Properties["build"].Properties["context"].MinLength = new(1)
 	application.Properties["build"].Required = []string{"context"}
+	application.Properties["platforms"].Items = &jsonschema.Schema{
+		Type: "string", Enum: utils.AnySlice(PlatformAMD64, PlatformARM64),
+	}
+	application.Properties["platforms"].UniqueItems = true
 	application.Properties["ports"].PropertyNames = stableKeySchema()
 	application.Properties["routes"].PropertyNames = stableKeySchema()
 	application.Properties["volumes"].PropertyNames = stableKeySchema()

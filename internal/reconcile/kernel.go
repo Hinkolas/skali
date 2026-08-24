@@ -114,6 +114,11 @@ type Config struct {
 	// empty keeps the cluster default. The installer sets it only when
 	// the cluster runs the longhorn storage driver.
 	StorageClass string
+	// PlatformPreference is the cluster's ordered build platform
+	// preference, reported to clients through the environment status so
+	// the CLI resolves single-arch builds on mixed clusters. Order
+	// carries meaning; the kernel never sorts it.
+	PlatformPreference []string
 	// Certificates renders explicit cert-manager Certificates for TLS
 	// routes and gates rollout health on their issuance. Local development
 	// leaves it false: no cert-manager, HTTP-only edge.

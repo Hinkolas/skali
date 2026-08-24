@@ -22,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/checkout"
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/compiler"
 )
 
 func writeFile(t *testing.T, root, name, content string) string {
@@ -60,7 +61,7 @@ func TestLoadLocalProjectAndBuildInputs(t *testing.T) {
 	require.Equal(t, "flowdemo", project.Result.Definition.Name)
 	require.Equal(t, root, project.Root)
 
-	inputs, contexts, err := buildInputs(project, []string{envFile}, "linux/amd64", nil)
+	inputs, contexts, err := buildInputs(project, []string{envFile}, map[string]string{"web": "linux/amd64"}, nil)
 	require.NoError(t, err)
 	require.Contains(t, inputs, "web")
 	require.Len(t, inputs["web"].InputHash, 64)
@@ -69,40 +70,56 @@ func TestLoadLocalProjectAndBuildInputs(t *testing.T) {
 	require.NotContains(t, contexts["web"].Files, ".env")
 
 	// The platform is part of the dedup key: a different target rebuilds.
-	otherPlatform, _, err := buildInputs(project, []string{envFile}, "linux/arm64", nil)
+	otherPlatform, _, err := buildInputs(project, []string{envFile}, map[string]string{"web": "linux/arm64"}, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, inputs["web"].InputHash, otherPlatform["web"].InputHash)
 
 	// A source change moves the input hash; the dedup key is honest.
 	writeFile(t, root, "main.txt", "changed")
-	changed, _, err := buildInputs(project, []string{envFile}, "linux/amd64", nil)
+	changed, _, err := buildInputs(project, []string{envFile}, map[string]string{"web": "linux/amd64"}, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, inputs["web"].InputHash, changed["web"].InputHash)
 
 	// A host-run intercept is skipped from the build inputs entirely.
-	skipped, _, err := buildInputs(project, []string{envFile}, "linux/amd64",
+	skipped, _, err := buildInputs(project, []string{envFile}, map[string]string{"web": "linux/amd64"},
 		map[string]client.LocalApplication{"web": {Ports: map[string]int{"http": 5173}}})
 	require.NoError(t, err)
 	require.NotContains(t, skipped, "web")
 }
 
-func TestResolveBuildPlatform(t *testing.T) {
+func platformDefinition(apps map[string]compiler.ApplicationSource) compiler.ProjectDefinition {
+	definition := compiler.ProjectDefinition{Applications: map[string]compiler.Application{}}
+	for key, source := range apps {
+		definition.Applications[key] = compiler.Application{Source: source}
+	}
+	return definition
+}
+
+func TestResolveAppPlatforms(t *testing.T) {
 	local := "linux/" + runtime.GOARCH
+	buildApp := compiler.ApplicationSource{Kind: "build"}
+	definition := platformDefinition(map[string]compiler.ApplicationSource{"web": buildApp})
 
 	// No status (old server or failed fetch): host arch plus a notice.
 	var out strings.Builder
-	require.Equal(t, local, resolveBuildPlatform(&out, nil, ""))
+	platforms, err := resolveAppPlatforms(&out, nil, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"web": local}, platforms)
 	require.Contains(t, out.String(), "did not report")
 
 	// An empty platform list is the same fallback.
 	out.Reset()
-	require.Equal(t, local, resolveBuildPlatform(&out, &client.EnvironmentStatus{}, ""))
+	platforms, err = resolveAppPlatforms(&out, &client.EnvironmentStatus{}, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"web": local}, platforms)
 	require.Contains(t, out.String(), "did not report")
 
 	// A reported platform wins; a foreign one is announced.
 	out.Reset()
 	status := &client.EnvironmentStatus{Platforms: []string{"linux/amd64"}}
-	require.Equal(t, "linux/amd64", resolveBuildPlatform(&out, status, ""))
+	platforms, err = resolveAppPlatforms(&out, status, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"web": "linux/amd64"}, platforms)
 	if local != "linux/amd64" {
 		require.Contains(t, out.String(), "cluster architecture")
 	}
@@ -110,21 +127,95 @@ func TestResolveBuildPlatform(t *testing.T) {
 	// A matching single platform stays silent.
 	out.Reset()
 	status = &client.EnvironmentStatus{Platforms: []string{local}}
-	require.Equal(t, local, resolveBuildPlatform(&out, status, ""))
+	platforms, err = resolveAppPlatforms(&out, status, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"web": local}, platforms)
 	require.Empty(t, out.String())
 
 	// Mixed clusters join into one sorted multi-platform build.
-	out.Reset()
 	status = &client.EnvironmentStatus{Platforms: []string{"linux/arm64", "linux/amd64"}}
-	require.Equal(t, "linux/amd64,linux/arm64", resolveBuildPlatform(&out, status, ""))
+	platforms, err = resolveAppPlatforms(io.Discard, status, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"web": "linux/amd64,linux/arm64"}, platforms)
 
 	// An override beats the report and is canonicalized.
 	out.Reset()
 	status = &client.EnvironmentStatus{Platforms: []string{"linux/amd64"}}
-	require.Equal(t, "linux/arm64", resolveBuildPlatform(&out, status, "linux/arm64"))
+	platforms, err = resolveAppPlatforms(&out, status, "linux/amd64", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"web": "linux/amd64"}, platforms)
 	require.Contains(t, out.String(), "override")
-	require.Equal(t, "linux/amd64,linux/arm64",
-		resolveBuildPlatform(io.Discard, nil, " linux/arm64, linux/amd64 ,linux/arm64"))
+	platforms, err = resolveAppPlatforms(io.Discard, nil, " linux/arm64, linux/amd64 ,linux/arm64", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"web": "linux/amd64,linux/arm64"}, platforms)
+
+	// An override outside an application's buildable platforms names it.
+	status = &client.EnvironmentStatus{Platforms: []string{"linux/amd64"}}
+	_, err = resolveAppPlatforms(io.Discard, status, "linux/arm64", definition, nil)
+	require.ErrorContains(t, err, "web")
+	require.ErrorContains(t, err, "linux/arm64")
+}
+
+func TestResolveAppPlatformsDeclared(t *testing.T) {
+	amdOnly := compiler.ApplicationSource{Kind: "build", Platforms: []string{"linux/amd64"}}
+	portable := compiler.ApplicationSource{Kind: "build"}
+	both := []string{"linux/amd64", "linux/arm64"}
+
+	// Declared platforms narrow the candidates on a mixed cluster.
+	definition := platformDefinition(map[string]compiler.ApplicationSource{"api": amdOnly, "web": portable})
+	status := &client.EnvironmentStatus{Platforms: both}
+	platforms, err := resolveAppPlatforms(io.Discard, status, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"api": "linux/amd64", "web": "linux/amd64,linux/arm64"}, platforms)
+
+	// Declared platforms disjoint from the cluster fail before the plan.
+	status = &client.EnvironmentStatus{Platforms: []string{"linux/arm64"}}
+	_, err = resolveAppPlatforms(io.Discard, status, "", definition, nil)
+	require.ErrorContains(t, err, "api")
+	require.ErrorContains(t, err, "linux/arm64")
+
+	// The same check guards image-sourced applications, which build nothing.
+	imageDefinition := platformDefinition(map[string]compiler.ApplicationSource{
+		"worker": {Kind: "image", Image: "example.invalid/worker:1", Platforms: []string{"linux/amd64"}},
+	})
+	_, err = resolveAppPlatforms(io.Discard, status, "", imageDefinition, nil)
+	require.ErrorContains(t, err, "worker")
+	platforms, err = resolveAppPlatforms(io.Discard, &client.EnvironmentStatus{Platforms: both}, "", imageDefinition, nil)
+	require.NoError(t, err)
+	require.Empty(t, platforms, "image applications produce no build platform")
+
+	// Without a status, declared platforms stand in for the local arch.
+	platforms, err = resolveAppPlatforms(io.Discard, nil, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, "linux/amd64", platforms["api"])
+}
+
+func TestResolveAppPlatformsPreference(t *testing.T) {
+	buildApp := compiler.ApplicationSource{Kind: "build"}
+	amdOnly := compiler.ApplicationSource{Kind: "build", Platforms: []string{"linux/amd64"}}
+	definition := platformDefinition(map[string]compiler.ApplicationSource{"web": buildApp, "legacy": amdOnly})
+	status := &client.EnvironmentStatus{
+		Platforms:          []string{"linux/amd64", "linux/arm64"},
+		PlatformPreference: []string{"linux/arm64"},
+	}
+
+	// The preference picks a single arch for portable applications while a
+	// declared-subset application falls through to its own candidates.
+	platforms, err := resolveAppPlatforms(io.Discard, status, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"web": "linux/arm64", "legacy": "linux/amd64"}, platforms)
+
+	// A preference matching no candidate falls back to the full set.
+	status.PlatformPreference = []string{"linux/riscv64"}
+	platforms, err = resolveAppPlatforms(io.Discard, status, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, "linux/amd64,linux/arm64", platforms["web"])
+
+	// Ordered preference: the first entry present in the candidates wins.
+	status.PlatformPreference = []string{"linux/riscv64", "linux/amd64", "linux/arm64"}
+	platforms, err = resolveAppPlatforms(io.Discard, status, "", definition, nil)
+	require.NoError(t, err)
+	require.Equal(t, "linux/amd64", platforms["web"])
 }
 
 func TestDiscoverEnvFiles(t *testing.T) {

@@ -62,8 +62,13 @@ type Record struct {
 	// deploys replicated block storage with enforced volume sizes.
 	// Records written before the choice existed omit it and read as
 	// local.
-	StorageDriver string   `yaml:"storageDriver,omitempty"`
-	Versions      Versions `yaml:"versions"`
+	StorageDriver string `yaml:"storageDriver,omitempty"`
+	// PlatformPreference is the cluster-level ordered build platform
+	// preference chosen at init: on a mixed-architecture cluster the first
+	// preferred platform an application supports wins its single-arch
+	// build. Empty records keep multi-arch builds.
+	PlatformPreference []string `yaml:"platformPreference,omitempty"`
+	Versions           Versions `yaml:"versions"`
 	// Lifecycle is present while a managed host install is in progress or
 	// failed. Records written before lifecycle tracking omit it and are
 	// treated as complete.
@@ -362,24 +367,26 @@ func (r *Record) CanonicalYAML() (string, error) {
 		Join           *JoinRecord `yaml:"join,omitempty"`
 		Endpoints      *Endpoints  `yaml:"endpoints,omitempty"`
 		TLS            *TLSConfig  `yaml:"tls,omitempty"`
-		RegistryNode   string      `yaml:"registryNode,omitempty"`
-		StorageDriver  string      `yaml:"storageDriver,omitempty"`
-		Versions       Versions    `yaml:"versions"`
+		RegistryNode       string      `yaml:"registryNode,omitempty"`
+		StorageDriver      string      `yaml:"storageDriver,omitempty"`
+		PlatformPreference []string    `yaml:"platformPreference,omitempty"`
+		Versions           Versions    `yaml:"versions"`
 	}
 	data, err := yaml.Marshal(canonicalRecord{
-		Version:        r.Version,
-		InstallationID: r.InstallationID,
-		Provider:       r.Provider,
-		Cluster:        r.Cluster,
-		Ownership:      r.Ownership,
-		Management:     r.Management,
-		Node:           r.Node,
-		Join:           r.Join,
-		Endpoints:      r.Endpoints,
-		TLS:            r.TLS,
-		RegistryNode:   r.RegistryNode,
-		StorageDriver:  r.StorageDriver,
-		Versions:       r.Versions,
+		Version:            r.Version,
+		InstallationID:     r.InstallationID,
+		Provider:           r.Provider,
+		Cluster:            r.Cluster,
+		Ownership:          r.Ownership,
+		Management:         r.Management,
+		Node:               r.Node,
+		Join:               r.Join,
+		Endpoints:          r.Endpoints,
+		TLS:                r.TLS,
+		RegistryNode:       r.RegistryNode,
+		StorageDriver:      r.StorageDriver,
+		PlatformPreference: r.PlatformPreference,
+		Versions:           r.Versions,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode canonical installation record: %w", err)

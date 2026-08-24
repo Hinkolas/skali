@@ -54,6 +54,11 @@ type InitOptions struct {
 	// so headless re-runs and upgrades never flip the choice. Switching
 	// an existing cluster from longhorn back to local is refused.
 	StorageDriver string
+	// PlatformPreference is the ordered build platform preference for
+	// mixed-architecture clusters. Empty keeps the record's current
+	// preference (none on a fresh installation), so headless re-runs and
+	// upgrades never flip the choice.
+	PlatformPreference []string
 	// Layout optionally asserts the expected membership; init refuses when
 	// the joined nodes do not match it.
 	Layout *layout.Layout
@@ -203,6 +208,13 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 			"switching back to local is not supported"))
 	}
 
+	// The platform preference defaults to the record for the same reason:
+	// only an explicit option changes it.
+	platformPreference := opts.PlatformPreference
+	if len(platformPreference) == 0 {
+		platformPreference = record.PlatformPreference
+	}
+
 	// Fresh longhorn clusters are Longhorn-native from the first converge
 	// (the claim is absent, so this reads as the Longhorn class); a re-run
 	// over an interrupted init keeps whatever shape the claim already has,
@@ -220,6 +232,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	record.TLS = &TLSConfig{IssuerEmail: opts.TLS.IssuerEmail, ACMEServer: opts.TLS.ACMEServer}
 	record.RegistryNode = opts.RegistryNode
 	record.StorageDriver = storageDriver
+	record.PlatformPreference = platformPreference
 	record.Versions.Bundle = version.Version
 	record.Versions.Installer = version.Version
 	canonical, err := record.CanonicalYAML()
@@ -247,6 +260,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 			RegistryStorage:      DefaultRegistryStorage,
 			RegistryNode:         opts.RegistryNode,
 			StorageDriver:        storageDriver,
+			PlatformPreference:   platformPreference,
 			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
 			RegistryStorageClass: registryStorageClass,
 			WebImage:             opts.WebImage,
@@ -323,6 +337,9 @@ func ValidateInitOptions(opts InitOptions) error {
 	default:
 		return fmt.Errorf("storage driver must be %s or %s, got %q",
 			bundle.StorageDriverLocal, bundle.StorageDriverLonghorn, opts.StorageDriver)
+	}
+	if err := validatePlatformPreference(opts.PlatformPreference); err != nil {
+		return fmt.Errorf("platform preference %s", err)
 	}
 	domains := map[string]string{
 		"api/ui": opts.Endpoints.API, "registry": opts.Endpoints.Registry,

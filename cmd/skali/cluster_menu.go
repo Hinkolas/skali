@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -206,6 +207,17 @@ func printStatus(out *os.File, status *installer.Status) {
 		}
 		printStatusRow(out, style, "nodes",
 			fmt.Sprintf("%d joined (%s)", len(status.Nodes), nodeRoleCounts(status)))
+		if archs := nodeArchCounts(status); len(archs) > 1 {
+			printStatusRow(out, style, "platforms", strings.Join(archs, ", "))
+			if record == nil || len(record.PlatformPreference) == 0 {
+				printStatusRow(out, style, "",
+					style.Dim("mixed architectures build multi-arch images; prefer one with "+
+						"skali cluster init --platform-preference"))
+			} else {
+				printStatusRow(out, style, "preference",
+					strings.Join(record.PlatformPreference, ", "))
+			}
+		}
 		servers := status.Servers()
 		if servers > 0 && servers%2 == 0 {
 			printStatusRow(out, style, "servers",
@@ -529,6 +541,25 @@ func nodeRoleCounts(status *installer.Status) string {
 		parts = append(parts, utils.PluralCount(agents, "agent"))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// nodeArchCounts summarizes the cluster's CPU architectures, e.g.
+// ["2 arm64", "1 amd64"], sorted by count descending then name. A single
+// entry means a homogeneous cluster.
+func nodeArchCounts(status *installer.Status) []string {
+	counts := map[string]int{}
+	for _, node := range status.Nodes {
+		if node.Arch != "" {
+			counts[node.Arch]++
+		}
+	}
+	archs := utils.SortedKeys(counts)
+	sort.SliceStable(archs, func(i, j int) bool { return counts[archs[i]] > counts[archs[j]] })
+	parts := make([]string, 0, len(archs))
+	for _, arch := range archs {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[arch], arch))
+	}
+	return parts
 }
 
 func healthyOverall(status *installer.Status) bool {

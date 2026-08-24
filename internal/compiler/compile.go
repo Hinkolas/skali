@@ -121,6 +121,13 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			Arguments:  arguments,
 		}}
 	}
+	// Canonical order keeps the definition hash independent of how the
+	// author listed the platforms.
+	if len(source.Platforms) > 0 {
+		platforms := slices.Clone(source.Platforms)
+		slices.Sort(platforms)
+		result.Source.Platforms = slices.Compact(platforms)
+	}
 
 	owner := "applications." + key
 	b.dependencies[owner] = make(map[string]struct{})

@@ -12,7 +12,7 @@ matrix documents what the R3 build schema and engine support.
 | Dockerfile builds | `build.context`, `build.dockerfile` | The context is project-root-relative; the Dockerfile is context-relative (docker convention, default `Dockerfile`). Neither may escape the project root; the Dockerfile may live outside the context directory via `..`. |
 | Multi-stage targets | `build.target` | Passed as `--target`; part of the build configuration hash. |
 | Build arguments | `build.arguments` | Passed as `--build-arg` verbatim (literal strings, no `${NAME}` interpolation). Part of the configuration hash. |
-| Target platform | (derived) | `linux/<host arch>` in R3; recorded on the build and part of the input hash. Cross-platform selection is an R4 surface. |
+| Target platform | `platforms` (application level) | Derived per application: the declared platforms intersect with the platforms observed on the cluster's application nodes; a cluster platform preference picks a single arch, otherwise all candidates build as one multi-platform image. Falls back to `linux/<host arch>` when nothing is known. Recorded on the build, part of the input hash, and rendered as node arch affinity on the workload. `--platform` overrides. |
 | Ignore rules | `.dockerignore` in the context root | dockerignore pattern syntax, including `!` exceptions. Patterns are rooted: use `**/*.log` to reach subdirectories. |
 | Layer caching | (automatic) | The engine uses the local BuildKit cache; an unchanged input hash skips the build entirely and reuses the verified artifact. |
 | Push and digest capture | (automatic) | `--push` with `--metadata-file`; attestations are disabled (`--provenance=false --sbom=false`) so the pushed digest is the plain manifest digest, verified server-side before the artifact enters a revision. |
@@ -35,7 +35,6 @@ matrix documents what the R3 build schema and engine support.
 - Cloud builders and build-context upload (R4; the schema and artifact
   contract are shared).
 - Buildpacks and Nixpacks (a future engine behind the same interface).
-- Explicit cross-platform builds and multi-platform release artifacts.
 - Remote cache export/import (`--cache-to`/`--cache-from`).
 - Named build contexts, SSH forwarding, and Dockerfile syntax directives
   requiring a custom frontend.

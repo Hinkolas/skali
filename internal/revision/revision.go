@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Hinkolas/skali/internal/compiler"
@@ -65,6 +66,20 @@ type Artifact struct {
 	Kind        string `json:"kind"`
 	Upstream    string `json:"upstream,omitempty"`
 	ContextHash string `json:"contextHash,omitempty"`
+	// Platforms lists the platforms the image runs on: a build's target
+	// platforms, or an image source's declared platforms. The renderer
+	// derives node arch affinity from it; empty means unknown and renders
+	// no constraint.
+	Platforms []string `json:"platforms,omitempty"`
+}
+
+// Equal reports whether two artifacts are identical, including their
+// platform sets. Artifact stopped being comparable with == when Platforms
+// was added.
+func (a Artifact) Equal(b Artifact) bool {
+	return a.Reference == b.Reference && a.Digest == b.Digest && a.Kind == b.Kind &&
+		a.Upstream == b.Upstream && a.ContextHash == b.ContextHash &&
+		slices.Equal(a.Platforms, b.Platforms)
 }
 
 // PendingDigest stands in for an artifact whose build or import has not run

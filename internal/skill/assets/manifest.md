@@ -98,11 +98,19 @@ applications:
       target: runtime               # optional multi-stage target, literal
       arguments:                    # optional literal build args; they persist in
         VERSION: "1.4.2"            # image config, so never put credentials here
+    platforms: [linux/amd64]        # optional; platforms the image supports
     command: ["/app/web", "serve"]  # optional container command
     environment:                    # names match ^[A-Za-z_][A-Za-z0-9_]*$
       NODE_ENV: production
       DATABASE_URL: "{{databases.data.url}}"
 ```
+
+`platforms` declares which platforms the application's image supports
+(`linux/amd64`, `linux/arm64`); it applies to both `image` and `build`
+sources. Leave it out for portable applications: they are built for
+every platform the cluster's application nodes run. Declaring a subset
+restricts builds to those platforms and pins the workload to matching
+nodes.
 
 `image` references are imported into the managed registry and pinned by
 digest. Build contexts may not be absolute paths and may not escape the

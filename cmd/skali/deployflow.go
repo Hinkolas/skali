@@ -430,29 +430,145 @@ func chooseEnvironment(out io.Writer, in *bufio.Reader, environments []client.En
 	})
 }
 
-// resolveBuildPlatform picks the platform local builds target: an explicit
-// override wins, then the platforms the server observed on the cluster
-// nodes, then the host architecture when the server reports nothing (older
-// servers, observation not yet synced). Multiple platforms join into one
-// comma-separated multi-platform build.
-func resolveBuildPlatform(out io.Writer, status *client.EnvironmentStatus, override string) string {
-	style := clirender.StyleFor(out)
+// resolveAppPlatforms picks the platform each build-sourced application
+// targets. Per application, in order: an explicit --platform override wins
+// (validated against the application's buildable platforms); otherwise the
+// candidates are the manifest's declared platforms intersected with the
+// platforms the server observed on the cluster's application nodes (either
+// side unknown keeps the other); a cluster platform preference picks the
+// first preferred candidate for a single-arch build; without a preference
+// every candidate joins into one comma-separated multi-platform build; and
+// when nothing is known the host architecture stands in (older servers,
+// observation not yet synced). Declared platforms disjoint from the
+// cluster's are a hard error, for image-sourced applications too: the
+// workload could not schedule anywhere.
+func resolveAppPlatforms(out io.Writer, status *client.EnvironmentStatus, override string,
+	definition compiler.ProjectDefinition, skip map[string]client.LocalApplication) (map[string]string, error) {
+
 	local := "linux/" + runtime.GOARCH
+	var observed, preference []string
+	if status != nil {
+		observed = status.Platforms
+		preference = status.PlatformPreference
+	}
+	overridePlatform := ""
 	if override != "" {
-		platform := canonicalPlatforms(strings.Split(override, ","))
-		fmt.Fprintf(out, "%s     %s %s\n", style.Dim("platform"), platform, style.Dim("(override)"))
-		return platform
+		overridePlatform = canonicalPlatforms(strings.Split(override, ","))
 	}
-	if status != nil && len(status.Platforms) > 0 {
-		platform := canonicalPlatforms(status.Platforms)
-		if platform != local {
-			fmt.Fprintf(out, "%s     %s %s\n", style.Dim("platform"), platform, style.Dim("(cluster architecture)"))
+
+	platforms := make(map[string]string)
+	reasons := make(map[string]string)
+	for _, key := range utils.SortedKeys(definition.Applications) {
+		if _, ok := skip[key]; ok {
+			continue
 		}
-		return platform
+		source := definition.Applications[key].Source
+		declared := source.Platforms
+		candidates := platformCandidates(declared, observed)
+		if len(declared) > 0 && len(observed) > 0 && len(candidates) == 0 {
+			return nil, fmt.Errorf("application %s supports only %s but the cluster's application nodes run %s",
+				key, strings.Join(declared, ", "), strings.Join(observed, ", "))
+		}
+		if source.Kind != "build" {
+			continue
+		}
+		switch {
+		case overridePlatform != "":
+			if len(candidates) > 0 && !platformsIntersect(strings.Split(overridePlatform, ","), candidates) {
+				return nil, fmt.Errorf("application %s cannot be built for %s; its buildable platforms are %s",
+					key, overridePlatform, strings.Join(candidates, ", "))
+			}
+			platforms[key], reasons[key] = overridePlatform, "override"
+		case len(candidates) == 0:
+			platforms[key] = local
+			reasons[key] = "local architecture; the server did not report cluster platforms"
+		default:
+			if preferred, ok := firstPreferredPlatform(preference, candidates); ok {
+				platforms[key], reasons[key] = preferred, "cluster preference"
+			} else if len(declared) > 0 && len(candidates) < len(observed) {
+				platforms[key], reasons[key] = canonicalPlatforms(candidates), "declared platforms"
+			} else {
+				platforms[key], reasons[key] = canonicalPlatforms(candidates), "cluster architecture"
+			}
+		}
 	}
-	fmt.Fprintf(out, "%s     %s %s\n", style.Dim("platform"), local,
-		style.Dim("(local architecture; the server did not report cluster platforms)"))
-	return local
+	printAppPlatforms(out, platforms, reasons, local)
+	return platforms, nil
+}
+
+// printAppPlatforms reports the chosen build platforms, staying quiet for
+// the common case of every application building for the local architecture
+// as a matter of course. One shared line covers uniform resolutions; mixed
+// resolutions print per application.
+func printAppPlatforms(out io.Writer, platforms, reasons map[string]string, local string) {
+	style := clirender.StyleFor(out)
+	uniform := true
+	first := ""
+	for _, key := range utils.SortedKeys(platforms) {
+		if first == "" {
+			first = platforms[key] + "\x00" + reasons[key]
+		} else if first != platforms[key]+"\x00"+reasons[key] {
+			uniform = false
+			break
+		}
+	}
+	if len(platforms) == 0 {
+		return
+	}
+	if uniform {
+		key := utils.SortedKeys(platforms)[0]
+		platform, reason := platforms[key], reasons[key]
+		if platform == local && (reason == "cluster architecture" || reason == "cluster preference") {
+			return
+		}
+		fmt.Fprintf(out, "%s     %s %s\n", style.Dim("platform"), platform, style.Dim("("+reason+")"))
+		return
+	}
+	for _, key := range utils.SortedKeys(platforms) {
+		fmt.Fprintf(out, "%s     %s %s\n", style.Dim("platform"), platforms[key],
+			style.Dim("("+key+": "+reasons[key]+")"))
+	}
+}
+
+// platformCandidates intersects an application's declared platforms with
+// the observed cluster platforms. Either side being empty means unknown
+// and keeps the other side unchanged, mirroring the server's guard.
+func platformCandidates(declared, observed []string) []string {
+	if len(declared) == 0 {
+		return observed
+	}
+	if len(observed) == 0 {
+		return declared
+	}
+	var common []string
+	for _, platform := range declared {
+		if slices.Contains(observed, platform) {
+			common = append(common, platform)
+		}
+	}
+	return common
+}
+
+// platformsIntersect reports whether any submitted platform is in the
+// candidate set.
+func platformsIntersect(submitted, candidates []string) bool {
+	for _, platform := range submitted {
+		if slices.Contains(candidates, strings.TrimSpace(platform)) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstPreferredPlatform picks the first entry of the ordered cluster
+// preference that the candidate set contains.
+func firstPreferredPlatform(preference, candidates []string) (string, bool) {
+	for _, platform := range preference {
+		if slices.Contains(candidates, platform) {
+			return platform, true
+		}
+	}
+	return "", false
 }
 
 // canonicalPlatforms trims, dedupes, and sorts so that equal platform sets
@@ -477,8 +593,9 @@ func canonicalPlatforms(platforms []string) string {
 
 // buildInputs computes the per-application hashes: the dedup key the
 // server decides reuse with. Selected env files never enter the context.
-// Applications in the skip set (host-run intercepts) hash nothing.
-func buildInputs(project *localProject, excludeFiles []string, platform string,
+// Applications in the skip set (host-run intercepts) hash nothing. Each
+// application hashes its own resolved platform.
+func buildInputs(project *localProject, excludeFiles []string, platforms map[string]string,
 	skip map[string]client.LocalApplication) (map[string]client.BuildInput, map[string]*build.Context, error) {
 	inputs := make(map[string]client.BuildInput)
 	contexts := make(map[string]*build.Context)
@@ -499,6 +616,7 @@ func buildInputs(project *localProject, excludeFiles []string, platform string,
 			return nil, nil, fmt.Errorf("read Dockerfile for %s: %w", key, err)
 		}
 		configHash := build.ConfigHash(dockerfile, spec.Target, spec.Arguments)
+		platform := platforms[key]
 		inputs[key] = client.BuildInput{
 			InputHash:  build.InputHash(collected.TreeHash, configHash, platform),
 			ConfigHash: configHash,
@@ -1292,8 +1410,12 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		fmt.Fprintf(out, "  %s\n", style.Yellow(fmt.Sprintf(
 			"warning: could not fetch environment status: %v", err)))
 	}
-	platform := resolveBuildPlatform(out, envStatus, opts.Platform)
-	inputs, contexts, err := buildInputs(project, excludeFiles, platform, opts.LocalApplications)
+	platforms, err := resolveAppPlatforms(out, envStatus, opts.Platform,
+		project.Result.Definition, opts.LocalApplications)
+	if err != nil {
+		return "", err
+	}
+	inputs, contexts, err := buildInputs(project, excludeFiles, platforms, opts.LocalApplications)
 	if err != nil {
 		return "", err
 	}

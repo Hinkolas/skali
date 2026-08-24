@@ -133,6 +133,13 @@ type API struct {
 	// (local-path), which is both the dev shape and the local driver.
 	StorageClass string `env:"SKALI_STORAGE_CLASS,default="`
 
+	// PlatformPreference is the cluster's ordered build platform
+	// preference for mixed-architecture clusters, separated by semicolons.
+	// The CLI reads it from the environment status and builds each
+	// application for the first preferred platform it supports. Order
+	// carries meaning; empty keeps multi-arch builds.
+	PlatformPreference []string `env:"SKALI_PLATFORM_PREFERENCE,delimiter=;,default="`
+
 	// CertManager reports that the installation runs cert-manager and the
 	// managed ClusterIssuer: routes render explicit Certificates, the
 	// kernel watches their issuance, and deploys gate on it. Local

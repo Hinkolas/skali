@@ -681,10 +681,15 @@ type EnvironmentStatus struct {
 	Observation struct {
 		State string `json:"state"`
 	} `json:"observation"`
-	// Platforms lists the observed cluster node platforms; nil when the
-	// server predates the field or the observation has not synced.
-	Platforms []string        `json:"platforms"`
-	Services  []ServiceStatus `json:"services"`
+	// Platforms lists the observed platforms of the cluster's application
+	// nodes; nil when the server predates the field or the observation has
+	// not synced.
+	Platforms []string `json:"platforms"`
+	// PlatformPreference is the cluster's ordered build platform
+	// preference; nil when the server predates the field or none is
+	// configured.
+	PlatformPreference []string        `json:"platform_preference"`
+	Services           []ServiceStatus `json:"services"`
 }
 
 type ServiceStatus struct {

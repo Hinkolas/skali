@@ -2,7 +2,9 @@ package manifest
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
@@ -37,6 +39,18 @@ func Validate(document *Document) yamldoc.Diagnostics {
 		}
 		if hasBuild && application.Build.Context == "" {
 			add(path+".build.context", "is required")
+		}
+		seenPlatforms := make(map[string]struct{}, len(application.Platforms))
+		for index, platform := range application.Platforms {
+			platformPath := fmt.Sprintf("%s.platforms[%d]", path, index)
+			if !slices.Contains(KnownPlatforms, platform) {
+				add(platformPath, "unknown platform %q; supported platforms are %s", platform, strings.Join(KnownPlatforms, ", "))
+				continue
+			}
+			if _, ok := seenPlatforms[platform]; ok {
+				add(platformPath, "duplicate platform %q", platform)
+			}
+			seenPlatforms[platform] = struct{}{}
 		}
 		for _, portKey := range utils.SortedKeys(application.Ports) {
 			portPath := path + ".ports." + portKey

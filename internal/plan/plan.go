@@ -124,7 +124,7 @@ func (p *Plan) diffApplications(active, candidate *revision.Revision) {
 					reasons = append(reasons, "deletes persistent volumes: "+strings.Join(removed, ", "))
 				}
 			}
-			if active.Artifacts[key] != candidate.Artifacts[key] {
+			if !active.Artifacts[key].Equal(candidate.Artifacts[key]) {
 				reasons = append(reasons, artifactReason(active.Artifacts[key], candidate.Artifacts[key]))
 			}
 			if len(reasons) == 0 {

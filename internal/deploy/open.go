@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -99,17 +100,32 @@ func (e *MissingBuildInputError) Error() string {
 	return "deploy: application " + e.Application + " uses a build source but no build input hashes were submitted"
 }
 
-// PlatformMismatchError: a submitted build targets none of the observed
-// cluster platforms, so the image could not run on any node.
+// PlatformMismatchError: an application's image targets none of the
+// platforms it may run on, so it could not run on any allowed node. For a
+// build source that is the submitted build platform against the declared
+// platforms intersected with the observed cluster platforms; for an image
+// source it is the declared platforms against the cluster platforms.
 type PlatformMismatchError struct {
 	Application string
 	Submitted   string
+	Declared    []string
 	Cluster     []string
 }
 
 func (e *PlatformMismatchError) Error() string {
-	return "deploy: application " + e.Application + " would be built for " + e.Submitted +
-		" but the cluster nodes run " + strings.Join(e.Cluster, ", ") +
+	cluster := " but the cluster's application nodes run " + strings.Join(e.Cluster, ", ")
+	if e.Submitted == "" {
+		return "deploy: application " + e.Application + " supports only " +
+			strings.Join(e.Declared, ", ") + cluster
+	}
+	message := "deploy: application " + e.Application + " would be built for " + e.Submitted
+	if len(e.Declared) > 0 {
+		message += " but declares platforms " + strings.Join(e.Declared, ", ") +
+			" and the cluster's application nodes run " + strings.Join(e.Cluster, ", ")
+	} else {
+		message += cluster
+	}
+	return message +
 		"; upgrade the skali CLI (newer versions build for the cluster platform automatically) or pass a matching --platform"
 }
 
@@ -701,6 +717,12 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 			return nil, fmt.Errorf("deploy: decode local applications: %w", err)
 		}
 	}
+	actionPlatforms := make(map[string]string, len(actions))
+	for _, action := range actions {
+		if action.Platform != "" {
+			actionPlatforms[action.Application] = action.Platform
+		}
+	}
 	result, err := s.runStages(ctx, runID, ExecuteInput{
 		ProjectID:           deployment.ProjectID,
 		EnvironmentID:       deployment.EnvironmentID,
@@ -713,6 +735,7 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 		DeploymentID:        deploymentID,
 		LocalApplications:   locals,
 		PruneValues:         deployment.PruneValues,
+		ActionPlatforms:     actionPlatforms,
 	})
 	if err != nil {
 		// Promotion marks the deployment promoted inside its own
@@ -851,6 +874,52 @@ func platformsOverlap(submitted string, cluster []string) bool {
 	return false
 }
 
+// splitPlatforms turns a submitted comma-joined platform string into a
+// canonical set: trimmed, deduplicated, sorted. Empty input returns nil.
+func splitPlatforms(submitted string) []string {
+	var platforms []string
+	for platform := range strings.SplitSeq(submitted, ",") {
+		if platform = strings.TrimSpace(platform); platform != "" {
+			platforms = append(platforms, platform)
+		}
+	}
+	slices.Sort(platforms)
+	return slices.Compact(platforms)
+}
+
+// intersectPlatforms intersects a declared platform set with the observed
+// cluster platforms. Either side being empty means unknown and returns the
+// other side unchanged, preserving the fail-open sentinel both carry.
+func intersectPlatforms(declared, cluster []string) []string {
+	if len(declared) == 0 {
+		return cluster
+	}
+	if len(cluster) == 0 {
+		return declared
+	}
+	var common []string
+	for _, platform := range declared {
+		if slices.Contains(cluster, platform) {
+			common = append(common, platform)
+		}
+	}
+	return common
+}
+
+// artifactPlatforms derives the platform set recorded on a revision
+// artifact. A build's image runs on exactly the platforms it was built
+// for; an image source runs on whatever the manifest declares. The
+// candidate revision (preview) and the stored revision (Prepare) MUST
+// derive it through this one function: the two revisions are compared by
+// checksum to decide up-to-dateness, and any divergence would keep an
+// environment permanently "not up to date".
+func artifactPlatforms(source compiler.ApplicationSource, submitted string) []string {
+	if source.Kind == "image" {
+		return source.Platforms
+	}
+	return splitPlatforms(submitted)
+}
+
 // preview computes the plan and per-application artifact decisions without
 // creating anything.
 func (s *Service) preview(ctx context.Context, env store.Environment, definitionVersion store.DefinitionVersion,
@@ -868,6 +937,10 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 		}
 		source := definition.Applications[key].Source
 		if source.Kind == "image" {
+			if len(source.Platforms) > 0 && len(in.NodePlatforms) > 0 &&
+				len(intersectPlatforms(source.Platforms, in.NodePlatforms)) == 0 {
+				return nil, &PlatformMismatchError{Application: key, Declared: source.Platforms, Cluster: in.NodePlatforms}
+			}
 			upstream := source.Image
 			row, err := s.st.GetVerifiedArtifactByUpstream(ctx, upstream)
 			if in.Rebuild && err == nil {
@@ -883,6 +956,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 				})
 				artifacts[key] = revision.Artifact{
 					Reference: row.Reference, Digest: *row.Digest, Kind: row.Kind, Upstream: row.Upstream,
+					Platforms: artifactPlatforms(source, ""),
 				}
 			case errors.Is(err, pgx.ErrNoRows):
 				allReuse = false
@@ -892,6 +966,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 				artifacts[key] = revision.Artifact{
 					Reference: "pending", Digest: revision.PendingDigest,
 					Kind: revision.KindImport, Upstream: upstream,
+					Platforms: artifactPlatforms(source, ""),
 				}
 			default:
 				return nil, fmt.Errorf("deploy: look up import artifact: %w", err)
@@ -903,8 +978,11 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 		if !ok || input.InputHash == "" {
 			return nil, &MissingBuildInputError{Application: key}
 		}
-		if !platformsOverlap(input.Platform, in.NodePlatforms) {
-			return nil, &PlatformMismatchError{Application: key, Submitted: input.Platform, Cluster: in.NodePlatforms}
+		if !platformsOverlap(input.Platform, intersectPlatforms(source.Platforms, in.NodePlatforms)) {
+			return nil, &PlatformMismatchError{
+				Application: key, Submitted: input.Platform,
+				Declared: source.Platforms, Cluster: in.NodePlatforms,
+			}
 		}
 		row, err := s.st.GetReusableArtifact(ctx, store.GetReusableArtifactParams{
 			ProjectID:   &env.ProjectID,
@@ -926,6 +1004,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 			})
 			artifacts[key] = revision.Artifact{
 				Reference: row.Reference, Digest: *row.Digest, Kind: row.Kind, ContextHash: row.ContextHash,
+				Platforms: artifactPlatforms(source, input.Platform),
 			}
 		case errors.Is(err, pgx.ErrNoRows):
 			allReuse = false
@@ -936,6 +1015,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 			artifacts[key] = revision.Artifact{
 				Reference: "pending", Digest: revision.PendingDigest,
 				Kind: revision.KindBuildLocal, ContextHash: input.InputHash,
+				Platforms: artifactPlatforms(source, input.Platform),
 			}
 		default:
 			return nil, fmt.Errorf("deploy: look up build artifact: %w", err)
@@ -1189,6 +1269,7 @@ func (s *Service) loadSourceRevision(ctx context.Context, environmentID, fromEnv
 			Application: key, Action: "reuse", Kind: art.Kind, ArtifactID: artRow.ID,
 			Upstream: art.Upstream, InputHash: art.ContextHash,
 			Reference: art.Reference, Digest: art.Digest,
+			Platform: strings.Join(art.Platforms, ","),
 		})
 	}
 	return &promotionSource{

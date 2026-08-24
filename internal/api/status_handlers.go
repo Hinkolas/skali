@@ -80,13 +80,14 @@ type certificatePayload struct {
 }
 
 type environmentStatusPayload struct {
-	EnvironmentID  string                 `json:"environment_id"`
-	State          string                 `json:"state"`
-	TargetRevision *revisionRefPayload    `json:"target_revision"`
-	ActiveRevision *revisionRefPayload    `json:"active_revision"`
-	Observation    observationPayload     `json:"observation"`
-	Platforms      []string               `json:"platforms"`
-	Services       []serviceStatusPayload `json:"services"`
+	EnvironmentID      string                 `json:"environment_id"`
+	State              string                 `json:"state"`
+	TargetRevision     *revisionRefPayload    `json:"target_revision"`
+	ActiveRevision     *revisionRefPayload    `json:"active_revision"`
+	Observation        observationPayload     `json:"observation"`
+	Platforms          []string               `json:"platforms"`
+	PlatformPreference []string               `json:"platform_preference"`
+	Services           []serviceStatusPayload `json:"services"`
 }
 
 func newObservationPayload(source module.SourceStatus) observationPayload {
@@ -104,11 +105,12 @@ func newObservationPayload(source module.SourceStatus) observationPayload {
 
 func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayload {
 	payload := environmentStatusPayload{
-		EnvironmentID: status.EnvironmentID.String(),
-		State:         status.State,
-		Observation:   newObservationPayload(status.Observation),
-		Platforms:     append([]string{}, status.Platforms...),
-		Services:      make([]serviceStatusPayload, 0, len(status.Services)),
+		EnvironmentID:      status.EnvironmentID.String(),
+		State:              status.State,
+		Observation:        newObservationPayload(status.Observation),
+		Platforms:          append([]string{}, status.Platforms...),
+		PlatformPreference: append([]string{}, status.PlatformPreference...),
+		Services:           make([]serviceStatusPayload, 0, len(status.Services)),
 	}
 	if status.Target != nil {
 		payload.TargetRevision = &revisionRefPayload{ID: status.Target.ID.String(), Checksum: status.Target.Checksum}

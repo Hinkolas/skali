@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/module"
 )
 
@@ -105,6 +106,34 @@ func TestNodePlatforms(t *testing.T) {
 	store.SetNodeArch("b", "")
 	store.RemoveNode("c")
 	require.Empty(t, store.NodePlatforms())
+}
+
+func TestNodePlatformsApplicationCapabilityFilter(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+
+	store.SetNodeArch("db", "amd64")
+	store.SetNodeArch("app", "arm64")
+	require.Equal(t, []string{"linux/amd64", "linux/arm64"}, store.NodePlatforms(),
+		"without capability labels every node counts")
+
+	store.SetNodeCapabilities("db", []string{layout.CapabilityDatabase})
+	store.SetNodeCapabilities("app", []string{layout.CapabilityApplication})
+	require.Equal(t, []string{"linux/arm64"}, store.NodePlatforms(),
+		"database-only nodes must not widen the build platforms")
+
+	store.SetNodeCapabilities("db", []string{layout.CapabilityDatabase, layout.CapabilityApplication})
+	require.Equal(t, []string{"linux/amd64", "linux/arm64"}, store.NodePlatforms())
+
+	store.SetNodeCapabilities("db", nil)
+	store.SetNodeCapabilities("app", nil)
+	require.Equal(t, []string{"linux/amd64", "linux/arm64"}, store.NodePlatforms(),
+		"losing every capability label falls back to all nodes")
+
+	store.SetNodeCapabilities("app", []string{layout.CapabilityApplication})
+	store.SetNodeArch("app", "")
+	require.Empty(t, store.NodePlatforms(),
+		"an application node without a reported arch leaves the platforms unknown")
 }
 
 func TestNodeRecords(t *testing.T) {

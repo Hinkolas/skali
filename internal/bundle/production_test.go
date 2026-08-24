@@ -388,6 +388,27 @@ func TestProductionHashProperties(t *testing.T) {
 	require.NotEqual(t, Hash(localProfile()), Hash(localChanged))
 }
 
+// The platform preference reaches skalid as an ordered semicolon-joined
+// env var, and only when set: an unset preference must not move the
+// rendered bytes or the bundle hash.
+func TestProductionPlatformPreference(t *testing.T) {
+	t.Parallel()
+	plain := productionProfile()
+	preferred := productionProfile()
+	preferred.Production.PlatformPreference = []string{"linux/arm64", "linux/amd64"}
+
+	plainSources := strings.Join(stageSources(plain), "\n")
+	require.NotContains(t, plainSources, "SKALI_PLATFORM_PREFERENCE")
+
+	preferredSources := strings.Join(stageSources(preferred), "\n")
+	require.Contains(t, preferredSources, "SKALI_PLATFORM_PREFERENCE")
+	require.Contains(t, preferredSources, "linux/arm64;linux/amd64",
+		"the preference order must survive the env render")
+
+	require.NotEqual(t, Hash(plain), Hash(preferred),
+		"setting a preference must roll the bundle so skalid restarts with the env var")
+}
+
 func TestProductionProfileValidation(t *testing.T) {
 	t.Parallel()
 	for field, mutate := range map[string]func(*Production){
@@ -411,6 +432,7 @@ func TestProductionProfileValidation(t *testing.T) {
 		},
 		"web image":           func(p *Production) { p.WebImage = "" },
 		"installation record": func(p *Production) { p.InstallationRecord = "" },
+		"platform preference": func(p *Production) { p.PlatformPreference = []string{"linux/riscv64"} },
 	} {
 		profile := productionProfile()
 		mutate(profile.Production)

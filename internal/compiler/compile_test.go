@@ -224,6 +224,28 @@ applications:
 	require.Equal(t, VariableRequirement{Name: "API_KEY", Default: "fallback", HasDefault: true}, variables["API_KEY"])
 }
 
+func TestPlatformsCompileCanonically(t *testing.T) {
+	t.Parallel()
+	result, err := compileManifest(t, `
+version: "1"
+name: platform-demo
+applications:
+  api:
+    build:
+      context: .
+    platforms: [linux/arm64, linux/amd64]
+  web:
+    image: example.invalid/web:1
+    platforms: [linux/amd64]
+  plain:
+    image: example.invalid/plain:1
+`)
+	require.NoError(t, err)
+	require.Equal(t, []string{"linux/amd64", "linux/arm64"}, result.Definition.Applications["api"].Source.Platforms)
+	require.Equal(t, []string{"linux/amd64"}, result.Definition.Applications["web"].Source.Platforms)
+	require.Nil(t, result.Definition.Applications["plain"].Source.Platforms)
+}
+
 // ${NAME} references concatenate with literals anywhere, including
 // environment values; only {{...}} service outputs must stand alone.
 func TestEnvironmentValueConcatenation(t *testing.T) {

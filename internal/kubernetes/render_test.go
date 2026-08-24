@@ -100,6 +100,72 @@ func TestRenderClusterPlacementOptions(t *testing.T) {
 	require.Equal(t, map[string]string{
 		layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 	}, managed[0].(*appsv1.Deployment).Spec.Template.Spec.NodeSelector)
+	require.Nil(t, managed[0].(*appsv1.Deployment).Spec.Template.Spec.Affinity,
+		"an unknown platform set renders no arch constraint")
+}
+
+// Artifact platforms become a required kubernetes.io/arch affinity on
+// managed clusters: pods never schedule where their image cannot run.
+// Unmanaged clusters and unknown platform sets render no constraint.
+func TestRenderArchAffinity(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+	render := func(managedCluster bool, platforms map[string][]string) []runtime.Object {
+		objects, err := Render(result, Options{
+			Namespace:      "skali-hello-world",
+			ManagedCluster: managedCluster,
+			Variables:      map[string]string{"APP_DOMAIN": "hello.localhost"},
+			BuildImages:    map[string]string{"web": "registry.local/web@sha256:test"},
+			AppPlatforms:   platforms,
+		})
+		require.NoError(t, err)
+		return objects
+	}
+
+	pinned := render(true, map[string][]string{"web": {"linux/arm64"}})
+	affinity := pinned[0].(*appsv1.Deployment).Spec.Template.Spec.Affinity
+	require.NotNil(t, affinity)
+	terms := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	require.Len(t, terms, 1)
+	require.Equal(t, []corev1.NodeSelectorRequirement{{
+		Key: corev1.LabelArchStable, Operator: corev1.NodeSelectorOpIn, Values: []string{"arm64"},
+	}}, terms[0].MatchExpressions)
+
+	multi := render(true, map[string][]string{"web": {"linux/arm64", "linux/amd64"}})
+	terms = multi[0].(*appsv1.Deployment).Spec.Template.Spec.Affinity.
+		NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	require.Equal(t, []string{"amd64", "arm64"}, terms[0].MatchExpressions[0].Values,
+		"archs are sorted so equal sets render identically")
+
+	require.Nil(t, render(false, map[string][]string{"web": {"linux/arm64"}})[0].(*appsv1.Deployment).
+		Spec.Template.Spec.Affinity, "unmanaged clusters never render the constraint")
+	require.Nil(t, render(true, nil)[0].(*appsv1.Deployment).Spec.Template.Spec.Affinity)
+}
+
+// The release Job carries the same arch affinity as the Deployment: the
+// release command runs from the same image.
+func TestRenderArchAffinityReleaseJob(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "file-sharing", "skali.yml"))
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+	objects, err := Render(result, Options{
+		Namespace:      "skali-file-sharing",
+		ManagedCluster: true,
+		Variables:      map[string]string{"APP_DOMAIN": "files.localhost", "SESSION_SECRET": "test-only"},
+		BuildImages:    map[string]string{"web": "registry.local/web@sha256:test"},
+		AppPlatforms:   map[string][]string{"web": {"linux/amd64"}},
+	})
+	require.NoError(t, err)
+	job := objects[0].(*batchv1.Job)
+	require.NotNil(t, job.Spec.Template.Spec.Affinity)
+	values := job.Spec.Template.Spec.Affinity.NodeAffinity.
+		RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values
+	require.Equal(t, []string{"amd64"}, values)
 }
 
 // The environment's priority reaches every application pod as its

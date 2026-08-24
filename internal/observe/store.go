@@ -14,6 +14,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/broadcast"
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/module"
 )
 
@@ -602,14 +603,29 @@ func (s *Store) Nodes() []NodeRecord {
 }
 
 // NodePlatforms lists the platforms images must target to run on the
-// observed nodes, as sorted deduplicated "linux/<arch>" strings. Empty
-// until the node informer has delivered anything.
+// cluster's application nodes, as sorted deduplicated "linux/<arch>"
+// strings. Only application-capable nodes count, so a database-only node
+// with a different architecture does not force multi-platform builds.
+// When no node carries the application capability (dev and unmanaged
+// clusters have no capability labels at all) every node counts, and the
+// result stays empty until the node informer has delivered anything:
+// downstream guards treat empty as unknown and fail open.
 func (s *Store) NodePlatforms() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	seen := make(map[string]struct{}, len(s.nodeArch))
 	platforms := make([]string, 0, len(s.nodeArch))
-	for _, arch := range s.nodeArch {
+	applicationNodes := false
+	for _, set := range s.nodeCapabilities {
+		if set[layout.CapabilityApplication] {
+			applicationNodes = true
+			break
+		}
+	}
+	for name, arch := range s.nodeArch {
+		if applicationNodes && !s.nodeCapabilities[name][layout.CapabilityApplication] {
+			continue
+		}
 		platform := "linux/" + arch
 		if _, ok := seen[platform]; ok {
 			continue

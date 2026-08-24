@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,6 +34,14 @@ type Options struct {
 	EnvironmentSecretName string
 	Variables             map[string]string
 	BuildImages           map[string]string
+
+	// AppPlatforms lists, per application key, the platforms its image
+	// runs on (from the revision artifact: a build's target platforms or
+	// an image source's declared platforms). On managed clusters the
+	// Deployment and release Job derive a required kubernetes.io/arch
+	// affinity from it so pods never schedule onto a node that cannot run
+	// the image. A missing entry means unknown and renders no constraint.
+	AppPlatforms map[string][]string
 
 	// EnvironmentID and RevisionChecksum stamp the identity labels used by
 	// observation and pruning. Both are optional so offline rendering (the
@@ -288,6 +297,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 			}
 		}
+		deployment.Spec.Template.Spec.Affinity = renderArchAffinity(options, key)
 		for _, volumeKey := range utils.SortedKeys(application.Volumes) {
 			deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
 				Name: volumeKey,
@@ -491,6 +501,7 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, name, image strin
 			layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
 		}
 	}
+	job.Spec.Template.Spec.Affinity = renderArchAffinity(options, key)
 	return job
 }
 
@@ -626,6 +637,43 @@ func renderSpread(labels map[string]string, placement compiler.Placement) *corev
 		constraint.MinDomains = new(int32(placement.Minimum))
 	}
 	return constraint
+}
+
+// renderArchAffinity pins an application's pods to nodes whose
+// architecture its image was built for, derived from the revision
+// artifact's platform set (never a policy knob of its own). Nil outside
+// managed clusters and for applications with an unknown platform set, so
+// dev clusters and pre-platform revisions render byte-identically.
+func renderArchAffinity(options Options, key string) *corev1.Affinity {
+	platforms := options.AppPlatforms[key]
+	if !options.ManagedCluster || len(platforms) == 0 {
+		return nil
+	}
+	archs := make([]string, 0, len(platforms))
+	for _, platform := range platforms {
+		arch, ok := strings.CutPrefix(platform, "linux/")
+		if !ok || arch == "" {
+			continue
+		}
+		archs = append(archs, arch)
+	}
+	if len(archs) == 0 {
+		return nil
+	}
+	slices.Sort(archs)
+	return &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key:      corev1.LabelArchStable,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   archs,
+					}},
+				}},
+			},
+		},
+	}
 }
 
 func targetPort(target compiler.PortTarget) intstr.IntOrString {

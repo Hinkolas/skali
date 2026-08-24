@@ -50,6 +50,11 @@ type ExecuteInput struct {
 	// PruneValues unsets the stored values the definition no longer
 	// references at promotion instead of ignoring them.
 	PruneValues bool
+	// ActionPlatforms carries each application's platform string from the
+	// deployment's recorded actions, so Prepare stamps the same platform
+	// set onto the stored revision that the plan preview stamped onto the
+	// candidate.
+	ActionPlatforms map[string]string
 }
 
 type ExecuteResult struct {
@@ -120,6 +125,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		Resolver:            in.Resolver,
 		LocalApplications:   in.LocalApplications,
 		PruneValues:         in.PruneValues,
+		ActionPlatforms:     in.ActionPlatforms,
 	})
 	if err != nil {
 		_ = writer.Error(ctx, "preparation failed: "+err.Error())

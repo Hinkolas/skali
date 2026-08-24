@@ -52,6 +52,27 @@
       },
       "additionalProperties": false
     },
+    "platforms": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "preference": {
+          "type": "array",
+          "description": "Ordered build platform preference for mixed-architecture clusters: the first entry an application supports wins its single-arch build. Entries are linux/amd64 or linux/arm64. Empty keeps the recorded choice, multi-arch builds on a fresh installation.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "linux/amd64",
+              "linux/arm64"
+            ]
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
     "skalid": {
       "type": "object",
       "required": [

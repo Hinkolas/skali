@@ -7,6 +7,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 )
@@ -42,6 +43,11 @@ func InitConfigSchema() (*jsonschema.Schema, error) {
 	}
 	yamldoc.StampSchema(schema, InitSchemaID, "Skali installer init configuration",
 		"Cluster initialization configuration consumed by skali cluster init --config.")
+	preference := schema.Properties["platforms"].Properties["preference"]
+	preference.Items = &jsonschema.Schema{
+		Type: "string", Enum: utils.AnySlice(manifest.PlatformAMD64, manifest.PlatformARM64),
+	}
+	preference.UniqueItems = true
 	return schema, nil
 }
 

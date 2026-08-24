@@ -28,8 +28,11 @@ type Status struct {
 	Target        *RevisionRef
 	Active        *RevisionRef
 	Observation   module.SourceStatus
-	Platforms     []string // observed cluster node platforms, empty until observation syncs
-	Services      []ServiceStatus
+	Platforms     []string // observed application-node platforms, empty until observation syncs
+	// PlatformPreference is the cluster's ordered build platform
+	// preference from the kernel config; empty means multi-arch builds.
+	PlatformPreference []string
+	Services           []ServiceStatus
 }
 
 type RevisionRef struct {
@@ -99,10 +102,11 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		return nil, fmt.Errorf("reconcile: get target: %w", err)
 	}
 	status := &Status{
-		EnvironmentID: environmentID,
-		State:         target.State,
-		Observation:   k.deps.Observed.Source(),
-		Platforms:     k.deps.Observed.NodePlatforms(),
+		EnvironmentID:      environmentID,
+		State:              target.State,
+		Observation:        k.deps.Observed.Source(),
+		Platforms:          k.deps.Observed.NodePlatforms(),
+		PlatformPreference: k.cfg.PlatformPreference,
 	}
 	var targetRevision *revision.Revision
 	if target.TargetRevisionID != nil {

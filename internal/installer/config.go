@@ -14,6 +14,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/manifest"
 )
 
 // NodeConfig is the per-host install configuration (node.yaml) consumed by
@@ -97,6 +98,7 @@ type InitConfig struct {
 	Skalid    SkalidConfig      `yaml:"skalid" json:"skalid"`
 	Web       WebConfig         `yaml:"web" json:"web"`
 	Storage   *StorageInitConfig `yaml:"storage,omitempty" json:"storage,omitempty"`
+	Platforms *PlatformsInitConfig `yaml:"platforms,omitempty" json:"platforms,omitempty"`
 }
 
 // StorageDriver folds the optional storage block: empty keeps the
@@ -106,6 +108,25 @@ func (c *InitConfig) StorageDriver() string {
 		return c.Storage.Driver
 	}
 	return ""
+}
+
+// PlatformPreference folds the optional platforms block: empty keeps the
+// recorded preference.
+func (c *InitConfig) PlatformPreference() []string {
+	if c.Platforms != nil {
+		return c.Platforms.Preference
+	}
+	return nil
+}
+
+// PlatformsInitConfig configures build platform selection on
+// mixed-architecture clusters.
+type PlatformsInitConfig struct {
+	// Preference is an ordered list of platforms (linux/amd64,
+	// linux/arm64): the first entry an application supports wins its
+	// single-arch build. Empty keeps the recorded preference, multi-arch
+	// builds on a fresh installation.
+	Preference []string `yaml:"preference,omitempty" json:"preference,omitempty" jsonschema:"Ordered build platform preference for mixed-architecture clusters: the first entry an application supports wins its single-arch build. Entries are linux/amd64 or linux/arm64. Empty keeps the recorded choice, multi-arch builds on a fresh installation."`
 }
 
 // StorageInitConfig selects the application storage layer.
@@ -272,7 +293,29 @@ func ParseInitConfig(data []byte) (*InitConfig, error) {
 				bundle.StorageDriverLocal, bundle.StorageDriverLonghorn, config.Storage.Driver)
 		}
 	}
+	if config.Platforms != nil {
+		if err := validatePlatformPreference(config.Platforms.Preference); err != nil {
+			return nil, fmt.Errorf("init config: platforms.preference %w", err)
+		}
+	}
 	return &config, nil
+}
+
+// validatePlatformPreference checks an ordered platform preference list
+// against the platforms skali can build for.
+func validatePlatformPreference(preference []string) error {
+	seen := make(map[string]struct{}, len(preference))
+	for _, platform := range preference {
+		if !slices.Contains(manifest.KnownPlatforms, platform) {
+			return fmt.Errorf("must list only %s, got %q",
+				strings.Join(manifest.KnownPlatforms, " or "), platform)
+		}
+		if _, ok := seen[platform]; ok {
+			return fmt.Errorf("lists %q twice", platform)
+		}
+		seen[platform] = struct{}{}
+	}
+	return nil
 }
 
 // strictParse decodes exactly one YAML document rejecting unknown fields,

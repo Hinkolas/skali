@@ -497,16 +497,22 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		environmentID.String(), rev.Checksum, data)
 
 	buildImages := map[string]string{}
+	appPlatforms := map[string][]string{}
 	for key, application := range rev.Definition.Applications {
-		if application.Source.Kind != "build" {
-			continue
-		}
 		if _, ok := intercepts[key]; ok {
 			// Intercepted applications ship no artifact; they render no
 			// workload either.
 			continue
 		}
 		artifact, resolved := rev.Artifacts[key]
+		if application.Source.Kind != "build" {
+			// Image-sourced applications still carry their declared
+			// platforms on the artifact for arch-affinity rendering.
+			if resolved && len(artifact.Platforms) > 0 {
+				appPlatforms[key] = artifact.Platforms
+			}
+			continue
+		}
 		if !resolved {
 			return nil, fmt.Errorf("reconcile: revision has no artifact for application %s", key)
 		}
@@ -515,6 +521,9 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 			image += "@" + artifact.Digest
 		}
 		buildImages[key] = image
+		if len(artifact.Platforms) > 0 {
+			appPlatforms[key] = artifact.Platforms
+		}
 	}
 
 	// Intercept declarations are keyed by manifest port name; rendering
@@ -552,6 +561,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		Namespace:               namespace.Name,
 		Variables:               variables,
 		BuildImages:             buildImages,
+		AppPlatforms:            appPlatforms,
 		EnvironmentID:           environmentID.String(),
 		RevisionChecksum:        rev.Checksum,
 		SecretVersions:          refs,

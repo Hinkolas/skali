@@ -89,6 +89,10 @@ type PrepareInput struct {
 	// PruneValues turns the orphaned stored values into Pruned: Promote
 	// unsets them in the promotion transaction instead of ignoring them.
 	PruneValues bool
+	// ActionPlatforms is each application's platform string from the
+	// deployment's recorded actions; artifactPlatforms folds it into the
+	// stored revision's artifacts. Missing entries record no platforms.
+	ActionPlatforms map[string]string
 }
 
 // Prepared carries everything Promote needs; it exists only in memory.
@@ -167,6 +171,9 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 		if err != nil {
 			return nil, fmt.Errorf("deploy: %w", err)
 		}
+		// The same derivation the plan preview used: the stored revision
+		// must checksum-equal a preview of identical inputs.
+		resolved.Artifact.Platforms = artifactPlatforms(source, in.ActionPlatforms[key])
 		artifacts[key] = resolved.Artifact
 		artifactIDs = append(artifactIDs, resolved.ArtifactID)
 	}
