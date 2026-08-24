@@ -342,6 +342,7 @@ type MetricStorageNodeSample struct {
 	DatabasesBytes int64
 	ObjectsBytes   int64
 	ImagesBytes    int64
+	TemporaryBytes int64
 }
 
 type MetricStorageSample struct {

@@ -51,6 +51,7 @@ export interface StorageCategories {
 	databases_bytes: number;
 	objects_bytes: number;
 	images_bytes: number;
+	temporary_bytes: number;
 	system_bytes: number;
 }
 
@@ -68,7 +69,7 @@ export interface NodesStorage {
 	nodes: NodeStorage[];
 }
 
-export type StorageKind = 'volume' | 'database' | 'bucket';
+export type StorageKind = 'volume' | 'database' | 'bucket' | 'temporary';
 
 /** One service's newest storage footprint; used_bytes is null where
  * unmeasurable (the volume's reserved size is all we know). */
@@ -102,7 +103,7 @@ export function storageFootprint(service: ServiceStorage): number {
 
 /** Sum the best-known footprints per storage kind. */
 export function storageByKind(services: ServiceStorage[]): Record<StorageKind, number> {
-	const totals: Record<StorageKind, number> = { volume: 0, database: 0, bucket: 0 };
+	const totals: Record<StorageKind, number> = { volume: 0, database: 0, bucket: 0, temporary: 0 };
 	for (const service of services) totals[service.kind] += storageFootprint(service);
 	return totals;
 }

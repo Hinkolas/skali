@@ -144,6 +144,7 @@ func TestNodesStorage(t *testing.T) {
 		DatabasesBytes: []int64{50},
 		ObjectsBytes:   []int64{25},
 		ImagesBytes:    []int64{125},
+		TemporaryBytes: []int64{60},
 	})
 	require.NoError(t, err)
 
@@ -157,8 +158,9 @@ func TestNodesStorage(t *testing.T) {
 	require.EqualValues(t, 500, node["used_bytes"])
 	categories := node["categories"].(map[string]any)
 	require.EqualValues(t, 100, categories["volumes_bytes"])
+	require.EqualValues(t, 60, categories["temporary_bytes"])
 	// system = used minus the attributed categories.
-	require.EqualValues(t, 200, categories["system_bytes"])
+	require.EqualValues(t, 140, categories["system_bytes"])
 }
 
 func TestProjectStorage(t *testing.T) {
@@ -175,28 +177,31 @@ func TestProjectStorage(t *testing.T) {
 
 	_, err := a.st.InsertStorageSamples(context.Background(), store.InsertStorageSamplesParams{
 		SampledAt:      time.Now().UTC(),
-		EnvironmentIds: []uuid.UUID{uuid.MustParse(envID), uuid.MustParse(envID)},
-		ServiceKeys:    []string{"files", "buckets.media"},
-		Kinds:          []string{"volume", "bucket"},
-		UsedBytes:      []int64{0, 777},
-		UsedMeasured:   []bool{false, true},
-		CapacityBytes:  []int64{100, 1000},
+		EnvironmentIds: []uuid.UUID{uuid.MustParse(envID), uuid.MustParse(envID), uuid.MustParse(envID)},
+		ServiceKeys:    []string{"files", "buckets.media", "files"},
+		Kinds:          []string{"volume", "bucket", "temporary"},
+		UsedBytes:      []int64{0, 777, 42},
+		UsedMeasured:   []bool{false, true, true},
+		CapacityBytes:  []int64{100, 1000, 0},
 	})
 	require.NoError(t, err)
 
 	status, body = a.do("GET", "/v1/projects/"+projectID+"/storage", token, nil)
 	require.Equal(t, http.StatusOK, status)
 	services := body["services"].([]any)
-	require.Len(t, services, 2)
+	require.Len(t, services, 3)
+	// One application key can carry two rows (volume and temporary), so
+	// the lookup keys on kind as well.
 	byKey := map[string]map[string]any{}
 	for _, entry := range services {
 		service := entry.(map[string]any)
-		byKey[service["service_key"].(string)] = service
+		byKey[service["kind"].(string)+":"+service["service_key"].(string)] = service
 	}
-	require.Nil(t, byKey["files"]["used_bytes"], "unmeasured usage must serialize as null")
-	require.EqualValues(t, 100, byKey["files"]["capacity_bytes"])
-	require.Equal(t, "volume", byKey["files"]["kind"])
-	require.EqualValues(t, 777, byKey["buckets.media"]["used_bytes"])
+	require.Nil(t, byKey["volume:files"]["used_bytes"], "unmeasured usage must serialize as null")
+	require.EqualValues(t, 100, byKey["volume:files"]["capacity_bytes"])
+	require.EqualValues(t, 777, byKey["bucket:buckets.media"]["used_bytes"])
+	require.EqualValues(t, 42, byKey["temporary:files"]["used_bytes"])
+	require.EqualValues(t, 0, byKey["temporary:files"]["capacity_bytes"])
 
 	// Membership gates the read: a stranger sees 404, anonymous 401.
 	a.createUser("stranger@example.com", "hunter2hunter2")

@@ -18,21 +18,42 @@ function storageKey(type: string, key: string): string {
 	return key;
 }
 
+// The primary storage kind of one service type. Applications additionally
+// carry a `temporary` row under the same bare key, picked out separately.
+function storageKind(type: string): string {
+	if (type === 'database') return 'database';
+	if (type === 'bucket') return 'bucket';
+	return 'volume';
+}
+
 export const load: PageServerLoad = async ({ params, parent, locals, fetch }) => {
 	const { services, env, project } = await parent();
 	const service = services.find((s) => s.key === params.service);
 	if (!service) error(404, 'Service not found');
 
-	if (!env) return { connection: null, bucketConnection: null, runs: null, storage: null };
+	if (!env)
+		return {
+			connection: null,
+			bucketConnection: null,
+			runs: null,
+			storage: null,
+			temporaryStorage: null
+		};
 
 	const storagePromise = apiFetch(fetch, locals.token, `/v1/projects/${project.id}/storage`).then(
-		async (res): Promise<ServiceStorage | null> => {
-			if (!res.ok) return null;
-			const storage = (await res.json()) as ProjectStorage;
+		async (
+			res
+		): Promise<{ storage: ServiceStorage | null; temporaryStorage: ServiceStorage | null }> => {
+			if (!res.ok) return { storage: null, temporaryStorage: null };
+			const payload = (await res.json()) as ProjectStorage;
 			const key = storageKey(service.type, service.key);
-			return (
-				storage.services.find((s) => s.environment_id === env.id && s.service_key === key) ?? null
+			const rows = payload.services.filter(
+				(s) => s.environment_id === env.id && s.service_key === key
 			);
+			return {
+				storage: rows.find((s) => s.kind === storageKind(service.type)) ?? null,
+				temporaryStorage: rows.find((s) => s.kind === 'temporary') ?? null
+			};
 		}
 	);
 
@@ -46,7 +67,7 @@ export const load: PageServerLoad = async ({ params, parent, locals, fetch }) =>
 			connection: res.ok ? ((await res.json()) as DatabaseConnection) : null,
 			bucketConnection: null,
 			runs: null,
-			storage: await storagePromise
+			...(await storagePromise)
 		};
 	}
 	if (service.type === 'bucket') {
@@ -59,7 +80,7 @@ export const load: PageServerLoad = async ({ params, parent, locals, fetch }) =>
 			connection: null,
 			bucketConnection: res.ok ? ((await res.json()) as BucketConnection) : null,
 			runs: null,
-			storage: await storagePromise
+			...(await storagePromise)
 		};
 	}
 	const res = await apiFetch(fetch, locals.token, `/v1/environments/${env.id}/runs`);
@@ -67,6 +88,6 @@ export const load: PageServerLoad = async ({ params, parent, locals, fetch }) =>
 		connection: null,
 		bucketConnection: null,
 		runs: res.ok ? ((await res.json()) as { runs: Run[] }).runs : null,
-		storage: await storagePromise
+		...(await storagePromise)
 	};
 };

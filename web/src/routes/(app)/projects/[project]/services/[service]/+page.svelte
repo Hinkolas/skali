@@ -21,6 +21,7 @@
 		{envId}
 		runs={data.runs}
 		storage={data.storage}
+		temporaryStorage={data.temporaryStorage}
 	/>
 {:else if service.type === 'database'}
 	<DatabaseOverview

@@ -190,6 +190,7 @@ type NodeStorage struct {
 	DatabasesBytes int64
 	ObjectsBytes   int64
 	ImagesBytes    int64
+	TemporaryBytes int64
 }
 
 // NodesStorage serves the current per-node storage picture. The one-hour
@@ -212,6 +213,7 @@ func (s *Service) NodesStorage(ctx context.Context, now time.Time) ([]NodeStorag
 			DatabasesBytes: row.DatabasesBytes,
 			ObjectsBytes:   row.ObjectsBytes,
 			ImagesBytes:    row.ImagesBytes,
+			TemporaryBytes: row.TemporaryBytes,
 		})
 	}
 	return nodes, nil

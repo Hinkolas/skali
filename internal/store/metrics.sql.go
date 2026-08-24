@@ -117,7 +117,8 @@ func (q *Queries) CurrentProjectStorage(ctx context.Context, arg CurrentProjectS
 
 const currentStorageNodeSamples = `-- name: CurrentStorageNodeSamples :many
 SELECT DISTINCT ON (node_name) node_name, sampled_at, capacity_bytes, used_bytes,
-       available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes
+       available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes,
+       temporary_bytes
 FROM metric_storage_node_samples
 WHERE sampled_at >= $1::timestamptz
 ORDER BY node_name, sampled_at DESC
@@ -145,6 +146,7 @@ func (q *Queries) CurrentStorageNodeSamples(ctx context.Context, since time.Time
 			&i.DatabasesBytes,
 			&i.ObjectsBytes,
 			&i.ImagesBytes,
+			&i.TemporaryBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -405,8 +407,8 @@ func (q *Queries) InsertNodeMetricSamples(ctx context.Context, arg InsertNodeMet
 }
 
 const insertStorageNodeSamples = `-- name: InsertStorageNodeSamples :execrows
-INSERT INTO metric_storage_node_samples (node_name, sampled_at, capacity_bytes, used_bytes, available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes)
-SELECT s.node_name, $1::timestamptz, s.capacity_bytes, s.used_bytes, s.available_bytes, s.volumes_bytes, s.databases_bytes, s.objects_bytes, s.images_bytes
+INSERT INTO metric_storage_node_samples (node_name, sampled_at, capacity_bytes, used_bytes, available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes, temporary_bytes)
+SELECT s.node_name, $1::timestamptz, s.capacity_bytes, s.used_bytes, s.available_bytes, s.volumes_bytes, s.databases_bytes, s.objects_bytes, s.images_bytes, s.temporary_bytes
 FROM (
     SELECT unnest($2::text[])        AS node_name,
            unnest($3::bigint[])  AS capacity_bytes,
@@ -415,7 +417,8 @@ FROM (
            unnest($6::bigint[])   AS volumes_bytes,
            unnest($7::bigint[]) AS databases_bytes,
            unnest($8::bigint[])   AS objects_bytes,
-           unnest($9::bigint[])    AS images_bytes
+           unnest($9::bigint[])    AS images_bytes,
+           unnest($10::bigint[]) AS temporary_bytes
 ) AS s
 ON CONFLICT DO NOTHING
 `
@@ -430,6 +433,7 @@ type InsertStorageNodeSamplesParams struct {
 	DatabasesBytes []int64
 	ObjectsBytes   []int64
 	ImagesBytes    []int64
+	TemporaryBytes []int64
 }
 
 func (q *Queries) InsertStorageNodeSamples(ctx context.Context, arg InsertStorageNodeSamplesParams) (int64, error) {
@@ -443,6 +447,7 @@ func (q *Queries) InsertStorageNodeSamples(ctx context.Context, arg InsertStorag
 		arg.DatabasesBytes,
 		arg.ObjectsBytes,
 		arg.ImagesBytes,
+		arg.TemporaryBytes,
 	)
 	if err != nil {
 		return 0, err

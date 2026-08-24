@@ -13,13 +13,15 @@
 		services,
 		envId,
 		runs,
-		storage = null
+		storage = null,
+		temporaryStorage = null
 	}: {
 		service: ApplicationView;
 		services: ServiceView[];
 		envId: string | null;
 		runs: Run[] | null;
 		storage?: ServiceStorage | null;
+		temporaryStorage?: ServiceStorage | null;
 	} = $props();
 </script>
 
@@ -28,18 +30,40 @@
 	<ConnectedServicesPanel {service} {services} />
 </div>
 
-{#if storage}
-	<div
-		class="border-border-subtle mb-6 flex items-center justify-between rounded-[15px] border px-4.5 py-3"
-	>
-		<span class="text-text-muted text-md">Volume storage</span>
-		<span class="font-mono text-text-primary text-sm">
-			{#if storage.used_bytes != null}
-				{formatBytes(storage.used_bytes)} of {formatBytes(storage.capacity_bytes)} used
-			{:else}
-				{formatBytes(storage.capacity_bytes)} reserved
-			{/if}
-		</span>
+{#if storage || temporaryStorage}
+	<div class="border-border-subtle mb-6 rounded-[15px] border px-4.5">
+		{#if storage}
+			<div
+				class="border-border-subtle flex items-center justify-between border-b py-3 last:border-0"
+			>
+				<span class="text-text-muted text-md">Volume storage</span>
+				<span class="font-mono text-text-primary text-sm">
+					{#if storage.used_bytes != null}
+						{formatBytes(storage.used_bytes)} of {formatBytes(storage.capacity_bytes)} used
+					{:else}
+						{formatBytes(storage.capacity_bytes)} reserved
+					{/if}
+				</span>
+			</div>
+		{/if}
+		{#if temporaryStorage}
+			<div
+				class="border-border-subtle flex items-center justify-between border-b py-3 last:border-0"
+			>
+				<span class="text-text-muted text-md">Temporary storage</span>
+				<span class="font-mono text-text-primary text-sm">
+					{#if temporaryStorage.used_bytes != null && temporaryStorage.capacity_bytes > 0}
+						{formatBytes(temporaryStorage.used_bytes)} of {formatBytes(
+							temporaryStorage.capacity_bytes
+						)} limit
+					{:else if temporaryStorage.used_bytes != null}
+						{formatBytes(temporaryStorage.used_bytes)} used
+					{:else}
+						{formatBytes(temporaryStorage.capacity_bytes)} limit
+					{/if}
+				</span>
+			</div>
+		{/if}
 	</div>
 {/if}
 

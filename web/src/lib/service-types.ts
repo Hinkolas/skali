@@ -107,6 +107,7 @@ export const STORAGE_CATEGORY_META: { key: string; label: string; class: string 
 	{ key: 'volumes_bytes', label: 'Volumes', class: 'bg-service-app' },
 	{ key: 'databases_bytes', label: 'Databases', class: 'bg-service-db' },
 	{ key: 'objects_bytes', label: 'Objects', class: 'bg-service-storage' },
+	{ key: 'temporary_bytes', label: 'Temporary', class: 'bg-service-cache' },
 	{ key: 'images_bytes', label: 'Images', class: 'bg-accent/70' },
 	{ key: 'system_bytes', label: 'System', class: 'bg-white/25' }
 ];
@@ -115,5 +116,6 @@ export const STORAGE_CATEGORY_META: { key: string; label: string; class: string 
 export const STORAGE_KIND_META: Record<string, { label: string; class: string }> = {
 	volume: { label: 'Volumes', class: 'bg-service-app' },
 	database: { label: 'Databases', class: 'bg-service-db' },
-	bucket: { label: 'Buckets', class: 'bg-service-storage' }
+	bucket: { label: 'Buckets', class: 'bg-service-storage' },
+	temporary: { label: 'Temporary', class: 'bg-service-cache' }
 };

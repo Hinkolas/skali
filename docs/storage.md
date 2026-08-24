@@ -21,6 +21,15 @@ can switch to `longhorn` at any time by re-running init with the flag;
 the reverse switch is not supported. The driver enum is also the seam for
 future provider-native drivers (for example hcloud-csi).
 
+Independent of the driver, every application's temporary storage (the
+container's writable layer, its logs, and emptyDirs) is measured from
+the kubelet and shown in the console, per service and as its own node
+category. Declaring `resources.limits.temporaryStorage` in the manifest
+caps it (the kubelet evicts a pod that exceeds its limit) and gives the
+console a capacity to show usage against. For an installation on the
+`local` driver whose state lives in buckets and databases, this is
+usually the number that matters.
+
 ```yaml
 applications:
   files:

@@ -88,8 +88,8 @@ GROUP BY bucket, application_key
 ORDER BY application_key, bucket;
 
 -- name: InsertStorageNodeSamples :execrows
-INSERT INTO metric_storage_node_samples (node_name, sampled_at, capacity_bytes, used_bytes, available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes)
-SELECT s.node_name, sqlc.arg(sampled_at)::timestamptz, s.capacity_bytes, s.used_bytes, s.available_bytes, s.volumes_bytes, s.databases_bytes, s.objects_bytes, s.images_bytes
+INSERT INTO metric_storage_node_samples (node_name, sampled_at, capacity_bytes, used_bytes, available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes, temporary_bytes)
+SELECT s.node_name, sqlc.arg(sampled_at)::timestamptz, s.capacity_bytes, s.used_bytes, s.available_bytes, s.volumes_bytes, s.databases_bytes, s.objects_bytes, s.images_bytes, s.temporary_bytes
 FROM (
     SELECT unnest(sqlc.arg(node_names)::text[])        AS node_name,
            unnest(sqlc.arg(capacity_bytes)::bigint[])  AS capacity_bytes,
@@ -98,7 +98,8 @@ FROM (
            unnest(sqlc.arg(volumes_bytes)::bigint[])   AS volumes_bytes,
            unnest(sqlc.arg(databases_bytes)::bigint[]) AS databases_bytes,
            unnest(sqlc.arg(objects_bytes)::bigint[])   AS objects_bytes,
-           unnest(sqlc.arg(images_bytes)::bigint[])    AS images_bytes
+           unnest(sqlc.arg(images_bytes)::bigint[])    AS images_bytes,
+           unnest(sqlc.arg(temporary_bytes)::bigint[]) AS temporary_bytes
 ) AS s
 ON CONFLICT DO NOTHING;
 
@@ -125,7 +126,8 @@ ON CONFLICT DO NOTHING;
 -- sampler from serving stale numbers as current.
 -- name: CurrentStorageNodeSamples :many
 SELECT DISTINCT ON (node_name) node_name, sampled_at, capacity_bytes, used_bytes,
-       available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes
+       available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes,
+       temporary_bytes
 FROM metric_storage_node_samples
 WHERE sampled_at >= sqlc.arg(since)::timestamptz
 ORDER BY node_name, sampled_at DESC;

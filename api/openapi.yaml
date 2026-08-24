@@ -1906,9 +1906,10 @@ paths:
         The newest storage sample per node: filesystem capacity, used, and
         available bytes, plus the attributable category rollups
         (application volumes, databases, object storage, container
-        images); the remainder up to `used_bytes` is the system share.
-        Database and object numbers are logical-size estimates. Empty
-        until the sampler has written a sample within the last hour.
+        images, and temporary container storage); the remainder up to
+        `used_bytes` is the system share. Database and object numbers are
+        logical-size estimates. Empty until the sampler has written a
+        sample within the last hour.
       tags: [status]
       responses:
         "200":
@@ -1933,11 +1934,13 @@ paths:
       description: |
         The newest storage footprint of every storage-consuming service
         across the project's environments: application volumes (kind
-        `volume`), databases (kind `database`, logical sizes), and buckets
-        (kind `bucket`). `used_bytes` is null where usage is unmeasurable
-        (application volumes on installations without the replicated
-        storage class); `capacity_bytes` is the declared size or quota, 0
-        when unknown.
+        `volume`), databases (kind `database`, logical sizes), buckets
+        (kind `bucket`), and the temporary container storage of
+        applications (kind `temporary`: writable layers, logs, and
+        emptyDirs, measured on every storage driver). `used_bytes` is null
+        where usage is unmeasurable (application volumes on installations
+        without the replicated storage class); `capacity_bytes` is the
+        declared size, quota, or temporaryStorage limit, 0 when unknown.
       tags: [status]
       responses:
         "200":
@@ -4061,6 +4064,7 @@ components:
                     databases_bytes,
                     objects_bytes,
                     images_bytes,
+                    temporary_bytes,
                     system_bytes,
                   ]
                 properties:
@@ -4068,6 +4072,7 @@ components:
                   databases_bytes: { type: integer }
                   objects_bytes: { type: integer }
                   images_bytes: { type: integer }
+                  temporary_bytes: { type: integer }
                   system_bytes: { type: integer }
 
     ProjectStorage:
@@ -4075,8 +4080,9 @@ components:
       description: |
         The newest storage footprint per storage-consuming service of one
         project. Database and bucket keys carry their status identity
-        prefixes (`databases.`, `buckets.`); application volumes use the
-        bare application key. `used_bytes` is null where unmeasurable.
+        prefixes (`databases.`, `buckets.`); application volumes and
+        temporary storage use the bare application key. `used_bytes` is
+        null where unmeasurable.
       required: [services]
       properties:
         services:
@@ -4095,7 +4101,7 @@ components:
             properties:
               environment_id: { type: string, format: uuid }
               service_key: { type: string }
-              kind: { type: string, enum: [volume, database, bucket] }
+              kind: { type: string, enum: [volume, database, bucket, temporary] }
               used_bytes: { type: integer, nullable: true }
               capacity_bytes: { type: integer }
               sampled_at: { type: string, format: date-time }

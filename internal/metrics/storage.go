@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
@@ -34,9 +35,10 @@ const (
 // Storage sample kinds; the console groups the per-service breakdown on
 // them.
 const (
-	kindVolume   = "volume"
-	kindDatabase = "database"
-	kindBucket   = "bucket"
+	kindVolume    = "volume"
+	kindDatabase  = "database"
+	kindBucket    = "bucket"
+	kindTemporary = "temporary"
 )
 
 // databaseSizeFamily is CNPG's stock per-database size gauge, served by the
@@ -45,8 +47,8 @@ const databaseSizeFamily = "cnpg_pg_database_size_bytes"
 
 // nodeStorage accumulates one node's sample row.
 type nodeStorage struct {
-	capacity, used, available          int64
-	volumes, databases, objects, image int64
+	capacity, used, available                     int64
+	volumes, databases, objects, image, temporary int64
 }
 
 // serviceStorage accumulates one service's sample row. used stays nil when
@@ -62,7 +64,7 @@ type serviceStorage struct {
 
 // sampleStorage collects the storage sample set: node filesystem totals and
 // category rollups from the kubelets, per-service footprints from managed
-// claims, the pools' exporters, and the object store's master. The four
+// claims and pods, the pools' exporters, and the object store's master. The
 // collectors degrade independently: a missing source loses its numbers for
 // one interval, never the pass.
 func (s *Sampler) sampleStorage(ctx context.Context, now time.Time) error {
@@ -79,7 +81,7 @@ func (s *Sampler) sampleStorage(ctx context.Context, now time.Time) error {
 	}
 	var services []serviceStorage
 
-	pvcUsage, err := s.collectKubeletStats(ctx, node)
+	pvcUsage, podScratch, err := s.collectKubeletStats(ctx, node)
 	if err != nil {
 		return err
 	}
@@ -88,6 +90,12 @@ func (s *Sampler) sampleStorage(ctx context.Context, now time.Time) error {
 		slog.WarnContext(ctx, "sample volume storage", "err", err)
 	} else {
 		services = append(services, volumeRows...)
+	}
+	temporaryRows, err := s.collectTemporaryStorage(ctx, podScratch)
+	if err != nil {
+		slog.WarnContext(ctx, "sample temporary storage", "err", err)
+	} else {
+		services = append(services, temporaryRows...)
 	}
 	if s.DB != nil {
 		databaseRows, err := s.collectDatabaseSizes(ctx, node)
@@ -118,6 +126,7 @@ func (s *Sampler) sampleStorage(ctx context.Context, now time.Time) error {
 			params.DatabasesBytes = append(params.DatabasesBytes, row.databases)
 			params.ObjectsBytes = append(params.ObjectsBytes, row.objects)
 			params.ImagesBytes = append(params.ImagesBytes, row.image)
+			params.TemporaryBytes = append(params.TemporaryBytes, row.temporary)
 		}
 		if _, err := s.Store.InsertStorageNodeSamples(ctx, params); err != nil {
 			return fmt.Errorf("insert storage node samples: %w", err)
@@ -157,16 +166,23 @@ type pvcReading struct {
 	node      string
 }
 
+// podKey identifies a pod across the kubelet stats and the pod list.
+type podKey struct {
+	namespace, name string
+}
+
 // collectKubeletStats reads every node's /stats/summary: filesystem and
-// image totals per node, and the per-claim readings that survive the
-// degenerate-value filter. A node whose kubelet does not answer keeps its
-// other category numbers and simply misses from this interval's node rows.
-func (s *Sampler) collectKubeletStats(ctx context.Context, node func(string) *nodeStorage) (map[pvcRef]pvcReading, error) {
+// image totals per node, per-pod temporary (ephemeral) usage, and the
+// per-claim readings that survive the degenerate-value filter. A node
+// whose kubelet does not answer keeps its other category numbers and
+// simply misses from this interval's node rows.
+func (s *Sampler) collectKubeletStats(ctx context.Context, node func(string) *nodeStorage) (map[pvcRef]pvcReading, map[podKey]int64, error) {
 	list, err := s.Kube.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("list nodes: %w", err)
+		return nil, nil, fmt.Errorf("list nodes: %w", err)
 	}
 	readings := map[pvcRef]pvcReading{}
+	scratch := map[podKey]int64{}
 	for _, item := range list.Items {
 		body, status, err := s.Kube.NodeProxyDo(ctx, http.MethodGet, item.Name, "/stats/summary", nil, nil)
 		if err != nil {
@@ -187,19 +203,29 @@ func (s *Sampler) collectKubeletStats(ctx context.Context, node func(string) *no
 		row.used = summary.usedBytes
 		row.available = summary.availableBytes
 		row.image = summary.imageFsUsedBytes
+		row.temporary = summary.temporaryBytes
 		for ref, used := range summary.volumes {
 			readings[ref] = pvcReading{usedBytes: used, node: item.Name}
 		}
+		for key, used := range summary.pods {
+			scratch[key] = used
+		}
 	}
-	return readings, nil
+	return readings, scratch, nil
 }
 
 // statsSummary is the reduced kubelet answer.
 type statsSummary struct {
 	capacityBytes, usedBytes, availableBytes int64
 	imageFsUsedBytes                         int64
+	// temporaryBytes is the node's whole temporary (ephemeral) footprint:
+	// every pod's writable layers, logs, and emptyDirs, platform and system
+	// pods included.
+	temporaryBytes int64
 	// volumes holds per-claim usage, degenerate entries already dropped.
 	volumes map[pvcRef]int64
+	// pods holds per-pod temporary usage for the app-service join.
+	pods map[podKey]int64
 }
 
 // wire shapes of the kubelet summary endpoint, reduced to what we read.
@@ -211,7 +237,12 @@ type summaryDocument struct {
 		} `json:"runtime"`
 	} `json:"node"`
 	Pods []struct {
-		Volume []struct {
+		PodRef struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+		} `json:"podRef"`
+		EphemeralStorage *fsStats `json:"ephemeral-storage"`
+		Volume           []struct {
 			fsStats
 			PvcRef *struct {
 				Name      string `json:"name"`
@@ -237,7 +268,7 @@ func parseStatsSummary(body []byte) (statsSummary, error) {
 	if err := json.Unmarshal(body, &document); err != nil {
 		return statsSummary{}, err
 	}
-	summary := statsSummary{volumes: map[pvcRef]int64{}}
+	summary := statsSummary{volumes: map[pvcRef]int64{}, pods: map[podKey]int64{}}
 	if document.Node.Fs == nil {
 		return summary, errors.New("kubelet summary carries no node filesystem stats")
 	}
@@ -248,6 +279,13 @@ func parseStatsSummary(body []byte) (statsSummary, error) {
 		summary.imageFsUsedBytes = int64(document.Node.Runtime.ImageFs.UsedBytes)
 	}
 	for _, pod := range document.Pods {
+		if pod.EphemeralStorage != nil {
+			used := int64(pod.EphemeralStorage.UsedBytes)
+			summary.temporaryBytes += used
+			if pod.PodRef.Name != "" && pod.PodRef.Namespace != "" {
+				summary.pods[podKey{namespace: pod.PodRef.Namespace, name: pod.PodRef.Name}] = used
+			}
+		}
 		for _, volume := range pod.Volume {
 			if volume.PvcRef == nil || volume.CapacityBytes == 0 {
 				continue
@@ -325,6 +363,82 @@ func (s *Sampler) collectAppVolumes(ctx context.Context, node func(string) *node
 		rows = append(rows, entry)
 	}
 	return rows, nil
+}
+
+// collectTemporaryStorage joins the managed application pods onto the
+// kubelet per-pod readings: one row per (environment, application service)
+// of temporary (ephemeral) usage, with the declared temporaryStorage limit
+// as capacity. Release-command pods are transient and skipped.
+func (s *Sampler) collectTemporaryStorage(ctx context.Context, readings map[podKey]int64) ([]serviceStorage, error) {
+	list, err := s.Kube.Clientset.CoreV1().Pods(metav1.NamespaceAll).
+		List(ctx, metav1.ListOptions{LabelSelector: rendering.ManagedSelector})
+	if err != nil {
+		return nil, fmt.Errorf("list managed pods: %w", err)
+	}
+	return temporaryRows(list.Items, readings), nil
+}
+
+// temporaryRows is the pure join behind collectTemporaryStorage. Usage sums
+// across a service's pods (a rollout briefly runs two), and so does the
+// limit, so capacity always covers exactly the pods that can be consuming.
+// A service with neither a reading nor a declared limit says nothing and
+// gets no row.
+func temporaryRows(pods []corev1.Pod, readings map[podKey]int64) []serviceStorage {
+	type serviceKey struct {
+		env     uuid.UUID
+		service string
+	}
+	type temporaryAgg struct {
+		capacity int64
+		used     int64
+		measured bool
+	}
+	agg := map[serviceKey]*temporaryAgg{}
+	var order []serviceKey
+	for _, pod := range pods {
+		labels := pod.GetLabels()
+		envID, err := uuid.Parse(labels[rendering.LabelEnvironment])
+		if err != nil {
+			continue
+		}
+		service := labels[rendering.LabelService]
+		if service == "" || rendering.IsReleaseServiceIdentity(service) {
+			continue
+		}
+		key := serviceKey{env: envID, service: service}
+		row := agg[key]
+		if row == nil {
+			row = &temporaryAgg{}
+			agg[key] = row
+			order = append(order, key)
+		}
+		for _, container := range pod.Spec.Containers {
+			if limit, ok := container.Resources.Limits[corev1.ResourceEphemeralStorage]; ok {
+				row.capacity += limit.Value()
+			}
+		}
+		if used, ok := readings[podKey{namespace: pod.Namespace, name: pod.Name}]; ok {
+			row.used += used
+			row.measured = true
+		}
+	}
+	rows := make([]serviceStorage, 0, len(order))
+	for _, key := range order {
+		row := agg[key]
+		if !row.measured && row.capacity == 0 {
+			continue
+		}
+		entry := serviceStorage{
+			environment: key.env, serviceKey: key.service,
+			kind: kindTemporary, capacity: row.capacity,
+		}
+		if row.measured {
+			used := row.used
+			entry.used = &used
+		}
+		rows = append(rows, entry)
+	}
+	return rows
 }
 
 // collectDatabaseSizes scrapes every pool's exporter Service for the stock

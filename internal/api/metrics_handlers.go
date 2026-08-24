@@ -76,6 +76,7 @@ type storageCategoriesPayload struct {
 	DatabasesBytes int64 `json:"databases_bytes"`
 	ObjectsBytes   int64 `json:"objects_bytes"`
 	ImagesBytes    int64 `json:"images_bytes"`
+	TemporaryBytes int64 `json:"temporary_bytes"`
 	SystemBytes    int64 `json:"system_bytes"`
 }
 
@@ -175,7 +176,8 @@ func (h *metricsHandlers) nodesStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	payload := nodesStoragePayload{Nodes: []nodeStoragePayload{}}
 	for _, node := range nodes {
-		attributed := node.VolumesBytes + node.DatabasesBytes + node.ObjectsBytes + node.ImagesBytes
+		attributed := node.VolumesBytes + node.DatabasesBytes + node.ObjectsBytes +
+			node.ImagesBytes + node.TemporaryBytes
 		system := node.UsedBytes - attributed
 		if system < 0 {
 			system = 0
@@ -191,6 +193,7 @@ func (h *metricsHandlers) nodesStorage(w http.ResponseWriter, r *http.Request) {
 				DatabasesBytes: node.DatabasesBytes,
 				ObjectsBytes:   node.ObjectsBytes,
 				ImagesBytes:    node.ImagesBytes,
+				TemporaryBytes: node.TemporaryBytes,
 				SystemBytes:    system,
 			},
 		})

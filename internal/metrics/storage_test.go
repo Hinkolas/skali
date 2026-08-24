@@ -7,7 +7,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 
+	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
 )
@@ -24,13 +27,17 @@ func TestParseStatsSummary(t *testing.T) {
 			"runtime": {"imageFs": {"capacityBytes": 500000000000, "usedBytes": 9000000000, "availableBytes": 435000000000}}
 		},
 		"pods": [
-			{"volume": [
+			{"podRef": {"name": "files-6f7d8", "namespace": "skali-demo-production"},
+			 "ephemeral-storage": {"capacityBytes": 500000000000, "usedBytes": 123456, "availableBytes": 435000000000},
+			 "volume": [
 				{"capacityBytes": 10000000000, "usedBytes": 1234567, "availableBytes": 9998765433,
 				 "pvcRef": {"name": "files-data", "namespace": "skali-demo-production"}},
 				{"capacityBytes": 500000000000, "usedBytes": 40000000000, "availableBytes": 435000000000,
 				 "pvcRef": {"name": "seaweed-data", "namespace": "skali-platform"}},
 				{"capacityBytes": 1000000, "usedBytes": 4096}
 			]},
+			{"podRef": {"name": "traefik-abc12", "namespace": "kube-system"},
+			 "ephemeral-storage": {"capacityBytes": 500000000000, "usedBytes": 900000, "availableBytes": 435000000000}},
 			{"volume": [
 				{"capacityBytes": 10000000000, "usedBytes": 7654321, "availableBytes": 9992345679,
 				 "pvcRef": {"name": "files-data", "namespace": "skali-demo-production"}}
@@ -48,9 +55,82 @@ func TestParseStatsSummary(t *testing.T) {
 	require.Equal(t, map[pvcRef]int64{
 		{namespace: "skali-demo-production", name: "files-data"}: 1234567 + 7654321,
 	}, summary.volumes)
+	// Temporary (ephemeral) usage: the node total counts every pod, system
+	// pods included; the per-pod map keys carry it into the service join.
+	// Unlike per-claim numbers there is no degenerate filter: the reported
+	// capacity is the node filesystem's by design.
+	require.Equal(t, int64(123456+900000), summary.temporaryBytes)
+	require.Equal(t, map[podKey]int64{
+		{namespace: "skali-demo-production", name: "files-6f7d8"}: 123456,
+		{namespace: "kube-system", name: "traefik-abc12"}:         900000,
+	}, summary.pods)
 
 	_, err = parseStatsSummary([]byte(`{"pods": []}`))
 	require.Error(t, err, "a summary without node fs stats is unusable")
+}
+
+// The join is where attribution can go wrong: labels decide the row, the
+// declared limit is the capacity, and pods without a kubelet reading must
+// not fake a measurement.
+func TestTemporaryRows(t *testing.T) {
+	t.Parallel()
+	envA := uuid.New()
+	limit := resource.MustParse("2Gi")
+	pod := func(namespace, name, env, service string, limited bool) corev1.Pod {
+		p := corev1.Pod{}
+		p.Namespace, p.Name = namespace, name
+		p.Labels = map[string]string{
+			rendering.LabelEnvironment: env,
+			rendering.LabelService:     service,
+		}
+		p.Spec.Containers = []corev1.Container{{Name: "app"}}
+		if limited {
+			p.Spec.Containers[0].Resources.Limits = corev1.ResourceList{
+				corev1.ResourceEphemeralStorage: limit,
+			}
+		}
+		return p
+	}
+	pods := []corev1.Pod{
+		// Two pods of one service (mid-rollout): usage and limits both sum.
+		pod("skali-demo-production", "files-1", envA.String(), "files", true),
+		pod("skali-demo-production", "files-2", envA.String(), "files", true),
+		// Measured but no declared limit: still a row, capacity 0.
+		pod("skali-demo-production", "web-1", envA.String(), "web", false),
+		// No reading and no limit: nothing to say, no row.
+		pod("skali-demo-production", "idle-1", envA.String(), "idle", false),
+		// Release-command pods and unlabeled pods never become rows.
+		pod("skali-demo-production", "files-release", envA.String(),
+			rendering.ReleaseServiceIdentity("files"), true),
+		pod("skali-platform", "skalid-1", "not-a-uuid", "skalid", false),
+	}
+	readings := map[podKey]int64{
+		{namespace: "skali-demo-production", name: "files-1"}:       1000,
+		{namespace: "skali-demo-production", name: "files-2"}:       200,
+		{namespace: "skali-demo-production", name: "web-1"}:         50,
+		{namespace: "skali-demo-production", name: "files-release"}: 7,
+	}
+	rows := temporaryRows(pods, readings)
+	require.Len(t, rows, 2)
+	byService := map[string]serviceStorage{}
+	for _, row := range rows {
+		require.Equal(t, kindTemporary, row.kind)
+		require.Equal(t, envA, row.environment)
+		byService[row.serviceKey] = row
+	}
+	require.NotNil(t, byService["files"].used)
+	require.Equal(t, int64(1200), *byService["files"].used)
+	require.Equal(t, 2*limit.Value(), byService["files"].capacity)
+	require.NotNil(t, byService["web"].used)
+	require.Equal(t, int64(50), *byService["web"].used)
+	require.Zero(t, byService["web"].capacity)
+
+	// A declared limit without a reading (kubelet missed the interval)
+	// still reports the reservation, with usage honestly null.
+	rows = temporaryRows(pods[:1], map[podKey]int64{})
+	require.Len(t, rows, 1)
+	require.Nil(t, rows[0].used)
+	require.Equal(t, limit.Value(), rows[0].capacity)
 }
 
 func TestParseGaugeByLabel(t *testing.T) {
@@ -95,6 +175,7 @@ func TestStorageReads(t *testing.T) {
 			DatabasesBytes: []int64{2},
 			ObjectsBytes:   []int64{3},
 			ImagesBytes:    []int64{4},
+			TemporaryBytes: []int64{5},
 		})
 		require.NoError(t, err)
 		_, err = st.InsertStorageSamples(ctx, store.InsertStorageSamplesParams{
@@ -114,6 +195,7 @@ func TestStorageReads(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.Equal(t, "cp-1", nodes[0].Name)
 	require.Equal(t, newer.Unix(), nodes[0].UsedBytes, "DISTINCT ON must return the newest sample")
+	require.Equal(t, int64(5), nodes[0].TemporaryBytes)
 
 	services, err := svc.ProjectStorage(ctx, projectID, now)
 	require.NoError(t, err)
