@@ -146,6 +146,9 @@ type PlanResult struct {
 	// Orphaned lists stored value names the definition no longer
 	// references; deployments ignore them. Advisory only.
 	Orphaned []string `json:"orphaned"`
+	// VolumeSizesUnenforced: the manifest declares volumes but the target
+	// cluster's storage driver enforces no sizes. Advisory only.
+	VolumeSizesUnenforced bool `json:"volume_sizes_unenforced"`
 	// RequiredRole is the environment role this deploy needs (deploy for
 	// code-only, maintain when it changes the definition or values).
 	RequiredRole string `json:"required_role"`
@@ -167,13 +170,14 @@ type Deployment struct {
 }
 
 type OpenedDeployment struct {
-	Deployment       *Deployment      `json:"deployment"`
-	Plan             *PlanDocument    `json:"plan"`
-	Actions          []ArtifactAction `json:"actions"`
-	UpToDate         bool             `json:"up_to_date"`
-	Orphaned         []string         `json:"orphaned"`
-	RequiredRole     string           `json:"required_role"`
-	BypassProtection bool             `json:"bypass_protection"`
+	Deployment            *Deployment      `json:"deployment"`
+	Plan                  *PlanDocument    `json:"plan"`
+	Actions               []ArtifactAction `json:"actions"`
+	UpToDate              bool             `json:"up_to_date"`
+	Orphaned              []string         `json:"orphaned"`
+	VolumeSizesUnenforced bool             `json:"volume_sizes_unenforced"`
+	RequiredRole          string           `json:"required_role"`
+	BypassProtection      bool             `json:"bypass_protection"`
 }
 
 type CompletedDeployment struct {

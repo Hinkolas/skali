@@ -38,6 +38,9 @@ type deploymentsHandlers struct {
 	reconcile    *reconcile.Kernel
 	capabilities []string
 	managed      bool
+	// storageClass is the application volume class; empty means the
+	// cluster default (local-path), whose declared sizes are unenforced.
+	storageClass string
 	// auth answers session freshness for the protection bypass, which is
 	// sudo-gated inside the handler because plan and open themselves are
 	// not.
@@ -185,30 +188,32 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preview, err := h.deploy.PlanPreview(r.Context(), deploy.PlanInput{
-		EnvironmentID:       id,
-		DefinitionVersionID: definitionVersionID,
-		FromEnvironmentID:   fromEnvironmentID,
-		Redeploy:            req.Redeploy,
-		CandidateID:         candidateID,
-		BuildInputs:         decodeBuildInputs(req.Builds),
-		NodePlatforms:       h.reconcile.NodePlatforms(),
-		Rebuild:             req.Rebuild,
-		LocalApplications:   decodeLocalApplications(req.LocalApplications),
-		ManagedCluster:      h.managed,
-		PruneValues:         req.PruneValues,
+		EnvironmentID:         id,
+		DefinitionVersionID:   definitionVersionID,
+		FromEnvironmentID:     fromEnvironmentID,
+		Redeploy:              req.Redeploy,
+		CandidateID:           candidateID,
+		BuildInputs:           decodeBuildInputs(req.Builds),
+		NodePlatforms:         h.reconcile.NodePlatforms(),
+		Rebuild:               req.Rebuild,
+		LocalApplications:     decodeLocalApplications(req.LocalApplications),
+		ManagedCluster:        h.managed,
+		PruneValues:           req.PruneValues,
+		UnenforcedVolumeSizes: h.managed && h.storageClass == "",
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Plan             *plan.Plan              `json:"plan"`
-		Actions          []artifactActionPayload `json:"actions"`
-		UpToDate         bool                    `json:"up_to_date"`
-		Orphaned         []string                `json:"orphaned,omitempty"`
-		RequiredRole     string                  `json:"required_role"`
-		BypassProtection bool                    `json:"bypass_protection"`
-	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned, requiredRole.String(), bypassed})
+		Plan                  *plan.Plan              `json:"plan"`
+		Actions               []artifactActionPayload `json:"actions"`
+		UpToDate              bool                    `json:"up_to_date"`
+		Orphaned              []string                `json:"orphaned,omitempty"`
+		VolumeSizesUnenforced bool                    `json:"volume_sizes_unenforced,omitempty"`
+		RequiredRole          string                  `json:"required_role"`
+		BypassProtection      bool                    `json:"bypass_protection"`
+	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned, preview.VolumeSizesUnenforced, requiredRole.String(), bypassed})
 }
 
 // deployRequest is what decides the role a deployment needs and whether
@@ -389,17 +394,18 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	user := UserFrom(r.Context())
 	opened, err := h.deploy.Open(r.Context(), deploy.OpenInput{
 		PlanInput: deploy.PlanInput{
-			EnvironmentID:       id,
-			DefinitionVersionID: definitionVersionID,
-			FromEnvironmentID:   fromEnvironmentID,
-			Redeploy:            req.Redeploy,
-			CandidateID:         candidateID,
-			BuildInputs:         decodeBuildInputs(req.Builds),
-			NodePlatforms:       h.reconcile.NodePlatforms(),
-			Rebuild:             req.Rebuild,
-			LocalApplications:   decodeLocalApplications(req.LocalApplications),
-			ManagedCluster:      h.managed,
-			PruneValues:         req.PruneValues,
+			EnvironmentID:         id,
+			DefinitionVersionID:   definitionVersionID,
+			FromEnvironmentID:     fromEnvironmentID,
+			Redeploy:              req.Redeploy,
+			CandidateID:           candidateID,
+			BuildInputs:           decodeBuildInputs(req.Builds),
+			NodePlatforms:         h.reconcile.NodePlatforms(),
+			Rebuild:               req.Rebuild,
+			LocalApplications:     decodeLocalApplications(req.LocalApplications),
+			ManagedCluster:        h.managed,
+			PruneValues:           req.PruneValues,
+			UnenforcedVolumeSizes: h.managed && h.storageClass == "",
 		},
 		Actor:              user.ID.String(),
 		BuildExecutor:      req.BuildExecutor,
@@ -424,20 +430,22 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, struct {
-		Deployment       deploymentPayload       `json:"deployment"`
-		Plan             *plan.Plan              `json:"plan"`
-		Actions          []artifactActionPayload `json:"actions"`
-		UpToDate         bool                    `json:"up_to_date"`
-		Orphaned         []string                `json:"orphaned,omitempty"`
-		RequiredRole     string                  `json:"required_role"`
-		BypassProtection bool                    `json:"bypass_protection"`
+		Deployment            deploymentPayload       `json:"deployment"`
+		Plan                  *plan.Plan              `json:"plan"`
+		Actions               []artifactActionPayload `json:"actions"`
+		UpToDate              bool                    `json:"up_to_date"`
+		Orphaned              []string                `json:"orphaned,omitempty"`
+		VolumeSizesUnenforced bool                    `json:"volume_sizes_unenforced,omitempty"`
+		RequiredRole          string                  `json:"required_role"`
+		BypassProtection      bool                    `json:"bypass_protection"`
 	}{
-		Deployment:       newDeploymentPayload(opened.Deployment),
-		Plan:             opened.Plan,
-		Actions:          h.actionPayloads(r.Context(), opened.Deployment.ProjectID, opened.Actions),
-		Orphaned:         opened.Orphaned,
-		RequiredRole:     requiredRole.String(),
-		BypassProtection: bypassed,
+		Deployment:            newDeploymentPayload(opened.Deployment),
+		Plan:                  opened.Plan,
+		Actions:               h.actionPayloads(r.Context(), opened.Deployment.ProjectID, opened.Actions),
+		Orphaned:              opened.Orphaned,
+		VolumeSizesUnenforced: opened.VolumeSizesUnenforced,
+		RequiredRole:          requiredRole.String(),
+		BypassProtection:      bypassed,
 	})
 }
 

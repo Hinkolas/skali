@@ -586,6 +586,18 @@ func printOrphanedValues(out io.Writer, orphaned []string) {
 		strings.Join(orphaned, ", ")+" (re-run with --prune-values to remove them)"))
 }
 
+// printVolumeSizeWarning surfaces the server's advisory that the target
+// cluster's storage driver cannot enforce declared volume sizes (the local
+// driver has no volume quotas). Advisory only, never an error.
+func printVolumeSizeWarning(out io.Writer, unenforced bool) {
+	if !unenforced {
+		return
+	}
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "\n  %s\n", style.Yellow("warning: this cluster uses the local storage driver, which does not "+
+		"enforce volume sizes; declared sizes are advisory (enforce them with the longhorn driver)"))
+}
+
 // healthHints names the applications whose compiled definition declares no
 // readiness probe: their rollouts can only verify that pods run, so the
 // rollout health guarantee is weak. Advisory only, never an error.
@@ -1313,6 +1325,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	}
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
 	printOrphanedValues(out, planned.Orphaned)
+	printVolumeSizeWarning(out, planned.VolumeSizesUnenforced)
 	if planned.BypassProtection {
 		printProtectionBypassed(out, opts.Environment)
 	}

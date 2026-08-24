@@ -240,6 +240,12 @@ type PlanInput struct {
 	// window even when nothing else changed, and are unset in the
 	// promotion transaction.
 	PruneValues bool
+	// UnenforcedVolumeSizes marks an installation whose application volume
+	// class enforces no capacity (the local storage driver): declared
+	// volume sizes are advisory there, and a definition that declares any
+	// volume gets a warning flag on its preview. Never set on the dev
+	// platform, where volumes are throwaway by design.
+	UnenforcedVolumeSizes bool
 }
 
 // Preview is a computed plan with its artifact decisions; nothing is
@@ -257,6 +263,10 @@ type Preview struct {
 	// references; they are ignored by deployments. Advisory only, and
 	// empty when the plan prunes them instead.
 	Orphaned []string
+	// VolumeSizesUnenforced: the definition declares volumes but the
+	// cluster's storage driver enforces no sizes (local-path quotas do not
+	// exist). Advisory only.
+	VolumeSizesUnenforced bool
 }
 
 type OpenInput struct {
@@ -289,6 +299,9 @@ type Opened struct {
 	// Orphaned lists stored value names the definition no longer
 	// references; they are ignored by deployments. Advisory only.
 	Orphaned []string
+	// VolumeSizesUnenforced mirrors the preview's advisory: declared
+	// volume sizes are not enforced on this cluster.
+	VolumeSizesUnenforced bool
 }
 
 // PlanPreview validates the candidate server-side and returns the semantic
@@ -308,7 +321,12 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 		if err != nil {
 			return nil, err
 		}
-		return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, in.LocalApplications, changed, in.PruneValues)
+		preview, err := s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, in.LocalApplications, changed, in.PruneValues)
+		if err != nil {
+			return nil, err
+		}
+		preview.VolumeSizesUnenforced = in.UnenforcedVolumeSizes && declaresVolumes(definition)
+		return preview, nil
 	}
 	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
 	if err != nil {
@@ -317,7 +335,23 @@ func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, erro
 	if err := validateLocalApplications(definition, in); err != nil {
 		return nil, err
 	}
-	return s.preview(ctx, env, definitionVersion, definition, in)
+	preview, err := s.preview(ctx, env, definitionVersion, definition, in)
+	if err != nil {
+		return nil, err
+	}
+	preview.VolumeSizesUnenforced = in.UnenforcedVolumeSizes && declaresVolumes(definition)
+	return preview, nil
+}
+
+// declaresVolumes reports whether any application of the definition
+// declares a persistent volume.
+func declaresVolumes(definition compiler.ProjectDefinition) bool {
+	for _, application := range definition.Applications {
+		if len(application.Volumes) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveReuseSource loads the artifact-reuse source of a promotion or a
@@ -422,11 +456,15 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	if err != nil {
 		return nil, err
 	}
+	preview.VolumeSizesUnenforced = in.UnenforcedVolumeSizes && declaresVolumes(definition)
 	if preview.Plan.Destructive() && !in.AllowDestructive {
 		return nil, ErrDestructiveChange
 	}
 	if preview.UpToDate && !in.Force {
-		return &Opened{Plan: preview.Plan, Actions: preview.Actions, UpToDate: true, Orphaned: preview.Orphaned}, nil
+		return &Opened{
+			Plan: preview.Plan, Actions: preview.Actions, UpToDate: true,
+			Orphaned: preview.Orphaned, VolumeSizesUnenforced: preview.VolumeSizesUnenforced,
+		}, nil
 	}
 	needsArtifactWork := false
 	for _, action := range preview.Actions {
@@ -577,11 +615,12 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 	}
 
 	return &Opened{
-		Deployment: deployment,
-		RunID:      runID,
-		Plan:       preview.Plan,
-		Actions:    actions,
-		Orphaned:   preview.Orphaned,
+		Deployment:            deployment,
+		RunID:                 runID,
+		Plan:                  preview.Plan,
+		Actions:               actions,
+		Orphaned:              preview.Orphaned,
+		VolumeSizesUnenforced: preview.VolumeSizesUnenforced,
 	}, nil
 }
 

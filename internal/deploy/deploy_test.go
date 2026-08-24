@@ -696,3 +696,55 @@ func TestLoadPromotionSource(t *testing.T) {
 	_, err = f.deploy.loadPromotionSource(ctx, otherEnv.ID, f.environmentID)
 	require.ErrorIs(t, err, ErrSourceProjectMismatch)
 }
+
+// The unenforced-volume-size advisory: it needs both a definition that
+// declares a volume and an installation marked as unenforcing (the local
+// storage driver). Either alone stays quiet.
+func TestPlanPreviewVolumeSizesUnenforced(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	withVolume := f.submit(t, `
+version: "1"
+name: demo
+applications:
+  files:
+    image: example.invalid/files:1
+    volumes:
+      data:
+        mountPath: /data
+        size: 1GB
+`, 0)
+
+	preview, err := f.deploy.PlanPreview(ctx, PlanInput{
+		EnvironmentID:         f.environmentID,
+		DefinitionVersionID:   withVolume,
+		UnenforcedVolumeSizes: true,
+	})
+	require.NoError(t, err)
+	require.True(t, preview.VolumeSizesUnenforced)
+
+	// An enforcing installation (a real storage class) never warns.
+	preview, err = f.deploy.PlanPreview(ctx, PlanInput{
+		EnvironmentID:       f.environmentID,
+		DefinitionVersionID: withVolume,
+	})
+	require.NoError(t, err)
+	require.False(t, preview.VolumeSizesUnenforced)
+
+	// A volumeless definition has nothing to warn about.
+	volumeless := f.submit(t, `
+version: "1"
+name: demo
+applications:
+  files:
+    image: example.invalid/files:1
+`, 1)
+	preview, err = f.deploy.PlanPreview(ctx, PlanInput{
+		EnvironmentID:         f.environmentID,
+		DefinitionVersionID:   volumeless,
+		UnenforcedVolumeSizes: true,
+	})
+	require.NoError(t, err)
+	require.False(t, preview.VolumeSizesUnenforced)
+}

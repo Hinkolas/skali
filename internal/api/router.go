@@ -67,6 +67,10 @@ type Deps struct {
 	// local-application intercepts and the local resolution audience, both
 	// of which exist only on the local dev platform.
 	ManagedCluster bool
+	// StorageClass is the application volume class of the cluster (empty
+	// means the default local-path class). Plan previews on a managed
+	// cluster without one warn that declared volume sizes are unenforced.
+	StorageClass string
 	// Databases serves database connection projections; nil hides the
 	// routes (no substrate wired).
 	Databases *dbstore.Service
@@ -172,7 +176,8 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 	dh := &deploymentsHandlers{
 		st: d.Store, deploy: d.Deploy, artifacts: d.Artifacts, builds: d.Builds,
 		journal: d.Journal, registry: d.Registry, reconcile: d.Reconcile,
-		capabilities: d.Capabilities, managed: d.ManagedCluster, auth: d.Auth,
+		capabilities: d.Capabilities, managed: d.ManagedCluster,
+		storageClass: d.StorageClass, auth: d.Auth,
 	}
 	ch := &clientStepsHandlers{st: d.Store, journal: d.Journal, values: d.Values}
 	r.Route("/v1", func(r chi.Router) {

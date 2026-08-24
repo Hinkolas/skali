@@ -343,6 +343,7 @@ func runServe() error {
 			Exec:               execSvc,
 			Capabilities:       cfg.Capabilities,
 			ManagedCluster:     cfg.ManagedCluster,
+			StorageClass:       cfg.StorageClass,
 			Databases:          dbstore.New(st),
 			SecretReader:       secretReader,
 			Version:            versionpkg.Version,

@@ -9,7 +9,9 @@ made at initialization, the storage driver:
   installations whose state lives mostly in buckets and databases; the
   trade-off is that declared sizes are not enforced, per-volume usage is
   not measurable, volumes pin their pods to one node, and a lost node
-  disk means lost volume data.
+  disk means lost volume data. `skali plan` and `skali deploy` print a
+  warning when a manifest declares volumes against a `local` cluster, so
+  the unenforced size is never a silent surprise.
 - `longhorn` deploys Longhorn, a replicated block-storage layer the
   installer owns: declared sizes are enforced, usage is measurable, and a
   volume survives the loss of the node it was written on. The cost is

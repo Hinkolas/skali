@@ -4365,6 +4365,12 @@ components:
             are ignored by deployments; remove them with the value DELETE
             operation.
           items: { type: string }
+        volume_sizes_unenforced:
+          type: boolean
+          description: |
+            True when the definition declares volumes but the cluster's
+            storage driver cannot enforce their sizes (the local driver
+            has no volume quotas). Advisory only.
 
     OpenDeploymentRequest:
       type: object
@@ -4491,6 +4497,12 @@ components:
             are ignored by deployments; remove them with the value DELETE
             operation.
           items: { type: string }
+        volume_sizes_unenforced:
+          type: boolean
+          description: |
+            True when the definition declares volumes but the cluster's
+            storage driver cannot enforce their sizes (the local driver
+            has no volume quotas). Advisory only.
 
     StepIdentity:
       type: object
