@@ -44,6 +44,69 @@ export interface NodeMetrics {
 	nodes: NodeSeries[];
 }
 
+/** The category split of a node's used bytes; databases and objects are
+ * logical-size estimates, system is the server-computed remainder. */
+export interface StorageCategories {
+	volumes_bytes: number;
+	databases_bytes: number;
+	objects_bytes: number;
+	images_bytes: number;
+	system_bytes: number;
+}
+
+export interface NodeStorage {
+	name: string;
+	sampled_at: string;
+	capacity_bytes: number;
+	used_bytes: number;
+	available_bytes: number;
+	categories: StorageCategories;
+}
+
+/** GET /v1/nodes/storage */
+export interface NodesStorage {
+	nodes: NodeStorage[];
+}
+
+export type StorageKind = 'volume' | 'database' | 'bucket';
+
+/** One service's newest storage footprint; used_bytes is null where
+ * unmeasurable (the volume's reserved size is all we know). */
+export interface ServiceStorage {
+	environment_id: string;
+	service_key: string;
+	kind: StorageKind;
+	used_bytes: number | null;
+	capacity_bytes: number;
+	sampled_at: string;
+}
+
+/** GET /v1/projects/{id}/storage */
+export interface ProjectStorage {
+	services: ServiceStorage[];
+}
+
+/** The services of one environment, or all of them when envId is null. */
+export function storageForEnvironment(
+	storage: ProjectStorage | null,
+	envId: string | null
+): ServiceStorage[] {
+	if (!storage) return [];
+	return storage.services.filter((s) => envId == null || s.environment_id === envId);
+}
+
+/** Best-known footprint of one entry: measured usage, else reserved size. */
+export function storageFootprint(service: ServiceStorage): number {
+	return service.used_bytes ?? service.capacity_bytes;
+}
+
+/** Sum the best-known footprints per storage kind. */
+export function storageByKind(services: ServiceStorage[]): Record<StorageKind, number> {
+	const totals: Record<StorageKind, number> = { volume: 0, database: 0, bucket: 0 };
+	for (const service of services) totals[service.kind] += storageFootprint(service);
+	return totals;
+}
+
 /** Zip one value array with the shared timestamps into chart points. */
 export function toChartPoints(timestamps: string[], values: (number | null)[]): ChartPoint[] {
 	return timestamps.map((ts, i) => ({ t: new Date(ts).getTime(), v: values[i] ?? null }));

@@ -57,6 +57,40 @@ func (c *Client) ServiceProxyDo(ctx context.Context, method, namespace, service 
 	return data, resp.StatusCode, nil
 }
 
+// NodeProxyDo performs one HTTP request against a node's kubelet through
+// the API server's node proxy, with the same works-from-a-laptop property
+// as ServiceProxyDo. Built for the storage sampler's /stats/summary reads.
+// Non-2xx answers are returned as data, not errors: the caller owns HTTP
+// semantics.
+func (c *Client) NodeProxyDo(ctx context.Context, method, node, reqPath string, query url.Values, body []byte) ([]byte, int, error) {
+	client, base, err := c.proxyClient()
+	if err != nil {
+		return nil, 0, err
+	}
+	u := *base
+	u.Path = "/api/v1/nodes/" + node + "/proxy/" + strings.TrimLeft(reqPath, "/")
+	u.RawQuery = query.Encode()
+
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), reader)
+	if err != nil {
+		return nil, 0, fmt.Errorf("kube: node proxy request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("kube: node proxy %s %s: %w", method, node, err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, 0, fmt.Errorf("kube: node proxy read: %w", err)
+	}
+	return data, resp.StatusCode, nil
+}
+
 // proxyClient lazily builds the authenticated HTTP client + base URL for
 // ServiceProxyDo from the same rest.Config as every other call.
 func (c *Client) proxyClient() (*http.Client, *url.URL, error) {

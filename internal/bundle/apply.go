@@ -119,6 +119,27 @@ func (a *Applier) WaitDeploymentReady(ctx context.Context, namespace, name strin
 	})
 }
 
+// WaitDaemonSetReady blocks until the daemon set's rollout is complete on
+// every scheduled node. A daemon set with zero scheduled nodes never reads
+// as ready: it would mean the selector matches no node, which is a
+// placement bug, not a healthy rollout.
+func (a *Applier) WaitDaemonSetReady(ctx context.Context, namespace, name string) error {
+	return a.wait(ctx, "daemon set "+name, func(ctx context.Context) (bool, error) {
+		set, err := a.Client.Clientset.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		status := set.Status
+		return status.ObservedGeneration >= set.Generation &&
+			status.DesiredNumberScheduled > 0 &&
+			status.UpdatedNumberScheduled == status.DesiredNumberScheduled &&
+			status.NumberAvailable == status.DesiredNumberScheduled, nil
+	})
+}
+
 // WaitJobComplete blocks until the job succeeded; a failed job errors with
 // its terminal state.
 func (a *Applier) WaitJobComplete(ctx context.Context, namespace, name string) error {

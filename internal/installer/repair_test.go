@@ -88,6 +88,16 @@ func TestPlanRepairs(t *testing.T) {
 			deps:      deps(agent, false),
 			wantIDs:   []string{"restart-k3s"},
 		},
+		"missing storage prerequisites install them": {
+			diagnosis: repairDiagnosis(StateServer, server, "storage prerequisites"),
+			deps:      deps(server, false),
+			wantIDs:   []string{"storage-prereqs"},
+		},
+		"unhealthy storage system reconverges": {
+			diagnosis: repairDiagnosis(StateServer, server, "storage system"),
+			deps:      deps(server, false),
+			wantIDs:   []string{"reconverge"},
+		},
 	}
 	for name, tc := range cases {
 		actions, refusals := PlanRepairs(tc.diagnosis, tc.deps)

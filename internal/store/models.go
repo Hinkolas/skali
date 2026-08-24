@@ -332,6 +332,27 @@ type MetricNodeSample struct {
 	MemoryAllocatableBytes   int64
 }
 
+type MetricStorageNodeSample struct {
+	NodeName       string
+	SampledAt      time.Time
+	CapacityBytes  int64
+	UsedBytes      int64
+	AvailableBytes int64
+	VolumesBytes   int64
+	DatabasesBytes int64
+	ObjectsBytes   int64
+	ImagesBytes    int64
+}
+
+type MetricStorageSample struct {
+	EnvironmentID uuid.UUID
+	ServiceKey    string
+	Kind          string
+	SampledAt     time.Time
+	UsedBytes     *int64
+	CapacityBytes int64
+}
+
 type ObjectStore struct {
 	ID                 uuid.UUID
 	Name               string

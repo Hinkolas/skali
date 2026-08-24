@@ -24,7 +24,19 @@ node-label:
   - skali.dev/capability-object-storage=true
   - skali.dev/capability-registry=true
   - skali.dev/cluster=production
+  - node.longhorn.io/create-default-disk=true
 `, rendered)
+}
+
+// A node without the application capability must not become a Longhorn
+// replica holder.
+func TestK3sConfigYAMLNoDiskLabelWithoutApplication(t *testing.T) {
+	t.Parallel()
+	rendered := k3sConfigYAML(k3sNode{
+		Name: "db-1", Cluster: "production",
+		Capabilities: []string{layout.CapabilityDatabase},
+	})
+	require.NotContains(t, rendered, layout.LonghornDiskLabel)
 }
 
 func TestK3sConfigYAMLServerNodeIP(t *testing.T) {
@@ -92,6 +104,7 @@ embedded-registry: true
 node-label:
   - skali.dev/capability-application=true
   - skali.dev/cluster=production
+  - node.longhorn.io/create-default-disk=true
 `, rendered)
 	require.NotContains(t, rendered, "cluster-init",
 		"only the first server initializes the etcd cluster")

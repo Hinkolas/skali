@@ -30,7 +30,7 @@ func installReadyHost(capabilities []string) *host.Fake {
 		return host.Result{}, nil
 	}
 	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
-		if len(cmd.Args) > 0 && cmd.Args[0] == "start" {
+		if len(cmd.Args) > 0 && (cmd.Args[0] == "start" || cmd.Args[0] == "enable") {
 			started = true
 			return host.Result{}, nil
 		}
@@ -38,6 +38,10 @@ func installReadyHost(capabilities []string) *host.Fake {
 			return host.Result{Stdout: "active\n"}, nil
 		}
 		return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
+	}
+	// A fresh host installs the Longhorn prerequisites through apt.
+	fake.Handlers["apt-get"] = func(host.Command) (host.Result, error) {
+		return host.Result{}, nil
 	}
 	fake.Handlers["k3s"] = func(cmd host.Command) (host.Result, error) {
 		labels := layout.CapabilityLabels(capabilities)
@@ -131,7 +135,7 @@ func TestInstallAgentJoin(t *testing.T) {
 		return host.Result{}, nil
 	}
 	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
-		if len(cmd.Args) > 0 && cmd.Args[0] == "start" {
+		if len(cmd.Args) > 0 && (cmd.Args[0] == "start" || cmd.Args[0] == "enable") {
 			joined = true
 			return host.Result{}, nil
 		}
@@ -139,6 +143,9 @@ func TestInstallAgentJoin(t *testing.T) {
 			return host.Result{Stdout: "active\n"}, nil
 		}
 		return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
+	}
+	fake.Handlers["apt-get"] = func(host.Command) (host.Result, error) {
+		return host.Result{}, nil
 	}
 
 	record, err := Install(ctx, fake, InstallOptions{
@@ -191,7 +198,7 @@ func TestInstallServerJoin(t *testing.T) {
 		return host.Result{}, nil
 	}
 	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
-		if len(cmd.Args) > 0 && cmd.Args[0] == "start" {
+		if len(cmd.Args) > 0 && (cmd.Args[0] == "start" || cmd.Args[0] == "enable") {
 			joined = true
 			return host.Result{}, nil
 		}

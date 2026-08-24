@@ -130,18 +130,55 @@ func TestLiveProfileHashStability(t *testing.T) {
 			NodePullSecret:     "pull-secret-value",
 			ACMEEmail:          record.TLS.IssuerEmail,
 			ACMEServer:         record.TLS.ACMEServer,
-			Capabilities:       layout.UnionCapabilities(expectedLayout.Nodes),
-			DatabaseTier:       topology.DatabaseTier,
-			DatabaseStorage:    DefaultDatabaseStorage,
-			RegistryStorage:    DefaultRegistryStorage,
-			WebImage:           "skali-web:dev",
-			WebImageID:         "sha256:def",
-			InstallationRecord: canonical,
+			Capabilities:    layout.UnionCapabilities(expectedLayout.Nodes),
+			DatabaseTier:    topology.DatabaseTier,
+			DatabaseStorage: DefaultDatabaseStorage,
+			RegistryStorage: DefaultRegistryStorage,
+			StorageReplicas: layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
+			// No registry claim exists in the fake, so the profile selects
+			// the Longhorn shape, exactly like a fresh Init.
+			RegistryStorageClass: bundle.StorageClassName,
+			WebImage:             "skali-web:dev",
+			WebImageID:           "sha256:def",
+			InstallationRecord:   canonical,
 		},
 	}
 	require.Equal(t, expected, profile)
 	require.Equal(t, bundle.Hash(expected), bundle.Hash(profile))
 	require.Equal(t, topology.DatabaseTier, live.Topology().DatabaseTier)
+}
+
+// TestLiveProfileRegistryStorageClass pins the migration-safety contract:
+// the profile renders the registry shape the cluster already has, because
+// the class is immutable on an existing claim and a converge that renders
+// anything else would wedge forever.
+func TestLiveProfileRegistryStorageClass(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fake := &host.Fake{FS: map[string][]byte{
+		K3sRegistriesPath: []byte(k3sRegistriesYAML("pull-secret-value")),
+	}}
+
+	legacyClass := "local-path"
+	legacyClaim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "skali-registry-data", Namespace: bundle.Namespace},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &legacyClass},
+	}
+	objects := append(liveProfileObjects(), legacyClaim)
+	profile, _, err := LiveProfile(ctx, fakeClientWith(objects...), fake, liveProfileRecord())
+	require.NoError(t, err)
+	require.Empty(t, profile.Production.RegistryStorageClass,
+		"a legacy local-path claim must keep the legacy registry shape")
+
+	migratedClass := bundle.StorageClassName
+	migratedClaim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "skali-registry-data", Namespace: bundle.Namespace},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &migratedClass},
+	}
+	objects = append(liveProfileObjects(), migratedClaim)
+	profile, _, err = LiveProfile(ctx, fakeClientWith(objects...), fake, liveProfileRecord())
+	require.NoError(t, err)
+	require.Equal(t, bundle.StorageClassName, profile.Production.RegistryStorageClass)
 }
 
 func TestLiveProfileRefusals(t *testing.T) {

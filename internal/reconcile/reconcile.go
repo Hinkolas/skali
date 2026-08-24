@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
@@ -548,6 +549,13 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		}
 	}
 
+	// The storage class follows the installation mode: managed clusters
+	// place application volumes on the replicated skali-app class, dev
+	// keeps the cluster default (local-path).
+	storageClass := ""
+	if k.cfg.ManagedCluster {
+		storageClass = bundle.StorageClassName
+	}
 	renderOptions := rendering.Options{
 		Namespace:               namespace.Name,
 		Variables:               variables,
@@ -557,6 +565,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		SecretVersions:          refs,
 		ProgressDeadlineSeconds: int64(k.cfg.RolloutDeadline / time.Second),
 		ManagedCluster:          k.cfg.ManagedCluster,
+		StorageClass:            storageClass,
 		Certificates:            k.cfg.Certificates,
 		Intercepts:              interceptPorts,
 		InterceptHostIP:         interceptHostIP,

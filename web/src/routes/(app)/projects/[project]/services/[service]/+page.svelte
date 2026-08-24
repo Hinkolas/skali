@@ -15,9 +15,27 @@
 </svelte:head>
 
 {#if service.type === 'application'}
-	<ApplicationOverview {service} services={data.services} {envId} runs={data.runs} />
+	<ApplicationOverview
+		{service}
+		services={data.services}
+		{envId}
+		runs={data.runs}
+		storage={data.storage}
+	/>
 {:else if service.type === 'database'}
-	<DatabaseOverview {service} services={data.services} connection={data.connection} {envId} />
+	<DatabaseOverview
+		{service}
+		services={data.services}
+		connection={data.connection}
+		{envId}
+		storage={data.storage}
+	/>
 {:else}
-	<BucketOverview {service} services={data.services} connection={data.bucketConnection} {envId} />
+	<BucketOverview
+		{service}
+		services={data.services}
+		connection={data.bucketConnection}
+		{envId}
+		storage={data.storage}
+	/>
 {/if}

@@ -295,6 +295,9 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 					mrh := &metricsHandlers{metrics: d.Metrics}
 					ac.route(r, "GET", "/environments/{id}/metrics", classEnvRead, mrh.environment)
 					ac.route(r, "GET", "/nodes/metrics", classInstanceAdmin, mrh.nodes)
+					// Current storage pictures, same database-only reads.
+					ac.route(r, "GET", "/nodes/storage", classInstanceAdmin, mrh.nodesStorage)
+					ac.route(r, "GET", "/projects/{id}/storage", classProjectRead, mrh.projectStorage)
 				}
 
 				// Instance facts: version, name, and identity.

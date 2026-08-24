@@ -182,6 +182,14 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if err != nil {
 		return fail(err)
 	}
+	// Fresh clusters are Longhorn-native from the first converge (the claim
+	// is absent, so this reads as the Longhorn class); a re-run over an
+	// interrupted init keeps whatever shape the claim already has, exactly
+	// like LiveProfile.
+	registryStorageClass, err := liveRegistryStorageClass(ctx, client)
+	if err != nil {
+		return fail(err)
+	}
 
 	// The record published in-cluster carries the initialization inputs;
 	// mutate the in-memory record first so the canonical text, the bundle
@@ -210,14 +218,16 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 			NodePullSecret:     pullSecret,
 			ACMEEmail:          opts.TLS.IssuerEmail,
 			ACMEServer:         opts.TLS.ACMEServer,
-			Capabilities:       layout.UnionCapabilities(live.Nodes),
-			DatabaseTier:       topology.DatabaseTier,
-			DatabaseStorage:    DefaultDatabaseStorage,
-			RegistryStorage:    DefaultRegistryStorage,
-			RegistryNode:       opts.RegistryNode,
-			WebImage:           opts.WebImage,
-			WebImageID:         opts.WebImageID,
-			InstallationRecord: canonical,
+			Capabilities:         layout.UnionCapabilities(live.Nodes),
+			DatabaseTier:         topology.DatabaseTier,
+			DatabaseStorage:      DefaultDatabaseStorage,
+			RegistryStorage:      DefaultRegistryStorage,
+			RegistryNode:         opts.RegistryNode,
+			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
+			RegistryStorageClass: registryStorageClass,
+			WebImage:             opts.WebImage,
+			WebImageID:           opts.WebImageID,
+			InstallationRecord:   canonical,
 		},
 	}
 

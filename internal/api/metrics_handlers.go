@@ -55,6 +55,43 @@ type nodeSeriesPayload struct {
 	MemoryBytes              []*int64 `json:"memory_bytes"`
 }
 
+type nodesStoragePayload struct {
+	Nodes []nodeStoragePayload `json:"nodes"`
+}
+
+type nodeStoragePayload struct {
+	Name           string                   `json:"name"`
+	SampledAt      time.Time                `json:"sampled_at"`
+	CapacityBytes  int64                    `json:"capacity_bytes"`
+	UsedBytes      int64                    `json:"used_bytes"`
+	AvailableBytes int64                    `json:"available_bytes"`
+	Categories     storageCategoriesPayload `json:"categories"`
+}
+
+// The category split of a node's used bytes. Databases and objects are
+// logical-size estimates, so the derived system share clamps at zero and
+// the client scales segments to fit when estimates overshoot.
+type storageCategoriesPayload struct {
+	VolumesBytes   int64 `json:"volumes_bytes"`
+	DatabasesBytes int64 `json:"databases_bytes"`
+	ObjectsBytes   int64 `json:"objects_bytes"`
+	ImagesBytes    int64 `json:"images_bytes"`
+	SystemBytes    int64 `json:"system_bytes"`
+}
+
+type projectStoragePayload struct {
+	Services []serviceStoragePayload `json:"services"`
+}
+
+type serviceStoragePayload struct {
+	EnvironmentID string    `json:"environment_id"`
+	ServiceKey    string    `json:"service_key"`
+	Kind          string    `json:"kind"`
+	UsedBytes     *int64    `json:"used_bytes"`
+	CapacityBytes int64     `json:"capacity_bytes"`
+	SampledAt     time.Time `json:"sampled_at"`
+}
+
 func (h *metricsHandlers) window(w http.ResponseWriter, r *http.Request) (metrics.Window, bool) {
 	window, err := metrics.WindowByName(r.URL.Query().Get("window"))
 	if err != nil {
@@ -125,6 +162,61 @@ func (h *metricsHandlers) nodes(w http.ResponseWriter, r *http.Request) {
 			MemoryAllocatableBytes:   node.MemoryAllocatableBytes,
 			CPUMillicores:            node.CPUMillicores,
 			MemoryBytes:              node.MemoryBytes,
+		})
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (h *metricsHandlers) nodesStorage(w http.ResponseWriter, r *http.Request) {
+	nodes, err := h.metrics.NodesStorage(r.Context(), time.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, codeInternal, "read storage metrics")
+		return
+	}
+	payload := nodesStoragePayload{Nodes: []nodeStoragePayload{}}
+	for _, node := range nodes {
+		attributed := node.VolumesBytes + node.DatabasesBytes + node.ObjectsBytes + node.ImagesBytes
+		system := node.UsedBytes - attributed
+		if system < 0 {
+			system = 0
+		}
+		payload.Nodes = append(payload.Nodes, nodeStoragePayload{
+			Name:           node.Name,
+			SampledAt:      node.SampledAt,
+			CapacityBytes:  node.CapacityBytes,
+			UsedBytes:      node.UsedBytes,
+			AvailableBytes: node.AvailableBytes,
+			Categories: storageCategoriesPayload{
+				VolumesBytes:   node.VolumesBytes,
+				DatabasesBytes: node.DatabasesBytes,
+				ObjectsBytes:   node.ObjectsBytes,
+				ImagesBytes:    node.ImagesBytes,
+				SystemBytes:    system,
+			},
+		})
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (h *metricsHandlers) projectStorage(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	services, err := h.metrics.ProjectStorage(r.Context(), id, time.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, codeInternal, "read storage metrics")
+		return
+	}
+	payload := projectStoragePayload{Services: []serviceStoragePayload{}}
+	for _, service := range services {
+		payload.Services = append(payload.Services, serviceStoragePayload{
+			EnvironmentID: service.EnvironmentID.String(),
+			ServiceKey:    service.ServiceKey,
+			Kind:          service.Kind,
+			UsedBytes:     service.UsedBytes,
+			CapacityBytes: service.CapacityBytes,
+			SampledAt:     service.SampledAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, payload)

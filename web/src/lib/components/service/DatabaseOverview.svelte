@@ -2,6 +2,7 @@
 	import type { DatabaseView, ServiceView } from '$lib/models/service';
 	import type { StatCardData } from '$lib/models/view';
 	import type { DatabaseConnection } from '$lib/types/connections';
+	import type { ServiceStorage } from '$lib/types/metrics';
 	import { formatBytes } from '$lib/format';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
@@ -12,20 +13,43 @@
 		service,
 		services,
 		connection,
-		envId
+		envId,
+		storage = null
 	}: {
 		service: DatabaseView;
 		services: ServiceView[];
 		connection: DatabaseConnection | null;
 		envId: string | null;
+		storage?: ServiceStorage | null;
 	} = $props();
 
-	const stats = $derived.by((): StatCardData[] => [
-		{
+	// Measured logical size from the sampler when it exists; the declared
+	// request stays the fallback and the denominator.
+	const storageStat = $derived.by((): StatCardData => {
+		const declared = service.config.storageBytes;
+		if (storage?.used_bytes != null) {
+			const parts = formatBytes(storage.used_bytes).split(' ');
+			return declared
+				? {
+						label: 'SIZE',
+						value: parts[0],
+						unit: `${parts[1]} / ${formatBytes(declared)}`,
+						progress: {
+							pct: Math.min(100, (storage.used_bytes / declared) * 100),
+							class: 'bg-service-db'
+						}
+					}
+				: { label: 'SIZE', value: parts[0], unit: parts[1], note: 'logical size' };
+		}
+		return {
 			label: 'STORAGE',
-			value: service.config.storageBytes ? formatBytes(service.config.storageBytes) : 'default',
+			value: declared ? formatBytes(declared) : 'default',
 			note: 'requested in skali.yaml'
-		},
+		};
+	});
+
+	const stats = $derived.by((): StatCardData[] => [
+		storageStat,
 		{
 			label: 'ENGINE',
 			value: service.config.engine,

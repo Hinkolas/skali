@@ -12,6 +12,11 @@ rules:
   - apiGroups: [""]
     resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
     verbs: ["*"]
+  # The storage sampler reads each kubelet's /stats/summary through the
+  # API server's node proxy.
+  - apiGroups: [""]
+    resources: [nodes/proxy]
+    verbs: [get]
   - apiGroups: [apps]
     resources: [deployments, statefulsets, daemonsets]
     verbs: ["*"]

@@ -40,3 +40,18 @@ provision:
     script: |
       #!/bin/sh
       hostnamectl set-hostname {{.Hostname}}
+  # Longhorn needs iscsid on every node that may attach a volume. Boot-time
+  # install keeps a fresh VM ready before skali cluster install runs; the
+  # installer's storage-prerequisites step covers VMs created before this
+  # template carried it. Best effort: apt failures leave the marker absent
+  # and the installer step retries with real error reporting.
+  - mode: system
+    script: |
+      #!/bin/sh
+      set -e
+      if [ -e /var/lib/skali-storage-prereqs ]; then exit 0; fi
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y open-iscsi
+      systemctl enable --now iscsid
+      touch /var/lib/skali-storage-prereqs

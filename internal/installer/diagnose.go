@@ -218,6 +218,26 @@ func Diagnose(ctx context.Context, runner host.Runner, opts DiagnoseOptions) (*D
 		suggest("skali cluster repair")
 	}
 
+	storage := probeStoragePrerequisites(ctx, runner)
+	switch {
+	case !storage.iscsidPresent:
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "storage prerequisites", Severity: SeverityFail,
+			Detail: "open-iscsi is not installed; Longhorn volumes cannot attach on this node",
+		})
+		suggest("skali cluster repair")
+	case storage.multipathdActive && !storage.multipathBlacklisted:
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "storage prerequisites", Severity: SeverityWarn,
+			Detail: "multipathd is active without the skali blacklist and may claim Longhorn volume devices",
+		})
+		suggest("skali cluster repair")
+	default:
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "storage prerequisites", Detail: "open-iscsi installed",
+		})
+	}
+
 	diagnoseNodeNetwork(ctx, runner, detected, diagnosis, suggest)
 
 	if detected.K3sVersion != "" && detected.K3sVersion != K3sVersion {
@@ -310,8 +330,56 @@ func diagnoseKubernetes(ctx context.Context, client *kube.Client, diagnosis *Dia
 		"skalid", "skalid", "app.kubernetes.io/name=skalid", databaseFailed)
 	diagnoseDeployment(ctx, client, diagnosis, suggest,
 		"web console", "skali-web", "app.kubernetes.io/name=skali-web", false)
+	diagnoseStorageSystem(ctx, client, diagnosis, suggest)
 	diagnoseVolumes(ctx, client, diagnosis)
 	diagnoseCertificates(ctx, client, diagnosis)
+}
+
+// diagnoseStorageSystem checks the Longhorn control plane once it is
+// installed: the manager daemon set on every scheduled node and the CSI
+// provisioner that actually binds claims. A cluster whose bundle predates
+// Longhorn has no longhorn-system namespace and is skipped silently; the
+// next upgrade converge installs it.
+func diagnoseStorageSystem(ctx context.Context, client *kube.Client, diagnosis *Diagnosis,
+	suggest func(string)) {
+	if _, err := client.Clientset.CoreV1().Namespaces().Get(ctx, "longhorn-system", metav1.GetOptions{}); err != nil {
+		return
+	}
+	healthy := true
+	manager, err := client.Clientset.AppsV1().DaemonSets("longhorn-system").Get(ctx, "longhorn-manager", metav1.GetOptions{})
+	switch {
+	case err != nil:
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "storage system", Severity: SeverityFail, Detail: "longhorn-manager is missing",
+		})
+		suggest("skali cluster repair")
+		return
+	case manager.Status.DesiredNumberScheduled == 0 ||
+		manager.Status.NumberAvailable < manager.Status.DesiredNumberScheduled:
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "storage system", Severity: SeverityFail,
+			Detail: fmt.Sprintf("longhorn-manager %d/%d nodes ready",
+				manager.Status.NumberAvailable, manager.Status.DesiredNumberScheduled),
+		})
+		suggest("skali cluster repair")
+		healthy = false
+	}
+	provisioner, err := client.Clientset.AppsV1().Deployments("longhorn-system").Get(ctx, "csi-provisioner", metav1.GetOptions{})
+	desired := int32(1)
+	if err == nil && provisioner.Spec.Replicas != nil {
+		desired = *provisioner.Spec.Replicas
+	}
+	if err != nil || provisioner.Status.AvailableReplicas < desired {
+		diagnosis.Checks = append(diagnosis.Checks, Check{
+			Name: "storage provisioner", Severity: SeverityFail,
+			Detail: "csi-provisioner is not available; new volumes will not bind",
+		})
+		suggest("skali cluster repair")
+		return
+	}
+	if healthy {
+		diagnosis.Checks = append(diagnosis.Checks, Check{Name: "storage system", Detail: "healthy"})
+	}
 }
 
 // diagnoseNodeNetwork covers the failure that looks like nothing else: a

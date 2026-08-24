@@ -2,16 +2,32 @@
 	import Server from '@lucide/svelte/icons/server';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import StackedBar from '$lib/components/ui/StackedBar.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
-	import { NODE_ROLE_META, NODE_STATE_META } from '$lib/service-types';
+	import { NODE_ROLE_META, NODE_STATE_META, STORAGE_CATEGORY_META } from '$lib/service-types';
 	import { formatBytes, formatCores, relativeTime } from '$lib/format';
-	import { lastValue } from '$lib/types/metrics';
+	import { lastValue, type NodeStorage } from '$lib/types/metrics';
 	import type { PageData } from './$types';
 
 	// Data comes from the (app) shell layout load; this page only presents it.
 	let { data }: { data: PageData } = $props();
 
-	const grid = 'grid-cols-[1.2fr_1.4fr_1.2fr_1.2fr_1fr_1.4fr_0.9fr]';
+	const grid = 'grid-cols-[1.1fr_1.3fr_1.1fr_1fr_0.9fr_1.3fr_1.5fr_0.8fr]';
+
+	const storage = $derived.by(() => {
+		const byNode: Record<string, NodeStorage> = {};
+		for (const node of data.nodeStorage?.nodes ?? []) byNode[node.name] = node;
+		return byNode;
+	});
+
+	function storageSegments(node: NodeStorage) {
+		const categories = node.categories as unknown as Record<string, number>;
+		return STORAGE_CATEGORY_META.map((meta) => ({
+			label: `${meta.label} ${formatBytes(categories[meta.key] ?? 0)}`,
+			value: categories[meta.key] ?? 0,
+			class: meta.class
+		}));
+	}
 
 	// Current usage from the newest sampled bucket, keyed by node name.
 	const usage = $derived.by(() => {
@@ -57,10 +73,14 @@
 
 <div class="pb-6">
 	{#if data.nodes.length > 0}
-		<Table columns={['Node', 'Addresses', 'Roles', 'OS', 'Kubelet', 'Usage', 'State']} {grid}>
+		<Table
+			columns={['Node', 'Addresses', 'Roles', 'OS', 'Kubelet', 'Usage', 'Storage', 'State']}
+			{grid}
+		>
 			{#each data.nodes as node (node.name)}
 				{@const state = NODE_STATE_META[node.ready ? 'online' : 'offline']}
 				{@const use = usage[node.name]}
+				{@const disk = storage[node.name]}
 				<div
 					class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {grid}"
 				>
@@ -97,6 +117,16 @@
 							<span class="font-mono text-text-faint text-sm">no data</span>
 						{/if}
 					</div>
+					<div class="flex flex-col justify-center gap-1 pr-4">
+						{#if disk}
+							<StackedBar segments={storageSegments(disk)} total={disk.capacity_bytes} />
+							<span class="font-mono text-text-faint text-xs">
+								{formatBytes(disk.used_bytes)} / {formatBytes(disk.capacity_bytes)}
+							</span>
+						{:else}
+							<span class="font-mono text-text-faint text-sm">no data</span>
+						{/if}
+					</div>
 					<div
 						class="flex items-center gap-1.5 text-md {state.text}"
 						title={node.last_heartbeat
@@ -109,6 +139,17 @@
 				</div>
 			{/each}
 		</Table>
+		{#if data.nodeStorage?.nodes.length}
+			<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-4.5">
+				{#each STORAGE_CATEGORY_META as meta (meta.key)}
+					<span class="flex items-center gap-1.5 font-mono text-text-faint text-xs">
+						<span class="size-[8px] rounded-full {meta.class}"></span>
+						{meta.label}
+					</span>
+				{/each}
+				<span class="font-mono text-text-faint text-xs">unfilled = free</span>
+			</div>
+		{/if}
 	{:else}
 		<EmptyState
 			icon={Server}

@@ -87,6 +87,57 @@ WHERE environment_id = $1
 GROUP BY bucket, application_key
 ORDER BY application_key, bucket;
 
+-- name: InsertStorageNodeSamples :execrows
+INSERT INTO metric_storage_node_samples (node_name, sampled_at, capacity_bytes, used_bytes, available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes)
+SELECT s.node_name, sqlc.arg(sampled_at)::timestamptz, s.capacity_bytes, s.used_bytes, s.available_bytes, s.volumes_bytes, s.databases_bytes, s.objects_bytes, s.images_bytes
+FROM (
+    SELECT unnest(sqlc.arg(node_names)::text[])        AS node_name,
+           unnest(sqlc.arg(capacity_bytes)::bigint[])  AS capacity_bytes,
+           unnest(sqlc.arg(used_bytes)::bigint[])      AS used_bytes,
+           unnest(sqlc.arg(available_bytes)::bigint[]) AS available_bytes,
+           unnest(sqlc.arg(volumes_bytes)::bigint[])   AS volumes_bytes,
+           unnest(sqlc.arg(databases_bytes)::bigint[]) AS databases_bytes,
+           unnest(sqlc.arg(objects_bytes)::bigint[])   AS objects_bytes,
+           unnest(sqlc.arg(images_bytes)::bigint[])    AS images_bytes
+) AS s
+ON CONFLICT DO NOTHING;
+
+-- used_bytes is nullable (unmeasurable app volumes); the companion
+-- used_measured array carries the null flags because unnest has no way to
+-- express NULL positions in a bigint array parameter.
+-- name: InsertStorageSamples :execrows
+INSERT INTO metric_storage_samples (environment_id, service_key, kind, sampled_at, used_bytes, capacity_bytes)
+SELECT s.environment_id, s.service_key, s.kind, sqlc.arg(sampled_at)::timestamptz,
+       CASE WHEN s.used_measured THEN s.used_bytes END, s.capacity_bytes
+FROM (
+    SELECT unnest(sqlc.arg(environment_ids)::uuid[]) AS environment_id,
+           unnest(sqlc.arg(service_keys)::text[])    AS service_key,
+           unnest(sqlc.arg(kinds)::text[])           AS kind,
+           unnest(sqlc.arg(used_bytes)::bigint[])    AS used_bytes,
+           unnest(sqlc.arg(used_measured)::bool[])   AS used_measured,
+           unnest(sqlc.arg(capacity_bytes)::bigint[]) AS capacity_bytes
+) AS s
+WHERE EXISTS (SELECT 1 FROM environments e WHERE e.id = s.environment_id)
+ON CONFLICT DO NOTHING;
+
+-- Current values, not series: the storage views show what is, and history
+-- stays in the table for future charts. The since cutoff keeps a dead
+-- sampler from serving stale numbers as current.
+-- name: CurrentStorageNodeSamples :many
+SELECT DISTINCT ON (node_name) node_name, sampled_at, capacity_bytes, used_bytes,
+       available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes
+FROM metric_storage_node_samples
+WHERE sampled_at >= sqlc.arg(since)::timestamptz
+ORDER BY node_name, sampled_at DESC;
+
+-- name: CurrentProjectStorage :many
+SELECT DISTINCT ON (s.environment_id, s.service_key, s.kind)
+       s.environment_id, s.service_key, s.kind, s.sampled_at, s.used_bytes, s.capacity_bytes
+FROM metric_storage_samples s
+JOIN environments e ON e.id = s.environment_id
+WHERE e.project_id = $1 AND s.sampled_at >= sqlc.arg(since)::timestamptz
+ORDER BY s.environment_id, s.service_key, s.kind, s.sampled_at DESC;
+
 -- Retention: plain age cutoff, run hourly by the sampler.
 -- name: DeleteAgedAppMetricSamples :execrows
 DELETE FROM metric_app_samples WHERE sampled_at < $1;
@@ -96,3 +147,9 @@ DELETE FROM metric_node_samples WHERE sampled_at < $1;
 
 -- name: DeleteAgedEdgeMetricSamples :execrows
 DELETE FROM metric_edge_samples WHERE sampled_at < $1;
+
+-- name: DeleteAgedStorageNodeSamples :execrows
+DELETE FROM metric_storage_node_samples WHERE sampled_at < $1;
+
+-- name: DeleteAgedStorageSamples :execrows
+DELETE FROM metric_storage_samples WHERE sampled_at < $1;

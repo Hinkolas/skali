@@ -49,8 +49,16 @@ func withK3s(fake *host.Fake, unit string, active bool) *host.Fake {
 		return host.Result{Stdout: "k3s version v1.36.3+k3s1 (0000)\ngo version go1.24\n"}, nil
 	}
 	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
-		if len(cmd.Args) != 2 || cmd.Args[1] != unit {
+		if len(cmd.Args) != 2 || (cmd.Args[1] != unit && cmd.Args[1] != "iscsid") {
 			return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
+		}
+		// Storage prerequisites are healthy on these fakes; the dedicated
+		// storage tests script their own hosts.
+		if cmd.Args[1] == "iscsid" {
+			if cmd.Args[0] == "is-enabled" {
+				return host.Result{Stdout: "enabled\n"}, nil
+			}
+			return host.Result{Stdout: "active\n"}, nil
 		}
 		switch cmd.Args[0] {
 		case "is-enabled":

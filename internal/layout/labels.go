@@ -27,6 +27,16 @@ const (
 	// ControlPlaneLabel is k3s's own role marker. The K3s role is never
 	// duplicated into a skali label because k3s already owns that fact.
 	ControlPlaneLabel = "node-role.kubernetes.io/control-plane"
+
+	// LonghornDiskLabel opts a node into Longhorn's default disk creation:
+	// only labeled nodes hold replica data (the bundle patches Longhorn to
+	// create-default-disk-on-labeled-nodes). It rides node registration for
+	// fresh application-capable nodes and converge stamps it onto existing
+	// ones.
+	LonghornDiskLabel = "node.longhorn.io/create-default-disk"
+
+	// LonghornDiskLabelValue enables default disk creation on the node.
+	LonghornDiskLabelValue = "true"
 )
 
 // CapabilityLabel returns the node label for one capability, for example

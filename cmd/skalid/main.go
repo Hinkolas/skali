@@ -405,7 +405,14 @@ func runServe() error {
 	// Usage telemetry: samples metrics-server readings into the platform
 	// database and prunes them by age. Absent in API-only mode.
 	if kubeClient != nil {
-		sampler := &metrics.Sampler{Store: st, Kube: kubeClient}
+		sampler := &metrics.Sampler{
+			Store: st, Kube: kubeClient,
+			// A second read-only seaweed client is safe: the storage
+			// collectors only read the master's volume listing.
+			DB:                dbstore.New(st),
+			Seaweed:           seaweed.NewClient(kubeClient, substrate.Namespace),
+			PlatformNamespace: substrate.Namespace,
+		}
 		go sampler.Run(loopCtx)
 	}
 

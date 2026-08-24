@@ -162,6 +162,12 @@ func k3sConfigYAML(node k3sNode) string {
 		builder.WriteString("  - " + key + "=" + labels[key] + "\n")
 	}
 	builder.WriteString("  - " + layout.ClusterLabel + "=" + node.Cluster + "\n")
+	// Application-capable nodes hold Longhorn replica data; the disk label
+	// rides registration like the capability labels (converge re-stamps it
+	// on nodes that joined before Longhorn shipped).
+	if slices.Contains(node.Capabilities, layout.CapabilityApplication) {
+		builder.WriteString("  - " + layout.LonghornDiskLabel + "=" + layout.LonghornDiskLabelValue + "\n")
+	}
 	if node.Pending {
 		builder.WriteString("node-taint:\n")
 		builder.WriteString("  - " + layout.PendingTaintKey + "=true:NoSchedule\n")

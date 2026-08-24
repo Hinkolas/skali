@@ -179,6 +179,81 @@ type NodesSeries struct {
 	Nodes      []NodeSeries
 }
 
+// NodeStorage is one node's newest storage sample with its category split.
+type NodeStorage struct {
+	Name           string
+	SampledAt      time.Time
+	CapacityBytes  int64
+	UsedBytes      int64
+	AvailableBytes int64
+	VolumesBytes   int64
+	DatabasesBytes int64
+	ObjectsBytes   int64
+	ImagesBytes    int64
+}
+
+// NodesStorage serves the current per-node storage picture. The one-hour
+// cutoff makes a dead sampler read as "no data" instead of serving stale
+// numbers as current.
+func (s *Service) NodesStorage(ctx context.Context, now time.Time) ([]NodeStorage, error) {
+	rows, err := s.Store.CurrentStorageNodeSamples(ctx, now.Add(-time.Hour))
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]NodeStorage, 0, len(rows))
+	for _, row := range rows {
+		nodes = append(nodes, NodeStorage{
+			Name:           row.NodeName,
+			SampledAt:      row.SampledAt,
+			CapacityBytes:  row.CapacityBytes,
+			UsedBytes:      row.UsedBytes,
+			AvailableBytes: row.AvailableBytes,
+			VolumesBytes:   row.VolumesBytes,
+			DatabasesBytes: row.DatabasesBytes,
+			ObjectsBytes:   row.ObjectsBytes,
+			ImagesBytes:    row.ImagesBytes,
+		})
+	}
+	return nodes, nil
+}
+
+// ServiceStorage is one service's newest storage footprint. UsedBytes is
+// nil where usage is unmeasurable (local-path app volumes); CapacityBytes
+// is the declared size or quota, 0 when unknown.
+type ServiceStorage struct {
+	EnvironmentID uuid.UUID
+	ServiceKey    string
+	Kind          string
+	UsedBytes     *int64
+	CapacityBytes int64
+	SampledAt     time.Time
+}
+
+// ProjectStorage serves the current per-service storage footprints of one
+// project's environments. The 24-hour cutoff tolerates pool scrape gaps
+// and scaled-down apps while still aging truly stale rows out.
+func (s *Service) ProjectStorage(ctx context.Context, projectID uuid.UUID, now time.Time) ([]ServiceStorage, error) {
+	rows, err := s.Store.CurrentProjectStorage(ctx, store.CurrentProjectStorageParams{
+		ProjectID: projectID,
+		Since:     now.Add(-24 * time.Hour),
+	})
+	if err != nil {
+		return nil, err
+	}
+	services := make([]ServiceStorage, 0, len(rows))
+	for _, row := range rows {
+		services = append(services, ServiceStorage{
+			EnvironmentID: row.EnvironmentID,
+			ServiceKey:    row.ServiceKey,
+			Kind:          row.Kind,
+			UsedBytes:     row.UsedBytes,
+			CapacityBytes: row.CapacityBytes,
+			SampledAt:     row.SampledAt,
+		})
+	}
+	return services, nil
+}
+
 func (s *Service) NodesSeries(ctx context.Context, w Window, now time.Time) (*NodesSeries, error) {
 	since, until, timestamps := w.grid(now)
 	rows, err := s.Store.NodeMetricSeries(ctx, store.NodeMetricSeriesParams{

@@ -113,8 +113,9 @@ Ordered loosely by how often I have wanted them.
 - [ ] External access to databases (allowlisted TCP) for tooling.
 - [ ] More database engines (Valkey/Redis first, then whatever a real
       project needs).
-- [ ] Persistent volumes for applications where a stateless port is not
-      realistic.
+- [x] Persistent volumes for applications where a stateless port is not
+      realistic: Longhorn-backed on managed clusters (enforced sizes,
+      replication, node-loss survival); see docs/storage.md.
 - [ ] Templates / examples catalog and Compose import.
 - [ ] LAN / HTTP-only installation profile for home and office clusters.
 - [ ] Notifications (deploy finished, run failed) to chat/webhook.
@@ -125,7 +126,7 @@ Ordered loosely by how often I have wanted them.
 ## 4. Platform and operations
 
 - [ ] Version pin bumps as a routine (k3s, CNPG, SeaweedFS, Traefik,
-      cert-manager) with the cluster e2e as the gate.
+      cert-manager, Longhorn) with the cluster e2e as the gate.
 - [ ] Node lifecycle: drain, replace, retire a node without hand surgery.
 - [ ] Multi-edge traffic distribution and DNS guidance.
 - [ ] Management-plane HA (skalid itself) once a second cluster or a real

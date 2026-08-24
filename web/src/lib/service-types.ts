@@ -97,3 +97,23 @@ export const NODE_ROLE_META: Record<string, { text: string; bg: string }> = {
 	master: { text: 'text-accent-light', bg: 'bg-accent/15' },
 	worker: { text: 'text-text-muted', bg: 'bg-white/6' }
 };
+
+/**
+ * Storage category segments for the capacity bars, in render order. The
+ * first three reuse the service kind colors so a bar segment and its kind
+ * badge read as the same thing; free space is the bar's unfilled track.
+ */
+export const STORAGE_CATEGORY_META: { key: string; label: string; class: string }[] = [
+	{ key: 'volumes_bytes', label: 'Volumes', class: 'bg-service-app' },
+	{ key: 'databases_bytes', label: 'Databases', class: 'bg-service-db' },
+	{ key: 'objects_bytes', label: 'Objects', class: 'bg-service-storage' },
+	{ key: 'images_bytes', label: 'Images', class: 'bg-accent/70' },
+	{ key: 'system_bytes', label: 'System', class: 'bg-white/25' }
+];
+
+/** Storage kind segments for the per-project bar, same palette. */
+export const STORAGE_KIND_META: Record<string, { label: string; class: string }> = {
+	volume: { label: 'Volumes', class: 'bg-service-app' },
+	database: { label: 'Databases', class: 'bg-service-db' },
+	bucket: { label: 'Buckets', class: 'bg-service-storage' }
+};

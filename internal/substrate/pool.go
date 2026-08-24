@@ -44,6 +44,12 @@ func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster)
 	if _, err := c.deps.Cluster.ApplyAs(ctx, object, kube.FieldManagerPlatform, false); err != nil {
 		return fmt.Errorf("substrate: apply pool %s: %w", pool.Name, err)
 	}
+	// The exporter Service feeds the storage sampler's database-size
+	// scrape; both platform shapes carry it.
+	metricsService := cnpg.RenderMetricsService(Namespace, pool.Name)
+	if _, err := c.deps.Cluster.ApplyAs(ctx, metricsService, kube.FieldManagerPlatform, false); err != nil {
+		return fmt.Errorf("substrate: apply pool %s metrics service: %w", pool.Name, err)
+	}
 	if !c.cfg.Managed {
 		if err := c.ensurePoolNodePort(ctx, pool); err != nil {
 			return err

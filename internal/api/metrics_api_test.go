@@ -116,3 +116,93 @@ func TestNodeMetrics(t *testing.T) {
 	require.Len(t, cpu, 60)
 	require.EqualValues(t, 250, cpu[59])
 }
+
+func TestNodesStorage(t *testing.T) {
+	a := newTestAPI(t)
+	a.createAdmin("storage@example.com", "hunter2hunter2")
+	a.createUser("member3@example.com", "hunter2hunter2")
+	admin := a.login("storage@example.com", "hunter2hunter2")
+
+	// Instance-wide storage is admin only.
+	member := a.login("member3@example.com", "hunter2hunter2")
+	status, _ := a.do("GET", "/v1/nodes/storage", member, nil)
+	require.Equal(t, http.StatusForbidden, status)
+
+	// Empty until the sampler wrote a recent sample.
+	status, body := a.do("GET", "/v1/nodes/storage", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.NotNil(t, body["nodes"], "nodes must be an empty list, not null")
+	require.Empty(t, body["nodes"])
+
+	_, err := a.st.InsertStorageNodeSamples(context.Background(), store.InsertStorageNodeSamplesParams{
+		SampledAt:      time.Now().UTC(),
+		NodeNames:      []string{"node-a"},
+		CapacityBytes:  []int64{1000},
+		UsedBytes:      []int64{500},
+		AvailableBytes: []int64{450},
+		VolumesBytes:   []int64{100},
+		DatabasesBytes: []int64{50},
+		ObjectsBytes:   []int64{25},
+		ImagesBytes:    []int64{125},
+	})
+	require.NoError(t, err)
+
+	status, body = a.do("GET", "/v1/nodes/storage", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	nodes := body["nodes"].([]any)
+	require.Len(t, nodes, 1)
+	node := nodes[0].(map[string]any)
+	require.Equal(t, "node-a", node["name"])
+	require.EqualValues(t, 1000, node["capacity_bytes"])
+	require.EqualValues(t, 500, node["used_bytes"])
+	categories := node["categories"].(map[string]any)
+	require.EqualValues(t, 100, categories["volumes_bytes"])
+	// system = used minus the attributed categories.
+	require.EqualValues(t, 200, categories["system_bytes"])
+}
+
+func TestProjectStorage(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("projstorage@example.com", "hunter2hunter2")
+	token := a.login("projstorage@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+
+	// Empty before any sample.
+	status, body := a.do("GET", "/v1/projects/"+projectID+"/storage", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.NotNil(t, body["services"], "services must be an empty list, not null")
+	require.Empty(t, body["services"])
+
+	_, err := a.st.InsertStorageSamples(context.Background(), store.InsertStorageSamplesParams{
+		SampledAt:      time.Now().UTC(),
+		EnvironmentIds: []uuid.UUID{uuid.MustParse(envID), uuid.MustParse(envID)},
+		ServiceKeys:    []string{"files", "buckets.media"},
+		Kinds:          []string{"volume", "bucket"},
+		UsedBytes:      []int64{0, 777},
+		UsedMeasured:   []bool{false, true},
+		CapacityBytes:  []int64{100, 1000},
+	})
+	require.NoError(t, err)
+
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/storage", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	services := body["services"].([]any)
+	require.Len(t, services, 2)
+	byKey := map[string]map[string]any{}
+	for _, entry := range services {
+		service := entry.(map[string]any)
+		byKey[service["service_key"].(string)] = service
+	}
+	require.Nil(t, byKey["files"]["used_bytes"], "unmeasured usage must serialize as null")
+	require.EqualValues(t, 100, byKey["files"]["capacity_bytes"])
+	require.Equal(t, "volume", byKey["files"]["kind"])
+	require.EqualValues(t, 777, byKey["buckets.media"]["used_bytes"])
+
+	// Membership gates the read: a stranger sees 404, anonymous 401.
+	a.createUser("stranger@example.com", "hunter2hunter2")
+	stranger := a.login("stranger@example.com", "hunter2hunter2")
+	status, _ = a.do("GET", "/v1/projects/"+projectID+"/storage", stranger, nil)
+	require.Contains(t, []int{http.StatusForbidden, http.StatusNotFound}, status)
+	status, _ = a.do("GET", "/v1/projects/"+projectID+"/storage", "", nil)
+	require.Equal(t, http.StatusUnauthorized, status)
+}

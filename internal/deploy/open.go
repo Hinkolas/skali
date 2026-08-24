@@ -164,6 +164,22 @@ func (e *InvalidInterceptPortsError) Error() string {
 	return "deploy: local application " + e.Application + " " + e.Detail
 }
 
+// VolumeShrinkError: a candidate revision declares an application volume
+// smaller than the active revision's. Kubernetes rejects claim shrinks
+// outright, so the deploy refuses up front with the volume named instead
+// of failing mid-rollout on a rejected apply.
+type VolumeShrinkError struct {
+	Application string
+	Volume      string
+	FromBytes   int64
+	ToBytes     int64
+}
+
+func (e *VolumeShrinkError) Error() string {
+	return fmt.Sprintf("deploy: volume %s.%s cannot shrink from %d to %d bytes; volumes only grow",
+		e.Application, e.Volume, e.FromBytes, e.ToBytes)
+}
+
 // ArtifactAction is one per-application decision taken at open: reuse a
 // verified artifact, build, or import. Stored on the deployment row so
 // completion re-reads decisions instead of trusting the client.
@@ -989,6 +1005,12 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 		activeChecksum = active.Checksum
 	}
 
+	if active != nil {
+		if err := validateVolumeSizes(active.Definition, candidate.Definition); err != nil {
+			return nil, err
+		}
+	}
+
 	document := plan.Diff(active, candidate)
 	document.Prune(pruned)
 	// Pruning is a change the deployment makes to the environment even
@@ -1000,6 +1022,33 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 		Candidate: candidate,
 		Orphaned:  orphaned,
 	}, nil
+}
+
+// validateVolumeSizes refuses a candidate that shrinks any volume still
+// declared by the active revision. Removed applications and removed
+// volumes pass: their claims are never pruned, so nothing shrinks.
+func validateVolumeSizes(active, candidate compiler.ProjectDefinition) error {
+	for _, key := range utils.SortedKeys(candidate.Applications) {
+		application := candidate.Applications[key]
+		current, ok := active.Applications[key]
+		if !ok {
+			continue
+		}
+		for _, volumeKey := range utils.SortedKeys(application.Volumes) {
+			volume := application.Volumes[volumeKey]
+			existing, ok := current.Volumes[volumeKey]
+			if !ok {
+				continue
+			}
+			if volume.SizeBytes < existing.SizeBytes {
+				return &VolumeShrinkError{
+					Application: key, Volume: volumeKey,
+					FromBytes: existing.SizeBytes, ToBytes: volume.SizeBytes,
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // localNames projects a local-application set to the name set revision.Build

@@ -39,6 +39,7 @@ func productionProfile() Profile {
 			DatabaseTier:       layout.TierSynchronous,
 			DatabaseStorage:    "10Gi",
 			RegistryStorage:    "20Gi",
+			StorageReplicas:    3,
 			WebImage:           "ghcr.io/hinkolas/skali-web:v2.0.0",
 			InstallationRecord: "version: \"1\"\ninstallationId: 0f0f\ncluster: production\n",
 		},
@@ -52,16 +53,16 @@ func TestLocalRenderFrozen(t *testing.T) {
 	t.Parallel()
 	profile := localProfile()
 	sources := stageSources(profile)
-	require.Len(t, sources, 11)
+	require.Len(t, sources, 12)
 
 	frozen := map[string]int{
 		"local-namespace.yaml":    0,
 		"local-priority.yaml":     1,
-		"local-database.yaml":     4,
-		"local-registry.yaml":     5,
-		"local-skalid.yaml":       6,
-		"local-edge-metrics.yaml": 9,
-		"local-bootstrap.yaml":    10,
+		"local-database.yaml":     5,
+		"local-registry.yaml":     6,
+		"local-skalid.yaml":       7,
+		"local-edge-metrics.yaml": 10,
+		"local-bootstrap.yaml":    11,
 	}
 	for name, index := range frozen {
 		path := filepath.Join("testdata", name)
@@ -75,10 +76,11 @@ func TestLocalRenderFrozen(t *testing.T) {
 		require.Equal(t, string(golden), sources[index], name)
 	}
 	// Production-only stages contribute zero bytes locally.
-	require.Empty(t, sources[2], "issuer stage must be empty locally")
-	require.Empty(t, sources[3], "edge stage must be empty locally")
-	require.Empty(t, sources[7], "record stage must be empty locally")
-	require.Empty(t, sources[8], "web stage must be empty locally")
+	require.Empty(t, sources[2], "storage stage must be empty locally")
+	require.Empty(t, sources[3], "issuer stage must be empty locally")
+	require.Empty(t, sources[4], "edge stage must be empty locally")
+	require.Empty(t, sources[8], "record stage must be empty locally")
+	require.Empty(t, sources[9], "web stage must be empty locally")
 
 	// The full hash including the vendored operator manifests is frozen
 	// too: cert-manager must not leak into the local fingerprint.
@@ -397,8 +399,12 @@ func TestProductionProfileValidation(t *testing.T) {
 		"database tier":         func(p *Production) { p.DatabaseTier = "" },
 		"database storage size": func(p *Production) { p.DatabaseStorage = "" },
 		"registry storage size": func(p *Production) { p.RegistryStorage = "" },
-		"web image":             func(p *Production) { p.WebImage = "" },
-		"installation record":   func(p *Production) { p.InstallationRecord = "" },
+		"storage replicas":      func(p *Production) { p.StorageReplicas = 0 },
+		"registry storage class": func(p *Production) {
+			p.RegistryStorageClass = "not-a-skali-class"
+		},
+		"web image":           func(p *Production) { p.WebImage = "" },
+		"installation record": func(p *Production) { p.InstallationRecord = "" },
 	} {
 		profile := productionProfile()
 		mutate(profile.Production)

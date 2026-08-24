@@ -45,6 +45,16 @@ const (
 	// is embedded even though the local profile never applies it; roughly
 	// one megabyte of CLI weight buys one shared bundle package.
 	CertManagerVersion = "1.21.1"
+	// LonghornVersion pins the vendored Longhorn release; applied only
+	// under a production profile. Dev clusters keep every claim on the
+	// k3d default local-path class.
+	LonghornVersion = "1.12.1"
+	// StorageClassName is the skali-owned Longhorn storage class managed
+	// clusters place application volumes and the registry volume on. It is
+	// never the cluster default: CNPG and seaweed replicate at their own
+	// layer and stay on local-path, so everything that wants replicated
+	// storage names this class explicitly.
+	StorageClassName = "skali-app"
 	RegistryImage      = "registry:2.8.3"
 	// RegistryNodePort is the stable node port the host maps its loopback
 	// registry port onto.
@@ -87,7 +97,7 @@ const (
 // OperatorNamespaces are the namespaces the vendored operator manifests
 // create; scoped uninstall removes them last. cert-manager exists only on
 // production installations; deleting an absent namespace is a no-op.
-var OperatorNamespaces = []string{"cnpg-system", "cert-manager"}
+var OperatorNamespaces = []string{"cnpg-system", "cert-manager", "longhorn-system"}
 
 //go:embed assets/cnpg-1.29.2.yaml
 var cnpgManifest []byte
@@ -109,6 +119,26 @@ var certManagerManifest []byte
 // CertManagerManifest is the pinned cert-manager install manifest; applied
 // only under a production profile.
 func CertManagerManifest() []byte { return certManagerManifest }
+
+//go:embed assets/longhorn-1.12.1.yaml
+var longhornManifest []byte
+
+// LonghornManifest is the pinned Longhorn install manifest; applied only
+// under a production profile. Two byte-patches keep upstream defaults from
+// ever reaching the cluster: the shipped longhorn storage class must not
+// become the cluster default (local-path keeps that role for CNPG, seaweed,
+// and skali-db), and default disk creation is confined to nodes labeled
+// node.longhorn.io/create-default-disk so only application-capable nodes
+// hold replica data. Both anchors are unique in the asset; the parse-based
+// unit test pins them against version bumps.
+func LonghornManifest() []byte {
+	patched := bytes.Replace(longhornManifest,
+		[]byte(`storageclass.kubernetes.io/is-default-class: "true"`),
+		[]byte(`storageclass.kubernetes.io/is-default-class: "false"`), 1)
+	return bytes.Replace(patched,
+		[]byte(`priority-class: "longhorn-critical"`),
+		[]byte(`priority-class: "longhorn-critical"`+"\n    "+`create-default-disk-on-labeled-nodes: "true"`), 1)
+}
 
 // Profile parameterizes one installation of the bundle.
 type Profile struct {
@@ -183,8 +213,21 @@ type Production struct {
 	RegistryStorage string
 	// RegistryNode pins the installer-owned local-path volume after the
 	// first reconciled initialization. Empty retains legacy
-	// capability-only placement.
+	// capability-only placement. Only the legacy registry shape (empty
+	// RegistryStorageClass) still consumes it; the field stays in the
+	// record so upgraded installations round-trip without a migration.
 	RegistryNode string
+	// StorageReplicas sizes the skali-app Longhorn storage class:
+	// min(3, application-capable nodes), never below 1.
+	StorageReplicas int
+	// RegistryStorageClass selects the registry volume shape. Empty
+	// renders the legacy local-path shape with the RegistryNode hostname
+	// pin; StorageClassName renders the Longhorn shape without a node
+	// pin. LiveProfile reads it from the live claim because the field is
+	// immutable on an existing PersistentVolumeClaim: converge must only
+	// ever render what the cluster already has, and the explicit
+	// storage-migrate command performs the switch.
+	RegistryStorageClass string
 	// WebImage is the web console image reference; the console serves the
 	// platform domain root while /api routes to skalid. Local dev runs the
 	// console from the working tree instead, so the field is
@@ -223,6 +266,10 @@ func (p *Production) validate() error {
 		return errors.New("bundle: production profile: database storage size is required")
 	case p.RegistryStorage == "":
 		return errors.New("bundle: production profile: registry storage size is required")
+	case p.StorageReplicas < 1 || p.StorageReplicas > 3:
+		return errors.New("bundle: production profile: storage replicas must be between 1 and 3")
+	case p.RegistryStorageClass != "" && p.RegistryStorageClass != StorageClassName:
+		return errors.New("bundle: production profile: unknown registry storage class")
 	case p.WebImage == "":
 		return errors.New("bundle: production profile: web image is required")
 	case p.InstallationRecord == "":
@@ -247,6 +294,9 @@ type Objects struct {
 	// skali-normal); it precedes every pod that references one, which is
 	// every pod the bundle and skalid render.
 	Priority []unstructured.Unstructured
+	// Storage is the skali-app Longhorn storage class (requires the
+	// Longhorn operators); empty under the local profile.
+	Storage []unstructured.Unstructured
 	// Issuer is the ACME ClusterIssuer named skali (requires
 	// cert-manager); empty under the local profile.
 	Issuer []unstructured.Unstructured
@@ -281,6 +331,7 @@ func stageSources(profile Profile) []string {
 	return []string{
 		namespaceYAML(),
 		priorityYAML(),
+		storageYAML(profile),
 		issuerYAML(profile),
 		edgeYAML(profile),
 		databaseYAML(profile),
@@ -306,6 +357,7 @@ func Render(profile Profile) (*Objects, error) {
 	targets := []*[]unstructured.Unstructured{
 		&objects.Namespace,
 		&objects.Priority,
+		&objects.Storage,
 		&objects.Issuer,
 		&objects.Edge,
 		&objects.Database,
@@ -342,6 +394,9 @@ func Hash(profile Profile) string {
 	sources := stageSources(profile)
 	if profile.Production != nil {
 		digest.Write(certManagerManifest)
+		// The patched Longhorn manifest, exactly what ApplyManifest
+		// applies under production.
+		digest.Write(LonghornManifest())
 		sources[len(sources)-1] = ""
 	}
 	for _, source := range sources {
@@ -412,6 +467,36 @@ description: Applications of normal priority environments; yield to high priorit
 `, layout.PriorityClassCritical, layout.PriorityClassCriticalValue,
 		layout.PriorityClassHigh, layout.PriorityClassHighValue,
 		layout.PriorityClassNormal, layout.PriorityClassNormalValue)
+}
+
+// storageYAML renders the skali-app StorageClass application volumes and
+// the registry volume provision on. Production only: dev clusters keep
+// every claim on the k3d default local-path class. dataLocality
+// best-effort co-locates one replica with the consuming pod when possible
+// without ever blocking scheduling. Parameters are immutable once the
+// class exists, so a replica-count change during converge means delete and
+// re-apply; volumes keep the replica count they were created with.
+func storageYAML(profile Profile) string {
+	if profile.Production == nil {
+		return ""
+	}
+	return fmt.Sprintf(`apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: %[1]s
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "%[2]d"
+  staleReplicaTimeout: "30"
+  fsType: ext4
+  dataLocality: best-effort
+  dataEngine: v1
+`, StorageClassName, profile.Production.StorageReplicas)
 }
 
 // issuerYAML renders the ACME ClusterIssuer every `tls: automatic` route
@@ -555,14 +640,20 @@ func registryYAML(profile Profile) string {
 	ingressSuffix := ""
 	certMount := ""
 	certVolume := ""
+	storageClass := ""
 	if production := profile.Production; production != nil {
 		storage = production.RegistryStorage
-		// Pin the single registry instance to a registry-capable node;
-		// the local-path volume provisions on first consumption, so pod
-		// and volume agree on the node.
+		// Pin the single registry instance to a registry-capable node.
 		nodeSelector = "\n      nodeSelector:\n        " +
 			layout.CapabilityLabel(layout.CapabilityRegistry) + `: "true"`
-		if production.RegistryNode != "" {
+		if production.RegistryStorageClass != "" {
+			// The Longhorn shape: the volume attaches wherever the pod
+			// schedules, so the hostname pin local-path required is gone.
+			storageClass = "\n  storageClassName: " + production.RegistryStorageClass
+		} else if production.RegistryNode != "" {
+			// The legacy local-path shape: the volume provisions on first
+			// consumption and pins to its node forever, so pod and volume
+			// must agree on the node up front.
 			nodeSelector += "\n        kubernetes.io/hostname: " + production.RegistryNode
 		}
 		// Production requires the registry token protocol: the 401
@@ -605,7 +696,7 @@ spec:
   accessModes: [ReadWriteOnce]
   resources:
     requests:
-      storage: %[4]s
+      storage: %[4]s%[10]s
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -657,7 +748,7 @@ spec:
       targetPort: 5000
       nodePort: %[3]d
 `, Namespace, RegistryImage, RegistryNodePort, storage, nodeSelector,
-		authConfig, certMount, certVolume, layout.PriorityClassCritical) + ingressSuffix
+		authConfig, certMount, certVolume, layout.PriorityClassCritical, storageClass) + ingressSuffix
 }
 
 // registryTokenSecretYAML renders the token trust material: skalid reads
@@ -893,6 +984,11 @@ rules:
   - apiGroups: [""]
     resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
     verbs: ["*"]
+  # The storage sampler reads each kubelet's /stats/summary through the
+  # API server's node proxy.
+  - apiGroups: [""]
+    resources: [nodes/proxy]
+    verbs: [get]
   - apiGroups: [apps]
     resources: [deployments, statefulsets, daemonsets]
     verbs: ["*"]

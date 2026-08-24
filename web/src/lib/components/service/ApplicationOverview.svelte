@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { ApplicationView, ServiceView } from '$lib/models/service';
+	import type { ServiceStorage } from '$lib/types/metrics';
 	import type { Run } from '$lib/types/runs';
+	import { formatBytes } from '$lib/format';
 	import ConnectedServicesPanel from './ConnectedServicesPanel.svelte';
 	import RoutesPanel from './RoutesPanel.svelte';
 	import RunsSection from '$lib/components/run/RunsSection.svelte';
@@ -10,12 +12,14 @@
 		service,
 		services,
 		envId,
-		runs
+		runs,
+		storage = null
 	}: {
 		service: ApplicationView;
 		services: ServiceView[];
 		envId: string | null;
 		runs: Run[] | null;
+		storage?: ServiceStorage | null;
 	} = $props();
 </script>
 
@@ -23,6 +27,21 @@
 	<WebProcessPanel {service} />
 	<ConnectedServicesPanel {service} {services} />
 </div>
+
+{#if storage}
+	<div
+		class="border-border-subtle mb-6 flex items-center justify-between rounded-[15px] border px-4.5 py-3"
+	>
+		<span class="text-text-muted text-md">Volume storage</span>
+		<span class="font-mono text-text-primary text-sm">
+			{#if storage.used_bytes != null}
+				{formatBytes(storage.used_bytes)} of {formatBytes(storage.capacity_bytes)} used
+			{:else}
+				{formatBytes(storage.capacity_bytes)} reserved
+			{/if}
+		</span>
+	</div>
+{/if}
 
 <div class="mb-6 empty:hidden">
 	<RoutesPanel serviceKey={service.key} />

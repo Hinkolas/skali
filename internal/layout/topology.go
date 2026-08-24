@@ -43,6 +43,22 @@ func TierInstances(tier Tier) int {
 	}
 }
 
+// StorageReplicas sizes the skali-app Longhorn storage class from the
+// number of application-capable nodes: one replica per node, capped at
+// three (more copies stop buying availability), never below one (a
+// single-node cluster still gets enforced sizes and stats, just no
+// redundancy).
+func StorageReplicas(applicationNodes int) int {
+	switch {
+	case applicationNodes >= 3:
+		return 3
+	case applicationNodes < 1:
+		return 1
+	default:
+		return applicationNodes
+	}
+}
+
 // Topology summarizes a validated layout for the installer: it sizes the
 // bootstrap database and the default shared pool and reports where each
 // system may be placed.

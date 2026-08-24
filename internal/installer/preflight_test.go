@@ -282,10 +282,16 @@ func TestInstallStartFailureStaysManagedAndRedactsSecrets(t *testing.T) {
 		if len(command.Args) > 0 && command.Args[0] == "start" {
 			return host.Result{ExitCode: 1, Stderr: "unit failed"}, nil
 		}
+		if len(command.Args) > 0 && command.Args[0] == "enable" {
+			return host.Result{}, nil
+		}
 		if len(command.Args) > 0 && command.Args[0] == "status" {
 			return host.Result{ExitCode: 3, Stdout: "failed " + token}, nil
 		}
 		return host.Result{ExitCode: 4, Stdout: "not-found"}, nil
+	}
+	fake.Handlers["apt-get"] = func(host.Command) (host.Result, error) {
+		return host.Result{}, nil
 	}
 	fake.Handlers["journalctl"] = func(host.Command) (host.Result, error) {
 		return host.Result{Stdout: `level=fatal msg="bad credential ` + pullSecret + `"`}, nil
@@ -342,6 +348,8 @@ func TestInterruptedJoinResumesWithCorrectedEndpoint(t *testing.T) {
 			return host.Result{}, nil
 		case "stop":
 			started = false
+			return host.Result{}, nil
+		case "enable":
 			return host.Result{}, nil
 		case "status":
 			return host.Result{ExitCode: 3, Stdout: "failed"}, nil

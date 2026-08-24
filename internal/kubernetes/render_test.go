@@ -367,6 +367,20 @@ applications:
 	require.True(t, ok)
 	require.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
 	require.Nil(t, deployment.Spec.Strategy.RollingUpdate)
+
+	// Without a declared storage class the claim keeps the cluster default
+	// (dev and offline rendering stay byte-identical to before the field).
+	claim, ok := objects[0].(*corev1.PersistentVolumeClaim)
+	require.True(t, ok)
+	require.Nil(t, claim.Spec.StorageClassName)
+
+	// Managed clusters name the class explicitly.
+	objects, err = Render(result, Options{Namespace: "skali-volume-rollout", StorageClass: "skali-app"})
+	require.NoError(t, err)
+	claim, ok = objects[0].(*corev1.PersistentVolumeClaim)
+	require.True(t, ok)
+	require.NotNil(t, claim.Spec.StorageClassName)
+	require.Equal(t, "skali-app", *claim.Spec.StorageClassName)
 }
 
 // A release command renders as a per-revision single-attempt Job with the

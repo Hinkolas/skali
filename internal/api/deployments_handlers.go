@@ -826,6 +826,7 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	var localsUnsupported *deploy.LocalApplicationsUnsupportedError
 	var unknownLocal *deploy.UnknownLocalApplicationError
 	var invalidIntercept *deploy.InvalidInterceptPortsError
+	var volumeShrink *deploy.VolumeShrinkError
 	var invalidValues *revision.ValuesError
 	var staleRevision *revision.SchemaError
 	var staleDefinition *compiler.UnsupportedDefinitionError
@@ -876,6 +877,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.As(err, &platformMismatch):
 		writeError(w, http.StatusUnprocessableEntity, codePlatformMismatch, trimDeployPrefix(err))
 	case errors.As(err, &localsUnsupported), errors.As(err, &unknownLocal), errors.As(err, &invalidIntercept):
+		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
+	case errors.As(err, &volumeShrink):
 		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &invalidValues):
 		writeError(w, http.StatusUnprocessableEntity, codeInvalidValues, invalidValues.Message)

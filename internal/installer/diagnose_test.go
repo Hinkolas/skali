@@ -301,6 +301,7 @@ func multiHomedHost(t *testing.T, coordinatorBound string) *host.Fake {
 	// thing wrong, which is what isolates the two scoped repairs.
 	active := map[string]bool{
 		"k3s.service": true, HostdAgentUnit: true, HostdCoordinatorUnit: true,
+		"iscsid": true,
 	}
 	fake.Handlers["systemctl"] = func(cmd host.Command) (host.Result, error) {
 		if len(cmd.Args) == 2 && active[cmd.Args[1]] {

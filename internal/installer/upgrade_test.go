@@ -160,10 +160,28 @@ func upgradeFake() *host.Fake {
 			}
 			return host.Result{}, nil
 		},
-		"systemctl": func(host.Command) (host.Result, error) {
+		// Everything reads active (iscsid included, so the storage
+		// prerequisites skip); multipathd is absent like on a typical
+		// cloud image.
+		"systemctl": func(cmd host.Command) (host.Result, error) {
+			if len(cmd.Args) == 2 && cmd.Args[1] == "multipathd" {
+				return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
+			}
 			return host.Result{Stdout: "active\n"}, nil
 		},
 	}}
+}
+
+// firstCommand returns the first recorded invocation of the named command.
+func firstCommand(t *testing.T, fake *host.Fake, name string) host.Command {
+	t.Helper()
+	for _, cmd := range fake.Commands {
+		if cmd.Name == name {
+			return cmd
+		}
+	}
+	t.Fatalf("no %q command was run", name)
+	return host.Command{}
 }
 
 func TestUpgradeK3sInvocation(t *testing.T) {
@@ -179,8 +197,7 @@ func TestUpgradeK3sInvocation(t *testing.T) {
 	require.NotContains(t, fake.FS, K3sRegistriesPath)
 	require.NotContains(t, fake.FS, K3sTokenPath)
 
-	script := fake.Commands[0]
-	require.Equal(t, "sh", script.Name)
+	script := firstCommand(t, fake, "sh")
 	require.Equal(t, []string{k3sInstallScriptPath}, script.Args)
 	require.Contains(t, script.Env, "INSTALL_K3S_VERSION="+K3sVersion)
 	for _, env := range script.Env {
@@ -204,8 +221,7 @@ func TestUpgradeK3sAgentInvocation(t *testing.T) {
 	}
 	require.NoError(t, UpgradeNode(context.Background(), fake, record, silentProgress{}))
 
-	script := fake.Commands[0]
-	require.Equal(t, "sh", script.Name)
+	script := firstCommand(t, fake, "sh")
 	require.Equal(t, []string{k3sInstallScriptPath, "agent"}, script.Args,
 		"the explicit agent argument selects the role; env selection would persist the token")
 

@@ -134,6 +134,11 @@ func HealNodePullCredential(ctx context.Context, runner host.Runner, restart boo
 // probes the installed version rather than the record.
 func UpgradeK3s(ctx context.Context, runner host.Runner, record *Record, progress Progress) error {
 	role := record.Node.Role
+	// Hosts installed before Longhorn shipped gain its prerequisites on
+	// their next upgrade, so the converge that follows finds ready nodes.
+	if err := EnsureStoragePrerequisites(ctx, runner, progress); err != nil {
+		return err
+	}
 	if err := upgradeK3s(ctx, runner, role, progress); err != nil {
 		return err
 	}

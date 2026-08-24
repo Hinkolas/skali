@@ -6,6 +6,7 @@
 	import type { BucketView, ServiceView } from '$lib/models/service';
 	import type { StatCardData } from '$lib/models/view';
 	import type { BucketConnection, BucketCredentials } from '$lib/types/connections';
+	import type { ServiceStorage } from '$lib/types/metrics';
 	import { formatBytes } from '$lib/format';
 	import { modal } from '$lib/stores/modal.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
@@ -22,12 +23,14 @@
 		service,
 		services,
 		connection,
-		envId
+		envId,
+		storage = null
 	}: {
 		service: BucketView;
 		services: ServiceView[];
 		connection: BucketConnection | null;
 		envId: string | null;
+		storage?: ServiceStorage | null;
 	} = $props();
 
 	let revealing = $state(false);
@@ -64,14 +67,33 @@
 		}
 	}
 
-	const stats = $derived.by((): StatCardData[] => [
-		{
+	// Measured bucket usage from the sampler when it exists; the declared
+	// quota stays the fallback and the denominator.
+	const usageStat = $derived.by((): StatCardData => {
+		const quota = service.config.storageQuotaBytes;
+		if (storage?.used_bytes != null) {
+			const parts = formatBytes(storage.used_bytes).split(' ');
+			return quota
+				? {
+						label: 'USED',
+						value: parts[0],
+						unit: `${parts[1]} / ${formatBytes(quota)}`,
+						progress: {
+							pct: Math.min(100, (storage.used_bytes / quota) * 100),
+							class: 'bg-service-storage'
+						}
+					}
+				: { label: 'USED', value: parts[0], unit: parts[1] };
+		}
+		return {
 			label: 'QUOTA',
-			value: service.config.storageQuotaBytes
-				? formatBytes(service.config.storageQuotaBytes)
-				: 'none',
+			value: quota ? formatBytes(quota) : 'none',
 			note: 'requested in skali.yaml'
-		},
+		};
+	});
+
+	const stats = $derived.by((): StatCardData[] => [
+		usageStat,
 		{ label: 'VISIBILITY', value: service.config.visibility },
 		{ label: 'VERSIONING', value: service.config.versioning },
 		{

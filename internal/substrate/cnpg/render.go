@@ -194,6 +194,41 @@ func RenderCredentialSecret(namespace, name, poolName, username, password string
 // in-cluster path; this Service exists only so host processes can reach the
 // pool, and it is never rendered on managed clusters. The selector mirrors
 // the one CNPG puts on its -rw Service.
+// MetricsPort is CNPG's built-in per-instance Prometheus exporter port;
+// the vendored operator enables it by default with the stock monitoring
+// queries (cnpg_pg_database_size_bytes included).
+const MetricsPort = 9187
+
+// MetricsServiceName names a pool's exporter Service.
+func MetricsServiceName(poolName string) string { return poolName + "-metrics" }
+
+// RenderMetricsService exposes the primary instance's built-in exporter
+// for the storage sampler's ServiceProxyDo scrape. Primary only: database
+// sizes are identical on replicas and the selector mirrors the NodePort
+// Service precedent.
+func RenderMetricsService(namespace, poolName string) *corev1.Service {
+	return &corev1.Service{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      MetricsServiceName(poolName),
+			Namespace: namespace,
+			Labels: map[string]string{
+				kubernetes.LabelPool: poolName,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"cnpg.io/cluster":      poolName,
+				"cnpg.io/instanceRole": "primary",
+			},
+			Ports: []corev1.ServicePort{{
+				Name: "metrics",
+				Port: MetricsPort,
+			}},
+		},
+	}
+}
+
 func RenderPrimaryNodePortService(namespace, poolName string, nodePort int32) *corev1.Service {
 	return &corev1.Service{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},

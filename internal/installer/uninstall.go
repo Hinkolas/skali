@@ -11,6 +11,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 
@@ -94,6 +96,7 @@ func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Clien
 	if err := stopBundleReconciler(ctx, client, progress); err != nil {
 		return err
 	}
+	confirmLonghornDeletion(ctx, client)
 
 	waves := [][]string{
 		inventory.ProjectNamespaces,
@@ -130,6 +133,31 @@ func UninstallBundle(ctx context.Context, runner host.Runner, client *kube.Clien
 	}
 	progress.Done("")
 	return nil
+}
+
+// confirmLonghornDeletion flips Longhorn's deleting-confirmation-flag
+// setting so its admission webhook stops blocking resource deletion and the
+// longhorn-system namespace terminates through the normal path instead of
+// the force-finalization escalation (which can strand host-side replica
+// data). Best-effort: pre-Longhorn installations and dev clusters have
+// neither the CRD nor the setting, and a failed flip only makes the
+// namespace wave slower, not wrong.
+func confirmLonghornDeletion(ctx context.Context, client *kube.Client) {
+	if client.Dynamic == nil {
+		return
+	}
+	settings := client.Dynamic.Resource(schema.GroupVersionResource{
+		Group: "longhorn.io", Version: "v1beta2", Resource: "settings",
+	}).Namespace("longhorn-system")
+	setting, err := settings.Get(ctx, "deleting-confirmation-flag", metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	setting = setting.DeepCopy()
+	if err := unstructured.SetNestedField(setting.Object, "true", "value"); err != nil {
+		return
+	}
+	_, _ = settings.Update(ctx, setting, metav1.UpdateOptions{})
 }
 
 // removePriorityClasses deletes the bundle's cluster-scoped PriorityClasses

@@ -74,6 +74,88 @@ func (q *Queries) AppMetricSeries(ctx context.Context, arg AppMetricSeriesParams
 	return items, nil
 }
 
+const currentProjectStorage = `-- name: CurrentProjectStorage :many
+SELECT DISTINCT ON (s.environment_id, s.service_key, s.kind)
+       s.environment_id, s.service_key, s.kind, s.sampled_at, s.used_bytes, s.capacity_bytes
+FROM metric_storage_samples s
+JOIN environments e ON e.id = s.environment_id
+WHERE e.project_id = $1 AND s.sampled_at >= $2::timestamptz
+ORDER BY s.environment_id, s.service_key, s.kind, s.sampled_at DESC
+`
+
+type CurrentProjectStorageParams struct {
+	ProjectID uuid.UUID
+	Since     time.Time
+}
+
+func (q *Queries) CurrentProjectStorage(ctx context.Context, arg CurrentProjectStorageParams) ([]MetricStorageSample, error) {
+	rows, err := q.db.Query(ctx, currentProjectStorage, arg.ProjectID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetricStorageSample
+	for rows.Next() {
+		var i MetricStorageSample
+		if err := rows.Scan(
+			&i.EnvironmentID,
+			&i.ServiceKey,
+			&i.Kind,
+			&i.SampledAt,
+			&i.UsedBytes,
+			&i.CapacityBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const currentStorageNodeSamples = `-- name: CurrentStorageNodeSamples :many
+SELECT DISTINCT ON (node_name) node_name, sampled_at, capacity_bytes, used_bytes,
+       available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes
+FROM metric_storage_node_samples
+WHERE sampled_at >= $1::timestamptz
+ORDER BY node_name, sampled_at DESC
+`
+
+// Current values, not series: the storage views show what is, and history
+// stays in the table for future charts. The since cutoff keeps a dead
+// sampler from serving stale numbers as current.
+func (q *Queries) CurrentStorageNodeSamples(ctx context.Context, since time.Time) ([]MetricStorageNodeSample, error) {
+	rows, err := q.db.Query(ctx, currentStorageNodeSamples, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetricStorageNodeSample
+	for rows.Next() {
+		var i MetricStorageNodeSample
+		if err := rows.Scan(
+			&i.NodeName,
+			&i.SampledAt,
+			&i.CapacityBytes,
+			&i.UsedBytes,
+			&i.AvailableBytes,
+			&i.VolumesBytes,
+			&i.DatabasesBytes,
+			&i.ObjectsBytes,
+			&i.ImagesBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteAgedAppMetricSamples = `-- name: DeleteAgedAppMetricSamples :execrows
 DELETE FROM metric_app_samples WHERE sampled_at < $1
 `
@@ -105,6 +187,30 @@ DELETE FROM metric_node_samples WHERE sampled_at < $1
 
 func (q *Queries) DeleteAgedNodeMetricSamples(ctx context.Context, sampledAt time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteAgedNodeMetricSamples, sampledAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteAgedStorageNodeSamples = `-- name: DeleteAgedStorageNodeSamples :execrows
+DELETE FROM metric_storage_node_samples WHERE sampled_at < $1
+`
+
+func (q *Queries) DeleteAgedStorageNodeSamples(ctx context.Context, sampledAt time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAgedStorageNodeSamples, sampledAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteAgedStorageSamples = `-- name: DeleteAgedStorageSamples :execrows
+DELETE FROM metric_storage_samples WHERE sampled_at < $1
+`
+
+func (q *Queries) DeleteAgedStorageSamples(ctx context.Context, sampledAt time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAgedStorageSamples, sampledAt)
 	if err != nil {
 		return 0, err
 	}
@@ -291,6 +397,97 @@ func (q *Queries) InsertNodeMetricSamples(ctx context.Context, arg InsertNodeMet
 		arg.MemoryBytes,
 		arg.CpuAllocatableMillicores,
 		arg.MemoryAllocatableBytes,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertStorageNodeSamples = `-- name: InsertStorageNodeSamples :execrows
+INSERT INTO metric_storage_node_samples (node_name, sampled_at, capacity_bytes, used_bytes, available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes)
+SELECT s.node_name, $1::timestamptz, s.capacity_bytes, s.used_bytes, s.available_bytes, s.volumes_bytes, s.databases_bytes, s.objects_bytes, s.images_bytes
+FROM (
+    SELECT unnest($2::text[])        AS node_name,
+           unnest($3::bigint[])  AS capacity_bytes,
+           unnest($4::bigint[])      AS used_bytes,
+           unnest($5::bigint[]) AS available_bytes,
+           unnest($6::bigint[])   AS volumes_bytes,
+           unnest($7::bigint[]) AS databases_bytes,
+           unnest($8::bigint[])   AS objects_bytes,
+           unnest($9::bigint[])    AS images_bytes
+) AS s
+ON CONFLICT DO NOTHING
+`
+
+type InsertStorageNodeSamplesParams struct {
+	SampledAt      time.Time
+	NodeNames      []string
+	CapacityBytes  []int64
+	UsedBytes      []int64
+	AvailableBytes []int64
+	VolumesBytes   []int64
+	DatabasesBytes []int64
+	ObjectsBytes   []int64
+	ImagesBytes    []int64
+}
+
+func (q *Queries) InsertStorageNodeSamples(ctx context.Context, arg InsertStorageNodeSamplesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertStorageNodeSamples,
+		arg.SampledAt,
+		arg.NodeNames,
+		arg.CapacityBytes,
+		arg.UsedBytes,
+		arg.AvailableBytes,
+		arg.VolumesBytes,
+		arg.DatabasesBytes,
+		arg.ObjectsBytes,
+		arg.ImagesBytes,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertStorageSamples = `-- name: InsertStorageSamples :execrows
+INSERT INTO metric_storage_samples (environment_id, service_key, kind, sampled_at, used_bytes, capacity_bytes)
+SELECT s.environment_id, s.service_key, s.kind, $1::timestamptz,
+       CASE WHEN s.used_measured THEN s.used_bytes END, s.capacity_bytes
+FROM (
+    SELECT unnest($2::uuid[]) AS environment_id,
+           unnest($3::text[])    AS service_key,
+           unnest($4::text[])           AS kind,
+           unnest($5::bigint[])    AS used_bytes,
+           unnest($6::bool[])   AS used_measured,
+           unnest($7::bigint[]) AS capacity_bytes
+) AS s
+WHERE EXISTS (SELECT 1 FROM environments e WHERE e.id = s.environment_id)
+ON CONFLICT DO NOTHING
+`
+
+type InsertStorageSamplesParams struct {
+	SampledAt      time.Time
+	EnvironmentIds []uuid.UUID
+	ServiceKeys    []string
+	Kinds          []string
+	UsedBytes      []int64
+	UsedMeasured   []bool
+	CapacityBytes  []int64
+}
+
+// used_bytes is nullable (unmeasurable app volumes); the companion
+// used_measured array carries the null flags because unnest has no way to
+// express NULL positions in a bigint array parameter.
+func (q *Queries) InsertStorageSamples(ctx context.Context, arg InsertStorageSamplesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertStorageSamples,
+		arg.SampledAt,
+		arg.EnvironmentIds,
+		arg.ServiceKeys,
+		arg.Kinds,
+		arg.UsedBytes,
+		arg.UsedMeasured,
+		arg.CapacityBytes,
 	)
 	if err != nil {
 		return 0, err

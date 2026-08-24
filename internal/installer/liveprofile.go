@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/bundle"
@@ -102,6 +103,11 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 	live := LayoutFromNodes(nodeList.Items, record.Cluster)
 	topology := live.Topology()
 
+	registryStorageClass, err := liveRegistryStorageClass(ctx, client)
+	if err != nil {
+		return profile, layout.Layout{}, err
+	}
+
 	canonical, err := record.CanonicalYAML()
 	if err != nil {
 		return profile, layout.Layout{}, err
@@ -126,10 +132,36 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 			DatabaseStorage:    DefaultDatabaseStorage,
 			RegistryStorage:    DefaultRegistryStorage,
 			RegistryNode:       record.RegistryNode,
-			WebImage:           webImage,
-			WebImageID:         webImageID,
-			InstallationRecord: canonical,
+			// Derived from the live topology exactly like Init, so the
+			// hash-match invariant holds by construction.
+			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
+			RegistryStorageClass: registryStorageClass,
+			WebImage:             webImage,
+			WebImageID:           webImageID,
+			InstallationRecord:   canonical,
 		},
 	}
 	return profile, live, nil
+}
+
+// liveRegistryStorageClass reads the registry claim's storage class so the
+// profile always renders the shape the cluster already has: the class is
+// immutable on an existing claim, and rendering anything else would wedge
+// every future converge on a rejected apply. The storage-migrate command
+// is the only sanctioned switch. An absent claim reads as the Longhorn
+// class (a fresh converge creates it there); any other live class reads as
+// the legacy local-path shape.
+func liveRegistryStorageClass(ctx context.Context, client *kube.Client) (string, error) {
+	claim, err := client.Clientset.CoreV1().PersistentVolumeClaims(bundle.Namespace).
+		Get(ctx, "skali-registry-data", metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return bundle.StorageClassName, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read registry volume claim: %w", err)
+	}
+	if claim.Spec.StorageClassName != nil && *claim.Spec.StorageClassName == bundle.StorageClassName {
+		return bundle.StorageClassName, nil
+	}
+	return "", nil
 }

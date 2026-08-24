@@ -253,6 +253,11 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 		return nil, failInstall(ctx, runner, record, node, log, err)
 	}
 
+	// Longhorn needs iscsid on every node that may attach a volume; the
+	// step is idempotent, so an install resume simply re-runs it.
+	if err := EnsureStoragePrerequisites(ctx, runner, progress); err != nil {
+		return nil, failInstall(ctx, runner, record, node, log, err)
+	}
 	if err := installK3sFiles(ctx, runner, node, progress); err != nil {
 		return nil, failInstall(ctx, runner, record, node, log, err)
 	}

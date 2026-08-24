@@ -13,9 +13,11 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
 
 var (
@@ -36,12 +38,25 @@ const (
 type Sampler struct {
 	Store *store.Store
 	Kube  *kube.Client
+	// DB resolves storage attribution (pools, tenants, claims, buckets);
+	// nil skips the database and bucket storage collectors.
+	DB *dbstore.Service
+	// Seaweed reads the object store's volume listing; nil skips the
+	// bucket storage collector.
+	Seaweed *seaweed.Client
+	// PlatformNamespace is where pools and seaweed live
+	// (substrate.Namespace); required for the storage collectors.
+	PlatformNamespace string
 	// Interval between samples; zero selects the 30s default.
 	Interval time.Duration
 	// Retention is the sample age cutoff; zero selects the 8 day default.
 	Retention time.Duration
 
-	lastPrune time.Time
+	lastPrune   time.Time
+	lastStorage time.Time
+	// poolMetricsUnavailable suppresses repeat logging per pool while its
+	// metrics Service is not applied yet.
+	poolMetricsUnavailable map[string]bool
 	// lastEdge holds the previous scrape's cumulative counters per Traefik
 	// router; deltas against it become the stored edge samples.
 	lastEdge map[string]routerCounters
@@ -80,6 +95,17 @@ func (s *Sampler) tick(ctx context.Context) {
 	}
 	if err := s.sampleEdge(tickCtx, now); err != nil && !errors.Is(err, context.Canceled) {
 		slog.WarnContext(ctx, "sample edge metrics", "err", err)
+	}
+	// Storage rides its own slower cadence and a wider timeout: one
+	// kubelet proxy per node plus one scrape per pool. Time-based rather
+	// than tick-counted, so a restart samples immediately.
+	if now.Sub(s.lastStorage) >= storageInterval {
+		s.lastStorage = now
+		storageCtx, cancelStorage := context.WithTimeout(ctx, storageTimeout)
+		if err := s.sampleStorage(storageCtx, now); err != nil && !errors.Is(err, context.Canceled) {
+			slog.WarnContext(ctx, "sample storage metrics", "err", err)
+		}
+		cancelStorage()
 	}
 	if now.Sub(s.lastPrune) >= pruneEvery {
 		s.lastPrune = now
@@ -259,7 +285,16 @@ func (s *Sampler) prune(ctx context.Context, now time.Time) {
 	if err != nil {
 		slog.WarnContext(ctx, "prune edge metric samples", "err", err)
 	}
-	if apps+nodes+edges > 0 {
-		slog.InfoContext(ctx, "pruned metric samples", "apps", apps, "nodes", nodes, "edges", edges)
+	storageNodes, err := s.Store.DeleteAgedStorageNodeSamples(ctx, cutoff)
+	if err != nil {
+		slog.WarnContext(ctx, "prune storage node samples", "err", err)
+	}
+	storageServices, err := s.Store.DeleteAgedStorageSamples(ctx, cutoff)
+	if err != nil {
+		slog.WarnContext(ctx, "prune storage samples", "err", err)
+	}
+	if apps+nodes+edges+storageNodes+storageServices > 0 {
+		slog.InfoContext(ctx, "pruned metric samples", "apps", apps, "nodes", nodes, "edges", edges,
+			"storage_nodes", storageNodes, "storage_services", storageServices)
 	}
 }

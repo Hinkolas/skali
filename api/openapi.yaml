@@ -1898,6 +1898,57 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/nodes/storage:
+    get:
+      operationId: getNodeStorage
+      summary: Get current node storage with category split
+      description: |
+        The newest storage sample per node: filesystem capacity, used, and
+        available bytes, plus the attributable category rollups
+        (application volumes, databases, object storage, container
+        images); the remainder up to `used_bytes` is the system share.
+        Database and object numbers are logical-size estimates. Empty
+        until the sampler has written a sample within the last hour.
+      tags: [status]
+      responses:
+        "200":
+          description: Current per-node storage.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodesStorage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/projects/{id}/storage:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getProjectStorage
+      summary: Get current per-service storage of a project
+      description: |
+        The newest storage footprint of every storage-consuming service
+        across the project's environments: application volumes (kind
+        `volume`), databases (kind `database`, logical sizes), and buckets
+        (kind `bucket`). `used_bytes` is null where usage is unmeasurable
+        (application volumes on installations without the replicated
+        storage class); `capacity_bytes` is the declared size or quota, 0
+        when unknown.
+      tags: [status]
+      responses:
+        "200":
+          description: Current per-service storage.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectStorage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/environments/{id}/metrics:
     parameters:
       - name: id
@@ -3973,6 +4024,81 @@ components:
               memory_bytes:
                 type: array
                 items: { type: integer, nullable: true }
+
+    NodesStorage:
+      type: object
+      description: |
+        The newest storage sample per node. Category bytes are the
+        attributable shares of `used_bytes`; `system_bytes` is the
+        clamped remainder. Databases and objects are logical-size
+        estimates and can overshoot on replicated pools.
+      required: [nodes]
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                name,
+                sampled_at,
+                capacity_bytes,
+                used_bytes,
+                available_bytes,
+                categories,
+              ]
+            properties:
+              name: { type: string }
+              sampled_at: { type: string, format: date-time }
+              capacity_bytes: { type: integer }
+              used_bytes: { type: integer }
+              available_bytes: { type: integer }
+              categories:
+                type: object
+                required:
+                  [
+                    volumes_bytes,
+                    databases_bytes,
+                    objects_bytes,
+                    images_bytes,
+                    system_bytes,
+                  ]
+                properties:
+                  volumes_bytes: { type: integer }
+                  databases_bytes: { type: integer }
+                  objects_bytes: { type: integer }
+                  images_bytes: { type: integer }
+                  system_bytes: { type: integer }
+
+    ProjectStorage:
+      type: object
+      description: |
+        The newest storage footprint per storage-consuming service of one
+        project. Database and bucket keys carry their status identity
+        prefixes (`databases.`, `buckets.`); application volumes use the
+        bare application key. `used_bytes` is null where unmeasurable.
+      required: [services]
+      properties:
+        services:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                environment_id,
+                service_key,
+                kind,
+                used_bytes,
+                capacity_bytes,
+                sampled_at,
+              ]
+            properties:
+              environment_id: { type: string, format: uuid }
+              service_key: { type: string }
+              kind: { type: string, enum: [volume, database, bucket] }
+              used_bytes: { type: integer, nullable: true }
+              capacity_bytes: { type: integer }
+              sampled_at: { type: string, format: date-time }
 
     Node:
       type: object
