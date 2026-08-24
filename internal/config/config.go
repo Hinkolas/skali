@@ -127,6 +127,12 @@ type API struct {
 	// labels.
 	ManagedCluster bool `env:"SKALI_MANAGED_CLUSTER,default=false"`
 
+	// StorageClass names the storage class application volume claims
+	// request. The bundle sets it to skali-app when the cluster runs the
+	// longhorn storage driver; empty keeps claims on the cluster default
+	// (local-path), which is both the dev shape and the local driver.
+	StorageClass string `env:"SKALI_STORAGE_CLASS,default="`
+
 	// CertManager reports that the installation runs cert-manager and the
 	// managed ClusterIssuer: routes render explicit Certificates, the
 	// kernel watches their issuance, and deploys gate on it. Local

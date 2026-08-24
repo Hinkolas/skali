@@ -28,9 +28,10 @@ func liveProfileRecord() *Record {
 			Name: "cp-1", Role: layout.RoleServer,
 			Capabilities: layout.Capabilities,
 		},
-		Endpoints: &Endpoints{API: "skali.e2e.test", Registry: "registry.skali.e2e.test"},
-		TLS:       &TLSConfig{IssuerEmail: "e2e@skali.e2e.test", ACMEServer: "https://acme.test/directory"},
-		Versions:  Versions{Installer: "0.0.0-dev", K3s: K3sVersion, Bundle: "0.0.0-dev"},
+		Endpoints:     &Endpoints{API: "skali.e2e.test", Registry: "registry.skali.e2e.test"},
+		TLS:           &TLSConfig{IssuerEmail: "e2e@skali.e2e.test", ACMEServer: "https://acme.test/directory"},
+		StorageDriver: bundle.StorageDriverLonghorn,
+		Versions:      Versions{Installer: "0.0.0-dev", K3s: K3sVersion, Bundle: "0.0.0-dev"},
 	}
 }
 
@@ -134,6 +135,7 @@ func TestLiveProfileHashStability(t *testing.T) {
 			DatabaseTier:    topology.DatabaseTier,
 			DatabaseStorage: DefaultDatabaseStorage,
 			RegistryStorage: DefaultRegistryStorage,
+			StorageDriver:   bundle.StorageDriverLonghorn,
 			StorageReplicas: layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
 			// No registry claim exists in the fake, so the profile selects
 			// the Longhorn shape, exactly like a fresh Init.
@@ -179,6 +181,17 @@ func TestLiveProfileRegistryStorageClass(t *testing.T) {
 	profile, _, err = LiveProfile(ctx, fakeClientWith(objects...), fake, liveProfileRecord())
 	require.NoError(t, err)
 	require.Equal(t, bundle.StorageClassName, profile.Production.RegistryStorageClass)
+
+	// A record without a storage driver reads as local: no skali-app
+	// registry shape even with the claim absent, and the profile carries
+	// the local driver.
+	legacyRecord := liveProfileRecord()
+	legacyRecord.StorageDriver = ""
+	profile, _, err = LiveProfile(ctx, fakeClientWith(liveProfileObjects()...), fake, legacyRecord)
+	require.NoError(t, err)
+	require.Equal(t, bundle.StorageDriverLocal, profile.Production.StorageDriver)
+	require.Empty(t, profile.Production.RegistryStorageClass,
+		"the local driver always keeps the legacy registry shape")
 }
 
 func TestLiveProfileRefusals(t *testing.T) {

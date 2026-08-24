@@ -1,10 +1,25 @@
 # Application storage
 
 Skali provisions a persistent volume for every `volumes` entry an
-application declares. On managed clusters those volumes live on Longhorn,
-a replicated block-storage layer the installer owns; declared sizes are
-enforced, usage is measurable, and a volume survives the loss of the node
-it was written on.
+application declares. Where those volumes live is a cluster-level choice
+made at initialization, the storage driver:
+
+- `local` (the default) keeps volumes on the k3s `local-path`
+  provisioner. Nothing extra runs on the cluster, which suits
+  installations whose state lives mostly in buckets and databases; the
+  trade-off is that declared sizes are not enforced, per-volume usage is
+  not measurable, volumes pin their pods to one node, and a lost node
+  disk means lost volume data.
+- `longhorn` deploys Longhorn, a replicated block-storage layer the
+  installer owns: declared sizes are enforced, usage is measurable, and a
+  volume survives the loss of the node it was written on. The cost is
+  Longhorn's operator footprint on every node.
+
+Pick it at init (`storage.driver` in init.yaml, the interactive prompt,
+or `skali cluster init --storage-driver longhorn`). A cluster on `local`
+can switch to `longhorn` at any time by re-running init with the flag;
+the reverse switch is not supported. The driver enum is also the seam for
+future provider-native drivers (for example hcloud-csi).
 
 ```yaml
 applications:
@@ -16,7 +31,7 @@ applications:
         size: 10GB
 ```
 
-## Where data lives
+## Where data lives (longhorn driver)
 
 | Data | Backing | Why |
 | --- | --- | --- |
@@ -24,6 +39,9 @@ applications:
 | Managed registry | Longhorn class `skali-app` | frees the registry from its node pin |
 | Managed databases (CNPG) | local disk (`local-path`) | postgres replicates at its own layer |
 | Object storage (SeaweedFS) | local disk (hostPath) | seaweed replicates at its own layer |
+
+Under the `local` driver every row reads `local-path` (the registry keeps
+its node pin), and the rest of this section does not apply.
 
 The `skali-app` StorageClass is rendered by the bundle and is never the
 cluster default; `local-path` keeps that role. Replicas per volume follow
@@ -42,28 +60,35 @@ Longhorn volumes attach over iSCSI. `skali cluster install` and
 `skali cluster upgrade` install `open-iscsi`, enable `iscsid`, and, where
 `multipathd` runs, write a blacklist at
 `/etc/multipath/conf.d/skali-longhorn.conf` so multipath never claims a
-Longhorn device. `skali cluster diagnose` checks all of this and
-`skali cluster repair` fixes it.
+Longhorn device. This happens under both drivers: the footprint is one
+small package and an idle daemon, and it keeps every host permanently
+ready so enabling longhorn later needs no per-host pass.
+`skali cluster diagnose` checks all of this and `skali cluster repair`
+fixes it.
 
 ## Resizing
 
 Volumes only grow. Raising `size` in the manifest expands the volume
 online on the next deploy; a deploy that shrinks a volume is refused up
-front with the volume named. On dev clusters (`local-path`) sizes cannot
-change at all; growth there is rejected by the cluster at apply time.
+front with the volume named. On `local-path` volumes (dev clusters and
+the `local` driver) sizes cannot change at all; growth there is rejected
+by the cluster at apply time.
 
-## Migrating an installation that predates Longhorn
+## Enabling longhorn on an existing cluster
 
-A cluster installed before Longhorn shipped keeps working untouched: the
-converge keeps rendering the legacy local-path shapes until each piece is
-migrated explicitly, because a claim's storage class is immutable.
+A cluster on the `local` driver (including any installation that predates
+the driver choice) keeps working untouched: the converge keeps rendering
+the legacy local-path shapes until each piece is migrated explicitly,
+because a claim's storage class is immutable.
 
 Order of operations:
 
-1. `skali cluster upgrade` on every node. This installs the host
-   prerequisites and the Longhorn operators. From this point, newly
-   created volumes (new apps, new environments) land on `skali-app`;
-   existing claims stay where they are.
+1. `skali cluster upgrade` on every node, so every host carries the
+   Longhorn prerequisites, then `skali cluster init --storage-driver
+   longhorn` on the server that maintains the bundle. The converge
+   installs the Longhorn operators and renders the `skali-app` class.
+   From this point, newly created volumes (new apps, new environments)
+   land on `skali-app`; existing claims stay where they are.
 2. `skali cluster storage-migrate` on the server that maintains the
    bundle. This recreates the registry volume on `skali-app` and drops
    the registry's node pin. Registry contents are discarded, not copied:

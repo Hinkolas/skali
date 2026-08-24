@@ -56,8 +56,14 @@ type Record struct {
 	// RegistryNode pins the installer-owned local registry volume to the
 	// hostname selected by the first reconciled initialization. Legacy
 	// records omit it and retain capability-only scheduling.
-	RegistryNode string   `yaml:"registryNode,omitempty"`
-	Versions     Versions `yaml:"versions"`
+	RegistryNode string `yaml:"registryNode,omitempty"`
+	// StorageDriver is the cluster-level application storage choice made
+	// at init: local keeps the k3s local-path provisioner, longhorn
+	// deploys replicated block storage with enforced volume sizes.
+	// Records written before the choice existed omit it and read as
+	// local.
+	StorageDriver string   `yaml:"storageDriver,omitempty"`
+	Versions      Versions `yaml:"versions"`
 	// Lifecycle is present while a managed host install is in progress or
 	// failed. Records written before lifecycle tracking omit it and are
 	// treated as complete.
@@ -106,6 +112,15 @@ func (r *Record) InstallComplete() bool {
 	return r != nil && (r.Lifecycle == nil ||
 		r.Lifecycle.Status == InstallStatusComplete ||
 		r.Lifecycle.Phase == InstallPhaseComplete)
+}
+
+// AppStorageDriver folds the pre-driver record default: anything but an
+// explicit longhorn choice reads as local.
+func (r *Record) AppStorageDriver() string {
+	if r != nil && r.StorageDriver == bundle.StorageDriverLonghorn {
+		return bundle.StorageDriverLonghorn
+	}
+	return bundle.StorageDriverLocal
 }
 
 func (r *Record) Reconciled() bool {
@@ -348,6 +363,7 @@ func (r *Record) CanonicalYAML() (string, error) {
 		Endpoints      *Endpoints  `yaml:"endpoints,omitempty"`
 		TLS            *TLSConfig  `yaml:"tls,omitempty"`
 		RegistryNode   string      `yaml:"registryNode,omitempty"`
+		StorageDriver  string      `yaml:"storageDriver,omitempty"`
 		Versions       Versions    `yaml:"versions"`
 	}
 	data, err := yaml.Marshal(canonicalRecord{
@@ -362,6 +378,7 @@ func (r *Record) CanonicalYAML() (string, error) {
 		Endpoints:      r.Endpoints,
 		TLS:            r.TLS,
 		RegistryNode:   r.RegistryNode,
+		StorageDriver:  r.StorageDriver,
 		Versions:       r.Versions,
 	})
 	if err != nil {

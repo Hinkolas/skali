@@ -39,6 +39,7 @@ func productionProfile() Profile {
 			DatabaseTier:       layout.TierSynchronous,
 			DatabaseStorage:    "10Gi",
 			RegistryStorage:    "20Gi",
+			StorageDriver:      StorageDriverLonghorn,
 			StorageReplicas:    3,
 			WebImage:           "ghcr.io/hinkolas/skali-web:v2.0.0",
 			InstallationRecord: "version: \"1\"\ninstallationId: 0f0f\ncluster: production\n",
@@ -399,9 +400,14 @@ func TestProductionProfileValidation(t *testing.T) {
 		"database tier":         func(p *Production) { p.DatabaseTier = "" },
 		"database storage size": func(p *Production) { p.DatabaseStorage = "" },
 		"registry storage size": func(p *Production) { p.RegistryStorage = "" },
+		"storage driver":        func(p *Production) { p.StorageDriver = "zfs" },
 		"storage replicas":      func(p *Production) { p.StorageReplicas = 0 },
 		"registry storage class": func(p *Production) {
 			p.RegistryStorageClass = "not-a-skali-class"
+		},
+		"registry storage class requires the longhorn storage driver": func(p *Production) {
+			p.StorageDriver = StorageDriverLocal
+			p.RegistryStorageClass = StorageClassName
 		},
 		"web image":           func(p *Production) { p.WebImage = "" },
 		"installation record": func(p *Production) { p.InstallationRecord = "" },

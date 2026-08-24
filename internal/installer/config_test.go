@@ -164,6 +164,34 @@ web:
 	require.Equal(t, "/root/skali-admin-password", config.Admin.PasswordFile)
 	require.Equal(t, "ghcr.io/hinkolas/skalid:v2.0.0", config.Skalid.Image)
 	require.Equal(t, "ghcr.io/hinkolas/skali-web:v2.0.0", config.Web.Image)
+	require.Empty(t, config.StorageDriver(), "an omitted storage block keeps the recorded driver")
+}
+
+func TestParseInitConfigStorageDriver(t *testing.T) {
+	t.Parallel()
+	base := `endpoints:
+  api: skali.example.com
+  registry: registry.example.com
+tls:
+  issuerEmail: ops@example.com
+admin:
+  email: a@example.com
+  passwordFile: /root/pw
+skalid:
+  image: skalid:dev
+web:
+  image: skali-web:dev
+`
+	config, err := ParseInitConfig([]byte(base + "storage:\n  driver: longhorn\n"))
+	require.NoError(t, err)
+	require.Equal(t, "longhorn", config.StorageDriver())
+
+	config, err = ParseInitConfig([]byte(base + "storage:\n  driver: local\n"))
+	require.NoError(t, err)
+	require.Equal(t, "local", config.StorageDriver())
+
+	_, err = ParseInitConfig([]byte(base + "storage:\n  driver: zfs\n"))
+	require.ErrorContains(t, err, "storage.driver must be local or longhorn")
 }
 
 func TestParseInitConfigRejections(t *testing.T) {

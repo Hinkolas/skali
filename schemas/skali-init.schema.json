@@ -69,6 +69,19 @@
       },
       "additionalProperties": false
     },
+    "storage": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "driver": {
+          "type": "string",
+          "description": "Application storage driver: local (default, k3s local-path, no replication or size enforcement) or longhorn (replicated block storage with enforced volume sizes). Empty keeps the recorded choice."
+        }
+      },
+      "additionalProperties": false
+    },
     "tls": {
       "type": "object",
       "required": [

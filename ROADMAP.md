@@ -114,8 +114,10 @@ Ordered loosely by how often I have wanted them.
 - [ ] More database engines (Valkey/Redis first, then whatever a real
       project needs).
 - [x] Persistent volumes for applications where a stateless port is not
-      realistic: Longhorn-backed on managed clusters (enforced sizes,
-      replication, node-loss survival); see docs/storage.md.
+      realistic: configurable storage driver, local-path by default and
+      Longhorn opt-in (enforced sizes, replication, node-loss survival);
+      the driver enum is the seam for provider-native drivers like
+      hcloud-csi later; see docs/storage.md.
 - [ ] Templates / examples catalog and Compose import.
 - [ ] LAN / HTTP-only installation profile for home and office clusters.
 - [ ] Notifications (deploy finished, run failed) to chat/webhook.

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
@@ -126,7 +127,7 @@ func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly boo
 		return nil
 	}
 	fmt.Fprintln(out)
-	return runInteractiveInit(ctx, out, reader, record, nil)
+	return runInteractiveInit(ctx, out, reader, record, nil, "")
 }
 
 // runInteractiveJoinFlow enrolls this host into an existing cluster in
@@ -289,8 +290,8 @@ func promptCapabilities(ctx context.Context, out *os.File, reader *bufio.Reader)
 // account only after skalid is ready (the engine calls Admin at exactly
 // that point).
 func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
-	record *installer.Record, asserted *layout.Layout) error {
-	opts := installer.InitOptions{Out: out, Layout: asserted}
+	record *installer.Record, asserted *layout.Layout, storageDriver string) error {
+	opts := installer.InitOptions{Out: out, Layout: asserted, StorageDriver: storageDriver}
 	if err := seedInitInputs(reader, true, record, &opts); err != nil {
 		return err
 	}
@@ -424,6 +425,24 @@ func seedInitInputs(reader *bufio.Reader, promptAllowed bool,
 		if err != nil {
 			return err
 		}
+	}
+	if opts.StorageDriver == "" && record.StorageDriver == "" &&
+		record.Endpoints == nil && promptAllowed {
+		// Asked only on a fresh initialization: existing clusters keep
+		// their recorded driver, and enabling longhorn later goes through
+		// init --storage-driver longhorn. local stays lean (k3s
+		// local-path, no size enforcement); longhorn replicates
+		// application volumes and enforces declared sizes at the cost of
+		// its operator footprint.
+		answer, err := cliprompt.LineDefault(reader,
+			"  storage driver (local or longhorn) [local]: ", bundle.StorageDriverLocal)
+		if err != nil {
+			return err
+		}
+		if answer != bundle.StorageDriverLocal && answer != bundle.StorageDriverLonghorn {
+			return fmt.Errorf("storage driver must be local or longhorn, got %q", answer)
+		}
+		opts.StorageDriver = answer
 	}
 	return nil
 }

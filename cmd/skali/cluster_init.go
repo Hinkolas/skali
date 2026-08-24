@@ -16,7 +16,7 @@ import (
 )
 
 func newClusterInitCmd() *cobra.Command {
-	var configPath, layoutPath string
+	var configPath, layoutPath, storageDriver string
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Skali on the joined cluster (run once on a server)",
@@ -64,7 +64,7 @@ func newClusterInitCmd() *cobra.Command {
 				}
 				banner(out)
 				reader := bufio.NewReader(os.Stdin)
-				return runInteractiveInit(ctx, out, reader, detected.Record, asserted)
+				return runInteractiveInit(ctx, out, reader, detected.Record, asserted, storageDriver)
 			}
 
 			data, err := os.ReadFile(configPath)
@@ -94,11 +94,15 @@ func newClusterInitCmd() *cobra.Command {
 				WebImage:      config.Web.Image,
 				WebImageID:    config.Web.ImageID,
 				Layout:        asserted,
+				StorageDriver: config.StorageDriver(),
 				Admin: func(context.Context) (string, string, error) {
 					return config.Admin.Email, adminPassword, nil
 				},
 				Progress: progress,
 				Out:      out,
+			}
+			if storageDriver != "" {
+				opts.StorageDriver = storageDriver
 			}
 			if err := installer.ValidateInitOptions(opts); err != nil {
 				progress.Abort()
@@ -166,5 +170,7 @@ func newClusterInitCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "non-interactive init configuration (init.yaml)")
 	cmd.Flags().StringVar(&layoutPath, "layout", "", "cluster-layout document asserting the expected membership")
+	cmd.Flags().StringVar(&storageDriver, "storage-driver", "",
+		"application storage driver: local (default) or longhorn; re-run init with longhorn to enable it on an existing cluster")
 	return cmd
 }

@@ -71,10 +71,13 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	if err := applier.ApplyManifest(ctx, CNPGManifest()); err != nil {
 		return err
 	}
+	longhorn := production != nil && production.StorageDriver == StorageDriverLonghorn
 	if production != nil {
 		if err := applier.ApplyManifest(ctx, CertManagerManifest()); err != nil {
 			return err
 		}
+	}
+	if longhorn {
 		// Longhorn rides the operators stage. The disk labels precede the
 		// manifest so the first manager start already sees which nodes
 		// hold replica data (fresh nodes get the label at registration;
@@ -107,6 +110,9 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 				return err
 			}
 		}
+		operators = cnpgDetail + ", cert-manager " + CertManagerVersion + ", Traefik (k3s)"
+	}
+	if longhorn {
 		// A first install pulls over a gigabyte of Longhorn images;
 		// narrate the wait so a quiet console is not mistaken for a hang.
 		progress.Note("waiting for Longhorn (a first install pulls its images)")
@@ -130,7 +136,7 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	}
 	progress.Done(operators)
 
-	if production != nil {
+	if longhorn {
 		progress.Start("Apply storage class")
 		err := applier.ApplyObjects(ctx, objects.Storage)
 		if err != nil && apierrors.IsInvalid(err) {

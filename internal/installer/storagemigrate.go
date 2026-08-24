@@ -38,6 +38,10 @@ func MigrateRegistryStorage(ctx context.Context, client *kube.Client, runner hos
 		published.Node.Name != "" && published.Node.Name != record.Node.Name {
 		return fmt.Errorf("the bundle is maintained on %s; run the migration there", published.Node.Name)
 	}
+	if record.AppStorageDriver() != bundle.StorageDriverLonghorn {
+		return errors.New("this cluster uses the local storage driver; the registry migration " +
+			"requires longhorn (enable it with skali cluster init --storage-driver longhorn)")
+	}
 	if _, err := client.Clientset.StorageV1().StorageClasses().Get(ctx, bundle.StorageClassName, metav1.GetOptions{}); err != nil {
 		return fmt.Errorf("the %s storage class is not installed; run skali cluster upgrade first", bundle.StorageClassName)
 	}

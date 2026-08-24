@@ -133,3 +133,42 @@ func TestLonghornHashProperties(t *testing.T) {
 	require.True(t, strings.Contains(manifest, "longhornio/longhorn-manager:v"+LonghornVersion),
 		"the exported version pin must match the vendored manifest")
 }
+
+// localDriverProfile is the production fixture on the local storage
+// driver: the lean shape that never deploys Longhorn.
+func localDriverProfile() Profile {
+	profile := productionProfile()
+	profile.Production.StorageDriver = StorageDriverLocal
+	return profile
+}
+
+// TestLocalStorageDriver pins the lean shape: no skali-app class, no
+// Longhorn hash input, no storage class handed to skalid, and the legacy
+// registry shape enforced.
+func TestLocalStorageDriver(t *testing.T) {
+	t.Parallel()
+	local := localDriverProfile()
+	require.Empty(t, storageYAML(local), "the local driver renders no storage class")
+	objects, err := Render(local)
+	require.NoError(t, err)
+	require.Empty(t, objects.Storage)
+
+	// The driver choice must move the hash (the manifest, the storage
+	// stage, and the skalid env all differ), and the local hash must not
+	// depend on the vendored Longhorn manifest.
+	require.NotEqual(t, Hash(productionProfile()), Hash(local))
+
+	longhornEnv := skalidYAML(productionProfile())
+	require.Contains(t, longhornEnv, "SKALI_STORAGE_CLASS")
+	require.Contains(t, longhornEnv, StorageClassName)
+	localEnv := skalidYAML(local)
+	require.NotContains(t, localEnv, "SKALI_STORAGE_CLASS",
+		"local-driver claims keep the cluster default class")
+
+	// The registry stays on its legacy shape under the local driver;
+	// selecting the Longhorn class without the driver is a profile error.
+	invalid := localDriverProfile()
+	invalid.Production.RegistryStorageClass = StorageClassName
+	_, err = Render(invalid)
+	require.ErrorContains(t, err, "requires the longhorn storage driver")
+}

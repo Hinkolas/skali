@@ -103,7 +103,8 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 	live := LayoutFromNodes(nodeList.Items, record.Cluster)
 	topology := live.Topology()
 
-	registryStorageClass, err := liveRegistryStorageClass(ctx, client)
+	storageDriver := record.AppStorageDriver()
+	registryStorageClass, err := liveRegistryStorageClass(ctx, client, storageDriver)
 	if err != nil {
 		return profile, layout.Layout{}, err
 	}
@@ -132,6 +133,7 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 			DatabaseStorage:    DefaultDatabaseStorage,
 			RegistryStorage:    DefaultRegistryStorage,
 			RegistryNode:       record.RegistryNode,
+			StorageDriver:      storageDriver,
 			// Derived from the live topology exactly like Init, so the
 			// hash-match invariant holds by construction.
 			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
@@ -148,10 +150,14 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 // profile always renders the shape the cluster already has: the class is
 // immutable on an existing claim, and rendering anything else would wedge
 // every future converge on a rejected apply. The storage-migrate command
-// is the only sanctioned switch. An absent claim reads as the Longhorn
-// class (a fresh converge creates it there); any other live class reads as
-// the legacy local-path shape.
-func liveRegistryStorageClass(ctx context.Context, client *kube.Client) (string, error) {
+// is the only sanctioned switch. Under the longhorn driver an absent claim
+// reads as the Longhorn class (a fresh converge creates it there); under
+// the local driver, and for any other live class, it reads as the legacy
+// local-path shape.
+func liveRegistryStorageClass(ctx context.Context, client *kube.Client, storageDriver string) (string, error) {
+	if storageDriver != bundle.StorageDriverLonghorn {
+		return "", nil
+	}
 	claim, err := client.Clientset.CoreV1().PersistentVolumeClaims(bundle.Namespace).
 		Get(ctx, "skali-registry-data", metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {

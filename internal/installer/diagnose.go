@@ -337,9 +337,9 @@ func diagnoseKubernetes(ctx context.Context, client *kube.Client, diagnosis *Dia
 
 // diagnoseStorageSystem checks the Longhorn control plane once it is
 // installed: the manager daemon set on every scheduled node and the CSI
-// provisioner that actually binds claims. A cluster whose bundle predates
-// Longhorn has no longhorn-system namespace and is skipped silently; the
-// next upgrade converge installs it.
+// provisioner that actually binds claims. A cluster on the local storage
+// driver (or whose bundle predates Longhorn) has no longhorn-system
+// namespace and is skipped silently.
 func diagnoseStorageSystem(ctx context.Context, client *kube.Client, diagnosis *Diagnosis,
 	suggest func(string)) {
 	if _, err := client.Clientset.CoreV1().Namespaces().Get(ctx, "longhorn-system", metav1.GetOptions{}); err != nil {

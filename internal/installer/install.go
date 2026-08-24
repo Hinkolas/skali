@@ -253,8 +253,12 @@ func Install(ctx context.Context, runner host.Runner, opts InstallOptions) (*Rec
 		return nil, failInstall(ctx, runner, record, node, log, err)
 	}
 
-	// Longhorn needs iscsid on every node that may attach a volume; the
-	// step is idempotent, so an install resume simply re-runs it.
+	// Longhorn needs iscsid on every node that may attach a volume. The
+	// prerequisites are installed regardless of the storage driver: they
+	// are a tiny idempotent footprint (one package, one idle daemon), and
+	// keeping every host permanently ready means enabling longhorn later
+	// is a plain re-init with no per-host pass. An install resume simply
+	// re-runs the step.
 	if err := EnsureStoragePrerequisites(ctx, runner, progress); err != nil {
 		return nil, failInstall(ctx, runner, record, node, log, err)
 	}

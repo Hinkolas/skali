@@ -110,6 +110,10 @@ type Config struct {
 	// ManagedCluster pins application pods to application-capable nodes.
 	// Local development leaves it false.
 	ManagedCluster bool
+	// StorageClass names the class application volume claims request;
+	// empty keeps the cluster default. The installer sets it only when
+	// the cluster runs the longhorn storage driver.
+	StorageClass string
 	// Certificates renders explicit cert-manager Certificates for TLS
 	// routes and gates rollout health on their issuance. Local development
 	// leaves it false: no cert-manager, HTTP-only edge.

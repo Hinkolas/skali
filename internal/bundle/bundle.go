@@ -46,14 +46,23 @@ const (
 	// one megabyte of CLI weight buys one shared bundle package.
 	CertManagerVersion = "1.21.1"
 	// LonghornVersion pins the vendored Longhorn release; applied only
-	// under a production profile. Dev clusters keep every claim on the
-	// k3d default local-path class.
+	// when a production profile selects the longhorn storage driver. Dev
+	// clusters keep every claim on the k3d default local-path class.
 	LonghornVersion = "1.12.1"
+	// StorageDriverLocal keeps application volumes on the k3s local-path
+	// provisioner: no replication, no enforced sizes, and no extra
+	// operator footprint. StorageDriverLonghorn deploys Longhorn and
+	// places application volumes (and, after migration, the registry) on
+	// the skali-app class. The choice is cluster-level, made at init, and
+	// recorded in the installation record; local never deploys Longhorn.
+	StorageDriverLocal    = "local"
+	StorageDriverLonghorn = "longhorn"
 	// StorageClassName is the skali-owned Longhorn storage class managed
-	// clusters place application volumes and the registry volume on. It is
-	// never the cluster default: CNPG and seaweed replicate at their own
-	// layer and stay on local-path, so everything that wants replicated
-	// storage names this class explicitly.
+	// clusters place application volumes and the registry volume on when
+	// the longhorn driver is selected. It is never the cluster default:
+	// CNPG and seaweed replicate at their own layer and stay on
+	// local-path, so everything that wants replicated storage names this
+	// class explicitly.
 	StorageClassName = "skali-app"
 	RegistryImage      = "registry:2.8.3"
 	// RegistryNodePort is the stable node port the host maps its loopback
@@ -124,7 +133,8 @@ func CertManagerManifest() []byte { return certManagerManifest }
 var longhornManifest []byte
 
 // LonghornManifest is the pinned Longhorn install manifest; applied only
-// under a production profile. Two byte-patches keep upstream defaults from
+// when the production profile selects the longhorn storage driver. Two
+// byte-patches keep upstream defaults from
 // ever reaching the cluster: the shipped longhorn storage class must not
 // become the cluster default (local-path keeps that role for CNPG, seaweed,
 // and skali-db), and default disk creation is confined to nodes labeled
@@ -217,8 +227,17 @@ type Production struct {
 	// RegistryStorageClass) still consumes it; the field stays in the
 	// record so upgraded installations round-trip without a migration.
 	RegistryNode string
+	// StorageDriver selects the application storage layer:
+	// StorageDriverLocal keeps the k3s local-path provisioner and never
+	// deploys Longhorn; StorageDriverLonghorn deploys it and renders the
+	// skali-app class. Both Init and LiveProfile read it from the
+	// installation record, so converge always renders what the cluster
+	// was initialized with.
+	StorageDriver string
 	// StorageReplicas sizes the skali-app Longhorn storage class:
-	// min(3, application-capable nodes), never below 1.
+	// min(3, application-capable nodes), never below 1. Derived from the
+	// live topology under both drivers so the profile hash stays stable
+	// across a later driver switch.
 	StorageReplicas int
 	// RegistryStorageClass selects the registry volume shape. Empty
 	// renders the legacy local-path shape with the RegistryNode hostname
@@ -266,10 +285,14 @@ func (p *Production) validate() error {
 		return errors.New("bundle: production profile: database storage size is required")
 	case p.RegistryStorage == "":
 		return errors.New("bundle: production profile: registry storage size is required")
+	case p.StorageDriver != StorageDriverLocal && p.StorageDriver != StorageDriverLonghorn:
+		return errors.New("bundle: production profile: storage driver must be local or longhorn")
 	case p.StorageReplicas < 1 || p.StorageReplicas > 3:
 		return errors.New("bundle: production profile: storage replicas must be between 1 and 3")
 	case p.RegistryStorageClass != "" && p.RegistryStorageClass != StorageClassName:
 		return errors.New("bundle: production profile: unknown registry storage class")
+	case p.RegistryStorageClass != "" && p.StorageDriver != StorageDriverLonghorn:
+		return errors.New("bundle: production profile: the registry storage class requires the longhorn storage driver")
 	case p.WebImage == "":
 		return errors.New("bundle: production profile: web image is required")
 	case p.InstallationRecord == "":
@@ -295,7 +318,8 @@ type Objects struct {
 	// every pod the bundle and skalid render.
 	Priority []unstructured.Unstructured
 	// Storage is the skali-app Longhorn storage class (requires the
-	// Longhorn operators); empty under the local profile.
+	// Longhorn operators); empty under the local profile and the local
+	// storage driver.
 	Storage []unstructured.Unstructured
 	// Issuer is the ACME ClusterIssuer named skali (requires
 	// cert-manager); empty under the local profile.
@@ -394,9 +418,11 @@ func Hash(profile Profile) string {
 	sources := stageSources(profile)
 	if profile.Production != nil {
 		digest.Write(certManagerManifest)
-		// The patched Longhorn manifest, exactly what ApplyManifest
-		// applies under production.
-		digest.Write(LonghornManifest())
+		if profile.Production.StorageDriver == StorageDriverLonghorn {
+			// The patched Longhorn manifest, exactly what ApplyManifest
+			// applies under the longhorn driver.
+			digest.Write(LonghornManifest())
+		}
 		sources[len(sources)-1] = ""
 	}
 	for _, source := range sources {
@@ -477,7 +503,7 @@ description: Applications of normal priority environments; yield to high priorit
 // class exists, so a replica-count change during converge means delete and
 // re-apply; volumes keep the replica count they were created with.
 func storageYAML(profile Profile) string {
-	if profile.Production == nil {
+	if profile.Production == nil || profile.Production.StorageDriver != StorageDriverLonghorn {
 		return ""
 	}
 	return fmt.Sprintf(`apiVersion: storage.k8s.io/v1
@@ -913,6 +939,12 @@ spec:
 		}
 		capabilitiesEnv += "\n            - name: SKALI_MANAGED_CLUSTER\n              value: \"true\"" +
 			"\n            - name: SKALI_CERT_MANAGER\n              value: \"true\""
+		if production.StorageDriver == StorageDriverLonghorn {
+			// Application volume claims name the replicated class; under
+			// the local driver the variable stays unset and claims keep
+			// the cluster default.
+			capabilitiesEnv += "\n            - name: SKALI_STORAGE_CLASS\n              value: " + StorageClassName
+		}
 		// The shared redirect-https Middleware rides the registry stage,
 		// which converges first; both platform -http routers reference it.
 		edgeSuffix = fmt.Sprintf(`---

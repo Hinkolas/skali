@@ -48,6 +48,12 @@ type InitOptions struct {
 	// durable placement choice. Empty retains legacy capability-only
 	// placement.
 	RegistryNode string
+	// StorageDriver selects the application storage layer:
+	// bundle.StorageDriverLocal or bundle.StorageDriverLonghorn. Empty
+	// keeps the record's current driver (local on a fresh installation),
+	// so headless re-runs and upgrades never flip the choice. Switching
+	// an existing cluster from longhorn back to local is refused.
+	StorageDriver string
 	// Layout optionally asserts the expected membership; init refuses when
 	// the joined nodes do not match it.
 	Layout *layout.Layout
@@ -182,11 +188,27 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if err != nil {
 		return fail(err)
 	}
-	// Fresh clusters are Longhorn-native from the first converge (the claim
-	// is absent, so this reads as the Longhorn class); a re-run over an
-	// interrupted init keeps whatever shape the claim already has, exactly
-	// like LiveProfile.
-	registryStorageClass, err := liveRegistryStorageClass(ctx, client)
+	// The storage driver defaults to the record so a re-run or upgrade
+	// never flips the choice; an explicit option enables longhorn on an
+	// existing cluster (the converge below installs it). The reverse
+	// switch is refused: converge never uninstalls Longhorn, and volumes
+	// already on the skali-app class would strand.
+	storageDriver := opts.StorageDriver
+	if storageDriver == "" {
+		storageDriver = record.AppStorageDriver()
+	}
+	if record.AppStorageDriver() == bundle.StorageDriverLonghorn &&
+		storageDriver == bundle.StorageDriverLocal {
+		return fail(errors.New("this cluster uses the longhorn storage driver; " +
+			"switching back to local is not supported"))
+	}
+
+	// Fresh longhorn clusters are Longhorn-native from the first converge
+	// (the claim is absent, so this reads as the Longhorn class); a re-run
+	// over an interrupted init keeps whatever shape the claim already has,
+	// exactly like LiveProfile. Under the local driver the registry always
+	// keeps the legacy local-path shape.
+	registryStorageClass, err := liveRegistryStorageClass(ctx, client, storageDriver)
 	if err != nil {
 		return fail(err)
 	}
@@ -197,6 +219,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	record.Endpoints = &Endpoints{API: opts.Endpoints.API, Registry: opts.Endpoints.Registry, S3: opts.Endpoints.S3}
 	record.TLS = &TLSConfig{IssuerEmail: opts.TLS.IssuerEmail, ACMEServer: opts.TLS.ACMEServer}
 	record.RegistryNode = opts.RegistryNode
+	record.StorageDriver = storageDriver
 	record.Versions.Bundle = version.Version
 	record.Versions.Installer = version.Version
 	canonical, err := record.CanonicalYAML()
@@ -223,6 +246,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 			DatabaseStorage:      DefaultDatabaseStorage,
 			RegistryStorage:      DefaultRegistryStorage,
 			RegistryNode:         opts.RegistryNode,
+			StorageDriver:        storageDriver,
 			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
 			RegistryStorageClass: registryStorageClass,
 			WebImage:             opts.WebImage,
@@ -293,6 +317,12 @@ func ValidateInitOptions(opts InitOptions) error {
 	}
 	if opts.Admin == nil && !opts.SkipAdmin {
 		return errors.New("init requires admin credentials")
+	}
+	switch opts.StorageDriver {
+	case "", bundle.StorageDriverLocal, bundle.StorageDriverLonghorn:
+	default:
+		return fmt.Errorf("storage driver must be %s or %s, got %q",
+			bundle.StorageDriverLocal, bundle.StorageDriverLonghorn, opts.StorageDriver)
 	}
 	domains := map[string]string{
 		"api/ui": opts.Endpoints.API, "registry": opts.Endpoints.Registry,

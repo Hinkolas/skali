@@ -275,6 +275,7 @@ func runServe() error {
 		RolloutDeadline: cfg.RolloutDeadline,
 		StaleThreshold:  cfg.StaleThreshold,
 		ManagedCluster:  cfg.ManagedCluster,
+		StorageClass:    cfg.StorageClass,
 		Certificates:    cfg.CertManager,
 	}
 	kernel = reconcile.New(kernelDeps, reconcileCfg)

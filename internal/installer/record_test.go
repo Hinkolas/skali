@@ -111,6 +111,16 @@ func TestRecordCanonicalYAML(t *testing.T) {
 	second, err := record.CanonicalYAML()
 	require.NoError(t, err)
 	require.Equal(t, first, second)
+
+	// The storage driver is a bundle-hash input: absent on legacy records
+	// (reading as local), present once init records a choice.
+	require.NotContains(t, first, "storageDriver")
+	require.Equal(t, "local", record.AppStorageDriver())
+	record.StorageDriver = "longhorn"
+	require.Equal(t, "longhorn", record.AppStorageDriver())
+	stamped, err := record.CanonicalYAML()
+	require.NoError(t, err)
+	require.Contains(t, stamped, "storageDriver: longhorn")
 }
 
 // Agent records keep their enrollment bookkeeping across save and load.

@@ -267,6 +267,8 @@ skalid:
   image: skalid:dev
 web:
   image: skali-web:dev
+storage:
+  driver: longhorn
 `, passwordFile))
 	// The tar flags import both images into the node's containerd during
 	// init.

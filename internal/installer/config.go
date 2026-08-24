@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
@@ -90,11 +91,28 @@ type VMConfig struct {
 // InitConfig is the cluster initialization configuration (init.yaml)
 // consumed by `skali cluster init --config`.
 type InitConfig struct {
-	Endpoints EndpointsConfig `yaml:"endpoints" json:"endpoints"`
-	TLS       TLSInitConfig   `yaml:"tls" json:"tls"`
-	Admin     AdminConfig     `yaml:"admin" json:"admin"`
-	Skalid    SkalidConfig    `yaml:"skalid" json:"skalid"`
-	Web       WebConfig       `yaml:"web" json:"web"`
+	Endpoints EndpointsConfig   `yaml:"endpoints" json:"endpoints"`
+	TLS       TLSInitConfig     `yaml:"tls" json:"tls"`
+	Admin     AdminConfig       `yaml:"admin" json:"admin"`
+	Skalid    SkalidConfig      `yaml:"skalid" json:"skalid"`
+	Web       WebConfig         `yaml:"web" json:"web"`
+	Storage   *StorageInitConfig `yaml:"storage,omitempty" json:"storage,omitempty"`
+}
+
+// StorageDriver folds the optional storage block: empty keeps the
+// recorded driver.
+func (c *InitConfig) StorageDriver() string {
+	if c.Storage != nil {
+		return c.Storage.Driver
+	}
+	return ""
+}
+
+// StorageInitConfig selects the application storage layer.
+type StorageInitConfig struct {
+	// Driver is local or longhorn. Empty keeps the cluster's recorded
+	// driver, local on a fresh installation.
+	Driver string `yaml:"driver,omitempty" json:"driver,omitempty" jsonschema:"Application storage driver: local (default, k3s local-path, no replication or size enforcement) or longhorn (replicated block storage with enforced volume sizes). Empty keeps the recorded choice."`
 }
 
 // EndpointsConfig declares the public domains.
@@ -245,6 +263,14 @@ func ParseInitConfig(data []byte) (*InitConfig, error) {
 	}
 	if config.Web.Image == "" {
 		return nil, errors.New("init config: web.image is required")
+	}
+	if config.Storage != nil {
+		switch config.Storage.Driver {
+		case "", bundle.StorageDriverLocal, bundle.StorageDriverLonghorn:
+		default:
+			return nil, fmt.Errorf("init config: storage.driver must be %s or %s, got %q",
+				bundle.StorageDriverLocal, bundle.StorageDriverLonghorn, config.Storage.Driver)
+		}
 	}
 	return &config, nil
 }
