@@ -175,7 +175,14 @@ func TestVersionOlder(t *testing.T) {
 		{"v0.2.0", "v0.10.0", true}, // numeric, not lexical
 		{"0.1.0", "v0.2.0", true},   // leading v optional
 		{"v0.9.9", "v1.0.0", true},
-		{"weird", "v0.2.0", false}, // unjudgeable versions never report drift
+		{"v0.2.0-rc.1", "v0.2.0", true}, // prerelease precedes its release
+		{"v0.2.0", "v0.2.0-rc.1", false},
+		{"v0.2.0-rc.1", "v0.2.0-rc.2", true},
+		{"v0.2.0-beta.3", "v0.2.0-rc.1", true},
+		{"v0.2.0-rc1", "v0.2.0-rc.2", true}, // dot optional
+		{"v0.2.0-rc.1", "v0.3.0-alpha.1", true},
+		{"v0.2.0-3-gabc1234", "v0.2.0", false}, // git describe is not comparable
+		{"weird", "v0.2.0", false},             // unjudgeable versions never report drift
 		{"v0.1.0", "weird", false},
 		{"", "v0.2.0", false},
 	}

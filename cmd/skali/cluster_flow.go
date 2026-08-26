@@ -22,9 +22,12 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-// releaseVersionPattern matches release-shaped installer versions (vX.Y.Z,
-// no prerelease or dev suffix); only those have a published skalid image.
-var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+// releaseVersionPattern matches versions a tagged release produces:
+// vX.Y.Z, optionally with an alpha, beta, or rc prerelease (v0.1.0-rc.1);
+// only those have published images. The prerelease shape is deliberately
+// narrow so git-describe dev versions (v0.1.0-3-gabc1234, -dirty) never
+// match and keep resolving to the working tree.
+var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$`)
 
 // runInteractiveFreshFlow drives the transcript's fresh single-node
 // conversation: seed identity and capabilities, the k3s/coordinator

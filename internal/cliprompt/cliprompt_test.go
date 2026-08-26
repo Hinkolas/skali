@@ -3,6 +3,7 @@ package cliprompt
 import (
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -176,57 +177,87 @@ func TestPlainOutputHasNoANSI(t *testing.T) {
 	require.NotContains(t, out.String(), "\x1b[")
 }
 
-// KNOWN FAILURE: this test panics inside charm.land/huh/v2 v2.0.3 with
-// "interface conversion: tea.Model is nil, not compat.ViewModel". The
-// terminal() helper feeds huh a fake reader/writer pair instead of a real
-// PTY; when bubbletea fails to start on that input it returns a nil model,
-// and huh's Form.run (form.go:708) type-asserts the model before checking
-// the error, masking the real failure with a panic. v2.0.3 is the newest
-// huh release, so there is no fix to pull yet. Options when this needs to
-// go green: drive these cases through a real PTY like the tests at the
-// bottom of this file, patch huh with a replace directive, or bump huh
-// once a release checks the error first.
-func TestTerminalTextEditingKeys(t *testing.T) {
-	t.Run("home end and backspace", func(t *testing.T) {
-		session, _, ctx, cancel := terminal("roduction\x1b[Hp\x1b[F!\x7f\r")
-		defer cancel()
+// ptyPrompt runs one prompt on a real pseudo-terminal: it types the input
+// once the prompt has taken the terminal over (raw mode changes the slave's
+// state) and returns the prompt's result. The fake reader/writer pair of
+// terminal() cannot drive text editing: bubbletea fails to start on it and
+// huh v2.0.3 type-asserts the nil model before checking the error.
+func ptyPrompt(t *testing.T, input string, prompt func(context.Context, *Session) (string, error)) (string, error) {
+	t.Helper()
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("SKALI_ACCESSIBLE", "")
+	master, slave, err := pty.Open()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = master.Close()
+		_ = slave.Close()
+	})
+	// A fresh pty has no window size; placeholders (defaults) render
+	// against the width, and a zero width takes bubbletea down before the
+	// first frame. Real terminals always report one.
+	require.NoError(t, pty.Setsize(slave, &pty.Winsize{Rows: 24, Cols: 80}))
+	// Drain the rendered output so the prompt never blocks on a full pty.
+	go func() { _, _ = io.Copy(io.Discard, master) }()
 
-		answer, err := session.Text(ctx, TextOptions{Title: "Environment"})
+	initial, err := xterm.GetState(int(slave.Fd()))
+	require.NoError(t, err)
+	session := New(slave, slave)
+	require.True(t, session.terminalUI())
+
+	type result struct {
+		value string
+		err   error
+	}
+	resultC := make(chan result, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() {
+		value, promptErr := prompt(ctx, session)
+		resultC <- result{value: value, err: promptErr}
+	}()
+	require.Eventually(t, func() bool {
+		state, stateErr := xterm.GetState(int(slave.Fd()))
+		return stateErr == nil && !reflect.DeepEqual(initial, state)
+	}, time.Second, 5*time.Millisecond)
+	_, err = master.Write([]byte(input))
+	require.NoError(t, err)
+	promptResult := <-resultC
+	return promptResult.value, promptResult.err
+}
+
+func TestTerminalTextEditingKeys(t *testing.T) {
+	text := func(opts TextOptions) func(context.Context, *Session) (string, error) {
+		return func(ctx context.Context, s *Session) (string, error) { return s.Text(ctx, opts) }
+	}
+	environment := TextOptions{Title: "Environment"}
+	withDefault := TextOptions{Title: "Environment", Default: "production"}
+
+	t.Run("home end and backspace", func(t *testing.T) {
+		answer, err := ptyPrompt(t, "roduction\x1b[Hp\x1b[F!\x7f\r", text(environment))
 		require.NoError(t, err)
 		require.Equal(t, "production", answer)
 	})
 
 	t.Run("left and delete", func(t *testing.T) {
-		session, _, ctx, cancel := terminal("prodXuction" + strings.Repeat("\x1b[D", 7) + "\x1b[3~\r")
-		defer cancel()
-
-		answer, err := session.Text(ctx, TextOptions{Title: "Environment"})
+		answer, err := ptyPrompt(t, "prodXuction"+strings.Repeat("\x1b[D", 7)+"\x1b[3~\r", text(environment))
 		require.NoError(t, err)
 		require.Equal(t, "production", answer)
 	})
 
-	t.Run("default and whitespace normalization", func(t *testing.T) {
-		session, _, ctx, cancel := terminal("\r")
-		defer cancel()
-		answer, err := session.Text(ctx, TextOptions{
-			Title:   "Environment",
-			Default: "production",
-		})
+	t.Run("empty input takes the default", func(t *testing.T) {
+		answer, err := ptyPrompt(t, "\r", text(withDefault))
 		require.NoError(t, err)
 		require.Equal(t, "production", answer)
+	})
 
-		session, _, ctx, cancel = terminal("staging\r")
-		defer cancel()
-		answer, err = session.Text(ctx, TextOptions{
-			Title:   "Environment",
-			Default: "production",
-		})
+	t.Run("typed input overrides the default", func(t *testing.T) {
+		answer, err := ptyPrompt(t, "staging\r", text(withDefault))
 		require.NoError(t, err)
 		require.Equal(t, "staging", answer)
+	})
 
-		session, _, ctx, cancel = terminal("  staging  \r")
-		defer cancel()
-		answer, err = session.Text(ctx, TextOptions{Title: "Environment"})
+	t.Run("whitespace normalization", func(t *testing.T) {
+		answer, err := ptyPrompt(t, "  staging  \r", text(environment))
 		require.NoError(t, err)
 		require.Equal(t, "staging", answer)
 	})

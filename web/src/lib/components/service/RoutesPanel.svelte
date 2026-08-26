@@ -42,6 +42,7 @@
 		<div class="flex flex-col gap-2">
 			{#each routes as route (route.key)}
 				<div class="flex items-center gap-2.5 text-md">
+					<!-- eslint-disable svelte/no-navigation-without-resolve -- external URL of the route's own domain -->
 					<a
 						href={url(route)}
 						target="_blank"
@@ -51,6 +52,7 @@
 						{url(route)}
 						<ExternalLink size={12} />
 					</a>
+					<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					{#if route.strategy === 'least-requests'}
 						<span class="text-text-faint font-mono">least-requests</span>
 					{/if}
@@ -61,10 +63,7 @@
 					{/if}
 					{#if route.certificate}
 						{@const meta = CERT_META[route.certificate.state]}
-						<span
-							class="ml-auto flex items-center gap-1.5 {meta.text}"
-							title={certTitle(route)}
-						>
+						<span class="ml-auto flex items-center gap-1.5 {meta.text}" title={certTitle(route)}>
 							<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label}
 						</span>
 					{/if}

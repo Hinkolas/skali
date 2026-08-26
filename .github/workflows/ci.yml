@@ -1,0 +1,66 @@
+name: ci
+
+# Not run on every push: the release workflow calls this on a tag before
+# publishing anything, and it can be started by hand from the Actions tab.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    services:
+      # DB-backed tests create an ephemeral database per test on this
+      # server (internal/testdb); without TEST_DATABASE_URL they skip.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: dev
+          POSTGRES_PASSWORD: dev
+          POSTGRES_DB: dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://dev:dev@localhost:5432/dev?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # web/ is excluded like task test: node_modules occasionally ships
+      # stray Go packages.
+      - run: go vet $(go list ./... | grep -v '/web/')
+      - run: go test $(go list ./... | grep -v '/web/')
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run lint
+
+  release-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check

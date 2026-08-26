@@ -20,10 +20,16 @@ func TestPublishedSkalidVersion(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "v0.1.0", version)
 
+	// Prereleases are published too.
+	version, ok = publishedSkalidVersion("ghcr.io/hinkolas/skalid:v0.1.0-rc.1")
+	require.True(t, ok)
+	require.Equal(t, "v0.1.0-rc.1", version)
+
 	for _, image := range []string{
 		"skalid:dev",
 		"ghcr.io/hinkolas/skalid:latest",
-		"ghcr.io/hinkolas/skalid:v0.1.0-rc.1",
+		"ghcr.io/hinkolas/skalid:v0.1.0-3-gabc1234",
+		"ghcr.io/hinkolas/skalid:v0.1.0-dirty",
 		"registry.example.com/skalid:v0.1.0",
 		"",
 	} {
@@ -42,6 +48,8 @@ func TestUpgradeHint(t *testing.T) {
 	// Current or ahead stays quiet; ahead is the CLI's problem.
 	require.Empty(t, upgradeHint("ghcr.io/hinkolas/skalid:v0.2.0"))
 	require.Empty(t, upgradeHint("ghcr.io/hinkolas/skalid:v0.3.0"))
+	// A prerelease of the CLI's version is behind it.
+	require.Contains(t, upgradeHint("ghcr.io/hinkolas/skalid:v0.2.0-rc.1"), "v0.2.0-rc.1")
 	// Non-published platforms have no comparable version.
 	require.Empty(t, upgradeHint("skalid:dev"))
 	require.Empty(t, upgradeHint("registry.example.com/skalid:v0.1.0"))
@@ -50,6 +58,14 @@ func TestUpgradeHint(t *testing.T) {
 func TestUpgradeHintDevBuildCLI(t *testing.T) {
 	withCLIVersion(t, "v0.0.0-dev")
 	require.Empty(t, upgradeHint("ghcr.io/hinkolas/skalid:v0.1.0"))
+}
+
+func TestUpgradeTargetPrereleaseCLI(t *testing.T) {
+	withCLIVersion(t, "v0.2.0-rc.1")
+	t.Chdir(t.TempDir())
+	image, _, err := upgradeTarget()
+	require.NoError(t, err)
+	require.Equal(t, "ghcr.io/hinkolas/skalid:v0.2.0-rc.1", image)
 }
 
 func TestUpgradeTargetReleasedCLI(t *testing.T) {

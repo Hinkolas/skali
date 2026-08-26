@@ -86,7 +86,10 @@ docker_manifests:
     image_templates:
       - ghcr.io/hinkolas/skalid:v{{ .Version }}-amd64
       - ghcr.io/hinkolas/skalid:v{{ .Version }}-arm64
+  # latest follows releases only: a prerelease tag (v0.1.0-rc.1) publishes
+  # its own versioned manifest but never moves this one.
   - name_template: ghcr.io/hinkolas/skalid:latest
+    skip_push: auto
     image_templates:
       - ghcr.io/hinkolas/skalid:v{{ .Version }}-amd64
       - ghcr.io/hinkolas/skalid:v{{ .Version }}-arm64
@@ -98,6 +101,10 @@ release:
   github:
     owner: Hinkolas
     name: skali
+  # A tag with a prerelease suffix becomes a GitHub prerelease, so
+  # releases/latest (install.sh's default) keeps pointing at the last
+  # full release.
+  prerelease: auto
   # install.sh rides along on every release so one URL serves both the
   # script and the binaries it downloads.
   extra_files:
