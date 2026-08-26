@@ -6,4 +6,4 @@ package version
 // Version is overridden by the release build:
 //
 //	go build -ldflags "-X github.com/Hinkolas/skali/internal/version.Version=v0.1.0"
-var Version = "0.0.0-dev"
+var Version = "v0.0.0-dev"

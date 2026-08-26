@@ -31,7 +31,7 @@ Working and used daily:
   users, nodes, account/2FA.
 - Agent skill (`skali skill install`).
 
-Live: `skali.khz.dev`, one node, `skalid 0.0.0-dev`. No release has ever
+Live: `skali.khz.dev`, one node, `skalid v0.0.0-dev`. No release has ever
 been tagged.
 
 ## 1. Production confidence

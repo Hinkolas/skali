@@ -48,7 +48,7 @@ func TestUpgradeHint(t *testing.T) {
 }
 
 func TestUpgradeHintDevBuildCLI(t *testing.T) {
-	withCLIVersion(t, "0.0.0-dev")
+	withCLIVersion(t, "v0.0.0-dev")
 	require.Empty(t, upgradeHint("ghcr.io/hinkolas/skalid:v0.1.0"))
 }
 
@@ -65,7 +65,7 @@ func TestUpgradeTargetReleasedCLI(t *testing.T) {
 }
 
 func TestUpgradeTargetDevBuildOutsideRepo(t *testing.T) {
-	withCLIVersion(t, "0.0.0-dev")
+	withCLIVersion(t, "v0.0.0-dev")
 	t.Chdir(t.TempDir())
 	_, _, err := upgradeTarget()
 	require.ErrorContains(t, err, "--skalid-image")

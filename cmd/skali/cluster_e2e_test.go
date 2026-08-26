@@ -188,7 +188,7 @@ func TestClusterEndToEnd(t *testing.T) {
 
 	binaryA := filepath.Join(t.TempDir(), "skali-a")
 	buildA := exec.Command("go", "build", "-ldflags",
-		"-X github.com/Hinkolas/skali/internal/version.Version=0.0.0-e2e-a"+
+		"-X github.com/Hinkolas/skali/internal/version.Version=v0.0.0-e2e-a"+
 			" -X github.com/Hinkolas/skali/internal/installer.K3sVersion="+e2eOlderK3s,
 		"-o", binaryA, "./cmd/skali")
 	buildA.Dir = h.repoRoot
@@ -314,7 +314,7 @@ storage:
 	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "(expected "+installer.K3sVersion+")")
-	require.Contains(t, statusOut, "(skali is 0.0.0-dev)")
+	require.Contains(t, statusOut, "(skali is v0.0.0-dev)")
 
 	// An older record missing a later-added field fails cleanly under
 	// --yes, naming the field, and mutates nothing.
@@ -341,7 +341,7 @@ storage:
 		"--image-tar", "/tmp/skalid-dev.tar", "--web-image-tar", "/tmp/skali-web-dev.tar")
 	require.Equal(t, 0, code, upgradeOut)
 	require.Contains(t, upgradeOut, e2eOlderK3s+" -> "+installer.K3sVersion)
-	require.Contains(t, upgradeOut, "0.0.0-e2e-a -> 0.0.0-dev")
+	require.Contains(t, upgradeOut, "v0.0.0-e2e-a -> v0.0.0-dev")
 	require.Contains(t, upgradeOut, "node registry credential missing")
 	require.Contains(t, upgradeOut, "Mint registry pull credential")
 	require.Contains(t, upgradeOut, "Upgrade k3s to "+installer.K3sVersion)
@@ -351,7 +351,7 @@ storage:
 	require.Contains(t, versionOut, installer.K3sVersion)
 	record = h.vmOK("sudo", "cat", "/var/lib/skali/installation.yaml")
 	require.Contains(t, record, "k3s: "+installer.K3sVersion)
-	require.Contains(t, record, "bundle: 0.0.0-dev")
+	require.Contains(t, record, "bundle: v0.0.0-dev")
 
 	// The converge restamped the bundle hash on the namespace.
 	namespaceJSON := h.vmOK("sudo", "k3s", "kubectl", "get", "namespace", "skali-system", "-o", "json")
@@ -367,7 +367,7 @@ storage:
 	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, installer.K3sVersion+" (current)")
-	require.Contains(t, statusOut, "0.0.0-dev (current)")
+	require.Contains(t, statusOut, "v0.0.0-dev (current)")
 	require.Contains(t, statusOut, "skalid healthy")
 	require.Contains(t, statusOut, "web healthy")
 
@@ -642,7 +642,7 @@ storage:
 	require.Contains(t, diagnoseOut, "k3s service: active")
 	require.Contains(t, diagnoseOut, "kubernetes api: reachable")
 	require.Contains(t, diagnoseOut, "nodes: 2/2 ready")
-	require.Contains(t, statusOut, "0.0.0-dev (current)",
+	require.Contains(t, statusOut, "v0.0.0-dev (current)",
 		"the topology apply must restamp the bundle hash")
 
 	// A repeat join with the same identity is a successful no-op.

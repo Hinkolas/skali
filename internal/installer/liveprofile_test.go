@@ -31,7 +31,7 @@ func liveProfileRecord() *Record {
 		Endpoints:     &Endpoints{API: "skali.e2e.test", Registry: "registry.skali.e2e.test"},
 		TLS:           &TLSConfig{IssuerEmail: "e2e@skali.e2e.test", ACMEServer: "https://acme.test/directory"},
 		StorageDriver: bundle.StorageDriverLonghorn,
-		Versions:      Versions{Installer: "0.0.0-dev", K3s: K3sVersion, Bundle: "0.0.0-dev"},
+		Versions:      Versions{Installer: "v0.0.0-dev", K3s: K3sVersion, Bundle: "0.0.0-dev"},
 	}
 }
 

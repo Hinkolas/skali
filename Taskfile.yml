@@ -14,7 +14,7 @@ dotenv: [".env"]
 vars:
   DB_NAME: skali
   VERSION:
-    sh: git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev
+    sh: git describe --tags --dirty 2>/dev/null || echo v0.0.0-dev
   LDFLAGS: -X github.com/Hinkolas/skali/internal/version.Version={{.VERSION}}
 
 tasks:

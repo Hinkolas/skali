@@ -30,7 +30,7 @@ const InstanceHeader = "Skali-Instance"
 // available pre-auth and on error responses (the meta endpoint needs a
 // session). Diagnostics only: compatibility decisions belong to explicit
 // signals like error codes and the capabilities list, never to comparing
-// version strings (a working-tree daemon reports 0.0.0-dev).
+// version strings (a working-tree daemon reports v0.0.0-dev).
 const VersionHeader = "Skali-Version"
 
 // Client talks to one master. Token may be empty for public endpoints.
