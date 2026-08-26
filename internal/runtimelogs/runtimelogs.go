@@ -2,8 +2,8 @@
 // through the public API: a merged per-environment stream with member
 // labels, best-effort previous-container output after restarts, and
 // automatic attachment of new members as they appear. This is a deliberate
-// runtime pass-through read: section 9.3 keeps runtime logs out of the
-// system database entirely, so unlike topology projections (which never
+// runtime pass-through read: runtime logs stay out of the system
+// database entirely, so unlike topology projections (which never
 // touch Kubernetes at request time) each log subscription holds live
 // follow streams against the kubelet for exactly as long as the client
 // stays attached. Deployment-step logs live in the journal and are never

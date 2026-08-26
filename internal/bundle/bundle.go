@@ -2,10 +2,10 @@
 // blessed operators (CNPG; Traefik ships with k3s itself), the bootstrap
 // Postgres cluster, the managed registry, and skalid, plus
 // the ordered apply engine over server-side apply under the installer
-// field manager. The local `skali dev` installation and the R4 production
+// field manager. The local `skali dev` installation and the production
 // installer share these definitions; only the profile differs. skalid
-// itself never touches these resources (section 14.5: it cannot reconcile
-// or delete what it needs to run).
+// itself never touches these resources (it cannot reconcile or delete what
+// it needs to run).
 package bundle
 
 import (
@@ -65,7 +65,7 @@ const (
 	// local-path, so everything that wants replicated storage names this
 	// class explicitly.
 	StorageClassName = "skali-app"
-	RegistryImage      = "registry:2.8.3"
+	RegistryImage    = "registry:2.8.3"
 	// RegistryNodePort is the stable node port the host maps its loopback
 	// registry port onto.
 	RegistryNodePort = 30500

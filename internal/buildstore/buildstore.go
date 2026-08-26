@@ -4,7 +4,8 @@
 // run and step key, and journal deletion never changes build state). Local
 // builds are records of client-side work: created already running by the
 // CLI, kept alive by heartbeats, and never claimable. The queued and
-// claimed states plus the lease columns belong to the R4 worker protocol.
+// claimed states plus the lease columns belong to the planned
+// remote-worker protocol, which nothing serves yet.
 package buildstore
 
 import (

@@ -29,7 +29,7 @@ import (
 // match and keep resolving to the working tree.
 var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$`)
 
-// runInteractiveFreshFlow drives the transcript's fresh single-node
+// runInteractiveFreshFlow drives the fresh single-node
 // conversation: seed identity and capabilities, the k3s/coordinator
 // bootstrap, and the offer to initialize immediately. Platform domains,
 // image, TLS, and admin credentials are intentionally deferred to init.

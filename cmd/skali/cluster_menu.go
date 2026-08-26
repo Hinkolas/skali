@@ -120,7 +120,7 @@ func printFreshHeader(out *os.File, detected *installer.Host) {
 	fmt.Fprintln(out)
 }
 
-// printStatus renders the transcript section 6 status block.
+// printStatus renders the status block.
 func printStatus(out *os.File, status *installer.Status) {
 	detected := status.Host
 	record := detected.Record

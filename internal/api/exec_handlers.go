@@ -34,7 +34,7 @@ const (
 	execWriteTimeout = 10 * time.Second
 )
 
-// execHandlers serves interactive exec sessions (section 7.4): a sanctioned
+// execHandlers serves interactive exec sessions: a sanctioned
 // request-time cluster pass-through like credential reveal and runtime
 // logs, carried over a WebSocket speaking internal/execproto.
 type execHandlers struct {

@@ -2,7 +2,7 @@
 // prerequisite checks, the k3d cluster lifecycle (create, start, stop,
 // delete), the local state record, and the bootstrap orchestration that
 // applies the skali-system bundle. Its authority is deliberately limited
-// to user-owned development installations (section 11.6); production
+// to user-owned development installations; production
 // clusters belong to `skali cluster`.
 package localdev
 
@@ -25,7 +25,7 @@ import (
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
-// The pinned local topology (section 11.2 and the cli-dev transcript).
+// The pinned local topology.
 const (
 	K3sImage   = "rancher/k3s:v1.36.3-k3s1"
 	AdminEmail = "dev@skali.localhost"

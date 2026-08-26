@@ -43,7 +43,7 @@ func newDeployCommand() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if opts.BuildMode != "" && opts.BuildMode != "local" && opts.BuildMode != "auto" {
-				return errors.New("--build must be local or auto (cloud builders arrive with R4)")
+				return errors.New("--build must be local or auto (cloud builders are not available yet)")
 			}
 			if err := validateFromFlags(command, opts); err != nil {
 				return err
@@ -61,7 +61,7 @@ func newDeployCommand() *cobra.Command {
 	}
 	addDeployFlags(command, opts)
 	command.Flags().StringVar(&opts.BuildMode, "build", "auto",
-		"build executor: local or auto (auto follows installation policy; local in R3)")
+		"build executor: local or auto (auto follows installation policy; local today)")
 	command.Flags().BoolVar(&opts.Yes, "yes", false, "approve a non-destructive plan without prompting")
 	command.Flags().BoolVar(&opts.AllowDestructive, "allow-destructive", false,
 		"approve a destructive plan (non-interactive)")

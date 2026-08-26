@@ -2,8 +2,8 @@
 // deterministic input hashing, an executor-neutral Engine interface, the
 // docker (BuildKit through buildx) implementation, and registry-to-registry
 // image imports. It knows nothing about jobs, queues, Postgres, or the
-// public API; the CLI drives it directly in R3 and the build worker drives
-// the same code in R4. Secret build inputs pass through BuildKit secret
+// public API; the CLI drives it directly today and a remote build worker
+// would drive the same code. Secret build inputs pass through BuildKit secret
 // mounts and process environments only; they never appear in command lines,
 // image history, or hashes.
 package build

@@ -77,8 +77,8 @@ type TierOptions struct {
 // so a half-applied change never looks current), then the database stage
 // at the new tier, then the readiness wait, then the stamp with the
 // new-tier hash. Deliberately NOT a full Init: the record stays untouched
-// (no version bump, no SaveRecord), the transcript binds the display to
-// exactly these two steps, and the database stage is the only
+// (no version bump, no SaveRecord), the display shows exactly these two
+// steps, and the database stage is the only
 // tier-dependent render, so the post-scale cluster equals a full converge
 // at the new tier.
 func ApplyTier(ctx context.Context, runner host.Runner, record *Record, plan TierPlan, opts TierOptions) error {

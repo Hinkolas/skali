@@ -11,7 +11,7 @@ import (
 )
 
 // logsHandlers streams live application logs through the public API
-// (section 9.3): runtime logs never enter the system database and are
+// runtime logs never enter the system database and are
 // never mixed with deployment-step logs.
 type logsHandlers struct {
 	logs *runtimelogs.Streamer

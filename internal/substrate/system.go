@@ -7,7 +7,7 @@ import (
 	"github.com/Hinkolas/skali/internal/dbstore"
 )
 
-// SystemClaimOutputs is what an internal consumer (the R6 object-storage
+// SystemClaimOutputs is what an internal consumer (the object-storage
 // metadata dependency) receives: connection identity plus the NAME of the
 // credential Secret in skali-platform. The password itself stays in the
 // Secret; consumers mount or read it themselves.

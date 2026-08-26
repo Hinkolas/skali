@@ -1,7 +1,7 @@
 // Package artifactstore persists managed-registry artifact records and
 // guards every phase change with the internal/artifact lifecycle machine.
-// R1 stores records and leases only; the pipelines that push real content
-// into the registry are R3 (local builds, imports) and R4 (production).
+// It stores records and leases only; the pipelines that push real content
+// into the registry live in internal/build and the deploy flow.
 package artifactstore
 
 import (
@@ -19,7 +19,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// SafetyWindow is the R1 constant hold on release artifacts: even without a
+// SafetyWindow is the constant hold on release artifacts: even without a
 // lease, a build artifact cannot be evicted until this long after it was
 // verified. Cache imports are reconstructable and carry no window.
 const SafetyWindow = 72 * time.Hour

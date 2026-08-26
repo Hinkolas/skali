@@ -18,8 +18,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 )
 
-// Docker builds through BuildKit via the docker buildx CLI: the R0-resolved
-// local builder. The result is exported locally (an OCI layout when the
+// Docker builds through BuildKit via the docker buildx CLI: the local
+// builder. The result is exported locally (an OCI layout when the
 // builder supports that exporter, else through the daemon image store) and
 // pushed in-process with Auth, so docker itself never talks to the managed
 // registry and never needs a credential for it.

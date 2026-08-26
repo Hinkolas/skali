@@ -34,7 +34,7 @@ buckets:
 // A bucket-bearing revision traverses the same generic machinery as
 // databases: the application waits visibly on the claim, provisioning
 // unblocks it, and activation requires both healthy. Zero kernel branches
-// on the service kind (section 6.7).
+// on the service kind.
 func TestReconcileBucketClaimGatesApplication(t *testing.T) {
 	t.Parallel()
 	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})

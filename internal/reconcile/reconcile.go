@@ -317,7 +317,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		// Jobs enforce the manifest timeouts, so the rollout deadline only
 		// needs to cover everything after them.
 		if time.Since(target.UpdatedAt) > k.cfg.RolloutDeadline+releaseBudget(rev.Definition) {
-			// Section 8.4 product policy: past the deadline the run fails
+			// Product policy: past the deadline the run fails
 			// with diagnostics and the target returns to the last active
 			// revision when one exists. The guarded compare-and-swap makes
 			// a concurrent newer promotion win; the first deployment of an

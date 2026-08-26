@@ -205,7 +205,7 @@ func (h *e2eHarness) waitRoute(contains string, timeout time.Duration) {
 	}, timeout, 2*time.Second, "route never served %q", contains)
 }
 
-// TestDevEndToEnd walks the R3 exit criteria on one throwaway
+// TestDevEndToEnd walks the local paved path on one throwaway
 // installation: fresh-machine paved path to a healthy route, unchanged
 // repeat reusing the artifact, skalid restart during a rollout resuming
 // toward the same revision, stop/start retaining state, and the explicit
@@ -550,7 +550,7 @@ func (h *e2eHarness) stateDir() string {
 	return ""
 }
 
-// TestDevGuestbookDatabase is the R5+R6 prototype path on local dev: a
+// TestDevGuestbookDatabase is the database plus bucket path on local dev: a
 // project bearing a database and a bucket deploys, the application waits
 // for both claims, starts with the injected connection outputs, reads its
 // own database writes through the shared dev pool, and stores and reads

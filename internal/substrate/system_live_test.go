@@ -17,7 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/testdb"
 )
 
-// TestLiveSystemClaimSameSubstrate is the R5 exit criterion behind R6: a
+// TestLiveSystemClaimSameSubstrate proves the shared-substrate contract: a
 // synthetic system claim (shaped like object-storage/metadata) provisions
 // through exactly the same claim, placement, pool, tenant, and credential
 // paths as user claims, and the installer-owned skali-system namespace is

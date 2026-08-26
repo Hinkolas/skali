@@ -63,8 +63,8 @@ type InitOptions struct {
 	// the joined nodes do not match it.
 	Layout *layout.Layout
 	// Admin returns the first operator account credentials. It is called
-	// only after skalid is ready, so interactive runs prompt at the moment
-	// the transcript shows; the credentials are never persisted host-side.
+	// only after skalid is ready, so interactive runs prompt at that
+	// moment; the credentials are never persisted host-side.
 	Admin func(ctx context.Context) (email, password string, err error)
 	// SkipAdmin skips the admin bootstrap step; upgrade reuses the
 	// existing accounts and never collects credentials.
@@ -246,14 +246,14 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		AuthSecret:    authSecret,
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
-			IngressHost:        opts.Endpoints.API,
-			RegistryDomain:     opts.Endpoints.Registry,
-			S3Domain:           opts.Endpoints.S3,
-			TokenKeyPEM:        tokenKeyPEM,
-			TokenCertPEM:       tokenCertPEM,
-			NodePullSecret:     pullSecret,
-			ACMEEmail:          opts.TLS.IssuerEmail,
-			ACMEServer:         opts.TLS.ACMEServer,
+			IngressHost:          opts.Endpoints.API,
+			RegistryDomain:       opts.Endpoints.Registry,
+			S3Domain:             opts.Endpoints.S3,
+			TokenKeyPEM:          tokenKeyPEM,
+			TokenCertPEM:         tokenCertPEM,
+			NodePullSecret:       pullSecret,
+			ACMEEmail:            opts.TLS.IssuerEmail,
+			ACMEServer:           opts.TLS.ACMEServer,
 			Capabilities:         layout.UnionCapabilities(live.Nodes),
 			DatabaseTier:         topology.DatabaseTier,
 			DatabaseStorage:      DefaultDatabaseStorage,

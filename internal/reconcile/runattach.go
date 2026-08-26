@@ -194,7 +194,7 @@ func (a *runAttachment) completeStep(ctx context.Context, key, title string, sta
 }
 
 // waitStep journals a visible waiting step: a dependency that is not ready
-// names what it waits for instead of retrying opaquely (section 8.3), and a
+// names what it waits for instead of retrying opaquely, and a
 // reason that changed across passes appends as a fresh line so the wait
 // narrates its actual progress. Only an in-flight run carries waiting
 // steps; idle drift passes stay silent.

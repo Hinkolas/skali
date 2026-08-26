@@ -56,9 +56,8 @@ type DynamicKind struct {
 // KubeSource feeds the observed store from Kubernetes LIST/WATCH caches:
 // initial LIST per kind, wait for cache sync, WATCH from the returned
 // resource versions, convert every change into a store write plus an
-// affected-owner enqueue. Watched kinds are the R2 core set plus the
-// dynamic operator CRDs registered through SourceOptions.Dynamic (CNPG
-// since R5).
+// affected-owner enqueue. Watched kinds are the core set plus the
+// dynamic operator CRDs registered through SourceOptions.Dynamic (CNPG).
 type KubeSource struct {
 	client    *kube.Client
 	store     *Store

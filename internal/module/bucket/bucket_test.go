@@ -92,7 +92,7 @@ func TestEvaluate(t *testing.T) {
 	require.Equal(t, module.HealthHealthy, healthy.Health)
 	require.Equal(t, "usage", healthy.Diagnostics[0].Code)
 
-	// A stale provider degrades without blanking (the R6 exit criterion).
+	// A stale provider degrades without blanking.
 	degraded := service.Evaluate([]module.ObservedResource{fresh(),
 		seaweedSource(module.SourceStale), claimResource("provisioned", ""), store, usage})
 	require.Equal(t, module.HealthDegraded, degraded.Health)

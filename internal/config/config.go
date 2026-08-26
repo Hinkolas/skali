@@ -149,7 +149,7 @@ type API struct {
 
 	// Capabilities lists what this installation can run, separated by
 	// semicolons; deployments whose revisions require more are rejected
-	// with a clear error instead of stalling. R3 installations serve
+	// with a clear error instead of stalling. Today installations serve
 	// applications and edge routes.
 	Capabilities []string `env:"SKALI_CAPABILITIES,delimiter=;,default=application;edge"`
 

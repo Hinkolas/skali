@@ -301,8 +301,8 @@ func TestReconcileIdlePassWritesNoJournal(t *testing.T) {
 }
 
 // Past the rollout deadline the run fails with diagnostics and the target
-// stays; a later recovery still activates (level-triggered, section 8.4;
-// automatic fallback is R3).
+// stays; a later recovery still activates (level-triggered; the deadline
+// fallback is a separate policy).
 func TestReconcileDeadlineFailsRunKeepsTarget(t *testing.T) {
 	t.Parallel()
 	f := newKernelFixture(t, Config{RolloutDeadline: time.Nanosecond})

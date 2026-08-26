@@ -321,8 +321,8 @@ type Opened struct {
 }
 
 // PlanPreview validates the candidate server-side and returns the semantic
-// and destructive plan without mutating anything (transcript: planning
-// never stores values, never moves targets).
+// and destructive plan without mutating anything (planning never stores
+// values and never moves targets).
 func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, error) {
 	if in.FromEnvironmentID != uuid.Nil || in.Redeploy {
 		src, err := s.resolveReuseSource(ctx, &in)

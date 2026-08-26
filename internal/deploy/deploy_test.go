@@ -137,7 +137,7 @@ func TestPrepareAndPromote(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, target.TargetRevisionID)
 	require.Equal(t, prepared.RevisionID, *target.TargetRevisionID)
-	require.Nil(t, target.ActiveRevisionID, "activation is R2; the pointer must stay empty")
+	require.Nil(t, target.ActiveRevisionID, "activation belongs to the kernel; the pointer must stay empty")
 
 	// Values were promoted atomically with the target.
 	current, err := f.values.CurrentVersions(ctx, f.environmentID)

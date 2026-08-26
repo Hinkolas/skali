@@ -1,9 +1,8 @@
 // Package deploy owns candidate preparation and promotion: it turns a
 // stored definition version plus environment values plus resolved artifacts
 // into an immutable revision, and moves the environment target atomically
-// with value and draft promotion. Artifact resolution is a pluggable seam;
-// R1 ships only the fake resolver, the real build and import resolvers are
-// R3 and R4.
+// with value and draft promotion. Artifact resolution is a pluggable seam:
+// the record resolver serves real builds and imports, tests use a fake.
 package deploy
 
 import (
@@ -50,7 +49,7 @@ type ArtifactResolver interface {
 
 // Enqueuer hands a promoted environment to the reconciliation kernel. It is
 // an interface so deploy never imports the kernel; nil means no kernel is
-// wired (R1 tests) and Execute finishes its run at promote.
+// wired (tests) and Execute finishes its run at promote.
 type Enqueuer interface {
 	Enqueue(environmentID uuid.UUID)
 }

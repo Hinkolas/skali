@@ -38,7 +38,7 @@ func newClusterRepairCmd() *cobra.Command {
 // runRepairFlow is diagnose-first: run the read-only diagnosis, print it,
 // derive the scoped actions, confirm each individually, act, and
 // re-diagnose. Both the command and the menu's repair entry land here. A
-// clean diagnosis performs no mutation (section 6 contract).
+// clean diagnosis performs no mutation.
 func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes bool) error {
 	if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
 		return err

@@ -48,7 +48,7 @@ func (f *liveFixture) readyPods(t *testing.T) int {
 // Exit criterion 1: pod create/readiness/delete changes propagate without
 // waiting for the audit interval. Audit and resync are an hour away, so
 // only watches can explain what this test observes. The two-second
-// objective is measured and logged, not asserted (section 7.5).
+// objective is measured and logged, not asserted.
 func TestLivePodEventPropagation(t *testing.T) {
 	t.Parallel()
 	f := newLiveFixture(t, Config{RolloutDeadline: 5 * time.Minute, Audit: time.Hour}, nil)

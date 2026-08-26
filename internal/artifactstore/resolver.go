@@ -12,7 +12,7 @@ import (
 )
 
 // RecordResolver resolves applications from already-verified artifact rows.
-// The R3 deployment flow builds, imports, and verifies every artifact
+// The deployment flow builds, imports, and verifies every artifact
 // before revision preparation runs, so resolution is a pure record read: no
 // registry contact, no digest inference. Kind and source consistency are
 // re-checked by revision.Build.

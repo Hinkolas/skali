@@ -76,7 +76,7 @@ const (
 	SourceUnknown = "unknown"
 )
 
-// ObservedResource is one typed projection out of the R2 ObservedStore.
+// ObservedResource is one typed projection out of the ObservedStore.
 // Exactly one of the typed members matching Kind is set. Every snapshot
 // handed to Evaluate begins with the KindSource pseudo-resource describing
 // observation freshness; when its state is not fresh, modules return

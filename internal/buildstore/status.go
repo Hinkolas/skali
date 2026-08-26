@@ -5,10 +5,11 @@ import "github.com/Hinkolas/skali/internal/lifecycle"
 type Status string
 
 const (
-	// StatusQueued: a worker build awaiting a claim (R4 worker protocol).
+	// StatusQueued: a worker build awaiting a claim (remote-worker
+	// protocol, not served yet).
 	StatusQueued Status = "queued"
 	// StatusClaimed: a worker holds the lease but has not reported the
-	// build running yet (R4 worker protocol). An expired lease returns the
+	// build running yet (remote-worker protocol). An expired lease returns the
 	// build to queued.
 	StatusClaimed Status = "claimed"
 	// StatusRunning: the build is executing. Local builds enter the machine

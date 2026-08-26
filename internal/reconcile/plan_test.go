@@ -163,7 +163,7 @@ databases:
 		{"applications.worker", "databases.main"},
 		{"applications.api"},
 	}, batches)
-	require.Empty(t, waiting, "databases are reconcilable since R5")
+	require.Empty(t, waiting, "databases are reconcilable")
 }
 
 func TestPlanBatchesOrdersBucketsBeforeDependents(t *testing.T) {
@@ -188,7 +188,7 @@ buckets:
 		{"buckets.assets"},
 		{"applications.api"},
 	}, batches)
-	require.Empty(t, waiting, "buckets are reconcilable since R6")
+	require.Empty(t, waiting, "buckets are reconcilable")
 }
 
 func TestGroupObjectsSplitsByService(t *testing.T) {

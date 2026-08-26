@@ -38,7 +38,7 @@ const (
 	codeRegistryUnavailable = "registry_unavailable"
 	codeInternal            = "internal"
 
-	// Deployment coordination (R3).
+	// Deployment coordination.
 	codeDeploymentInFlight      = "deployment_in_flight"
 	codeDestructiveChange       = "destructive_change"
 	codeDigestMismatch          = "digest_mismatch"

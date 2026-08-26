@@ -1,11 +1,10 @@
 // Package installer is the engine behind the `skali cluster` group, the privileged
 // installation and recovery surface of the CLI. It owns host-level k3s lifecycle, the
 // root-owned installation record, and the installer-owned skali-system
-// bundle converge. It never depends on the Skali API or product database
-// (section 14.1); its authority is exactly what skalid must not have
-// (section 14.5). All host mutation goes through host.Runner so the same
-// engine drives a local Linux host, a scripted test fake, and later a
-// Lima-managed VM.
+// bundle converge. It never depends on the Skali API or product database;
+// its authority is exactly what skalid must not have. All host mutation
+// goes through host.Runner so the same engine drives a local Linux host, a
+// scripted test fake, and a Lima-managed VM.
 package installer
 
 import "github.com/Hinkolas/skali/internal/bundle"
@@ -19,7 +18,7 @@ var K3sVersion = "v1.36.3+k3s1"
 const (
 	// StateDir is the root-owned installation state directory.
 	StateDir = "/var/lib/skali"
-	// RecordPath is the root-owned installation record (section 14.1).
+	// RecordPath is the root-owned installation record.
 	RecordPath = StateDir + "/installation.yaml"
 	// RecordBackupPath retains the last valid record so a truncated or
 	// interrupted write never removes the installer's recovery authority.

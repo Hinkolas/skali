@@ -208,7 +208,7 @@ func TestPerSourceFreshnessIsolation(t *testing.T) {
 	store.MarkReady("seaweedfs")
 
 	// A provider failure turns only the provider stale; the cluster view
-	// keeps its meaning (R6 exit criterion).
+	// keeps its meaning.
 	store.MarkFailure("seaweedfs")
 	now = now.Add(time.Minute)
 	store.EvaluateFreshness("seaweedfs", 30*time.Second)

@@ -25,7 +25,7 @@ func (f *liveFixture) serviceStatus(t *testing.T, key string) *ServiceStatus {
 	return nil
 }
 
-// R3 exit criterion: killing one of three application members drops health
+// Killing one of three application members drops health
 // to 2/3 promptly with the replacement member named, then the deployment
 // controller heals it back to 3/3 healthy. Exercises the production
 // application module end to end.

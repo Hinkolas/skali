@@ -8,7 +8,7 @@ import (
 )
 
 // The transcript's node.yaml shapes: the fresh server and the joining
-// agent (section 2 verbatim).
+// agent.
 func TestParseNodeConfig(t *testing.T) {
 	t.Parallel()
 	config, err := ParseNodeConfig([]byte(`role: server
@@ -141,7 +141,7 @@ func TestParseNodeConfigRejections(t *testing.T) {
 	}
 }
 
-// The transcript's init.yaml, extended with the image this slice requires.
+// A complete init.yaml, including the image it requires.
 func TestParseInitConfig(t *testing.T) {
 	t.Parallel()
 	config, err := ParseInitConfig([]byte(`endpoints:

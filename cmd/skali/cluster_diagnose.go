@@ -59,7 +59,7 @@ func runDiagnosis(cmd *cobra.Command, out *os.File) (*installer.Diagnosis, error
 	return diagnosis, nil
 }
 
-// printDiagnosis renders the transcript section 7 shape: the state
+// printDiagnosis renders the diagnosis: the state
 // header, one line per check with pod drilldown indented, then the
 // deduplicated suggested actions.
 func printDiagnosis(out io.Writer, diagnosis *installer.Diagnosis) {

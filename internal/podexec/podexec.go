@@ -1,6 +1,6 @@
 // Package podexec resolves and runs interactive exec sessions in app pods
-// through the public API. Like runtime logs (section 9.3) this is a
-// sanctioned request-time pass-through read (section 7.4): the session
+// through the public API. Like runtime logs this is a sanctioned
+// request-time pass-through read: the session
 // holds a live exec stream against the kubelet for exactly as long as the
 // client stays attached, and nothing is persisted. Targets resolve only
 // through the environment's own namespace and the observed store's app

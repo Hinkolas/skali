@@ -375,7 +375,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BuildExecutor != "" && req.BuildExecutor != "local" {
 		writeError(w, http.StatusBadRequest, codeBadRequest,
-			"build_executor must be local (cloud builders arrive with R4)")
+			"build_executor must be local (cloud builders are not available yet)")
 		return
 	}
 	request := deployRequest{
@@ -703,8 +703,8 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	case err == nil || errors.Is(err, pgx.ErrNoRows):
-		// Runs without a deployment row (reconcile runs, rollback runs,
-		// pre-R3 rows): the journal is cancelled, and a rollback additionally
+		// Runs without a deployment row (reconcile runs, rollback runs):
+		// the journal is cancelled, and a rollback additionally
 		// returns the target to the prior active revision like a cancelled
 		// promotion.
 		if err := h.journal.FinishRun(r.Context(), id, journal.RunCancelled); err != nil &&

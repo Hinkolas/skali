@@ -66,9 +66,9 @@ type ExecuteResult struct {
 // (resolve artifacts, build and store the immutable revision), then promote
 // (move the target, promote values, advance the draft) in one transaction.
 // Failure discards the staged candidate and finishes the run failed; the
-// target and current values are untouched by construction. In R1 this is
-// exercised by tests with the fake resolver; R3 wires it to the API and
-// real build/import resolvers.
+// target and current values are untouched by construction. Tests exercise
+// it with the fake resolver; the API wires the real build and import
+// resolvers.
 func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult, error) {
 	run, err := in.Journal.CreateRun(ctx, journal.RunInput{
 		Kind:          "deployment",
@@ -91,7 +91,7 @@ func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult,
 
 // runStages journals revision creation and promotion into an already
 // running run, then hands rollout to the kernel (or, without one, finishes
-// the run). Execute and the R3 deployment completion flow share it; the
+// the run). Execute and the deployment completion flow share it; the
 // deterministic step keys are "revision" and "promote".
 func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInput) (*ExecuteResult, error) {
 	result := &ExecuteResult{RunID: runID}
@@ -182,8 +182,8 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 
 	// With a kernel wired, the run stays running: the reconcile worker owns
 	// apply, verify, and activation, journaling into this same run through
-	// deterministic step keys, and finishes it. Without one (R1 behavior,
-	// kept for tests), promotion concludes the run.
+	// deterministic step keys, and finishes it. Without one (kept for
+	// tests), promotion concludes the run.
 	if s.enqueuer != nil {
 		if _, err := in.Journal.EnsureStep(ctx, runID, nil, "rollout", "Roll out revision"); err != nil {
 			return result, s.fail(ctx, in, runID, nil, err)

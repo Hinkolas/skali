@@ -20,10 +20,10 @@ type Resolved struct {
 	Artifact   revision.Artifact
 }
 
-// Fake is the R1 artifact resolver: it produces deterministic digests from
+// Fake is the test artifact resolver: it produces deterministic digests from
 // the application source instead of touching any registry, but drives the
 // real pending -> verified (or abandoned) record lifecycle so tests
-// exercise the same persistence the R3 resolvers will. Provenance marks
+// exercise the same persistence the real resolvers do. Provenance marks
 // every record as fake.
 type Fake struct {
 	Store     *Service

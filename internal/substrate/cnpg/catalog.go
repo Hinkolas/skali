@@ -17,8 +17,8 @@ type Image struct {
 	Extensions []string
 }
 
-// catalog maps (engine, major) to its blessed image. R5 pins the stock CNPG
-// "system" images; a skali-built image with pgvector/postgis replaces an
+// catalog maps (engine, major) to its blessed image. Today it pins the
+// stock CNPG "system" images; a skali-built image with pgvector/postgis replaces an
 // entry here without any schema or claim change. The extension list is the
 // curated contrib subset those images ship.
 var catalog = map[string]map[int]Image{

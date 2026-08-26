@@ -39,7 +39,7 @@ type Cluster interface {
 }
 
 // ClaimManager is the kernel's generic seam to infrastructure-claim
-// subsystems (the database substrate now, buckets with R6): the environment
+// subsystems (the database and bucket substrates): the environment
 // pass records desired claims and consumes readiness, never claim
 // mechanics. The kernel stays free of service-type fields; per-service
 // health still flows through module evaluation over observed claim
@@ -260,7 +260,8 @@ func (k *Kernel) worker(ctx context.Context) {
 // audit enqueues every environment from Postgres: the slower correctness
 // backstop that catches divergence with no cluster object to fire on. It
 // also surfaces orphaned managed namespaces as diagnostics and touches
-// nothing (removal is a destructive transition of a later milestone).
+// nothing (removal is a destructive transition that does not exist yet;
+// see the known limitations in docs/storage.md).
 func (k *Kernel) audit(ctx context.Context) {
 	targets, err := k.deps.Store.ListEnvironmentTargets(ctx)
 	if err != nil {

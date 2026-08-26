@@ -53,7 +53,7 @@ func writeFilerObject(t *testing.T, client *kube.Client, bucket, name, content s
 	require.NoError(t, result.Error(), "filer upload failed")
 }
 
-// TestLiveSeaweedObservation proves the R6 observation exit criterion on a
+// TestLiveSeaweedObservation proves bucket observation on a
 // real cluster: the poll observer reports store and bucket truth, a
 // SeaweedFS outage turns only the seaweedfs source stale (bucket health
 // degrades, cluster observation keeps its meaning), and recovery restores
