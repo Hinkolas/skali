@@ -49,6 +49,10 @@ temp/
 # --- Go build output ---
 /bin/
 /dist/
+# A plain `go build ./cmd/<name>` drops the binary at the repo root.
+/skali
+/skalid
+/skali-hostd
 *.exe
 *.test
 *.out
