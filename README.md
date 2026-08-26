@@ -219,6 +219,8 @@ the complete manifest reference and the platform's rules.
   and protection.
 - [`docs/build-matrix.md`](docs/build-matrix.md): supported Dockerfile and
   BuildKit features.
+- [`docs/limitations.md`](docs/limitations.md): what skali does not do
+  yet, and how to work around it.
 - [`docs/development.md`](docs/development.md): working on skali itself.
 - [`ROADMAP.md`](ROADMAP.md): what exists and what comes next.
 

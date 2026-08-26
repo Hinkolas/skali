@@ -23,6 +23,9 @@ can switch to `longhorn` at any time by re-running init with the flag;
 the reverse switch is not supported. The driver enum is also the seam for
 future provider-native drivers (for example hcloud-csi).
 
+Volumes removed from a manifest are never deleted automatically; see
+[limitations.md](limitations.md).
+
 Independent of the driver, every application's temporary storage (the
 container's writable layer, its logs, and emptyDirs) is measured from
 the kubelet and shown in the console, per service and as its own node

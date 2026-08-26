@@ -101,8 +101,8 @@ func applyAll(objects []runtime.Object) []Op {
 // prunableKinds are the stateless kinds the reconciler may delete when they
 // are owned by the environment and absent from the desired set. Namespaces
 // and PersistentVolumeClaims are never pruned: stateful removal requires an
-// explicit destructive transition that does not exist yet (see the known
-// limitations in docs/storage.md). Secrets are not observed (the one
+// explicit destructive transition that does not exist yet (see
+// docs/limitations.md). Secrets are not observed (the one
 // rendered Secret is always desired), so they are not prunable either.
 var prunableKinds = map[schema.GroupKind]bool{
 	{Group: "apps", Kind: "Deployment"}:                     true,

@@ -261,7 +261,7 @@ func (k *Kernel) worker(ctx context.Context) {
 // backstop that catches divergence with no cluster object to fire on. It
 // also surfaces orphaned managed namespaces as diagnostics and touches
 // nothing (removal is a destructive transition that does not exist yet;
-// see the known limitations in docs/storage.md).
+// see docs/limitations.md).
 func (k *Kernel) audit(ctx context.Context) {
 	targets, err := k.deps.Store.ListEnvironmentTargets(ctx)
 	if err != nil {
