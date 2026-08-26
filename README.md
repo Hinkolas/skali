@@ -232,3 +232,10 @@ on the platform domain. k3s and a small set of operators (CloudNativePG,
 Traefik, cert-manager, SeaweedFS, optionally Longhorn) do the generic
 orchestration; skali owns the hosts it runs on and never adopts a cluster it
 did not install.
+
+## License
+
+skali is released under the [Apache License 2.0](LICENSE). You can run it
+for yourself, for your company, or for your own customers, modify it, and
+redistribute it; see the license for the full terms. Security reports go
+through [SECURITY.md](SECURITY.md).
