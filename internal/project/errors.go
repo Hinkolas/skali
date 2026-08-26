@@ -13,6 +13,10 @@ var (
 	ErrInvalidFormat        = errors.New("project: format must be yaml or json")
 	ErrNameMismatch         = errors.New("project: manifest name does not match the project name")
 	ErrUserNotFound         = errors.New("project: user not found")
+	// ErrProjectHasEnvironments: a project is deleted only after every
+	// environment is purged; deleting the rows underneath live namespaces
+	// would orphan running workloads.
+	ErrProjectHasEnvironments = errors.New("project: environments still exist")
 	// ErrNotMember: a cell needs a membership to hang off.
 	ErrNotMember       = errors.New("project: user is not a member of the project")
 	ErrInvalidRole     = errors.New("project: invalid role")

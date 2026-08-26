@@ -57,6 +57,25 @@ func TestProjectCRUD(t *testing.T) {
 	require.ErrorIs(t, err, ErrProjectNotFound)
 }
 
+func TestDeleteRefusesWithEnvironments(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	proj, err := svc.Create(ctx, "demo", "", uuid.Nil)
+	require.NoError(t, err)
+	env, err := svc.CreateEnvironment(ctx, proj.ID, "production", EnvironmentOptions{})
+	require.NoError(t, err)
+
+	require.ErrorIs(t, svc.Delete(ctx, proj.ID), ErrProjectHasEnvironments)
+	_, err = svc.Get(ctx, proj.ID)
+	require.NoError(t, err, "a refused delete leaves the project in place")
+
+	require.NoError(t, svc.DeleteEnvironment(ctx, env.ID))
+	require.NoError(t, svc.Delete(ctx, proj.ID))
+	require.ErrorIs(t, svc.Delete(ctx, proj.ID), ErrProjectNotFound)
+}
+
 func TestEnvironmentCRUD(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t)

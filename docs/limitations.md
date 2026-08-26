@@ -28,15 +28,16 @@ Declared sizes are only enforced on the `longhorn` driver; on `local` the
 size is advisory and volumes pin their pods to one node. See
 [`storage.md`](storage.md).
 
-## Deleting a project does not tear its environments down
+## Deleting a project requires purging its environments first
 
-`DELETE /v1/projects/{id}` (the console's delete-project action) removes
-the project and its environment records, but does not purge the
-environments' namespaces: their workloads, databases, buckets, and volumes
-keep running on the cluster, and skalid only logs
-`orphaned managed namespace retained`. Purge every environment first with
-`skali env rm <name>`, then delete the project. Namespaces already orphaned
-this way can only be removed by hand (`kubectl delete namespace`).
+A project is deleted only once it has no environments: the API refuses
+otherwise (409), because environment records are released by the
+reconciler after a purge confirms the namespace is gone, and deleting them
+any other way would orphan running workloads. Run `skali env rm <name>` for
+each environment, then delete the project. A namespace that was orphaned
+before this guard existed can only be removed by hand
+(`kubectl delete namespace skali-<project>-<environment>`); skalid logs
+`orphaned managed namespace retained` for it.
 
 ## The registry node cannot be removed
 

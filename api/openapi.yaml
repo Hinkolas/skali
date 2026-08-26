@@ -631,14 +631,17 @@ paths:
       operationId: deleteProject
       summary: Delete a project
       description: |
-        Destructive: removes the project with every environment, draft,
-        and revision. Requires recent authentication (sudo mode).
+        Destructive: removes the project with its drafts and revisions.
+        Refused with 409 while the project still has environments; purge
+        each one first (skali env rm), which releases its namespace.
+        Requires recent authentication (sudo mode).
       tags: [projects]
       responses:
         "204":
           description: Project deleted.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ReauthRequired" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/projects/{id}/draft:

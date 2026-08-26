@@ -114,15 +114,29 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, displayName, sourceM
 	return &proj, nil
 }
 
+// Delete removes a project that has no environments left. Environments
+// own namespaces on the cluster and are released by the reconciler through
+// a purge (skali env rm), which deletes their rows only once the cluster
+// confirms absence; refusing here keeps a project delete from cascading
+// those rows away underneath running workloads.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
-	rows, err := s.st.DeleteProjectByID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("project: delete: %w", err)
-	}
-	if rows == 0 {
-		return ErrProjectNotFound
-	}
-	return nil
+	return s.st.WithTx(ctx, func(q *store.Queries) error {
+		environments, err := q.ListEnvironments(ctx, id)
+		if err != nil {
+			return fmt.Errorf("project: list environments: %w", err)
+		}
+		if len(environments) > 0 {
+			return ErrProjectHasEnvironments
+		}
+		rows, err := q.DeleteProjectByID(ctx, id)
+		if err != nil {
+			return fmt.Errorf("project: delete: %w", err)
+		}
+		if rows == 0 {
+			return ErrProjectNotFound
+		}
+		return nil
+	})
 }
 
 // EnvironmentOptions shape a new environment. The zero value is an

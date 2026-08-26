@@ -161,6 +161,9 @@ func writeProjectError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, codeNotFound, "not found")
 	case errors.Is(err, project.ErrProjectNameTaken):
 		writeError(w, http.StatusConflict, codeConflict, "a project with this name already exists")
+	case errors.Is(err, project.ErrProjectHasEnvironments):
+		writeError(w, http.StatusConflict, codeConflict,
+			"the project still has environments; remove each one first (skali env rm)")
 	case errors.Is(err, project.ErrEnvironmentNameTaken):
 		writeError(w, http.StatusConflict, codeConflict, "an environment with this name already exists")
 	case errors.Is(err, project.ErrVersionConflict):
