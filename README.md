@@ -1,251 +1,234 @@
 # skali
 
-Self-hostable hosting platform: declare an application or a managed database
-in a project and skali runs it on your own hardware — Sevalla-style service
-primitives instead of raw containers. skali is a **product control plane on
-Kubernetes (k3s)**: user intent lives in Postgres, a controller compiles it
-into k8s objects (server-side apply) and reads status back; k3s and a small
-set of blessed operators (CloudNativePG, Traefik, cert-manager) do all
-generic orchestration.
+Run your applications on your own servers, without running a platform team.
 
-**Status:** usable for local development and staging; production
-hardening in progress. `skali dev` runs a project on a disposable local k3d
-platform, `skali deploy` ships it to a remote installation, and `skali
-cluster` installs and maintains the k3s hosts. Applications, managed
-Postgres, S3 buckets, TLS routes, backups, exec, and a web console are all
-in place. What comes next lives in [`ROADMAP.md`](ROADMAP.md); the
-supported build features are in [`docs/build-matrix.md`](docs/build-matrix.md).
+skali is a self-hosted hosting platform. You describe an application, its
+Postgres databases, and its S3 buckets in one `skali.yaml`; skali builds it,
+runs it with TLS routes, health checks, and rollouts, and hands you the
+credentials. The same manifest runs on a disposable local cluster on your
+laptop (`skali dev`) and on the servers you install skali on (`skali
+deploy`). Under the hood it is Kubernetes (k3s), but you never have to touch
+it.
 
-Distinct product and operational roles:
+- **Applications** from a Dockerfile or a prebuilt image, replicated, with
+  readiness and liveness probes, release commands for migrations, and
+  zero-downtime rollouts.
+- **Managed PostgreSQL** (CloudNativePG) and **S3 buckets** (SeaweedFS),
+  provisioned from the manifest with credentials injected as environment
+  variables.
+- **Routes with automatic TLS** (Traefik, Let's Encrypt), custom domains,
+  load-balancing strategies.
+- **Environments** per project (staging, production, ...), promotion between
+  them, rollbacks, encrypted per-environment values.
+- **Local development** on the real platform: hot reload for the app you are
+  working on while its databases and buckets run in the local cluster.
+- **A web console** and a CLI, users with 2FA, and per-project roles.
+- **Backups** of environment data to your own S3 target, cluster upgrades,
+  diagnosis and repair, single node or many.
 
-- **`skalid`** — the control plane: REST API + (soon) the controller. It runs
-  inside Kubernetes in production and also carries the operator commands
-  (`user`, `migrate`).
-- **`skali`** — the workflow-oriented CLI. It owns local manifest, build,
-  terminal, and development-runtime workflows and uses the public API for
-  remote state changes. It also carries the privileged, repeatable `skali
-  cluster` command group for host-level k3s lifecycle and installer-owned
-  Skali system resources; no other command administers production
-  Kubernetes.
-- **`skali-hostd`** — the installer-owned Linux host service for reconciled
-  clusters. Every node runs its outbound-polling typed-operation agent;
-  servers also run the TLS enrollment coordinator. It is independent of
-  `skalid` and the product database.
-- **`web/`** — SvelteKit BFF (adapter-node). Owns the browser session cookie
-  and proxies `/_api/v1/*` to the daemon; the bearer token never reaches
-  browser JavaScript. On a production cluster it ships as the `skali-web`
-  deployment behind the platform domain: `/` serves the console and `/api`
-  routes to the daemon, one surface over 80/443.
+**Status:** early. skali is used daily for development and staging;
+production hardening is in progress and tracked in [`ROADMAP.md`](ROADMAP.md).
 
-Auth is email+password (argon2id) with optional TOTP 2FA and backup codes;
-sessions are opaque bearer tokens (sha256-hashed at rest, 30-day sliding
-expiry, instant revocation). There is no signup endpoint — users are created
-by the operator.
-Access is per project and per environment on one role ladder
-(`none < read < deploy < maintain < admin`): memberships, per-environment
-overrides, and an environment ceiling, with instance admins above all of it.
-`skali access ls|set|rm` and `skali env ls|create|set|rm` manage it from the
-CLI, the console's project settings from the browser.
-See [`docs/permissions.md`](docs/permissions.md).
-
-## Reconciled cluster workflow
-
-New managed clusters stage topology changes and apply them as one durable
-revision:
+## Install the CLI
 
 ```sh
-# Seed server: creates one-node k3s plus the coordinator, not the platform.
-sudo skali cluster create --config node.yaml
-
-# Seed server: create a one-use, 24-hour invitation.
-sudo skali cluster token --role server
-
-# New host: endpoint accepts host, host:port, or an HTTPS origin.
-# This installs only skali-hostd and enrolls a candidate; k3s stays absent.
-sudo skali cluster join 10.1.0.3 \
-  --token-file /root/skali-invitation \
-  --capabilities database,application
-
-# Repeat enrollment for every planned host, then review and converge once.
-sudo skali cluster plan
-sudo skali cluster apply --wait
-
-# The first init applies every pending node before deploying Skali once.
-sudo skali cluster init --config init.yaml
+curl -fsSL https://skali.dev/install.sh | sh
 ```
 
-Invitations use `skali.<base64url-json>`. The payload contains only a
-protocol version, invitation ID, random credential, and coordinator CA pin;
-role, expiry, use, and capability restrictions remain server-side. K3s and
-registry credentials are released only to an enrolled agent over mTLS during
-an accepted apply.
+The script picks the binary for your OS and architecture (macOS and Linux,
+amd64 and arm64), verifies its checksum, and installs it: `/usr/local/bin`
+on Linux (asks for sudo), `~/.local/bin` on macOS. Set `SKALI_VERSION=v0.1.0`
+to pin a release. Run it on your laptop to develop and deploy, and on every
+server that should become a skali node.
 
-Candidate changes can be accumulated with `cluster node capabilities`,
-`cluster node remove|restore`, and `cluster changes import|discard`.
-`cluster apply --rebalance-workloads` additionally performs safe one-at-a-time
-rolling redistribution; normal reconciliation moves only invalidly placed or
-draining workloads. Existing schema-version-1 clusters keep their imperative
-`skali1.`/K10 join behavior and are never migrated in place.
+## Run a project locally
 
-## Quickstart: run a project locally
-
-Requirements: Docker (with buildx). [k3d](https://k3d.io) is used for
-the local cluster; when none is on PATH, `skali dev` installs a pinned,
-checksum-verified copy into `~/.local/share/skali/bin` automatically
-(an existing k3d always wins). From a
-project directory with a `skali.yml` (for example
-[`examples/hello-world`](examples/hello-world), a build-sourced app, or
-[`examples/whoami`](examples/whoami), an imported image):
+Requirements: Docker. skali installs a pinned copy of
+[k3d](https://k3d.io) for the local cluster if none is on your PATH.
 
 ```sh
-cd examples/hello-world && cp .env.example .env
+git clone https://github.com/Hinkolas/skali
+cd skali/examples/hello-world
+cp .env.example .env
 skali dev
 ```
 
-Bare `skali dev` is the complete paved path: it creates the disposable
-`skali-dev` k3d cluster, installs the in-cluster skali-system bundle
-(skalid, CNPG Postgres, managed registry), builds and imports the
-project's artifacts, deploys through the public API, and attaches to the
-rollout. The local edge is HTTP-only: routes serve on
-`http://<domain>:8080` for `*.localhost` domains, and the local API lives
-at `http://skali.localhost:8080` (TLS is a production concern).
-`skali dev status | logs | stop | reset` manage the installation; reset is
-the only destructive command and always confirms. Working from this
-repository, `skali dev` builds the `skalid:dev` image from the working
-tree automatically (`task dev:image` refreshes it explicitly).
+`skali dev` creates the local platform on first run, builds the project,
+deploys it, and follows its logs. The example is then served at
+`http://hello-world.localhost:8080`. Ctrl-C pauses the project (data is kept),
+`skali dev` brings it back, `skali dev -d` keeps it running in the
+background. `skali dev ls`, `skali dev status`, `skali dev exec`, and
+`skali dev reset` do what they say; reset is the only destructive one and
+asks first.
 
-## Quickstart (contributing to skali itself)
+Add a `dev:` block to an application and bare `skali dev` runs that app as a
+process on your machine with hot reload, behind the cluster's routes and with
+its real database and bucket credentials.
 
-Requirements: Go 1.26+, Node 22+, [go-task](https://taskfile.dev), Docker
-(shared dev Postgres; k3d dev cluster), sqlc (only when changing queries).
+## Set up a server
 
-```sh
-# 1. Environment (DATABASE_URL, AUTH_SECRET, …)
-cp .env.example .env    # then set AUTH_SECRET: openssl rand -base64 32
-
-# 2. Shared dev Postgres + skali's database (idempotent)
-task db
-
-# 3. Migrate + create the admin user
-go run ./cmd/skalid migrate up
-go run ./cmd/skalid user create --email you@example.com
-
-# 4. Run the API (:7070) — ensures the dev db first
-task dev
-
-# 5. CLI
-go run ./cmd/skali remote add dev http://localhost:7070
-go run ./cmd/skali remote status
-
-# 6. Web UI (vite dev server on :5173, BFF → API)
-cd web && cp .env.example .env && npm install
-task dev:web
-```
-
-The OpenAPI contract is served at `GET /openapi.yaml` (on a cluster:
-`/api/openapi.yaml`) and lives in [`api/openapi.yaml`](api/openapi.yaml); a
-router-walk test keeps it honest.
-
-## Manifest compiler preview
-
-Skali discovers `skali.yml` or `skali.yaml` in the current directory or a
-parent. An alternative complete definition can be selected explicitly with
-`--manifest`.
+Any Linux server with a public IP works; a Mac runs skali inside a managed
+Lima VM. Point DNS at the server first: an A record for the platform domain
+(for example `skali.example.com`), one for the registry
+(`cr.skali.example.com`), and one per application domain. Ports 80 and 443
+must be reachable.
 
 ```sh
-go run ./cmd/skali validate --manifest examples/hello-world/skali.yml
-
-# Inspect the canonical, target-independent compiler IR.
-go run ./cmd/skali compile --manifest examples/hello-world/skali.yml
-
-# Preview the deterministic Kubernetes objects without touching a cluster.
-# Image-sourced apps render as-is; build-sourced apps additionally need
-# their prepared digest-pinned image via --image (skali dev supplies it
-# automatically during real deployments).
-go run ./cmd/skali compile \
-  --manifest examples/whoami/skali.yml \
-  --target kubernetes \
-  --env-file examples/whoami/.env.example
+curl -fsSL https://skali.dev/install.sh | sh
+sudo skali cluster
 ```
 
-The generated editor schema is checked in at
-[`schemas/skali.schema.json`](schemas/skali.schema.json). Run
-`go generate ./internal/manifest` after changing the manifest wire types.
+`skali cluster` on a fresh host walks you through it: create a new cluster,
+initialize skali on it with your domains, a Let's Encrypt account email, and
+the first admin account. When it finishes it prints the console URL. The
+whole thing takes a few minutes and is repeatable: run `sudo skali cluster`
+again at any time to see status or open the maintenance menu.
 
-## Layout
+Non-interactive installs pass `--config` files instead
+(`skali cluster install --config node.yaml`, `skali cluster init --config
+init.yaml`); the schemas for both are in [`schemas/`](schemas/).
 
-```
-api/           OpenAPI 3.1 contract (embedded, served by the daemon)
-cmd/skalid     control plane: serve (default) | user | migrate
-cmd/skali      workflow CLI: remote, validate, compile
-migrations/    goose migrations (embedded; also sqlc's schema source)
-query/         sqlc query sources → generated into internal/store
-internal/
-  api/           HTTP layer: router, middleware, error envelope, handlers, SSE
-  artifact/      artifact lifecycle machine (pending/verified/abandoned/evicted)
-  artifactstore/ artifact records, retention leases, record + fake resolvers
-  auth/          auth service: argon2id, opaque sessions, TOTP 2FA, rate limits
-  build/         pure build engine: context hashing, buildx, digest imports
-  buildstore/    build records and lifecycle (local now, R4 worker queue)
-  bundle/        installer-owned skali-system bundle: render, SSA apply, waits
-  claim/         claim lifecycle machine (R5 implements the substrate)
-  client/        typed REST client used by cmd/skali (JSON + SSE)
-  clirender/     terminal run-tree renderer (transcript glyph shape)
-  compiler/      normalized project IR, references, units, dependency graph
-  cliconfig/     ~/.config/skali/config.yaml named remotes
-  config/        env-driven config (godotenv + envconfig)
-  crypt/         shared at-rest encryption (AES-GCM, HKDF-derived keys)
-  deploy/        deployment coordination: plan, artifact window, promotion
-  journal/       run/step/attempt machines + persistence, logs, SSE fan-out
-  kube/          cluster client, server-side apply/delete, field ownership
-  kubernetes/    pure compiler IR → Kubernetes API object rendering
-  kubetest/      live-cluster test gating (TEST_KUBECONFIG), severable proxy
-  layout/        installer cluster-layout schema and topology derivation
-  lifecycle/     generic declarative state-machine engine
-  localdev/      disposable local platform: k3d lifecycle, state, bootstrap
-  manifest/      strict skali.yml parser, diagnostics, and schema generation
-  module/        service-module contract, registry, health (+app, +apptest)
-  obs/           slog + OpenTelemetry (env-only, zero egress by default)
-  observe/       in-memory ObservedStore fed by LIST/WATCH, freshness, fake
-  plan/          revision diffing with destructive-change classification
-  project/       projects, environments, optimistically versioned drafts
-  reconcile/     level-triggered kernel: queue, apply/prune, health, activation
-  redact/        secret-plaintext redaction for run logs
-  registry/      managed-registry client: digest verification, repo layout
-  revision/      immutable revision builder and document contract
-  runtimelogs/   live application log streaming (cluster pass-through)
-  store/         pgx pool/tx glue + sqlc-generated queries
-  testdb/        ephemeral Postgres database per test
-  values/        dotenv import and the value contract check
-  valuestore/    versioned write-only environment values, encrypted, staging
-web/           SvelteKit BFF (adapter-node)
-```
-
-## Roadmap
-
-[`ROADMAP.md`](ROADMAP.md) is the plan of record: a functionality-level list
-ordered by production confidence, console catch-up, product features,
-platform operations, and housekeeping. Earlier architecture plans were
-removed from the tree on 2026-08-19 and live only in git history.
-
-## Tests
+### More nodes
 
 ```sh
-# DB-backed tests create ephemeral databases on this server per test:
-export TEST_DATABASE_URL=postgres://dev:dev@localhost:5432/dev?sslmode=disable
-task test
-cd web && npm run check
+# on the server: print a one-use join invitation
+sudo skali cluster token
 
-# Live cluster tests (observation, apply/prune, healing, HPA transitions)
-# run against a disposable pinned k3d cluster:
-task k3d:up
-task test:live
-task k3d:down
+# on each new host, after installing the CLI
+sudo skali cluster join skali.example.com --token-file ./invitation
 
-# Build-engine tests exec docker (buildx + a throwaway registry container):
-task test:docker
-
-# The skali dev end-to-end suite drives the real paved path on its own
-# throwaway installation (cluster skali-dev-e2e); it takes minutes:
-task test:dev
+# back on the server: review and converge the topology in one step
+sudo skali cluster plan
+sudo skali cluster apply --wait
 ```
+
+Nodes declare capabilities (`application`, `database`, `edge`, ...) and
+skali places workloads accordingly. Servers can be joined the same way for a
+highly available control plane.
+
+### Day two
+
+```sh
+sudo skali cluster status          # health of this node and the platform
+sudo skali cluster diagnose        # find problems, with suggested fixes
+sudo skali cluster repair          # apply them, each one confirmed
+sudo skali cluster upgrade         # k3s and the platform, to this CLI's version
+sudo skali cluster reset-password  # recover a locked-out admin account
+```
+
+## Deploy
+
+Connect the CLI to your installation once, then deploy from any project
+directory that has a `skali.yaml`:
+
+```sh
+skali remote add prod skali.example.com   # logs you in
+cd my-project
+skali deploy
+```
+
+The first deploy of a checkout asks which project and environment to target
+and remembers the answer. Configuration values come from the environment's
+stored values or a local env file (`--env-file .env.production`); every value
+is stored encrypted, write-only, and shown by name only. Each deploy shows a
+plan, builds locally, pushes into the platform's registry, and renders the
+rollout live, ending with the URLs of your routes.
+
+```sh
+skali plan                        # what a deploy would change, without doing it
+skali logs web                    # live logs of an application
+skali exec web -- sh              # a shell in a running container
+skali rollback                    # back to the previous revision
+skali deploy --from staging       # promote staging's revision to this environment
+skali backup create               # snapshot databases, buckets, and volumes
+skali access set alice@example.com deploy   # roles: read, deploy, maintain, admin
+```
+
+The web console shows the same projects, deployments, logs, and settings in
+the browser, and manages users.
+
+## The manifest
+
+```yaml
+# yaml-language-server: $schema=https://skali.dev/schemas/v1/skali.schema.json
+version: "1"
+name: guestbook
+
+applications:
+  web:
+    build:
+      context: .
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        port: http
+    environment:
+      DATABASE_URL: "{{ databases.data.url }}"
+      S3_BUCKET: "{{ buckets.files.name }}"
+      S3_ACCESS_KEY: "{{ buckets.files.access_key }}"
+      S3_SECRET_KEY: "{{ buckets.files.secret_key }}"
+    health:
+      readiness:
+        http:
+          port: http
+          path: /healthz
+    deployment:
+      releaseCommand:
+        command: ["./app", "migrate"]
+    scaling:
+      replicas:
+        min: 2
+
+databases:
+  data:
+    engine: postgres
+    version: 17
+
+buckets:
+  files:
+    quotas:
+      storage: 1GB
+```
+
+`${NAME}` references are per-environment values you provide; `{{ ... }}`
+references are outputs of the databases and buckets skali provisions.
+`skali validate` checks a manifest, and the schema line above gives you
+completion and inline errors in any editor with YAML language support.
+
+The [`examples/`](examples/) directory has complete projects: a minimal
+build ([`hello-world`](examples/hello-world)), an imported image
+([`whoami`](examples/whoami)), an app with a database, a bucket, and a
+volume ([`guestbook`](examples/guestbook)), and the local hot-reload loop
+([`dev-loop`](examples/dev-loop)).
+
+If you write manifests with a coding agent, `skali skill install` gives it
+the complete manifest reference and the platform's rules.
+
+## Documentation
+
+- [`docs/databases.md`](docs/databases.md): managed PostgreSQL, engines and
+  versions, extensions, isolation and availability.
+- [`docs/buckets.md`](docs/buckets.md): S3 buckets, quotas, endpoints, and
+  topology.
+- [`docs/storage.md`](docs/storage.md): persistent volumes and the storage
+  drivers.
+- [`docs/permissions.md`](docs/permissions.md): users, roles, environments,
+  and protection.
+- [`docs/build-matrix.md`](docs/build-matrix.md): supported Dockerfile and
+  BuildKit features.
+- [`docs/development.md`](docs/development.md): working on skali itself.
+- [`ROADMAP.md`](ROADMAP.md): what exists and what comes next.
+
+## How it fits together
+
+`skali` is the CLI: it builds on your machine, talks to the platform's API,
+and installs and maintains the servers. `skalid` is the control plane that
+runs on the cluster: it stores what you declared, compiles it into
+Kubernetes objects, and reports status back. The console is a web app served
+on the platform domain. k3s and a small set of operators (CloudNativePG,
+Traefik, cert-manager, SeaweedFS, optionally Longhorn) do the generic
+orchestration; skali owns the hosts it runs on and never adopts a cluster it
+did not install.
