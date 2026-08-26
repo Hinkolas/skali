@@ -1,9 +1,9 @@
-# Supported BuildKit feature matrix (R3)
+# Supported BuildKit feature matrix
 
-The local build executor drives BuildKit through `docker buildx build`
-(the R0-resolved local builder). The manifest describes how to build; the
-engine guarantees the same artifact contract regardless of executor. This
-matrix documents what the R3 build schema and engine support.
+The local build executor drives BuildKit through `docker buildx build`.
+The manifest describes how to build; the engine guarantees the same
+artifact contract regardless of executor. This matrix documents what the
+build schema and engine support today.
 
 ## Supported
 
@@ -30,10 +30,10 @@ matrix documents what the R3 build schema and engine support.
 - Symlinks must stay inside the context; absolute or escaping targets fail
   collection.
 
-## Not supported in R3
+## Not supported yet
 
-- Cloud builders and build-context upload (R4; the schema and artifact
-  contract are shared).
+- Cloud builders and build-context upload (planned; the schema and
+  artifact contract are shared).
 - Buildpacks and Nixpacks (a future engine behind the same interface).
 - Remote cache export/import (`--cache-to`/`--cache-from`).
 - Named build contexts, SSH forwarding, and Dockerfile syntax directives

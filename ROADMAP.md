@@ -7,7 +7,7 @@ plans (`REWORK_V2.md`, `.plan/`, `docs/transcripts/`) were removed on
 Anything below may be reworked freely; nothing that exists is sacred.
 
 Rule of thumb: production confidence first, then make the console honest,
-then features. Everything is dogfooded on the khz cluster before it counts.
+then features. Everything is dogfooded on a real cluster before it counts.
 
 ## Where we are (2026-08-19)
 
@@ -31,8 +31,8 @@ Working and used daily:
   users, nodes, account/2FA.
 - Agent skill (`skali skill install`).
 
-Live: `skali.khz.dev`, one node, `skalid v0.0.0-dev`. No release has ever
-been tagged.
+One single-node installation runs a dev build in daily use. No release has
+been tagged yet.
 
 ## 1. Production confidence
 
@@ -75,7 +75,7 @@ The goal of this block: I can put a paying workload on skali and sleep.
       `skali-high`, `skali-normal` come with the permission system).
 - [ ] Documented recovery runbook: lost node, lost disk, lost control plane,
       lost skalid database. Each path tried once.
-- [ ] Move a real kilohertz workload onto khz and leave it there.
+- [ ] Move a real production workload onto skali and leave it there.
 
 ## 2. Console catch-up
 

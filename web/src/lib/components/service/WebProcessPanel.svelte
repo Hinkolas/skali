@@ -41,9 +41,6 @@
 			<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
 		</span>
 		<div class="ml-auto flex gap-2">
-			<span title="Restarts from the UI are coming soon; use skali deploy --force">
-				<Button size="sm" disabled>Restart</Button>
-			</span>
 			<span title="Shell access is coming soon">
 				<Button size="sm" disabled>Shell</Button>
 			</span>

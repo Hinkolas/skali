@@ -3,7 +3,13 @@
 version: "1"
 
 name: file-sharing
-description: Full-stack file-sharing application with PostgreSQL and S3 storage
+description: Reference manifest exercising most of the schema (no application source ships with it)
+
+# This example is a reference, not a runnable project: it shows most of the
+# manifest surface (resources, autoscaling, placement, rollout, backups) for
+# an application whose source is not included. It validates and compiles;
+# `skali dev` or `skali deploy` would fail at the build step. For runnable
+# examples see hello-world, whoami, guestbook, and dev-loop.
 
 # ${NAME} values come from the project environment and are derived from use:
 # a missing value without a default fails validation before deployment, and
