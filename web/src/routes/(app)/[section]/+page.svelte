@@ -12,12 +12,12 @@
 
 <PageHeader title={data.title}>
 	{#snippet subtitle()}
-		Not designed yet — placeholder page
+		Coming soon
 	{/snippet}
 </PageHeader>
 
 <EmptyState
 	icon={data.icon}
-	title="{data.title} isn't part of the prototype yet"
-	description="this page will land in a later design pass"
+	title="{data.title} isn't available yet"
+	description="this page will arrive in a future version"
 />

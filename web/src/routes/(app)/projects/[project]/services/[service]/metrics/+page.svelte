@@ -116,8 +116,8 @@
 {#if !designed}
 	<EmptyState
 		icon={Gauge}
-		title="Metrics isn't part of the prototype yet"
-		description="this page will land in a later design pass"
+		title="Metrics isn't available yet"
+		description="this page will arrive in a future version"
 	/>
 {:else}
 	<div class="mb-3.5 flex items-baseline gap-2.5">

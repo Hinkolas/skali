@@ -64,7 +64,7 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 
 export const PROJECT_TABS: NavItemDef[] = [
 	{ label: 'Overview', slug: '', icon: LayoutDashboard },
-	{ label: 'Service graph', slug: 'graph', icon: Workflow },
+	{ label: 'Service graph', slug: 'graph', icon: Workflow, stub: true },
 	{ label: 'Activity', slug: 'activity', icon: Activity, stub: true },
 	{ label: 'Logs', slug: 'logs', icon: ScrollText, stub: true },
 	{ label: 'Settings', slug: 'settings', icon: Settings2 }
@@ -93,16 +93,6 @@ export const SERVICE_TABS: Record<ServiceType, NavItemDef[]> = {
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },
 		{ label: 'Metrics', slug: 'metrics', icon: Gauge, stub: true },
 		{ label: 'Settings', slug: 'settings', icon: Settings2 }
-	],
-	cache: [
-		{ label: 'Overview', slug: '', icon: LayoutDashboard },
-		{ label: 'Metrics', slug: 'metrics', icon: Gauge, stub: true },
-		{ label: 'Settings', slug: 'settings', icon: Settings2, stub: true }
-	],
-	storage: [
-		{ label: 'Overview', slug: '', icon: LayoutDashboard },
-		{ label: 'Metrics', slug: 'metrics', icon: Gauge, stub: true },
-		{ label: 'Settings', slug: 'settings', icon: Settings2, stub: true }
 	]
 };
 

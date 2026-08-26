@@ -1,13 +1,12 @@
 <script lang="ts">
-	import { HEALTH_META, STATUS_META, type ServiceStatus } from '$lib/service-types';
+	import { HEALTH_META } from '$lib/service-types';
 	import type { ServiceHealth } from '$lib/types/project';
 	import type { HealthDiagnostic } from '$lib/types/status';
 	import StatusDot from './StatusDot.svelte';
 	import Tooltip from './Tooltip.svelte';
 
 	// Inline form: dot + colored label. Pill form: adds a tinted rounded
-	// background (page headers next to the service title). Accepts both the
-	// real health vocabulary and the legacy graph statuses.
+	// background (page headers next to the service title).
 	//
 	// Health alone says a service is not settled but never why: the reason
 	// lives in the status projection's diagnostics (a progressing database is
@@ -21,7 +20,7 @@
 		align = 'start',
 		focusable = true
 	}: {
-		status: ServiceStatus | ServiceHealth;
+		status: ServiceHealth;
 		pill?: boolean;
 		/** Diagnostics behind this status, empty when there is nothing to explain. */
 		diagnostics?: HealthDiagnostic[];
@@ -31,11 +30,7 @@
 		focusable?: boolean;
 	} = $props();
 
-	const meta = $derived(
-		status in STATUS_META
-			? STATUS_META[status as ServiceStatus]
-			: HEALTH_META[status as ServiceHealth]
-	);
+	const meta = $derived(HEALTH_META[status]);
 	const pillBg: Record<string, string> = {
 		'text-status-success': 'bg-status-success/10',
 		'text-status-warning': 'bg-status-warning/10',
