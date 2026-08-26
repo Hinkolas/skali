@@ -1,5 +1,7 @@
 <script lang="ts">
-	let { children } = $props();
+	import type { LayoutData } from './$types';
+
+	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 </script>
 
 <div
@@ -17,13 +19,12 @@
 				s
 			</div>
 			<h1 class="text-text-primary text-2xl font-semibold tracking-[-0.015em]">Sign in to skali</h1>
-			<div class="font-mono text-text-faint text-sm">self-hosted platform</div>
 		</div>
 
 		{@render children()}
 
-		<div class="font-mono text-text-ghost mt-5.5 text-center text-xs">
-			skali · self-hosted · <span class="text-text-faint">$ skali login</span>
-		</div>
+		{#if data.version}
+			<div class="font-mono text-text-ghost mt-5.5 text-center text-xs">skali {data.version}</div>
+		{/if}
 	</div>
 </div>

@@ -49,7 +49,8 @@ func newClusterCommand() *cobra.Command {
 		newClusterUpgradeCmd(), newClusterUninstallCmd(), newClusterTokenCmd(), newClusterJoinCmd(),
 		newClusterTierCmd(), newClusterDiagnoseCmd(), newClusterRepairCmd(), newClusterRestoreCmd(),
 		newClusterNodeCmd(), newClusterChangesCmd(), newClusterPlanCmd(), newClusterApplyCmd(),
-		newClusterRebalanceCmd(), newClusterAddressesCmd(), newClusterStorageMigrateCmd())
+		newClusterRebalanceCmd(), newClusterAddressesCmd(), newClusterStorageMigrateCmd(),
+		newClusterResetPasswordCmd())
 	clusterCmd = cluster
 	return cluster
 }

@@ -90,7 +90,10 @@ demotion to member keeps their own projects.
 
 Invariants kept from today: at least one instance admin must remain
 (`ErrLastAdmin`), users cannot change their own instance role or delete
-themselves, `skalid user set-role` is the lost-admin recovery path
+themselves, `skalid user set-role` and `skalid user reset-password` are the
+lost-admin recovery paths (a forgotten password is reset from a server node
+with `skali cluster reset-password`, optionally dropping a lost 2FA device;
+there is no email-based reset by design)
 (`skalid user delete` must go through `auth.DeleteUser` so it honors the
 last-admin guard; today it bypasses it).
 

@@ -149,3 +149,22 @@ func ensureAdminRemains(ctx context.Context, q *store.Queries) error {
 	}
 	return nil
 }
+
+// ClearUserTwoFactor removes a user's 2FA enrollment without any credential
+// check: the operator recovery path for an admin who lost the device along
+// with the password. Nothing enrolled is not an error, so the reset flow can
+// always request it.
+func ClearUserTwoFactor(ctx context.Context, st *store.Store, userID uuid.UUID) error {
+	return st.WithTx(ctx, func(q *store.Queries) error {
+		if _, err := q.GetUserByID(ctx, userID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if _, err := q.DeleteTwoFactorByUserID(ctx, userID); err != nil {
+			return err
+		}
+		return q.SetUserTwoFactorEnabled(ctx, store.SetUserTwoFactorEnabledParams{ID: userID, TwoFactorEnabled: false})
+	})
+}

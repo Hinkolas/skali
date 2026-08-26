@@ -3,7 +3,6 @@
 	import { resolve } from '$app/paths';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
-	import { toast } from '$lib/stores/toast.svelte';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
@@ -113,10 +112,7 @@
 			</label>
 
 			<label class="flex flex-col gap-1.5">
-				<span class="text-text-tertiary flex text-base font-medium">
-					Password
-					<span class="text-text-faint ml-auto cursor-pointer text-md font-normal">Forgot?</span>
-				</span>
+				<span class="text-text-tertiary text-base font-medium">Password</span>
 				<input
 					type="password"
 					name="password"
@@ -146,20 +142,6 @@
 				{:else}
 					<span>Sign in</span>
 				{/if}
-			</button>
-
-			<div class="text-text-ghost flex items-center gap-2.5 text-sm">
-				<span class="bg-border-default h-px flex-1"></span>
-				or
-				<span class="bg-border-default h-px flex-1"></span>
-			</div>
-
-			<button
-				type="button"
-				onclick={() => toast.info('Access tokens are coming soon')}
-				class="border-border-strong text-text-secondary cursor-pointer rounded-[11px] border p-2.75 text-center text-lg font-medium transition-colors hover:bg-white/4"
-			>
-				Use access token
 			</button>
 		</form>
 	{/if}

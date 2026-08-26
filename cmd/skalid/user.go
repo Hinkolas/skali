@@ -22,7 +22,7 @@ import (
 // AUTH_SECRET or other serve-only settings.
 func runUser(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: skalid user <create|list|set-role|delete> [flags]")
+		return errors.New("usage: skalid user <create|list|set-role|reset-password|delete> [flags]")
 	}
 	ctx := context.Background()
 
@@ -44,10 +44,12 @@ func runUser(args []string) error {
 		return userList(ctx, st)
 	case "set-role":
 		return userSetRole(ctx, st, args[1:])
+	case "reset-password":
+		return userResetPassword(ctx, st, args[1:])
 	case "delete":
 		return userDelete(ctx, st, args[1:])
 	default:
-		return fmt.Errorf("unknown user command %q (available: create, list, set-role, delete)", args[0])
+		return fmt.Errorf("unknown user command %q (available: create, list, set-role, reset-password, delete)", args[0])
 	}
 }
 
@@ -117,6 +119,49 @@ func userSetRole(ctx context.Context, st *store.Store, args []string) error {
 		return err
 	}
 	fmt.Printf("%s is now %s\n", user.Email, user.Role)
+	return nil
+}
+
+// userResetPassword is the operator recovery path for a forgotten password:
+// no old password, no caller identity, only database access. `skali cluster
+// reset-password` runs it as a one-shot job on the cluster. Every session of
+// the user is revoked; --disable-2fa also drops a lost authenticator.
+func userResetPassword(ctx context.Context, st *store.Store, args []string) error {
+	fs := flag.NewFlagSet("user reset-password", flag.ContinueOnError)
+	email := fs.String("email", "", "login email (required)")
+	passwordStdin := fs.Bool("password-stdin", false, "read the new password from stdin instead of prompting")
+	disableTwoFactor := fs.Bool("disable-2fa", false, "also remove the user's two-factor enrollment")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" {
+		return errors.New("usage: skalid user reset-password --email <address> [--disable-2fa] [--password-stdin]")
+	}
+
+	user, err := st.GetUserByEmail(ctx, *email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("no user with email %q", *email)
+		}
+		return err
+	}
+	password, err := readPassword(ctx, *passwordStdin)
+	if err != nil {
+		return err
+	}
+	if err := auth.ResetUserPassword(ctx, st, user.ID, password); err != nil {
+		return err
+	}
+	if *disableTwoFactor {
+		if err := auth.ClearUserTwoFactor(ctx, st, user.ID); err != nil {
+			return err
+		}
+	}
+	suffix := ""
+	if *disableTwoFactor {
+		suffix = ", two-factor disabled"
+	}
+	fmt.Printf("password reset for %s %s (%s), sessions revoked%s\n", user.Role, user.Email, user.ID, suffix)
 	return nil
 }
 
