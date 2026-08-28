@@ -193,14 +193,12 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 			ac.route(r, "GET", "/environments/{id}/logs/stream", classEnvRead, lh.stream)
 
 			// Exec sits with the streams (a session must outlive the
-			// request timeout) but behind the reauth gate: a shell in the
-			// container exposes everything credential reveal does.
+			// request timeout). The sudo gate lives in the handler: only a
+			// promote-only environment demands a fresh session for a shell
+			// (see docs/permissions.md).
 			if d.Exec != nil {
-				xh := newExecHandlers(d.Exec)
-				r.Group(func(r chi.Router) {
-					r.Use(RequireFresh(d.Auth))
-					ac.route(r, "GET", "/environments/{id}/exec", classEnvMaintain, xh.open)
-				})
+				xh := newExecHandlers(d.Exec, d.Auth)
+				ac.route(r, "GET", "/environments/{id}/exec", classEnvMaintain, xh.open)
 			}
 		})
 
@@ -211,6 +209,11 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 			// Public: everything a client can reach without a session.
 			ac.route(r, "POST", "/auth/login", classPublic, h.login)
 			ac.route(r, "POST", "/auth/2fa/verify", classPublic, h.verifyTwoFactor)
+			// Browser device authorization, CLI side: open a login request
+			// and poll it. The poll answer carries the bearer token, so the
+			// console's BFF never proxies these two.
+			ac.route(r, "POST", "/auth/device/requests", classPublic, h.startDeviceLogin)
+			ac.route(r, "POST", "/auth/device/token", classPublic, h.pollDevice)
 
 			// Bearer-protected. RequireAuth stays on this group only.
 			r.Group(func(r chi.Router) {
@@ -226,11 +229,21 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				ac.route(r, "GET", "/auth/sessions", classSelf, h.listSessions)
 				ac.route(r, "DELETE", "/auth/sessions/{id}", classSelf, h.revokeSession)
 				ac.route(r, "POST", "/auth/2fa/confirm", classSelf, h.confirmTwoFactor)
+				// Device authorization: a reauth request is bound to the
+				// calling (stale) session, so it cannot sit behind the gate;
+				// the console looks requests up and denies them freely.
+				ac.route(r, "POST", "/auth/device/requests/reauth", classSelf, h.startDeviceReauth)
+				ac.route(r, "GET", "/auth/device/codes/{user_code}", classSelf, h.lookupDevice)
+				ac.route(r, "POST", "/auth/device/codes/{user_code}/deny", classSelf, h.denyDevice)
 
 				// Sensitive self-service: sudo mode.
 				r.Group(func(r chi.Router) {
 					r.Use(RequireFresh(d.Auth))
 
+					// Approving hands a terminal a session or a fresh sudo
+					// window; the browser proves identity first (the console
+					// answers the gate with its reauth checkpoint).
+					ac.route(r, "POST", "/auth/device/codes/{user_code}/approve", classSelf, h.approveDevice)
 					ac.route(r, "POST", "/auth/password", classSelf, h.changePassword)
 					ac.route(r, "POST", "/auth/2fa/enable", classSelf, h.enableTwoFactor)
 					ac.route(r, "POST", "/auth/2fa/disable", classSelf, h.disableTwoFactor)

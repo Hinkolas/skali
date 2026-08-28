@@ -16,4 +16,7 @@ var (
 	ErrInvalidRole             = errors.New("auth: role must be admin or member")
 	ErrLastAdmin               = errors.New("auth: cannot demote or delete the last admin")
 	ErrReauthRequired          = errors.New("auth: recent authentication required")
+	ErrDeviceNotFound          = errors.New("auth: device request not found or no longer pending")
+	ErrDeviceForeign           = errors.New("auth: device request belongs to another user")
+	ErrSlowDown                = errors.New("auth: polling too fast")
 )

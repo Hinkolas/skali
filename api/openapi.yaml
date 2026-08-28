@@ -27,7 +27,10 @@ info:
     session to have proven the user's identity recently (within the
     operator-configured reauth window). A stale session receives
     `403 reauth_required`; clients recover by confirming identity at
-    `/v1/auth/reauth` and retrying the original request.
+    `/v1/auth/reauth` and retrying the original request. A terminal can
+    instead confirm in the browser through device authorization
+    (`/v1/auth/device/*`): the CLI opens a request, the signed-in console
+    approves it, and the CLI's session is fresh again.
 
     Every response carries the `Skali-Instance` header: the installation
     identity minted with the database, which changes exactly when a
@@ -222,6 +225,170 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/device/requests:
+    post:
+      operationId: startDeviceLogin
+      summary: Open a browser device authorization for login
+      description: |
+        CLI side of browser login. Answers a device code to poll with and
+        a user code the person confirms at `/auth/device?code=...` in the
+        console. The caller's address and user agent become the minted
+        session's. Public; rate limited per address.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                client_label:
+                  type: string
+                  description: Shown to the approver, e.g. "skali CLI on laptop".
+      responses:
+        "201":
+          description: Request opened.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/device/requests/reauth:
+    post:
+      operationId: startDeviceReauth
+      summary: Open a browser device authorization for sudo mode
+      description: |
+        Like `startDeviceLogin`, but bound to the calling session: approval
+        by that session's owner (behind the console's own reauth checkpoint)
+        re-stamps the session's sudo window instead of minting a token, so
+        a stale terminal session confirms identity in the browser. Not
+        behind the reauth gate, since the caller is stale by definition.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                client_label:
+                  type: string
+      responses:
+        "201":
+          description: Request opened.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/device/token:
+    post:
+      operationId: pollDevice
+      summary: Poll a device authorization
+      description: |
+        Answers the request's state. Terminal states (`approved`, `denied`,
+        `expired`) are reported once and the request is deleted, so an
+        approved login hands out its session exactly once and an unknown
+        device code is indistinguishable from a swept one (`404`). Polling
+        faster than `interval` answers `429 slow_down` without changing
+        the request.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_code]
+              properties:
+                device_code:
+                  type: string
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicePoll" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429":
+          description: "`slow_down` (poll faster than the interval) or `rate_limited`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/auth/device/codes/{user_code}:
+    get:
+      operationId: lookupDevice
+      summary: Describe a pending device authorization
+      description: |
+        Console side: what the person sees before approving. Accepts the
+        code in any case, with or without the dash. Only pending, unexpired
+        requests answer; everything else is `404`.
+      tags: [auth]
+      parameters:
+        - name: user_code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The pending request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/device/codes/{user_code}/approve:
+    post:
+      operationId: approveDevice
+      summary: Approve a device authorization (sudo mode)
+      description: |
+        A login request records the caller as the approver; the terminal
+        receives a session for the caller on its next poll. A reauth request
+        re-stamps the bound terminal session, and only that session's owner
+        may approve it (`403 forbidden` otherwise). Behind the reauth gate:
+        the caller's own session must be fresh.
+      tags: [auth]
+      parameters:
+        - name: user_code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Approved.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/device/codes/{user_code}/deny:
+    post:
+      operationId: denyDevice
+      summary: Deny a device authorization
+      tags: [auth]
+      parameters:
+        - name: user_code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Denied; the terminal learns on its next poll.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/auth/password:
     post:
@@ -3003,7 +3170,9 @@ paths:
         without a terminal frame means the session failed. The server
         pings every 15 seconds; the route is exempt from the request
         timeout. Targets resolve only among the environment's own app
-        pods; the session requires a fresh (reauthenticated) session.
+        pods. On a promote-only environment the session requires a fresh
+        (reauthenticated) session; a direct environment opens on the
+        maintain role alone.
       tags: [exec]
       responses:
         "101":
@@ -3271,6 +3440,58 @@ components:
       properties:
         session: { $ref: "#/components/schemas/SessionCreated" }
 
+    DeviceRequest:
+      type: object
+      description: |
+        A pending browser device authorization. The device code is the
+        polling secret, shown to nobody; the user code is what the person
+        confirms in the console, rendered XXXX-XXXX.
+      required: [device_code, user_code, expires_at, interval]
+      properties:
+        device_code:
+          type: string
+        user_code:
+          type: string
+          example: BCDF-2345
+        expires_at:
+          type: string
+          format: date-time
+        interval:
+          type: integer
+          description: Seconds between polls; faster polling answers `slow_down`.
+
+    DevicePoll:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, approved, denied, expired]
+        session:
+          description: Set exactly once, on the poll that observes an approved login request.
+          allOf:
+            - $ref: "#/components/schemas/SessionCreated"
+
+    DeviceInfo:
+      type: object
+      required: [intent, client_label, created_at, expires_at, mine]
+      properties:
+        intent:
+          type: string
+          enum: [login, reauth]
+        client_label:
+          type: string
+          description: The requesting client's self-description, e.g. "skali CLI on laptop".
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        mine:
+          type: boolean
+          description: For reauth requests, whether the bound session belongs to the caller; only its owner may approve.
+
     Challenge:
       type: object
       required: [token, expires_at]
@@ -3322,6 +3543,7 @@ components:
             - version_conflict
             - invalid_manifest
             - rate_limited
+            - slow_down
             - node_unreachable
             - no_ready_pod
             - registry_disabled

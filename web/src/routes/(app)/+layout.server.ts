@@ -10,8 +10,10 @@ import type { Project } from '$lib/types/project';
 import type { SystemMeta } from '$lib/types/system';
 import type { LayoutServerLoad } from './$types';
 
-export const load: LayoutServerLoad = async ({ locals, fetch }) => {
-	if (!locals.user) redirect(302, '/auth/login');
+export const load: LayoutServerLoad = async ({ locals, fetch, url }) => {
+	if (!locals.user) {
+		redirect(302, '/auth/login?next=' + encodeURIComponent(url.pathname + url.search));
+	}
 
 	const [projectsRes, nodesRes, metaRes] = await Promise.all([
 		apiFetch(fetch, locals.token, '/v1/projects?include=summary'),

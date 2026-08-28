@@ -14,10 +14,12 @@ import (
 
 // reauthSession refreshes the sudo window of the current session for a
 // gated call: the local platform reuses its recorded bootstrap password,
-// every other remote asks for the second factor when one is enrolled and
-// for the account password otherwise. On a pipe the prompt reads one line
-// from stdin (the same plain prompt skali remote add uses), so scripts can
-// confirm without a terminal.
+// every other remote asks for the second factor when one is enrolled, opens
+// the browser to confirm when the terminal is interactive (the console's
+// checkpoint takes a password manager), and asks for the account password
+// otherwise. On a pipe the prompt reads one line from stdin (the same
+// plain prompt skali remote add uses), so scripts can confirm without a
+// terminal.
 func reauthSession(ctx context.Context, out io.Writer, in *bufio.Reader, api *client.Client) error {
 	info, err := api.CurrentSession(ctx)
 	if err != nil {
@@ -43,6 +45,16 @@ func reauthSession(ctx context.Context, out io.Writer, in *bufio.Reader, api *cl
 			return fmt.Errorf("reauthenticate: %w", err)
 		}
 		return nil
+	}
+	if browserAuthAvailable(false) {
+		err := deviceReauth(ctx, out, api)
+		if !client.IsNotFound(err) {
+			if err != nil {
+				return fmt.Errorf("reauthenticate: %w", err)
+			}
+			return nil
+		}
+		// An older daemon without the device flow: confirm the password.
 	}
 	password, err := session.Secret(ctx, cliprompt.SecretOptions{
 		Title:       "Confirm your password",

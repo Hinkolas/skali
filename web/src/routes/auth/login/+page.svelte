@@ -3,9 +3,9 @@
 	import { resolve } from '$app/paths';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
-	import type { ActionData } from './$types';
+	import type { ActionData, PageData } from './$types';
 
-	let { form }: { form: ActionData } = $props();
+	let { form, data }: { form: ActionData; data: PageData } = $props();
 	let submitting = $state(false);
 	let emailInput = $state<HTMLInputElement | null>(null);
 	let codeInput = $state<HTMLInputElement | null>(null);
@@ -48,6 +48,7 @@
 
 		<form method="post" action="?/verify" use:enhance={submitEnhance} class="flex flex-col gap-3.5">
 			<input type="hidden" name="challenge_token" value={form?.challengeToken ?? ''} />
+			<input type="hidden" name="next" value={data.next} />
 			<label class="flex flex-col gap-1.5">
 				<span class="text-text-tertiary text-base font-medium">Code</span>
 				<input
@@ -96,6 +97,7 @@
 		</p>
 	{:else}
 		<form method="post" action="?/login" use:enhance={submitEnhance} class="flex flex-col gap-3.5">
+			<input type="hidden" name="next" value={data.next} />
 			<label class="flex flex-col gap-1.5">
 				<span class="text-text-tertiary text-base font-medium">Email</span>
 				<input

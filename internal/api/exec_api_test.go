@@ -122,13 +122,26 @@ func TestExecHandshakeErrors(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, status)
 	require.Equal(t, "invalid_token", errorCode(t, body))
 
-	// Stale session: exec sits behind the reauth gate.
+	// Stale session on a direct environment: no sudo gate, the request
+	// reaches resolution.
 	a.staleAllSessions()
+	a.execFake.script(func(context.Context, uuid.UUID, podexec.Options) (*podexec.Session, error) {
+		return nil, podexec.ErrNoCluster
+	}, nil)
+	status, body = a.do("GET", path, token, nil)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "node_unreachable", errorCode(t, body))
+
+	// Promote-only environment: a shell needs a fresh session.
+	a.setEnvironmentSettings(t, envID, map[string]any{"deploy_policy": "promote-only"})
 	status, body = a.do("GET", path, token, nil)
 	require.Equal(t, http.StatusForbidden, status)
 	require.Equal(t, "reauth_required", errorCode(t, body))
 	status, _ = a.do("POST", "/v1/auth/reauth", token, map[string]string{"password": "hunter2hunter2"})
 	require.Equal(t, http.StatusNoContent, status)
+	status, body = a.do("GET", path, token, nil)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "node_unreachable", errorCode(t, body))
 
 	// Resolve failures surface as normal envelopes before any upgrade.
 	for _, tc := range []struct {

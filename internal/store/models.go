@@ -236,6 +236,23 @@ type Deployment struct {
 	FromEnvironmentID   *uuid.UUID
 }
 
+type DeviceRequest struct {
+	ID             uuid.UUID
+	Intent         string
+	UserCode       string
+	DeviceCodeHash []byte
+	Status         string
+	SessionID      *uuid.UUID
+	UserID         *uuid.UUID
+	ClientLabel    string
+	IpAddress      string
+	UserAgent      string
+	PollCount      int32
+	LastPolledAt   *time.Time
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+}
+
 type Environment struct {
 	ID           uuid.UUID
 	ProjectID    uuid.UUID

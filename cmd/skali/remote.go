@@ -35,6 +35,7 @@ creates one and logs in; "skali remote login" re-authenticates.`,
 
 func newRemoteAddCmd() *cobra.Command {
 	var email string
+	var noBrowser bool
 	cmd := &cobra.Command{
 		Use:   "add <name> <host or url>",
 		Short: "Add a remote and log in to it",
@@ -43,7 +44,11 @@ like "skali remote add example https://skali.example.com". A bare hostname
 tries https then http and targets the cluster's /api path
 (skali.example.com becomes https://skali.example.com/api); an explicit URL
 is used verbatim. On success the new remote becomes the current one; on
-failure nothing is stored.`,
+failure nothing is stored.
+
+In a terminal the login opens the web console in your browser and waits
+for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and
+non-interactive runs ask for email and password on the terminal instead.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := cliconfig.Load()
@@ -85,7 +90,7 @@ failure nothing is stored.`,
 				}
 				return probeErr
 			}
-			sess, instance, err := loginSession(cmd.Context(), cliprompt.New(os.Stdin, os.Stderr), master, email)
+			sess, instance, err := loginRemote(cmd.Context(), cliprompt.New(os.Stdin, os.Stderr), master, email, noBrowser)
 			if err != nil {
 				return fmt.Errorf("remote %q not added: %w", remoteName, err)
 			}
@@ -98,18 +103,24 @@ failure nothing is stored.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&email, "email", "", "login email (prompted when omitted)")
+	cmd.Flags().StringVar(&email, "email", "", "login email (prompted when omitted; implies --no-browser)")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "log in with email and password on the terminal instead of the browser")
 	return cmd
 }
 
 func newRemoteLoginCmd() *cobra.Command {
 	var email string
+	var noBrowser bool
 	cmd := &cobra.Command{
 		Use:   "login [name]",
-		Short: "Log in again with email and password (and TOTP when enabled)",
+		Short: "Log in again (browser, or email and password with --no-browser)",
 		Long: `Re-authenticate an existing remote and store the fresh session token.
 Without a name the current remote is used; with one, that remote becomes
-current when the login succeeds. Remotes are created with "skali remote add".`,
+current when the login succeeds. Remotes are created with "skali remote add".
+
+In a terminal the login opens the web console in your browser and waits
+for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and
+non-interactive runs ask for email and password on the terminal instead.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := cliconfig.Load()
@@ -156,7 +167,7 @@ current when the login succeeds. Remotes are created with "skali remote add".`,
 					}
 				}
 			}
-			sess, instance, err := loginSession(cmd.Context(), prompts, target.Master, email)
+			sess, instance, err := loginRemote(cmd.Context(), prompts, target.Master, email, noBrowser)
 			if err != nil {
 				return err
 			}
@@ -172,7 +183,8 @@ current when the login succeeds. Remotes are created with "skali remote add".`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&email, "email", "", "login email (prompted when omitted)")
+	cmd.Flags().StringVar(&email, "email", "", "login email (prompted when omitted; implies --no-browser)")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "log in with email and password on the terminal instead of the browser")
 	return cmd
 }
 
@@ -466,6 +478,20 @@ func parseMasterURL(raw string) (string, error) {
 		return "", fmt.Errorf("invalid master URL %q: credentials do not belong in the URL", raw)
 	}
 	return strings.TrimRight(trimmed, "/"), nil
+}
+
+// loginRemote picks the login path: the browser when the terminal is
+// interactive and nobody opted out (an explicit --email means the person
+// wants the typed path), the prompts otherwise. A master without the
+// device flow (an older daemon answers 404) falls back to the prompts.
+func loginRemote(ctx context.Context, prompts *cliprompt.Session, master, email string, noBrowser bool) (*client.SessionCreated, string, error) {
+	if email == "" && browserAuthAvailable(noBrowser) {
+		sess, instance, err := deviceLogin(ctx, os.Stderr, master)
+		if !client.IsNotFound(err) {
+			return sess, instance, err
+		}
+	}
+	return loginSession(ctx, prompts, master, email)
 }
 
 // loginSession collects credentials (the email is prompted unless provided),

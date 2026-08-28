@@ -1,7 +1,11 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
+
+	// Each auth page names itself through its load data; sign-in is the default.
+	const title = $derived((page.data.title as string | undefined) ?? 'Sign in to skali');
 </script>
 
 <div
@@ -18,7 +22,7 @@
 			>
 				s
 			</div>
-			<h1 class="text-text-primary text-2xl font-semibold tracking-[-0.015em]">Sign in to skali</h1>
+			<h1 class="text-text-primary text-2xl font-semibold tracking-[-0.015em]">{title}</h1>
 		</div>
 
 		{@render children()}

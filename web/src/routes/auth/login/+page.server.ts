@@ -1,9 +1,14 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { apiFetch, clientMeta, setSessionCookie } from '$lib/server/api';
+import { safeNext } from '$lib/server/safe-next';
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (locals.user) redirect(302, '/');
+// `next` carries the page a guard bounced from (the CLI's device
+// authorization page, mostly) through both steps of the form.
+export const load: PageServerLoad = async ({ locals, url }) => {
+	const next = safeNext(url.searchParams.get('next'));
+	if (locals.user) redirect(302, next);
+	return { next, title: 'Sign in to skali' };
 };
 
 // Login is a two-step form: `login` exchanges credentials for either a
@@ -35,6 +40,7 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const email = String(form.get('email') ?? '').trim();
 		const password = String(form.get('password') ?? '');
+		const next = safeNext(String(form.get('next') ?? ''));
 		if (!email || !password) {
 			return fail(400, { message: 'Email and password are required.', email });
 		}
@@ -63,13 +69,14 @@ export const actions: Actions = {
 		}
 
 		setSessionCookie(cookies, body.session.token, body.session.expires_at);
-		redirect(303, '/');
+		redirect(303, next);
 	},
 
 	verify: async ({ request, cookies, fetch, getClientAddress }) => {
 		const form = await request.formData();
 		const challengeToken = String(form.get('challenge_token') ?? '');
 		const code = String(form.get('code') ?? '').trim();
+		const next = safeNext(String(form.get('next') ?? ''));
 		if (!challengeToken || !code) {
 			return fail(400, {
 				step: 'totp' as const,
@@ -100,6 +107,6 @@ export const actions: Actions = {
 		}
 
 		setSessionCookie(cookies, body.session.token, body.session.expires_at);
-		redirect(303, '/');
+		redirect(303, next);
 	}
 };

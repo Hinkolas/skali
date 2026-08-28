@@ -10,7 +10,12 @@ import { apiFetch, clientMeta } from '$lib/server/api';
 // bearer tokens, which must stay between the BFF and the API. v1/auth/reauth
 // does NOT belong here: it returns 204 (no token) and the client-side sudo
 // interceptor depends on reaching it through this proxy.
-const DENIED_PREFIXES = ['v1/auth/login', 'v1/auth/2fa/verify'];
+const DENIED_PREFIXES = [
+	'v1/auth/login',
+	'v1/auth/2fa/verify',
+	'v1/auth/device/requests',
+	'v1/auth/device/token'
+];
 
 const proxy: RequestHandler = async ({ params, request, url, locals, fetch, getClientAddress }) => {
 	const path = params.path ?? '';

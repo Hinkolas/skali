@@ -222,11 +222,14 @@ in ("environment production is promote-only: promote with skali deploy
 --bypass-protection"). The check runs in plan as well as in open, so the
 CLI refuses before anything is built (and, knowing the environment's
 settings, before it even submits the definition). Values changes, restore,
-exec, backups, teardown, and delete are not policy-gated: the policy is
-about untested code reaching the environment; those are configuration,
-data, access, and the environment's existence, and have their own roles
-(restore keeps the sudo it has as a maintain action; nothing gains sudo
-because of protection).
+backups, teardown, and delete are not policy-gated: the policy is about
+untested code reaching the environment; those are configuration, data,
+access, and the environment's existence, and have their own roles (restore
+keeps the sudo it has as a maintain action). Exec is the one exception: a
+shell can change what the policy protects, so on a promote-only environment
+it needs sudo mode on top of `maintain`; on a direct environment `maintain`
+alone opens it. The deploy policy is the only "this is production" signal
+the platform has; priority and names say nothing.
 
 The policy applies to everyone including admins. Bypass: request field
 `bypass_protection: true` (`skali deploy --bypass-protection`; `--force`
@@ -302,7 +305,7 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | status, deployments, revisions, runs, run logs, runtime logs, value names, connection info, backups list, settings, access list | E:read |
 | promote into, rollback, restart, redeploy, run cancel, backup create, direct deploy with unchanged definition | E:deploy |
 | direct deploy with definition changes, values set/prune, restore (S) | E:maintain |
-| exec (S), resolved application environment (S), credential reveal (S) | E:maintain |
+| exec (S on promote-only environments), resolved application environment (S), credential reveal (S) | E:maintain |
 | bypass protection (S) | E:admin |
 | user management writes, nodes, system observation, backup target (S for writes) | IA |
 | user directory (trimmed for non-admins), own account, sessions, 2FA, `/system/meta`, `/auth/session` | any authenticated user |
@@ -319,13 +322,35 @@ protection answers 403 `environment_protected`; a bypass without a fresh
 session answers 403 `reauth_required`.
 
 Public: `GET /healthz`, `GET /openapi.yaml`, `GET /token` (registry realm,
-Basic auth per request as today).
+Basic auth per request as today), `POST /auth/device/requests` and
+`POST /auth/device/token` (the CLI side of browser device authorization;
+the poll answer carries the bearer token, so the console never proxies
+them).
 
 Authenticated, self: `POST /auth/logout`, `POST /auth/reauth`,
 `GET /auth/session`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}`,
-`POST /auth/2fa/confirm`, `GET /system/meta`; sudo: `POST /auth/password`,
+`POST /auth/2fa/confirm`, `GET /system/meta`,
+`POST /auth/device/requests/reauth` (bound to the calling session, so it
+runs outside the gate it exists to satisfy),
+`GET /auth/device/codes/{user_code}`,
+`POST /auth/device/codes/{user_code}/deny`; sudo: `POST /auth/password`,
 `POST /auth/2fa/enable`, `POST /auth/2fa/disable`,
-`POST /auth/2fa/backup-codes`.
+`POST /auth/2fa/backup-codes`,
+`POST /auth/device/codes/{user_code}/approve` (approving hands a terminal
+a session or a fresh sudo window, so the browser proves identity first).
+
+Browser device authorization is how the CLI logs in and confirms sudo
+without typing a password into the terminal: `skali remote add` (and any
+sudo-gated command whose session has aged) opens a request, prints the
+user code, opens `/auth/device?code=...` in the browser, and polls with
+the device code. The signed-in console shows who is asking and approves
+or denies; approval of a login request mints a session for the approver on
+the CLI's next poll, approval of a reauth request re-stamps the CLI
+session it is bound to (only that session's owner may approve, and the
+console's own reauth checkpoint runs first). Requests live ten minutes,
+answer once, and are swept afterwards. Non-interactive runs, `--no-browser`,
+and `SKALI_NO_BROWSER=1` keep the typed prompts; two-factor accounts keep
+the six-digit code prompt as the direct path.
 
 Instance admin: `GET /nodes`, `GET /system/observation` (both member-readable
 today, the console only hides them), `GET /users`; sudo: `POST /users`,
@@ -372,7 +397,7 @@ their environment first):
 | `GET .../status`, `.../status/stream` | E:read |
 | `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream` | E:read (a run outside any environment is instance-admin only) |
 | `GET .../logs/stream` (runtime logs) | E:read |
-| `GET .../exec` (S) | E:maintain |
+| `GET .../exec` (S when promote-only) | E:maintain |
 | `GET .../databases/{key}/connection`, `.../buckets/{key}/connection` | E:read |
 | `POST .../credentials/reveal` (S) | E:maintain |
 | `GET .../applications/{key}/environment` (S) | E:maintain |

@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	kexec "k8s.io/client-go/util/exec"
 
+	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/execproto"
 	"github.com/Hinkolas/skali/internal/podexec"
 )
@@ -39,12 +40,14 @@ const (
 // logs, carried over a WebSocket speaking internal/execproto.
 type execHandlers struct {
 	exec     ExecService
+	auth     *auth.Service
 	upgrader websocket.Upgrader
 }
 
-func newExecHandlers(exec ExecService) *execHandlers {
+func newExecHandlers(exec ExecService, auth *auth.Service) *execHandlers {
 	return &execHandlers{
 		exec: exec,
+		auth: auth,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  32 * 1024,
 			WriteBufferSize: 32 * 1024,
@@ -82,6 +85,17 @@ func (h *execHandlers) open(w http.ResponseWriter, r *http.Request) {
 		Container: query.Get("container"),
 		Command:   query["cmd"],
 		TTY:       tty,
+	}
+
+	// A shell in the container can change what the deploy policy protects,
+	// so a promote-only environment asks for sudo mode here; a direct one
+	// is covered by the maintain role alone.
+	if envGrant := environmentGrantFrom(r.Context()); envGrant != nil && envGrant.Protected() {
+		if sess := SessionFrom(r.Context()); sess == nil || !h.auth.IsSessionFresh(sess) {
+			writeError(w, http.StatusForbidden, codeReauthRequired,
+				"recent authentication required: environment "+envGrant.Name+" is promote-only")
+			return
+		}
 	}
 
 	session, err := h.exec.Resolve(r.Context(), id, opts)

@@ -34,6 +34,7 @@ type Config struct {
 	SessionUpdateAge time.Duration // sliding refresh: extend when a session's last touch is older than this
 	ChallengeTTL     time.Duration // window between password login and 2FA code entry
 	ReauthWindow     time.Duration // sudo mode: how long a session counts as freshly authenticated
+	DeviceTTL        time.Duration // browser device authorization: how long a pending request stays approvable
 }
 
 const (
@@ -85,6 +86,9 @@ func New(st *store.Store, cfg Config) (*Service, error) {
 	}
 	if cfg.ReauthWindow == 0 {
 		cfg.ReauthWindow = defaultReauthWindow
+	}
+	if cfg.DeviceTTL == 0 {
+		cfg.DeviceTTL = defaultDeviceTTL
 	}
 	key, err := deriveKey(cfg.Secret)
 	if err != nil {
@@ -471,13 +475,16 @@ func (s *Service) RegenerateBackupCodes(ctx context.Context, userID uuid.UUID) (
 	return codes, nil
 }
 
-// SweepExpired removes expired sessions and login challenges; the skalid
-// binary runs it periodically.
+// SweepExpired removes expired sessions, login challenges, and device
+// requests; the skalid binary runs it periodically.
 func (s *Service) SweepExpired(ctx context.Context) error {
 	if _, err := s.st.DeleteExpiredSessions(ctx); err != nil {
 		return err
 	}
-	_, err := s.st.DeleteExpiredLoginChallenges(ctx)
+	if _, err := s.st.DeleteExpiredLoginChallenges(ctx); err != nil {
+		return err
+	}
+	_, err := s.st.DeleteExpiredDeviceRequests(ctx)
 	return err
 }
 

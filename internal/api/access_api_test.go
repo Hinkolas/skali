@@ -199,6 +199,7 @@ var notFoundAllowed = map[string]bool{
 	"GET /v1/environments/{id}/databases/{key}/connection": true,
 	"GET /v1/environments/{id}/buckets/{key}/connection":   true,
 	"GET /v1/system/backup-target":                         true,
+	"GET /v1/auth/device/codes/{user_code}":                true,
 }
 
 // destructiveRoutes would change the fixture when let through; their allowed

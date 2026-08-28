@@ -33,6 +33,7 @@ const (
 	codeVersionConflict     = "version_conflict"
 	codeInvalidManifest     = "invalid_manifest"
 	codeRateLimited         = "rate_limited"
+	codeSlowDown            = "slow_down"
 	codeNodeUnreachable     = "node_unreachable"
 	codeRegistryDisabled    = "registry_disabled"
 	codeRegistryUnavailable = "registry_unavailable"
@@ -80,6 +81,12 @@ func writeAuthError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusTooManyRequests, codeRateLimited, "too many attempts, try again later")
 	case errors.Is(err, auth.ErrReauthRequired):
 		writeError(w, http.StatusForbidden, codeReauthRequired, "recent authentication required")
+	case errors.Is(err, auth.ErrSlowDown):
+		writeError(w, http.StatusTooManyRequests, codeSlowDown, "polling too fast; wait for the interval")
+	case errors.Is(err, auth.ErrDeviceNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "device request not found or no longer pending")
+	case errors.Is(err, auth.ErrDeviceForeign):
+		writeError(w, http.StatusForbidden, codeForbidden, "this request belongs to another account")
 	case errors.Is(err, auth.ErrTwoFactorAlreadyEnabled):
 		writeError(w, http.StatusConflict, codeConflict, "two-factor authentication is already enabled")
 	case errors.Is(err, auth.ErrTwoFactorNotEnabled):
