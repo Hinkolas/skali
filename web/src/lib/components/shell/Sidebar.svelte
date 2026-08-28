@@ -1,4 +1,5 @@
 <script lang="ts">
+	import LogoMark from '$lib/components/ui/LogoMark.svelte';
 	import { page } from '$app/state';
 	import type { OrgView } from '$lib/models/org';
 	import type { ServiceView } from '$lib/models/service';
@@ -36,9 +37,9 @@
 	     nav item containers), not the item icons. -->
 	<div class="flex h-14 flex-none items-center gap-2.5 px-1">
 		<div
-			class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135 text-lg font-bold"
+			class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135"
 		>
-			s
+			<LogoMark class="size-4" />
 		</div>
 		<div class="text-xl font-semibold tracking-[-0.01em]">skali</div>
 		<button

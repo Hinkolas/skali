@@ -45,7 +45,7 @@
 	--text-lg: 15px; /* nav items, inputs, buttons, card titles */
 	--text-xl: 17px; /* panel and section headings */
 	--text-2xl: 22px; /* auth page title */
-	--text-3xl: 24px; /* logo tile glyph */
+	--text-3xl: 24px; /* unused since the logo tile became an SVG mark */
 	--text-4xl: 26px; /* stat card values */
 	--text-5xl: 29px; /* page title */
 	--text-6xl: 44px; /* error code display */
@@ -74,11 +74,11 @@
 	--color-text-ghost: #64656f; /* section headers, placeholders */
 
 	/* Accent (violet) */
-	--color-accent: #8b7cf6;
-	--color-accent-light: #a99bf8; /* AP badges, graph port labels */
-	--color-accent-nav: #cfc6fb; /* active nav text, avatar initials */
-	--color-accent-from: #9d8bfa; /* gradient start */
-	--color-accent-to: #7359f0; /* gradient end */
+	--color-accent: #7c5cff;
+	--color-accent-light: #a58fff; /* AP badges, graph port labels */
+	--color-accent-nav: #d7cdfe; /* active nav text, avatar initials */
+	--color-accent-from: #9076ff; /* gradient start */
+	--color-accent-to: #5b33ff; /* gradient end */
 
 	/* Status */
 	--color-status-success: #4ec98c;
@@ -97,12 +97,12 @@
 	   rebrand; chart-2 is a darkened service-storage amber (the token itself
 	   is too light for chart marks). Do NOT use the service-* set for series:
 	   its adjacent pairs fail colorblind separation. */
-	--color-chart-1: #8b7cf6;
+	--color-chart-1: #7c5cff;
 	--color-chart-2: #b8802c;
 
 	/* Violet glows for primary buttons / logo tiles */
-	--shadow-glow: 0 0 18px rgb(124 98 242 / 0.28);
-	--shadow-glow-lg: 0 0 26px rgb(124 98 242 / 0.4);
+	--shadow-glow: 0 0 18px rgb(124 92 255 / 0.28);
+	--shadow-glow-lg: 0 0 26px rgb(124 92 255 / 0.4);
 }
 
 /* Page-level radial glows. Both originate from the skali logo tile: the app
@@ -118,12 +118,12 @@
 	background: #0b0b0f
 		radial-gradient(
 			990px 660px at 30px 31px,
-			rgb(124 98 242 / 0.09) 0%,
-			rgb(124 98 242 / 0.055) 20%,
-			rgb(124 98 242 / 0.029) 40%,
-			rgb(124 98 242 / 0.012) 60%,
-			rgb(124 98 242 / 0.003) 80%,
-			rgb(124 98 242 / 0) 100%
+			rgb(124 92 255 / 0.09) 0%,
+			rgb(124 92 255 / 0.055) 20%,
+			rgb(124 92 255 / 0.029) 40%,
+			rgb(124 92 255 / 0.012) 60%,
+			rgb(124 92 255 / 0.003) 80%,
+			rgb(124 92 255 / 0) 100%
 		);
 }
 /* Eased stops: a two-stop radial fades linearly, which leaves a visible ring
@@ -131,12 +131,12 @@
 @utility bg-glow-halo {
 	background: radial-gradient(
 		closest-side,
-		rgb(124 98 242 / 0.13) 0%,
-		rgb(124 98 242 / 0.08) 20%,
-		rgb(124 98 242 / 0.042) 40%,
-		rgb(124 98 242 / 0.017) 60%,
-		rgb(124 98 242 / 0.004) 80%,
-		rgb(124 98 242 / 0) 100%
+		rgb(124 92 255 / 0.13) 0%,
+		rgb(124 92 255 / 0.08) 20%,
+		rgb(124 92 255 / 0.042) 40%,
+		rgb(124 92 255 / 0.017) 60%,
+		rgb(124 92 255 / 0.004) 80%,
+		rgb(124 92 255 / 0) 100%
 	);
 }
 

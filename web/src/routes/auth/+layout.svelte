@@ -1,4 +1,5 @@
 <script lang="ts">
+	import LogoMark from '$lib/components/ui/LogoMark.svelte';
 	import { page } from '$app/state';
 	import type { LayoutData } from './$types';
 
@@ -18,9 +19,9 @@
 				class="bg-glow-halo pointer-events-none absolute top-[23px] left-1/2 -z-10 h-[1150px] w-[1700px] -translate-x-1/2 -translate-y-1/2"
 			></div>
 			<div
-				class="from-accent-from to-accent-to text-surface-base shadow-glow-lg grid h-10.5 w-10.5 place-items-center rounded-xl bg-linear-135 text-3xl font-bold"
+				class="from-accent-from to-accent-to text-surface-base shadow-glow-lg grid h-10.5 w-10.5 place-items-center rounded-xl bg-linear-135"
 			>
-				s
+				<LogoMark class="h-6 w-6" />
 			</div>
 			<h1 class="text-text-primary text-2xl font-semibold tracking-[-0.015em]">{title}</h1>
 		</div>
