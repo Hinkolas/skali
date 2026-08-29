@@ -10,7 +10,8 @@
 		storageByKind,
 		storageFootprint,
 		storageForEnvironment,
-		windowTotal
+		sumSeries,
+		toChartPoints
 	} from '$lib/types/metrics';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
@@ -62,71 +63,75 @@
 		return { cpu: cpu || null, mem: mem || null };
 	});
 
-	// All four tiles come from stored samples for the selected environment
-	// (24h window): usage from the newest bucket, traffic from the edge
-	// counters Traefik reports.
+	// The four tiles come from stored samples for the selected environment
+	// (24h window): the headline is the newest bucket, the sparkline is the
+	// whole window summed across apps, and the storage tile reads the
+	// footprint API instead (no series there).
 	const stats = $derived.by((): StatCardData[] => {
 		const m = data.metrics;
 		const apps = m?.applications ?? [];
 		const noData: Pick<StatCardData, 'value' | 'note'> = { value: 'n/a', note: 'no data yet' };
+		const series = (values: (number | null)[]) =>
+			m ? toChartPoints(m.timestamps, values) : undefined;
 
+		const requestSeries = sumSeries(apps, (a) => a.edge?.requests);
 		const requests = currentTotal(apps, (a) => a.edge?.requests ?? []);
-		const requestsStat: StatCardData =
-			requests != null && m
-				? {
-						label: 'REQUESTS',
-						value: formatCount((requests / m.step_seconds) * 60),
-						unit: '/min'
-					}
-				: { label: 'REQUESTS', ...noData };
+		let requestsStat: StatCardData = { label: 'REQUESTS', ...noData };
+		if (requests != null && m) {
+			const perMinute = 60 / m.step_seconds;
+			requestsStat = {
+				label: 'REQUESTS',
+				value: formatCount(requests * perMinute),
+				unit: '/min',
+				sparkline: series(requestSeries.map((v) => (v == null ? null : v * perMinute)))
+			};
+			// Compare the newest bucket with the one an hour earlier.
+			const now = requestSeries.length - 1;
+			const before = now - Math.round(3600 / m.step_seconds);
+			const prev = before >= 0 ? requestSeries[before] : null;
+			if (prev != null && prev > 0 && requestSeries[now] != null) {
+				const delta = Math.round(((requestSeries[now]! - prev) / prev) * 100);
+				requestsStat.chip = {
+					text: `${delta >= 0 ? '+' : ''}${delta}%`,
+					tone: delta >= 0 ? 'success' : 'neutral'
+				};
+				requestsStat.note = 'vs last hour';
+			}
+		}
 
+		const cpuSeries = sumSeries(apps, (a) => a.cpu_millicores);
 		const cpu = currentTotal(apps, (a) => a.cpu_millicores);
 		let cpuStat: StatCardData = { label: 'CPU', ...noData };
 		if (cpu != null) {
 			// The limit picks the unit so numerator and denominator match.
-			if (limits.cpu != null) {
-				cpuStat =
-					limits.cpu >= 1000
-						? {
-								label: 'CPU',
-								value: (cpu / 1000).toFixed(cpu < 100 ? 2 : 1),
-								unit: `/ ${+(limits.cpu / 1000).toFixed(1)} cores`,
-								progress: { pct: Math.min(100, (cpu / limits.cpu) * 100), class: 'bg-accent' }
-							}
-						: {
-								label: 'CPU',
-								value: `${Math.round(cpu)}`,
-								unit: `/ ${Math.round(limits.cpu)} mCPU`,
-								progress: { pct: Math.min(100, (cpu / limits.cpu) * 100), class: 'bg-accent' }
-							};
-			} else if (cpu >= 1000) {
-				cpuStat = { label: 'CPU', value: (cpu / 1000).toFixed(1), unit: 'cores' };
-			} else {
-				cpuStat = { label: 'CPU', value: `${Math.round(cpu)}`, unit: 'mCPU' };
-			}
+			const inCores = limits.cpu != null ? limits.cpu >= 1000 : cpu >= 1000;
+			cpuStat = {
+				label: 'CPU',
+				value: inCores ? (cpu / 1000).toFixed(cpu < 100 ? 2 : 1) : `${Math.round(cpu)}`,
+				unit:
+					limits.cpu != null
+						? inCores
+							? `/ ${+(limits.cpu / 1000).toFixed(1)} cores`
+							: `/ ${Math.round(limits.cpu)} mCPU`
+						: inCores
+							? 'cores'
+							: 'mCPU',
+				sparkline: series(cpuSeries)
+			};
 		}
 
+		const memSeries = sumSeries(apps, (a) => a.memory_bytes);
 		const mem = currentTotal(apps, (a) => a.memory_bytes);
 		let memStat: StatCardData = { label: 'MEMORY', ...noData };
 		if (mem != null) {
 			const memParts = formatBytes(mem).split(' ');
-			memStat =
-				limits.mem != null
-					? {
-							label: 'MEMORY',
-							value: memParts[0],
-							unit: `${memParts[1]} / ${formatBytes(limits.mem)}`,
-							progress: { pct: Math.min(100, (mem / limits.mem) * 100), class: 'bg-accent' }
-						}
-					: { label: 'MEMORY', value: memParts[0], unit: memParts[1] };
+			memStat = {
+				label: 'MEMORY',
+				value: memParts[0],
+				unit: limits.mem != null ? `${memParts[1]} / ${formatBytes(limits.mem)}` : memParts[1],
+				sparkline: series(memSeries)
+			};
 		}
-
-		// Response bytes served over the loaded 24h window: edge egress/day.
-		const egress = windowTotal(apps, (a) => a.edge?.response_bytes);
-		const egressParts = egress != null ? formatBytes(egress).split(' ') : null;
-		const egressStat: StatCardData = egressParts
-			? { label: 'EGRESS', value: egressParts[0], unit: `${egressParts[1]}/d` }
-			: { label: 'EGRESS', ...noData };
 
 		// Best-known storage footprint of the selected environment: measured
 		// where the sampler has real numbers, reserved sizes elsewhere.
@@ -135,18 +140,20 @@
 			const used = envStorage.reduce((acc, s) => acc + storageFootprint(s), 0);
 			const declared = envStorage.reduce((acc, s) => acc + s.capacity_bytes, 0);
 			const parts = formatBytes(used).split(' ');
+			const kinds = Object.entries(storageKinds).filter(([, v]) => v > 0).length;
 			storageStat =
 				declared > 0
 					? {
 							label: 'STORAGE',
 							value: parts[0],
 							unit: `${parts[1]} / ${formatBytes(declared)}`,
-							progress: { pct: Math.min(100, (used / declared) * 100), class: 'bg-accent' }
+							progress: { pct: Math.min(100, (used / declared) * 100), class: 'bg-accent' },
+							note: `${envStorage.length} service${envStorage.length === 1 ? '' : 's'}, ${kinds} kind${kinds === 1 ? '' : 's'}`
 						}
 					: { label: 'STORAGE', value: parts[0], unit: parts[1] };
 		}
 
-		return [requestsStat, cpuStat, memStat, egressStat, storageStat];
+		return [requestsStat, cpuStat, memStat, storageStat];
 	});
 
 	// Storage rows of the selected environment, largest footprint first.
@@ -172,7 +179,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="mb-6.5 grid grid-cols-5 gap-3.5">
+<div class="mb-6.5 grid grid-cols-4 gap-3.5">
 	{#each stats as stat (stat.label)}
 		<StatCard {stat} />
 	{/each}

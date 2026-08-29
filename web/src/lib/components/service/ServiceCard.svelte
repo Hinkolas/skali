@@ -38,7 +38,7 @@
 		}),
 		env
 	)}
-	class="bg-surface-raised border-border-default hover:border-accent/35 flex flex-col gap-3 rounded-[15px] border px-4.5 py-4 transition-colors"
+	class="bg-surface-card border-border-raised hover:border-accent/35 flex flex-col gap-3 rounded-[15px] border px-4.5 py-4 transition-colors"
 >
 	<div class="flex items-center gap-2.5">
 		<TypeBadge kind={service.type} form="tile" size="md" />

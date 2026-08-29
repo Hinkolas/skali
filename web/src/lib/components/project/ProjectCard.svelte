@@ -39,7 +39,7 @@
 
 <a
 	href={resolve('/(app)/projects/[project]', { project: project.name })}
-	class="bg-surface-raised border-border-default hover:border-accent/35 flex flex-col gap-3.5 rounded-[15px] border px-5 py-4.5 transition-colors"
+	class="bg-surface-card border-border-raised hover:border-accent/35 flex flex-col gap-3.5 rounded-[15px] border px-5 py-4.5 transition-colors"
 >
 	<div class="flex items-center gap-2.5">
 		<div class="text-text-primary truncate text-xl font-semibold">

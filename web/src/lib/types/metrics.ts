@@ -157,3 +157,23 @@ export function currentTotal(
 	for (const app of apps) best += pick(app)[bestIndex] ?? 0;
 	return best;
 }
+
+/** Per-bucket sum of a per-application accessor; null where no app has data. */
+export function sumSeries(
+	apps: ApplicationSeries[],
+	pick: (app: ApplicationSeries) => (number | null)[] | undefined
+): (number | null)[] {
+	const out: (number | null)[] = [];
+	for (const app of apps) {
+		const values = pick(app) ?? [];
+		for (let i = 0; i < values.length; i++) {
+			const v = values[i];
+			if (v == null) {
+				if (out[i] === undefined) out[i] = null;
+				continue;
+			}
+			out[i] = (out[i] ?? 0) + v;
+		}
+	}
+	return out;
+}

@@ -2,9 +2,16 @@
 	import type { StatCardData } from '$lib/models/view';
 	import Card from './Card.svelte';
 	import ProgressBar from './ProgressBar.svelte';
+	import Sparkline from './Sparkline.svelte';
 	import TrendChip from './TrendChip.svelte';
 
 	let { stat }: { stat: StatCardData } = $props();
+
+	// The preview slot holds one of: a sparkline (series data), a progress
+	// bar (usage against a limit), or nothing. Chip and note sit below it
+	// either way so the footer line lands at the same height across tiles.
+	const hasSparkline = $derived((stat.sparkline?.length ?? 0) > 1);
+	const hasFooter = $derived(Boolean(stat.chip || stat.note));
 </script>
 
 <Card class="px-4.5 py-4">
@@ -16,11 +23,16 @@
 				>{stat.unit}</span
 			>{/if}
 	</div>
-	{#if stat.progress}
-		<div class="mt-3">
-			<ProgressBar pct={stat.progress.pct} class={stat.progress.class} />
+	{#if hasSparkline}
+		<Sparkline points={stat.sparkline!} class="mt-3" />
+	{:else if stat.progress}
+		<div class="mt-3 flex h-7 items-center">
+			<div class="w-full">
+				<ProgressBar pct={stat.progress.pct} class={stat.progress.class} />
+			</div>
 		</div>
-	{:else if stat.chip || stat.note}
+	{/if}
+	{#if hasFooter}
 		<div class="mt-2.5 flex items-center gap-2">
 			{#if stat.chip}
 				<TrendChip text={stat.chip.text} tone={stat.chip.tone} />

@@ -52,8 +52,9 @@
 
 	/* Surfaces */
 	--color-surface-base: #0b0b0f; /* page background */
-	--color-surface-raised: #121216; /* sidebar, cards */
-	--color-surface-overlay: #17171c; /* switcher/user cards, modal panels */
+	--color-surface-raised: #121216; /* main content surface, side panel */
+	--color-surface-card: #17171c; /* cards inside the main surface (stat tiles, service cards) */
+	--color-surface-overlay: #17171c; /* switcher/user cards, modal panels, menus */
 	--color-surface-input: #0d0d11; /* inputs, copy fields */
 	--color-surface-canvas: #0e0e12; /* graph canvas */
 	--color-surface-node: #14141a; /* graph node cards */
@@ -62,7 +63,7 @@
 	/* Borders (white-alpha ramp) */
 	--color-border-subtle: rgb(255 255 255 / 0.06); /* row dividers */
 	--color-border-default: rgb(255 255 255 / 0.07); /* card borders */
-	--color-border-raised: rgb(255 255 255 / 0.09); /* switcher cards, graph nodes */
+	--color-border-raised: rgb(255 255 255 / 0.09); /* cards inside main, switcher cards, graph nodes */
 	--color-border-strong: rgb(255 255 255 / 0.12); /* inputs, secondary buttons */
 
 	/* Text ramp — all six steps are load-bearing, don't collapse */
