@@ -7,7 +7,7 @@ This page is for working on skali itself. Using skali is covered by the
 
 - **`skalid`** (`cmd/skalid`): the control plane. REST API plus the
   reconcile controller. Runs inside Kubernetes in production and carries the
-  operator commands (`user`, `migrate`, `backup-worker`).
+  operator commands (`user`, `migrate`, `seed`, `backup-worker`).
 - **`skali`** (`cmd/skali`): the CLI. Owns manifest, build, terminal, and
   local-development workflows and uses the public API for remote state
   changes. Its `skali cluster` group is the privileged host-level lifecycle
@@ -61,6 +61,17 @@ go run ./cmd/skali remote status
 cd web && cp .env.example .env && npm install
 task dev:web
 ```
+
+An API-only daemon has nothing to show until something is deployed. `task
+seed` (`skalid seed`) fabricates a data-rich installation for working on the
+console: seven users under `@seed.skali.local` (password `seed-password`,
+`ada@` is an instance admin), five projects with several environments each,
+memberships and environment cells, a week of deployment history (successes,
+a failed rollout, a rollback, restarts, backups, one deployment still in
+flight), provisioned database and bucket claims, and usage, edge, and
+storage telemetry for the charts. `task seed:reset` removes exactly those
+rows and seeds again; other data is left alone. Cluster observation (health,
+pods, the node list) is not seeded and reads as unknown without a cluster.
 
 Working from this repository, `skali dev` builds the `skalid:dev` image from
 the working tree automatically (`task dev:image` refreshes it explicitly),

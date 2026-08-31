@@ -8,6 +8,7 @@
 //	skalid [serve]                          run the control plane (REST API + controller)
 //	skalid user create|list|set-role|delete manage app users (there is no signup endpoint)
 //	skalid migrate up|status                apply / inspect database migrations
+//	skalid seed [--reset]                   fabricate development data for the console
 package main
 
 import (
@@ -77,12 +78,14 @@ func run() error {
 		return runUser(args[1:])
 	case "migrate":
 		return runMigrate(args[1:])
+	case "seed":
+		return runSeed(args[1:])
 	case "backup-worker":
 		// The in-Job data mover; never invoked by operators directly, so it
 		// stays out of the unknown-command listing.
 		return backup.RunWorker(args[1:])
 	default:
-		return fmt.Errorf("unknown command %q (available: serve, user, migrate)", args[0])
+		return fmt.Errorf("unknown command %q (available: serve, user, migrate, seed)", args[0])
 	}
 }
 

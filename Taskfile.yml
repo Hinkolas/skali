@@ -88,6 +88,20 @@ tasks:
     cmds:
       - docker build -t skalid:dev -f build/skalid.Dockerfile .
 
+  seed:
+    desc: Fabricate development data for the console (users, projects, history, telemetry)
+    deps: [db]
+    cmds:
+      - go run ./cmd/skalid migrate up
+      - go run ./cmd/skalid seed {{.CLI_ARGS}}
+
+  seed:reset:
+    desc: Remove previously seeded data and seed again
+    deps: [db]
+    cmds:
+      - go run ./cmd/skalid migrate up
+      - go run ./cmd/skalid seed --reset {{.CLI_ARGS}}
+
   db:
     desc: Ensure the shared dev Postgres is up and skali's database exists
     cmds:
