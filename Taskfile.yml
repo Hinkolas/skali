@@ -84,7 +84,7 @@ tasks:
       - npm run dev
 
   dev:image:
-    desc: Build the skalid image from the working tree; skali dev up imports and rolls it
+    desc: Build the skalid image from the working tree; the next skali dev imports and rolls it
     cmds:
       - docker build -t skalid:dev -f build/skalid.Dockerfile .
 

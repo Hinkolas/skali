@@ -34,224 +34,232 @@ const localEnvironmentName = "local"
 func newDevCommand() *cobra.Command {
 	var envFile, skalidImage, platform string
 	var detach, force, rebuild, preview, pruneValues bool
-	command := &cobra.Command{
-		Use:   "dev",
-		Short: "Run the project on the local skali platform",
-		Long: "Bare skali dev is the complete paved path: it ensures the disposable\n" +
-			"local platform (k3d cluster with in-cluster skalid, Postgres, and\n" +
-			"registry), builds and deploys the current project, attaches to the\n" +
-			"rollout, and follows the runtime logs. Like docker compose, ending\n" +
-			"the session (Ctrl-C, closing the terminal) pauses the project; its\n" +
-			"data is retained and the next skali dev brings it back. Pressing d\n" +
-			"while the logs follow detaches instead: the session ends and the\n" +
-			"project keeps running, as if started with -d. A rollout\n" +
-			"already in flight is adopted: dev attaches to it instead of\n" +
-			"failing; --force cancels it and redeploys. Use -d for a background\n" +
-			"project that keeps running, skali dev down to pause it explicitly,\n" +
-			"and skali dev ls to see everything on the local platform. Local\n" +
-			"values never leave this machine.",
-		Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, args []string) error {
-			// The whole session runs on one signal-scoped context: INT,
-			// TERM, and HUP (a closed terminal) all end it, and the
-			// epilogue pauses the project unless -d asked for a background
-			// project.
-			sessionCtx, stopSignals := signal.NotifyContext(command.Context(),
-				os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-			defer stopSignals()
-			command.SetContext(sessionCtx)
+	// runUp is the project verb: shared by bare skali dev and skali dev up,
+	// the way docker compose and compose up are the same command.
+	runUp := func(command *cobra.Command, args []string) error {
+		// The whole session runs on one signal-scoped context: INT,
+		// TERM, and HUP (a closed terminal) all end it, and the
+		// epilogue pauses the project unless -d asked for a background
+		// project.
+		sessionCtx, stopSignals := signal.NotifyContext(command.Context(),
+			os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stopSignals()
+		command.SetContext(sessionCtx)
 
-			var window atomic.Value // open artifact window's deployment ID
-			window.Store("")
+		var window atomic.Value // open artifact window's deployment ID
+		window.Store("")
 
-			// Dev-block applications run on the host instead of building,
-			// unless --preview asks for the full in-cluster deployment.
-			// They are child processes of this session, so a detached
-			// session cannot host them.
-			project, err := loadLocalProject("")
-			if err != nil {
-				return err
-			}
-			devApps := map[string]manifest.Dev{}
-			if !preview {
-				devApps = devApplications(project)
-			}
-			if detach && len(devApps) > 0 {
-				return fmt.Errorf("--detach cannot host local dev processes (%s); "+
-					"use --preview for a detached full deployment",
-					strings.Join(utils.SortedKeys(devApps), ", "))
-			}
-			// Host ports are resolved up front so a busy pin fails before
-			// any platform or server work: manifest pins verbatim, every
-			// other service port deterministically auto-allocated. One
-			// allocator spans the session so applications never collide.
-			devPorts := map[string]map[string]int{}
-			if len(devApps) > 0 {
-				allocator := devports.Default()
-				for _, key := range utils.SortedKeys(devApps) {
-					allocated, err := allocator.Allocate(
-						project.Result.Definition.Name, key,
-						kubernetes.InterceptPortNames(project.Result.Definition.Applications[key]),
-						devApps[key].Ports)
-					if err != nil {
-						return err
-					}
-					devPorts[key] = allocated
-				}
-			}
-
-			if _, err := ensureLocalPlatform(command, skalidImage, false); err != nil {
-				if sessionCtx.Err() != nil {
-					return errors.New("interrupted")
-				}
-				return err
-			}
-			// followWithChildren starts the host dev processes (none under
-			// --preview) and hands the session to the log follow.
-			followWithChildren := func(api *client.Client, environmentID string) error {
-				var children *devChildren
-				var mux *logMux
-				if len(devApps) > 0 {
-					mux = newLogMux(command.OutOrStdout())
-					var err error
-					children, err = startDevChildren(sessionCtx, mux, command.OutOrStdout(),
-						api, environmentID, project.Root, devApps, devPorts)
-					if err != nil {
-						if sessionCtx.Err() != nil {
-							return finishInterrupted(command, window.Load().(string), detach)
-						}
-						return err
-					}
-				}
-				return devFollowLogs(command, api, environmentID, &window, children, mux)
-			}
-			// A run already holding the environment's slot (a rollout still
-			// settling, a pause finishing) is resolved before the deploy
-			// flow: adopt it instead of failing with deployment_in_flight,
-			// or cancel it when --force asked for a fresh deploy. A failed
-			// environment lookup means nothing is deployed yet.
-			attachToRunning := func(api *client.Client, environmentID string) error {
-				printDevReady(command, api, environmentID, devPorts)
-				if detach {
-					return nil
-				}
-				if len(devApps) > 0 {
-					out := command.OutOrStdout()
-					fmt.Fprintf(out, "  %s\n", clirender.StyleFor(out).Yellow(
-						"note: attached to an in-flight run; route interception may lag until the next deploy"))
-				}
-				return followWithChildren(api, environmentID)
-			}
-			if api, environmentID, err := localProjectEnvironment(command); err == nil {
-				action, err := devResolveInFlight(sessionCtx, command.OutOrStdout(),
-					api, environmentID, force || rebuild)
-				if sessionCtx.Err() != nil {
-					return finishInterrupted(command, window.Load().(string), detach)
-				}
+		// Dev-block applications run on the host instead of building,
+		// unless --preview asks for the full in-cluster deployment.
+		// They are child processes of this session, so a detached
+		// session cannot host them.
+		project, err := loadLocalProject("")
+		if err != nil {
+			return err
+		}
+		devApps := map[string]manifest.Dev{}
+		if !preview {
+			devApps = devApplications(project)
+		}
+		if detach && len(devApps) > 0 {
+			return fmt.Errorf("--detach cannot host local dev processes (%s); "+
+				"use --preview for a detached full deployment",
+				strings.Join(utils.SortedKeys(devApps), ", "))
+		}
+		// Host ports are resolved up front so a busy pin fails before
+		// any platform or server work: manifest pins verbatim, every
+		// other service port deterministically auto-allocated. One
+		// allocator spans the session so applications never collide.
+		devPorts := map[string]map[string]int{}
+		if len(devApps) > 0 {
+			allocator := devports.Default()
+			for _, key := range utils.SortedKeys(devApps) {
+				allocated, err := allocator.Allocate(
+					project.Result.Definition.Name, key,
+					kubernetes.InterceptPortNames(project.Result.Definition.Applications[key]),
+					devApps[key].Ports)
 				if err != nil {
 					return err
 				}
-				switch action {
-				case devInFlightDetached:
-					return nil
-				case devInFlightAttached:
-					return attachToRunning(api, environmentID)
+				devPorts[key] = allocated
+			}
+		}
+
+		if _, err := ensureLocalPlatform(command, skalidImage, false); err != nil {
+			if sessionCtx.Err() != nil {
+				return errors.New("interrupted")
+			}
+			return err
+		}
+		// followWithChildren starts the host dev processes (none under
+		// --preview) and hands the session to the log follow.
+		followWithChildren := func(api *client.Client, environmentID string) error {
+			var children *devChildren
+			var mux *logMux
+			if len(devApps) > 0 {
+				mux = newLogMux(command.OutOrStdout())
+				var err error
+				children, err = startDevChildren(sessionCtx, mux, command.OutOrStdout(),
+					api, environmentID, project.Root, devApps, devPorts)
+				if err != nil {
+					if sessionCtx.Err() != nil {
+						return finishInterrupted(command, window.Load().(string), detach)
+					}
+					return err
 				}
 			}
-			opts := &deployOptions{
-				Remote:             localRemoteName,
-				Environment:        localEnvironmentName,
-				EnvFile:            envFile,
-				AutoEnvFile:        true,
-				Yes:                true,
-				CreateMissing:      true,
-				Platform:           platform,
-				Force:              force || rebuild,
-				Rebuild:            rebuild,
-				PruneValues:        pruneValues,
-				OnDeploymentOpened: func(id string) { window.Store(id) },
-				OnDeploymentClosed: func() { window.Store("") },
-				SkipReadySummary:   true,
+			return devFollowLogs(command, api, environmentID, &window, children, mux)
+		}
+		// A run already holding the environment's slot (a rollout still
+		// settling, a pause finishing) is resolved before the deploy
+		// flow: adopt it instead of failing with deployment_in_flight,
+		// or cancel it when --force asked for a fresh deploy. A failed
+		// environment lookup means nothing is deployed yet.
+		attachToRunning := func(api *client.Client, environmentID string) error {
+			printDevReady(command, api, environmentID, devPorts)
+			if detach {
+				return nil
 			}
 			if len(devApps) > 0 {
-				opts.LocalApplications = make(map[string]client.LocalApplication, len(devApps))
-				for key := range devApps {
-					opts.LocalApplications[key] = client.LocalApplication{Ports: devPorts[key]}
-				}
+				out := command.OutOrStdout()
+				fmt.Fprintf(out, "  %s\n", clirender.StyleFor(out).Yellow(
+					"note: attached to an in-flight run; route interception may lag until the next deploy"))
 			}
-			var outcome string
-			for attempt := 0; ; attempt++ {
-				var err error
-				outcome, err = runDeployFlow(command, opts, false)
-				if sessionCtx.Err() != nil {
-					return finishInterrupted(command, window.Load().(string), detach)
-				}
-				if err == nil {
-					break
-				}
-				// A run can still take the slot between the up-front check
-				// and the open (a cancelled deployment's fallback reconcile,
-				// a concurrent session); resolve it the same way instead of
-				// surfacing the 409, with a cap so a pathological server
-				// cannot loop us forever.
-				if !isDeploymentInFlight(err) || attempt >= 2 {
-					return err
-				}
-				api, environmentID, lookupErr := localProjectEnvironment(command)
-				if lookupErr != nil {
-					return err
-				}
-				action, resolveErr := devResolveInFlight(sessionCtx, command.OutOrStdout(),
-					api, environmentID, force || rebuild)
-				if sessionCtx.Err() != nil {
-					return finishInterrupted(command, window.Load().(string), detach)
-				}
-				if resolveErr != nil {
-					return resolveErr
-				}
-				switch action {
-				case devInFlightDetached:
-					return nil
-				case devInFlightAttached:
-					return attachToRunning(api, environmentID)
-				}
+			return followWithChildren(api, environmentID)
+		}
+		if api, environmentID, err := localProjectEnvironment(command); err == nil {
+			action, err := devResolveInFlight(sessionCtx, command.OutOrStdout(),
+				api, environmentID, force || rebuild)
+			if sessionCtx.Err() != nil {
+				return finishInterrupted(command, window.Load().(string), detach)
 			}
-			api, environmentID, err := localProjectEnvironment(command)
 			if err != nil {
 				return err
 			}
-			printDevReady(command, api, environmentID, devPorts)
-			if detach || outcome == deployOutcomeDetached {
+			switch action {
+			case devInFlightDetached:
 				return nil
+			case devInFlightAttached:
+				return attachToRunning(api, environmentID)
 			}
-			return followWithChildren(api, environmentID)
-		},
+		}
+		opts := &deployOptions{
+			Remote:             localRemoteName,
+			Environment:        localEnvironmentName,
+			EnvFile:            envFile,
+			AutoEnvFile:        true,
+			Yes:                true,
+			CreateMissing:      true,
+			Platform:           platform,
+			Force:              force || rebuild,
+			Rebuild:            rebuild,
+			PruneValues:        pruneValues,
+			OnDeploymentOpened: func(id string) { window.Store(id) },
+			OnDeploymentClosed: func() { window.Store("") },
+			SkipReadySummary:   true,
+		}
+		if len(devApps) > 0 {
+			opts.LocalApplications = make(map[string]client.LocalApplication, len(devApps))
+			for key := range devApps {
+				opts.LocalApplications[key] = client.LocalApplication{Ports: devPorts[key]}
+			}
+		}
+		var outcome string
+		for attempt := 0; ; attempt++ {
+			var err error
+			outcome, err = runDeployFlow(command, opts, false)
+			if sessionCtx.Err() != nil {
+				return finishInterrupted(command, window.Load().(string), detach)
+			}
+			if err == nil {
+				break
+			}
+			// A run can still take the slot between the up-front check
+			// and the open (a cancelled deployment's fallback reconcile,
+			// a concurrent session); resolve it the same way instead of
+			// surfacing the 409, with a cap so a pathological server
+			// cannot loop us forever.
+			if !isDeploymentInFlight(err) || attempt >= 2 {
+				return err
+			}
+			api, environmentID, lookupErr := localProjectEnvironment(command)
+			if lookupErr != nil {
+				return err
+			}
+			action, resolveErr := devResolveInFlight(sessionCtx, command.OutOrStdout(),
+				api, environmentID, force || rebuild)
+			if sessionCtx.Err() != nil {
+				return finishInterrupted(command, window.Load().(string), detach)
+			}
+			if resolveErr != nil {
+				return resolveErr
+			}
+			switch action {
+			case devInFlightDetached:
+				return nil
+			case devInFlightAttached:
+				return attachToRunning(api, environmentID)
+			}
+		}
+		api, environmentID, err := localProjectEnvironment(command)
+		if err != nil {
+			return err
+		}
+		printDevReady(command, api, environmentID, devPorts)
+		if detach || outcome == deployOutcomeDetached {
+			return nil
+		}
+		return followWithChildren(api, environmentID)
+	}
+	command := &cobra.Command{
+		Use:   "dev",
+		Short: "Run the project on the local skali platform",
+		Long: "Bare skali dev (shorthand for skali dev up) is the complete paved\n" +
+			"path: it ensures the disposable local platform (k3d cluster with\n" +
+			"in-cluster skalid, Postgres, and registry), builds and deploys the\n" +
+			"current project, attaches to the rollout, and follows the runtime\n" +
+			"logs. Like docker compose, ending the session (Ctrl-C, closing the\n" +
+			"terminal) pauses the project; its data is retained and the next\n" +
+			"skali dev brings it back. Pressing d while the logs follow detaches\n" +
+			"instead: the session ends and the project keeps running, as if\n" +
+			"started with -d. A rollout already in flight is adopted: dev\n" +
+			"attaches to it instead of failing; --force cancels it and\n" +
+			"redeploys. Use -d for a background project that keeps running,\n" +
+			"skali dev down to pause it explicitly, and skali dev ls to see\n" +
+			"everything on the local platform. The platform's own lifecycle\n" +
+			"lives under skali dev start, stop, upgrade, and reset. Local\n" +
+			"values never leave this machine.",
+		Args: cobra.NoArgs,
+		RunE: runUp,
 	}
 	command.PersistentFlags().StringVar(&skalidImage, "skalid-image", "",
 		"control-plane image for the local platform (defaults to the recorded or task dev:image build)")
-	command.Flags().StringVar(&envFile, "env-file", "", "explicit local env file (defaults to ./.env; otherwise discovered env files are offered)")
-	command.Flags().StringVar(&platform, "platform", "",
-		"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
-	command.Flags().BoolVarP(&detach, "detach", "d", false,
-		"exit once the rollout settles instead of following runtime logs")
-	command.Flags().BoolVar(&force, "force", false,
-		"deploy even when nothing changed, cancelling any in-flight run first; application workloads are restarted (data is untouched)")
-	command.Flags().BoolVar(&rebuild, "rebuild", false,
-		"rebuild and re-import artifacts without caches, picking up moved base images (implies --force)")
-	command.Flags().BoolVar(&preview, "preview", false,
-		"build and deploy every application in the cluster, ignoring dev blocks; no local dev processes run")
-	command.Flags().BoolVar(&pruneValues, "prune-values", false,
-		"remove stored values the manifest no longer references as part of this deployment")
 
 	up := &cobra.Command{
 		Use:   "up",
-		Short: "Fully converge the local platform (create, repair)",
+		Short: "Build, deploy, and attach to the current project (same as bare skali dev)",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, args []string) error {
-			_, err := ensureLocalPlatform(command, skalidImage, true)
-			return err
-		},
+		RunE:  runUp,
 	}
+	// The project flags live on both spellings of the verb, bound to the
+	// same variables; only one of the two ever runs per invocation.
+	addProjectFlags := func(c *cobra.Command) {
+		c.Flags().StringVar(&envFile, "env-file", "", "explicit local env file (defaults to ./.env; otherwise discovered env files are offered)")
+		c.Flags().StringVar(&platform, "platform", "",
+			"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
+		c.Flags().BoolVarP(&detach, "detach", "d", false,
+			"exit once the rollout settles instead of following runtime logs")
+		c.Flags().BoolVar(&force, "force", false,
+			"deploy even when nothing changed, cancelling any in-flight run first; application workloads are restarted (data is untouched)")
+		c.Flags().BoolVar(&rebuild, "rebuild", false,
+			"rebuild and re-import artifacts without caches, picking up moved base images (implies --force)")
+		c.Flags().BoolVar(&preview, "preview", false,
+			"build and deploy every application in the cluster, ignoring dev blocks; no local dev processes run")
+		c.Flags().BoolVar(&pruneValues, "prune-values", false,
+			"remove stored values the manifest no longer references as part of this deployment")
+	}
+	addProjectFlags(command)
+	addProjectFlags(up)
 
 	upgrade := &cobra.Command{
 		Use:   "upgrade",
@@ -259,9 +267,9 @@ func newDevCommand() *cobra.Command {
 		Long: "Moves the local platform's control plane to the skalid this CLI\n" +
 			"ships: the working-tree build inside the skali repository, the\n" +
 			"published image of the same version for a released CLI. Bare\n" +
-			"skali dev and skali dev up repair the platform but never change\n" +
-			"its version; this command is the one that does. Project data is\n" +
-			"retained. Downgrades are refused.",
+			"skali dev and skali dev start --force repair the platform but\n" +
+			"never change its version; this command is the one that does.\n" +
+			"Project data is retained. Downgrades are refused.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			return runDevUpgrade(command, skalidImage)
@@ -333,27 +341,39 @@ func newDevCommand() *cobra.Command {
 		},
 	}
 
+	var startForce bool
 	start := &cobra.Command{
 		Use:   "start",
-		Short: "Start the stopped local platform; state is retained",
-		Args:  cobra.NoArgs,
+		Short: "Start the local platform, creating it when absent",
+		Long: "Boots the local platform: creates it when absent, starts it when\n" +
+			"stopped, and leaves a running one untouched beyond a health check.\n" +
+			"Project data survives a stop/start cycle. --force runs a full\n" +
+			"converge pass (re-applying the complete platform bundle) even when\n" +
+			"the platform looks healthy; it is the repair verb for a platform\n" +
+			"whose recorded state lies. Neither form changes the platform's\n" +
+			"version; that stays skali dev upgrade's job.",
+		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			clusterStatus, err := localdev.Status(command.Context())
 			if err != nil {
 				return err
 			}
-			if clusterStatus == localdev.ClusterAbsent {
-				return errors.New("the local platform is not installed; run skali dev up first")
-			}
-			if _, err := ensureLocalPlatform(command, skalidImage, false); err != nil {
+			if _, err := ensureLocalPlatform(command, skalidImage, startForce); err != nil {
 				return err
 			}
 			out := command.OutOrStdout()
+			if clusterStatus == localdev.ClusterAbsent {
+				fmt.Fprintf(out, "%slocal platform created and running\n",
+					clirender.StyleFor(out).Check())
+				return nil
+			}
 			fmt.Fprintf(out, "%slocal platform running; state is retained\n",
 				clirender.StyleFor(out).Check())
 			return nil
 		},
 	}
+	start.Flags().BoolVar(&startForce, "force", false,
+		"force a full converge pass even when the platform looks healthy")
 
 	var resetYes bool
 	reset := &cobra.Command{
@@ -684,7 +704,7 @@ func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID 
 func reauthLocal(ctx context.Context, api *client.Client) error {
 	state, err := localdev.LoadState()
 	if err != nil || state.AdminPassword == "" {
-		return errors.New("recent authentication required; run skali dev up first")
+		return errors.New("recent authentication required; run skali dev start first")
 	}
 	if err := api.Reauthenticate(ctx, state.AdminPassword); err != nil {
 		return fmt.Errorf("reauthenticate against the local platform: %w", err)
@@ -725,7 +745,7 @@ func runDevLs(command *cobra.Command, args []string) error {
 	}
 	localRemote := cfg.Remotes[localRemoteName]
 	if localRemote == nil {
-		return errors.New("the local platform is not set up; run skali dev up first")
+		return errors.New("the local platform is not set up; run skali dev start first")
 	}
 	api := remoteClient(cfg, localRemote)
 	projects, err := api.ListProjects(ctx)
@@ -936,7 +956,7 @@ func localProjectEnvironment(command *cobra.Command) (*client.Client, string, er
 	}
 	localRemote := cfg.Remotes[localRemoteName]
 	if localRemote == nil {
-		return nil, "", errors.New("the local platform is not set up; run skali dev up first")
+		return nil, "", errors.New("the local platform is not set up; run skali dev first")
 	}
 	api := remoteClient(cfg, localRemote)
 	_, environmentID, err := resolveEnvironmentIDs(command.Context(), api,

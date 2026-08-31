@@ -22,7 +22,7 @@ const publishedSkalidRepo = "ghcr.io/hinkolas/skalid:"
 // skalid: the working-tree build inside the repository, otherwise the
 // published image of a released CLI. Everything after target selection is
 // the ordinary forced Ensure (import, pod roll, bundle converge), so
-// upgrade repairs as it goes, exactly like skali dev up. The k3s pin is
+// upgrade repairs as it goes, exactly like skali dev start --force. The k3s pin is
 // the one thing that cannot move in place (the k3d node container is the
 // image), so its drift is reported with the reset path instead.
 func runDevUpgrade(command *cobra.Command, skalidImage string) error {
@@ -32,7 +32,7 @@ func runDevUpgrade(command *cobra.Command, skalidImage string) error {
 
 	state, err := localdev.LoadState()
 	if errors.Is(err, localdev.ErrNotInstalled) {
-		return errors.New("the local platform is not installed; run skali dev up first")
+		return errors.New("the local platform is not installed; run skali dev start first")
 	}
 	if err != nil {
 		return err

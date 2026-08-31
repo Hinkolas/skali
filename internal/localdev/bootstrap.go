@@ -18,8 +18,8 @@ type EnsureOptions struct {
 	// recorded one.
 	SkalidImage string
 	// ForceConverge skips the unchanged-platform fast path and always runs
-	// the full bundle converge. skali dev up sets it, so one verb still
-	// proves and repairs the whole installation instead of assuming it.
+	// the full bundle converge. skali dev start --force sets it, so one verb
+	// still proves and repairs the whole installation instead of assuming it.
 	ForceConverge bool
 	// Progress narrates the ensure stages.
 	Progress Progress

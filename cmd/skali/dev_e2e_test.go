@@ -471,8 +471,8 @@ func TestDevEndToEnd(t *testing.T) {
 			"a restart must not pay the full converge")
 		h.waitRoute("hello again from skali", 3*time.Minute)
 
-		// dev up stays the explicit full converge.
-		out = h.run(false, "", "dev", "up")
+		// dev start --force stays the explicit full converge.
+		out = h.run(false, "", "dev", "start", "--force")
 		require.Contains(t, out, "Bootstrap database")
 	})
 
