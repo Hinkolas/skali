@@ -12,19 +12,42 @@ import (
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
 
+// k3sBuiltinImages is the bundled-component list of the pinned k3s
+// release (the k3s-images.txt asset of the K3sImage version): everything
+// k3s deploys on its own at boot, from the pause sandbox to the Traefik
+// edge. Nothing mirrors or caches these, so without them in the import
+// batch a fresh cluster pulls all of them from docker.io (rate-limited,
+// and the edge health gate waits on the Traefik pull). Bump in lockstep
+// with K3sImage.
+func k3sBuiltinImages() []string {
+	return []string{
+		"rancher/mirrored-pause:3.10.2",
+		"rancher/mirrored-coredns-coredns:1.14.6",
+		"rancher/klipper-helm:v0.13.3-build20260727",
+		"rancher/mirrored-library-traefik:3.7.8",
+		"rancher/klipper-lb:v0.4.17",
+		"rancher/local-path-provisioner:v0.0.36",
+		"rancher/mirrored-metrics-server:v0.9.0",
+		"rancher/mirrored-library-busybox:1.37.0",
+	}
+}
+
 // RequiredImages lists every public image the local platform needs inside
-// the k3d node: the CNPG operator, the bootstrap and shared-pool postgres
-// images, the managed registry, and SeaweedFS. They are pre-pulled on the
-// host and imported in one batch so a cold cluster never pulls from the
-// internet mid-deploy; skalid and app images ride their own import and
-// registry paths.
+// the k3d node: the k3s built-in components, the CNPG operator, the
+// bootstrap and shared-pool postgres images, the managed registry, and
+// SeaweedFS. They are pre-pulled on the host and imported in one batch so
+// a cold cluster never pulls from the internet mid-deploy; skalid and app
+// images ride their own import and registry paths. The built-ins lead the
+// list: k3s starts pulling them the moment it boots, so the earlier the
+// import lands the more of that pull it saves (an image that arrives by
+// either path makes the other a no-op).
 func RequiredImages() []string {
-	images := []string{
+	images := append(k3sBuiltinImages(),
 		bundle.CNPGOperatorImage,
 		bundle.BootstrapPostgresImage,
 		bundle.RegistryImage,
 		seaweed.Image,
-	}
+	)
 	// The default shared-pool image; substrate.DefaultEngine/DefaultMajor
 	// stay unimported here (a drift test in internal/substrate pins the
 	// agreement).

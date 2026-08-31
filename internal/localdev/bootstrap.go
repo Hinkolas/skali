@@ -200,10 +200,10 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		return nil, err
 	}
 	importNeeded := status == ClusterAbsent || state.SkalidImage != importedTag || imageID != state.ImportedImageID
+	// Platform images lead the batch: k3s is pulling its built-in
+	// components right now, and every one the import beats is a docker.io
+	// round trip saved, while skalid is not deployed until the converge.
 	var batch []string
-	if importNeeded {
-		batch = append(batch, state.SkalidImage)
-	}
 	if len(missing) > 0 {
 		progress.Start("Pull platform images")
 		progress.Note(strings.Join(missing, ", "))
@@ -212,6 +212,9 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		}
 		progress.Done(fmt.Sprintf("%d cached on the host", len(missing)))
 		batch = append(batch, missing...)
+	}
+	if importNeeded {
+		batch = append(batch, state.SkalidImage)
 	}
 	progress.Start("Import " + state.SkalidImage)
 	if len(batch) > 0 {

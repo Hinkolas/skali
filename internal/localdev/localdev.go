@@ -25,7 +25,8 @@ import (
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
-// The pinned local topology.
+// The pinned local topology. A K3sImage bump must carry k3sBuiltinImages
+// (images.go) along to the new release's k3s-images.txt.
 const (
 	K3sImage   = "rancher/k3s:v1.36.3-k3s1"
 	AdminEmail = "dev@skali.localhost"

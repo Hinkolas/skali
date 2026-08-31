@@ -56,6 +56,19 @@ collected at the end.
 - [ ] `internal/cliconfig/config.go:96`: `Save` never rechmods a
       pre-existing wider-mode token file.
 - [ ] Align `web/package.json` version (`0.0.1`) with the release tag.
+- [ ] **Prebaked dev node image** (cold-start follow-up to the built-in
+      image imports in `internal/localdev/images.go`): publish a
+      `skali-dev-node` image built FROM the pinned `rancher/k3s`, with an
+      airgap tarball of the k3s built-ins, platform images, and released
+      skalid dropped into `/var/lib/rancher/k3s/agent/images/` so k3s
+      auto-imports everything on first boot. A fresh `skali dev` then
+      needs one layer-cached ghcr pull and no save/ctr import pipe; reset
+      stays fast. Bake images only, never booted cluster state (certs,
+      etcd, initdb are per-install). Needs multi-arch builds, a CI
+      rebuild per release, and a seam for the
+      `localdev.K3sImage == installer.K3sVersion` drift test; recorded
+      `state.K3sImage` drift routes existing installs through
+      `dev reset`, which is the only pickup path anyway.
 
 ## B. Outside the codebase
 
