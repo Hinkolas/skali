@@ -21,7 +21,7 @@ func TestOlder(t *testing.T) {
 		{"v0.2.0", "v0.2.0-rc.1", false},
 		{"v0.2.0-rc.1", "v0.2.0-rc.2", true},
 		{"v0.2.0-beta.3", "v0.2.0-rc.1", true},
-		{"v0.2.0-rc1", "v0.2.0-rc.2", true}, // dot optional
+		{"v0.2.0-rc1", "v0.2.0-rc.2", false}, // undotted suffix is not a release shape
 		{"v0.2.0-rc.1", "v0.3.0-alpha.1", true},
 		{"v0.2.0-3-gabc1234", "v0.2.0", false}, // git describe is not comparable
 		{"weird", "v0.2.0", false},             // unjudgeable versions never report drift
@@ -41,6 +41,8 @@ func TestReleaseShapes(t *testing.T) {
 	require.False(t, IsRelease("v0.1.0-3-gabc1234"))
 	require.False(t, IsRelease("v0.0.0-dev"))
 	require.False(t, IsRelease("v0.1.0-dirty"))
+	require.False(t, IsRelease("v0.1.0-rc1"))
+	require.False(t, IsRelease("v0.1.0-rc.1.2"))
 
 	got, ok := PublishedSkalidVersion(PublishedSkalidImage("v0.1.0"))
 	require.True(t, ok)

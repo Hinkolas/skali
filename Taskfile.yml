@@ -216,8 +216,10 @@ tasks:
     preconditions:
       - sh: test -n "{{.V}}"
         msg: "pass the version: task release:tag V=v0.1.0"
-      - sh: printf '%s' "{{.V}}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
-        msg: "version must look like v1.2.3 or v1.2.3-rc.1 (the update scanner, goreleaser, and release.yml all parse it)"
+      # Mirrors internal/version.releasePattern: anything else publishes
+      # fine but the update scanner never recognizes it.
+      - sh: printf '%s' "{{.V}}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'
+        msg: "version must look like v1.2.3 or v1.2.3-rc.1 (dotted alpha, beta, rc suffixes only, never -rc1; see internal/version)"
       - sh: git diff --quiet && git diff --cached --quiet
         msg: "commit or stash your changes first"
       - sh: test "$(git rev-parse --abbrev-ref HEAD)" = main
@@ -233,7 +235,8 @@ tasks:
         echo "release {{.V}}"
         echo "  commit  $(git log -1 --format='%h %s')"
         echo "  branch  main (in sync with origin/main)"
-        case "{{.V}}" in *-*) echo "  kind    prerelease (no latest tag)";; *) echo "  kind    release (moves latest)";; esac
+        case "{{.V}}" in *-*) echo "  kind    prerelease (GitHub prerelease, latest does not move, beta channel only)";; *) echo "  kind    release (moves latest, offered to every cluster)";; esac
+        case "{{.V}}" in v0.*) echo "  stage   initial development (0.x: breaking changes allowed between minors)";; *) echo "  stage   stable (breaking changes need a major bump)";; esac
         printf 'tag and push? [y/N] '
         read -r answer
         case "$answer" in y|Y|yes) ;; *) echo "aborted"; exit 1;; esac

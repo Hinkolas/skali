@@ -28,11 +28,13 @@ const (
 )
 
 // releasePattern matches versions a tagged release produces: vX.Y.Z,
-// optionally with an alpha, beta, or rc prerelease (v0.1.0-rc.1); only
-// those have published images and binaries. The prerelease shape is
-// deliberately narrow so git-describe dev versions (v0.1.0-3-gabc1234,
-// -dirty) never match and keep resolving to the working tree.
-var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$`)
+// optionally with a dotted alpha, beta, or rc prerelease (v0.1.0-rc.1;
+// never -rc1); only those have published images and binaries. The
+// prerelease shape is deliberately narrow so git-describe dev versions
+// (v0.1.0-3-gabc1234, -dirty) never match and keep resolving to the
+// working tree. task release:tag enforces the same shape before a tag
+// exists.
+var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$`)
 
 // IsRelease reports whether v names a tagged release.
 func IsRelease(v string) bool {
@@ -104,7 +106,7 @@ func Older(a, b string) bool {
 	return false
 }
 
-var prereleasePattern = regexp.MustCompile(`^(alpha|beta|rc)\.?([0-9]+)$`)
+var prereleasePattern = regexp.MustCompile(`^(alpha|beta|rc)\.([0-9]+)$`)
 
 // parsePrerelease returns the {stage, number} rank of the prerelease
 // suffix after the first "-" (alpha < beta < rc), nil for a plain release,

@@ -96,7 +96,8 @@ Repo settings, hosting, and release-day steps. Nothing here is a commit.
       `skali dev` and `skali cluster init` fail on every fresh machine
       until this manual one-time setting is made.
 - [ ] **Rehearse the release end to end** on a prerelease tag
-      (`v0.1.0-rc.1`): `install.sh` on a clean Linux server and
+      (`task release:tag V=v0.1.0-rc.1`; tags are cut with that task, never
+      `git tag` by hand): `install.sh` on a clean Linux server and
       a clean Mac, `sudo skali cluster` through init with the published
       images, `skali dev` outside the repo, `skali cluster upgrade` from a
       released binary, and `skali cluster reset-password` (never run on a

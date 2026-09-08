@@ -154,8 +154,12 @@ Releases are cut by tagging `v*`: goreleaser builds the binaries and
 Tag with `task release:tag V=v0.1.0` rather than `git tag` by hand: it
 validates the goreleaser config, refuses a dirty tree, a branch other than
 main, a HEAD that is not origin/main, a malformed version, or a tag that
-already exists, then confirms before pushing. A `-rc.1` style suffix makes
-a GitHub prerelease that does not move the `latest` image tags.
+already exists, then confirms before pushing. Prerelease suffixes are
+dotted `-alpha.N`, `-beta.N`, `-rc.N` only (the version package and the task
+reject `-rc1`); such a tag becomes a GitHub prerelease that does not move the
+`latest` image tags and is offered only to beta-channel clusters. Plain
+`v0.y.z` tags are full releases; the leading zero is the initial-development
+signal, not a prerelease.
 The workflow also attaches `release.json` (`skali-schema --schema release`),
 which names the k3s pin the release installs; the update scanner shows it
 and the coordinator checks the k3s move against it before any host changes.

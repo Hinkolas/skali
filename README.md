@@ -26,8 +26,13 @@ it.
 - **Backups** of environment data to your own S3 target, cluster upgrades,
   diagnosis and repair, single node or many.
 
-**Status:** early. skali is used daily for development and staging;
-production hardening is in progress and tracked in [`ROADMAP.md`](ROADMAP.md).
+**Status: initial development (0.x).** skali is used daily for development
+and staging, and production hardening is tracked in [`ROADMAP.md`](ROADMAP.md).
+Until v1.0.0 nothing is guaranteed: the manifest schema, CLI, API, and
+on-disk formats may change in breaking ways between minor versions, upgrades
+may require manual steps, and we do not recommend it for production workloads
+you cannot afford to lose. Releases are real releases and safe to run, but
+read the release notes before every upgrade.
 
 ## Install the CLI
 
