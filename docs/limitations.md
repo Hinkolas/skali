@@ -68,3 +68,16 @@ to `local` today.
 `skalid` runs as one deployment. The applications it manages keep running
 if it is down, but deploys, the console, and the API are unavailable until
 it is back.
+
+## Console updates need a coordinator-managed cluster and internet egress
+
+The System / Software update page can move a reconciled (coordinator-managed)
+cluster to a newer release. The daemon's daily scan reads the GitHub releases
+API, and every node downloads its new `skali-hostd` and k3s from GitHub, so
+both need outbound HTTPS. `SKALI_UPDATE_SCAN=false` keeps the daemon fully
+offline (the page still works for settings and shows nothing to update);
+`/etc/skali/hostd.env` with `SKALI_RELEASE_BASE` points node downloads at a
+mirror. Legacy (version-1) installations and the local `skali dev` platform
+show the available release but must be upgraded with `skali cluster upgrade`
+or `skali dev upgrade`. Release assets are verified against `checksums.txt`
+over TLS; there is no signature yet (see the release checklist).

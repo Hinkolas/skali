@@ -14,11 +14,18 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/hostdaemon"
+	"github.com/Hinkolas/skali/internal/installer"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	// The release host is fixed in production; the environment file both
+	// units read lets the cluster e2e serve a fake release from the test
+	// host. It is the only download-affecting input, and it is root-owned.
+	if base := os.Getenv("SKALI_RELEASE_BASE"); base != "" {
+		installer.ReleaseBase = base
+	}
 	root := &cobra.Command{
 		Use:           "skali-hostd",
 		Short:         "Skali managed-host lifecycle service",

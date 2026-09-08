@@ -57,7 +57,7 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 		section: 'Administration',
 		items: [
 			{ label: 'Users', slug: 'users', icon: Users, adminOnly: true },
-			{ label: 'System', slug: 'system', icon: Settings2, stub: true, adminOnly: true }
+			{ label: 'System', slug: 'system', icon: Settings2, adminOnly: true }
 		]
 	}
 ];

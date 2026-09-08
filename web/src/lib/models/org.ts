@@ -7,6 +7,8 @@ import type { SystemMeta } from '$lib/types/system';
 export interface OrgView {
 	name: string;
 	version: string;
+	/** A newer release the daemon knows about; drives the System badge. */
+	update_available: string | null;
 	project_count: number;
 	node_count: number;
 }
@@ -19,6 +21,7 @@ export function buildOrg(
 	return {
 		name: meta?.name || 'skali',
 		version: meta?.version ?? '',
+		update_available: meta?.update_available?.version ?? null,
 		project_count: projectCount,
 		node_count: nodeCount
 	};

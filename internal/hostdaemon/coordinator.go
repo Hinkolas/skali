@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -35,11 +36,17 @@ import (
 	"github.com/Hinkolas/skali/internal/installer/host"
 	skalikube "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/version"
 )
 
 const coordinatorLease = "skali-cluster-coordinator"
 
 var errPlatformInitializationRequired = errors.New("platform initialization is required")
+
+// errLeaderStale means the platform must move to a release this coordinator
+// binary is not: the leader's own node is being upgraded and the restart
+// that follows brings a coordinator that can. Not a failure, a wait.
+var errLeaderStale = errors.New("the coordinator must restart into the target release first")
 
 type CoordinatorDaemon struct {
 	Kubeconfig string
@@ -49,6 +56,61 @@ type CoordinatorDaemon struct {
 	Logger   *slog.Logger
 	Identity string
 	Runner   host.Runner
+	// Releases fetches release metadata and checksums for upgrade
+	// operations; nil uses a short-timeout client.
+	Releases *http.Client
+
+	releases releaseCache
+}
+
+// releaseCache remembers what the leader read about a release so every
+// node's action is built from one download, and a coordinator restart
+// re-reads at most once.
+type releaseCache struct {
+	mu        sync.Mutex
+	checksums map[string]map[string]string
+	metadata  map[string]*installer.ReleaseMetadata
+}
+
+func (d *CoordinatorDaemon) releaseClient() *http.Client {
+	if d.Releases != nil {
+		return d.Releases
+	}
+	return &http.Client{Timeout: 60 * time.Second}
+}
+
+func (d *CoordinatorDaemon) releaseChecksums(ctx context.Context, release string) (map[string]string, error) {
+	d.releases.mu.Lock()
+	defer d.releases.mu.Unlock()
+	if sums, ok := d.releases.checksums[release]; ok {
+		return sums, nil
+	}
+	sums, err := installer.ReleaseChecksums(ctx, d.releaseClient(), installer.ReleaseBase, release)
+	if err != nil {
+		return nil, err
+	}
+	if d.releases.checksums == nil {
+		d.releases.checksums = make(map[string]map[string]string)
+	}
+	d.releases.checksums[release] = sums
+	return sums, nil
+}
+
+func (d *CoordinatorDaemon) releaseMetadata(ctx context.Context, release string) (*installer.ReleaseMetadata, error) {
+	d.releases.mu.Lock()
+	defer d.releases.mu.Unlock()
+	if metadata, ok := d.releases.metadata[release]; ok {
+		return metadata, nil
+	}
+	metadata, err := installer.FetchReleaseMetadata(ctx, d.releaseClient(), installer.ReleaseBase, release)
+	if err != nil {
+		return nil, err
+	}
+	if d.releases.metadata == nil {
+		d.releases.metadata = make(map[string]*installer.ReleaseMetadata)
+	}
+	d.releases.metadata[release] = metadata
+	return metadata, nil
 }
 
 func (d *CoordinatorDaemon) Run(ctx context.Context) error {
@@ -356,6 +418,30 @@ func (d *CoordinatorDaemon) actionFor(ctx context.Context, store *clusterstate.S
 	case clusterstate.NodeActionCapabilities:
 		desired := target.Nodes[nodeID]
 		action.Capabilities = append([]string(nil), desired.Capabilities...)
+	case clusterstate.NodeActionUpgrade:
+		if !operation.UpgradePreflight {
+			if err := d.upgradePreflight(ctx, state, target); err != nil {
+				_, _ = store.Update(ctx, func(current *clusterstate.State) error {
+					return clusterstate.CompleteNodeAction(current, nodeID, attemptID,
+						false, err.Error(), time.Now())
+				})
+				return clusterstate.AgentAction{}, err
+			}
+			if _, err := store.Update(ctx, func(current *clusterstate.State) error {
+				return clusterstate.MarkUpgradePreflight(current, time.Now())
+			}); err != nil {
+				return clusterstate.AgentAction{}, err
+			}
+		}
+		action.Version = target.Platform.Version
+		action.HostdSHA256, err = d.hostdChecksum(ctx, target.Platform.Version, target.Nodes[nodeID].Name)
+		if err != nil {
+			_, _ = store.Update(ctx, func(current *clusterstate.State) error {
+				return clusterstate.CompleteNodeAction(current, nodeID, attemptID,
+					false, err.Error(), time.Now())
+			})
+			return clusterstate.AgentAction{}, err
+		}
 	case clusterstate.NodeActionRemove:
 		action.Role = from.Nodes[nodeID].Role
 		if !step.ClusterPrepared {
@@ -376,6 +462,60 @@ func (d *CoordinatorDaemon) actionFor(ctx context.Context, store *clusterstate.S
 		return clusterstate.AgentAction{}, fmt.Errorf("unknown node action %q", step.Action)
 	}
 	return action, nil
+}
+
+// upgradePreflight judges the whole upgrade once before the first host
+// changes: the release must publish its checksums (so it exists and its
+// binaries are verifiable) and, when it publishes release.json, the k3s pin
+// it carries must be reachable from every node in one supported move. A
+// refusal here fails the operation with nothing touched.
+func (d *CoordinatorDaemon) upgradePreflight(ctx context.Context, state *clusterstate.State,
+	target clusterstate.Revision) error {
+	release := target.Platform.Version
+	if _, err := d.releaseChecksums(ctx, release); err != nil {
+		return fmt.Errorf("release %s is not downloadable: %w", release, err)
+	}
+	metadata, err := d.releaseMetadata(ctx, release)
+	if err != nil {
+		return err
+	}
+	if metadata == nil || metadata.K3s == "" {
+		return nil
+	}
+	for _, desired := range clusterstate.SortedRevisionNodes(target.Nodes) {
+		node := state.Nodes[desired.ID]
+		if node.K3sVersion == "" {
+			continue
+		}
+		if err := installer.CheckK3sMove(node.K3sVersion, metadata.K3s); err != nil {
+			return fmt.Errorf("node %s: %w", desired.Name, err)
+		}
+	}
+	return nil
+}
+
+// hostdChecksum resolves the published checksum of the hostd binary for
+// the architecture the kube Node reports; the agent verifies its download
+// against it before anything is written to the host.
+func (d *CoordinatorDaemon) hostdChecksum(ctx context.Context, release, nodeName string) (string, error) {
+	client, err := installer.KubeClient(ctx, d.Runner)
+	if err != nil {
+		return "", err
+	}
+	node, err := client.Clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("read node %s for its architecture: %w", nodeName, err)
+	}
+	arch := node.Status.NodeInfo.Architecture
+	sums, err := d.releaseChecksums(ctx, release)
+	if err != nil {
+		return "", err
+	}
+	sum, ok := sums[installer.HostdAsset(arch)]
+	if !ok {
+		return "", fmt.Errorf("release %s publishes no %s", release, installer.HostdAsset(arch))
+	}
+	return sum, nil
 }
 
 // prepareNodeRemoval performs the cluster-visible half of removal while a
@@ -483,7 +623,7 @@ func (d *CoordinatorDaemon) reconcile(ctx context.Context, store *clusterstate.S
 		return nil
 	}
 	if !nodeActionsComplete(operation, clusterstate.NodeActionInstall,
-		clusterstate.NodeActionCapabilities) {
+		clusterstate.NodeActionCapabilities, clusterstate.NodeActionUpgrade) {
 		return nil
 	}
 	if !operation.TopologyActivated {
@@ -512,12 +652,17 @@ func (d *CoordinatorDaemon) reconcile(ctx context.Context, store *clusterstate.S
 		operation.Phase != clusterstate.OperationRebalancing &&
 		operation.Phase != clusterstate.OperationVerifying {
 		if target.Platform.Enabled {
-			if err := d.reconcilePlatform(ctx); err != nil {
+			if err := d.reconcilePlatform(ctx, target); err != nil {
 				if errors.Is(err, errPlatformInitializationRequired) {
 					_, updateErr := store.Update(ctx, func(state *clusterstate.State) error {
 						return clusterstate.AwaitPlatformInitialization(state, time.Now())
 					})
 					return updateErr
+				}
+				if errors.Is(err, errLeaderStale) {
+					d.log("waiting for the coordinator to restart into the target release",
+						"running", version.Version, "target", target.Platform.Version)
+					return nil
 				}
 				_, _ = store.Update(ctx, func(state *clusterstate.State) error {
 					return clusterstate.AdvancePlatform(state, false, err.Error(), time.Now())
@@ -587,8 +732,11 @@ func (d *CoordinatorDaemon) reconcile(ctx context.Context, store *clusterstate.S
 			if err := d.pruneOrphanedDatabaseInstances(ctx); err != nil {
 				return err
 			}
-			if err := d.reconcilePlatform(ctx); err != nil &&
+			if err := d.reconcilePlatform(ctx, target); err != nil &&
 				!errors.Is(err, errPlatformInitializationRequired) {
+				if errors.Is(err, errLeaderStale) {
+					return nil
+				}
 				return err
 			}
 		}
@@ -768,6 +916,18 @@ func (d *CoordinatorDaemon) verifyTarget(ctx context.Context, from,
 			return fmt.Errorf("verify platform deployment %s: %d/%d replicas available",
 				name, deployment.Status.AvailableReplicas, desired)
 		}
+		// A versioned platform must run at least the target release: the
+		// image proves the converge moved, and a newer image (an operator's
+		// CLI upgrade) is not a regression.
+		if want := target.Platform.Version; want != "" && name == "skalid" {
+			for _, container := range deployment.Spec.Template.Spec.Containers {
+				running, ok := version.PublishedSkalidVersion(container.Image)
+				if container.Name == "skalid" && ok && version.Older(running, want) {
+					return fmt.Errorf("verify platform deployment skalid: runs %s, target is %s",
+						running, want)
+				}
+			}
+		}
 	}
 	databaseNodes := 0
 	for _, node := range target.Nodes {
@@ -871,11 +1031,21 @@ func (d *CoordinatorDaemon) snapshotEtcd(ctx context.Context, operationID string
 	return nil
 }
 
-func (d *CoordinatorDaemon) reconcilePlatform(ctx context.Context) error {
-	record, err := installer.LoadRecord(ctx, d.Runner)
+// reconcilePlatform converges the bundle to the live profile, and when the
+// target names a release newer than the recorded bundle, to that release:
+// the published skalid and web images replace the live ones, the record's
+// versions move with them (the record text is a bundle input, so the hash
+// moves too), and the leader's own record is bumped so its status stays
+// truthful. Only the coordinator built from the target release performs the
+// move: its embedded bundle is the one that release ships, and a stale
+// leader waits for its own restart instead. A bundle already newer than the
+// target (an operator ran a newer CLI upgrade) is never rolled back.
+func (d *CoordinatorDaemon) reconcilePlatform(ctx context.Context, target clusterstate.Revision) error {
+	local, err := installer.LoadRecord(ctx, d.Runner)
 	if err != nil {
 		return err
 	}
+	record := local
 	client, err := installer.KubeClient(ctx, d.Runner)
 	if err != nil {
 		return err
@@ -900,6 +1070,39 @@ func (d *CoordinatorDaemon) reconcilePlatform(ctx context.Context) error {
 			return errPlatformInitializationRequired
 		}
 		return err
+	}
+	want := target.Platform.Version
+	moveBundle := want != "" && (version.Older(record.Versions.Bundle, want) ||
+		(record.Versions.Bundle == want && profile.SkalidImage != version.PublishedSkalidImage(want)))
+	if moveBundle {
+		if version.Version != want {
+			return errLeaderStale
+		}
+		profile.SkalidImage = version.PublishedSkalidImage(want)
+		profile.SkalidImageID = ""
+		profile.Production.WebImage = version.PublishedWebImage(want)
+		profile.Production.WebImageID = ""
+		record.Versions.Bundle = want
+		record.Versions.Installer = want
+		record.Versions.K3s = installer.K3sVersion
+		canonical, err := record.CanonicalYAML()
+		if err != nil {
+			return err
+		}
+		profile.Production.InstallationRecord = canonical
+		if err := bundle.Converge(ctx, client, profile, nil); err != nil {
+			return err
+		}
+		// The published record moved with the converge; the leader's own
+		// file follows so status on this host reports the bundle it runs.
+		if local.Versions.Bundle != "" {
+			local.Versions.Bundle = want
+			local.Versions.Installer = want
+			if err := installer.SaveRecord(ctx, d.Runner, local); err != nil {
+				return err
+			}
+		}
+		return bundle.StampHash(ctx, client, profile)
 	}
 	if bundle.StampedHash(ctx, client) == bundle.Hash(profile) {
 		return nil

@@ -871,8 +871,8 @@ func defaultSkalidImage(ctx context.Context, tasks *clirender.Tasks) string {
 		}
 		task.Fail()
 	}
-	if releaseVersionPattern.MatchString(versionpkg.Version) {
-		image := publishedSkalidRepo + versionpkg.Version
+	if versionpkg.IsRelease(versionpkg.Version) {
+		image := versionpkg.PublishedSkalidImage(versionpkg.Version)
 		task := tasks.Start("Pull " + image)
 		if err := localdev.EnsureHostImage(ctx, image); err == nil {
 			task.Done("")

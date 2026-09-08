@@ -29,6 +29,7 @@ import (
 	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
@@ -96,6 +97,9 @@ type Deps struct {
 	// Metrics serves usage series from stored samples; nil hides the
 	// routes (tests without a store).
 	Metrics *metrics.Service
+	// Updates owns platform update status, scans, and settings; nil hides
+	// the routes and the meta indicator.
+	Updates *updates.Service
 }
 
 // StripAPIPrefix serves the router both at the root and under /api: the
@@ -319,7 +323,10 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				}
 
 				// Instance facts: version, name, and identity.
-				mh := &systemHandlers{version: d.Version, instanceName: d.InstanceName, instanceID: d.InstanceID}
+				mh := &systemHandlers{
+					version: d.Version, instanceName: d.InstanceName, instanceID: d.InstanceID,
+					updates: d.Updates,
+				}
 				ac.route(r, "GET", "/system/meta", classSelf, mh.meta)
 
 				// Database and bucket connection projections; credential
@@ -394,6 +401,15 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				r.Group(func(r chi.Router) {
 					r.Use(RequireAdmin)
 
+					// Platform updates: the status document and a manual
+					// scan are plain admin reads; every change is below.
+					var uph *updatesHandlers
+					if d.Updates != nil {
+						uph = &updatesHandlers{updates: d.Updates}
+						ac.route(r, "GET", "/system/updates", classInstanceAdmin, uph.get)
+						ac.route(r, "POST", "/system/updates/scan", classInstanceAdmin, uph.scan)
+					}
+
 					// Writes additionally need sudo mode. RequireAdmin sits
 					// outside RequireFresh so non-admins get "forbidden", never a
 					// reauth prompt that would not help them.
@@ -412,6 +428,15 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 							ac.route(r, "GET", "/system/backup-target", classInstanceAdmin, bth.get)
 							ac.route(r, "PUT", "/system/backup-target", classInstanceAdmin, bth.put)
 							ac.route(r, "DELETE", "/system/backup-target", classInstanceAdmin, bth.delete)
+						}
+
+						// Starting or resuming an update rolls every node
+						// and the control plane; channel and auto-update
+						// decide what future scans may start on their own.
+						if uph != nil {
+							ac.route(r, "POST", "/system/updates/apply", classInstanceAdmin, uph.apply)
+							ac.route(r, "POST", "/system/updates/resume", classInstanceAdmin, uph.resume)
+							ac.route(r, "PUT", "/system/updates/settings", classInstanceAdmin, uph.putSettings)
 						}
 					})
 				})

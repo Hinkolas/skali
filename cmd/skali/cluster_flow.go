@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -21,13 +20,6 @@ import (
 	"github.com/Hinkolas/skali/internal/utils"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
-
-// releaseVersionPattern matches versions a tagged release produces:
-// vX.Y.Z, optionally with an alpha, beta, or rc prerelease (v0.1.0-rc.1);
-// only those have published images. The prerelease shape is deliberately
-// narrow so git-describe dev versions (v0.1.0-3-gabc1234, -dirty) never
-// match and keep resolving to the working tree.
-var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$`)
 
 // runInteractiveFreshFlow drives the fresh single-node
 // conversation: seed identity and capabilities, the k3s/coordinator
@@ -524,10 +516,10 @@ func resolveSkalidImage(reader *bufio.Reader, promptAllowed bool, opts *installe
 	switch {
 	case imageTarFlag != "":
 		// A staged tar names the image itself; no prompt.
-	case releaseVersionPattern.MatchString(versionpkg.Version):
+	case versionpkg.IsRelease(versionpkg.Version):
 		// A released installer has a published skalid image of the same
 		// version; the operator can still type any other reference.
-		defaultImage := publishedSkalidRepo + versionpkg.Version
+		defaultImage := versionpkg.PublishedSkalidImage(versionpkg.Version)
 		if !promptAllowed {
 			opts.SkalidImage = defaultImage
 			return nil
@@ -554,8 +546,8 @@ func resolveWebImage(reader *bufio.Reader, promptAllowed bool, opts *installer.I
 		// A staged tar names the image itself; no prompt.
 	case webImageFlag != "":
 		opts.WebImage = webImageFlag
-	case releaseVersionPattern.MatchString(versionpkg.Version):
-		defaultImage := "ghcr.io/hinkolas/skali-web:" + versionpkg.Version
+	case versionpkg.IsRelease(versionpkg.Version):
+		defaultImage := versionpkg.PublishedWebImage(versionpkg.Version)
 		if !promptAllowed {
 			opts.WebImage = defaultImage
 			return nil

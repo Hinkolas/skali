@@ -17,6 +17,7 @@ const (
 	ActionAddServer          ActionKind = "add-server"
 	ActionAddAgent           ActionKind = "add-agent"
 	ActionChangeCapabilities ActionKind = "change-capabilities"
+	ActionUpgradeNode        ActionKind = "upgrade-node"
 	ActionMoveWorkloads      ActionKind = "move-required-workloads"
 	ActionReconcilePlatform  ActionKind = "reconcile-platform"
 	ActionRemoveAgent        ActionKind = "remove-agent"
@@ -90,12 +91,32 @@ func BuildPlan(state *State, from, target Revision, rebalanceWorkloads bool) (Pl
 		}
 	}
 
-	if target.Platform.Enabled && (!from.Platform.Enabled ||
+	// A version change upgrades every retained node (servers first, matching
+	// the serial execution order) and then moves the bundle; the platform
+	// reconcile carries the new images.
+	versionChanged := target.Platform.Version != "" && target.Platform.Version != from.Platform.Version
+	if versionChanged {
+		for _, node := range SortedRevisionNodes(target.Nodes) {
+			if _, exists := from.Nodes[node.ID]; !exists {
+				// A node added in the same revision installs at the new
+				// version; it needs no separate upgrade.
+				continue
+			}
+			plan.Actions = append(plan.Actions, Action{
+				Kind: ActionUpgradeNode, NodeID: node.ID, NodeName: node.Name, Role: node.Role,
+				From: []string{from.Platform.Version}, To: []string{target.Platform.Version},
+				Detail: "hostd and k3s to " + target.Platform.Version,
+			})
+		}
+	}
+
+	if target.Platform.Enabled && (!from.Platform.Enabled || versionChanged ||
 		plan.DatabaseTierFrom != plan.DatabaseTierTo || topologyChanged(plan.Actions)) {
-		plan.Actions = append(plan.Actions, Action{
-			Kind:   ActionReconcilePlatform,
-			Detail: fmt.Sprintf("reconcile platform once at database tier %s", plan.DatabaseTierTo),
-		})
+		detail := fmt.Sprintf("reconcile platform once at database tier %s", plan.DatabaseTierTo)
+		if versionChanged {
+			detail = "move the platform bundle to " + target.Platform.Version
+		}
+		plan.Actions = append(plan.Actions, Action{Kind: ActionReconcilePlatform, Detail: detail})
 	}
 
 	// Removals are agent-first in display but the reconciler may impose

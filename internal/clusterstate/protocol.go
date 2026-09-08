@@ -38,9 +38,12 @@ type EnrollResponse struct {
 type AgentReport struct {
 	Phase      string `json:"phase"`
 	K3sVersion string `json:"k3sVersion,omitempty"`
-	ActionID   string `json:"actionId,omitempty"`
-	ActionOK   bool   `json:"actionOk,omitempty"`
-	Error      string `json:"error,omitempty"`
+	// AgentVersion is the running skali-hostd build, so the coordinator
+	// sees a node pick up a new binary after an upgrade action.
+	AgentVersion string `json:"agentVersion,omitempty"`
+	ActionID     string `json:"actionId,omitempty"`
+	ActionOK     bool   `json:"actionOk,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 type AgentPollRequest struct {
@@ -58,6 +61,13 @@ type AgentAction struct {
 	Server       string   `json:"server,omitempty"`
 	K3sToken     string   `json:"k3sToken,omitempty"`
 	PullSecret   string   `json:"pullSecret,omitempty"`
+	// Version names the release an upgrade action moves the node to; the
+	// agent derives every download from it and the fixed release host, so
+	// no URL and no command ever travels in an action. HostdSHA256 is the
+	// published checksum of skali-hostd for this node's architecture, read
+	// by the coordinator from the release's checksums.txt.
+	Version     string `json:"version,omitempty"`
+	HostdSHA256 string `json:"hostdSha256,omitempty"`
 }
 
 type AgentPollResponse struct {

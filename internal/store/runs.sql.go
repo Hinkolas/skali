@@ -12,6 +12,19 @@ import (
 	"github.com/google/uuid"
 )
 
+const countRunningRuns = `-- name: CountRunningRuns :one
+SELECT count(*) FROM runs WHERE status = 'running'
+`
+
+// Platform updates wait for in-flight work: a running run anywhere means a
+// deployment, restore, or restart the control-plane roll would interrupt.
+func (q *Queries) CountRunningRuns(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunningRuns)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRun = `-- name: CreateRun :one
 INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection)
 VALUES ($1, $2, $3, $4, $5, $6)

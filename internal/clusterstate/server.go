@@ -227,6 +227,9 @@ func (c *Coordinator) poll(w http.ResponseWriter, r *http.Request) {
 		}
 		node.LastSeen = c.Store.now()
 		node.K3sVersion = request.Report.K3sVersion
+		if request.Report.AgentVersion != "" {
+			node.AgentVersion = request.Report.AgentVersion
+		}
 		if request.Report.Phase != "" {
 			node.Phase = request.Report.Phase
 		}

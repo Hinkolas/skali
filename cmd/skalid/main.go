@@ -55,6 +55,7 @@ import (
 	"github.com/Hinkolas/skali/internal/substrate"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
+	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
@@ -309,6 +310,17 @@ func runServe() error {
 		}
 	}
 
+	// Platform updates: the scan runs wherever a feed is configured; the
+	// cluster bridge exists only with a cluster, and reports unmanaged on
+	// the dev platform and legacy installs, where the CLI still upgrades.
+	updatesSvc := &updates.Service{Store: st, Version: versionpkg.Version}
+	if cfg.UpdateScan && cfg.UpdateFeedURL != "" {
+		updatesSvc.Feed = &updates.GitHubFeed{URL: cfg.UpdateFeedURL}
+	}
+	if kubeClient != nil {
+		updatesSvc.Cluster = &updates.Cluster{Client: kubeClient.Clientset}
+	}
+
 	runtimeLogs := &runtimelogs.Streamer{Observed: observed, Store: st}
 	// Reads work in API-only mode; only the sampler needs a cluster.
 	metricsSvc := &metrics.Service{Store: st}
@@ -356,6 +368,7 @@ func runServe() error {
 			BackupTargets:      backupTargets,
 			Backups:            backupCtl,
 			Metrics:            metricsSvc,
+			Updates:            updatesSvc,
 		})),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -421,6 +434,9 @@ func runServe() error {
 		}
 		go sampler.Run(loopCtx)
 	}
+
+	// The daily release scan (and automatic updates when enabled).
+	go updatesSvc.Run(loopCtx)
 
 	slog.InfoContext(ctx, "starting", "service", serviceName, "http_addr", cfg.HTTPAddr)
 

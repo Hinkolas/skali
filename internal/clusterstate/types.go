@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/version"
 )
 
 const (
@@ -49,6 +50,7 @@ const (
 
 	OperationPending      = "pending"
 	OperationAdding       = "adding-nodes"
+	OperationUpgrading    = "upgrading-nodes"
 	OperationActivating   = "activating-topology"
 	OperationInitializing = "awaiting-platform-initialization"
 	OperationPlatform     = "reconciling-platform"
@@ -86,6 +88,14 @@ type State struct {
 type PlatformState struct {
 	Enabled      bool   `json:"enabled"`
 	RegistryNode string `json:"registryNode,omitempty"`
+	// Version is the released skali version the platform runs: the hostd
+	// binary on every node, that binary's k3s pin, and the skalid and web
+	// images the bundle deploys. Empty on clusters initialized by a dev
+	// build, which keeps whatever images init named; a console-driven
+	// update sets it, and the coordinator moves every node and the bundle
+	// to it. Only tagged releases are accepted, because only those have
+	// published binaries and images to download.
+	Version string `json:"version,omitempty"`
 }
 
 // Revision is an immutable desired topology snapshot. Nodes absent from the
@@ -137,10 +147,15 @@ type Operation struct {
 	EtcdSnapshot       string              `json:"etcdSnapshot,omitempty"`
 	TopologyActivated  bool                `json:"topologyActivated,omitempty"`
 	NodeSteps          map[string]NodeStep `json:"nodeSteps,omitempty"`
-	LastError          string              `json:"lastError,omitempty"`
-	StartedAt          time.Time           `json:"startedAt"`
-	UpdatedAt          time.Time           `json:"updatedAt"`
-	CompletedAt        time.Time           `json:"completedAt,omitempty"`
+	// UpgradePreflight records that the leader checked the target release
+	// against every node once (the k3s move it implies, its published
+	// assets) before the first upgrade action was handed out, so a
+	// coordinator restart never repeats the network round trip.
+	UpgradePreflight bool      `json:"upgradePreflight,omitempty"`
+	LastError        string    `json:"lastError,omitempty"`
+	StartedAt        time.Time `json:"startedAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+	CompletedAt      time.Time `json:"completedAt,omitempty"`
 }
 
 type NodeStep struct {
@@ -346,6 +361,9 @@ func validateRevision(nodes map[string]RevisionNode, platform PlatformState) err
 			return fmt.Errorf("platform-enabled revision is missing required capabilities: %s",
 				strings.Join(missing, ", "))
 		}
+	}
+	if platform.Version != "" && !version.IsRelease(platform.Version) {
+		return fmt.Errorf("platform version %q is not a tagged release", platform.Version)
 	}
 	if platform.RegistryNode != "" {
 		node, ok := nodes[platform.RegistryNode]

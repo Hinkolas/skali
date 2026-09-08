@@ -450,7 +450,7 @@ func waitK3sUpgraded(ctx context.Context, runner host.Runner, role string, progr
 // probeK3sUpgraded runs one round of the upgrade health checks; an empty
 // return means everything holds.
 func probeK3sUpgraded(ctx context.Context, runner host.Runner, role, unit string) string {
-	if version := probeK3sVersion(ctx, runner); version != K3sVersion {
+	if version := ProbeK3sVersion(ctx, runner); version != K3sVersion {
 		return fmt.Sprintf("k3s reports version %q, expected %q", version, K3sVersion)
 	}
 	result, err := runner.Run(ctx, host.Command{

@@ -48,18 +48,7 @@ func PlanUpgrade(status *Status, imageTar bool) UpgradePlan {
 		BundleTo: version.Version,
 	}
 	plan.K3sDrifted = !status.K3sCurrent
-	if cmp, ok := compareK3sVersions(status.Host.K3sVersion, K3sVersion); ok {
-		if cmp > 0 {
-			plan.K3sDowngrade = true
-		}
-		if cmp < 0 {
-			installed, _ := parseK3sVersion(status.Host.K3sVersion)
-			pinned, _ := parseK3sVersion(K3sVersion)
-			if pinned[0] != installed[0] || pinned[1]-installed[1] > 1 {
-				plan.K3sMinorSkip = true
-			}
-		}
-	}
+	plan.K3sDowngrade, plan.K3sMinorSkip = classifyK3sMove(status.Host.K3sVersion, K3sVersion)
 	if status.Host.Record != nil && status.Host.Record.Node.Role == layout.RoleServer {
 		plan.BundleFrom = status.BundleVersion
 		plan.BundleDrifted = status.Initialized && !status.BundleCurrent

@@ -59,6 +59,10 @@ const (
 
 	// Exec.
 	codeNoReadyPod = "no_ready_pod"
+
+	// Platform updates.
+	codeUpdateInProgress = "update_in_progress"
+	codeUpdateBlocked    = "update_blocked"
 )
 
 // writeInternalError logs the real error and reports an opaque 500.

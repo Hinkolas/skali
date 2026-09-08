@@ -52,6 +52,13 @@ jobs:
             ghcr.io/hinkolas/skali-web:${{ github.ref_name }}
             ${{ !contains(github.ref_name, '-') && 'ghcr.io/hinkolas/skali-web:latest' || '' }}
 
+      # Release metadata the update scanner and the coordinator read: the
+      # version and the k3s pin this release's installer carries.
+      - run: |
+          mkdir -p dist
+          go run ./cmd/skali-schema --schema release --version "${{ github.ref_name }}" --output dist/release.json
+          cat dist/release.json
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser

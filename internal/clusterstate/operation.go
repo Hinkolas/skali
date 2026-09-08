@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/version"
 )
 
 const (
@@ -21,8 +22,13 @@ const (
 const (
 	NodeActionInstall      = "install"
 	NodeActionCapabilities = "capabilities"
+	NodeActionUpgrade      = "upgrade"
 	NodeActionRemove       = "remove"
 )
+
+// ErrOperationActive refuses a new request while a cluster operation is in
+// flight; the caller resumes or waits for it instead.
+var ErrOperationActive = errors.New("a cluster operation is already in progress")
 
 const maxParallelAgents = 4
 
@@ -85,6 +91,8 @@ func FreezeCandidate(state *State, rebalanceWorkloads bool, now time.Time) (Plan
 			stepAction = NodeActionInstall
 		case ActionChangeCapabilities:
 			stepAction = NodeActionCapabilities
+		case ActionUpgradeNode:
+			stepAction = NodeActionUpgrade
 		case ActionRemoveServer, ActionRemoveAgent:
 			stepAction = NodeActionRemove
 		default:
@@ -161,6 +169,24 @@ func RunnableNodeActions(state *State) (map[string]NodeStep, error) {
 		result[id] = operation.NodeSteps[id]
 	}
 	if len(result) > 0 || !allActionComplete(operation, NodeActionCapabilities) {
+		return result, nil
+	}
+
+	// Upgrades run strictly one node at a time, servers first: each moves
+	// the host's k3s and restarts its own hostd, so two at once would take
+	// two nodes out of service together.
+	if running := sortedSteps(operation, target, NodeActionUpgrade, "", StepRunning); len(running) > 0 {
+		result[running[0]] = operation.NodeSteps[running[0]]
+		return result, nil
+	}
+	for _, role := range []string{layout.RoleServer, layout.RoleAgent} {
+		if pending := sortedSteps(operation, target, NodeActionUpgrade, role,
+			StepPending, StepFailed); len(pending) > 0 {
+			result[pending[0]] = operation.NodeSteps[pending[0]]
+			return result, nil
+		}
+	}
+	if !allActionComplete(operation, NodeActionUpgrade) {
 		return result, nil
 	}
 
@@ -329,7 +355,7 @@ func CompleteNodeAction(state *State, nodeID, attemptID string, succeeded bool,
 	node.UpdatedAt = step.UpdatedAt
 	if succeeded {
 		switch step.Action {
-		case NodeActionInstall, NodeActionCapabilities:
+		case NodeActionInstall, NodeActionCapabilities, NodeActionUpgrade:
 			node.Phase = NodePhaseActive
 		case NodeActionRemove:
 			node.Phase = NodePhaseAwaitingCleanup
@@ -365,8 +391,9 @@ func AdvancePlatform(state *State, succeeded bool, lastError string, now time.Ti
 		return err
 	}
 	if !allActionComplete(operation, NodeActionInstall) ||
-		!allActionComplete(operation, NodeActionCapabilities) {
-		return errors.New("platform cannot reconcile before additions and capability changes complete")
+		!allActionComplete(operation, NodeActionCapabilities) ||
+		!allActionComplete(operation, NodeActionUpgrade) {
+		return errors.New("platform cannot reconcile before additions, capability changes, and upgrades complete")
 	}
 	now = now.UTC().Truncate(time.Second)
 	if !succeeded {
@@ -401,7 +428,8 @@ func AwaitPlatformInitialization(state *State, now time.Time) error {
 		return errors.New("platform initialization was requested for a disabled target")
 	}
 	if !allActionComplete(operation, NodeActionInstall) ||
-		!allActionComplete(operation, NodeActionCapabilities) {
+		!allActionComplete(operation, NodeActionCapabilities) ||
+		!allActionComplete(operation, NodeActionUpgrade) {
 		return errors.New("platform initialization cannot begin before topology actions complete")
 	}
 	now = now.UTC().Truncate(time.Second)
@@ -410,6 +438,84 @@ func AwaitPlatformInitialization(state *State, now time.Time) error {
 	operation.UpdatedAt = now
 	state.Operations[operation.ID] = operation
 	return nil
+}
+
+// MarkUpgradePreflight records the leader's one-time release check for the
+// active operation.
+func MarkUpgradePreflight(state *State, now time.Time) error {
+	operation, _, _, err := currentOperationState(state)
+	if err != nil {
+		return err
+	}
+	operation.UpgradePreflight = true
+	operation.UpdatedAt = now.UTC().Truncate(time.Second)
+	state.Operations[operation.ID] = operation
+	return nil
+}
+
+// HeartbeatWindow is how recently every node must have polled before a
+// version change is accepted: an upgrade waits on each host in turn, so a
+// silent one would stall it at the first step.
+const HeartbeatWindow = 2 * time.Minute
+
+// RequestPlatformVersion stages and freezes a platform version change in
+// one step: the candidate becomes the converged topology with the new
+// version, and the resulting operation upgrades every node and reconverges
+// the bundle. It is the only mutation the product daemon performs on the
+// cluster state, so every refusal a careful operator would make is made
+// here: no concurrent operation, an initialized platform, a newer tagged
+// release, no staged topology edits that would ride along unreviewed, and
+// every node active and recently heard from.
+// Updatable reports why a version change cannot start right now, or nil:
+// the console shows the reason and disables the button before anyone asks.
+func Updatable(state *State, now time.Time) error {
+	if state.CurrentOperation != "" {
+		return ErrOperationActive
+	}
+	converged, err := state.Converged()
+	if err != nil {
+		return err
+	}
+	if !converged.Platform.Enabled {
+		return errors.New("the platform is not initialized; run skali cluster init first")
+	}
+	if state.CandidateRevision != state.ConvergedRevision {
+		return errors.New("topology changes are staged but not applied; apply or discard them before updating")
+	}
+	for _, node := range SortedRevisionNodes(converged.Nodes) {
+		enrolled, ok := state.Nodes[node.ID]
+		if !ok || enrolled.Phase != NodePhaseActive {
+			return fmt.Errorf("node %s is not active", node.Name)
+		}
+		if enrolled.LastSeen.IsZero() || now.Sub(enrolled.LastSeen) > HeartbeatWindow {
+			return fmt.Errorf("node %s has not reported to the coordinator recently", node.Name)
+		}
+	}
+	return nil
+}
+
+func RequestPlatformVersion(state *State, target string, now time.Time) (Plan, Operation, error) {
+	if !version.IsRelease(target) {
+		return Plan{}, Operation{}, fmt.Errorf("version %q is not a tagged release", target)
+	}
+	if err := Updatable(state, now); err != nil {
+		return Plan{}, Operation{}, err
+	}
+	converged, err := state.Converged()
+	if err != nil {
+		return Plan{}, Operation{}, err
+	}
+	if converged.Platform.Version != "" && !version.Older(converged.Platform.Version, target) {
+		return Plan{}, Operation{}, fmt.Errorf("the platform already runs %s; %s is not newer",
+			converged.Platform.Version, target)
+	}
+	if _, err := state.EditCandidate(now, func(_ map[string]RevisionNode, platform *PlatformState) error {
+		platform.Version = target
+		return nil
+	}); err != nil {
+		return Plan{}, Operation{}, err
+	}
+	return FreezeCandidate(state, false, now)
 }
 
 func FailOperation(state *State, lastError string, now time.Time) error {
@@ -544,6 +650,8 @@ func phaseForAction(action string) string {
 		return OperationAdding
 	case NodeActionCapabilities:
 		return OperationActivating
+	case NodeActionUpgrade:
+		return OperationUpgrading
 	case NodeActionRemove:
 		return OperationRemoving
 	default:

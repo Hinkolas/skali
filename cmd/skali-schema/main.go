@@ -1,8 +1,10 @@
 // Command skali-schema generates the editor-facing JSON Schemas from the
-// manifest and cluster-layout wire types. It is invoked through go generate.
+// manifest and cluster-layout wire types (invoked through go generate), and
+// the release.json metadata the release workflow attaches to every release.
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -14,8 +16,9 @@ import (
 )
 
 func main() {
-	schema := flag.String("schema", "manifest", "schema to generate: manifest, layout, node, or init")
+	schema := flag.String("schema", "manifest", "schema to generate: manifest, layout, node, init, or release")
 	output := flag.String("output", "", "output schema path")
+	releaseVersion := flag.String("version", "", "release tag for --schema release")
 	flag.Parse()
 	if *output == "" {
 		fmt.Fprintln(os.Stderr, "error: --output is required")
@@ -33,8 +36,19 @@ func main() {
 		data, err = installer.NodeConfigJSONSchema()
 	case "init":
 		data, err = installer.InitConfigJSONSchema()
+	case "release":
+		// The k3s pin comes from the installer package of the build that
+		// produces the release, so the file can never disagree with the
+		// binaries next to it.
+		if *releaseVersion == "" {
+			fmt.Fprintln(os.Stderr, "error: --version is required for --schema release")
+			os.Exit(2)
+		}
+		data, err = json.MarshalIndent(installer.ReleaseMetadata{
+			Version: *releaseVersion, K3s: installer.K3sVersion,
+		}, "", "  ")
 	default:
-		fmt.Fprintf(os.Stderr, "error: unknown --schema %q; expected manifest, layout, node, or init\n", *schema)
+		fmt.Fprintf(os.Stderr, "error: unknown --schema %q; expected manifest, layout, node, init, or release\n", *schema)
 		os.Exit(2)
 	}
 	if err != nil {

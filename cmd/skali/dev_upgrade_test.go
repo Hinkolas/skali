@@ -16,12 +16,12 @@ func withCLIVersion(t *testing.T, version string) {
 }
 
 func TestPublishedSkalidVersion(t *testing.T) {
-	version, ok := publishedSkalidVersion("ghcr.io/hinkolas/skalid:v0.1.0")
+	version, ok := versionpkg.PublishedSkalidVersion("ghcr.io/hinkolas/skalid:v0.1.0")
 	require.True(t, ok)
 	require.Equal(t, "v0.1.0", version)
 
 	// Prereleases are published too.
-	version, ok = publishedSkalidVersion("ghcr.io/hinkolas/skalid:v0.1.0-rc.1")
+	version, ok = versionpkg.PublishedSkalidVersion("ghcr.io/hinkolas/skalid:v0.1.0-rc.1")
 	require.True(t, ok)
 	require.Equal(t, "v0.1.0-rc.1", version)
 
@@ -33,7 +33,7 @@ func TestPublishedSkalidVersion(t *testing.T) {
 		"registry.example.com/skalid:v0.1.0",
 		"",
 	} {
-		_, ok := publishedSkalidVersion(image)
+		_, ok := versionpkg.PublishedSkalidVersion(image)
 		require.False(t, ok, image)
 	}
 }

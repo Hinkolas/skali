@@ -1886,6 +1886,156 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /v1/system/updates:
+    get:
+      operationId: getSystemUpdates
+      summary: Get platform update status
+      description: |
+        Admin only. The installed version, the release the last scan found on
+        the configured channel and whether it is newer, the channel and
+        auto-update settings, every enrolled node with its k3s and agent
+        versions, and the running (or most recent) update operation with its
+        per-node steps. `managed` is false on the local dev platform and on
+        legacy installations, where updates run through the CLI;
+        `manageable` is false while the cluster cannot take an update and
+        `reason` says why.
+      tags: [status]
+      responses:
+        "200":
+          description: Update status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/system/updates/scan:
+    post:
+      operationId: scanSystemUpdates
+      summary: Check the release feed now
+      description: |
+        Admin only. Asks the release feed for the newest release on the
+        configured channel and records the answer; the daily scan does the
+        same on its own. A feed failure is recorded in `last_error`, not
+        returned as an error, so the last known release stays visible.
+      tags: [status]
+      responses:
+        "200":
+          description: Update status after the scan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Scanning is disabled on this installation (`error.code = update_blocked`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/system/updates/apply:
+    post:
+      operationId: applySystemUpdate
+      summary: Start a platform update
+      description: |
+        Admin only, sudo mode. Asks the cluster coordinator to move every node
+        (hostd, then k3s) and the platform bundle to the named release, one
+        node at a time, servers first. Refused while any run or backup is in
+        flight, while another cluster operation runs, when the version is
+        not a tagged release newer than the installed one, or when the
+        cluster is not coordinator-managed.
+      tags: [status]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version:
+                  type: string
+                  description: The release to move to, for example v0.2.0.
+      responses:
+        "202":
+          description: The update was accepted; poll the status for progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: A cluster operation is already running (`error.code = update_in_progress`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: The update cannot start; the message says why (`error.code = update_blocked`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/system/updates/resume:
+    post:
+      operationId: resumeSystemUpdate
+      summary: Resume a failed platform update
+      description: |
+        Admin only, sudo mode. Re-runs the remaining steps of the failed
+        update operation without replaying the ones that completed.
+      tags: [status]
+      responses:
+        "202":
+          description: The update resumed; poll the status for progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The operation is not in a failed state (`error.code = update_in_progress`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Nothing to resume (`error.code = update_blocked`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/system/updates/settings:
+    put:
+      operationId: putSystemUpdateSettings
+      summary: Set the update channel and automatic updates
+      description: |
+        Admin only, sudo mode. `stable` follows tagged releases; `beta` also
+        follows prereleases. With `auto_update` on, the daily scan starts an
+        update as soon as it finds a newer release the cluster can take.
+        Changing the channel rescans immediately.
+      tags: [status]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel, auto_update]
+              properties:
+                channel:
+                  type: string
+                  enum: [stable, beta]
+                auto_update:
+                  type: boolean
+      responses:
+        "200":
+          description: Update status with the new settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /v1/system/observation:
     get:
       operationId: getSystemObservation
@@ -4105,6 +4255,8 @@ components:
         the database and never changes afterwards; every response also
         carries it in the Skali-Instance header so clients can pin it per
         remote and detect that a cluster was uninstalled and reinstalled.
+        update_available names the newer release the last scan found, when
+        there is one, so the shell can show its indicator.
       required: [version]
       properties:
         version:
@@ -4114,6 +4266,126 @@ components:
         instance_id:
           type: string
           format: uuid
+        update_available:
+          $ref: "#/components/schemas/Release"
+
+    Release:
+      type: object
+      description: One published skali release as the release feed reports it.
+      required: [version, prerelease, published_at]
+      properties:
+        version:
+          type: string
+        prerelease:
+          type: boolean
+        published_at:
+          type: string
+          format: date-time
+        url:
+          type: string
+          description: The release page (notes and assets).
+        k3s:
+          type: string
+          description: The k3s pin the release installs; absent for releases without release.json.
+
+    UpdateStatus:
+      type: object
+      description: |
+        The platform update document: what runs, what the feed found, the
+        operator's settings, the nodes, and the running or last update.
+      required:
+        - installed
+        - channel
+        - auto_update
+        - last_checked_at
+        - latest
+        - update_available
+        - managed
+        - manageable
+        - nodes
+        - operation
+      properties:
+        installed:
+          type: object
+          required: [version]
+          properties:
+            version:
+              type: string
+              description: The running daemon's version.
+            platform_version:
+              type: string
+              description: The release the cluster state records; absent when unmanaged or initialized by a dev build.
+        channel:
+          type: string
+          enum: [stable, beta]
+        auto_update:
+          type: boolean
+        last_checked_at:
+          type: [string, "null"]
+          format: date-time
+        last_error:
+          type: string
+          description: Why the last scan did not complete; absent when it did.
+        latest:
+          oneOf:
+            - $ref: "#/components/schemas/Release"
+            - type: "null"
+          description: The newest release on the channel, whether or not it is newer than what runs.
+        update_available:
+          type: boolean
+        managed:
+          type: boolean
+          description: A cluster coordinator exists to perform updates.
+        manageable:
+          type: boolean
+          description: An update could start right now.
+        reason:
+          type: string
+          description: Why an update cannot start, when manageable is false.
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [name, role, phase]
+            properties:
+              name: { type: string }
+              role: { type: string, enum: [server, agent] }
+              k3s_version: { type: string }
+              agent_version: { type: string }
+              phase: { type: string }
+              last_seen: { type: string, format: date-time }
+        operation:
+          oneOf:
+            - $ref: "#/components/schemas/UpdateOperation"
+            - type: "null"
+
+    UpdateOperation:
+      type: object
+      description: |
+        A cluster operation as the coordinator journals it: the phase it is
+        in and one step per node, servers first in the order they run.
+      required: [id, phase, started_at, updated_at, steps]
+      properties:
+        id: { type: string }
+        phase:
+          type: string
+          description: pending, upgrading-nodes, activating-topology, reconciling-platform, verifying, complete, failed, or another coordinator phase.
+        target_version: { type: string }
+        from_version: { type: string }
+        started_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        error: { type: string }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [node, action, phase]
+            properties:
+              node: { type: string }
+              action: { type: string }
+              phase: { type: string, enum: [pending, running, complete, failed] }
+              error: { type: string }
 
     BackupSnapshot:
       type: object

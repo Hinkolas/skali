@@ -37,6 +37,7 @@ import (
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
+	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
@@ -707,6 +708,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 			DB: dbstore.New(a.st), Deploy: deploySvc, Targets: backupTargets,
 		}, backup.Config{}),
 		Metrics: &metrics.Service{Store: a.st},
+		Updates: &updates.Service{Store: a.st, Version: "test"},
 	})
 
 	routes := 0
@@ -727,5 +729,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 87, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 92, routes, "route count changed; update the OpenAPI spec and this number")
 }

@@ -94,7 +94,7 @@ func Detect(ctx context.Context, runner host.Runner) (*Host, error) {
 	agentUnit := probeUnit(ctx, runner, "k3s-agent.service")
 	k3sPresent := binary.Exists || serverUnit.present || agentUnit.present
 	if binary.Exists {
-		detected.K3sVersion = probeK3sVersion(ctx, runner)
+		detected.K3sVersion = ProbeK3sVersion(ctx, runner)
 	}
 
 	record, recordErr := LoadRecord(ctx, runner)
@@ -322,7 +322,10 @@ func probeUnit(ctx context.Context, runner host.Runner, unit string) unitStatus 
 	return status
 }
 
-func probeK3sVersion(ctx context.Context, runner host.Runner) string {
+// ProbeK3sVersion reports the installed k3s version from the binary itself
+// (empty when k3s is absent); status and the hostd upgrade action both trust
+// it over any record.
+func ProbeK3sVersion(ctx context.Context, runner host.Runner) string {
 	result, err := runner.Run(ctx, host.Command{Name: "k3s", Args: []string{"--version"}})
 	if err != nil || result.ExitCode != 0 {
 		return ""

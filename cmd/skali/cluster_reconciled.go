@@ -396,17 +396,33 @@ func prepareReconciledInit(ctx context.Context, record *installer.Record,
 		if err != nil {
 			return err
 		}
-		if !candidate.Platform.Enabled || candidate.Platform.RegistryNode == "" {
+		// A released CLI records the platform version it initializes, so
+		// the coordinator and the console know what runs and console
+		// updates have a baseline; a dev build leaves it unset.
+		wantVersion := ""
+		if versionpkg.IsRelease(versionpkg.Version) && candidate.Platform.Version == "" {
+			wantVersion = versionpkg.Version
+		}
+		if !candidate.Platform.Enabled || candidate.Platform.RegistryNode == "" || wantVersion != "" {
 			_, err = state.EditCandidate(time.Now(),
 				func(nodes map[string]clusterstate.RevisionNode,
 					platform *clusterstate.PlatformState) error {
-					node, err := chooseRegistryNode(nodes)
-					if err != nil {
-						return err
-					}
 					platform.Enabled = true
-					platform.RegistryNode = node.ID
-					registryNode = node.Name
+					if platform.RegistryNode == "" {
+						node, err := chooseRegistryNode(nodes)
+						if err != nil {
+							return err
+						}
+						platform.RegistryNode = node.ID
+					}
+					if wantVersion != "" {
+						platform.Version = wantVersion
+					}
+					registry, ok := nodes[platform.RegistryNode]
+					if !ok {
+						return errors.New("the target registry node is missing")
+					}
+					registryNode = registry.Name
 					return nil
 				})
 			if err != nil {

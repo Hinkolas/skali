@@ -16,7 +16,15 @@ This page is for working on skali itself. Using skali is covered by the
 - **`skali-hostd`** (`cmd/skali-hostd`): the installer-owned Linux host
   service on reconciled clusters. Every node runs the outbound-polling agent;
   servers also run the TLS enrollment coordinator. Independent of `skalid`
-  and the product database.
+  and the product database. It also carries platform updates: the
+  coordinator hands each node an `upgrade` action naming a release, the
+  agent downloads that release's `skali-hostd` from GitHub (verified against
+  `checksums.txt`), swaps itself, restarts, and the new binary moves k3s to
+  its own pin; the leader then converges the bundle to the release's images.
+  `skalid` only writes the desired version into the cluster state (the
+  console's Updates page, `internal/updates`); it never executes on a host.
+  Both units read `/etc/skali/hostd.env`, where `SKALI_RELEASE_BASE` can
+  point downloads at a mirror or a test server.
 - **`web/`**: the console, a SvelteKit BFF (adapter-node). Owns the browser
   session cookie and proxies `/_api/v1/*` to the daemon; the bearer token
   never reaches browser JavaScript. On a cluster it ships as the `skali-web`
@@ -143,6 +151,11 @@ task install:server # source install: build everything and run the installer
 
 Releases are cut by tagging `v*`: goreleaser builds the binaries and
 `install.sh`, and the workflow publishes the `skalid` and `skali-web` images.
+The workflow also attaches `release.json` (`skali-schema --schema release`),
+which names the k3s pin the release installs; the update scanner shows it
+and the coordinator checks the k3s move against it before any host changes.
+The daemon's daily scan reads the GitHub releases API (`SKALI_UPDATE_SCAN`,
+`SKALI_UPDATE_FEED_URL` in `.env.example`).
 Version pins for k3s, k3d, CNPG, cert-manager, Longhorn, and Lima live in
 their packages next to their checksums; bump them together.
 
@@ -181,6 +194,7 @@ internal/
   skill/         the agent skill and `skali skill install`
   store/         pgx glue plus sqlc-generated queries
   substrate/     shared Postgres (CNPG) and S3 (SeaweedFS) provisioning
+  updates/       release scan, update settings, and the cluster-state bridge
   valuestore/    versioned, encrypted, write-only environment values
 web/           the console (SvelteKit)
 ```

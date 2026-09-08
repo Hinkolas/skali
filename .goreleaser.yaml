@@ -106,6 +106,10 @@ release:
   # full release.
   prerelease: auto
   # install.sh rides along on every release so one URL serves both the
-  # script and the binaries it downloads.
+  # script and the binaries it downloads. release.json (written by the
+  # workflow before this runs) names the k3s pin the release installs, so a
+  # cluster coordinator can judge an update before touching any host and
+  # the console can say what it includes.
   extra_files:
     - glob: install.sh
+    - glob: dist/release.json

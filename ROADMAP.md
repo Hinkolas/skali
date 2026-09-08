@@ -79,7 +79,9 @@ The goal of this block: I can put a paying workload on skali and sleep.
       diagnose/repair, seaweed replication, edge failover.
 - [ ] Rolling `skalid` and the web console on a live cluster without
       dropping in-flight runs or user traffic. Old daemon versions must not
-      quietly serve after an upgrade.
+      quietly serve after an upgrade. (Console updates refuse to start
+      while runs are in flight, which covers the common case, not a roll
+      that begins mid-run.)
 - [x] Basic metrics (cpu/mem/disk per node and per service, database and
       bucket usage) exposed in API and console.
 - [ ] Minimal alerting: node down, workload crashlooping, disk or quota near
@@ -145,6 +147,13 @@ Ordered loosely by how often I have wanted them.
 
 ## 4. Platform and operations
 
+- [x] Console-driven platform updates: a daily release scan (GitHub
+      releases, stable or beta channel), the System / Software update page
+      with per-node progress, automatic updates, and the coordinator moving
+      every node's hostd and k3s plus the bundle in one operation.
+      `skali cluster upgrade` remains the path for legacy installs and
+      `skali dev upgrade` for the local platform. Not yet rehearsed on a
+      real cluster from a released binary.
 - [ ] Version pin bumps as a routine (k3s, CNPG, SeaweedFS, Traefik,
       cert-manager, Longhorn) with the cluster e2e as the gate.
 - [ ] Node lifecycle: drain, replace, retire a node without hand surgery;

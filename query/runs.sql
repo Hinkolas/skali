@@ -46,3 +46,8 @@ DELETE FROM runs WHERE id IN (
 -- name: DeleteAgedTerminalRuns :execrows
 DELETE FROM runs
 WHERE status IN ('succeeded', 'failed', 'cancelled') AND finished_at < $1;
+
+-- Platform updates wait for in-flight work: a running run anywhere means a
+-- deployment, restore, or restart the control-plane roll would interrupt.
+-- name: CountRunningRuns :one
+SELECT count(*) FROM runs WHERE status = 'running';

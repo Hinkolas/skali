@@ -100,7 +100,13 @@ Repo settings, hosting, and release-day steps. Nothing here is a commit.
       a clean Mac, `sudo skali cluster` through init with the published
       images, `skali dev` outside the repo, `skali cluster upgrade` from a
       released binary, and `skali cluster reset-password` (never run on a
-      live cluster yet).
+      live cluster yet). Then tag `rc.2` and update to it from the console
+      (System / Software update on the beta channel): every node's hostd
+      and k3s move, the bundle rolls, and the console reconnects.
+- [ ] **Cluster nodes reach GitHub.** Console updates download
+      `skali-hostd` and k3s from github.com on every node and the daemon
+      scans api.github.com; confirm egress or set `SKALI_RELEASE_BASE`
+      in `/etc/skali/hostd.env` and `SKALI_UPDATE_FEED_URL` to a mirror.
 
 ### Strongly recommended
 

@@ -174,6 +174,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+EnvironmentFile=-` + HostdEnvironmentPath + `
 ExecStart=` + HostdBinaryPath + ` ` + mode + `
 Restart=always
 RestartSec=3s

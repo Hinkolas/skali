@@ -481,6 +481,19 @@ type TwoFactor struct {
 	UpdatedAt    time.Time
 }
 
+type UpdateSetting struct {
+	Singleton         bool
+	Channel           string
+	AutoUpdate        bool
+	LastCheckedAt     *time.Time
+	LatestVersion     *string
+	LatestK3s         *string
+	LatestPublishedAt *time.Time
+	LatestUrl         *string
+	LastError         *string
+	UpdatedAt         time.Time
+}
+
 type User struct {
 	ID               uuid.UUID
 	Email            string

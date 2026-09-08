@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -211,60 +210,6 @@ func k3dVersionString(output string) string {
 		}
 	}
 	return ""
-}
-
-// VersionOlder reports version a strictly older than b, tolerating a
-// leading "v" and ordering alpha, beta, and rc prereleases before their
-// release (v0.1.0-rc.1 < v0.1.0); false when either does not parse, so
-// callers only act on drift they can actually judge.
-func VersionOlder(a, b string) bool {
-	got, okA := parseVersion(a)
-	want, okB := parseVersion(b)
-	if !okA || !okB {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return got[i] < want[i]
-		}
-	}
-	preA, okA := parsePrerelease(a)
-	preB, okB := parsePrerelease(b)
-	if !okA || !okB {
-		return false
-	}
-	// A release outranks every prerelease of the same version.
-	if preA == nil || preB == nil {
-		return preA != nil && preB == nil
-	}
-	for i := range preA {
-		if preA[i] != preB[i] {
-			return preA[i] < preB[i]
-		}
-	}
-	return false
-}
-
-var prereleasePattern = regexp.MustCompile(`^(alpha|beta|rc)\.?([0-9]+)$`)
-
-// parsePrerelease returns the {stage, number} rank of the prerelease
-// suffix after the first "-" (alpha < beta < rc), nil for a plain release,
-// and ok=false for any other suffix, which is not comparable.
-func parsePrerelease(s string) (rank []int, ok bool) {
-	_, suffix, found := strings.Cut(strings.TrimSpace(s), "-")
-	if !found {
-		return nil, true
-	}
-	match := prereleasePattern.FindStringSubmatch(suffix)
-	if match == nil {
-		return nil, false
-	}
-	stage := map[string]int{"alpha": 0, "beta": 1, "rc": 2}[match[1]]
-	number, err := strconv.Atoi(match[2])
-	if err != nil {
-		return nil, false
-	}
-	return []int{stage, number}, true
 }
 
 // versionAtLeast compares dotted numeric versions, tolerating a leading

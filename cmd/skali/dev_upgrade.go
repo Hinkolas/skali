@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,10 +12,6 @@ import (
 	"github.com/Hinkolas/skali/internal/localdev"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
-
-// publishedSkalidRepo prefixes every published control-plane image; a
-// released CLI pins the tag matching its own version.
-const publishedSkalidRepo = "ghcr.io/hinkolas/skalid:"
 
 // runDevUpgrade moves the local platform's control plane to this CLI's
 // skalid: the working-tree build inside the repository, otherwise the
@@ -51,9 +46,9 @@ func runDevUpgrade(command *cobra.Command, skalidImage string) error {
 	// never "current". Downgrades are refused: schema migrations only move
 	// forward, so an older skalid over a newer database is a broken
 	// platform, not a rollback.
-	current, currentOK := publishedSkalidVersion(state.SkalidImage)
-	targetVersion, targetOK := publishedSkalidVersion(target)
-	if !explicit && currentOK && targetOK && localdev.VersionOlder(targetVersion, current) {
+	current, currentOK := versionpkg.PublishedSkalidVersion(state.SkalidImage)
+	targetVersion, targetOK := versionpkg.PublishedSkalidVersion(target)
+	if !explicit && currentOK && targetOK && versionpkg.Older(targetVersion, current) {
 		return fmt.Errorf("the local platform runs skalid %s, newer than this CLI's %s: "+
 			"upgrade the CLI, or skali dev reset for a fresh platform at this CLI's version",
 			current, targetVersion)
@@ -107,8 +102,8 @@ func upgradeTarget() (image, repoRoot string, err error) {
 	if root := findRepoRoot(); root != "" {
 		return "skalid:dev", root, nil
 	}
-	if releaseVersionPattern.MatchString(versionpkg.Version) {
-		return publishedSkalidRepo + versionpkg.Version, "", nil
+	if versionpkg.IsRelease(versionpkg.Version) {
+		return versionpkg.PublishedSkalidImage(versionpkg.Version), "", nil
 	}
 	return "", "", fmt.Errorf("this CLI is a dev build (%s) outside the skali repository, "+
 		"so no skalid image can be derived from it; pass --skalid-image", versionpkg.Version)
@@ -137,27 +132,16 @@ func materializeSkalidImage(ctx context.Context, out io.Writer, target, repoRoot
 	return nil
 }
 
-// publishedSkalidVersion extracts the release version of a published
-// skalid image reference; ok is false for anything else (working-tree
-// builds, custom images), whose versions cannot be compared.
-func publishedSkalidVersion(image string) (string, bool) {
-	tag, found := strings.CutPrefix(image, publishedSkalidRepo)
-	if !found || !releaseVersionPattern.MatchString(tag) {
-		return "", false
-	}
-	return tag, true
-}
-
 // upgradeHint names a local platform trailing a released CLI; empty
 // otherwise. Dev builds, working-tree platforms, and custom images have no
 // comparable versions, and a platform ahead of the CLI is the CLI's
 // problem, not the platform's.
 func upgradeHint(recorded string) string {
-	if !releaseVersionPattern.MatchString(versionpkg.Version) {
+	if !versionpkg.IsRelease(versionpkg.Version) {
 		return ""
 	}
-	current, ok := publishedSkalidVersion(recorded)
-	if !ok || !localdev.VersionOlder(current, versionpkg.Version) {
+	current, ok := versionpkg.PublishedSkalidVersion(recorded)
+	if !ok || !versionpkg.Older(current, versionpkg.Version) {
 		return ""
 	}
 	return fmt.Sprintf("the local platform runs skalid %s and this CLI is %s; skali dev upgrade moves it",

@@ -74,6 +74,14 @@ type API struct {
 	// silently attach to whatever cluster the developer's shell points at.
 	KubeconfigPath string `env:"SKALI_KUBECONFIG,default="`
 
+	// UpdateScan enables the daily release scan behind the console's Updates
+	// page; false keeps the daemon free of any outbound request to the
+	// release feed (air-gapped installations).
+	UpdateScan bool `env:"SKALI_UPDATE_SCAN,default=true"`
+	// UpdateFeedURL is the releases listing the scan reads, in the GitHub
+	// releases API shape; tests and mirrors point it elsewhere.
+	UpdateFeedURL string `env:"SKALI_UPDATE_FEED_URL,default=https://api.github.com/repos/Hinkolas/skali/releases"`
+
 	// ReconcileResync re-fires informer updates for every cached object as the
 	// correctness backstop against missed watch edits.
 	ReconcileResync time.Duration `env:"RECONCILE_RESYNC_INTERVAL,default=5m"`
