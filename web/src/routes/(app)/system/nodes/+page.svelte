@@ -9,7 +9,8 @@
 	import { lastValue, type NodeStorage } from '$lib/types/metrics';
 	import type { PageData } from './$types';
 
-	// Data comes from the (app) shell layout load; this page only presents it.
+	// Node rows come from the (app) shell layout load; this page adds usage and
+	// storage from its own load and presents them.
 	let { data }: { data: PageData } = $props();
 
 	const grid = 'grid-cols-[1.1fr_1.3fr_1.1fr_1fr_0.9fr_1.3fr_1.5fr_0.8fr]';
@@ -53,11 +54,9 @@
 				? 'no nodes in the cluster'
 				: 'cluster not observed';
 		}
-		const health =
-			online === data.nodes.length
-				? `all ${data.nodes.length} online`
-				: `${online}/${data.nodes.length} online`;
-		return data.org.version ? `${health} · skalid ${data.org.version}` : health;
+		return online === data.nodes.length
+			? `all ${data.nodes.length} online`
+			: `${online}/${data.nodes.length} online`;
 	});
 </script>
 

@@ -3,7 +3,7 @@ import { apiFetch } from '$lib/server/api';
 import type { NodeMetrics, NodesStorage } from '$lib/types/metrics';
 import type { PageServerLoad } from './$types';
 
-// Nodes are instance-admin territory: the API already answers 403 to members
+// Admin only, like every system page: the API already answers 403 to members
 // (the shell layout degrades to an empty list), and the page refuses too so
 // the sidebar's hiding is not the only line.
 export const load: PageServerLoad = async ({ locals, fetch }) => {

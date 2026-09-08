@@ -8,7 +8,6 @@ import type { ServiceType } from '$lib/service-types';
 
 import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
-import Server from '@lucide/svelte/icons/server';
 import Globe from '@lucide/svelte/icons/globe';
 import Bell from '@lucide/svelte/icons/bell';
 import Archive from '@lucide/svelte/icons/archive';
@@ -42,7 +41,6 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 		items: [
 			{ label: 'Dashboard', slug: 'dashboard', icon: LayoutDashboard, stub: true },
 			{ label: 'Projects', slug: 'projects', icon: FolderKanban },
-			{ label: 'Nodes', slug: 'nodes', icon: Server, adminOnly: true },
 			{ label: 'Domains', slug: 'domains', icon: Globe, stub: true }
 		]
 	},
