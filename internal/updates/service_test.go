@@ -52,13 +52,24 @@ func TestServiceScansAndPersistsSettings(t *testing.T) {
 	require.True(t, status.UpdateAvailable)
 	require.Empty(t, status.LastError)
 
-	// A feed failure is recorded, and the last release stays visible.
-	feed.err = errors.New("HTTP 503")
+	// A feed failure is recorded with its kind, and the last release stays
+	// visible; an untyped error still lands as a classified one.
+	feed.err = &FeedError{Kind: FeedOffline, Detail: "dial tcp: no route to host"}
 	status, err = svc.Scan(ctx)
 	require.NoError(t, err)
-	require.Equal(t, "HTTP 503", status.LastError)
+	require.Equal(t, FeedOffline, status.LastErrorKind)
+	require.Equal(t, "update servers unreachable: dial tcp: no route to host", status.LastError)
 	require.Equal(t, "v0.2.0", status.Latest.Version)
+	require.True(t, status.UpdateAvailable, "a known release stays actionable while the feed is down")
+	feed.err = errors.New("garbage")
+	status, err = svc.Scan(ctx)
+	require.NoError(t, err)
+	require.Equal(t, FeedInvalid, status.LastErrorKind)
 	feed.err = nil
+	status, err = svc.Scan(ctx)
+	require.NoError(t, err)
+	require.Empty(t, status.LastError)
+	require.Empty(t, status.LastErrorKind, "a successful scan clears the failure")
 
 	// A channel change rescans; auto-update persists.
 	calls := feed.calls
@@ -91,6 +102,42 @@ func TestServiceScansAndPersistsSettings(t *testing.T) {
 	disabled := &Service{Store: st, Version: "v0.1.0"}
 	_, err = disabled.Scan(ctx)
 	require.ErrorIs(t, err, ErrScanDisabled)
+}
+
+// The daily rule relaxes to hourly while the feed is failing: an outage of
+// the update servers is noticed within the hour of their return, and a
+// healthy scan goes back to the daily cadence.
+func TestServiceRetriesFailedScansHourly(t *testing.T) {
+	st := store.NewStore(testdb.New(t))
+	ctx := context.Background()
+	feed := &staticFeed{err: &FeedError{Kind: FeedOffline, Detail: "dial tcp: i/o timeout"}}
+	svc := &Service{Store: st, Feed: feed, Version: "v0.1.0"}
+
+	svc.tick(ctx)
+	require.Equal(t, 1, feed.calls, "first tick scans")
+	svc.tick(ctx)
+	require.Equal(t, 1, feed.calls, "a failure just recorded is not retried within the hour")
+
+	// Ninety minutes later the failed scan is due again, though the daily
+	// interval has not passed.
+	_, err := st.Pool.Exec(ctx, "UPDATE update_settings SET last_checked_at = now() - interval '90 minutes'")
+	require.NoError(t, err)
+	svc.tick(ctx)
+	require.Equal(t, 2, feed.calls, "a failed scan retries hourly")
+
+	// Once the feed answers, the same age is no longer due.
+	feed.err, feed.release = nil, &Release{Version: "v0.2.0", PublishedAt: time.Now()}
+	_, err = st.Pool.Exec(ctx, "UPDATE update_settings SET last_checked_at = now() - interval '90 minutes'")
+	require.NoError(t, err)
+	svc.tick(ctx)
+	require.Equal(t, 3, feed.calls)
+	status, err := svc.Status(ctx)
+	require.NoError(t, err)
+	require.Empty(t, status.LastErrorKind)
+	_, err = st.Pool.Exec(ctx, "UPDATE update_settings SET last_checked_at = now() - interval '90 minutes'")
+	require.NoError(t, err)
+	svc.tick(ctx)
+	require.Equal(t, 3, feed.calls, "a healthy scan waits for the daily interval")
 }
 
 // managedCluster bootstraps a one-server reconciled cluster state in a fake

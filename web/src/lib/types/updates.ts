@@ -2,6 +2,36 @@
 
 export type UpdateChannel = 'stable' | 'beta';
 
+/** Why the last release scan failed; the page words its notice by kind. */
+export type FeedErrorKind = 'offline' | 'not_found' | 'rate_limited' | 'unavailable' | 'invalid';
+
+export const FEED_ERROR_TITLE: Record<FeedErrorKind, string> = {
+	offline: 'Update servers are offline',
+	not_found: 'Release feed not found',
+	rate_limited: 'Release feed is rate limiting this installation',
+	unavailable: 'Update servers are unavailable',
+	invalid: 'Release feed returned an unexpected answer'
+};
+
+export const FEED_ERROR_HINT: Record<FeedErrorKind, string> = {
+	offline:
+		'skalid could not reach the release feed. GitHub may be down, or this installation has no outbound HTTPS. It retries every hour.',
+	not_found:
+		'The release feed answered 404. The repository may be private or renamed, or the configured feed URL is wrong. It retries every hour.',
+	rate_limited: 'The feed refused the request for now. The next scheduled check usually succeeds.',
+	unavailable: 'The release feed answered with a server error. It retries every hour.',
+	invalid: 'The feed answered, but not with a release listing. Check the configured feed URL.'
+};
+
+/** The short pill text for a failed scan, by kind. */
+export const FEED_ERROR_PILL: Record<FeedErrorKind, string> = {
+	offline: 'update servers offline',
+	not_found: 'release feed not found',
+	rate_limited: 'feed rate limited',
+	unavailable: 'update servers unavailable',
+	invalid: 'check failed'
+};
+
 export interface Release {
 	version: string;
 	prerelease: boolean;
@@ -47,6 +77,7 @@ export interface UpdateStatus {
 	auto_update: boolean;
 	last_checked_at: string | null;
 	last_error?: string;
+	last_error_kind?: FeedErrorKind;
 	latest: Release | null;
 	update_available: boolean;
 	managed: boolean;

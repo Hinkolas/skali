@@ -4326,6 +4326,16 @@ components:
         last_error:
           type: string
           description: Why the last scan did not complete; absent when it did.
+        last_error_kind:
+          type: string
+          enum: [offline, not_found, rate_limited, unavailable, invalid]
+          description: |
+            Classifies `last_error`: `offline` (the update servers did not
+            answer: down, unresolvable, or no egress), `not_found` (the feed
+            answered 404: private or renamed repository, wrong feed URL),
+            `rate_limited` (403 or 429), `unavailable` (server error),
+            `invalid` (an answer that is not a release listing). A failed
+            scan is retried hourly instead of daily.
         latest:
           oneOf:
             - $ref: "#/components/schemas/Release"

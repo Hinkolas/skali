@@ -18,6 +18,59 @@ import (
 	"github.com/Hinkolas/skali/internal/version"
 )
 
+// FeedErrorKind classifies why a scan could not complete, so the console
+// can say "the update servers are offline" instead of quoting a dial error.
+type FeedErrorKind string
+
+const (
+	// FeedOffline means the feed host did not answer at all: DNS, connect,
+	// TLS, or a timeout. GitHub is down, or this installation has no egress.
+	FeedOffline FeedErrorKind = "offline"
+	// FeedNotFound means the feed answered 404: the repository is private,
+	// renamed, or the configured feed URL is wrong.
+	FeedNotFound FeedErrorKind = "not_found"
+	// FeedRateLimited means the feed refused the request for now (403 or
+	// 429); the next scheduled scan usually succeeds.
+	FeedRateLimited FeedErrorKind = "rate_limited"
+	// FeedUnavailable means the feed answered with a server error.
+	FeedUnavailable FeedErrorKind = "unavailable"
+	// FeedInvalid means the feed answered, but not with a release listing.
+	FeedInvalid FeedErrorKind = "invalid"
+)
+
+// FeedError is what every feed failure surfaces as: a kind the console
+// renders and a detail an operator can chase in the logs.
+type FeedError struct {
+	Kind   FeedErrorKind
+	Detail string
+}
+
+func (e *FeedError) Error() string {
+	switch e.Kind {
+	case FeedOffline:
+		return "update servers unreachable: " + e.Detail
+	case FeedNotFound:
+		return "release feed not found: " + e.Detail
+	case FeedRateLimited:
+		return "release feed rate limited: " + e.Detail
+	case FeedUnavailable:
+		return "release feed unavailable: " + e.Detail
+	default:
+		return "release feed invalid: " + e.Detail
+	}
+}
+
+// classifyFeedError wraps any feed failure as a FeedError; transport errors
+// (no response at all) are offline, everything else already carries its
+// kind or is a malformed answer.
+func classifyFeedError(err error) *FeedError {
+	var typed *FeedError
+	if errors.As(err, &typed) {
+		return typed
+	}
+	return &FeedError{Kind: FeedInvalid, Detail: err.Error()}
+}
+
 // Channel selects which releases count. Stable follows tagged releases;
 // beta also follows prereleases (alpha, beta, rc tags), which GitHub marks
 // as such and goreleaser never points "latest" at.
@@ -94,11 +147,11 @@ func (f *GitHubFeed) Latest(ctx context.Context, channel Channel) (*Release, err
 	}
 	body, err := f.get(ctx, url+"?per_page=30", 4<<20)
 	if err != nil {
-		return nil, err
+		return nil, classifyFeedError(err)
 	}
 	var listed []githubRelease
 	if err := json.Unmarshal(body, &listed); err != nil {
-		return nil, fmt.Errorf("decode release feed: %w", err)
+		return nil, &FeedError{Kind: FeedInvalid, Detail: fmt.Sprintf("decode %s: %v", url, err)}
 	}
 	var best *githubRelease
 	for index := range listed {
@@ -150,18 +203,36 @@ func (f *GitHubFeed) get(ctx context.Context, url string, limit int64) ([]byte, 
 	request.Header.Set("User-Agent", "skalid/"+version.Version)
 	response, err := f.client().Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", url, err)
+		// No answer at all: the host is down, unresolvable, or unreachable
+		// from here. The wrapped url.Error already names the address.
+		return nil, &FeedError{Kind: FeedOffline, Detail: err.Error()}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %s: HTTP %d", url, response.StatusCode)
+		return nil, &FeedError{Kind: statusKind(response.StatusCode), Detail: fmt.Sprintf("%s answered HTTP %d", url, response.StatusCode)}
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", url, err)
+		return nil, &FeedError{Kind: FeedOffline, Detail: fmt.Sprintf("read %s: %v", url, err)}
 	}
 	if int64(len(body)) > limit {
-		return nil, errors.New("release feed response is too large")
+		return nil, &FeedError{Kind: FeedInvalid, Detail: fmt.Sprintf("%s answered more than %d bytes", url, limit)}
 	}
 	return body, nil
+}
+
+// statusKind maps a non-200 answer to its kind. GitHub answers 403 with a
+// rate-limit body when an unauthenticated client asks too often, so 403 is
+// treated as rate limiting, not as a hidden repository (that is a 404).
+func statusKind(code int) FeedErrorKind {
+	switch {
+	case code == http.StatusNotFound, code == http.StatusGone:
+		return FeedNotFound
+	case code == http.StatusForbidden, code == http.StatusTooManyRequests:
+		return FeedRateLimited
+	case code >= 500:
+		return FeedUnavailable
+	default:
+		return FeedInvalid
+	}
 }

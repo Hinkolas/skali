@@ -11,7 +11,7 @@ import (
 )
 
 const getUpdateSettings = `-- name: GetUpdateSettings :one
-SELECT singleton, channel, auto_update, last_checked_at, latest_version, latest_k3s, latest_published_at, latest_url, last_error, updated_at FROM update_settings
+SELECT singleton, channel, auto_update, last_checked_at, latest_version, latest_k3s, latest_published_at, latest_url, last_error, last_error_kind, updated_at FROM update_settings
 `
 
 func (q *Queries) GetUpdateSettings(ctx context.Context) (UpdateSetting, error) {
@@ -27,6 +27,7 @@ func (q *Queries) GetUpdateSettings(ctx context.Context) (UpdateSetting, error) 
 		&i.LatestPublishedAt,
 		&i.LatestUrl,
 		&i.LastError,
+		&i.LastErrorKind,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -40,8 +41,9 @@ SET last_checked_at     = now(),
     latest_published_at = COALESCE($3, latest_published_at),
     latest_url          = COALESCE($4, latest_url),
     last_error          = $5,
+    last_error_kind     = $6,
     updated_at          = now()
-RETURNING singleton, channel, auto_update, last_checked_at, latest_version, latest_k3s, latest_published_at, latest_url, last_error, updated_at
+RETURNING singleton, channel, auto_update, last_checked_at, latest_version, latest_k3s, latest_published_at, latest_url, last_error, last_error_kind, updated_at
 `
 
 type RecordUpdateScanParams struct {
@@ -50,6 +52,7 @@ type RecordUpdateScanParams struct {
 	LatestPublishedAt *time.Time
 	LatestUrl         *string
 	LastError         *string
+	LastErrorKind     *string
 }
 
 // A scan result replaces the previous one wholesale; a failed scan keeps
@@ -61,6 +64,7 @@ func (q *Queries) RecordUpdateScan(ctx context.Context, arg RecordUpdateScanPara
 		arg.LatestPublishedAt,
 		arg.LatestUrl,
 		arg.LastError,
+		arg.LastErrorKind,
 	)
 	var i UpdateSetting
 	err := row.Scan(
@@ -73,6 +77,7 @@ func (q *Queries) RecordUpdateScan(ctx context.Context, arg RecordUpdateScanPara
 		&i.LatestPublishedAt,
 		&i.LatestUrl,
 		&i.LastError,
+		&i.LastErrorKind,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -83,7 +88,7 @@ UPDATE update_settings
 SET channel     = $1,
     auto_update = $2,
     updated_at  = now()
-RETURNING singleton, channel, auto_update, last_checked_at, latest_version, latest_k3s, latest_published_at, latest_url, last_error, updated_at
+RETURNING singleton, channel, auto_update, last_checked_at, latest_version, latest_k3s, latest_published_at, latest_url, last_error, last_error_kind, updated_at
 `
 
 type SaveUpdateSettingsParams struct {
@@ -104,6 +109,7 @@ func (q *Queries) SaveUpdateSettings(ctx context.Context, arg SaveUpdateSettings
 		&i.LatestPublishedAt,
 		&i.LatestUrl,
 		&i.LastError,
+		&i.LastErrorKind,
 		&i.UpdatedAt,
 	)
 	return i, err

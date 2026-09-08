@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import CloudOff from '@lucide/svelte/icons/cloud-off';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { api, ApiError } from '$lib/api/client';
 	import { formatDateTime, formatDuration, relativeTime } from '$lib/format';
 	import { dialog } from '$lib/stores/dialog.svelte';
@@ -14,6 +16,8 @@
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
 	import Toggle from '$lib/components/ui/Toggle.svelte';
 	import {
+		FEED_ERROR_HINT,
+		FEED_ERROR_TITLE,
 		OPERATION_PHASE_LABEL,
 		operationSettled,
 		type UpdateChannel,
@@ -79,6 +83,19 @@
 		failed: 'failed'
 	};
 
+	// The last scan failed: worded by kind, shown above every branch so it
+	// is not hidden behind a release an earlier scan found.
+	const feedFailure = $derived.by(() => {
+		if (!status.last_error) return null;
+		const kind = status.last_error_kind;
+		return {
+			offline: kind === 'offline' || kind === 'unavailable',
+			title: kind ? FEED_ERROR_TITLE[kind] : 'Could not check for updates',
+			hint: kind ? FEED_ERROR_HINT[kind] : 'The last check did not complete.',
+			detail: status.last_error
+		};
+	});
+
 	const updateTitle = $derived.by(() => {
 		if (!status.managed) return status.reason ?? 'not manageable from the console';
 		if (!status.manageable) return status.reason ?? 'the cluster cannot take an update right now';
@@ -92,20 +109,36 @@
 		return err instanceof ApiError ? err.message : fallback;
 	}
 
+	// A scan that reaches the daemon but not the feed is not a success: the
+	// toast takes the failure's tone and title, the notice above carries
+	// the detail.
 	async function scan() {
 		busy = 'scan';
+		const id = toast.loading('Checking for updates');
 		try {
-			status = await toast.promise(api.post<UpdateStatus>('/v1/system/updates/scan'), {
-				loading: 'Checking for updates',
-				success: (s) =>
-					s.update_available && s.latest
-						? `${s.latest.version} is available`
-						: 'You are up to date',
-				error: (err) => describeError(err, 'Could not check for updates')
-			});
+			status = await api.post<UpdateStatus>('/v1/system/updates/scan');
+			if (status.last_error) {
+				toast.update(id, {
+					variant: 'warning',
+					title: status.last_error_kind
+						? FEED_ERROR_TITLE[status.last_error_kind]
+						: 'Could not check for updates'
+				});
+			} else {
+				toast.update(id, {
+					variant: 'success',
+					title:
+						status.update_available && status.latest
+							? `${status.latest.version} is available`
+							: 'You are up to date'
+				});
+			}
 			await invalidateAll();
-		} catch {
-			// The toast already explained it.
+		} catch (err) {
+			toast.update(id, {
+				variant: 'error',
+				title: describeError(err, 'Could not check for updates')
+			});
 		} finally {
 			busy = null;
 		}
@@ -188,6 +221,33 @@
 </PageHeader>
 
 <div class="flex max-w-3xl flex-col gap-3.5 pb-6">
+	{#if feedFailure}
+		<div
+			class="border-status-warning/25 bg-status-warning/10 flex items-start gap-3 rounded-[13px] border px-4 py-3.5"
+			role="status"
+		>
+			<div class="text-status-warning mt-0.5 flex-none">
+				{#if feedFailure.offline}
+					<CloudOff size={17} strokeWidth={1.75} />
+				{:else}
+					<TriangleAlert size={17} strokeWidth={1.75} />
+				{/if}
+			</div>
+			<div class="flex min-w-0 flex-1 flex-col gap-0.5">
+				<span class="text-status-warning text-md font-medium">{feedFailure.title}</span>
+				<span class="text-text-muted text-md">
+					{feedFailure.hint}
+					{#if status.last_checked_at}
+						Last tried {relativeTime(status.last_checked_at)}.
+					{/if}
+				</span>
+				<span class="text-text-faint mt-1 font-mono text-sm break-all" title={feedFailure.detail}>
+					{feedFailure.detail}
+				</span>
+			</div>
+		</div>
+	{/if}
+
 	<!-- The update itself: what runs, what is available, and the button. -->
 	<Card class="p-5">
 		{#if running && operation}
@@ -281,9 +341,10 @@
 				</h3>
 				<span class="text-text-muted text-md">
 					{#if status.last_error}
-						<span class="text-status-warning">{status.last_error}</span>
-						{#if status.last_checked_at}
-							· tried {relativeTime(status.last_checked_at)}
+						{#if status.latest}
+							last successful check found {status.latest.version}, which is what you run
+						{:else}
+							no release is known yet; the notice above says why the check failed
 						{/if}
 					{:else if status.last_checked_at}
 						last checked {relativeTime(status.last_checked_at)}

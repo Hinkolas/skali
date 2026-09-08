@@ -70,7 +70,50 @@ func TestGitHubFeedPicksNewestByVersionPerChannel(t *testing.T) {
 	require.Nil(t, none)
 
 	_, err = (&GitHubFeed{URL: empty.URL + "/missing", Client: empty.Client()}).Latest(ctx, ChannelStable)
+	var failure *FeedError
+	require.ErrorAs(t, err, &failure)
+	require.Equal(t, FeedNotFound, failure.Kind, "a private or renamed repository answers 404")
 	require.ErrorContains(t, err, "HTTP 404")
+}
+
+// Every way the feed can fail lands as a classified FeedError, so the
+// console can tell "the update servers are offline" from "the feed URL is
+// wrong" without parsing error text.
+func TestGitHubFeedClassifiesFailures(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	kindOf := func(t *testing.T, feed *GitHubFeed) FeedErrorKind {
+		t.Helper()
+		_, err := feed.Latest(ctx, ChannelStable)
+		var failure *FeedError
+		require.ErrorAs(t, err, &failure)
+		return failure.Kind
+	}
+
+	// Nothing listens: connection refused is offline.
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+	offline := &GitHubFeed{URL: closedURL + "/releases"}
+	require.Equal(t, FeedOffline, kindOf(t, offline))
+	require.ErrorContains(t, &FeedError{Kind: FeedOffline, Detail: "x"}, "update servers unreachable")
+
+	// An unresolvable host is offline too.
+	require.Equal(t, FeedOffline, kindOf(t, &GitHubFeed{URL: "https://releases.invalid/releases"}))
+
+	answer := func(code int, body string) *GitHubFeed {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(server.Close)
+		return &GitHubFeed{URL: server.URL + "/releases", Client: server.Client()}
+	}
+	require.Equal(t, FeedNotFound, kindOf(t, answer(http.StatusNotFound, "")))
+	require.Equal(t, FeedRateLimited, kindOf(t, answer(http.StatusForbidden, `{"message":"API rate limit exceeded"}`)))
+	require.Equal(t, FeedRateLimited, kindOf(t, answer(http.StatusTooManyRequests, "")))
+	require.Equal(t, FeedUnavailable, kindOf(t, answer(http.StatusBadGateway, "")))
+	require.Equal(t, FeedInvalid, kindOf(t, answer(http.StatusOK, "<html>not json</html>")))
 }
 
 func TestGitHubFeedBetaIncludesPrereleases(t *testing.T) {

@@ -155,7 +155,10 @@ The workflow also attaches `release.json` (`skali-schema --schema release`),
 which names the k3s pin the release installs; the update scanner shows it
 and the coordinator checks the k3s move against it before any host changes.
 The daemon's daily scan reads the GitHub releases API (`SKALI_UPDATE_SCAN`,
-`SKALI_UPDATE_FEED_URL` in `.env.example`).
+`SKALI_UPDATE_FEED_URL` in `.env.example`). A scan that fails is recorded
+with a kind (offline, not found, rate limited, unavailable, invalid) that the
+Software update page turns into a notice, and is retried hourly until the
+feed answers again; the last release found stays visible and updatable.
 Version pins for k3s, k3d, CNPG, cert-manager, Longhorn, and Lima live in
 their packages next to their checksums; bump them together.
 

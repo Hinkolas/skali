@@ -17,6 +17,7 @@ CREATE TABLE update_settings (
     latest_published_at    TIMESTAMPTZ,
     latest_url             TEXT,
     last_error             TEXT,
+    last_error_kind        TEXT CHECK (last_error_kind IN ('offline', 'not_found', 'rate_limited', 'unavailable', 'invalid')),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO update_settings DEFAULT VALUES;

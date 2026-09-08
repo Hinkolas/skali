@@ -491,6 +491,7 @@ type UpdateSetting struct {
 	LatestPublishedAt *time.Time
 	LatestUrl         *string
 	LastError         *string
+	LastErrorKind     *string
 	UpdatedAt         time.Time
 }
 

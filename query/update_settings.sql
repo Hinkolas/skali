@@ -18,5 +18,6 @@ SET last_checked_at     = now(),
     latest_published_at = COALESCE(sqlc.narg('latest_published_at'), latest_published_at),
     latest_url          = COALESCE(sqlc.narg('latest_url'), latest_url),
     last_error          = sqlc.narg('last_error'),
+    last_error_kind     = sqlc.narg('last_error_kind'),
     updated_at          = now()
 RETURNING *;

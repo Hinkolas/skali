@@ -33,7 +33,11 @@ type Settings struct {
 	Channel       Channel    `json:"channel"`
 	AutoUpdate    bool       `json:"auto_update"`
 	LastCheckedAt *time.Time `json:"last_checked_at"`
-	LastError     string     `json:"last_error,omitempty"`
+	// LastError says why the last scan did not complete, LastErrorKind
+	// classifies it (offline, not_found, rate_limited, unavailable,
+	// invalid) so the console can word the notice; both empty when it did.
+	LastError     string        `json:"last_error,omitempty"`
+	LastErrorKind FeedErrorKind `json:"last_error_kind,omitempty"`
 	// Latest is the newest release the last scan found on the channel,
 	// whether or not it is newer than what runs.
 	Latest *Release `json:"latest"`
@@ -146,6 +150,9 @@ func settingsFromRow(row store.UpdateSetting) Settings {
 	if row.LastError != nil {
 		settings.LastError = *row.LastError
 	}
+	if row.LastErrorKind != nil {
+		settings.LastErrorKind = FeedErrorKind(*row.LastErrorKind)
+	}
 	if row.LatestVersion != nil && *row.LatestVersion != "" {
 		settings.Latest = &Release{
 			Version: *row.LatestVersion, Prerelease: version.IsPrerelease(*row.LatestVersion),
@@ -164,8 +171,8 @@ func settingsFromRow(row store.UpdateSetting) Settings {
 }
 
 // Scan asks the feed for the channel's newest release and records the
-// answer; a feed failure is recorded too, never returned as a scan error,
-// because the last known release stays useful.
+// answer; a feed failure is recorded too (classified, see FeedError), never
+// returned as a scan error, because the last known release stays useful.
 func (s *Service) Scan(ctx context.Context) (*Status, error) {
 	if s.Feed == nil {
 		return nil, ErrScanDisabled
@@ -177,8 +184,9 @@ func (s *Service) Scan(ctx context.Context) (*Status, error) {
 	release, feedErr := s.Feed.Latest(ctx, Channel(row.Channel))
 	params := store.RecordUpdateScanParams{}
 	if feedErr != nil {
-		message := feedErr.Error()
-		params.LastError = &message
+		failure := classifyFeedError(feedErr)
+		message, kind := failure.Error(), string(failure.Kind)
+		params.LastError, params.LastErrorKind = &message, &kind
 	} else if release != nil {
 		params.LatestVersion = &release.Version
 		params.LatestPublishedAt = &release.PublishedAt
@@ -298,7 +306,9 @@ func (s *Service) Resume(ctx context.Context) (*Status, error) {
 
 // Run is the daily loop: a scan at boot when the last one is older than
 // the interval, then hourly checks of the same rule, so a restart never
-// hammers the feed and a long-running daemon never drifts. With auto-update
+// hammers the feed and a long-running daemon never drifts. A scan that
+// failed is retried on every hourly check instead, so an outage of the
+// update servers clears within the hour of their return. With auto-update
 // on, a newer release that the cluster can take is applied right away;
 // anything in the way is logged and retried on the next due scan.
 func (s *Service) Run(ctx context.Context) {
@@ -335,6 +345,9 @@ func (s *Service) tick(ctx context.Context) {
 	if interval <= 0 {
 		interval = defaultScanInterval
 	}
+	if row.LastError != nil && interval > loopTick {
+		interval = loopTick
+	}
 	if row.LastCheckedAt != nil && s.clock().Sub(*row.LastCheckedAt) < interval {
 		return
 	}
@@ -346,7 +359,7 @@ func (s *Service) tick(ctx context.Context) {
 		return
 	}
 	if status.LastError != "" {
-		s.log().WarnContext(ctx, "update feed unreachable", "err", status.LastError)
+		s.log().WarnContext(ctx, "update scan failed", "kind", status.LastErrorKind, "err", status.LastError)
 		return
 	}
 	if !status.AutoUpdate || !status.UpdateAvailable {

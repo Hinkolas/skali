@@ -5,7 +5,7 @@
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
-	import { operationSettled } from '$lib/types/updates';
+	import { FEED_ERROR_PILL, operationSettled } from '$lib/types/updates';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -23,7 +23,12 @@
 		if (status.update_available && status.latest) {
 			return { text: `${status.latest.version} available`, tone: 'warning' as const };
 		}
-		if (status.last_error) return { text: 'check failed', tone: 'warning' as const };
+		if (status.last_error) {
+			const text = status.last_error_kind
+				? FEED_ERROR_PILL[status.last_error_kind]
+				: 'check failed';
+			return { text, tone: 'warning' as const };
+		}
 		if (status.last_checked_at) return { text: 'up to date', tone: 'success' as const };
 		return { text: 'not checked yet', tone: 'neutral' as const };
 	});
