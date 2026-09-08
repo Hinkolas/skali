@@ -40,8 +40,8 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://dev:dev@localhost:5432/dev?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - uses: sqlc-dev/setup-sqlc@v5
@@ -81,8 +81,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -95,15 +95,19 @@ jobs:
   release-config:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: check
+          # Install-only also adds the binary to PATH for subsequent steps.
+          install-only: true
+
+      - name: Validate release configuration
+        run: goreleaser check
 
       - name: Rehearse clean snapshot metadata
         run: scripts/check-release-snapshot.sh
