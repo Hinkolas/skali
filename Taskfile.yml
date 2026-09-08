@@ -203,3 +203,40 @@ tasks:
     desc: Build a local snapshot release into dist/ (no publish); pass flags after --, for example task release:snapshot -- --skip=docker
     cmds:
       - goreleaser release --snapshot --clean {{.CLI_ARGS}}
+
+  # Pushing a v* tag is the release button: CI runs on the tag, goreleaser
+  # publishes binaries and images, and the GitHub release it creates is what
+  # every running cluster's update scan offers as an upgrade. The
+  # preconditions refuse to press it from the wrong commit or with a version
+  # the scanner, goreleaser, and release.yml would not agree on.
+  release:tag:
+    desc: "Tag and push a release from origin/main: task release:tag V=v0.1.0"
+    interactive: true
+    deps: [release:check]
+    preconditions:
+      - sh: test -n "{{.V}}"
+        msg: "pass the version: task release:tag V=v0.1.0"
+      - sh: printf '%s' "{{.V}}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+        msg: "version must look like v1.2.3 or v1.2.3-rc.1 (the update scanner, goreleaser, and release.yml all parse it)"
+      - sh: git diff --quiet && git diff --cached --quiet
+        msg: "commit or stash your changes first"
+      - sh: test "$(git rev-parse --abbrev-ref HEAD)" = main
+        msg: "releases are tagged on main"
+      - sh: git fetch --quiet origin main --tags && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+        msg: "HEAD is not origin/main; push (or pull) first so the release points at a commit on main"
+      - sh: ! git rev-parse -q --verify "refs/tags/{{.V}}" >/dev/null
+        msg: "tag {{.V}} already exists locally"
+      - sh: test -z "$(git ls-remote --tags origin "refs/tags/{{.V}}")"
+        msg: "tag {{.V}} already exists on origin"
+    cmds:
+      - |
+        echo "release {{.V}}"
+        echo "  commit  $(git log -1 --format='%h %s')"
+        echo "  branch  main (in sync with origin/main)"
+        case "{{.V}}" in *-*) echo "  kind    prerelease (no latest tag)";; *) echo "  kind    release (moves latest)";; esac
+        printf 'tag and push? [y/N] '
+        read -r answer
+        case "$answer" in y|Y|yes) ;; *) echo "aborted"; exit 1;; esac
+      - git tag -a "{{.V}}" -m "{{.V}}"
+      - git push origin "refs/tags/{{.V}}"
+      - echo "pushed {{.V}}; the release workflow takes it from here"

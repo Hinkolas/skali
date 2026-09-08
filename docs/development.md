@@ -151,6 +151,11 @@ task install:server # source install: build everything and run the installer
 
 Releases are cut by tagging `v*`: goreleaser builds the binaries and
 `install.sh`, and the workflow publishes the `skalid` and `skali-web` images.
+Tag with `task release:tag V=v0.1.0` rather than `git tag` by hand: it
+validates the goreleaser config, refuses a dirty tree, a branch other than
+main, a HEAD that is not origin/main, a malformed version, or a tag that
+already exists, then confirms before pushing. A `-rc.1` style suffix makes
+a GitHub prerelease that does not move the `latest` image tags.
 The workflow also attaches `release.json` (`skali-schema --schema release`),
 which names the k3s pin the release installs; the update scanner shows it
 and the coordinator checks the k3s move against it before any host changes.
