@@ -40,7 +40,7 @@ admin`) per project and per environment; see
 
 ## Local setup
 
-Requirements: Go 1.26+, Node 22+, [go-task](https://taskfile.dev), Docker
+Requirements: Go 1.26.8+, Node 22+, [go-task](https://taskfile.dev), Docker
 (for the k3d dev cluster and image builds), a Postgres for the control-plane
 database, and sqlc when changing queries.
 
@@ -210,3 +210,5 @@ internal/
   valuestore/    versioned, encrypted, write-only environment values
 web/           the console (SvelteKit)
 ```
+
+Run `scripts/check-release-snapshot.sh` to rehearse a clean, nonpublishing release and verify its metadata against the built CLI.

@@ -3,11 +3,11 @@
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "8edd57fa97fd3289fbcd0d4f1db76e1977fbd56ac229f49a7e18933cc7da0882",
+  "definitionHash": "20cadebbe828829114ee96815b067b4706828d1e966e8eaa84dba7817ab328df",
   "definition": {
     "version": "1",
     "name": "file-sharing",
-    "description": "Full-stack file-sharing application with PostgreSQL and S3 storage",
+    "description": "Reference manifest exercising most of the schema (no application source ships with it)",
     "applications": {
       "web": {
         "source": {
@@ -315,5 +315,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "b4a6c1d596d1a63a5463816c8abd03af25e1c324dbb93912a9e1aa4e9a0f98a0"
+  "checksum": "bd412152ff4b97e82afcc98ec7cd681d995964c879a434157429e7c41de81e6a"
 }

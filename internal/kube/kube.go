@@ -19,8 +19,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -149,13 +151,36 @@ func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string
 	if err != nil {
 		return ApplyResult{}, err
 	}
+	owner := applied.GetLabels()["skali.dev/environment"]
+	if scope := namespaceOwner(ObjectRef{GVK: applied.GroupVersionKind(), Namespace: applied.GetNamespace(), Name: applied.GetName()}); scope != "" && owner != scope {
+		return ApplyResult{}, fmt.Errorf("kube: environment ownership does not match namespace")
+	}
+	if owner != "" {
+		stampIdentity(applied)
+	}
 	priorVersion := ""
 	priorGeneration := int64(0)
 	if live, err := resource.Get(ctx, applied.GetName(), metav1.GetOptions{}); err == nil {
+		if owner != "" {
+			if err := checkOwner(live, owner, applied.GroupVersionKind()); err != nil {
+				return ApplyResult{}, err
+			}
+			applied.SetResourceVersion(live.GetResourceVersion())
+		}
 		priorVersion = live.GetResourceVersion()
 		priorGeneration = live.GetGeneration()
 	} else if !apierrors.IsNotFound(err) {
 		return ApplyResult{}, fmt.Errorf("kube: get %s before apply: %w", applied.GetName(), err)
+	}
+	if priorVersion == "" && owner != "" {
+		created, err := resource.Create(ctx, applied, metav1.CreateOptions{FieldManager: manager})
+		if apierrors.IsAlreadyExists(err) {
+			return c.ApplyAs(ctx, obj, manager, force)
+		}
+		if err != nil {
+			return ApplyResult{}, err
+		}
+		return ApplyResult{Changed: true, Live: created}, nil
 	}
 	data, err := applied.MarshalJSON()
 	if err != nil {
@@ -188,7 +213,23 @@ func (c *Client) Delete(ctx context.Context, ref ObjectRef) (bool, error) {
 	// already cascades in the background, so this only pins the behavior.
 	propagation := metav1.DeletePropagationBackground
 	options := metav1.DeleteOptions{PropagationPolicy: &propagation}
-	if ref.UID != "" {
+	if owner := namespaceOwner(ref); owner != "" {
+		live, err := resource.Get(ctx, ref.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if err := checkOwner(live, owner, ref.GVK); err != nil {
+			return false, err
+		}
+		if ref.UID != "" && ref.UID != live.GetUID() {
+			return false, fmt.Errorf("kube: ownership changed for %s", ref)
+		}
+		uid, rv := live.GetUID(), live.GetResourceVersion()
+		options.Preconditions = &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}
+	} else if ref.UID != "" {
 		options.Preconditions = &metav1.Preconditions{UID: &ref.UID}
 	}
 	if err := resource.Delete(ctx, ref.Name, options); err != nil {
@@ -220,6 +261,14 @@ func (c *Client) DisownFields(ctx context.Context, ref ObjectRef, manager string
 			}
 			return fmt.Errorf("kube: get %s for disown: %w", ref, err)
 		}
+		if owner := namespaceOwner(ref); owner != "" {
+			if err := checkOwner(live, owner, ref.GVK); err != nil {
+				return err
+			}
+		}
+		if ref.UID != "" && ref.UID != live.GetUID() {
+			return fmt.Errorf("kube: ownership changed for %s", ref)
+		}
 		rewritten, changed, err := RemoveOwnedFields(live.GetManagedFields(), manager, paths...)
 		if err != nil {
 			return fmt.Errorf("kube: rewrite managed fields of %s: %w", ref, err)
@@ -247,7 +296,7 @@ func (c *Client) prepare(obj runtime.Object) (*unstructured.Unstructured, dynami
 	if err != nil {
 		return nil, nil, fmt.Errorf("kube: convert to unstructured: %w", err)
 	}
-	applied := &unstructured.Unstructured{Object: content}
+	applied := (&unstructured.Unstructured{Object: content}).DeepCopy()
 	StripServerFields(applied)
 	gvk := applied.GroupVersionKind()
 	if gvk.Empty() {
@@ -312,4 +361,62 @@ func removeNullCreationTimestamps(value any) {
 			}
 		}
 	}
+}
+
+const identityAnnotation = "skali.dev/resource-identity"
+
+func resourceIdentity(g schema.GroupVersionKind, name string) string {
+	return g.Group + "/" + g.Kind + "/" + name
+}
+
+func stampIdentity(obj *unstructured.Unstructured) {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[identityAnnotation] = resourceIdentity(obj.GroupVersionKind(), obj.GetName())
+	obj.SetAnnotations(annotations)
+}
+
+func namespaceOwner(ref ObjectRef) string {
+	name := ref.Namespace
+	if ref.GVK.Kind == "Namespace" && ref.GVK.Group == "" {
+		name = ref.Name
+	}
+	if !strings.HasPrefix(name, "skali-") {
+		return ""
+	}
+	id, err := uuid.Parse(strings.TrimPrefix(name, "skali-"))
+	if err != nil {
+		return ""
+	}
+	return id.String()
+}
+
+func checkOwner(live *unstructured.Unstructured, owner string, gvk schema.GroupVersionKind) error {
+	if live.GetLabels()["skali.dev/managed"] != "true" || live.GetLabels()["skali.dev/environment"] != owner ||
+		live.GetAnnotations()[identityAnnotation] != resourceIdentity(gvk, live.GetName()) {
+		return fmt.Errorf("kube: refusing foreign or unowned %s/%s", gvk.Kind, live.GetName())
+	}
+	return nil
+}
+
+// CheckNamespaceBaseline is read-only and runs before controllers start. The
+// installer and substrate namespaces have no environment label.
+func (c *Client) CheckNamespaceBaseline(ctx context.Context) error {
+	list, err := c.Clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{LabelSelector: "skali.dev/managed=true"})
+	if err != nil {
+		return err
+	}
+	for _, ns := range list.Items {
+		owner := ns.Labels["skali.dev/environment"]
+		if owner == "" {
+			continue
+		}
+		id, err := uuid.Parse(owner)
+		if err != nil || ns.Name != "skali-"+id.String() {
+			return fmt.Errorf("legacy managed namespace %s: this release requires a fresh installation; existing resources were retained", ns.Name)
+		}
+	}
+	return nil
 }

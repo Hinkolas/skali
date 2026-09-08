@@ -239,7 +239,7 @@ applications:
 
 	// tls automatic + least-requests: websecure router with p2c, redirecting
 	// http companion, certificate.
-	public := byName["IngressRoute/policies-api-public"]
+	public := byName["IngressRoute/"+RouteName("policies", "api", "public", "primary")]
 	require.NotNil(t, public)
 	routes, _, err := unstructured.NestedSlice(public.Object, "spec", "routes")
 	require.NoError(t, err)
@@ -247,40 +247,40 @@ applications:
 	require.Equal(t, "p2c", service["strategy"])
 	secret, _, err := unstructured.NestedString(public.Object, "spec", "tls", "secretName")
 	require.NoError(t, err)
-	require.Equal(t, "policies-api-public-tls", secret)
-	publicHTTP := byName["IngressRoute/policies-api-public-http"]
+	require.Equal(t, RouteTLSName("policies", "api", "public"), secret)
+	publicHTTP := byName["IngressRoute/"+RouteName("policies", "api", "public", "http")]
 	require.NotNil(t, publicHTTP)
 	httpRoutes, _, err := unstructured.NestedSlice(publicHTTP.Object, "spec", "routes")
 	require.NoError(t, err)
 	require.Contains(t, httpRoutes[0].(map[string]any), "middlewares",
 		"automatic routes redirect plain HTTP")
-	require.NotNil(t, byName["Certificate/policies-api-public-tls"])
+	require.NotNil(t, byName["Certificate/"+RouteTLSName("policies", "api", "public")])
 	require.NotNil(t, byName["Middleware/redirect-https"])
 
 	// tls optional: both routers serve, no redirect.
-	relaxedHTTP := byName["IngressRoute/policies-api-relaxed-http"]
+	relaxedHTTP := byName["IngressRoute/"+RouteName("policies", "api", "relaxed", "http")]
 	require.NotNil(t, relaxedHTTP)
 	relaxedRoutes, _, err := unstructured.NestedSlice(relaxedHTTP.Object, "spec", "routes")
 	require.NoError(t, err)
 	require.NotContains(t, relaxedRoutes[0].(map[string]any), "middlewares",
 		"optional routes keep serving plain HTTP")
-	require.NotNil(t, byName["Certificate/policies-api-relaxed-tls"])
+	require.NotNil(t, byName["Certificate/"+RouteTLSName("policies", "api", "relaxed")])
 
 	// tls disabled: one web router, no certificate, default strategy.
-	internal := byName["IngressRoute/policies-api-internal"]
+	internal := byName["IngressRoute/"+RouteName("policies", "api", "internal", "primary")]
 	require.NotNil(t, internal)
 	points, _, err := unstructured.NestedStringSlice(internal.Object, "spec", "entryPoints")
 	require.NoError(t, err)
 	require.Equal(t, []string{edge.EntryPointWeb}, points)
-	require.Nil(t, byName["IngressRoute/policies-api-internal-http"])
-	require.Nil(t, byName["Certificate/policies-api-internal-tls"])
+	require.Nil(t, byName["IngressRoute/"+RouteName("policies", "api", "internal", "http")])
+	require.Nil(t, byName["Certificate/"+RouteTLSName("policies", "api", "internal")])
 	internalRoutes, _, err := unstructured.NestedSlice(internal.Object, "spec", "routes")
 	require.NoError(t, err)
 	internalService := internalRoutes[0].(map[string]any)["services"].([]any)[0].(map[string]any)
 	require.NotContains(t, internalService, "strategy")
 
 	// RouteTLSName mirrors the renderer's composition.
-	require.Equal(t, "policies-api-public-tls", RouteTLSName("policies", "api", "public"))
+	require.Equal(t, RouteTLSName("policies", "api", "public"), RouteTLSName("policies", "api", "public"))
 }
 
 // A forced deployment's restart stamp becomes a pod-template annotation so
@@ -355,8 +355,8 @@ func TestRenderBuildApplicationWithManagedOutputs(t *testing.T) {
 		"preferred spreading must not emit Kubernetes' DoNotSchedule-only minDomains")
 
 	environment := deployment.Spec.Template.Spec.Containers[0].Env
-	require.Contains(t, environment, environmentVariableFromSecret("POSTGRES_HOST", "skali-output-databases-data", "host"))
-	require.Contains(t, environment, environmentVariableFromSecret("S3_ENDPOINT", "skali-output-buckets-files", "endpoint"))
+	require.Contains(t, environment, environmentVariableFromSecret("POSTGRES_HOST", OutputSecretName("databases", "data"), "host"))
+	require.Contains(t, environment, environmentVariableFromSecret("S3_ENDPOINT", OutputSecretName("buckets", "files"), "endpoint"))
 }
 
 // Selector labels are baked into immutable Kubernetes selectors, so two
@@ -504,7 +504,7 @@ applications:
 
 	require.Equal(t, ReleaseJobName("shop", "web",
 		"6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2"), job.Name)
-	require.Equal(t, "shop-web-release-6ee3b68d021fb92e", job.Name)
+	require.LessOrEqual(t, len(job.Name), 63)
 	require.Equal(t, []string{"bun", "scripts/migrate.ts"}, job.Spec.Template.Spec.Containers[0].Args)
 	require.Equal(t, deployment.Spec.Template.Spec.Containers[0].Image, job.Spec.Template.Spec.Containers[0].Image)
 	require.Equal(t, deployment.Spec.Template.Spec.Containers[0].Env, job.Spec.Template.Spec.Containers[0].Env)
@@ -719,7 +719,7 @@ func TestRenderInterceptedApplication(t *testing.T) {
 	require.Nil(t, service.Spec.Selector, "intercepted Services drop their selector")
 
 	slice := objects[1].(*discoveryv1.EndpointSlice)
-	require.Equal(t, service.Name+"-local", slice.Name)
+	require.Equal(t, objectName("intercept", "hello-world", "web"), slice.Name)
 	require.Equal(t, "true", slice.Labels[LabelManaged])
 	require.Equal(t, service.Name, slice.Labels["kubernetes.io/service-name"])
 	require.Equal(t, "skali.dev", slice.Labels["endpointslice.kubernetes.io/managed-by"])

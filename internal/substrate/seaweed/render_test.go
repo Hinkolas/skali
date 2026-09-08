@@ -102,7 +102,7 @@ func TestRenderS3Edge(t *testing.T) {
 	routes, _, err := unstructured.NestedSlice(route.Object, "spec", "routes")
 	require.NoError(t, err)
 	rule := routes[0].(map[string]any)
-	require.Equal(t, "Host(`s3.example.com`) && PathPrefix(`/`)", rule["match"])
+	require.Equal(t, `Host("s3.example.com") && PathPrefix("/")`, rule["match"])
 	backend := rule["services"].([]any)[0].(map[string]any)
 	require.Equal(t, S3Service, backend["name"])
 	require.EqualValues(t, S3Port, backend["port"])

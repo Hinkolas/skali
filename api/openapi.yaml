@@ -1329,6 +1329,9 @@ paths:
                 type: object
                 required: [target, run_id]
                 properties:
+                  warnings:
+                    type: array
+                    items: { $ref: "#/components/schemas/DeploymentWarning" }
                   target: { $ref: "#/components/schemas/Target" }
                   run_id:
                     type: string
@@ -1341,6 +1344,7 @@ paths:
           description: |
             `conflict`: the environment already targets this revision, or
             the revision belongs to another environment.
+            `hostname_claimed` or `hostname_reserved`: required routes cannot be claimed.
             `deployment_in_flight`: another deployment or run is in
             flight. `unsupported_schema`: the revision document was
             written by another build and cannot be targeted.
@@ -2757,6 +2761,9 @@ paths:
                 type: object
                 required: [up_to_date, required_role, bypass_protection]
                 properties:
+                  warnings:
+                    type: array
+                    items: { $ref: "#/components/schemas/DeploymentWarning" }
                   up_to_date:
                     type: boolean
                   plan: { $ref: "#/components/schemas/PlanDocument" }
@@ -4848,6 +4855,9 @@ components:
       type: object
       required: [plan, actions, up_to_date, required_role, bypass_protection]
       properties:
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/DeploymentWarning" }
         plan: { $ref: "#/components/schemas/PlanDocument" }
         actions:
           type: array
@@ -4987,6 +4997,9 @@ components:
       type: object
       required: [deployment, plan, actions, up_to_date, required_role, bypass_protection]
       properties:
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/DeploymentWarning" }
         deployment: { $ref: "#/components/schemas/Deployment" }
         plan: { $ref: "#/components/schemas/PlanDocument" }
         actions:
@@ -5042,3 +5055,13 @@ components:
         previous:
           type: boolean
           description: The line comes from the previous container after a restart.
+
+    DeploymentWarning:
+      type: object
+      required: [code, message, paths]
+      properties:
+        code: { type: string, example: backup_policy_inactive }
+        message: { type: string }
+        paths:
+          type: array
+          items: { type: string }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
 )
 
@@ -132,6 +133,11 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		_ = in.Journal.FinishAttempt(ctx, attempt.ID, journal.AttemptFailed)
 		_ = in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepFailed)
 		return result, s.fail(ctx, in, runID, writer, err)
+	}
+	for _, warning := range compiler.Warnings(prepared.Revision.Definition) {
+		if err := writer.Warn(ctx, warning.Code+": "+warning.Message); err != nil {
+			return result, s.fail(ctx, in, runID, writer, err)
+		}
 	}
 	result.RevisionID = prepared.RevisionID
 	if len(prepared.Orphaned) > 0 {

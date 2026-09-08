@@ -343,6 +343,9 @@
 		{:else if planError}
 			<div class="text-status-danger text-md">{planError}</div>
 		{:else if planned}
+			{#each planned.warnings ?? [] as warning (warning.code)}
+				<p role="status" class="text-status-warning text-sm">{warning.message}</p>
+			{/each}
 			{#if planned.up_to_date}
 				<span class="text-text-muted text-md">
 					{target.name} already runs this revision; there is nothing to promote.

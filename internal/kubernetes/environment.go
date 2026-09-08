@@ -48,8 +48,8 @@ func EnvironmentSecretData(definition compiler.ProjectDefinition, variables map[
 }
 
 // NamespaceName derives the deterministic namespace of one environment.
-func NamespaceName(project, environment string) string {
-	return objectName("skali", project, environment)
+func NamespaceName(environmentID string) string {
+	return "skali-" + environmentID
 }
 
 // RenderNamespace renders the environment namespace. It is the first object
@@ -58,11 +58,12 @@ func RenderNamespace(project, environment, environmentID string) *corev1.Namespa
 	return &corev1.Namespace{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: NamespaceName(project, environment),
+			Name: NamespaceName(environmentID),
 			Labels: map[string]string{
-				LabelManaged:     "true",
-				LabelProject:     project,
-				LabelEnvironment: environmentID,
+				LabelManaged:         "true",
+				LabelProject:         project,
+				LabelEnvironmentName: environment,
+				LabelEnvironment:     environmentID,
 			},
 		},
 	}
@@ -85,12 +86,13 @@ func RenderOutputSecret(project, environment, environmentID, collection, service
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      OutputSecretName(collection, service),
-			Namespace: NamespaceName(project, environment),
+			Namespace: NamespaceName(environmentID),
 			Labels: map[string]string{
-				LabelManaged:     "true",
-				LabelProject:     project,
-				LabelEnvironment: environmentID,
-				LabelService:     collection + "." + service,
+				LabelManaged:         "true",
+				LabelProject:         project,
+				LabelEnvironmentName: environment,
+				LabelEnvironment:     environmentID,
+				LabelService:         collection + "." + service,
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -114,7 +116,7 @@ func RenderEnvironmentSecret(project, environment, environmentID, revisionChecks
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      EnvironmentSecretName,
-			Namespace: NamespaceName(project, environment),
+			Namespace: NamespaceName(environmentID),
 			Labels:    labels,
 		},
 		Type: corev1.SecretTypeOpaque,

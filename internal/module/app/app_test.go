@@ -68,7 +68,7 @@ func decodeRoutes(t *testing.T, certificates bool, tls string) module.Service {
 
 func certificate(status module.CertificateStatus) module.ObservedResource {
 	return module.ObservedResource{
-		Kind: module.KindCertificate, Name: "proj-web-public-tls",
+		Kind: module.KindCertificate, Name: "tls-proj-web-public-0f0cfcc88276f2165665ed0173565bcc",
 		Certificate: &status,
 	}
 }

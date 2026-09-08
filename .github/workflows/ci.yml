@@ -1,8 +1,10 @@
 name: ci
 
-# Not run on every push: the release workflow calls this on a tag before
-# publishing anything, and it can be started by hand from the Actions tab.
+# Shared checks for contributions and releases.
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_call:
   workflow_dispatch:
 
@@ -36,8 +38,13 @@ jobs:
           go-version-file: go.mod
       # web/ is excluded like task test: node_modules occasionally ships
       # stray Go packages.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
       - run: go vet $(go list ./... | grep -v '/web/')
       - run: go test $(go list ./... | grep -v '/web/')
+      - name: Linux restore ownership
+        run: |
+          go test -c -o /tmp/skali-backup-tests ./internal/backup
+          sudo /tmp/skali-backup-tests -test.run 'TestArchive|TestLinuxNonRoot|TestTarUntar'
 
   web:
     runs-on: ubuntu-latest
@@ -54,13 +61,21 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run lint
+      - run: npm run build
+      - run: npm audit
 
   release-config:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
           args: check
+
+      - name: Rehearse clean snapshot metadata
+        run: scripts/check-release-snapshot.sh

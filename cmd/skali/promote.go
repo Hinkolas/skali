@@ -242,6 +242,9 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	printPlan(out, planned.Plan, planned.Actions, activeChecksum)
 	printOrphanedValues(out, planned.Orphaned)
 	printVolumeSizeWarning(out, planned.VolumeSizesUnenforced)
+	for _, warning := range planned.Warnings {
+		fmt.Fprintln(out, "warning: "+warning.Message)
+	}
 	if planned.BypassProtection {
 		printProtectionBypassed(out, opts.Environment)
 	}

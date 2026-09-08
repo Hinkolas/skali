@@ -169,11 +169,7 @@ func (s *Streamer) namespace(ctx context.Context, environmentID uuid.UUID) (stri
 		}
 		return "", fmt.Errorf("runtimelogs: get environment: %w", err)
 	}
-	project, err := s.Store.GetProjectByID(ctx, env.ProjectID)
-	if err != nil {
-		return "", fmt.Errorf("runtimelogs: get project: %w", err)
-	}
-	return skalikube.NamespaceName(project.Name, env.Name), nil
+	return skalikube.NamespaceName(env.ID.String()), nil
 }
 
 // splitTimestamp separates the kubelet's RFC3339Nano prefix from the line.

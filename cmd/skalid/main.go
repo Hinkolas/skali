@@ -138,6 +138,9 @@ func runServe() error {
 	artifactSvc := artifactstore.New(st)
 	buildSvc := buildstore.New(st)
 	deploySvc := deploy.New(st, valueSvc, artifactSvc, versionpkg.Version)
+	if err := deploySvc.ReserveHostnames(ctx, append(cfg.ReservedHosts, cfg.S3Domain)); err != nil {
+		return err
+	}
 	backupTargets, err := backup.NewTargetStore(st, cfg.AuthSecret)
 	if err != nil {
 		return err
@@ -192,6 +195,12 @@ func runServe() error {
 		slog.InfoContext(ctx, "no cluster configuration resolved; running API-only")
 	}
 
+	if kubeClient != nil {
+		if err := kubeClient.CheckNamespaceBaseline(ctx); err != nil {
+			return err
+		}
+	}
+
 	// The production service modules.
 	registry := module.NewRegistry()
 	if err := registry.Register(app.Module{Certificates: cfg.CertManager}); err != nil {
@@ -226,6 +235,7 @@ func runServe() error {
 	}
 	if kubeClient != nil {
 		kernelDeps.Cluster = kubeClient
+		kernelDeps.LiveRouteHosts = kubeClient.LiveRouteHosts
 		kernelDeps.JobLogs = kubeClient.TailJobLogs
 		kernelDeps.RefreshObservation = source.Refresh
 	}

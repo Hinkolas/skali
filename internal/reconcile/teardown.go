@@ -54,6 +54,9 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 	if teardownSettled(snapshot, releasing) {
+		if err := k.releaseAbsentHostnames(ctx, environmentID); err != nil {
+			return 0, err
+		}
 		if !releasing {
 			attachment.finish(ctx, journal.RunSucceeded)
 			return 0, nil

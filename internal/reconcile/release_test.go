@@ -76,7 +76,7 @@ func TestReconcileReleaseCommandGatesApply(t *testing.T) {
 
 	ops := f.cluster.recorded()
 	require.Contains(t, ops, "apply Job/"+f.namespace+"/"+jobName)
-	require.NotContains(t, ops, "apply Deployment/"+f.namespace+"/demo-web",
+	require.NotContains(t, ops, "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3",
 		"the workload must not roll before the release command completes")
 
 	// Still running: another pass neither re-creates the Job nor applies.
@@ -85,14 +85,14 @@ func TestReconcileReleaseCommandGatesApply(t *testing.T) {
 	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Equal(t, requeueHealthCheck, requeue)
-	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web")
+	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 
 	// Success unblocks the workload; health then activates the revision.
 	f.fake.SetReleaseJob(f.environmentID, f.namespace, jobName, "web",
 		observe.JobStatus{Succeeded: true, Created: time.Now()})
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web")
+	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 
 	f.markHealthy(t)
 	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
@@ -140,7 +140,7 @@ func TestReconcileReleaseFailureFailsRun(t *testing.T) {
 	run, err := f.st.GetRunByID(ctx, result.RunID)
 	require.NoError(t, err)
 	require.Equal(t, "failed", run.Status)
-	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web")
+	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 
 	target := f.target(t)
 	require.NotNil(t, target.TargetRevisionID, "a first deployment has nothing to fall back to")
@@ -170,7 +170,7 @@ func TestReconcileReleaseRetriesStaleFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, requeueHealthCheck, requeue)
 	require.Contains(t, f.cluster.recorded(), "delete Job/"+f.namespace+"/"+jobName)
-	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web")
+	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 
 	run, err := f.st.GetRunByID(ctx, result.RunID)
 	require.NoError(t, err)

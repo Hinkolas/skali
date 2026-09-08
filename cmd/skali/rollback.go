@@ -115,6 +115,9 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 	if err != nil {
 		return err
 	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintln(out, "warning: "+warning.Message)
+	}
 	fmt.Fprintf(out, "\n%s %s  roll back %s to %s\n", style.Dim("run"),
 		style.Bold(result.RunID), target.environment, utils.ShortChecksum(chosen.Checksum))
 	if opts.Detach {

@@ -7,12 +7,13 @@ package kubernetes
 // per-revision or per-environment values; object labels carry the full
 // identity and may change between revisions.
 const (
-	LabelManaged     = "skali.dev/managed"
-	LabelProject     = "skali.dev/project"
-	LabelApplication = "skali.dev/application"
-	LabelEnvironment = "skali.dev/environment"
-	LabelService     = "skali.dev/service"
-	LabelRevision    = "skali.dev/revision"
+	LabelManaged         = "skali.dev/managed"
+	LabelProject         = "skali.dev/project"
+	LabelApplication     = "skali.dev/application"
+	LabelEnvironment     = "skali.dev/environment"
+	LabelEnvironmentName = "skali.dev/environment-name"
+	LabelService         = "skali.dev/service"
+	LabelRevision        = "skali.dev/revision"
 	// LabelPool marks platform-scoped substrate objects (database pools and
 	// their tenants) with the owning pool's name. Pool objects carry no
 	// environment identity; tenant objects carry both.

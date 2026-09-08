@@ -84,3 +84,5 @@ mirror. Legacy (version-1) installations and the local `skali dev` platform
 show the available release but must be upgraded with `skali cluster upgrade`
 or `skali dev upgrade`. Release assets are verified against `checksums.txt`
 over TLS; there is no signature yet (see the release checklist).
+
+Manifest backup policies are accepted but inactive: scheduling and retention are not enforced. Use manual backups. See [prerelease safety](prerelease-safety.md) for hostname ownership, restore behavior, and the fresh-install requirement.

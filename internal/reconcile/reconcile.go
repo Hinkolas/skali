@@ -37,6 +37,12 @@ const requeueHealthCheck = 15 * time.Second
 // evaluate health, and activate when the revision's health conditions pass.
 // A pass that changes nothing writes no journal rows.
 func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UUID) (time.Duration, error) {
+	unlock, lockErr := k.deps.Store.LockEnvironment(ctx, environmentID)
+	if lockErr != nil {
+		return 0, lockErr
+	}
+	defer unlock()
+
 	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -191,7 +197,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 					// when one exists; a first deployment keeps its target
 					// so a redeploy retries the release.
 					attachment.finish(ctx, journal.RunFailed)
-					rows, err := k.deps.Store.FallbackEnvironmentTarget(ctx, store.FallbackEnvironmentTargetParams{
+					rows, err := k.deps.Deploy.FallbackTargetLocked(ctx, store.FallbackEnvironmentTargetParams{
 						EnvironmentID:    environmentID,
 						TargetRevisionID: target.TargetRevisionID,
 					})
@@ -258,6 +264,10 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if len(pruned) > 0 {
 		attachment.ensure(ctx)
 		attachment.completeStep(ctx, "prune", "Prune removed objects", journal.StepSucceeded, pruned)
+	}
+
+	if err := k.releaseAbsentHostnames(ctx, environmentID); err != nil {
+		return 0, err
 	}
 
 	// Evaluate over a post-apply snapshot and activate when every service of
@@ -327,7 +337,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			attachment.completeStep(ctx, "verify", "Verify health", journal.StepFailed,
 				healthSummary(statuses))
 			attachment.finish(ctx, journal.RunFailed)
-			rows, err := k.deps.Store.FallbackEnvironmentTarget(ctx, store.FallbackEnvironmentTargetParams{
+			rows, err := k.deps.Deploy.FallbackTargetLocked(ctx, store.FallbackEnvironmentTargetParams{
 				EnvironmentID:    environmentID,
 				TargetRevisionID: target.TargetRevisionID,
 			})
@@ -583,6 +593,9 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	if err != nil {
 		return nil, err
 	}
+	if err := rendering.ValidateObjects(append([]runtime.Object{namespace, secret}, objects...)); err != nil {
+		return nil, err
+	}
 	services, refsList, err := groupObjects(objects)
 	if err != nil {
 		return nil, err
@@ -742,4 +755,23 @@ func describeObject(obj runtime.Object) string {
 		return kind + "/" + accessor.GetName()
 	}
 	return kind + "/" + accessor.GetNamespace() + "/" + accessor.GetName()
+}
+
+func (k *Kernel) releaseAbsentHostnames(ctx context.Context, env uuid.UUID) error {
+	claims, err := k.deps.Store.ListEnvironmentHostnames(ctx, &env)
+	if err != nil {
+		return err
+	}
+	if len(claims) == 0 {
+		return nil
+	}
+
+	if k.deps.LiveRouteHosts == nil {
+		return nil
+	} // no cluster evidence: retain claims
+	live, err := k.deps.LiveRouteHosts(ctx, env)
+	if err != nil {
+		return err
+	}
+	return k.deps.Deploy.ReleaseAbsentHostnames(ctx, env, live)
 }

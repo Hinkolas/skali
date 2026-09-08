@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
 	"strings"
 
@@ -206,6 +207,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
+		Warnings              []diagnostic.Warning    `json:"warnings,omitempty"`
 		Plan                  *plan.Plan              `json:"plan"`
 		Actions               []artifactActionPayload `json:"actions"`
 		UpToDate              bool                    `json:"up_to_date"`
@@ -213,7 +215,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		VolumeSizesUnenforced bool                    `json:"volume_sizes_unenforced,omitempty"`
 		RequiredRole          string                  `json:"required_role"`
 		BypassProtection      bool                    `json:"bypass_protection"`
-	}{preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned, preview.VolumeSizesUnenforced, requiredRole.String(), bypassed})
+	}{preview.Warnings, preview.Plan, h.actionPayloads(r.Context(), env.ProjectID, preview.Actions), preview.UpToDate, preview.Orphaned, preview.VolumeSizesUnenforced, requiredRole.String(), bypassed})
 }
 
 // deployRequest is what decides the role a deployment needs and whether
@@ -422,15 +424,17 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 	}
 	if opened.UpToDate {
 		writeJSON(w, http.StatusOK, struct {
-			UpToDate         bool       `json:"up_to_date"`
-			Plan             *plan.Plan `json:"plan"`
-			RequiredRole     string     `json:"required_role"`
-			BypassProtection bool       `json:"bypass_protection"`
-		}{true, opened.Plan, requiredRole.String(), bypassed})
+			Warnings         []diagnostic.Warning `json:"warnings,omitempty"`
+			UpToDate         bool                 `json:"up_to_date"`
+			Plan             *plan.Plan           `json:"plan"`
+			RequiredRole     string               `json:"required_role"`
+			BypassProtection bool                 `json:"bypass_protection"`
+		}{opened.Warnings, true, opened.Plan, requiredRole.String(), bypassed})
 		return
 	}
 	writeJSON(w, http.StatusCreated, struct {
 		Deployment            deploymentPayload       `json:"deployment"`
+		Warnings              []diagnostic.Warning    `json:"warnings,omitempty"`
 		Plan                  *plan.Plan              `json:"plan"`
 		Actions               []artifactActionPayload `json:"actions"`
 		UpToDate              bool                    `json:"up_to_date"`
@@ -439,6 +443,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 		RequiredRole          string                  `json:"required_role"`
 		BypassProtection      bool                    `json:"bypass_protection"`
 	}{
+		Warnings:              opened.Warnings,
 		Deployment:            newDeploymentPayload(opened.Deployment),
 		Plan:                  opened.Plan,
 		Actions:               h.actionPayloads(r.Context(), opened.Deployment.ProjectID, opened.Actions),
@@ -689,7 +694,7 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if deployment.RevisionID != nil {
-			rows, err := h.st.FallbackEnvironmentTarget(r.Context(), store.FallbackEnvironmentTargetParams{
+			rows, err := h.deploy.FallbackTarget(r.Context(), store.FallbackEnvironmentTargetParams{
 				EnvironmentID:    deployment.EnvironmentID,
 				TargetRevisionID: deployment.RevisionID,
 			})
@@ -719,7 +724,7 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			if err == nil && target.TargetRevisionID != nil {
-				rows, err := h.st.FallbackEnvironmentTarget(r.Context(), store.FallbackEnvironmentTargetParams{
+				rows, err := h.deploy.FallbackTarget(r.Context(), store.FallbackEnvironmentTargetParams{
 					EnvironmentID:    *run.EnvironmentID,
 					TargetRevisionID: target.TargetRevisionID,
 				})
@@ -826,6 +831,21 @@ func parseDeploymentSelector(w http.ResponseWriter, definitionVersion, from, can
 // writeDeployError maps deploy and registry sentinel errors onto the
 // envelope.
 func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
+	var invalidRoute *compiler.RouteError
+	if errors.As(err, &invalidRoute) {
+		writeError(w, http.StatusBadRequest, "invalid_route", invalidRoute.Error())
+		return
+	}
+	var hostname *deploy.HostnameConflict
+	if errors.As(err, &hostname) {
+		code := "hostname_claimed"
+		if hostname.Reserved {
+			code = "hostname_reserved"
+		}
+		writeError(w, http.StatusConflict, code, hostname.Error())
+		return
+	}
+
 	var capabilities *deploy.UnsupportedCapabilitiesError
 	var bucketPolicy *deploy.UnsupportedBucketPolicyError
 	var missingInput *deploy.MissingBuildInputError

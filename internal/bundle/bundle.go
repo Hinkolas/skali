@@ -942,7 +942,7 @@ spec:
 		// with them set, skalid serves the registry token realm. The push
 		// host is the public registry domain: build clients push through the
 		// edge while artifact references stay on the internal name.
-		capabilitiesEnv = "\n            - name: SKALI_CAPABILITIES\n              value: " +
+		capabilitiesEnv = "\n            - name: SKALI_RESERVED_HOSTS\n              value: " + strings.Join([]string{production.IngressHost, production.RegistryDomain, production.S3Domain}, ";") + "\n            - name: SKALI_CAPABILITIES\n              value: " +
 			strings.Join(production.Capabilities, ";") +
 			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
 			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +

@@ -307,6 +307,13 @@ type EnvironmentTarget struct {
 	RestartedAt      *time.Time
 }
 
+type HostnameClaim struct {
+	Hostname         string
+	EnvironmentID    *uuid.UUID
+	TargetRevisionID *uuid.UUID
+	Reserved         bool
+}
+
 type InstanceIdentity struct {
 	Singleton bool
 	ID        uuid.UUID

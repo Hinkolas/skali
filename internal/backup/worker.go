@@ -193,6 +193,12 @@ func workerTar(ctx context.Context, args []string) error {
 }
 
 func writeTar(root string, out io.Writer) error {
+	source, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
 	compressor, err := zstd.NewWriter(out)
 	if err != nil {
 		return fmt.Errorf("backup-worker: create compressor: %w", err)
@@ -205,9 +211,6 @@ func writeTar(root string, out io.Writer) error {
 		relative, err := filepath.Rel(root, current)
 		if err != nil {
 			return err
-		}
-		if relative == "." {
-			return nil
 		}
 		if relative == "lost+found" {
 			if entry.IsDir() {
@@ -239,12 +242,14 @@ func writeTar(root string, out io.Writer) error {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		file, err := os.Open(current)
+		file, err := source.Open(relative)
 		if err != nil {
 			return err
 		}
-		defer file.Close()
 		_, err = io.Copy(archive, file)
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
 		return err
 	})
 	if err != nil {
@@ -292,79 +297,3 @@ func workerUntar(ctx context.Context, args []string) error {
 
 // clearDirectory removes everything under root except lost+found, which
 // belongs to the filesystem, not the data.
-func clearDirectory(root string) error {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return fmt.Errorf("backup-worker: read %s: %w", root, err)
-	}
-	for _, entry := range entries {
-		if entry.Name() == "lost+found" {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
-			return fmt.Errorf("backup-worker: clear %s: %w", root, err)
-		}
-	}
-	return nil
-}
-
-func extractTar(root string, in io.Reader) error {
-	decompressor, err := zstd.NewReader(in)
-	if err != nil {
-		return fmt.Errorf("backup-worker: create decompressor: %w", err)
-	}
-	defer decompressor.Close()
-	archive := tar.NewReader(decompressor)
-	for {
-		header, err := archive.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("backup-worker: read archive: %w", err)
-		}
-		target, err := securePath(root, header.Name)
-		if err != nil {
-			return err
-		}
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, fs.FileMode(header.Mode)&fs.ModePerm); err != nil {
-				return fmt.Errorf("backup-worker: create directory %s: %w", target, err)
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return fmt.Errorf("backup-worker: create parent of %s: %w", target, err)
-			}
-			file, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(header.Mode)&fs.ModePerm)
-			if err != nil {
-				return fmt.Errorf("backup-worker: create %s: %w", target, err)
-			}
-			_, err = io.Copy(file, archive)
-			if closeErr := file.Close(); err == nil {
-				err = closeErr
-			}
-			if err != nil {
-				return fmt.Errorf("backup-worker: write %s: %w", target, err)
-			}
-		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return fmt.Errorf("backup-worker: create parent of %s: %w", target, err)
-			}
-			if err := os.Symlink(header.Linkname, target); err != nil {
-				return fmt.Errorf("backup-worker: create symlink %s: %w", target, err)
-			}
-		default:
-			slog.Warn("skipping unsupported archive entry", "name", header.Name, "type", header.Typeflag)
-		}
-	}
-}
-
-// securePath refuses archive entries that would escape the destination.
-func securePath(root, name string) (string, error) {
-	cleaned := filepath.Join(root, filepath.FromSlash(name))
-	if cleaned != root && !strings.HasPrefix(cleaned, root+string(os.PathSeparator)) {
-		return "", fmt.Errorf("backup-worker: archive entry %q escapes the destination", name)
-	}
-	return cleaned, nil
-}

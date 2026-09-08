@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/Hinkolas/skali/internal/edge"
 	pathpkg "path"
 	"path/filepath"
 	"slices"
@@ -174,6 +175,11 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path+".domain", "%s", err)
 			continue
 		}
+		if !domain.HasProjectVariables() {
+			if _, err := edge.CanonicalDomain(domain.Literal()); err != nil {
+				b.add(path+".domain", "%s", err)
+			}
+		}
 		b.collectVariables(path+".domain", domain)
 		routePath := route.Path
 		if routePath == "" {
@@ -183,6 +189,9 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path+".path", "must start with /")
 		} else {
 			routePath = pathpkg.Clean(routePath)
+		}
+		if err := edge.ValidatePath(routePath); err != nil {
+			b.add(path+".path", "%s", err)
 		}
 		tls := route.TLS
 		if tls == "" {

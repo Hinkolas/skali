@@ -294,10 +294,10 @@ func (c *Controller) teardownBucketClaim(ctx context.Context, row store.BucketCl
 		return 0, err
 	}
 	if row.OwnerKind == dbstore.OwnerService {
-		if project, environment, service, ok := ownerNames(row.OwnerRef); ok {
+		if _, _, service, ok := ownerNames(row.OwnerRef); ok && row.EnvironmentID != nil {
 			if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
 				GVK:       secretGVK,
-				Namespace: kubernetes.NamespaceName(project, environment),
+				Namespace: kubernetes.NamespaceName(row.EnvironmentID.String()),
 				Name:      kubernetes.OutputSecretName("buckets", service),
 			}); err != nil {
 				return 0, err

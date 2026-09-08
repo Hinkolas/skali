@@ -8,6 +8,7 @@ package edge
 import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"strconv"
 )
 
 var (
@@ -60,7 +61,7 @@ type Route struct {
 
 // HostMatch builds the canonical router rule for one public route.
 func HostMatch(domain, path string) string {
-	return "Host(`" + domain + "`) && PathPrefix(`" + path + "`)"
+	return "Host(" + strconv.Quote(domain) + ") && PathPrefix(" + strconv.Quote(path) + ")"
 }
 
 // IngressRoute builds a traefik.io/v1alpha1 IngressRoute. A non-empty

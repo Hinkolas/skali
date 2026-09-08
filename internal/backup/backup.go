@@ -349,7 +349,7 @@ func (c *Controller) backupDatabase(ctx context.Context, log *stepLog, bctx *bac
 	identity.WorkerImage = workerImage
 	identity.TargetSecret = targetSecretName
 	identity.SnapshotObject = key
-	name := jobName("skali-backup", utils.ShortID(row.ID), "db", component.ServiceKey)
+	name := jobName("skali-backup", row.ID.String(), "db", component.ServiceKey)
 	log.Info(ctx, "dumping database "+identity.DatabaseName)
 	if err := c.runJob(ctx, log, renderDatabaseBackupJob(name, substrate.Namespace, row.ID.String(), identity)); err != nil {
 		return err
@@ -397,14 +397,14 @@ func (c *Controller) backupVolume(ctx context.Context, log *stepLog, bctx *backu
 	if err != nil {
 		return err
 	}
-	namespace := kubernetes.NamespaceName(row.ProjectName, row.EnvironmentName)
+	namespace := kubernetes.NamespaceName(row.EnvironmentID.String())
 	if err := c.ensureTargetSecret(ctx, namespace, bctx.credentials); err != nil {
 		return err
 	}
 	claimName := kubernetes.VolumeClaimName(row.ProjectName, component.Application, component.Volume)
 	key := volumeKey(bctx.prefix(), row.ProjectName, row.EnvironmentName,
 		component.Application, component.Volume, bctx.snapshotID)
-	name := jobName("skali-backup", utils.ShortID(row.ID), "vol", component.Application, component.Volume)
+	name := jobName("skali-backup", row.ID.String(), "vol", component.Application, component.Volume)
 	log.Info(ctx, "archiving volume claim "+claimName)
 	job := renderVolumeJob(name, namespace, row.ID.String(), workerImage, targetSecretName, claimName, key, false)
 	if err := c.runJob(ctx, log, job); err != nil {
@@ -426,7 +426,7 @@ func (c *Controller) cleanupJobs(ctx context.Context, row *store.Backup) {
 		return
 	}
 	namespaces := []string{substrate.Namespace,
-		kubernetes.NamespaceName(row.ProjectName, row.EnvironmentName)}
+		kubernetes.NamespaceName(row.EnvironmentID.String())}
 	for _, namespace := range namespaces {
 		jobs, err := c.deps.Kube.Clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: backupJobLabel + "=" + row.ID.String(),

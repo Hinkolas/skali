@@ -48,7 +48,7 @@ func certFixture(t *testing.T, cfg Config) *kernelFixture {
 	return f
 }
 
-const certName = "demo-web-public-tls"
+const certName = "tls-demo-web-public-5c59ce82ae9851442567672b334b1998"
 
 // The certificate gate end to end: a healthy workload does not activate
 // while issuance is pending, the rollout deadline fails the run with the
@@ -66,8 +66,8 @@ func TestCertificateGatesActivation(t *testing.T) {
 
 	// The desired set carries the edge objects.
 	recorded := f.cluster.recorded()
-	require.Contains(t, recorded, "apply IngressRoute/"+f.namespace+"/demo-web-public")
-	require.Contains(t, recorded, "apply IngressRoute/"+f.namespace+"/demo-web-public-http")
+	require.Contains(t, recorded, "apply IngressRoute/"+f.namespace+"/route-demo-web-public-primary-84d18c2ac3f6fedc1433f38e899e23bf")
+	require.Contains(t, recorded, "apply IngressRoute/"+f.namespace+"/route-demo-web-public-http-5f1b04c211d4f06c08a014badc51a3fb")
 	require.Contains(t, recorded, "apply Certificate/"+f.namespace+"/"+certName)
 	require.Contains(t, recorded, "apply Middleware/"+f.namespace+"/redirect-https")
 

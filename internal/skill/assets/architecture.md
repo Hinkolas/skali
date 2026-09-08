@@ -217,6 +217,7 @@ buckets:
     quotas:
       storage: 50GB
 
+# Inactive declaration: scheduling and retention are not enforced.
 backups:
   daily:
     schedule: "0 3 * * *"
@@ -225,3 +226,5 @@ backups:
       databases: all
       buckets: all
 ```
+
+Backup policies are accepted but inactive: skali does not run scheduled backups or enforce retention. Create backups manually with `skali backup create`; inspect `skali backup --help` for restore and deletion commands.

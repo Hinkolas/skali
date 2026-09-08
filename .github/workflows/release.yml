@@ -52,13 +52,6 @@ jobs:
             ghcr.io/hinkolas/skali-web:${{ github.ref_name }}
             ${{ !contains(github.ref_name, '-') && 'ghcr.io/hinkolas/skali-web:latest' || '' }}
 
-      # Release metadata the update scanner and the coordinator read: the
-      # version and the k3s pin this release's installer carries.
-      - run: |
-          mkdir -p dist
-          go run ./cmd/skali-schema --schema release --version "${{ github.ref_name }}" --output dist/release.json
-          cat dist/release.json
-
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -66,3 +59,12 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published release metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p .cache/published-release
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern release.json --dir .cache/published-release --clobber
+          go run ./cmd/skali-schema --schema release --version "$RELEASE_TAG" --output .cache/published-release/release.json --verify

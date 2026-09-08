@@ -18,6 +18,7 @@ import (
 func main() {
 	schema := flag.String("schema", "manifest", "schema to generate: manifest, layout, node, init, or release")
 	output := flag.String("output", "", "output schema path")
+	verify := flag.Bool("verify", false, "verify existing release metadata without writing")
 	releaseVersion := flag.String("version", "", "release tag for --schema release")
 	flag.Parse()
 	if *output == "" {
@@ -44,9 +45,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error: --version is required for --schema release")
 			os.Exit(2)
 		}
-		data, err = json.MarshalIndent(installer.ReleaseMetadata{
-			Version: *releaseVersion, K3s: installer.K3sVersion,
-		}, "", "  ")
+		data, err = releaseMetadata(*releaseVersion)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown --schema %q; expected manifest, layout, node, init, or release\n", *schema)
 		os.Exit(2)
@@ -54,6 +53,24 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+
+	if *verify {
+		if *schema != "release" {
+			fmt.Fprintln(os.Stderr, "--verify requires --schema release")
+			os.Exit(2)
+		}
+		actual, err := os.ReadFile(*output)
+		var got, want installer.ReleaseMetadata
+		if err == nil {
+			err = json.Unmarshal(actual, &got)
+		}
+		_ = json.Unmarshal(data, &want)
+		if err != nil || got != want {
+			fmt.Fprintln(os.Stderr, "release metadata does not match the release version and installer k3s pin")
+			os.Exit(1)
+		}
+		return
 	}
 
 	if err := os.MkdirAll(filepath.Dir(*output), 0o755); err != nil {
@@ -64,4 +81,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+func releaseMetadata(version string) ([]byte, error) {
+	return json.MarshalIndent(installer.ReleaseMetadata{Version: version, K3s: installer.K3sVersion}, "", "  ")
 }

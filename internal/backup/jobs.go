@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -85,6 +86,14 @@ func (c *Controller) ensureTargetSecret(ctx context.Context, namespace string, c
 		if !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("backup: create target secret in %s: %w", namespace, err)
 		}
+		live, err := secrets.Get(ctx, targetSecretName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if live.Labels[backupJobLabel+"-owned"] != "true" {
+			return errors.New("backup: refusing unowned target secret")
+		}
+		secret.ResourceVersion = live.ResourceVersion
 		if _, err := secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("backup: update target secret in %s: %w", namespace, err)
 		}
@@ -93,21 +102,23 @@ func (c *Controller) ensureTargetSecret(ctx context.Context, namespace string, c
 }
 
 func (c *Controller) deleteTargetSecret(ctx context.Context, namespace string) {
-	err := c.deps.Kube.Clientset.CoreV1().Secrets(namespace).
-		Delete(ctx, targetSecretName, metav1.DeleteOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		_ = err
+	secrets := c.deps.Kube.Clientset.CoreV1().Secrets(namespace)
+	live, err := secrets.Get(ctx, targetSecretName, metav1.GetOptions{})
+	if err != nil || live.Labels[backupJobLabel+"-owned"] != "true" {
+		return
 	}
+	_ = secrets.Delete(ctx, targetSecretName, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &live.UID, ResourceVersion: &live.ResourceVersion}})
 }
 
 // jobName builds a DNS-safe Job name under the 63-character cap.
 func jobName(parts ...string) string {
-	value := strings.ToLower(strings.Join(parts, "-"))
-	if len(value) <= 63 {
-		return value
+	encoded, _ := json.Marshal(parts)
+	sum := sha256.Sum256(encoded)
+	prefix := strings.ToLower(strings.Join(parts, "-"))
+	if len(prefix) > 30 {
+		prefix = strings.TrimRight(prefix[:30], "-")
 	}
-	sum := sha256.Sum256([]byte(value))
-	return strings.TrimRight(value[:54], "-") + "-" + hex.EncodeToString(sum[:4])
+	return prefix + "-" + hex.EncodeToString(sum[:16])
 }
 
 func jobMeta(name, namespace, backupID string) metav1.ObjectMeta {
@@ -251,10 +262,11 @@ func renderVolumeJob(name, namespace, backupID, workerImage, targetSecret, claim
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{
-					Name:    "worker",
-					Image:   workerImage,
-					Args:    args,
-					EnvFrom: workerEnvFrom(targetSecret),
+					SecurityContext: &corev1.SecurityContext{RunAsUser: new(int64(0)), RunAsGroup: new(int64(0)), AllowPrivilegeEscalation: new(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"CHOWN", "FOWNER", "DAC_OVERRIDE", "FSETID"}}},
+					Name:            "worker",
+					Image:           workerImage,
+					Args:            args,
+					EnvFrom:         workerEnvFrom(targetSecret),
 					VolumeMounts: []corev1.VolumeMount{{
 						Name: "data", MountPath: "/data", ReadOnly: readOnly}},
 				}},
@@ -390,20 +402,28 @@ func relevantContainer(pod *corev1.Pod, failed bool) string {
 }
 
 func (c *Controller) deleteJob(ctx context.Context, namespace, name string) {
-	propagation := metav1.DeletePropagationBackground
-	err := c.deps.Kube.Clientset.BatchV1().Jobs(namespace).Delete(ctx, name,
-		metav1.DeleteOptions{PropagationPolicy: &propagation})
-	if err != nil && !apierrors.IsNotFound(err) {
-		_ = err
+	jobs := c.deps.Kube.Clientset.BatchV1().Jobs(namespace)
+	live, err := jobs.Get(ctx, name, metav1.GetOptions{})
+	if err != nil || live.Labels[backupJobLabel] == "" {
+		return
 	}
+	propagation := metav1.DeletePropagationBackground
+	_ = jobs.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &propagation, Preconditions: &metav1.Preconditions{UID: &live.UID, ResourceVersion: &live.ResourceVersion}})
 }
 
 // deleteJobAndWait removes a leftover Job of the same name and waits until
 // it is gone: creating over a terminating Job fails.
 func (c *Controller) deleteJobAndWait(ctx context.Context, namespace, name string) error {
 	jobs := c.deps.Kube.Clientset.BatchV1().Jobs(namespace)
-	if _, err := jobs.Get(ctx, name, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+	live, err := jobs.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
 		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if live.Labels[backupJobLabel] == "" {
+		return errors.New("backup: refusing unowned job")
 	}
 	c.deleteJob(ctx, namespace, name)
 	deadline := time.Now().Add(time.Minute)

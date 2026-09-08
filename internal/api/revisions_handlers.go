@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
 	"time"
 
@@ -160,7 +161,8 @@ func (h *revisionsHandlers) putTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Target targetPayload `json:"target"`
-		RunID  string        `json:"run_id"`
-	}{newTargetPayload(target), result.RunID.String()})
+		Warnings []diagnostic.Warning `json:"warnings,omitempty"`
+		Target   targetPayload        `json:"target"`
+		RunID    string               `json:"run_id"`
+	}{result.Warnings, newTargetPayload(target), result.RunID.String()})
 }

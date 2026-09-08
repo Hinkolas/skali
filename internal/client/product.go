@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -140,9 +141,10 @@ type ArtifactAction struct {
 }
 
 type PlanResult struct {
-	Plan     *PlanDocument    `json:"plan"`
-	Actions  []ArtifactAction `json:"actions"`
-	UpToDate bool             `json:"up_to_date"`
+	Warnings []diagnostic.Warning `json:"warnings,omitempty"`
+	Plan     *PlanDocument        `json:"plan"`
+	Actions  []ArtifactAction     `json:"actions"`
+	UpToDate bool                 `json:"up_to_date"`
 	// Orphaned lists stored value names the definition no longer
 	// references; deployments ignore them. Advisory only.
 	Orphaned []string `json:"orphaned"`
@@ -170,14 +172,15 @@ type Deployment struct {
 }
 
 type OpenedDeployment struct {
-	Deployment            *Deployment      `json:"deployment"`
-	Plan                  *PlanDocument    `json:"plan"`
-	Actions               []ArtifactAction `json:"actions"`
-	UpToDate              bool             `json:"up_to_date"`
-	Orphaned              []string         `json:"orphaned"`
-	VolumeSizesUnenforced bool             `json:"volume_sizes_unenforced"`
-	RequiredRole          string           `json:"required_role"`
-	BypassProtection      bool             `json:"bypass_protection"`
+	Warnings              []diagnostic.Warning `json:"warnings,omitempty"`
+	Deployment            *Deployment          `json:"deployment"`
+	Plan                  *PlanDocument        `json:"plan"`
+	Actions               []ArtifactAction     `json:"actions"`
+	UpToDate              bool                 `json:"up_to_date"`
+	Orphaned              []string             `json:"orphaned"`
+	VolumeSizesUnenforced bool                 `json:"volume_sizes_unenforced"`
+	RequiredRole          string               `json:"required_role"`
+	BypassProtection      bool                 `json:"bypass_protection"`
 }
 
 type CompletedDeployment struct {
@@ -650,8 +653,9 @@ func (c *Client) ListRevisions(ctx context.Context, environmentID string) ([]Rev
 // SetTargetResult is the rollback response: the moved pointer pair and the
 // run that carries the rollout.
 type SetTargetResult struct {
-	Target Target `json:"target"`
-	RunID  string `json:"run_id"`
+	Warnings []diagnostic.Warning `json:"warnings,omitempty"`
+	Target   Target               `json:"target"`
+	RunID    string               `json:"run_id"`
 }
 
 // SetTarget rolls the environment back to an existing revision.

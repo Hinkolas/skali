@@ -147,7 +147,7 @@ func newKernelFixture(t *testing.T, cfg Config) *kernelFixture {
 		st: st, kernel: kernel, journal: journalSvc, deploy: deploySvc,
 		fake: fake, cluster: cluster,
 		projectID: proj.ID, environmentID: env.ID,
-		namespace: "skali-demo-production",
+		namespace: "skali-" + env.ID.String(),
 	}
 }
 
@@ -205,7 +205,7 @@ func (f *kernelFixture) markHealthy(t *testing.T) {
 	require.NotNil(t, target.TargetRevisionID)
 	row, err := f.st.GetRevisionByID(context.Background(), *target.TargetRevisionID)
 	require.NoError(t, err)
-	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", row.Checksum[:16],
+	f.fake.SetWorkload(f.environmentID, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web", row.Checksum[:16],
 		module.WorkloadStatus{Desired: 1, Ready: 1, Updated: 1})
 	f.fake.SetPod(f.environmentID, f.namespace, "web", "web-1", "node-a",
 		module.PodStatus{Phase: "Running", Ready: true})
@@ -232,8 +232,8 @@ func TestReconcileAppliesAndActivatesDeployment(t *testing.T) {
 	ops := f.cluster.recorded()
 	require.Contains(t, ops, "apply Namespace//"+f.namespace)
 	require.Contains(t, ops, "apply Secret/"+f.namespace+"/skali-environment")
-	require.Contains(t, ops, "apply Deployment/"+f.namespace+"/demo-web")
-	require.Contains(t, ops, "apply Service/"+f.namespace+"/demo-web")
+	require.Contains(t, ops, "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.Contains(t, ops, "apply Service/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 
 	target := f.target(t)
 	require.Equal(t, result.RevisionID, *target.TargetRevisionID)
@@ -309,7 +309,7 @@ func TestReconcileDeadlineFailsRunKeepsTarget(t *testing.T) {
 	ctx := context.Background()
 	result := f.executeDeployment(t)
 	f.fake.SetFresh()
-	f.fake.SetWorkload(f.environmentID, f.namespace, "demo-web", "web", "",
+	f.fake.SetWorkload(f.environmentID, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web", "",
 		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)

@@ -6,6 +6,7 @@ package kubernetes
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -125,6 +127,9 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 	if _, missing, _ := values.Conform(result.Definition.RequiredVariables, options.Variables); len(missing) > 0 {
 		return nil, fmt.Errorf("missing project variables: %s", strings.Join(missing, ", "))
 	}
+	if _, err := compiler.ResolveRoutes(result.Definition, options.Variables); err != nil {
+		return nil, err
+	}
 	var objects []runtime.Object
 	// One shared redirect Middleware serves every `tls: automatic` route of
 	// the environment; it carries no service label, so it joins pruning and
@@ -146,6 +151,9 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 		}
 		objects = append(objects, rendered...)
 	}
+	if err := ValidateObjects(objects); err != nil {
+		return nil, err
+	}
 	return objects, nil
 }
 
@@ -165,12 +173,12 @@ func needsRedirect(project compiler.ProjectDefinition) bool {
 // composed exactly as the renderer composes it so the app module can match
 // observed Certificates against manifest routes.
 func RouteTLSName(projectName, applicationKey, routeKey string) string {
-	return objectName(objectName(projectName, applicationKey), routeKey, "tls")
+	return objectName("tls", projectName, applicationKey, routeKey)
 }
 
 func renderApplication(project compiler.ProjectDefinition, key string, options Options) ([]runtime.Object, error) {
 	application := project.Applications[key]
-	name := objectName(project.Name, key)
+	name := ApplicationName(project.Name, key)
 	// Selector labels are baked into immutable Deployment and Service
 	// selectors: stable across revisions by contract. Object labels add the
 	// environment/service/revision identity for observation and pruning.
@@ -220,7 +228,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	var objects []runtime.Object
 	for _, volumeKey := range utils.SortedKeys(application.Volumes) {
 		volume := application.Volumes[volumeKey]
-		claimName := objectName(name, volumeKey)
+		claimName := VolumeClaimName(project.Name, key, volumeKey)
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 			Name:      volumeKey,
 			MountPath: volume.MountPath,
@@ -302,7 +310,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
 				Name: volumeKey,
 				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: objectName(name, volumeKey),
+					ClaimName: VolumeClaimName(project.Name, key, volumeKey),
 				}},
 			})
 		}
@@ -334,7 +342,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			},
 		})
 		if intercepted {
-			slice, err := renderInterceptSlice(name, options.Namespace, labels, servicePorts, hostPorts, options.InterceptHostIP)
+			slice, err := renderInterceptSlice(objectName("intercept", project.Name, key), name, options.Namespace, labels, servicePorts, hostPorts, options.InterceptHostIP)
 			if err != nil {
 				return nil, err
 			}
@@ -353,6 +361,10 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		if err != nil {
 			return nil, fmt.Errorf("route %s domain: %w", routeKey, err)
 		}
+		domain, err = edge.CanonicalDomain(domain)
+		if err != nil {
+			return nil, fmt.Errorf("route %s domain: %w", routeKey, err)
+		}
 		match := edge.HostMatch(domain, route.Path)
 		backend := edge.Service{Name: name}
 		if route.Port.Name != "" {
@@ -364,8 +376,8 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			backend.Strategy = edge.StrategyP2C
 		}
 		if options.Certificates && route.TLS != "disabled" {
-			secretName := objectName(name, routeKey, "tls")
-			objects = append(objects, edge.IngressRoute(options.Namespace, objectName(name, routeKey),
+			secretName := RouteTLSName(project.Name, key, routeKey)
+			objects = append(objects, edge.IngressRoute(options.Namespace, RouteName(project.Name, key, routeKey, "primary"),
 				maps.Clone(labels), []string{edge.EntryPointWebSecure},
 				[]edge.Route{{Match: match, Service: backend}}, secretName))
 			// The plain-HTTP router redirects on `automatic` and serves the
@@ -375,14 +387,31 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			if route.TLS == "automatic" {
 				httpRoute.Middlewares = []string{edge.RedirectMiddlewareName}
 			}
-			objects = append(objects, edge.IngressRoute(options.Namespace, objectName(name, routeKey, "http"),
+			objects = append(objects, edge.IngressRoute(options.Namespace, RouteName(project.Name, key, routeKey, "http"),
 				maps.Clone(labels), []string{edge.EntryPointWeb},
 				[]edge.Route{httpRoute}, ""))
 			objects = append(objects, edge.Certificate(options.Namespace, secretName, domain, maps.Clone(labels)))
 		} else {
-			objects = append(objects, edge.IngressRoute(options.Namespace, objectName(name, routeKey),
+			objects = append(objects, edge.IngressRoute(options.Namespace, RouteName(project.Name, key, routeKey, "primary"),
 				maps.Clone(labels), []string{edge.EntryPointWeb},
 				[]edge.Route{{Match: match, Service: backend}}, ""))
+		}
+	}
+
+	// Record canonical hosts for conservative, fresh-read claim retirement.
+	resolved, err := compiler.ResolveRoutes(project, options.Variables)
+	if err != nil {
+		return nil, err
+	}
+	for _, route := range resolved {
+		if route.Application != key {
+			continue
+		}
+		for _, obj := range objects {
+			m, _ := meta.Accessor(obj)
+			if obj.GetObjectKind().GroupVersionKind() == edge.IngressRouteGVK && (m.GetName() == RouteName(project.Name, key, route.Key, "primary") || m.GetName() == RouteName(project.Name, key, route.Key, "http")) {
+				m.SetAnnotations(map[string]string{"skali.dev/route-hostname": route.Domain})
+			}
 		}
 	}
 
@@ -428,7 +457,7 @@ const DefaultReleaseTimeout = 10 * time.Minute
 // re-converging pass finds the completed one; Jobs are immutable, so the
 // name is the release identity.
 func ReleaseJobName(projectName, key, revisionChecksum string) string {
-	return objectName(projectName, key, "release", RevisionLabelValue(revisionChecksum))
+	return objectName("release", projectName, key, revisionChecksum)
 }
 
 // ReleaseServiceIdentity is the LabelService value of release-command pods:
@@ -593,7 +622,7 @@ func renderServicePorts(application compiler.Application) []corev1.ServicePort {
 		}
 		numbers[target.Number] = struct{}{}
 		ports = append(ports, corev1.ServicePort{
-			Name:       objectName("route", name),
+			Name:       routePortName(name),
 			Port:       int32(target.Number),
 			TargetPort: intstr.FromInt32(int32(target.Number)),
 			Protocol:   corev1.ProtocolTCP,
@@ -700,21 +729,30 @@ func durationSeconds(milliseconds int64) int32 {
 
 // VolumeClaimName is the PVC name of one application volume, for callers
 // outside rendering (the backup engine mounts the PVC into its Jobs). It
-// must mirror the render path exactly: the application object name first,
-// then the volume key, each pass applying the length cap.
+// hashes the original project/application/volume tuple exactly once.
 func VolumeClaimName(project, application, volume string) string {
-	return objectName(objectName(project, application), volume)
+	return objectName("volume", project, application, volume)
+}
+
+// ApplicationName is shared by workloads and their Service references.
+func ApplicationName(project, application string) string {
+	return objectName("app", project, application)
+}
+
+func RouteName(project, application, route, variant string) string {
+	return objectName("route", project, application, route, variant)
 }
 
 func objectName(parts ...string) string {
-	value := strings.ToLower(strings.Join(parts, "-"))
-	value = strings.Trim(value, "-")
-	if len(value) <= 63 {
-		return value
+	// JSON's array encoding preserves component boundaries, including hyphens.
+	encoded, _ := json.Marshal(parts)
+	sum := sha256.Sum256(encoded)
+	suffix := hex.EncodeToString(sum[:16])
+	prefix := strings.Trim(strings.ToLower(strings.Join(parts, "-")), "-")
+	if len(prefix) > 30 {
+		prefix = strings.TrimRight(prefix[:30], "-")
 	}
-	sum := sha256.Sum256([]byte(value))
-	suffix := hex.EncodeToString(sum[:4])
-	return strings.TrimRight(value[:54], "-") + "-" + suffix
+	return prefix + "-" + suffix
 }
 
 // valuesIdentity hashes the stored generations of exactly the project
@@ -771,7 +809,7 @@ func templateAnnotations(options Options, key, valuesHash string) map[string]str
 // dev process on the host. The service-name label is what kube-proxy joins
 // on; the managed-by label keeps the kube endpointslice controller from
 // garbage-collecting a slice it does not own.
-func renderInterceptSlice(serviceName, namespace string, labels map[string]string,
+func renderInterceptSlice(sliceName, serviceName, namespace string, labels map[string]string,
 	servicePorts []corev1.ServicePort, hostPorts map[string]int32, hostIP string) (*discoveryv1.EndpointSlice, error) {
 	if hostIP == "" {
 		return nil, fmt.Errorf("intercepted application requires the resolved host gateway address")
@@ -801,7 +839,7 @@ func renderInterceptSlice(serviceName, namespace string, labels map[string]strin
 	return &discoveryv1.EndpointSlice{
 		TypeMeta: metav1.TypeMeta{APIVersion: "discovery.k8s.io/v1", Kind: "EndpointSlice"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      objectName(serviceName, "local"),
+			Name:      sliceName,
 			Namespace: namespace,
 			Labels:    sliceLabels,
 		},
@@ -812,4 +850,11 @@ func renderInterceptSlice(serviceName, namespace string, labels map[string]strin
 		}},
 		Ports: ports,
 	}, nil
+}
+
+func routePortName(name string) string {
+	if len(name) <= 57 {
+		return "route-" + name
+	}
+	return objectName("route-port", name)
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/diagnostic"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
@@ -254,7 +255,19 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 // see a window where the target has already moved but the row still claims
 // the client owns it.
 func (s *Service) Promote(ctx context.Context, p *Prepared) error {
+	unlock, err := s.st.LockEnvironment(ctx, p.EnvironmentID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	routes, err := s.revisionRoutes(ctx, p.EnvironmentID, p.Revision)
+	if err != nil {
+		return err
+	}
 	return s.st.WithTx(ctx, func(q *store.Queries) error {
+		if err := s.claimRoutesTx(ctx, q, p.EnvironmentID, p.RevisionID, routes); err != nil {
+			return err
+		}
 		rows, err := q.SetEnvironmentTarget(ctx, store.SetEnvironmentTargetParams{
 			EnvironmentID:    p.EnvironmentID,
 			TargetRevisionID: &p.RevisionID,
@@ -319,7 +332,8 @@ type RollbackInput struct {
 }
 
 type RollbackResult struct {
-	RunID uuid.UUID
+	Warnings []diagnostic.Warning
+	RunID    uuid.UUID
 }
 
 // Rollback points the target at an existing revision of this environment and
@@ -328,6 +342,12 @@ type RollbackResult struct {
 // untouched target; the unique running-run index serializes rollbacks
 // against deployments.
 func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResult, error) {
+	unlock, err := s.st.LockEnvironment(ctx, in.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	row, err := s.st.GetRevisionByID(ctx, in.RevisionID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -378,7 +398,19 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		return nil, err
 	}
 
+	rev, err := s.GetRevision(ctx, in.RevisionID)
+	if err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+	}
+	routes, err := s.revisionRoutes(ctx, in.EnvironmentID, rev)
+	if err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+	}
+
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+		if err := s.claimRoutesTx(ctx, q, in.EnvironmentID, in.RevisionID, routes); err != nil {
+			return err
+		}
 		rows, err := q.SetEnvironmentTarget(ctx, store.SetEnvironmentTargetParams{
 			EnvironmentID:    in.EnvironmentID,
 			TargetRevisionID: &in.RevisionID,
@@ -399,6 +431,11 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	if err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
+	for _, warning := range compiler.Warnings(rev.Definition) {
+		if err := s.instantStep(ctx, in.Journal, run.ID, redactor, warning.Code, "Backup policy warning", warning.Message); err != nil {
+			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
+		}
+	}
 	if err := s.instantStep(ctx, in.Journal, run.ID, redactor, "promote", "Promote revision",
 		"target set to revision "+row.Checksum); err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
@@ -408,12 +445,12 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)
-		return &RollbackResult{RunID: run.ID}, nil
+		return &RollbackResult{RunID: run.ID, Warnings: compiler.Warnings(rev.Definition)}, nil
 	}
 	if err := in.Journal.FinishRun(ctx, run.ID, journal.RunSucceeded); err != nil {
 		return nil, err
 	}
-	return &RollbackResult{RunID: run.ID}, nil
+	return &RollbackResult{RunID: run.ID, Warnings: compiler.Warnings(rev.Definition)}, nil
 }
 
 // RestartInput describes one service restart: stamp the application's

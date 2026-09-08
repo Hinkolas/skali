@@ -97,7 +97,7 @@ type Project struct {
 	Applications map[string]Application `yaml:"applications,omitempty" json:"applications,omitempty" jsonschema:"Container applications keyed by stable service name."`
 	Databases    map[string]Database    `yaml:"databases,omitempty" json:"databases,omitempty" jsonschema:"Managed databases keyed by stable service name."`
 	Buckets      map[string]Bucket      `yaml:"buckets,omitempty" json:"buckets,omitempty" jsonschema:"Managed object-storage buckets keyed by stable service name."`
-	Backups      map[string]Backup      `yaml:"backups,omitempty" json:"backups,omitempty" jsonschema:"Project-wide coordinated backup policies."`
+	Backups      map[string]Backup      `yaml:"backups,omitempty" json:"backups,omitempty" jsonschema:"Accepted but inactive backup policies. Scheduling and retention are not enforced; create backups manually."`
 }
 
 type Application struct {

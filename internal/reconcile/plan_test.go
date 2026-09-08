@@ -22,7 +22,7 @@ import (
 func planDeployment(replicas *int32) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-web", Namespace: "ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "app-demo-web-714832ea87e5bc991f3f11667354c6c3", Namespace: "ns"},
 		Spec:       appsv1.DeploymentSpec{Replicas: replicas},
 	}
 }
@@ -30,7 +30,7 @@ func planDeployment(replicas *int32) *appsv1.Deployment {
 func planAutoscaler() *autoscalingv2.HorizontalPodAutoscaler {
 	return &autoscalingv2.HorizontalPodAutoscaler{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "autoscaling/v2", Kind: "HorizontalPodAutoscaler"},
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-web", Namespace: "ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "app-demo-web-714832ea87e5bc991f3f11667354c6c3", Namespace: "ns"},
 	}
 }
 
@@ -45,7 +45,7 @@ func ownedWorkload(t *testing.T, owned bool) *observe.Object {
 	return &observe.Object{
 		Ref: kube.ObjectRef{
 			GVK:       schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
-			Namespace: "ns", Name: "demo-web",
+			Namespace: "ns", Name: "app-demo-web-714832ea87e5bc991f3f11667354c6c3",
 		},
 		Kind: module.KindWorkload,
 		ManagedFields: []metav1.ManagedFieldsEntry{{
@@ -87,7 +87,7 @@ func TestPlanScaleOpsAutoscaledToFixed(t *testing.T) {
 	liveHPA := &observe.Object{
 		Ref: kube.ObjectRef{
 			GVK:       schema.GroupVersionKind{Group: "autoscaling", Version: "v2", Kind: "HorizontalPodAutoscaler"},
-			Namespace: "ns", Name: "demo-web",
+			Namespace: "ns", Name: "app-demo-web-714832ea87e5bc991f3f11667354c6c3",
 		},
 		Kind: module.KindAutoscaler,
 	}
@@ -197,7 +197,7 @@ func TestGroupObjectsSplitsByService(t *testing.T) {
 	deployment.Labels = map[string]string{"skali.dev/service": "web"}
 	service := &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-web", Namespace: "ns", Labels: map[string]string{"skali.dev/service": "web"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "app-demo-web-714832ea87e5bc991f3f11667354c6c3", Namespace: "ns", Labels: map[string]string{"skali.dev/service": "web"}},
 	}
 	grouped, refs, err := groupObjects([]runtime.Object{deployment, service})
 	require.NoError(t, err)

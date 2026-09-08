@@ -31,6 +31,7 @@ export interface ArtifactAction {
 }
 
 export interface PlanResult {
+	warnings?: DeploymentWarning[];
 	plan: PlanDocument | null;
 	actions: ArtifactAction[];
 	up_to_date: boolean;
@@ -46,8 +47,15 @@ export interface DeploymentRef {
 
 /** POST /deployments response; `deployment` is absent when up_to_date. */
 export interface OpenedDeployment {
+	warnings?: DeploymentWarning[];
 	deployment?: DeploymentRef;
 	actions?: ArtifactAction[];
 	up_to_date?: boolean;
 	bypass_protection?: boolean;
+}
+
+export interface DeploymentWarning {
+	code: string;
+	message: string;
+	paths: string[];
 }

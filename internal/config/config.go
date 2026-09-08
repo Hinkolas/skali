@@ -102,6 +102,8 @@ type API struct {
 	// RegistryHost names the managed registry in artifact references (what
 	// nodes pull and build clients push, for example localhost:5510). Empty
 	// disables the build and import surfaces.
+	ReservedHosts []string `env:"SKALI_RESERVED_HOSTS,delimiter=;,default=skali.localhost"`
+
 	RegistryHost string `env:"SKALI_REGISTRY_HOST,default="`
 
 	// RegistryEndpoint is the address skalid itself dials for digest

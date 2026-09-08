@@ -56,7 +56,7 @@ func testEnv(t *testing.T) (*Service, *observe.Fake, uuid.UUID, string) {
 	observed := observe.NewFake()
 	observed.SetFresh()
 	service := &Service{Kube: &kube.Client{}, Observed: observed.Store, Store: st}
-	return service, observed, env.ID, "skali-demo-production"
+	return service, observed, env.ID, "skali-" + env.ID.String()
 }
 
 func TestResolvePicksNewestReadyPod(t *testing.T) {

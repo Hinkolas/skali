@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Hinkolas/skali/internal/diagnostic"
 	"maps"
 	"slices"
 	"sort"
@@ -267,8 +268,9 @@ type PlanInput struct {
 // Preview is a computed plan with its artifact decisions; nothing is
 // created or mutated.
 type Preview struct {
-	Plan    *plan.Plan
-	Actions []ArtifactAction
+	Warnings []diagnostic.Warning
+	Plan     *plan.Plan
+	Actions  []ArtifactAction
 	// UpToDate: every artifact is reusable and the candidate revision
 	// checksum equals the active revision. Deploying would be meaningless.
 	UpToDate bool
@@ -307,6 +309,7 @@ type OpenInput struct {
 // the work list the client executes. UpToDate short-circuits: nothing was
 // created and there is nothing to do.
 type Opened struct {
+	Warnings   []diagnostic.Warning
 	Deployment *store.Deployment
 	RunID      uuid.UUID
 	Plan       *plan.Plan
@@ -478,7 +481,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	}
 	if preview.UpToDate && !in.Force {
 		return &Opened{
-			Plan: preview.Plan, Actions: preview.Actions, UpToDate: true,
+			Plan: preview.Plan, Actions: preview.Actions, UpToDate: true, Warnings: preview.Warnings,
 			Orphaned: preview.Orphaned, VolumeSizesUnenforced: preview.VolumeSizesUnenforced,
 		}, nil
 	}
@@ -618,6 +621,11 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 		"definition "+utils.ShortChecksum(preview.Candidate.DefinitionHash)+" validated"); err != nil {
 		return nil, err
 	}
+	for _, warning := range preview.Warnings {
+		if err := s.instantStep(ctx, in.Journal, runID, redactor, warning.Code, "Backup policy warning", warning.Message); err != nil {
+			return nil, err
+		}
+	}
 	valuesLine := "using current environment values"
 	if in.CandidateID != uuid.Nil {
 		staged := countCandidate(ctx, s.values, env.ID, in.CandidateID)
@@ -631,6 +639,7 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 	}
 
 	return &Opened{
+		Warnings:              preview.Warnings,
 		Deployment:            deployment,
 		RunID:                 runID,
 		Plan:                  preview.Plan,
@@ -1110,6 +1119,10 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 		return nil, fmt.Errorf("deploy: build candidate revision: %w", err)
 	}
 
+	if err := s.checkRoutes(ctx, env.ID, candidate); err != nil {
+		return nil, err
+	}
+
 	var active *revision.Revision
 	activeChecksum := ""
 	target, err := s.st.GetEnvironmentTarget(ctx, env.ID)
@@ -1135,6 +1148,7 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 	// Pruning is a change the deployment makes to the environment even
 	// when the revision is unchanged, so it must open a real window.
 	return &Preview{
+		Warnings:  compiler.Warnings(definition),
 		Plan:      document,
 		Actions:   actions,
 		UpToDate:  allReuse && !interceptsChanged && len(pruned) == 0 && active != nil && candidate.Checksum == activeChecksum,

@@ -191,16 +191,13 @@ func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *s
 	}
 
 	if err := scope.step(ctx, "start", "Resume environment", func(ctx context.Context, log *stepLog) error {
-		moved, err := c.deps.Store.SetEnvironmentTarget(ctx, store.SetEnvironmentTargetParams{
-			EnvironmentID:    row.EnvironmentID,
-			TargetRevisionID: row.RevisionID,
-		})
-		if err != nil {
-			return fmt.Errorf("re-promote revision: %w", err)
+		if row.RevisionID == nil {
+			return errors.New("restore has no resume revision")
 		}
-		if moved == 0 {
-			return errors.New("the environment is releasing; nothing to resume")
+		if err := c.deps.Deploy.ResumeRevision(ctx, row.EnvironmentID, *row.RevisionID); err != nil {
+			return err
 		}
+
 		if c.deps.Enqueue != nil {
 			c.deps.Enqueue(row.EnvironmentID)
 		}
@@ -222,7 +219,12 @@ func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *s
 func (c *Controller) stopEnvironment(ctx context.Context, log *stepLog, row *store.Backup) error {
 	// Capture-then-down: MarkEnvironmentDown NULLs both revision pointers,
 	// which is why the resume revision was captured at accept time.
+	unlock, err := c.deps.Store.LockEnvironment(ctx, row.EnvironmentID)
+	if err != nil {
+		return err
+	}
 	marked, err := c.deps.Store.MarkEnvironmentDown(ctx, row.EnvironmentID)
+	unlock()
 	if err != nil {
 		return fmt.Errorf("mark environment down: %w", err)
 	}
@@ -234,7 +236,7 @@ func (c *Controller) stopEnvironment(ctx context.Context, log *stepLog, row *sto
 	}
 	log.Info(ctx, "waiting for workloads to stop")
 
-	namespace := kubernetes.NamespaceName(row.ProjectName, row.EnvironmentName)
+	namespace := kubernetes.NamespaceName(row.EnvironmentID.String())
 	selector := kubernetes.EnvironmentSelector(row.EnvironmentID.String())
 	deadline := time.Now().Add(c.cfg.JobTimeout)
 	for time.Now().Before(deadline) {
@@ -329,7 +331,7 @@ func (c *Controller) restoreDatabase(ctx context.Context, log *stepLog, bctx *ba
 	identity.WorkerImage = workerImage
 	identity.TargetSecret = targetSecretName
 	identity.SnapshotObject = component.ObjectKey
-	name := jobName("skali-restore", utils.ShortID(row.ID), "db", component.ServiceKey)
+	name := jobName("skali-restore", row.ID.String(), "db", component.ServiceKey)
 	log.Info(ctx, "restoring into database "+identity.DatabaseName)
 	return c.runJob(ctx, log, renderDatabaseRestoreJob(name, substrate.Namespace, row.ID.String(), identity))
 }
@@ -381,12 +383,12 @@ func (c *Controller) restoreVolume(ctx context.Context, log *stepLog, bctx *back
 	if err != nil {
 		return err
 	}
-	namespace := kubernetes.NamespaceName(row.ProjectName, row.EnvironmentName)
+	namespace := kubernetes.NamespaceName(row.EnvironmentID.String())
 	if err := c.ensureTargetSecret(ctx, namespace, bctx.credentials); err != nil {
 		return err
 	}
 	claimName := kubernetes.VolumeClaimName(row.ProjectName, component.Application, component.Volume)
-	name := jobName("skali-restore", utils.ShortID(row.ID), "vol", component.Application, component.Volume)
+	name := jobName("skali-restore", row.ID.String(), "vol", component.Application, component.Volume)
 	log.Info(ctx, "restoring volume claim "+claimName)
 	job := renderVolumeJob(name, namespace, row.ID.String(), workerImage, targetSecretName,
 		claimName, component.ObjectKey, true)

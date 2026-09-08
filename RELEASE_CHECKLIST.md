@@ -24,9 +24,8 @@ collected at the end.
       trusted-proxy allowlist (`internal/api/middleware.go:135`); partial
       login rate-limit bypass for callers that reach the Service directly.
       Add a TRUSTED_PROXIES CIDR check.
-- [ ] Backup restore extracts tar symlinks without validating link targets
-      (`internal/backup/worker.go:349-352`); a crafted archive in the
-      backup bucket could write outside the restore root.
+- [x] Volume restore uses rooted filesystem operations, defers symlinks,
+      rejects unsafe archives, and preserves numeric ownership.
 - [ ] `godotenv.Load()` runs unconditionally in `skalid serve`
       (`internal/config/config.go:214`); a stray `.env` in the container
       workdir can supply missing config. Gate on dev builds.
@@ -42,8 +41,8 @@ collected at the end.
       `mod_timestamp`, so builds are not reproducible.
 - [ ] `build/skalid.release.Dockerfile:6` and `build/skalid.Dockerfile:11`
       use floating `alpine:3.21` (EOL ~Nov 2026); bump and digest-pin.
-- [ ] `go.mod:3` pins patch `go 1.26.1`; use `go 1.26` so 1.26.0 users do
-      not force a toolchain download.
+- [x] Pin the patched Go 1.26.8 toolchain for builds and releases;
+      vulnerability scanning gates CI.
 - [ ] `/healthz`, `/openapi.yaml`, and `/token` are served but absent from
       `api/openapi.yaml` (the `/v1/` surface is exactly in sync); add the
       root routes, `/healthz` at minimum.
@@ -194,3 +193,7 @@ Repo settings, hosting, and release-day steps. Nothing here is a commit.
 - [x] **Readable dev versions** (2026-08-26): dev default is `v0.0.0-dev`,
       matching the `v`-prefixed tags and ldflags; `Taskfile.yml` dropped
       `--always`.
+
+The six P1 fixes and their prerelease compatibility contract are described in
+[prerelease safety](docs/prerelease-safety.md). Scheduled backup policies remain
+inactive and now produce deployment warnings.

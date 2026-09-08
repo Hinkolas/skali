@@ -44,7 +44,7 @@ func (f *kernelFixture) deployedAndActive(t *testing.T) (serviceRef, volumeRef, 
 	require.NotNil(t, f.target(t).ActiveRevisionID)
 
 	serviceRef = f.seedObject(schema.GroupVersionKind{Version: "v1", Kind: "Service"},
-		module.KindService, f.namespace, "demo-web", "web")
+		module.KindService, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web")
 	volumeRef = f.seedObject(schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"},
 		module.KindVolume, f.namespace, "demo-web-data", "web")
 	namespaceRef = f.seedObject(schema.GroupVersionKind{Version: "v1", Kind: "Namespace"},
@@ -55,7 +55,7 @@ func (f *kernelFixture) deployedAndActive(t *testing.T) (serviceRef, volumeRef, 
 func (f *kernelFixture) workloadRef() kube.ObjectRef {
 	return kube.ObjectRef{
 		GVK:       schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
-		Namespace: f.namespace, Name: "demo-web",
+		Namespace: f.namespace, Name: "app-demo-web-714832ea87e5bc991f3f11667354c6c3",
 	}
 }
 
@@ -86,8 +86,8 @@ func TestTeardownDownRemovesWorkloadsAndKeepsData(t *testing.T) {
 	require.Equal(t, requeueHealthCheck, requeue, "deletion is asynchronous")
 
 	ops := f.cluster.recorded()
-	require.Contains(t, ops, "delete Deployment/"+f.namespace+"/demo-web")
-	require.Contains(t, ops, "delete Service/"+f.namespace+"/demo-web")
+	require.Contains(t, ops, "delete Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.Contains(t, ops, "delete Service/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 	require.Contains(t, ops, "delete Secret/"+f.namespace+"/skali-environment")
 	for _, op := range ops {
 		require.NotContains(t, op, "PersistentVolumeClaim", "down never touches volumes")
@@ -199,7 +199,7 @@ func TestTeardownPurgeRemovesEverything(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, requeueHealthCheck, requeue)
 	ops := f.cluster.recorded()
-	require.Contains(t, ops, "delete Deployment/"+f.namespace+"/demo-web")
+	require.Contains(t, ops, "delete Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 	require.Contains(t, ops, "delete PersistentVolumeClaim/"+f.namespace+"/demo-web-data")
 	require.Contains(t, ops, "delete Namespace/"+f.namespace)
 

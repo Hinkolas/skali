@@ -666,7 +666,7 @@
     },
     "backups": {
       "type": "object",
-      "description": "Project-wide coordinated backup policies.",
+      "description": "Accepted but inactive backup policies. Scheduling and retention are not enforced; create backups manually.",
       "additionalProperties": {
         "type": "object",
         "required": [

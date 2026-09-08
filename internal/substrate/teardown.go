@@ -110,10 +110,10 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 		return 0, fmt.Errorf("substrate: delete credential secret: %w", err)
 	}
 	if row.OwnerKind == dbstore.OwnerService {
-		if project, environment, service, ok := ownerNames(row.OwnerRef); ok {
+		if _, _, service, ok := ownerNames(row.OwnerRef); ok && row.EnvironmentID != nil {
 			if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
 				GVK:       secretGVK,
-				Namespace: kubernetes.NamespaceName(project, environment),
+				Namespace: kubernetes.NamespaceName(row.EnvironmentID.String()),
 				Name:      kubernetes.OutputSecretName("databases", service),
 			}); err != nil {
 				return 0, fmt.Errorf("substrate: delete output mirror: %w", err)

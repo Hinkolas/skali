@@ -153,6 +153,7 @@ buckets:
 
 # Project backups coordinate service-specific backup mechanisms into one
 # recovery point.
+# Inactive: scheduling and retention are not enforced. Use skali backup create.
 backups:
   daily:
     schedule: "0 3 * * *"

@@ -52,7 +52,7 @@ func TestReconcileBucketClaimGatesApplication(t *testing.T) {
 	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Equal(t, 1, claims.calls)
-	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web",
+	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3",
 		"the application must wait for the bucket claim")
 
 	tree, err := f.journal.RunTree(ctx, result.RunID)
@@ -75,7 +75,7 @@ func TestReconcileBucketClaimGatesApplication(t *testing.T) {
 	// Pass 2 applies the application; health arrives; pass 3 activates.
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web")
+	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 	f.markHealthy(t)
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestReconcileBucketWithoutSubstrateWaits(t *testing.T) {
 
 	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/demo-web")
+	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
 
 	tree, err := f.journal.RunTree(ctx, result.RunID)
 	require.NoError(t, err)

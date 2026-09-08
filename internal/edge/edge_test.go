@@ -32,7 +32,7 @@ func TestIngressRouteShape(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, routes, 1)
 	rule := routes[0].(map[string]any)
-	require.Equal(t, "Host(`app.example.com`) && PathPrefix(`/`)", rule["match"])
+	require.Equal(t, `Host("app.example.com") && PathPrefix("/")`, rule["match"])
 	require.Equal(t, "Rule", rule["kind"])
 	service := rule["services"].([]any)[0].(map[string]any)
 	require.Equal(t, "web", service["name"])

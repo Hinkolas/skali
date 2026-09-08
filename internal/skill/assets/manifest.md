@@ -355,6 +355,7 @@ applications:
 ## Backups
 
 ```yaml
+# Inactive declaration: scheduling and retention are not enforced.
 backups:
   daily:
     schedule: "0 3 * * *"   # required, five-field cron
@@ -434,3 +435,5 @@ databases:
     storage:
       size: 10GB
 ```
+
+Backup policies are accepted but inactive: skali does not run scheduled backups or enforce retention. Create backups manually with `skali backup create`; inspect `skali backup --help` for restore and deletion commands.
