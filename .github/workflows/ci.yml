@@ -1,6 +1,8 @@
 name: ci
 
-# Shared checks for contributions and releases.
+# Shared checks for contributions and releases: every push to main, every
+# pull request, and (via workflow_call) every release tag. Advisory scans
+# live in audit.yml so a new upstream CVE cannot turn an unrelated push red.
 on:
   pull_request:
   push:
@@ -10,6 +12,12 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to the same branch supersedes the running checks. Tags and
+# release calls never cancel each other.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   go:
@@ -36,9 +44,30 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: sqlc-dev/setup-sqlc@v5
+        with:
+          # Pinned to the version sqlc generate was last run with locally;
+          # a mismatch shows up as generated drift, so bump both together.
+          sqlc-version: "1.30.0"
+
+      # Drift checks: the tree must already contain what the tools would
+      # produce. Each prints the offending diff before failing.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^web/'))
+          if [ -n "$unformatted" ]; then
+            echo "gofmt -w these files:"; echo "$unformatted"; exit 1
+          fi
+      - name: go mod tidy is clean
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+      - name: Generated schemas and sqlc store are current
+        run: |
+          go generate ./internal/manifest ./internal/layout ./internal/installer
+          sqlc generate
+          git diff --exit-code
+
       # web/ is excluded like task test: node_modules occasionally ships
       # stray Go packages.
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
       - run: go vet $(go list ./... | grep -v '/web/')
       - run: go test $(go list ./... | grep -v '/web/')
       - name: Linux restore ownership
@@ -62,7 +91,6 @@ jobs:
       - run: npm run check
       - run: npm run lint
       - run: npm run build
-      - run: npm audit
 
   release-config:
     runs-on: ubuntu-latest

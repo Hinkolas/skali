@@ -92,12 +92,12 @@ type VMConfig struct {
 // InitConfig is the cluster initialization configuration (init.yaml)
 // consumed by `skali cluster init --config`.
 type InitConfig struct {
-	Endpoints EndpointsConfig   `yaml:"endpoints" json:"endpoints"`
-	TLS       TLSInitConfig     `yaml:"tls" json:"tls"`
-	Admin     AdminConfig       `yaml:"admin" json:"admin"`
-	Skalid    SkalidConfig      `yaml:"skalid" json:"skalid"`
-	Web       WebConfig         `yaml:"web" json:"web"`
-	Storage   *StorageInitConfig `yaml:"storage,omitempty" json:"storage,omitempty"`
+	Endpoints EndpointsConfig      `yaml:"endpoints" json:"endpoints"`
+	TLS       TLSInitConfig        `yaml:"tls" json:"tls"`
+	Admin     AdminConfig          `yaml:"admin" json:"admin"`
+	Skalid    SkalidConfig         `yaml:"skalid" json:"skalid"`
+	Web       WebConfig            `yaml:"web" json:"web"`
+	Storage   *StorageInitConfig   `yaml:"storage,omitempty" json:"storage,omitempty"`
 	Platforms *PlatformsInitConfig `yaml:"platforms,omitempty" json:"platforms,omitempty"`
 }
 

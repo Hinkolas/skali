@@ -118,7 +118,7 @@ func TestEnvironmentSeries(t *testing.T) {
 		return nil
 	}
 	require.NotNil(t, valueAt(now.Add(-3*time.Minute)))
-	require.EqualValues(t, 100, *valueAt(now.Add(-3*time.Minute)))
+	require.EqualValues(t, 100, *valueAt(now.Add(-3 * time.Minute)))
 	// The in-progress trailing bucket carries the newest sample.
 	last := app.CPUMillicores[59]
 	require.NotNil(t, last)

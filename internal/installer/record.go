@@ -357,16 +357,16 @@ func RemoveRecord(ctx context.Context, runner host.Runner) error {
 // them the stamped hash.
 func (r *Record) CanonicalYAML() (string, error) {
 	type canonicalRecord struct {
-		Version        string      `yaml:"version"`
-		InstallationID string      `yaml:"installationId"`
-		Provider       string      `yaml:"provider"`
-		Cluster        string      `yaml:"cluster"`
-		Ownership      string      `yaml:"ownership"`
-		Management     string      `yaml:"management,omitempty"`
-		Node           NodeRecord  `yaml:"node"`
-		Join           *JoinRecord `yaml:"join,omitempty"`
-		Endpoints      *Endpoints  `yaml:"endpoints,omitempty"`
-		TLS            *TLSConfig  `yaml:"tls,omitempty"`
+		Version            string      `yaml:"version"`
+		InstallationID     string      `yaml:"installationId"`
+		Provider           string      `yaml:"provider"`
+		Cluster            string      `yaml:"cluster"`
+		Ownership          string      `yaml:"ownership"`
+		Management         string      `yaml:"management,omitempty"`
+		Node               NodeRecord  `yaml:"node"`
+		Join               *JoinRecord `yaml:"join,omitempty"`
+		Endpoints          *Endpoints  `yaml:"endpoints,omitempty"`
+		TLS                *TLSConfig  `yaml:"tls,omitempty"`
 		RegistryNode       string      `yaml:"registryNode,omitempty"`
 		StorageDriver      string      `yaml:"storageDriver,omitempty"`
 		PlatformPreference []string    `yaml:"platformPreference,omitempty"`

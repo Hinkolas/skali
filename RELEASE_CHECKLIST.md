@@ -159,8 +159,11 @@ Repo settings, hosting, and release-day steps. Nothing here is a commit.
       `latest` manifest, and the `skali-web:latest` tag is skipped for
       prerelease tags. New `.github/workflows/ci.yml` (go vet + go test
       against a Postgres service, `npm run check` + `npm run lint`,
-      `goreleaser check`) runs on tags only (via `release.yml`, which
-      publishes only when it passes) or by hand from the Actions tab. Made the suite green for CI: the
+      `goreleaser check`) runs on every push to main and pull request, and
+      on tags via `release.yml`, which publishes only when it passes.
+      2026-09-08: gofmt, `go mod tidy`, and generated-code drift checks
+      added; govulncheck and `npm audit` moved to the daily `audit.yml`
+      (run it by hand before tagging). Made the suite green for CI: the
       cliprompt text-editing test now drives a sized real PTY (the huh
       nil-model panic came from a zero-width pty), one Svelte file
       formatted, one external-link eslint pass-through.

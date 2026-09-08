@@ -88,12 +88,12 @@ func newClusterInitCmd() *cobra.Command {
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
 			opts := installer.InitOptions{
-				Endpoints:     installer.Endpoints{API: config.Endpoints.API, Registry: config.Endpoints.Registry, S3: config.Endpoints.S3},
-				TLS:           installer.TLSConfig{IssuerEmail: config.TLS.IssuerEmail, ACMEServer: config.TLS.ACMEServer},
-				SkalidImage:   config.Skalid.Image,
-				SkalidImageID: config.Skalid.ImageID,
-				WebImage:      config.Web.Image,
-				WebImageID:    config.Web.ImageID,
+				Endpoints:          installer.Endpoints{API: config.Endpoints.API, Registry: config.Endpoints.Registry, S3: config.Endpoints.S3},
+				TLS:                installer.TLSConfig{IssuerEmail: config.TLS.IssuerEmail, ACMEServer: config.TLS.ACMEServer},
+				SkalidImage:        config.Skalid.Image,
+				SkalidImageID:      config.Skalid.ImageID,
+				WebImage:           config.Web.Image,
+				WebImageID:         config.Web.ImageID,
 				Layout:             asserted,
 				StorageDriver:      config.StorageDriver(),
 				PlatformPreference: config.PlatformPreference(),
