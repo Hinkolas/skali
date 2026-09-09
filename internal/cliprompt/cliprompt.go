@@ -338,7 +338,7 @@ func newTypedConfirmField(
 		Validate(validate)
 }
 
-func (s *Session) run(ctx context.Context, field huh.Field) error {
+func (s *Session) run(ctx context.Context, field huh.Field, keymaps ...*huh.KeyMap) error {
 	form := huh.NewForm(huh.NewGroup(field)).
 		WithInput(s.in).
 		WithOutput(s.out).
@@ -346,6 +346,9 @@ func (s *Session) run(ctx context.Context, field huh.Field) error {
 		WithAccessible(false).
 		WithShowHelp(false).
 		WithShowErrors(true)
+	if len(keymaps) > 0 {
+		form.WithKeyMap(keymaps[0])
+	}
 	err := form.RunWithContext(ctx)
 	if errors.Is(err, huh.ErrUserAborted) || errors.Is(err, context.Canceled) {
 		return ErrAborted

@@ -11,7 +11,8 @@ import (
 )
 
 func newClusterStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var all bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show the installation state and health of this host",
 		Args:  cobra.NoArgs,
@@ -42,7 +43,7 @@ func newClusterStatusCmd() *cobra.Command {
 				printFreshHeader(out, status.Host)
 				return nil
 			}
-			printStatus(out, status)
+			printStatus(out, status, all)
 			switch status.Host.State {
 			case installer.StateDamaged:
 				return fmt.Errorf("this installation is damaged")
@@ -54,4 +55,6 @@ func newClusterStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "include cancelled and removed node history")
+	return cmd
 }

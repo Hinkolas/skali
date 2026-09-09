@@ -195,3 +195,13 @@ LISTEN 0      4096   [::1]:10248          [::]:*
 	require.NoError(t, err)
 	require.Equal(t, []string{"127.0.0.1:6444", "*:6443", "[::1]:10248"}, listening)
 }
+
+func TestCoordinatorRouteAddressUsesPrivatePeerRoute(t *testing.T) {
+	fake := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
+		"ip": func(cmd host.Command) (host.Result, error) {
+			require.Equal(t, []string{"route", "get", "10.10.1.1"}, cmd.Args)
+			return host.Result{Stdout: "10.10.1.1 via 10.10.0.1 dev enp7s0 src 10.10.2.10 uid 0"}, nil
+		},
+	}}
+	require.Equal(t, "10.10.2.10", CoordinatorRouteAddress(context.Background(), fake, "https://10.10.1.1:6444"))
+}

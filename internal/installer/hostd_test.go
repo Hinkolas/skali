@@ -2,6 +2,8 @@ package installer
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,4 +120,29 @@ func TestCacheCoordinatorStatePersistsOnlyChangedReferences(t *testing.T) {
 	require.NoError(t, CacheCoordinatorState(context.Background(), fake, response))
 	require.Equal(t, writes, len(fake.Writes),
 		"unchanged heartbeat state must not rewrite the atomic record")
+}
+
+func TestCancelledEnrollmentCleanupRetainsHostdAndRetiresStateLast(t *testing.T) {
+	fake := linuxHost()
+	fake.Handlers["systemd-run"] = func(cmd host.Command) (host.Result, error) { return host.Result{}, nil }
+	require.NoError(t, ScheduleHostdSelfRemoval(context.Background(), fake, true))
+	command := fake.Commands[len(fake.Commands)-1]
+	require.Contains(t, command.Args, "--collect")
+	script := command.Args[len(command.Args)-1]
+	require.NotContains(t, script, "rm -f "+HostdBinaryPath)
+	require.NotContains(t, script, "rm -rf "+StateDir)
+	require.Contains(t, script, "mv "+StateDir+" ")
+	require.Less(t, strings.Index(script, "daemon-reload"), strings.Index(script, "mv "+StateDir))
+	// Manual cleanup stops both agents and any old pending timer before reuse.
+	fake.Handlers["systemctl"] = func(host.Command) (host.Result, error) { return host.Result{}, nil }
+	fake.FS[HostdBinaryPath] = []byte("hostd")
+	require.NoError(t, RemoveHostd(context.Background(), fake, false))
+	require.Contains(t, fake.FS, HostdBinaryPath)
+	found := false
+	for _, command := range fake.Commands {
+		if slices.Contains(command.Args, "skali-hostd-cleanup.timer") {
+			found = true
+		}
+	}
+	require.True(t, found)
 }

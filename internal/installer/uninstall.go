@@ -566,7 +566,7 @@ func UninstallNode(ctx context.Context, runner host.Runner, record *Record, plan
 
 	if record.Reconciled() {
 		progress.Start("Remove Skali host services")
-		if err := RemoveHostd(ctx, runner, true); err != nil {
+		if err := RemoveHostd(ctx, runner, !record.EnrolledOnly()); err != nil {
 			return err
 		}
 		progress.Done("")

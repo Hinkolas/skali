@@ -56,13 +56,17 @@ func runClusterRoot(cmd *cobra.Command) error {
 	case installer.StateUnmanaged:
 		printFreshHeader(out, detected)
 		return unmanagedError()
-	case installer.StateInterrupted, installer.StateOrphaned:
+	case installer.StateInterrupted, installer.StateOrphaned, installer.StateEnrolled:
 		status, err := installer.GatherStatus(ctx, runner())
 		if err != nil {
 			return err
 		}
 		printStatus(out, status)
 		if !cliprompt.Interactive() {
+			return nil
+		}
+		if detected.State == installer.StateEnrolled && detected.Record.Lifecycle != nil && detected.Record.Lifecycle.Status == installer.InstallStatusEnrolled && detected.Record.Lifecycle.Phase == installer.InstallPhaseAwaitingApply {
+			fmt.Fprintln(out, "Review skali cluster plan on an active controller, then apply or initialize the cluster.")
 			return nil
 		}
 		return runRecoveryMenu(ctx, out, status)
@@ -121,7 +125,7 @@ func printFreshHeader(out *os.File, detected *installer.Host) {
 }
 
 // printStatus renders the status block.
-func printStatus(out *os.File, status *installer.Status) {
+func printStatus(out *os.File, status *installer.Status, all ...bool) {
 	detected := status.Host
 	record := detected.Record
 	style := clirender.StyleFor(out)
@@ -241,14 +245,14 @@ func printStatus(out *os.File, status *installer.Status) {
 			}
 		}
 		printStatusRow(out, style, "bootstrap", strings.Join(parts, ", "))
-	} else {
+	} else if detected.State != installer.StateEnrolled {
 		printStatusRow(out, style, "cluster", style.Red("kubernetes api unreachable"))
 	}
 	for _, problem := range detected.Problems {
 		printStatusRow(out, style, "problem", style.Red(problem))
 	}
 	if record != nil && record.Reconciled() {
-		printReconciledStatus(out, status)
+		printReconciledStatus(out, status, all...)
 	}
 	fmt.Fprintln(out)
 }
@@ -257,13 +261,13 @@ func printStatusRow(out *os.File, style *clirender.Style, label, value string) {
 	fmt.Fprintf(out, "  %s %s\n", style.Muted(fmt.Sprintf("%-10s", label)), value)
 }
 
-func printReconciledStatus(out *os.File, status *installer.Status) {
+func printReconciledStatus(out *os.File, status *installer.Status, all ...bool) {
 	style := clirender.StyleFor(out)
 	if status.Reconciled == nil {
 		record := status.Host.Record
 		if status.Host.State == installer.StateEnrolled {
 			printStatusRow(out, style, "enrollment",
-				style.BrightYellow("awaiting cluster apply"))
+				style.BrightYellow(enrollmentStatus(record)))
 			if record.Coordinator != nil &&
 				len(record.Coordinator.Endpoints) > 0 {
 				printStatusRow(out, style, "coordinator",
@@ -339,6 +343,9 @@ func printReconciledStatus(out *os.File, status *installer.Status) {
 		fmt.Fprintln(out, "  "+style.Muted("managed nodes"))
 	}
 	for _, node := range nodes {
+		if (len(all) == 0 || !all[0]) && (node.Phase == clusterstate.NodePhaseRemoved || node.Phase == clusterstate.NodePhaseCancelled) {
+			continue
+		}
 		heartbeat := "never"
 		if !node.LastSeen.IsZero() {
 			heartbeat = now.Sub(node.LastSeen).Round(time.Second).String() + " ago"
@@ -366,11 +373,15 @@ func shortRevision(value string) string {
 
 func runRecoveryMenu(ctx context.Context, out *os.File, status *installer.Status) error {
 	reader := bufio.NewReader(os.Stdin)
+	resumeLabel := "Resume or edit inputs"
+	if status.Host.Record != nil && status.Host.Record.EnrolledOnly() {
+		resumeLabel = "Resume enrollment"
+	}
 	choice, err := promptSession(out, reader).Select(ctx, cliprompt.SelectOptions{
 		Title:       "How should Skali recover this installation?",
 		Description: "Diagnosis is read-only; other actions may ask for confirmation.",
 		Options: []cliprompt.Option{
-			{Label: "Resume or edit inputs", Value: "resume"},
+			{Label: resumeLabel, Value: "resume"},
 			{Label: "Diagnose", Value: "diagnose"},
 			{Label: "Repair", Value: "repair"},
 			{Label: "Uninstall", Value: "uninstall"},
@@ -423,38 +434,7 @@ func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reade
 		return errors.New("the interrupted installation has no recoverable inputs")
 	}
 	if record.Reconciled() && record.EnrolledOnly() {
-		tokenFile, err := cliprompt.Line(reader,
-			"  enrollment token file path (empty to paste the token): ")
-		if err != nil {
-			return err
-		}
-		token := ""
-		if tokenFile == "" {
-			token, err = cliprompt.Secret(reader, "  enrollment token: ")
-		} else {
-			data, readErr := os.ReadFile(tokenFile)
-			if readErr != nil {
-				return readErr
-			}
-			token = strings.TrimSpace(string(data))
-		}
-		if err != nil {
-			return err
-		}
-		endpoint := ""
-		if record.Coordinator != nil && len(record.Coordinator.Endpoints) > 0 {
-			endpoint = record.Coordinator.Endpoints[0]
-		}
-		endpoint, err = cliprompt.LineDefault(reader,
-			"  coordinator ["+endpoint+"]: ", endpoint)
-		if err != nil {
-			return err
-		}
-		resumed, err := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
-			Server: endpoint, Token: token,
-			Capabilities: append([]string(nil), record.Node.Capabilities...),
-			Network:      record.Node.Network(),
-		})
+		resumed, err := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{Interactive: true})
 		if err != nil {
 			return err
 		}
@@ -487,7 +467,7 @@ func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reade
 		}
 		token := ""
 		if tokenFile == "" {
-			token, err = cliprompt.Secret(reader, "  join token: ")
+			token, err = promptJoinToken(ctx, reader)
 			if err != nil {
 				return err
 			}
@@ -496,7 +476,7 @@ func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reade
 			if err != nil {
 				return fmt.Errorf("read join token file %s: %w", tokenFile, err)
 			}
-			token = strings.TrimSpace(string(data))
+			token = clusterstate.NormalizeToken(string(data))
 		}
 		claims, err := installer.InspectJoinToken(token)
 		if err != nil {
@@ -684,4 +664,17 @@ func goArch(machine string) string {
 	default:
 		return machine
 	}
+}
+
+func enrollmentStatus(record *installer.Record) string {
+	if record != nil && record.Lifecycle != nil && record.Lifecycle.Status == installer.InstallStatusFailed {
+		return "enrollment incomplete; resume with sudo skali cluster join"
+	}
+	if record != nil && record.Coordinator != nil && !record.Coordinator.LastHeartbeatAt.IsZero() {
+		if time.Since(record.Coordinator.LastHeartbeatAt) < 30*time.Second {
+			return "agent connected; awaiting cluster apply"
+		}
+		return "awaiting cluster apply; coordinator heartbeat is stale"
+	}
+	return "enrolled; waiting for first agent heartbeat"
 }

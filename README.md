@@ -115,11 +115,11 @@ init.yaml`); the schemas for both are in [`schemas/`](schemas/).
 ### More nodes
 
 ```sh
-# on the server: print a one-use join invitation
-sudo skali cluster token
+# on the server: print a one-use join command with capability defaults
+sudo skali cluster token --role agent --capabilities application
 
 # on each new host, after installing the CLI
-sudo skali cluster join skali.example.com --token-file ./invitation
+sudo skali cluster join --token 'skali.…'
 
 # back on the server: review and converge the topology in one step
 sudo skali cluster plan
@@ -128,7 +128,10 @@ sudo skali cluster apply --wait
 
 Nodes declare capabilities (`application`, `database`, `edge`, ...) and
 skali places workloads accordingly. Servers can be joined the same way for a
-highly available control plane.
+highly available control plane. Enrollment retries temporary connection failures;
+after an interruption, run `sudo skali cluster join` to resume the saved attempt.
+See [enrollment and recovery](docs/enrollment.md) for token inputs, pending-node
+removal, and upgrading an existing alpha cluster.
 
 ### Day two
 

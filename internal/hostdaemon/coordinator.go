@@ -124,6 +124,9 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load coordinator kubeconfig: %w", err)
 	}
+	// Eleven agents polling every five seconds need 8.8 QPS for polls alone
+	// (four requests each), before leases, enrollment, and mirror repair.
+	config.QPS, config.Burst = 50, 100
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
@@ -252,6 +255,14 @@ func (d *CoordinatorDaemon) controlLoop(ctx context.Context, store *clusterstate
 	defer ticker.Stop()
 	var reconcileCancel context.CancelFunc
 	var reconcileDone <-chan error
+	var mirrors clusterstate.MirrorReconciler
+	var mirrorDone <-chan error
+	var mirrorCancel context.CancelFunc
+	defer func() {
+		if mirrorCancel != nil {
+			mirrorCancel()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -259,6 +270,15 @@ func (d *CoordinatorDaemon) controlLoop(ctx context.Context, store *clusterstate
 				reconcileCancel()
 			}
 			return
+		case err := <-mirrorDone:
+			mirrorDone = nil
+			if mirrorCancel != nil {
+				mirrorCancel()
+				mirrorCancel = nil
+			}
+			if err != nil && !errors.Is(err, context.Canceled) {
+				d.log("cluster mirror reconciliation failed", "error", err)
+			}
 		case err := <-reconcileDone:
 			reconcileDone = nil
 			reconcileCancel = nil
@@ -273,16 +293,29 @@ func (d *CoordinatorDaemon) controlLoop(ctx context.Context, store *clusterstate
 			leader, err := d.acquireOrRenew(ctx, client)
 			if err != nil {
 				d.log("coordinator leader lease failed", "error", err)
+				if mirrorCancel != nil {
+					mirrorCancel()
+				}
 				if reconcileCancel != nil {
 					reconcileCancel()
 				}
 				continue
 			}
 			if !leader {
+				if mirrorCancel != nil {
+					mirrorCancel()
+				}
 				if reconcileCancel != nil {
 					reconcileCancel()
 				}
 				continue
+			}
+			if mirrorDone == nil {
+				mirrorCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				mirrorCancel = cancel
+				done := make(chan error, 1)
+				mirrorDone = done
+				go func() { done <- mirrors.Sync(mirrorCtx, store) }()
 			}
 			if reconcileDone == nil {
 				reconcileCtx, cancel := context.WithCancel(ctx)
@@ -348,6 +381,9 @@ func (d *CoordinatorDaemon) actionFor(ctx context.Context, store *clusterstate.S
 	node, exists := state.Nodes[nodeID]
 	if !exists {
 		return clusterstate.AgentAction{}, errors.New("node is not enrolled")
+	}
+	if node.Phase == clusterstate.NodePhaseCancelled {
+		return clusterstate.AgentAction{ID: "cleanup-" + nodeID, Type: "cleanup"}, nil
 	}
 	if node.Phase == clusterstate.NodePhaseUninstalling ||
 		node.Phase == clusterstate.NodePhaseAwaitingCleanup {

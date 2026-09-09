@@ -16,16 +16,22 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	mathrand "math/rand/v2"
 	"net"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type EnrollmentClient struct {
-	Endpoint string
-	Token    string
-	Timeout  time.Duration
+	Endpoint    string
+	Endpoints   []string
+	Token       string
+	Timeout     time.Duration
+	RetryBudget time.Duration
+	OnRetry     func(attempt int, delay time.Duration, err error)
 }
 
 func (c EnrollmentClient) Preflight(ctx context.Context, host HostFacts) (PreflightResponse, error) {
@@ -49,28 +55,85 @@ func (c EnrollmentClient) enrollmentRequest(ctx context.Context, path string, in
 	if err != nil {
 		return err
 	}
+	endpoints := []string{endpoint}
+	for _, candidate := range c.Endpoints {
+		normalized, err := NormalizeEndpoint(candidate)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(endpoints, normalized) {
+			endpoints = append(endpoints, normalized)
+		}
+	}
 	body, err := json.Marshal(input)
 	if err != nil {
 		return err
 	}
+
 	timeout := c.Timeout
 	if timeout <= 0 {
-		timeout = 10 * time.Second
+		timeout = 30 * time.Second
 	}
-	client := &http.Client{
-		Timeout:   timeout,
-		Transport: &http.Transport{TLSClientConfig: pinnedTLSConfig(token.CAPin)},
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	budget := c.RetryBudget
+	if budget <= 0 {
+		budget = 2 * time.Minute
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimSuffix(endpoint, "/")+path, bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	transport := &http.Transport{TLSClientConfig: pinnedTLSConfig(token.CAPin)}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Timeout: timeout, Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	for attempt := 0; ; attempt++ {
+		err := enrollmentAttempt(ctx, client, endpoints[attempt%len(endpoints)], c.Token, path, body, output)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("enrollment request interrupted: %w", ctx.Err())
+		}
+		if !retryableEnrollmentError(err) {
+			return err
+		}
+		delay := time.Second << min(attempt, 3)
+		delay = min(10*time.Second, delay+time.Duration(mathrand.Int64N(int64(delay/2)+1)))
+		var problem *EnrollmentError
+		if errors.As(err, &problem) && problem.RetryAfter > delay {
+			delay = problem.RetryAfter
+		}
+		if c.OnRetry != nil {
+			c.OnRetry(attempt+1, delay, err)
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("enrollment response not confirmed: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+// EnrollmentError preserves the protocol classification without parsing human copy.
+type EnrollmentError struct {
+	Status     int
+	Code       string
+	Message    string
+	RetryAfter time.Duration
+}
+
+func (e *EnrollmentError) Error() string { return "coordinator rejected enrollment: " + e.Message }
+
+type coordinatorTrustError struct{ error }
+
+func enrollmentAttempt(ctx context.Context, client *http.Client, endpoint, token, path string, body []byte, output any) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(endpoint, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+c.Token)
+	request.Header.Set("Authorization", "Bearer "+NormalizeToken(token))
 	response, err := client.Do(request)
 	if err != nil {
 		return classifyEnrollmentError(endpoint, err)
@@ -81,16 +144,51 @@ func (c EnrollmentClient) enrollmentRequest(ctx context.Context, path string, in
 		return err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		var problem map[string]string
-		if json.Unmarshal(data, &problem) == nil && problem["error"] != "" {
-			return fmt.Errorf("coordinator rejected enrollment: %s", problem["error"])
+		var problem struct {
+			Code    string `json:"code"`
+			Message string `json:"error"`
 		}
-		return fmt.Errorf("coordinator returned HTTP %d", response.StatusCode)
+		_ = json.Unmarshal(data, &problem)
+		if problem.Message == "" {
+			problem.Message = fmt.Sprintf("HTTP %d", response.StatusCode)
+		}
+		return &EnrollmentError{Status: response.StatusCode, Code: problem.Code, Message: strings.ReplaceAll(problem.Message, NormalizeToken(token), "[redacted]"), RetryAfter: retryAfter(response.Header.Get("Retry-After"), time.Now())}
 	}
 	if err := json.Unmarshal(data, output); err != nil {
 		return fmt.Errorf("decode coordinator response: %w", err)
 	}
 	return nil
+}
+
+func retryAfter(value string, now time.Time) time.Duration {
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(min(seconds, 120)) * time.Second
+	}
+	if deadline, err := http.ParseTime(value); err == nil {
+		return max(0, deadline.Sub(now))
+	}
+	return 0
+}
+
+func retryableEnrollmentError(err error) bool {
+	var trust *coordinatorTrustError
+	if errors.As(err, &trust) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var problem *EnrollmentError
+	if errors.As(err, &problem) {
+		switch problem.Status {
+		case 408, 429, 500, 502, 503, 504:
+			return true
+		}
+		return false
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) && dns.IsNotFound {
+		return false
+	}
+	var netError net.Error
+	return errors.As(err, &netError) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func pinnedTLSConfig(pin string) *tls.Config {
@@ -99,7 +197,7 @@ func pinnedTLSConfig(pin string) *tls.Config {
 		InsecureSkipVerify: true, // replaced by exact CA pin verification below
 		VerifyConnection: func(connection tls.ConnectionState) error {
 			if len(connection.PeerCertificates) == 0 {
-				return errors.New("coordinator presented no certificate")
+				return &coordinatorTrustError{errors.New("coordinator presented no certificate")}
 			}
 			roots := x509.NewCertPool()
 			intermediates := x509.NewCertPool()
@@ -116,14 +214,14 @@ func pinnedTLSConfig(pin string) *tls.Config {
 				}
 			}
 			if !pinned {
-				return errors.New("coordinator CA does not match the enrollment token")
+				return &coordinatorTrustError{errors.New("coordinator CA does not match the enrollment token")}
 			}
 			_, err := connection.PeerCertificates[0].Verify(x509.VerifyOptions{
 				Roots: roots, Intermediates: intermediates,
 				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 			})
 			if err != nil {
-				return fmt.Errorf("verify coordinator certificate: %w", err)
+				return &coordinatorTrustError{fmt.Errorf("verify coordinator certificate: %w", err)}
 			}
 			return nil
 		},
@@ -187,7 +285,7 @@ func AgentTLSConfig(caPEM, certPEM, keyPEM []byte) (*tls.Config, error) {
 		RootCAs: pool, InsecureSkipVerify: true,
 		VerifyConnection: func(connection tls.ConnectionState) error {
 			if len(connection.PeerCertificates) == 0 {
-				return errors.New("coordinator presented no certificate")
+				return &coordinatorTrustError{errors.New("coordinator presented no certificate")}
 			}
 			intermediates := x509.NewCertPool()
 			for _, peer := range connection.PeerCertificates[1:] {

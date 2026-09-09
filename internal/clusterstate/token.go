@@ -16,10 +16,11 @@ import (
 const TokenPrefix = "skali."
 
 type Token struct {
-	Version    int    `json:"version"`
-	Invitation string `json:"invitation"`
-	Credential string `json:"credential"`
-	CAPin      string `json:"caPin"`
+	Version      int      `json:"version"`
+	Invitation   string   `json:"invitation"`
+	Credential   string   `json:"credential"`
+	CAPin        string   `json:"caPin"`
+	Coordinators []string `json:"coordinators,omitempty"`
 }
 
 func NewToken(invitation, caPin string) (encoded string, token Token, err error) {
@@ -45,7 +46,7 @@ func NewToken(invitation, caPin string) (encoded string, token Token, err error)
 }
 
 func ParseToken(value string) (Token, error) {
-	value = strings.TrimSpace(value)
+	value = NormalizeToken(value)
 	if !strings.HasPrefix(value, TokenPrefix) {
 		return Token{}, errors.New("not a reconciled Skali enrollment token")
 	}
@@ -96,4 +97,27 @@ func MatchCredential(hash, credential string) bool {
 	}
 	sum := sha256.Sum256([]byte(credential))
 	return subtle.ConstantTimeCompare(expected, sum[:]) == 1
+}
+
+// NormalizeToken accepts tokens copied from wrapped terminals and multiline fields.
+func NormalizeToken(value string) string { return strings.Join(strings.Fields(value), "") }
+
+// WithCoordinators adds discovery hints without changing invitation authority.
+func WithCoordinators(encoded string, endpoints []string) (string, error) {
+	token, err := ParseToken(encoded)
+	if err != nil {
+		return "", err
+	}
+	for _, endpoint := range endpoints {
+		normalized, err := NormalizeEndpoint(endpoint)
+		if err != nil {
+			return "", err
+		}
+		token.Coordinators = append(token.Coordinators, normalized)
+	}
+	body, err := json.Marshal(token)
+	if err != nil {
+		return "", err
+	}
+	return TokenPrefix + base64.RawURLEncoding.EncodeToString(body), nil
 }
