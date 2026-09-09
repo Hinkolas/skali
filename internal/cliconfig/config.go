@@ -89,12 +89,33 @@ func Save(cfg *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("cliconfig: mkdir: %w", err)
 	}
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("cliconfig: protect directory: %w", err)
+	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("cliconfig: marshal: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// A new, private inode both repairs existing loose permissions and avoids
+	// following a config-file symlink. Rename leaves the previous file intact
+	// if writing fails, rather than truncating a working login configuration.
+	f, err := os.CreateTemp(filepath.Dir(path), ".config-*")
+	if err != nil {
+		return fmt.Errorf("cliconfig: create temporary file: %w", err)
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("cliconfig: write %s: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("cliconfig: sync: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("cliconfig: close: %w", err)
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		return fmt.Errorf("cliconfig: replace %s: %w", path, err)
 	}
 	return nil
 }

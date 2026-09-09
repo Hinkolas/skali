@@ -1,10 +1,27 @@
-# First prerelease safety changes
+# v0.1.0-alpha.1 installation baseline
 
-This release establishes a fresh-install baseline. Environment namespaces use
-`skali-<environment UUID>` and workload resource names include an identity hash.
+`00001_baseline.sql` replaces the 30 unpublished development migrations.
+It creates the final schema directly, without the retired plaintext-value
+and database-backup tables or development data rewrites. This is the last
+history squash: installations created from `v0.1.0-alpha.1` are the baseline
+for future numbered, incremental migrations. Released migration files must
+not be edited, removed, or renumbered; changes to persisted state must provide
+an upgrade path from this baseline.
+
+An existing database from the old development history cannot be upgraded to
+this baseline in place, even if it has no environments. The embedded migration
+runner checks a baseline marker before applying migrations or reporting status,
+so the old migration `00001` cannot silently count as the new baseline.
+It refuses old databases without changing their schema or data. Do not reset
+their Goose version table or insert the marker to bypass this check. Follow
+the export and fresh-install procedure below for any development data you need.
+Use `skalid migrate up` rather than invoking Goose directly so this check runs.
+
+Environment namespaces use `skali-<environment UUID>` and workload resource
+names include an identity hash.
 Existing names, volumes, and namespaces are never automatically renamed,
-adopted, or deleted. Migration refuses databases containing legacy environments;
-startup also refuses legacy managed namespaces before starting controllers.
+adopted, or deleted. Startup also refuses legacy managed namespaces before
+starting controllers.
 
 Before replacing an existing development installation, stop writes and export
 its databases, buckets, and volume contents using the old installation. Keep

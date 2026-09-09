@@ -7,6 +7,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -34,16 +35,19 @@ import (
 )
 
 type Deps struct {
-	Auth      *auth.Service
-	Store     *store.Store
-	DB        *pgxpool.Pool
-	Projects  *project.Service
-	Values    *valuestore.Service
-	Deploy    *deploy.Service
-	Artifacts *artifactstore.Service
-	Builds    *buildstore.Service
-	Journal   *journal.Service
-	Reconcile *reconcile.Kernel
+	// TrustProxy identifies reverse proxies allowed to supply client addresses.
+	// Nil trusts no forwarded headers.
+	TrustProxy func(netip.Addr) bool
+	Auth       *auth.Service
+	Store      *store.Store
+	DB         *pgxpool.Pool
+	Projects   *project.Service
+	Values     *valuestore.Service
+	Deploy     *deploy.Service
+	Artifacts  *artifactstore.Service
+	Builds     *buildstore.Service
+	Journal    *journal.Service
+	Reconcile  *reconcile.Kernel
 	// Registry is the managed-registry client; a zero-host client means
 	// the build and import surfaces answer registry_disabled.
 	Registry *registry.Client
@@ -138,7 +142,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 	r.Use(middleware.RequestID)
 	// realIP must precede everything that reads RemoteAddr (rate-limit keys,
 	// session metadata).
-	r.Use(realIP)
+	r.Use(realIP(d.TrustProxy))
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(platformHeaders(d.InstanceID, d.Version))

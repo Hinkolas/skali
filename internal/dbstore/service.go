@@ -45,9 +45,8 @@ const (
 	StateReleased  = "released"
 )
 
-// ClusterStates is the pool lifecycle machine. The hibernated dev idle
-// state was retired 2026-07-31 (the dev substrate is always on); migration
-// 00013 folds surviving rows back to active.
+// ClusterStates is the pool lifecycle machine. The dev substrate stays up
+// while the platform runs, so there is no idle hibernation state.
 var ClusterStates = lifecycle.Machine[string]{
 	States: []string{StateActive, StateReleasing, StateReleased},
 	Transitions: map[string][]string{

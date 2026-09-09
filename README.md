@@ -26,25 +26,33 @@ it.
 - **Backups** of environment data to your own S3 target, cluster upgrades,
   diagnosis and repair, single node or many.
 
-**Status: initial development (0.x).** skali is used daily for development
+**Status: preparing v0.1.0-alpha.1.** skali is used daily for development
 and staging, and production hardening is tracked in [`ROADMAP.md`](ROADMAP.md).
 Until v1.0.0 nothing is guaranteed: the manifest schema, CLI, API, and
 on-disk formats may change in breaking ways between minor versions, upgrades
 may require manual steps, and we do not recommend it for production workloads
-you cannot afford to lose. Releases are real releases and safe to run, but
-read the release notes before every upgrade.
+you cannot afford to lose. The first alpha is an early testing release; read
+the release notes and [known limitations](docs/limitations.md) before deploying.
+Use trusted operators and workloads: project roles do not provide hostile
+workload isolation (see [security boundaries](docs/security.md)).
 
 ## Install the CLI
 
+Once `v0.1.0-alpha.1` is published, install that exact prerelease:
+
 ```sh
-curl -fsSL https://skali.dev/install.sh | sh
+curl -fsSL https://github.com/Hinkolas/skali/releases/download/v0.1.0-alpha.1/install.sh | SKALI_VERSION=v0.1.0-alpha.1 sh
 ```
+
+Before that release exists, build from this checkout with `task install:cli`;
+see [contributor setup](docs/development.md) for prerequisites. Prereleases
+are excluded from GitHub's `latest` URL, so keep the explicit version pin.
 
 The script picks the binary for your OS and architecture (macOS and Linux,
 amd64 and arm64), verifies its checksum, and installs it: `/usr/local/bin`
-on Linux (asks for sudo), `~/.local/bin` on macOS. Set `SKALI_VERSION=v0.1.0`
-to pin a release. Run it on your laptop to develop and deploy, and on every
-server that should become a skali node.
+on Linux (asks for sudo), `~/.local/bin` on macOS. Set `SKALI_VERSION` on
+the `sh` command, as above, to pin a release. Run it on your laptop to develop
+and deploy, and on every server that should become a skali node.
 
 ## Run a project locally
 
@@ -72,14 +80,16 @@ its real database and bucket credentials.
 
 ## Set up a server
 
-Any Linux server with a public IP works; a Mac runs skali inside a managed
-Lima VM. Point DNS at the server first: an A record for the platform domain
+Use a Debian-family Linux server (Debian or Ubuntu) with `apt`, systemd,
+and an amd64 or arm64 CPU; the managed host installer does not support
+arbitrary Linux distributions. A Mac runs skali inside a managed Lima VM.
+Point DNS at the server first: an A record for the platform domain
 (for example `skali.example.com`), one for the registry
 (`cr.skali.example.com`), and one per application domain. Ports 80 and 443
 must be reachable.
 
 ```sh
-curl -fsSL https://skali.dev/install.sh | sh
+curl -fsSL https://github.com/Hinkolas/skali/releases/download/v0.1.0-alpha.1/install.sh | SKALI_VERSION=v0.1.0-alpha.1 sh
 sudo skali cluster
 ```
 
@@ -155,7 +165,7 @@ the browser, and manages users.
 ## The manifest
 
 ```yaml
-# yaml-language-server: $schema=https://skali.dev/schemas/v1/skali.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-alpha.1/schemas/skali.schema.json
 version: "1"
 name: guestbook
 

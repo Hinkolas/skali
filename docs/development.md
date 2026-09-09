@@ -41,17 +41,15 @@ admin`) per project and per environment; see
 ## Local setup
 
 Requirements: Go 1.26.8+, Node 22+, [go-task](https://taskfile.dev), Docker
-(for the k3d dev cluster and image builds), a Postgres for the control-plane
-database, and sqlc when changing queries.
+with Docker Compose (for the project Postgres, k3d dev cluster, and image
+builds), and sqlc when changing queries.
 
 ```sh
 # 1. Environment (DATABASE_URL, AUTH_SECRET, ...)
 cp .env.example .env    # then set AUTH_SECRET: openssl rand -base64 32
 
-# 2. A Postgres reachable at DATABASE_URL with a database named "skali".
-#    `task db` does this through a machine-global ~/Taskfile.yml that
-#    provides a db:start task; without one, run any local Postgres and
-#    point DATABASE_URL at it.
+# 2. Start this repository's Postgres 17 on 127.0.0.1:55432.
+#    compose.yaml owns its container and persistent volume.
 task db
 
 # 3. Migrate and create the first admin
@@ -66,7 +64,8 @@ go run ./cmd/skali remote add dev http://localhost:7070
 go run ./cmd/skali remote status
 
 # 6. The console (vite on :5173, BFF to the API)
-cd web && cp .env.example .env && npm install
+cp web/.env.example web/.env
+(cd web && npm ci)
 task dev:web
 ```
 
@@ -88,6 +87,25 @@ so the local platform always runs your code.
 The OpenAPI contract lives in [`api/openapi.yaml`](../api/openapi.yaml) and
 is served at `GET /openapi.yaml` (`/api/openapi.yaml` on a cluster); a
 router-walk test keeps every registered route in the spec.
+
+### Database migration baseline
+
+`migrations/00001_baseline.sql` is the fresh-install schema for
+`v0.1.0-alpha.1`. Future schema changes belong in new, sequentially numbered
+Goose migrations starting at `00002`; never squash, rewrite, or renumber
+released migrations. Preserve existing installation identities and data with
+incremental migrations, and test upgrades against populated databases as well
+as fresh installs. Regenerate the store with `sqlc generate` after schema edits.
+
+Use `skalid migrate up` (or `go run ./cmd/skalid migrate up`) to apply the
+embedded migrations and their baseline compatibility check. `migrate status`
+performs the same check. Direct Goose commands bypass it; reserve them for
+disposable development databases, including destructive Down testing.
+Databases from the old, unpublished 30-migration history need a separate fresh
+installation; see [prerelease safety](prerelease-safety.md) before replacing one.
+Run `TEST_DATABASE_URL=... go test ./migrations` to exercise fresh installs,
+repeat migration with existing data, baseline rollback/reapply, and refusal of
+the old history.
 
 ## Manifest tooling
 
@@ -116,9 +134,8 @@ them; a test compiles every manifest fence in the skill.
 ## Tests
 
 ```sh
-# DB-backed tests create an ephemeral database per test on this server:
-export TEST_DATABASE_URL=postgres://dev:dev@localhost:5432/dev?sslmode=disable
-task test
+# Start the project Postgres and run all Go tests, including DB-backed tests:
+task test:db
 cd web && npm run check
 
 # Live cluster tests (observation, apply/prune, healing) against a
@@ -139,7 +156,12 @@ task test:cluster
 ```
 
 Bare `go test ./...` skips DB-backed tests when `TEST_DATABASE_URL` is
-unset; use `task test` to be sure they ran.
+unset. `task test` also skips them unless you set `TEST_DATABASE_URL`; use
+`task test:db` to start the project database and run them automatically.
+Each test creates and drops its own database. `task db:stop` preserves the
+development database; do not delete the Compose volume to fix a migration
+error without first exporting any data you need. An external Postgres is
+also supported: set `DATABASE_URL` and `TEST_DATABASE_URL` yourself.
 
 ## Building
 

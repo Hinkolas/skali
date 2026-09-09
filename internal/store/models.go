@@ -464,6 +464,10 @@ type Session struct {
 	ReauthenticatedAt time.Time
 }
 
+type SkaliSchemaBaseline struct {
+	Version string
+}
+
 type Step struct {
 	ID              uuid.UUID
 	RunID           uuid.UUID

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -98,7 +99,7 @@ func requestLogger(next http.Handler) http.Handler {
 }
 
 // InstanceHeader carries the installation identity on every response,
-// including errors: the value is minted with the database (migration 00015)
+// including errors: the value is minted with the database (the schema baseline)
 // and changes exactly when a cluster is uninstalled and reinstalled. Clients
 // pin it per remote to tell a reinstalled cluster apart from an expired
 // session; internal/client owns the pinning side. This is a convenience
@@ -127,23 +128,44 @@ func platformHeaders(instanceID, version string) func(http.Handler) http.Handler
 	}
 }
 
-// realIP folds the proxy-reported client address into r.RemoteAddr: X-Real-IP
-// first, else the rightmost X-Forwarded-For entry — the one appended by the
-// nearest hop. These headers are trusted because the daemon is documented to
-// run behind the operator's reverse proxy or the SvelteKit BFF. (chi's RealIP
-// middleware is deprecated for using the leftmost, client-spoofable value.)
-func realIP(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
-			r.RemoteAddr = ip
-		} else if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
-				r.RemoteAddr = ip
+// realIP accepts forwarding headers only from a trusted socket peer. Walk
+// X-Forwarded-For from the nearest hop to the first untrusted address; entries
+// beyond that address were supplied by an untrusted caller. Invalid input
+// falls back to the socket peer. X-Real-IP is for proxies that overwrite it.
+func realIP(trust func(netip.Addr) bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			peer, err := netip.ParseAddr(clientIP(r))
+			if err == nil && trust != nil && trust(peer.Unmap()) {
+				if values, present := r.Header["X-Forwarded-For"]; present {
+					parts := strings.Split(strings.Join(values, ","), ",")
+					addresses := make([]netip.Addr, len(parts))
+					valid := true
+					for i, part := range parts {
+						addresses[i], err = netip.ParseAddr(strings.TrimSpace(part))
+						if err != nil {
+							valid = false
+							break
+						}
+					}
+					if valid {
+						for i := len(addresses) - 1; i >= 0; i-- {
+							peer = addresses[i].Unmap()
+							if !trust(peer) {
+								break
+							}
+						}
+						r.RemoteAddr = peer.String()
+					}
+				} else if values := r.Header.Values("X-Real-IP"); len(values) == 1 {
+					if ip, err := netip.ParseAddr(strings.TrimSpace(values[0])); err == nil {
+						r.RemoteAddr = ip.Unmap().String()
+					}
+				}
 			}
-		}
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // clientIP returns the request's client address without the port; realIP has

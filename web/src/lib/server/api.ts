@@ -49,7 +49,8 @@ export function clearSessionCookie(cookies: Cookies): void {
 /**
  * Headers that forward the browser's identity to the API, so sessions carry
  * the real device (session lists) and rate limits key on the real client IP —
- * not the BFF's. The API trusts X-Real-IP because it sits behind the BFF.
+ * reported by the BFF. The API accepts X-Real-IP only from a trusted proxy
+ * peer; the managed BFF itself accepts traffic only from the Traefik edge.
  */
 export function clientMeta(
 	request: Request,

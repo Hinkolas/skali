@@ -18,7 +18,8 @@ import (
 
 // pinnedKeyPEM and pinnedKeyID pin the libtrust key ID derivation: the
 // registry indexes its trusted keys by exactly this string, so any drift
-// here would make every minted token unverifiable.
+// here would make every minted token unverifiable. This is a publicly known
+// test key; never use it to sign tokens for an actual registry.
 const (
 	pinnedKeyPEM = `-----BEGIN EC PRIVATE KEY-----
 MHcCAQEEIPEHnHCc0EcOYzY6FEB8/qOJWiZPUJUDLg2ymun3du4XoAoGCCqGSM49

@@ -52,9 +52,11 @@ be relaxed once migration between nodes is implemented.
 
 There is no `skali cluster restore` yet. Recovering an installation on a
 fresh host means reinstalling, restoring the system database from your own
-backup, and re-pushing images with `skali deploy`. Keep a copy of
-`/var/lib/skali/installation.yaml` with your backups: nothing in the cluster
-can recreate it. Environment data (databases, buckets, volumes) is covered
+backup, and re-pushing images with `skali deploy`. Preserve the original
+`AUTH_SECRET` and `/var/lib/skali/installation.yaml` securely with your
+system-database backup: a restored database cannot decrypt its environment
+values, TOTP secrets, or backup credentials without the original key. See
+[security and key recovery](security.md). Environment data (databases, buckets, volumes) is covered
 by `skali backup`, but skali's own state is not backed up automatically.
 
 ## Builds run on your machine

@@ -7,9 +7,7 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/project"
-	"github.com/Hinkolas/skali/migrations"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"sync"
@@ -132,32 +130,4 @@ func TestRetiredClaimSurvivesRestartAndTargetLock(t *testing.T) {
 	require.NoError(t, restarted.ReleaseAbsentHostnames(ctx, f.environmentID, map[string]bool{}))
 	_, err = f.st.GetHostnameClaim(ctx, "example.com")
 	require.Error(t, err)
-}
-
-func TestLegacyEnvironmentMigrationRefusesWithoutMutation(t *testing.T) {
-	f := newFixture(t)
-	sql, err := migrations.FS.ReadFile("00029_environment_identity.sql")
-	require.NoError(t, err)
-	_, err = f.st.Pool.Exec(context.Background(), string(sql))
-	require.ErrorContains(t, err, "fresh installation")
-	_, err = f.st.GetEnvironmentByID(context.Background(), f.environmentID)
-	require.NoError(t, err)
-}
-
-func TestMigrationPreflightRunsBeforeOlderMigrations(t *testing.T) {
-	f := newFixture(t)
-	ctx := context.Background()
-	// Simulate an installation predating the fresh-install baseline. Even
-	// before goose considers its pending migrations, population must block it.
-	_, err := f.st.Pool.Exec(ctx, "DELETE FROM goose_db_version WHERE version_id >= 14")
-	require.NoError(t, err)
-	db := stdlib.OpenDB(*f.st.Pool.Config().ConnConfig)
-	defer db.Close()
-	_, err = migrations.Up(ctx, db)
-	require.ErrorContains(t, err, "no migrations were applied")
-	_, err = f.st.GetEnvironmentByID(ctx, f.environmentID)
-	require.NoError(t, err)
-	var count int
-	require.NoError(t, f.st.Pool.QueryRow(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id>=14").Scan(&count))
-	require.Zero(t, count)
 }

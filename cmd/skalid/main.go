@@ -47,6 +47,7 @@ import (
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/podexec"
 	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/proxytrust"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
 	"github.com/Hinkolas/skali/internal/registrytoken"
@@ -349,10 +350,21 @@ func runServe() error {
 			return secret.Data, nil
 		}
 	}
+	prefixes, err := proxytrust.Parse(cfg.TrustedProxies)
+	if err != nil {
+		return err
+	}
+	trustedProxies := proxytrust.New(prefixes)
+	proxyCtx, cancelProxies := context.WithCancel(ctx)
+	defer cancelProxies()
+	if kubeClient != nil {
+		go trustedProxies.Run(proxyCtx, kubeClient.Clientset)
+	}
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.StripAPIPrefix(api.NewRouter(api.Deps{
 			Auth:               authSvc,
+			TrustProxy:         trustedProxies.Contains,
 			Store:              st,
 			DB:                 pool,
 			Projects:           projectSvc,

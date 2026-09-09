@@ -20,6 +20,42 @@ func TestLoadMissingFileIsEmptyConfig(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestSaveRepairsExistingPermissions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path, err := Path()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o644))
+	require.NoError(t, os.Chmod(filepath.Dir(path), 0o755))
+	require.NoError(t, Save(&Config{}))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	info, err = os.Stat(filepath.Dir(path))
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+}
+
+func TestSaveReplacesSymlinkWithoutWritingTarget(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path, err := Path()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	target := filepath.Join(dir, "target")
+	require.NoError(t, os.WriteFile(target, []byte("untouched"), 0o644))
+	require.NoError(t, os.Symlink(target, path))
+	require.NoError(t, Save(&Config{}))
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "untouched", string(data))
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.True(t, info.Mode().IsRegular())
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
 func TestSaveLoadRoundTripAndPermissions(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

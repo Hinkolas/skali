@@ -15,7 +15,7 @@ values they require. The same definition deploys unchanged to a local
   `skali validate` when unsure.
 - Editors get completion and inline validation from the published schema
   by putting this on the first line:
-  `# yaml-language-server: $schema=https://skali.dev/schemas/v1/skali.schema.json`
+  `# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-alpha.1/schemas/skali.schema.json`
 
 Top level:
 

@@ -1,0 +1,71 @@
+# Keep the default rules. Exceptions match BOTH an exact fixture path and
+# its exact synthetic value; a new credential in the same file still fails.
+# Historical seed values are retained here so the full history can be scanned.
+title = "skali secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ["(^|/)cmd/skalid/seed\\.go$"]
+regexTarget = "secret"
+regexes = ["^whsec_1234567890$"]
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ["(^|/)internal/bundle/testdata/local\\-bootstrap\\.yaml$"]
+regexTarget = "secret"
+regexes = ["^Z2VuZXJhdGVkLXBhc3N3b3Jk$"]
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ["(^|/)internal/valuestore/valuestore_test\\.go$"]
+regexTarget = "secret"
+regexes = ["^0123456789abcdef0123456789abcdef$"]
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["kubernetes-secret-yaml"]
+paths = ["(^|/)internal/bundle/testdata/local\\-bootstrap\\.yaml$"]
+regexTarget = "secret"
+regexes = ["^ADMIN_EMAIL: ZGV2QHNrYWxpLmxvY2FsaG9zdA==$"]
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["kubernetes-secret-yaml"]
+paths = ["(^|/)internal/bundle/testdata/local\\-skalid\\.yaml$"]
+regexTarget = "secret"
+regexes = ["^AUTH_SECRET: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=$"]
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["private-key"]
+paths = ["(^|/)internal/registrytoken/registrytoken_test\\.go$"]
+regexTarget = "secret"
+regexes = ["^\\-\\-\\-\\-\\-BEGIN EC PRIVATE KEY\\-\\-\\-\\-\\-\\nMHcCAQEEIPEHnHCc0EcOYzY6FEB8/qOJWiZPUJUDLg2ymun3du4XoAoGCCqGSM49\\nAwEHoUQDQgAEZprVjE6IElO10HHFdqXFvUYvbV0PFaadLpDmlDwhvuN0Q2zcMdt8\\nUYk8Fu5SqO9ZSpaEhhngdg1sR6vwkq8SuA==\\n\\-\\-\\-\\-\\-END EC PRIVATE KEY\\-\\-\\-\\-\\-$"]
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["stripe-access-token"]
+paths = ["(^|/)cmd/skalid/seed\\.go$"]
+regexTarget = "secret"
+regexes = ["^sk_live_51H0000000000000000$"]
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["stripe-access-token"]
+paths = ["(^|/)cmd/skalid/seed\\.go$"]
+regexTarget = "secret"
+regexes = ["^sk_test_51H0000000000000000$"]

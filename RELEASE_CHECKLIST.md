@@ -1,4 +1,4 @@
-# 0.1.0 release checklist
+# v0.1.0-alpha.1 release checklist
 
 Findings from the pre-release audit (2026-08-24), grouped by where the work
 happens: in the codebase, or outside it (repo settings, hosting, release
@@ -14,16 +14,10 @@ collected at the end.
 
 ### Strongly recommended
 
-- [ ] **Squash migrations to a clean 00001 before the tag.** `00013` has
-      no `-- +goose Down` (breaks `goose down`) and `00014`/`00016`
-      contain "pre-release wipe" DROP TABLEs. No prior installs exist, so
-      squashing is free now and impossible after 0.1.0.
+(none left)
+
 ### Optional (hardening backlog, fine after 0.1.0)
 
-- [ ] `realIP` trusts `X-Real-IP` / `X-Forwarded-For` with no
-      trusted-proxy allowlist (`internal/api/middleware.go:135`); partial
-      login rate-limit bypass for callers that reach the Service directly.
-      Add a TRUSTED_PROXIES CIDR check.
 - [x] Volume restore uses rooted filesystem operations, defers symlinks,
       rejects unsafe archives, and preserves numeric ownership.
 - [ ] `godotenv.Load()` runs unconditionally in `skalid serve`
@@ -52,8 +46,6 @@ collected at the end.
       example.com-style values.
 - [ ] `install.sh` private-repo language (GITHUB_TOKEN branch, lines
       11, 46-49, 76) becomes dead code once public; simplify.
-- [ ] `internal/cliconfig/config.go:96`: `Save` never rechmods a
-      pre-existing wider-mode token file.
 - [ ] Align `web/package.json` version (`0.0.1`) with the release tag.
 - [ ] **Prebaked dev node image** (cold-start follow-up to the built-in
       image imports in `internal/localdev/images.go`): publish a
@@ -71,21 +63,17 @@ collected at the end.
 
 ## B. Outside the codebase
 
-Repo settings, hosting, and release-day steps. Nothing here is a commit.
+Repo settings, hosting, and release-day steps; the setup script is versioned,
+but these settings must be applied on GitHub.
 
 ### Non-optional
 
-- [ ] **Register `skali.dev` and serve install.sh plus the schemas.** The
-      README installs via `https://skali.dev/install.sh`; that URL must
-      redirect to (or mirror) the `install.sh` release asset on GitHub.
-      Serve `schemas/*.json` (four files) one-to-one at
-      `https://skali.dev/schemas/v1/<file>` with
-      `Content-Type: application/schema+json` and
-      `Access-Control-Allow-Origin: *` (browser editors need CORS).
-      Decision 2026-08-26: host manually until the docs site exists;
-      re-copy after any `go generate` that changes `schemas/`. The
-      installed agent skill writes the `skali.schema.json` URL into every
-      manifest, so both must resolve before the tag.
+- [ ] **Verify the pinned alpha install and schema URLs after publication.**
+      README installation uses the GitHub `v0.1.0-alpha.1` release asset with
+      `SKALI_VERSION` set on `sh`; the editor schema URL uses that same tag on
+      raw.githubusercontent.com. No custom domain is needed to install.
+      Schema `$id` values remain stable identifiers under `skali.dev`; they
+      are not the download URLs used by the README or installed agent skill.
 - [ ] **Make the repository public** before the tag. `install.sh`
       downloads from public release URLs and the README clones it.
 - [ ] **Flip GHCR packages public after the first push.** Packages created
@@ -95,12 +83,12 @@ Repo settings, hosting, and release-day steps. Nothing here is a commit.
       `skali dev` and `skali cluster init` fail on every fresh machine
       until this manual one-time setting is made.
 - [ ] **Rehearse the release end to end** on a prerelease tag
-      (`task release:tag V=v0.1.0-rc.1`; tags are cut with that task, never
+      (`task release:tag V=v0.1.0-alpha.1`; tags are cut with that task, never
       `git tag` by hand): `install.sh` on a clean Linux server and
       a clean Mac, `sudo skali cluster` through init with the published
       images, `skali dev` outside the repo, `skali cluster upgrade` from a
       released binary, and `skali cluster reset-password` (never run on a
-      live cluster yet). Then tag `rc.2` and update to it from the console
+      live cluster yet). Then tag `v0.1.0-alpha.2` and update to it from the console
       (System / Software update on the beta channel): every node's hostd
       and k3s move, the bundle rolls, and the console reconnects.
 - [ ] **Cluster nodes reach GitHub.** Console updates download
@@ -108,17 +96,47 @@ Repo settings, hosting, and release-day steps. Nothing here is a commit.
       scans api.github.com; confirm egress or set `SKALI_RELEASE_BASE`
       in `/etc/skali/hostd.env` and `SKALI_UPDATE_FEED_URL` to a mirror.
 
-### Strongly recommended
+### Before accepting public contributions
 
-- [ ] **Rewrite history to drop the binary blob** (`c8d709a`) before the
-      repo goes public, while there are no other clones:
-      `git branch -rd origin/rework`, then
-      `git filter-repo --path skali --invert-paths --force`, re-add
-      `origin`, force-push `main`. Optionally delete the stale `rework`
-      branch on GitHub.
+- [ ] **Enable public GitHub protections.** Review
+      `.github/main-protection.json`, then run
+      `scripts/configure-public-repo.sh --apply` immediately after making the
+      repository public. It enables private vulnerability reporting, secret
+      scanning, push protection, and required CI on main, including for admins;
+      force pushes and deletion are blocked. Pull requests need passing checks
+      and resolved conversations; zero required approvals supports a solo
+      maintainer. Existing branch protection is never overwritten.
+      Confirm that Security / Report a vulnerability is available and that
+      the four required check names match an actual PR run.
+      On 2026-09-09 GitHub refused branch protection for the private repository
+      on the current plan (403); private vulnerability reporting returned 404.
+      Dependabot alerts were enabled successfully.
+
+### Optional history cleanup
+
+- [ ] Historical guestbook binaries remain in old commits (roughly 21 MB in
+      total). They are not credentials and do not block publication. A history
+      rewrite is optional, irreversible for existing clones, and requires a
+      separate decision. Do not run the old root-binary filter command: the
+      earlier root `skali` blob is no longer the relevant finding.
 
 ## Done
 
+- [x] **Public-readiness fixes (2026-09-09).** Token config saves repair file
+      permissions atomically. Forwarded client addresses require trusted peers;
+      platform proxy discovery uses exact pod IPs and the console has a Traefik
+      ingress policy. Regression tests cover spoofed headers, discovery failure,
+      and existing loose token files. Documented encryption-key preservation and
+      the trusted-workload boundary; removed the unsupported install domain and
+      safety claims. Added project-owned Compose Postgres and `task test:db`.
+      Full-history Gitleaks runs in CI with exact synthetic-fixture exceptions;
+      realistic-looking seed tokens were replaced with obvious fixture strings.
+
+- [x] **Squash migrations before the first alpha tag.**
+      `00001_baseline.sql` creates the final schema directly and has a complete
+      Down path. A baseline marker rejects the old development history without
+      changing it. Future releases append migrations and preserve this baseline;
+      no further history squash after `v0.1.0-alpha.1`.
 - [x] **ROADMAP.md reconciled** (2026-08-26): status section refreshed,
       permission system, metrics, bucket backup, console cleanup, the
       console-scope decision, and skill/schema lockstep checked off; new
@@ -137,8 +155,8 @@ Repo settings, hosting, and release-day steps. Nothing here is a commit.
       R-milestone, "cli-dev transcript", and "later milestone" reference in
       Go code, tests, and `.dockerignore` rewritten in plain terms,
       including three user-facing strings (`--build` help and error, the
-      `build_executor` API error). Only `migrations/*.sql` still carry R4/R5
-      notes; they go with the migration squash.
+      `build_executor` API error). The migration squash also removed the
+      remaining historical R4/R5 notes.
 - [x] **LICENSE and SECURITY.md** (2026-08-26): Apache-2.0 (canonical
       text from apache.org), a security policy using GitHub private
       vulnerability reporting, and a License section in the README.
@@ -188,9 +206,9 @@ Repo settings, hosting, and release-day steps. Nothing here is a commit.
       `.gitignore` covers `/skali`, `/skalid`, `/skali-hostd`. History
       rewrite is tracked in B.
 - [x] **README rewritten for users** (2026-08-26): install via
-      `skali.dev/install.sh`, local run, server setup, deploy, manifest,
+      a release script, local run, server setup, deploy, manifest,
       docs index. Contributor material moved to `docs/development.md`
-      (documents the `task db` dependency on a global `~/Taskfile.yml`);
+      (now uses project-owned Docker Compose);
       `.env.example` names database `skali` to match the Taskfile; the
       docs pages are linked.
 - [x] **Readable dev versions** (2026-08-26): dev default is `v0.0.0-dev`,

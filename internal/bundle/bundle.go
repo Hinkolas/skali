@@ -1216,6 +1216,8 @@ spec:
               value: https://%[4]s
             - name: ADDRESS_HEADER
               value: x-forwarded-for
+            - name: XFF_DEPTH
+              value: "1"
           readinessProbe:
             httpGet:
               path: /healthz
@@ -1234,6 +1236,28 @@ spec:
   ports:
     - port: 80
       targetPort: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: skali-web-ingress
+  namespace: %[1]s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: skali-web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 3000
 `, Namespace, production.WebImage, podAnnotations, production.IngressHost)
 }
 

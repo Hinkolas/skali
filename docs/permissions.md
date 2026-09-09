@@ -535,11 +535,9 @@ deferred until something needs to read it.
 - `users.create_projects` boolean default false.
 - Bootstrap unchanged: `skalid user create --role admin`.
 
-Backfill of existing installations: none. Existing `member` users keep
-their accounts and hold no project membership until an admin grants one;
-`skalid migrate up` prints a notice naming them when migration 00019
-lands (on a cluster that is the migrate init container's log). Existing
-admins are unaffected.
+Project membership and environment access are part of the
+`v0.1.0-alpha.1` schema baseline. New `member` users hold no project access
+until membership is granted; creating an account does not make it an admin.
 
 ## Enforcement shape
 
@@ -627,3 +625,10 @@ mapping.
 - Internal-tools colleague: `create_projects` on, `admin` of their own
   projects, member nowhere else. Their environments are `normal` priority
   and yield to production; they cannot raise them.
+
+## Workload trust boundary
+
+These roles govern skali API operations. They do not isolate application network
+traffic or sandbox hostile containers. Deploy access lets someone run code on
+the shared cluster; grant it only to trusted people. See
+[security boundaries](security.md) for the alpha's isolation limits.

@@ -243,7 +243,7 @@ var seedProjects = []seedProject{
 				values: map[string]string{
 					"APP_DOMAIN":     "shop.example.com",
 					"SESSION_SECRET": "prod-session-secret-9f8e7d6c",
-					"STRIPE_KEY":     "sk_live_51H0000000000000000",
+					"STRIPE_KEY":     "fixture-stripe-production",
 					"SENTRY_DSN":     "https://abc@o1.ingest.sentry.io/1",
 				},
 				history: []seedRun{
@@ -268,7 +268,7 @@ var seedProjects = []seedProject{
 				values: map[string]string{
 					"APP_DOMAIN":     "shop-staging.example.com",
 					"SESSION_SECRET": "staging-session-secret",
-					"STRIPE_KEY":     "sk_test_51H0000000000000000",
+					"STRIPE_KEY":     "fixture-stripe-staging",
 					"SENTRY_DSN":     "https://abc@o1.ingest.sentry.io/2",
 				},
 				history: []seedRun{
@@ -406,8 +406,8 @@ var seedProjects = []seedProject{
 					"APP_DOMAIN":   "mail.example.com",
 					"SMTP_HOST":    "smtp.postmarkapp.com",
 					"SMTP_USER":    "postmark-user",
-					"SMTP_PASS":    "postmark-secret-token",
-					"WEBHOOK_KEY":  "whsec_1234567890",
+					"SMTP_PASS":    "fixture-smtp-password",
+					"WEBHOOK_KEY":  "fixture-webhook-key",
 					"DEFAULT_FROM": "no-reply@example.com",
 				},
 				history: []seedRun{

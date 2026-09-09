@@ -11,6 +11,8 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/sethvargo/go-envconfig"
+
+	"github.com/Hinkolas/skali/internal/proxytrust"
 )
 
 // Logging is shared by every binary, including ones with no database access.
@@ -54,9 +56,15 @@ type API struct {
 	Base
 	HTTPAddr string `env:"HTTP_ADDR,default=:7070"`
 
-	// AuthSecret keys everything the auth system encrypts at rest (e.g. TOTP
-	// secrets); rotating it forces users to re-enroll 2FA.
+	// AuthSecret encrypts TOTP secrets, environment values, and backup-target
+	// credentials. Preserve it with system-database backups. Changing it without
+	// re-encrypting existing records loses access to those records; no supported
+	// key-rotation command exists.
 	AuthSecret string `env:"AUTH_SECRET,required"`
+
+	// Additional trusted reverse proxies, as comma-separated CIDRs. Empty trusts
+	// only discovered platform proxies when connected to Kubernetes.
+	TrustedProxies string `env:"SKALI_TRUSTED_PROXIES"`
 
 	// InstanceName is the operator-chosen display name for this installation,
 	// shown by clients (the web shell's org slot); empty leaves naming to the
@@ -185,6 +193,9 @@ type API struct {
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.
 func (a *API) Validate() error {
+	if _, err := proxytrust.Parse(a.TrustedProxies); err != nil {
+		return err
+	}
 	if err := a.Base.Validate(); err != nil {
 		return err
 	}

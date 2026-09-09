@@ -32,3 +32,12 @@ Out of scope: vulnerabilities in the operators skali deploys (k3s,
 CloudNativePG, Traefik, cert-manager, SeaweedFS, Longhorn), which belong
 to their upstream projects, unless skali's configuration of them is the
 cause.
+
+## Deployment trust boundary
+
+This alpha is intended for trusted operators running trusted application code.
+Project and environment roles authorize control-plane operations. They do not
+provide network or container isolation suitable for hostile tenants. Application
+pods currently share cluster networking and do not have a comprehensive
+restricted pod-security policy. See [security boundaries and encryption-key
+recovery](docs/security.md) before deploying workloads.

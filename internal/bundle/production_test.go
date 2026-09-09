@@ -328,7 +328,7 @@ func TestRenderProductionObjects(t *testing.T) {
 
 	// Web console: deployment wired to the in-cluster daemon and the public
 	// origin, service in front of the SvelteKit port.
-	require.Len(t, objects.Web, 2)
+	require.Len(t, objects.Web, 3)
 	webDeployment := objects.Web[0]
 	require.Equal(t, "Deployment", webDeployment.GetKind())
 	require.Equal(t, "skali-web", webDeployment.GetName())
@@ -345,6 +345,24 @@ func TestRenderProductionObjects(t *testing.T) {
 	webPort := ports[0].(map[string]any)
 	require.EqualValues(t, 80, webPort["port"])
 	require.EqualValues(t, 3000, webPort["targetPort"])
+	// Forwarded addresses are safe only if workloads cannot bypass Traefik
+	// and send invented headers straight to the console.
+	policy := objects.Web[2]
+	require.Equal(t, "NetworkPolicy", policy.GetKind())
+	require.Equal(t, Namespace, policy.GetNamespace())
+	spec, _, err := unstructured.NestedMap(policy.Object, "spec")
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{
+		"podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "skali-web"}},
+		"policyTypes": []any{"Ingress"},
+		"ingress": []any{map[string]any{
+			"from": []any{map[string]any{
+				"namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": "kube-system"}},
+				"podSelector":       map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "traefik"}},
+			}},
+			"ports": []any{map[string]any{"protocol": "TCP", "port": float64(3000)}},
+		}},
+	}, spec)
 
 	// The vendored cert-manager manifest parses.
 	certManager, err := ParseManifest(CertManagerManifest())
