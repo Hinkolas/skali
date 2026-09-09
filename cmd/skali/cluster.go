@@ -39,10 +39,6 @@ func newClusterCommand() *cobra.Command {
 		"name of the Lima VM hosting the skali node (macOS only)")
 	cluster.PersistentFlags().StringVar(&imageTarFlag, "image-tar", "",
 		"docker-save tar of the skalid image, imported into the node during init (source installs)")
-	cluster.PersistentFlags().StringVar(&webImageTarFlag, "web-image-tar", "",
-		"docker-save tar of the skali-web console image, imported into the node during init (source installs)")
-	cluster.PersistentFlags().StringVar(&webImageFlag, "web-image", "",
-		"skali-web console image reference; defaults to the published image on release builds")
 	cluster.PersistentFlags().StringVar(&hostdBinFlag, "hostd-bin", "",
 		"Linux skali-hostd binary to install on managed nodes (source installs)")
 	cluster.AddCommand(newClusterCreateCmd(), newClusterInstallCmd(), newClusterInitCmd(), newClusterStatusCmd(),
@@ -66,12 +62,10 @@ func runner() host.Runner {
 }
 
 var (
-	vmFlag          string
-	imageTarFlag    string
-	webImageTarFlag string
-	webImageFlag    string
-	hostdBinFlag    string
-	clusterCmd      *cobra.Command
+	vmFlag       string
+	imageTarFlag string
+	hostdBinFlag string
+	clusterCmd   *cobra.Command
 )
 
 func vmFlagChanged() bool {

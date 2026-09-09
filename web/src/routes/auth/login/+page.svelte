@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
-	import type { ActionData, PageData } from './$types';
+	import type { PageData } from './$types';
 
-	let { form, data }: { form: ActionData; data: PageData } = $props();
+	let { data }: { data: PageData } = $props();
+	let form = $state<{ step?: 'totp'; challengeToken?: string; email?: string; message?: string }>(
+		{}
+	);
 	let submitting = $state(false);
 	let emailInput = $state<HTMLInputElement | null>(null);
 	let codeInput = $state<HTMLInputElement | null>(null);
@@ -23,13 +25,58 @@
 	const inputClass =
 		'w-full rounded-[11px] border border-border-strong bg-surface-input px-3.25 py-2.75 text-lg text-text-primary transition-colors focus:border-accent/50 focus:outline-none';
 
-	const submitEnhance = () => {
+	async function submit(event: SubmitEvent) {
+		event.preventDefault();
+		if (submitting) return;
 		submitting = true;
-		return async ({ update }: { update: () => Promise<void> }) => {
-			await update();
+		const fields = new FormData(event.currentTarget as HTMLFormElement);
+		const verifying = totpStep;
+		const email = String(fields.get('email') ?? '').trim();
+		try {
+			const response = await fetch('/api/v1/auth/' + (verifying ? '2fa/verify' : 'login'), {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: { 'content-type': 'application/json', 'X-Requested-With': 'skali' },
+				body: JSON.stringify(
+					verifying
+						? {
+								session_transport: 'cookie',
+								challenge_token: form.challengeToken,
+								code: String(fields.get('code') ?? '').trim()
+							}
+						: { session_transport: 'cookie', email, password: String(fields.get('password') ?? '') }
+				)
+			});
+			const body = await response.json().catch(() => null);
+			if (!response.ok) {
+				const code = body?.error?.code;
+				const messages: Record<string, string> = {
+					invalid_credentials: 'Wrong email or password.',
+					invalid_code: 'That code is not valid.',
+					invalid_token: 'The code expired — sign in again.',
+					rate_limited: 'Too many attempts. Wait a moment and try again.'
+				};
+				form = {
+					...form,
+					email: verifying ? form.email : email,
+					...(code === 'invalid_token' ? { step: undefined, challengeToken: undefined } : {}),
+					message:
+						messages[code] ??
+						(response.status >= 500
+							? 'The server is unreachable. Try again in a moment.'
+							: (body?.error?.message ?? 'Something went wrong.'))
+				};
+			} else if (body?.challenge) {
+				form = { step: 'totp', challengeToken: body.challenge.token, email };
+			} else {
+				window.location.assign(data.next);
+			}
+		} catch {
+			form = { ...form, message: 'The server is unreachable. Try again in a moment.' };
+		} finally {
 			submitting = false;
-		};
-	};
+		}
+	}
 </script>
 
 <svelte:head>
@@ -46,7 +93,7 @@
 			Enter the 6-digit code from your authenticator app, or one of your backup codes.
 		</p>
 
-		<form method="post" action="?/verify" use:enhance={submitEnhance} class="flex flex-col gap-3.5">
+		<form onsubmit={submit} class="flex flex-col gap-3.5">
 			<input type="hidden" name="challenge_token" value={form?.challengeToken ?? ''} />
 			<input type="hidden" name="next" value={data.next} />
 			<label class="flex flex-col gap-1.5">
@@ -96,7 +143,7 @@
 			</a>
 		</p>
 	{:else}
-		<form method="post" action="?/login" use:enhance={submitEnhance} class="flex flex-col gap-3.5">
+		<form onsubmit={submit} class="flex flex-col gap-3.5">
 			<input type="hidden" name="next" value={data.next} />
 			<label class="flex flex-col gap-1.5">
 				<span class="text-text-tertiary text-base font-medium">Email</span>

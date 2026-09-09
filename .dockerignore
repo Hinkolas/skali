@@ -1,5 +1,5 @@
 # Keep the image build context lean (the build/*.Dockerfile images build
-# from the repo root). Only the Go sources matter to the image.
+# from the repo root). Frontend assets are generated inside the build.
 .git
 bin/
 web/node_modules/
@@ -7,3 +7,7 @@ web/.svelte-kit/
 web/build/
 .env
 *.log
+
+internal/webui/dist/
+dist/
+.cache/

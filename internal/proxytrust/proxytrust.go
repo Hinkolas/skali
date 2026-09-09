@@ -82,7 +82,7 @@ func (t *Trust) refresh(ctx context.Context, client kubernetes.Interface) {
 	defer cancel()
 	ips := map[netip.Addr]struct{}{}
 	for _, proxy := range []struct{ namespace, name string }{
-		{"kube-system", "traefik"}, {"skali-system", "skali-web"},
+		{"kube-system", "traefik"},
 	} {
 		pods, err := client.CoreV1().Pods(proxy.namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "app.kubernetes.io/name=" + proxy.name,

@@ -85,11 +85,15 @@ func (h *authHandlers) sessionMeta(r *http.Request) auth.SessionMeta {
 // POST /v1/auth/login
 func (h *authHandlers) login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		SessionTransport sessionTransport `json:"session_transport"`
+		Email            string           `json:"email"`
+		Password         string           `json:"password"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+		return
+	}
+	if !validateSessionTransport(w, r, req.SessionTransport) {
 		return
 	}
 	if req.Email == "" || req.Password == "" {
@@ -108,17 +112,21 @@ func (h *authHandlers) login(w http.ResponseWriter, r *http.Request) {
 		}{challengePayload{Token: res.Challenge.Token, ExpiresAt: res.Challenge.ExpiresAt}})
 		return
 	}
-	h.writeSessionCreated(w, res.Session)
+	h.writeSessionCreated(w, r, res.Session, req.SessionTransport)
 }
 
 // POST /v1/auth/2fa/verify
 func (h *authHandlers) verifyTwoFactor(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ChallengeToken string `json:"challenge_token"`
-		Code           string `json:"code"`
+		SessionTransport sessionTransport `json:"session_transport"`
+		ChallengeToken   string           `json:"challenge_token"`
+		Code             string           `json:"code"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+		return
+	}
+	if !validateSessionTransport(w, r, req.SessionTransport) {
 		return
 	}
 	if req.ChallengeToken == "" || req.Code == "" {
@@ -131,10 +139,17 @@ func (h *authHandlers) verifyTwoFactor(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(r.Context(), w, err)
 		return
 	}
-	h.writeSessionCreated(w, sess)
+	h.writeSessionCreated(w, r, sess, req.SessionTransport)
 }
 
-func (h *authHandlers) writeSessionCreated(w http.ResponseWriter, sess *auth.Session) {
+func (h *authHandlers) writeSessionCreated(w http.ResponseWriter, r *http.Request, sess *auth.Session, transport sessionTransport) {
+	if transport == "cookie" {
+		setSessionCookie(w, r, sess.Token, sess.ExpiresAt)
+		writeJSON(w, http.StatusOK, map[string]any{"session": map[string]any{
+			"expires_at": sess.ExpiresAt, "user": newUserPayload(&sess.User),
+		}})
+		return
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Session sessionCreatedPayload `json:"session"`
 	}{sessionCreatedPayload{
@@ -149,6 +164,9 @@ func (h *authHandlers) logout(w http.ResponseWriter, r *http.Request) {
 	if err := h.auth.Logout(r.Context(), tokenFrom(r.Context())); err != nil {
 		writeAuthError(r.Context(), w, err)
 		return
+	}
+	if cookieAuthFrom(r) {
+		clearSessionCookie(w, r)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

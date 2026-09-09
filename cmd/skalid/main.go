@@ -1,5 +1,5 @@
 // Command skalid is the skali control plane: the client-facing REST API (web
-// BFF, skali CLI, future native clients) plus the controller that compiles
+// console, skali CLI, future native clients) plus the controller that compiles
 // services into Kubernetes objects and reads status back.
 //
 // Besides serving (the default), the binary carries the operator commands —
@@ -59,6 +59,7 @@ import (
 	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
+	"github.com/Hinkolas/skali/internal/webui"
 )
 
 const serviceName = "skalid"
@@ -362,8 +363,9 @@ func runServe() error {
 	}
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: api.StripAPIPrefix(api.NewRouter(api.Deps{
+		Handler: webui.Handler(api.StripAPIPrefix(api.NewRouter(api.Deps{
 			Auth:               authSvc,
+			CookieSecure:       cfg.CookieSecure,
 			TrustProxy:         trustedProxies.Contains,
 			Store:              st,
 			DB:                 pool,
@@ -391,7 +393,7 @@ func runServe() error {
 			Backups:            backupCtl,
 			Metrics:            metricsSvc,
 			Updates:            updatesSvc,
-		})),
+		}))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErr := make(chan error, 1)

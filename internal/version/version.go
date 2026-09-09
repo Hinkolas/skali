@@ -20,8 +20,6 @@ const (
 	// PublishedSkalidRepo prefixes every published control-plane image; a
 	// release tags it with its own version.
 	PublishedSkalidRepo = "ghcr.io/hinkolas/skalid:"
-	// PublishedWebRepo prefixes the published web console image.
-	PublishedWebRepo = "ghcr.io/hinkolas/skali-web:"
 	// ReleaseRepo is the GitHub repository releases are published to; the
 	// binaries and checksums.txt hang off its release download URLs.
 	ReleaseRepo = "Hinkolas/skali"
@@ -49,9 +47,6 @@ func IsPrerelease(v string) bool {
 
 // PublishedSkalidImage is the control-plane image a release publishes.
 func PublishedSkalidImage(v string) string { return PublishedSkalidRepo + v }
-
-// PublishedWebImage is the web console image a release publishes.
-func PublishedWebImage(v string) string { return PublishedWebRepo + v }
 
 // PublishedSkalidVersion extracts the release version of a published skalid
 // image reference; ok is false for anything else (working-tree builds,

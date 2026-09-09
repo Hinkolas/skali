@@ -1,4 +1,4 @@
-// Browser-side SSE consumption over the /_api/stream proxy. EventSource
+// Browser-side SSE consumption directly from the Go API. EventSource
 // handles reconnection and Last-Event-ID on its own for transient drops, but
 // gives up permanently on HTTP errors (e.g. a daemon restart returning 502),
 // so this wrapper re-creates the source with capped backoff and replays the
@@ -38,7 +38,7 @@ export function openStream<T>(options: StreamOptions<T>): StreamHandle {
 		setState('connecting');
 		const cursor = lastID ?? options.after;
 		const query = cursor ? `?after=${encodeURIComponent(cursor)}` : '';
-		source = new EventSource(`/_api/stream${options.path}${query}`);
+		source = new EventSource(`/api${options.path}${query}`);
 		source.onopen = () => {
 			backoff = 1000;
 			setState('open');

@@ -1,4 +1,4 @@
-// Auth store: authentication itself is server-side (session cookie + layout
+// Auth store: authentication itself is handled by Go (session cookie + layout
 // guards); this just exposes the current user to components and handles
 // sign-out. Hydrated from layout data via setUser in the (app) layout.
 
@@ -12,14 +12,17 @@ export const authState = {
 	}
 };
 
-/** Hydrate from server load data (called by the app layout). */
+/** Hydrate from layout data (called by the app layout). */
 export function setUser(u: AuthUser | null) {
 	user = u;
 }
 
 export async function signOut() {
 	try {
-		await fetch('/auth/logout', { method: 'POST' });
+		await fetch('/api/v1/auth/logout', {
+			method: 'POST',
+			headers: { 'X-Requested-With': 'skali' }
+		});
 	} catch {
 		// Cookie may survive, but the login page will resolve the truth.
 	}

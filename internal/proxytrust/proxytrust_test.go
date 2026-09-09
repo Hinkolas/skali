@@ -22,7 +22,7 @@ func TestProxyDiscovery(t *testing.T) {
 	}
 	client := fake.NewClientset(
 		pod("kube-system", "traefik", "10.42.0.1", false),
-		pod("skali-system", "skali-web", "10.42.0.2", false),
+		pod("kube-system", "traefik", "10.42.0.2", false),
 		pod("application", "traefik", "10.42.0.3", false),
 		pod("kube-system", "other", "10.42.0.4", false),
 		pod("kube-system", "traefik", "10.42.0.5", true),

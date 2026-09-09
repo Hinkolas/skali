@@ -12,6 +12,8 @@ const (
 	ctxKeyUser ctxKey = iota
 	ctxKeySession
 	ctxKeyToken
+	ctxKeyCookieAuth
+	ctxKeyBrowserPolicy
 )
 
 // UserFrom returns the authenticated user; nil outside RequireAuth.

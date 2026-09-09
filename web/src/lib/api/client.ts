@@ -1,6 +1,4 @@
-// Thin client for the BFF proxy: relative /_api/v1/… calls, envelope-aware
-// error handling. Components never talk to the Go API directly. The prefix
-// is /_api because the production edge owns /api for the daemon itself.
+import { redirect } from '@sveltejs/kit';
 
 export class ApiError extends Error {
 	constructor(
@@ -21,9 +19,13 @@ async function request<T>(
 ): Promise<T> {
 	let res: Response;
 	try {
-		res = await fetch(`/_api${path}`, {
+		res = await fetch(`/api${path}`, {
 			method,
-			headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+			headers: {
+				'X-Requested-With': 'skali',
+				...(body !== undefined ? { 'content-type': 'application/json' } : {})
+			},
+			credentials: 'same-origin',
 			body: body !== undefined ? JSON.stringify(body) : undefined
 		});
 	} catch {
@@ -51,7 +53,7 @@ async function request<T>(
 			detail?.code !== 'invalid_credentials' &&
 			detail?.code !== 'invalid_code'
 		) {
-			window.location.href = '/auth/login';
+			window.location.href = loginDestination();
 		}
 		throw new ApiError(res.status, detail?.code ?? 'internal', detail?.message ?? res.statusText);
 	}
@@ -65,3 +67,21 @@ export const api = {
 	put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
 	del: <T = void>(path: string) => request<T>('DELETE', path)
 };
+
+/** Raw responses for route loads that intentionally degrade on API errors. */
+export async function apiFetch(
+	fetchFn: typeof fetch,
+	path: string,
+	init: RequestInit = {}
+): Promise<Response> {
+	const headers = new Headers(init.headers);
+	headers.set('X-Requested-With', 'skali');
+	const response = await fetchFn(`/api${path}`, { ...init, headers, credentials: 'same-origin' });
+	if (response.status === 401) redirect(307, loginDestination());
+	return response;
+}
+
+export function loginDestination(): string {
+	const next = window.location.pathname + window.location.search;
+	return '/auth/login?next=' + encodeURIComponent(next);
+}

@@ -129,6 +129,8 @@ spec:
               value: "true"
             - name: SKALI_CAPABILITIES
               value: application;edge;database;object-storage
+            - name: SKALI_COOKIE_SECURE
+              value: "false"
           readinessProbe:
             httpGet:
               path: /healthz

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,24 +15,44 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 )
 
-// RequireAuth guards a route group with bearer-token authentication and puts
+// RequireAuth guards a route group with bearer or cookie authentication and puts
 // the resolved user, session, and raw token on the request context. It must
 // wrap only the protected group — never the router root, or login locks
 // itself out.
 func RequireAuth(a auth.Authenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
 			token, ok := bearerToken(r)
+			fromCookie := false
+			if _, supplied := r.Header["Authorization"]; !supplied {
+				if cookie, err := r.Cookie(SessionCookie); err == nil {
+					token, ok, fromCookie = cookie.Value, cookie.Value != "", true
+				}
+			}
 			if !ok {
-				writeError(w, http.StatusUnauthorized, codeInvalidToken, "missing or malformed Authorization header")
+				if fromCookie {
+					clearSessionCookie(w, r)
+				}
+				writeError(w, http.StatusUnauthorized, codeInvalidToken, "missing or malformed session credentials")
+				return
+			}
+			if fromCookie && !safeMethod(r.Method) && !checkBrowserMutation(w, r) {
 				return
 			}
 			user, sess, err := a.Authenticate(r.Context(), token)
 			if err != nil {
+				if fromCookie && errors.Is(err, auth.ErrInvalidToken) {
+					clearSessionCookie(w, r)
+				}
 				writeAuthError(r.Context(), w, err)
 				return
 			}
-			ctx := context.WithValue(r.Context(), ctxKeyUser, user)
+			if fromCookie {
+				setSessionCookie(w, r, token, sess.ExpiresAt)
+			}
+			ctx := context.WithValue(r.Context(), ctxKeyCookieAuth, fromCookie)
+			ctx = context.WithValue(ctx, ctxKeyUser, user)
 			ctx = context.WithValue(ctx, ctxKeySession, sess)
 			ctx = context.WithValue(ctx, ctxKeyToken, token)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -71,7 +92,11 @@ func RequireFresh(svc *auth.Service) func(http.Handler) http.Handler {
 // bearerToken extracts the token from "Authorization: Bearer <token>",
 // matching the scheme case-insensitively per RFC 9110.
 func bearerToken(r *http.Request) (string, bool) {
-	scheme, rest, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	values := r.Header.Values("Authorization")
+	if len(values) != 1 {
+		return "", false
+	}
+	scheme, rest, ok := strings.Cut(values[0], " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") {
 		return "", false
 	}

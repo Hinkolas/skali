@@ -80,7 +80,7 @@ func TestClusterDarwin(t *testing.T) {
 	statusOut, code := run("status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "fresh")
-	require.Contains(t, statusOut, "vm      none")
+	require.Regexp(t, `vm\s+none`, statusOut)
 
 	// Install: creates the VM, installs the pinned k3s server inside it,
 	// and registers the login LaunchAgent.
@@ -131,14 +131,6 @@ vm:
 	saveOut, code := h.hostCommand("docker", "save", "skalid:dev", "-o", imageTar)
 	require.Equal(t, 0, code, saveOut)
 
-	// The web console image rides its own tar the same way.
-	webTar := filepath.Join(t.TempDir(), "skali-web-dev.tar")
-	dockerOut, code = h.hostCommand("docker", "build", "-t", "skali-web:dev",
-		"-f", filepath.Join(h.repoRoot, "build", "web.Dockerfile"), filepath.Join(h.repoRoot, "web"))
-	require.Equal(t, 0, code, dockerOut)
-	saveOut, code = h.hostCommand("docker", "save", "skali-web:dev", "-o", webTar)
-	require.Equal(t, 0, code, saveOut)
-
 	// Init with a MAC-side password file: the installer must read it on
 	// this machine, not inside the VM.
 	passwordFile := filepath.Join(t.TempDir(), "admin-password")
@@ -155,14 +147,10 @@ admin:
   passwordFile: %s
 skalid:
   image: skalid:dev
-web:
-  image: skali-web:dev
 `, passwordFile), 0o644))
-	initOut, code := run("init", "--config", initConfig, "--image-tar", imageTar,
-		"--web-image-tar", webTar)
+	initOut, code := run("init", "--config", initConfig, "--image-tar", imageTar)
 	require.Equal(t, 0, code, initOut)
 	require.Contains(t, initOut, "Import image skalid:dev")
-	require.Contains(t, initOut, "Import image skali-web:dev")
 
 	// A healthy status can only come from a working kube client, and the
 	// template forwards guest 6443 to host 16443: an unrewritten kubeconfig
@@ -176,10 +164,26 @@ web:
 	require.Contains(t, statusOut, "skalid healthy")
 	require.Contains(t, statusOut, "1 joined")
 	require.NotContains(t, statusOut, "kubernetes api unreachable")
+	consoleHTML := h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "--raw",
+		"/api/v1/namespaces/skali-system/services/skalid:80/proxy/200.html")
+	require.Contains(t, strings.ToLower(consoleHTML), "<!doctype html")
+	resources := h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "deploy,svc,networkpolicy", "-n", "skali-system", "-o", "name")
+	require.NotContains(t, resources, "skali-web")
+
+	// Reimporting the embedded image exercises an actual bundle upgrade.
+	upgradeOut, code := run("upgrade", "--yes", "--image-tar", imageTar)
+	require.Equal(t, 0, code, upgradeOut)
+	diagnoseOut, code := run("diagnose")
+	require.Equal(t, 0, code, diagnoseOut)
+	repairOut, code := run("repair", "--yes")
+	require.Equal(t, 0, code, repairOut)
+	require.Contains(t, repairOut, "nothing to repair")
+	resources = h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "deploy,svc,networkpolicy", "-n", "skali-system", "-o", "name")
+	require.NotContains(t, resources, "skali-web")
 
 	// Upgrade with no drift proves the maintenance prelude path into the
 	// VM without converging anything.
-	upgradeOut, code := run("upgrade", "--yes")
+	upgradeOut, code = run("upgrade", "--yes")
 	require.Equal(t, 0, code, upgradeOut)
 	require.Contains(t, upgradeOut, "already current, nothing to do")
 
@@ -207,5 +211,5 @@ web:
 	statusOut, code = run("status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "fresh")
-	require.Contains(t, statusOut, "vm      none")
+	require.Regexp(t, `vm\s+none`, statusOut)
 }

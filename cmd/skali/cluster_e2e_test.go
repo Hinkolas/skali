@@ -241,15 +241,6 @@ func TestClusterEndToEnd(t *testing.T) {
 	require.Equal(t, 0, code, saveOut)
 	h.copyIn(imageTar, "/tmp/skalid-dev.tar")
 
-	// The web console image rides its own tar the same way.
-	webTar := filepath.Join(t.TempDir(), "skali-web-dev.tar")
-	buildOut, code = h.hostCommand("docker", "build", "-t", "skali-web:dev",
-		"-f", filepath.Join(h.repoRoot, "build", "web.Dockerfile"), filepath.Join(h.repoRoot, "web"))
-	require.Equal(t, 0, code, buildOut)
-	saveOut, code = h.hostCommand("docker", "save", "skali-web:dev", "-o", webTar)
-	require.Equal(t, 0, code, saveOut)
-	h.copyIn(webTar, "/tmp/skali-web-dev.tar")
-
 	// Init: the ACME staging directory keeps pending issuance away from
 	// production rate limits; skali.e2e.test never resolves, so
 	// certificates stay pending by design and nothing asserts TLS.
@@ -265,18 +256,14 @@ admin:
   passwordFile: %s
 skalid:
   image: skalid:dev
-web:
-  image: skali-web:dev
 storage:
   driver: longhorn
 `, passwordFile))
-	// The tar flags import both images into the node's containerd during
-	// init.
+	// The tar imports the daemon, including its console, into containerd.
 	initOut, code := h.vm("sudo", "/tmp/skali-a", "cluster", "init", "--config", initConfig,
-		"--image-tar", "/tmp/skalid-dev.tar", "--web-image-tar", "/tmp/skali-web-dev.tar")
+		"--image-tar", "/tmp/skalid-dev.tar")
 	require.Equal(t, 0, code, initOut)
 	require.Contains(t, initOut, "Import image skalid:dev")
-	require.Contains(t, initOut, "Import image skali-web:dev")
 	require.Contains(t, initOut, "https://skali.e2e.test/api")
 	require.Contains(t, initOut, "https://registry.skali.e2e.test")
 
@@ -296,15 +283,16 @@ storage:
 		"--resolve", "skali.e2e.test:80:127.0.0.1", "http://skali.e2e.test/api/healthz")
 	require.Regexp(t, `^30[18] https://skali\.e2e\.test/api/healthz`, edgeRedirect)
 	consoleHTML := h.vmOK("sudo", "k3s", "kubectl", "get", "--raw",
-		"/api/v1/namespaces/skali-system/services/skali-web:80/proxy/")
+		"/api/v1/namespaces/skali-system/services/skalid:80/proxy/200.html")
 	require.Contains(t, strings.ToLower(consoleHTML), "<!doctype html")
+	resources := h.vmOK("sudo", "k3s", "kubectl", "get", "deploy,svc,networkpolicy", "-n", "skali-system", "-o", "name")
+	require.NotContains(t, resources, "skali-web")
 
 	statusOut, code = h.vm("sudo", "/tmp/skali-a", "cluster", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "Skali server")
 	require.Contains(t, statusOut, "database healthy")
 	require.Contains(t, statusOut, "skalid healthy")
-	require.Contains(t, statusOut, "web healthy")
 
 	// Upgrade phase: the current build takes over the installation build A
 	// created, moving k3s to the current pin and re-converging the bundle
@@ -321,7 +309,7 @@ storage:
 	h.vmOK("sudo", "cp", "/var/lib/skali/installation.yaml", "/tmp/installation-backup.yaml")
 	h.vmOK("sudo", "sed", "-i", "/registry:/d", "/var/lib/skali/installation.yaml")
 	missingOut, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes",
-		"--image-tar", "/tmp/skalid-dev.tar", "--web-image-tar", "/tmp/skali-web-dev.tar")
+		"--image-tar", "/tmp/skalid-dev.tar")
 	require.NotEqual(t, 0, code, missingOut)
 	require.Contains(t, missingOut, "registry domain")
 	require.Contains(t, missingOut, "interactively")
@@ -338,7 +326,7 @@ storage:
 
 	// The upgrade itself, reusing the already-staged image tars.
 	upgradeOut, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes",
-		"--image-tar", "/tmp/skalid-dev.tar", "--web-image-tar", "/tmp/skali-web-dev.tar")
+		"--image-tar", "/tmp/skalid-dev.tar")
 	require.Equal(t, 0, code, upgradeOut)
 	require.Contains(t, upgradeOut, e2eOlderK3s+" -> "+installer.K3sVersion)
 	require.Contains(t, upgradeOut, "v0.0.0-e2e-a -> v0.0.0-dev")
@@ -369,7 +357,6 @@ storage:
 	require.Contains(t, statusOut, installer.K3sVersion+" (current)")
 	require.Contains(t, statusOut, "v0.0.0-dev (current)")
 	require.Contains(t, statusOut, "skalid healthy")
-	require.Contains(t, statusOut, "web healthy")
 
 	// Idempotence: a second upgrade has nothing to do.
 	repeatUpgrade, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes")
@@ -565,7 +552,6 @@ storage:
 	statusOut, code = h.vm("sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, statusOut)
 	require.Contains(t, statusOut, "skalid healthy")
-	require.Contains(t, statusOut, "web healthy")
 
 	// The leaver's final cleanup runs via a transient unit two seconds
 	// after the acknowledgment, so wait for the host state and the hostd

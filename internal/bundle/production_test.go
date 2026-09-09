@@ -29,19 +29,19 @@ func productionProfile() Profile {
 		AuthSecret:   strings.Repeat("a", 32),
 		RegistryHost: RegistryInternalHost,
 		Production: &Production{
-			IngressHost:        "skali.example.com",
-			RegistryDomain:     "registry.example.com",
-			TokenKeyPEM:        "-----BEGIN EC PRIVATE KEY-----\nfake\n-----END EC PRIVATE KEY-----\n",
-			TokenCertPEM:       "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
-			NodePullSecret:     "node-pull-secret",
-			ACMEEmail:          "ops@example.com",
-			Capabilities:       layout.Capabilities,
-			DatabaseTier:       layout.TierSynchronous,
-			DatabaseStorage:    "10Gi",
-			RegistryStorage:    "20Gi",
-			StorageDriver:      StorageDriverLonghorn,
-			StorageReplicas:    3,
-			WebImage:           "ghcr.io/hinkolas/skali-web:v2.0.0",
+			IngressHost:     "skali.example.com",
+			RegistryDomain:  "registry.example.com",
+			TokenKeyPEM:     "-----BEGIN EC PRIVATE KEY-----\nfake\n-----END EC PRIVATE KEY-----\n",
+			TokenCertPEM:    "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+			NodePullSecret:  "node-pull-secret",
+			ACMEEmail:       "ops@example.com",
+			Capabilities:    layout.Capabilities,
+			DatabaseTier:    layout.TierSynchronous,
+			DatabaseStorage: "10Gi",
+			RegistryStorage: "20Gi",
+			StorageDriver:   StorageDriverLonghorn,
+			StorageReplicas: 3,
+
 			InstallationRecord: "version: \"1\"\ninstallationId: 0f0f\ncluster: production\n",
 		},
 	}
@@ -54,7 +54,7 @@ func TestLocalRenderFrozen(t *testing.T) {
 	t.Parallel()
 	profile := localProfile()
 	sources := stageSources(profile)
-	require.Len(t, sources, 12)
+	require.Len(t, sources, 11)
 
 	frozen := map[string]int{
 		"local-namespace.yaml":    0,
@@ -62,8 +62,8 @@ func TestLocalRenderFrozen(t *testing.T) {
 		"local-database.yaml":     5,
 		"local-registry.yaml":     6,
 		"local-skalid.yaml":       7,
-		"local-edge-metrics.yaml": 10,
-		"local-bootstrap.yaml":    11,
+		"local-edge-metrics.yaml": 9,
+		"local-bootstrap.yaml":    10,
 	}
 	for name, index := range frozen {
 		path := filepath.Join("testdata", name)
@@ -81,7 +81,6 @@ func TestLocalRenderFrozen(t *testing.T) {
 	require.Empty(t, sources[3], "issuer stage must be empty locally")
 	require.Empty(t, sources[4], "edge stage must be empty locally")
 	require.Empty(t, sources[8], "record stage must be empty locally")
-	require.Empty(t, sources[9], "web stage must be empty locally")
 
 	// The full hash including the vendored operator manifests is frozen
 	// too: cert-manager must not leak into the local fingerprint.
@@ -220,14 +219,10 @@ func TestRenderProductionObjects(t *testing.T) {
 	routeSecret, _, _ := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
 	require.Equal(t, "skalid-tls", routeSecret)
 	skalidRoutes, _, _ := unstructured.NestedSlice(route.Object, "spec", "routes")
-	require.Len(t, skalidRoutes, 2)
-	apiRule := skalidRoutes[0].(map[string]any)
-	require.Equal(t, "Host(`skali.example.com`) && PathPrefix(`/api`)", apiRule["match"],
-		"/api must be listed first; Traefik prioritizes the longer match")
-	require.Equal(t, "skalid", apiRule["services"].([]any)[0].(map[string]any)["name"])
-	webRule := skalidRoutes[1].(map[string]any)
-	require.Equal(t, "Host(`skali.example.com`) && PathPrefix(`/`)", webRule["match"])
-	require.Equal(t, "skali-web", webRule["services"].([]any)[0].(map[string]any)["name"])
+	require.Len(t, skalidRoutes, 1)
+	rule := skalidRoutes[0].(map[string]any)
+	require.Equal(t, "Host(`skali.example.com`) && PathPrefix(`/`)", rule["match"])
+	require.Equal(t, "skalid", rule["services"].([]any)[0].(map[string]any)["name"])
 
 	redirect := objects.Skalid[8]
 	require.Equal(t, "IngressRoute", redirect.GetKind())
@@ -326,43 +321,9 @@ func TestRenderProductionObjects(t *testing.T) {
 	text, _, _ := unstructured.NestedString(record.Object, "data", RecordKey)
 	require.Equal(t, profile.Production.InstallationRecord, text)
 
-	// Web console: deployment wired to the in-cluster daemon and the public
-	// origin, service in front of the SvelteKit port.
-	require.Len(t, objects.Web, 3)
-	webDeployment := objects.Web[0]
-	require.Equal(t, "Deployment", webDeployment.GetKind())
-	require.Equal(t, "skali-web", webDeployment.GetName())
-	webJSON, err := webDeployment.MarshalJSON()
-	require.NoError(t, err)
-	require.Contains(t, string(webJSON), `"value":"http://skalid"`)
-	require.Contains(t, string(webJSON), `"value":"https://skali.example.com"`)
-	require.Contains(t, string(webJSON), `"ADDRESS_HEADER"`)
-	require.Contains(t, string(webJSON), `"path":"/healthz"`)
-	webService := objects.Web[1]
-	require.Equal(t, "Service", webService.GetKind())
-	ports, _, _ := unstructured.NestedSlice(webService.Object, "spec", "ports")
-	require.Len(t, ports, 1)
-	webPort := ports[0].(map[string]any)
-	require.EqualValues(t, 80, webPort["port"])
-	require.EqualValues(t, 3000, webPort["targetPort"])
-	// Forwarded addresses are safe only if workloads cannot bypass Traefik
-	// and send invented headers straight to the console.
-	policy := objects.Web[2]
-	require.Equal(t, "NetworkPolicy", policy.GetKind())
-	require.Equal(t, Namespace, policy.GetNamespace())
-	spec, _, err := unstructured.NestedMap(policy.Object, "spec")
-	require.NoError(t, err)
-	require.Equal(t, map[string]any{
-		"podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "skali-web"}},
-		"policyTypes": []any{"Ingress"},
-		"ingress": []any{map[string]any{
-			"from": []any{map[string]any{
-				"namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": "kube-system"}},
-				"podSelector":       map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "traefik"}},
-			}},
-			"ports": []any{map[string]any{"protocol": "TCP", "port": float64(3000)}},
-		}},
-	}, spec)
+	// The console shares the daemon and its HTTPS cookie policy.
+	require.Contains(t, string(raw), `"SKALI_COOKIE_SECURE"`)
+	require.NotContains(t, strings.Join(stageSources(profile), "\n"), "skali-web")
 
 	// The vendored cert-manager manifest parses.
 	certManager, err := ParseManifest(CertManagerManifest())
@@ -385,7 +346,6 @@ func TestProductionHashProperties(t *testing.T) {
 		"registry domain": func(p *Production) { p.RegistryDomain = "other-registry.example.com" },
 		"token key":       func(p *Production) { p.TokenKeyPEM = "rotated" },
 		"node secret":     func(p *Production) { p.NodePullSecret = "rotated" },
-		"web image":       func(p *Production) { p.WebImage = "ghcr.io/hinkolas/skali-web:other" },
 	} {
 		changed := productionProfile()
 		mutate(changed.Production)
@@ -448,7 +408,6 @@ func TestProductionProfileValidation(t *testing.T) {
 			p.StorageDriver = StorageDriverLocal
 			p.RegistryStorageClass = StorageClassName
 		},
-		"web image":           func(p *Production) { p.WebImage = "" },
 		"installation record": func(p *Production) { p.InstallationRecord = "" },
 		"platform preference": func(p *Production) { p.PlatformPreference = []string{"linux/riscv64"} },
 	} {

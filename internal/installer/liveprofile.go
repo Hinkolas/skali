@@ -73,26 +73,6 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 	}
 	imageID := deployment.Spec.Template.Annotations["skali.dev/image-id"]
 
-	webDeployment, err := client.Clientset.AppsV1().Deployments(bundle.Namespace).Get(ctx, "skali-web", metav1.GetOptions{})
-	if err != nil {
-		return profile, layout.Layout{}, errors.New("the skali-web deployment is missing, so its image cannot be read; " +
-			"run skali cluster upgrade, which resolves one")
-	}
-	webImage := ""
-	for _, container := range webDeployment.Spec.Template.Spec.Containers {
-		if container.Name == "skali-web" {
-			webImage = container.Image
-		}
-	}
-	if webImage == "" && len(webDeployment.Spec.Template.Spec.Containers) > 0 {
-		webImage = webDeployment.Spec.Template.Spec.Containers[0].Image
-	}
-	if webImage == "" {
-		return profile, layout.Layout{}, errors.New("the skali-web deployment names no image; " +
-			"run skali cluster upgrade, which resolves one")
-	}
-	webImageID := webDeployment.Spec.Template.Annotations["skali.dev/image-id"]
-
 	nodeList, err := client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return profile, layout.Layout{}, fmt.Errorf("list nodes: %w", err)
@@ -139,8 +119,6 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 			// hash-match invariant holds by construction.
 			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
 			RegistryStorageClass: registryStorageClass,
-			WebImage:             webImage,
-			WebImageID:           webImageID,
 			InstallationRecord:   canonical,
 		},
 	}

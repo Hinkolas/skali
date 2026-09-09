@@ -8,8 +8,7 @@
     "endpoints",
     "tls",
     "admin",
-    "skalid",
-    "web"
+    "skalid"
   ],
   "properties": {
     "admin": {
@@ -116,23 +115,6 @@
         "issuerEmail": {
           "type": "string",
           "description": "ACME account email for certificate issuance."
-        }
-      },
-      "additionalProperties": false
-    },
-    "web": {
-      "type": "object",
-      "required": [
-        "image"
-      ],
-      "properties": {
-        "image": {
-          "type": "string",
-          "description": "skali-web console image reference to install."
-        },
-        "imageId": {
-          "type": "string",
-          "description": "Optional image content identity behind a mutable tag."
         }
       },
       "additionalProperties": false

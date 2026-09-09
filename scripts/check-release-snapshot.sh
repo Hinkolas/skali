@@ -1,7 +1,7 @@
 #!/bin/sh
 # Nonpublishing rehearsal; requires GoReleaser and the configured Go toolchain.
 set -eu
-goreleaser release --snapshot --clean --skip=docker,publish
+goreleaser release --snapshot --clean --skip=docker,publish "$@"
 snapshot_version=$(python3 -c 'import json; print(json.load(open("dist/metadata.json"))["version"])')
 go run ./cmd/skali-schema --schema release --version "v$snapshot_version" --output ".cache/skali-release/$snapshot_version/release.json" --verify
 case "$(uname -s)/$(uname -m)" in
