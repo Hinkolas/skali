@@ -58,7 +58,7 @@
 <nav aria-label="Breadcrumbs" class="-ml-2 flex min-w-0 items-center gap-1">
 	<a
 		href={resolve('/(app)/projects')}
-		class="text-text-tertiary hover:text-text-primary rounded-lg px-2 py-1 text-base font-medium transition-colors"
+		class="text-text-tertiary hover:text-text-primary truncate rounded-lg px-2 py-1 text-base font-medium transition-colors"
 	>
 		{data.org.name}
 	</a>

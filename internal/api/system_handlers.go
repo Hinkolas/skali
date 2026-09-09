@@ -36,6 +36,9 @@ func (h *systemHandlers) meta(w http.ResponseWriter, r *http.Request) {
 		// be read, and the indicator is a hint, not a fact worth failing on.
 		if status, err := h.updates.Status(r.Context()); err == nil && status.UpdateAvailable {
 			payload.UpdateAvailable = status.Latest
+			if target := status.Summary.TargetVersion; target != "" && (payload.UpdateAvailable == nil || payload.UpdateAvailable.Version != target) {
+				payload.UpdateAvailable = &updates.Release{Version: target}
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, payload)

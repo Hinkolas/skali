@@ -139,9 +139,13 @@ removal, and upgrading an existing alpha cluster.
 sudo skali cluster status          # health of this node and the platform
 sudo skali cluster diagnose        # find problems, with suggested fixes
 sudo skali cluster repair          # apply them, each one confirmed
-sudo skali cluster upgrade         # k3s and the platform, to this CLI's version
+sudo skali cluster upgrade --wait  # whole cluster, latest release on its channel
 sudo skali cluster reset-password  # recover a locked-out admin account
 ```
+
+Managed cluster updates use the authenticated Skali remote and continue after
+the CLI disconnects. See [cluster updates](docs/updates.md) for exact versions,
+incomplete updates, and controller recovery when the API is unavailable.
 
 ## Deploy
 

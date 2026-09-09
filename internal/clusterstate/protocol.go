@@ -52,16 +52,17 @@ type AgentPollRequest struct {
 }
 
 type AgentAction struct {
-	ID           string   `json:"id,omitempty"`
-	Type         string   `json:"type,omitempty"`
-	Cluster      string   `json:"cluster,omitempty"`
-	Role         string   `json:"role,omitempty"`
-	NodeName     string   `json:"nodeName,omitempty"`
-	NodeIP       string   `json:"nodeIP,omitempty"`
-	Capabilities []string `json:"capabilities,omitempty"`
-	Server       string   `json:"server,omitempty"`
-	K3sToken     string   `json:"k3sToken,omitempty"`
-	PullSecret   string   `json:"pullSecret,omitempty"`
+	RestartCoordinator bool     `json:"restartCoordinator,omitempty"`
+	ID                 string   `json:"id,omitempty"`
+	Type               string   `json:"type,omitempty"`
+	Cluster            string   `json:"cluster,omitempty"`
+	Role               string   `json:"role,omitempty"`
+	NodeName           string   `json:"nodeName,omitempty"`
+	NodeIP             string   `json:"nodeIP,omitempty"`
+	Capabilities       []string `json:"capabilities,omitempty"`
+	Server             string   `json:"server,omitempty"`
+	K3sToken           string   `json:"k3sToken,omitempty"`
+	PullSecret         string   `json:"pullSecret,omitempty"`
 	// Version names the release an upgrade action moves the node to; the
 	// agent derives every download from it and the fixed release host, so
 	// no URL and no command ever travels in an action. HostdSHA256 is the

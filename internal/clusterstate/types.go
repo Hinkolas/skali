@@ -66,9 +66,12 @@ const (
 // immutable once created; the three revision references are advanced with a
 // Kubernetes resource-version compare-and-swap by Store.Update.
 type State struct {
-	Version  int    `json:"version"`
-	Cluster  string `json:"cluster"`
-	Sequence int64  `json:"sequence"`
+	// Release observations live in a separate ConfigMap data entry. Older
+	// coordinators rewrite state.json and would drop unfamiliar JSON fields.
+	Updates  UpdateJournal `json:"-"`
+	Version  int           `json:"version"`
+	Cluster  string        `json:"cluster"`
+	Sequence int64         `json:"sequence"`
 
 	ConvergedRevision    string `json:"convergedRevision"`
 	TargetRevision       string `json:"targetRevision,omitempty"`

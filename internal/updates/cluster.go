@@ -27,13 +27,15 @@ type Cluster struct {
 
 // NodeState is one enrolled node as the coordinator sees it.
 type NodeState struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Role         string    `json:"role"`
-	K3sVersion   string    `json:"k3s_version,omitempty"`
-	AgentVersion string    `json:"agent_version,omitempty"`
-	Phase        string    `json:"phase"`
-	LastSeen     time.Time `json:"last_seen,omitempty"`
+	ID                  string    `json:"id"`
+	Name                string    `json:"name"`
+	Role                string    `json:"role"`
+	K3sVersion          string    `json:"k3s_version,omitempty"`
+	AgentVersion        string    `json:"agent_version,omitempty"`
+	Phase               string    `json:"phase"`
+	LastSeen            time.Time `json:"last_seen,omitzero"`
+	CoordinatorVersion  string    `json:"coordinator_version,omitempty"`
+	CoordinatorLastSeen time.Time `json:"coordinator_last_seen,omitzero"`
 }
 
 // StepState is one node's part of an operation.
@@ -66,13 +68,15 @@ func (o *OperationState) Settled() bool {
 
 // Snapshot is what the console needs from the cluster state.
 type Snapshot struct {
+	ExpectedK3s string
 	// PlatformVersion is the release the converged revision names; empty
 	// on clusters initialized by a dev build.
 	PlatformVersion string
 	Nodes           []NodeState
 	// Operation is the current operation, or the most recent update when
 	// none is running, so a finished or failed update stays visible.
-	Operation *OperationState
+	Operation      *OperationState
+	LastSuccessful *OperationState
 	// Manageable is whether a version change could start now; Reason says
 	// why not.
 	Manageable bool
@@ -117,7 +121,7 @@ func (c *Cluster) Apply(ctx context.Context, target string) (*Snapshot, error) {
 		return nil, err
 	}
 	state, err := store.Update(ctx, func(state *clusterstate.State) error {
-		_, _, err := clusterstate.RequestPlatformVersion(state, target, c.clock())
+		_, err := clusterstate.RequestRelease(state, target, c.clock())
 		return err
 	})
 	if err != nil {
@@ -130,6 +134,11 @@ func project(state *clusterstate.State, now time.Time) *Snapshot {
 	snapshot := &Snapshot{Manageable: true}
 	if converged, err := state.Converged(); err == nil {
 		snapshot.PlatformVersion = converged.Platform.Version
+		for _, release := range state.Updates.Operations {
+			if release.Version == converged.Platform.Version && release.K3s != "" {
+				snapshot.ExpectedK3s = release.K3s
+			}
+		}
 	}
 	for _, node := range clusterstate.SortedNodes(state.Nodes) {
 		// Retired identities remain in the journal, but their hostnames may
@@ -137,9 +146,15 @@ func project(state *clusterstate.State, now time.Time) *Snapshot {
 		if node.Phase == clusterstate.NodePhaseRemoved || node.Phase == clusterstate.NodePhaseCancelled {
 			continue
 		}
+		coordinator := clusterstate.CoordinatorReport{}
+		if node.Role == "server" {
+			coordinator = state.Updates.Coordinators[node.ID]
+		}
 		snapshot.Nodes = append(snapshot.Nodes, NodeState{
 			ID: node.ID, Name: node.Name, Role: node.Role, K3sVersion: node.K3sVersion,
 			AgentVersion: node.AgentVersion, Phase: node.Phase, LastSeen: node.LastSeen,
+			CoordinatorVersion:  coordinator.Version,
+			CoordinatorLastSeen: coordinator.LastSeen,
 		})
 	}
 	if err := clusterstate.Updatable(state, now); err != nil {
@@ -147,6 +162,12 @@ func project(state *clusterstate.State, now time.Time) *Snapshot {
 		snapshot.Reason = err.Error()
 	}
 	snapshot.Operation = relevantOperation(state)
+	for _, op := range state.Operations {
+		if op.Phase == clusterstate.OperationComplete && clusterstate.IsReleaseOperation(state, op) &&
+			(snapshot.LastSuccessful == nil || snapshot.LastSuccessful.UpdatedAt.Before(op.UpdatedAt)) {
+			snapshot.LastSuccessful = projectOperation(state, op)
+		}
+	}
 	return snapshot
 }
 
@@ -155,14 +176,15 @@ func project(state *clusterstate.State, now time.Time) *Snapshot {
 func relevantOperation(state *clusterstate.State) *OperationState {
 	if state.CurrentOperation != "" {
 		if operation, ok := state.Operations[state.CurrentOperation]; ok {
-			return projectOperation(state, operation)
+			if clusterstate.IsReleaseOperation(state, operation) {
+				return projectOperation(state, operation)
+			}
 		}
 	}
 	var newest *clusterstate.Operation
 	for id := range state.Operations {
 		operation := state.Operations[id]
-		from, target := state.Revisions[operation.FromRevision], state.Revisions[operation.TargetRevision]
-		if target.Platform.Version == "" || target.Platform.Version == from.Platform.Version {
+		if !clusterstate.IsReleaseOperation(state, operation) {
 			continue
 		}
 		if newest == nil || newest.StartedAt.Before(operation.StartedAt) {

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { afterNavigate } from '$app/navigation';
+	import MenuIcon from '@lucide/svelte/icons/menu';
 	import { setUser } from '$lib/stores/auth.svelte';
 	import { modal } from '$lib/stores/modal.svelte';
 	import Sidebar from '$lib/components/shell/Sidebar.svelte';
@@ -10,6 +12,10 @@
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
+	let navigationOpen = $state(false);
+	afterNavigate(() => {
+		navigationOpen = false;
+	});
 
 	$effect.pre(() => {
 		setUser(data.user);
@@ -18,6 +24,7 @@
 
 <svelte:window
 	onkeydown={(e) => {
+		if (e.key === 'Escape') navigationOpen = false;
 		if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
 			e.preventDefault();
 			modal.open(CommandPaletteModal, {}, commandPaletteOptions);
@@ -28,12 +35,26 @@
 <!-- No top padding: the 62px logo/topbar band provides the breathing room,
      so its content centers between the window edge and the card. -->
 <div class="bg-glow-app flex h-screen gap-2.5 px-2.5 pb-2.5">
-	<Sidebar />
+	<div class="hidden md:contents"><Sidebar /></div>
 	<div class="flex min-w-0 flex-1 flex-col">
-		<Topbar />
+		<div class="flex min-w-0 items-center gap-3">
+			<details class="relative flex-none md:hidden" bind:open={navigationOpen}>
+				<summary
+					aria-label="Navigation"
+					class="text-text-primary cursor-pointer list-none rounded-lg p-2 hover:bg-white/4"
+					><MenuIcon size={20} /></summary
+				>
+				<div
+					class="bg-surface-base border-border-default absolute top-10 left-0 z-40 max-h-[80dvh] overflow-y-auto rounded-xl border p-3"
+				>
+					<Sidebar />
+				</div>
+			</details>
+			<div class="min-w-0 flex-1"><Topbar /></div>
+		</div>
 		<div class="flex min-h-0 flex-1 gap-4">
 			<main
-				class="bg-surface-raised border-border-default min-w-0 flex-1 overflow-y-auto rounded-2xl border px-5.5 pt-5.5"
+				class="bg-surface-raised border-border-default min-w-0 flex-1 overflow-y-auto rounded-2xl border px-4 pt-4 sm:px-5.5 sm:pt-5.5"
 			>
 				{@render children()}
 			</main>

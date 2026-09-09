@@ -15,7 +15,7 @@
 	} = $props();
 </script>
 
-<div class="mb-5.5 flex items-start">
+<div class="mb-5.5 flex flex-col items-start gap-3 sm:flex-row sm:gap-0">
 	<div>
 		<div class="flex items-center gap-3">
 			<h1 class="text-text-primary text-5xl font-semibold tracking-[-0.02em]">{title}</h1>

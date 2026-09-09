@@ -166,13 +166,18 @@ func managedCluster(t *testing.T, now time.Time) *Cluster {
 	state.Nodes["seed"] = node
 	_, err = cs.Bootstrap(context.Background(), state)
 	require.NoError(t, err)
+	_, err = cs.Update(context.Background(), func(s *clusterstate.State) error {
+		s.Updates.Coordinators = map[string]clusterstate.CoordinatorReport{"seed": {Version: "v0.1.0", LastSeen: now}}
+		return nil
+	})
+	require.NoError(t, err)
 	return &Cluster{Client: client, now: func() time.Time { return now }}
 }
 
 func TestServiceAppliesThroughClusterState(t *testing.T) {
 	st := store.NewStore(testdb.New(t))
 	ctx := context.Background()
-	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	feed := &staticFeed{release: &Release{Version: "v0.2.0", PublishedAt: now}}
 	svc := &Service{Store: st, Feed: feed, Cluster: managedCluster(t, now), Version: "v0.1.0",
 		now: func() time.Time { return now }}
@@ -211,9 +216,7 @@ func TestServiceAppliesThroughClusterState(t *testing.T) {
 	require.ErrorIs(t, err, clusterstate.ErrOperationActive, "only a failed operation resumes")
 
 	// The loop applies on its own when asked to, and stays quiet otherwise.
-	// The loop's own clock stays real so the scan is due against the row's
-	// database timestamp; the cluster clock stays pinned to keep the node
-	// heartbeat fresh.
+	// Both clocks agree so aggregate freshness uses the same observation time.
 	auto := &Service{Store: st, Feed: &staticFeed{release: &Release{Version: "v0.3.0", PublishedAt: now}},
 		Cluster: managedCluster(t, now), Version: "v0.1.0"}
 	_, err = auto.UpdateSettings(ctx, ChannelStable, true)
@@ -226,4 +229,32 @@ func TestServiceAppliesThroughClusterState(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, status.Operation)
 	require.Equal(t, "v0.3.0", status.Operation.TargetVersion)
+}
+
+func TestServiceFinishesPlatformAheadWithoutFeedAndDoesNotRepairAutomatically(t *testing.T) {
+	st := store.NewStore(testdb.New(t))
+	now := time.Now()
+	svc := &Service{Store: st, Cluster: managedCluster(t, now), Version: "v0.2.0", now: func() time.Time { return now }}
+	ctx := context.Background()
+	status, err := svc.Status(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "finish", status.Summary.Action)
+	require.Equal(t, "v0.2.0", status.Summary.TargetVersion)
+	require.Equal(t, "v0.1.0", status.Summary.ConvergedVersion)
+	require.Nil(t, status.Latest)
+	require.True(t, status.UpdateAvailable)
+	// Automatic updates never interpret an out-of-band platform upgrade as consent.
+	svc.Feed = &staticFeed{release: &Release{Version: "v0.3.0", PublishedAt: now}}
+	_, err = svc.UpdateSettings(ctx, ChannelStable, true)
+	require.NoError(t, err)
+	svc.tick(ctx)
+	status, err = svc.Status(ctx)
+	require.NoError(t, err)
+	require.Nil(t, status.Operation)
+	require.Equal(t, "finish", status.Summary.Action)
+	status, err = svc.Apply(ctx, "v0.2.0")
+	require.NoError(t, err)
+	require.Equal(t, "updating", status.Summary.State)
+	require.Equal(t, "v0.1.0", status.Summary.ConvergedVersion)
+	require.Equal(t, "v0.2.0", status.Operation.TargetVersion)
 }

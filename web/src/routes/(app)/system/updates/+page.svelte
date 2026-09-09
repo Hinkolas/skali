@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import CloudOff from '@lucide/svelte/icons/cloud-off';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { api, ApiError } from '$lib/api/client';
-	import { formatDateTime, formatDuration, relativeTime } from '$lib/format';
+	import { formatDateTime, relativeTime } from '$lib/format';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
@@ -18,10 +19,10 @@
 	import {
 		FEED_ERROR_HINT,
 		FEED_ERROR_TITLE,
-		OPERATION_PHASE_LABEL,
-		operationSettled,
 		type UpdateChannel,
 		type UpdateStatus,
+		updatePresentation,
+		updateSummary,
 		type UpdateStepPhase
 	} from '$lib/types/updates';
 	import type { PageData } from './$types';
@@ -37,7 +38,22 @@
 	let busy = $state<'scan' | 'apply' | 'resume' | 'settings' | null>(null);
 
 	const operation = $derived(status.operation);
-	const running = $derived(operation != null && !operationSettled(operation));
+	const summary = $derived(updateSummary(status));
+	const running = $derived(summary?.state === 'updating');
+	const presentation = $derived(updatePresentation(status));
+	let detailsOpen = $state(false);
+	let detailsElement: HTMLDetailsElement;
+	async function showDetails(failedStep = false) {
+		detailsOpen = true;
+		await tick();
+		const id = failedStep
+			? operation?.steps.find((step) => step.phase === 'failed')?.node_id
+			: undefined;
+		const destination = id ? document.getElementById(`update-node-${id}`) : detailsElement;
+		destination?.scrollIntoView({ block: 'start' });
+		if (id) destination?.focus();
+		else detailsElement?.querySelector('summary')?.focus();
+	}
 
 	$effect(() => {
 		const interval = running ? 3_000 : 60_000;
@@ -60,15 +76,7 @@
 		};
 	});
 
-	const progress = $derived.by(() => {
-		if (!operation) return { done: 0, total: 0, pct: 0 };
-		// The bundle move is the last step after every node; count it so
-		// the bar does not sit at 100% while the platform still rolls.
-		const total = operation.steps.length + 1;
-		let done = operation.steps.filter((s) => s.phase === 'complete').length;
-		if (operation.phase === 'complete') done = total;
-		return { done, total, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
-	});
+	const progress = $derived(summary.progress);
 
 	const stepDot: Record<UpdateStepPhase, string> = {
 		pending: 'bg-white/15',
@@ -102,7 +110,7 @@
 		return undefined;
 	});
 	const canUpdate = $derived(
-		status.managed && status.manageable && status.update_available && status.latest != null
+		status.managed && (status.manageable || summary.action === 'retry') && summary.action !== ''
 	);
 
 	function describeError(err: unknown, fallback: string) {
@@ -127,10 +135,7 @@
 			} else {
 				toast.update(id, {
 					variant: 'success',
-					title:
-						status.update_available && status.latest
-							? `${status.latest.version} is available`
-							: 'You are up to date'
+					title: updatePresentation(status).title
 				});
 			}
 			await invalidateAll();
@@ -145,14 +150,14 @@
 	}
 
 	async function apply() {
-		const target = status.latest?.version;
+		const target = summary.target_version;
 		if (!target) return;
 		const confirmed = await dialog.confirm({
 			variant: 'danger',
-			title: `Update to ${target}?`,
+			title: `${summary.action === 'finish' ? 'Finish update to' : 'Update to'} ${target}?`,
 			description:
 				'Every node moves to the new release one at a time, servers first, and the control plane restarts. Running applications keep serving; the console disconnects briefly.',
-			confirmLabel: 'Update now'
+			confirmLabel: presentation.action
 		});
 		if (!confirmed) return;
 		busy = 'apply';
@@ -205,13 +210,7 @@
 
 <PageHeader title="Software update">
 	{#snippet subtitle()}
-		<span>skalid {status.installed.version}</span>
-		{#if disconnected}
-			<span class="text-status-warning flex items-center gap-1.5">
-				<LoaderCircle class="size-3.5 animate-spin" />
-				control plane restarting
-			</span>
-		{/if}
+		<span>One release for the platform and every node</span>
 	{/snippet}
 	{#snippet actions()}
 		<Button variant="secondary" onclick={scan} busy={busy === 'scan'} disabled={busy != null}>
@@ -221,214 +220,135 @@
 </PageHeader>
 
 <div class="flex max-w-3xl flex-col gap-3.5 pb-6">
+	{#if disconnected}
+		<p class="text-status-warning flex items-center gap-2 text-md" role="status">
+			<LoaderCircle class="size-4 animate-spin" />
+			Reconnecting to the platform. An accepted update continues in the background.
+		</p>
+	{/if}
 	{#if feedFailure}
 		<div
-			class="border-status-warning/25 bg-status-warning/10 flex items-start gap-3 rounded-[13px] border px-4 py-3.5"
+			class="border-status-warning/25 bg-status-warning/10 flex items-start gap-3 rounded-[13px] border p-4"
 			role="status"
 		>
-			<div class="text-status-warning mt-0.5 flex-none">
-				{#if feedFailure.offline}
-					<CloudOff size={17} strokeWidth={1.75} />
-				{:else}
-					<TriangleAlert size={17} strokeWidth={1.75} />
+			{#if feedFailure.offline}<CloudOff size={18} />{:else}<TriangleAlert size={18} />{/if}
+			<div class="min-w-0">
+				<p class="text-status-warning text-md font-medium">{feedFailure.title}</p>
+				<p class="text-text-muted mt-1 text-md">{feedFailure.hint}</p>
+				<button
+					class="text-accent-nav mt-2 cursor-pointer text-md underline underline-offset-4"
+					onclick={() => showDetails()}>View details</button
+				>
+			</div>
+		</div>
+	{/if}
+
+	<Card class="p-5">
+		<div class="flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
+			<div class="w-full min-w-0 sm:w-auto sm:flex-1">
+				<h2 class="text-text-primary text-xl font-semibold">{presentation.title}</h2>
+				{#if summary.detail}<p class="text-text-muted mt-1 max-w-prose text-md">
+						{summary.detail}
+					</p>{/if}
+				{#if summary.state === 'incomplete'}
+					<p class="text-text-muted mt-1 text-md">
+						Finish updating to {summary.target_version}.
+					</p>
+				{/if}
+				{#if summary.state === 'failed'}
+					<button
+						class="text-accent-nav mt-2 cursor-pointer text-md underline underline-offset-4"
+						onclick={() => showDetails(true)}>View failed step</button
+					>
 				{/if}
 			</div>
-			<div class="flex min-w-0 flex-1 flex-col gap-0.5">
-				<span class="text-status-warning text-md font-medium">{feedFailure.title}</span>
-				<span class="text-text-muted text-md">
-					{feedFailure.hint}
-					{#if status.last_checked_at}
-						Last tried {relativeTime(status.last_checked_at)}.
-					{/if}
-				</span>
-				<span class="text-text-faint mt-1 font-mono text-sm break-all" title={feedFailure.detail}>
-					{feedFailure.detail}
-				</span>
-			</div>
-		</div>
-	{/if}
-
-	<!-- The update itself: what runs, what is available, and the button. -->
-	<Card class="p-5">
-		{#if running && operation}
-			<div class="flex items-start gap-3">
-				<div class="flex min-w-0 flex-1 flex-col gap-1">
-					<h3 class="text-text-primary text-xl font-semibold">
-						Updating to {operation.target_version ?? status.latest?.version ?? ''}
-					</h3>
-					<span class="text-text-muted text-md">
-						{OPERATION_PHASE_LABEL[operation.phase] ?? operation.phase}
-						· started {relativeTime(operation.started_at)}
-						· {formatDuration(operation.started_at, null)}
-					</span>
-				</div>
-				<span class="font-mono text-text-muted text-sm">{progress.done}/{progress.total}</span>
-			</div>
-			<div class="mt-4">
-				<ProgressBar pct={progress.pct} />
-			</div>
-		{:else if operation?.phase === 'failed'}
-			<div class="flex items-start gap-3">
-				<div class="flex min-w-0 flex-1 flex-col gap-1">
-					<h3 class="text-status-danger text-xl font-semibold">
-						Update to {operation.target_version ?? ''} failed
-					</h3>
-					<span class="text-text-muted text-md">
-						{operation.error ?? 'a step failed'} · {relativeTime(operation.updated_at)}
-					</span>
-				</div>
-				<Button variant="primary" onclick={resume} busy={busy === 'resume'} disabled={busy != null}>
-					Retry
-				</Button>
-			</div>
-		{:else if status.update_available && status.latest}
-			<div class="flex items-start gap-3">
-				<div class="flex min-w-0 flex-1 flex-col gap-1">
-					<h3 class="text-text-primary text-xl font-semibold">
-						{status.latest.version}
-						{#if status.latest.prerelease}
-							<span class="text-text-muted ml-1 text-md font-normal">prerelease</span>
-						{/if}
-					</h3>
-					<span class="text-text-muted text-md">
-						published {formatDateTime(status.latest.published_at)}
-						{#if status.latest.k3s}
-							· includes k3s {status.latest.k3s}
-						{/if}
-					</span>
-					{#if status.latest.url}
-						<!-- eslint-disable svelte/no-navigation-without-resolve -- external release page -->
-						<a
-							href={status.latest.url}
-							target="_blank"
-							rel="noreferrer"
-							class="text-accent-nav mt-1 flex items-center gap-1 text-md hover:underline"
-						>
-							Release notes
-							<ExternalLink size={13} />
-						</a>
-						<!-- eslint-enable svelte/no-navigation-without-resolve -->
-					{/if}
-				</div>
+			{#if summary.action}
 				<Button
 					variant="primary"
-					onclick={apply}
-					busy={busy === 'apply'}
+					onclick={summary.action === 'retry' ? resume : apply}
+					busy={busy === 'apply' || busy === 'resume'}
 					disabled={busy != null || !canUpdate}
-					title={updateTitle}
+					title={summary.action === 'retry' ? 'Continue the remaining update steps' : updateTitle}
 				>
-					Update now
+					{presentation.action}
 				</Button>
-			</div>
-			{#if updateTitle}
-				<p class="text-text-muted mt-4 text-md">
-					{updateTitle}
-					{#if !status.managed}
-						<span class="font-mono text-text-secondary ml-1">skali cluster upgrade</span>
-					{/if}
-				</p>
 			{/if}
-		{:else}
-			<div class="flex flex-col gap-1">
-				<h3 class="text-text-primary text-xl font-semibold">
-					{#if status.last_error}
-						Could not check for updates
-					{:else if status.last_checked_at}
-						You are up to date
-					{:else}
-						Not checked yet
-					{/if}
-				</h3>
-				<span class="text-text-muted text-md">
-					{#if status.last_error}
-						{#if status.latest}
-							last successful check found {status.latest.version}, which is what you run
-						{:else}
-							no release is known yet; the notice above says why the check failed
-						{/if}
-					{:else if status.last_checked_at}
-						last checked {relativeTime(status.last_checked_at)}
-						{#if status.latest}
-							· latest release {status.latest.version}
-						{/if}
-					{:else}
-						the daily scan has not run; check now to ask the release feed
-					{/if}
-				</span>
+		</div>
+		{#if running}
+			<div
+				class="mt-5"
+				role="progressbar"
+				aria-label={progress.phase}
+				aria-valuemin={0}
+				aria-valuemax={100}
+				aria-valuenow={progress.percent}
+			>
+				<div class="text-text-muted mb-2 flex justify-between gap-4 text-md" aria-live="polite">
+					<span>{progress.phase}</span><span>{progress.done}/{progress.total}</span>
+				</div>
+				<ProgressBar pct={progress.percent} />
 			</div>
-			{#if operation?.phase === 'complete'}
-				<p class="text-text-faint mt-3 text-md">
-					Last update to {operation.target_version ?? ''} completed
-					{relativeTime(operation.completed_at ?? operation.updated_at)}.
-				</p>
-			{/if}
 		{/if}
-
+		{#if updateTitle && !running && summary.action !== 'retry'}
+			<p class="text-text-muted mt-3 text-md">{updateTitle}</p>
+		{/if}
 		<div class="mt-5">
-			<KeyValueRow k="Installed" v={status.installed.version} />
-			{#if status.installed.platform_version && status.installed.platform_version !== status.installed.version}
-				<KeyValueRow k="Cluster" v={status.installed.platform_version} />
+			<KeyValueRow k="Skali version" v={summary.converged_version ?? 'not verified'} />
+			{#if running || summary.action === 'finish' || summary.action === 'retry'}
+				<KeyValueRow
+					k={running ? 'Updating to' : 'Target version'}
+					v={summary.target_version ?? 'unknown'}
+				/>
 			{/if}
-			<KeyValueRow k="Channel" v={status.channel} />
 			<KeyValueRow
 				k="Last check"
-				v={status.last_checked_at ? formatDateTime(status.last_checked_at) : 'never'}
+				v={status.last_checked_at ? relativeTime(status.last_checked_at) : 'never'}
 			/>
 		</div>
+		{#if status.latest && summary.action === 'update'}
+			<p class="text-text-muted mt-3 text-md">
+				Released {formatDateTime(status.latest.published_at)}
+			</p>
+			{#if status.latest.url}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- external release page -->
+				<a
+					href={status.latest.url}
+					target="_blank"
+					rel="noreferrer"
+					class="text-accent-nav mt-2 inline-flex items-center gap-1 text-md hover:underline"
+				>
+					Release notes <ExternalLink size={13} />
+				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
+			{/if}
+		{/if}
+		{#if status.last_successful}
+			<p class="text-text-faint mt-3 text-md">
+				Last successful update: {status.last_successful.target_version}, {relativeTime(
+					status.last_successful.completed_at ?? status.last_successful.updated_at
+				)}.
+			</p>
+		{/if}
 	</Card>
 
-	<!-- Per-node progress while an update runs, or after it failed. -->
-	{#if operation && (running || operation.phase === 'failed') && operation.steps.length > 0}
-		<Card class="p-5">
-			<h3 class="text-text-primary text-xl font-semibold">Nodes</h3>
-			<div class="mt-3">
-				{#each operation.steps as step (step.node_id)}
-					<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
-						<span class="size-[8px] flex-none rounded-full {stepDot[step.phase]}"></span>
-						<span class="font-mono text-text-primary text-md">{step.node}</span>
-						<span class="text-text-faint text-md">{step.action}</span>
-						<span class="flex-1"></span>
-						<span
-							class="text-md {step.phase === 'failed' ? 'text-status-danger' : 'text-text-muted'}"
-							title={step.error}
-						>
-							{stepLabel[step.phase]}
-						</span>
-					</div>
-				{/each}
-				<div class="flex items-center gap-3 py-2.5">
-					<span
-						class="size-[8px] flex-none rounded-full {operation.phase === 'complete'
-							? 'bg-status-success'
-							: operation.phase === 'reconciling-platform' || operation.phase === 'verifying'
-								? 'bg-status-warning animate-pulse'
-								: 'bg-white/15'}"
-					></span>
-					<span class="text-text-primary text-md">platform bundle</span>
-					<span class="text-text-faint text-md">skalid, console, registry</span>
-				</div>
-			</div>
-		</Card>
-	{/if}
-
-	<!-- Settings: the daily scan's channel and what it may do on its own. -->
 	<Card class="p-5">
-		<h3 class="text-text-primary text-xl font-semibold">Automatic updates</h3>
+		<h2 class="text-text-primary text-xl font-semibold">Automatic updates</h2>
 		<div class="mt-4 flex flex-col gap-4">
 			<Toggle
 				checked={status.auto_update}
 				label="Install updates automatically"
-				description="The daily check starts an update as soon as a newer release is available and nothing is deploying."
+				description="Install new releases for the whole cluster after the daily check. Incomplete updates require your attention."
 				disabled={busy != null}
 				onchange={(checked) => saveSettings(status.channel, checked)}
 			/>
-			<div class="flex flex-col gap-1.5">
-				<span class="text-text-tertiary text-base font-medium">Channel</span>
+			<fieldset class="flex flex-col gap-1.5">
+				<legend class="text-text-tertiary mb-1.5 text-base font-medium">Channel</legend>
 				<div class="flex gap-2">
 					{#each ['stable', 'beta'] as const as channel (channel)}
 						<button
 							type="button"
 							disabled={busy != null}
+							aria-pressed={status.channel === channel}
 							onclick={() =>
 								channel !== status.channel && saveSettings(channel, status.auto_update)}
 							class="flex-1 cursor-pointer rounded-[11px] border px-3 py-2.5 text-lg font-medium transition-colors disabled:cursor-default {status.channel ===
@@ -440,35 +360,77 @@
 						</button>
 					{/each}
 				</div>
-				<span class="text-text-muted text-base">
+				<p class="text-text-muted text-base">
 					{status.channel === 'beta'
-						? 'Beta also follows prereleases (alpha, beta, rc). Expect rough edges.'
-						: 'Stable follows tagged releases only.'}
-				</span>
-			</div>
+						? 'Beta includes alpha, beta, and release candidates.'
+						: 'Stable includes stable releases only. Choose beta for alpha releases.'}
+				</p>
+			</fieldset>
 		</div>
 	</Card>
 
-	<!-- What every node runs, from the coordinator. -->
-	{#if status.managed}
-		<Card class="p-5">
-			<h3 class="text-text-primary text-xl font-semibold">Cluster</h3>
-			<div class="mt-3">
+	<Card class="p-5">
+		<details bind:this={detailsElement} bind:open={detailsOpen}>
+			<summary class="text-text-primary cursor-pointer text-lg font-medium">Update details</summary>
+			<div class="mt-4">
+				<h3 class="text-text-primary mb-2 text-md font-medium">Platform</h3>
+				<KeyValueRow k="skalid and console" v={status.installed.version} />
+				<p class="text-text-muted mt-2 text-base">
+					The platform runs inside Kubernetes. Host agents run on every node; coordinators run on
+					controllers.
+				</p>
+				{#if status.last_error}<p class="text-status-warning mt-3 text-sm break-words">
+						{status.last_error}
+					</p>{/if}
+				{#if operation?.error}<p class="text-status-warning mt-3 text-sm break-words">
+						{operation.error}
+					</p>{/if}
+				<h3 class="text-text-primary mt-5 text-md font-medium">Nodes</h3>
 				{#each status.nodes as node (node.id)}
-					<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
-						<span class="font-mono text-text-primary text-md">{node.name}</span>
-						<Pill text={node.role} />
-						<span class="flex-1"></span>
-						<span class="font-mono text-text-muted text-sm" title="k3s">
-							{node.k3s_version ?? 'k3s unknown'}
-						</span>
-						<span class="font-mono text-text-muted text-sm" title="skali-hostd">
-							{node.agent_version ?? 'hostd unknown'}
-						</span>
-						<Pill text={node.phase} tone={nodePhaseTone[node.phase] ?? 'neutral'} />
+					{@const step = operation?.steps.find((step) => step.node_id === node.id)}
+					<div
+						id={`update-node-${node.id}`}
+						tabindex="-1"
+						class="border-border-subtle border-b py-4 last:border-0"
+					>
+						<div class="flex flex-wrap items-center gap-2">
+							<span class="font-mono text-text-primary text-md break-all">{node.name}</span>
+							<Pill text={node.role === 'server' ? 'controller' : 'worker'} />
+							<Pill text={node.phase} tone={nodePhaseTone[node.phase] ?? 'neutral'} />
+						</div>
+						<dl
+							class="text-text-muted mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm"
+						>
+							<dt>Host agent</dt>
+							<dd class="font-mono break-all">{node.agent_version ?? 'not reported'}</dd>
+							{#if node.role === 'server'}<dt>Coordinator</dt>
+								<dd class="font-mono break-all">
+									{node.coordinator_version ?? 'not reported'}
+								</dd>{/if}
+							<dt>Kubernetes</dt>
+							<dd class="font-mono break-all">{node.k3s_version ?? 'not reported'}</dd>
+							<dt>Agent report</dt>
+							<dd>{node.last_seen ? relativeTime(node.last_seen) : 'never'}</dd>
+							{#if node.role === 'server'}
+								<dt>Coordinator report</dt>
+								<dd>
+									{node.coordinator_last_seen ? relativeTime(node.coordinator_last_seen) : 'never'}
+								</dd>
+							{/if}
+						</dl>
+						{#if step && operation?.phase !== 'complete'}
+							<p class="text-text-muted mt-2 flex items-center gap-2 text-md">
+								<span class="size-2 rounded-full {stepDot[step.phase]}"></span>{stepLabel[
+									step.phase
+								]}
+							</p>
+							{#if step.error}<p class="text-status-warning mt-1 text-sm break-words">
+									{step.error}
+								</p>{/if}
+						{/if}
 					</div>
 				{/each}
 			</div>
-		</Card>
-	{/if}
+		</details>
+	</Card>
 </div>

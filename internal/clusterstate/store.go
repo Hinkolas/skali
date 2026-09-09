@@ -123,12 +123,16 @@ func (s *Store) Bootstrap(ctx context.Context, state *State) (Trust, error) {
 	if err != nil {
 		return Trust{}, err
 	}
+	journal, err := json.Marshal(state.Updates)
+	if err != nil {
+		return Trust{}, err
+	}
 	_, err = s.Client.CoreV1().ConfigMaps(Namespace).Create(ctx, &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   StateName,
 			Labels: map[string]string{"skali.dev/cluster-state": "true"},
 		},
-		Data: map[string]string{StateKey: string(data)},
+		Data: map[string]string{StateKey: string(data), UpdateJournalKey: string(journal)},
 	}, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		existing, loadErr := s.Load(ctx)
@@ -153,7 +157,7 @@ func (s *Store) Load(ctx context.Context) (*State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read cluster state: %w", err)
 	}
-	state, err := decodeState(configMap.Data[StateKey])
+	state, err := decodeDocument(configMap.Data)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +192,7 @@ func (s *Store) Update(ctx context.Context, mutate func(*State) error) (*State, 
 		if err != nil {
 			return err
 		}
-		state, err := decodeState(configMap.Data[StateKey])
+		state, err := decodeDocument(configMap.Data)
 		if err != nil {
 			return err
 		}
@@ -201,6 +205,11 @@ func (s *Store) Update(ctx context.Context, mutate func(*State) error) (*State, 
 			return err
 		}
 		configMap.Data[StateKey] = string(data)
+		journal, err := json.Marshal(state.Updates)
+		if err != nil {
+			return err
+		}
+		configMap.Data[UpdateJournalKey] = string(journal)
 		if _, err := s.Client.CoreV1().ConfigMaps(Namespace).
 			Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
 			return err
