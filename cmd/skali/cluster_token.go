@@ -60,9 +60,7 @@ func newClusterTokenCmd() *cobra.Command {
 			}
 
 			if detected.Record.Reconciled() {
-				if server != "" {
-					return fmt.Errorf("--server is not stored in reconciled tokens; supply the coordinator to cluster join")
-				}
+
 				if !cmd.Flags().Changed("capabilities") && cliprompt.Interactive() {
 					allowedCapabilities, err = promptInvitationCapabilities(ctx, out)
 					if err != nil {
@@ -81,32 +79,33 @@ func newClusterTokenCmd() *cobra.Command {
 				fmt.Fprintf(out, "one-time %s invitation for cluster %q (expires %s):\n",
 					invitation.Role, detected.Record.Cluster,
 					invitation.ExpiresAt.Format(time.RFC3339))
-				// Naming the real endpoint matters on a multi-homed node:
-				// the coordinator answers only on the addresses this node
-				// declared, so a guessed one is refused.
-				coordinator := "<coordinator>"
-				var alternates []string
-				if detected.Record.Coordinator != nil {
-					for index, endpoint := range detected.Record.Coordinator.Endpoints {
-						if index == 0 {
-							coordinator = endpoint
-							continue
-						}
-						alternates = append(alternates, endpoint)
+
+				var endpoints []string
+				if server != "" {
+					endpoint, err := clusterstate.NormalizeEndpoint(server)
+					if err != nil {
+						return err
 					}
+					endpoints = append(endpoints, endpoint)
+				} else if detected.Record.Coordinator != nil {
+					endpoints = detected.Record.Coordinator.Endpoints
 				}
-				fmt.Fprintf(out, "  sudo skali cluster join %s --token-file <file> --capabilities <list>\n",
-					coordinator)
-				if len(alternates) > 0 {
-					fmt.Fprintf(out, "  other coordinator endpoints: %s\n", strings.Join(alternates, ", "))
+				token, err = clusterstate.WithCoordinators(token, endpoints)
+				if err != nil {
+					return err
 				}
-				fmt.Fprintln(out)
-				fmt.Fprintln(out, "enrollment token (write it to <file>, mode 0600):")
-				fmt.Fprintf(out, "  %s\n", token)
-				fmt.Fprintln(out)
-				fmt.Fprintf(out, "invitation id: %s\n", invitation.ID)
-				fmt.Fprintln(out, "The token carries authentication only; it contains no endpoint, role,")
-				fmt.Fprintln(out, "cluster name, k3s token, or registry credential.")
+				fmt.Fprintf(out, "  sudo skali cluster join --token '%s'\n", token)
+				if len(endpoints) == 0 {
+					fmt.Fprintln(out, "No coordinator endpoint is recorded; supply one when joining.")
+				}
+				if len(invitation.AllowedCapabilities) > 0 {
+					fmt.Fprintf(out, "  capabilities: %s (used by default)\n", strings.Join(invitation.AllowedCapabilities, ", "))
+				} else {
+					fmt.Fprintln(out, "Choose this node's capabilities when joining, or pass --capabilities.")
+				}
+				fmt.Fprintf(out, "\ninvitation id: %s\n", invitation.ID)
+				fmt.Fprintln(out, "The invitation includes coordinator discovery hints. Role and capabilities are verified by the coordinator.")
+
 				return nil
 			}
 
@@ -147,7 +146,7 @@ func newClusterTokenCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", layout.RoleAgent, "role the token enrolls: agent or server (interactive runs ask)")
-	cmd.Flags().StringVar(&server, "server", "", "legacy-only advertised HTTPS k3s endpoint (v2 tokens never contain an address)")
+	cmd.Flags().StringVar(&server, "server", "", "advertised coordinator endpoint override (k3s endpoint for legacy clusters)")
 	cmd.Flags().StringSliceVar(&allowedCapabilities, "capabilities", nil,
 		"optional capabilities this invitation allows (default: all)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "invitation lifetime for reconciled clusters")

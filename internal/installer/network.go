@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -454,4 +455,45 @@ func EndpointServed(listening []string, address, port string) bool {
 		}
 	}
 	return false
+}
+
+// CoordinatorRouteAddress asks the target host's kernel which local address it
+// uses for coordinator traffic. Discovery never substitutes a remote node IP.
+// Multiple source addresses are ambiguous and require an operator choice.
+func CoordinatorRouteAddress(ctx context.Context, runner host.Runner, endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Hostname() == "" {
+		return ""
+	}
+	targets := []string{parsed.Hostname()}
+	if net.ParseIP(targets[0]) == nil {
+		result, err := runner.Run(ctx, host.Command{Name: "getent", Args: []string{"ahosts", targets[0]}})
+		if err != nil || result.ExitCode != 0 {
+			return ""
+		}
+		targets = nil
+		for _, line := range strings.Split(result.Stdout, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && net.ParseIP(fields[0]) != nil && !slices.Contains(targets, fields[0]) {
+				targets = append(targets, fields[0])
+			}
+		}
+	}
+	sources := []string{}
+	for _, target := range targets {
+		result, err := runner.Run(ctx, host.Command{Name: "ip", Args: []string{"route", "get", target}})
+		if err != nil || result.ExitCode != 0 {
+			continue
+		}
+		fields := strings.Fields(result.Stdout)
+		for index, field := range fields {
+			if field == "src" && index+1 < len(fields) && net.ParseIP(fields[index+1]) != nil && !slices.Contains(sources, fields[index+1]) {
+				sources = append(sources, fields[index+1])
+			}
+		}
+	}
+	if len(sources) == 1 {
+		return sources[0]
+	}
+	return ""
 }

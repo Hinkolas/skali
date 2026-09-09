@@ -52,8 +52,12 @@ func promptNodeNetwork(ctx context.Context, out *os.File, reader *bufio.Reader) 
 // public question for addresses that are mapped onto this host without
 // being assigned to it.
 func promptDetectedNodeNetwork(ctx context.Context, out io.Writer, session *cliprompt.Session,
-	addresses []installer.HostAddress) (installer.NodeNetwork, error) {
+	addresses []installer.HostAddress, preferred ...string) (installer.NodeNetwork, error) {
 	network := installer.NodeNetwork{}
+	recommended := installer.DefaultClusterAddress(addresses)
+	if len(preferred) > 0 && preferred[0] != "" {
+		recommended = preferred[0]
+	}
 	if len(addresses) == 1 {
 		fmt.Fprintf(out, "  node address: %s\n", addresses[0].Label())
 		network.ClusterIP = addresses[0].IP
@@ -66,7 +70,7 @@ func promptDetectedNodeNetwork(ctx context.Context, out io.Writer, session *clip
 				Description: "type an address the detection missed",
 				Value:       manualAddressValue,
 			}),
-			DefaultValue: installer.DefaultClusterAddress(addresses),
+			DefaultValue: recommended,
 		})
 		if err != nil {
 			return installer.NodeNetwork{}, err
@@ -202,4 +206,43 @@ func describeNetwork(network installer.NodeNetwork) string {
 		parts = append(parts, "public "+strings.Join(network.PublicIPs, ", "))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func promptJoinNodeNetwork(ctx context.Context, out *os.File, reader *bufio.Reader, desired installer.NodeNetwork, endpoint string) (installer.NodeNetwork, error) {
+	addresses, err := installer.DetectHostAddresses(ctx, runner())
+	if err != nil || len(addresses) == 0 {
+		if desired.ClusterIP == "" {
+			desired.ClusterIP, err = promptSession(out, reader).Text(ctx, cliprompt.TextOptions{Title: "Cluster address", Description: "Enter this host's address that other cluster nodes can reach.", Validate: validateRequiredIP})
+			if err != nil {
+				return desired, err
+			}
+		}
+		if desired.PublicIPs == nil {
+			desired.PublicIPs, err = promptTypedPublicIPs(ctx, promptSession(out, reader))
+		}
+		return desired, err
+	}
+	recommended := desired.ClusterIP
+	if recommended == "" {
+		recommended = installer.CoordinatorRouteAddress(ctx, runner(), endpoint)
+	}
+	if desired.ClusterIP != "" {
+		if desired.PublicIPs == nil {
+			desired.PublicIPs, err = promptTypedPublicIPs(ctx, promptSession(out, reader))
+		}
+		return desired, err
+	}
+	selected, err := promptDetectedNodeNetwork(ctx, out, promptSession(out, reader), addresses, recommended)
+	if err != nil {
+		return desired, err
+	}
+	// Explicit declarations are authoritative. The caller only invokes this
+	// helper for missing inputs, retaining SAN and bind configuration.
+	if desired.ClusterIP == "" {
+		desired.ClusterIP = selected.ClusterIP
+	}
+	if desired.PublicIPs == nil {
+		desired.PublicIPs = selected.PublicIPs
+	}
+	return desired, nil
 }

@@ -319,7 +319,11 @@ func (a *Agent) execute(ctx context.Context, action clusterstate.AgentAction) (c
 			err = installer.DecommissionK3s(ctx, a.Runner, record)
 		}
 	case "cleanup":
-		err = installer.ScheduleHostdSelfRemoval(ctx, a.Runner)
+		var record *installer.Record
+		record, err = installer.LoadRecord(ctx, a.Runner)
+		if err == nil {
+			err = installer.ScheduleHostdSelfRemoval(ctx, a.Runner, record.EnrolledOnly())
+		}
 	default:
 		err = fmt.Errorf("coordinator requested unknown action %q", action.Type)
 	}

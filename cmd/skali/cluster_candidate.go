@@ -84,32 +84,8 @@ func newClusterNodeRemoveCmd() *cobra.Command {
 			}
 			enrolledOnly := false
 			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
-				_, err := state.EditCandidate(time.Now(),
-					func(nodes map[string]clusterstate.RevisionNode, platform *clusterstate.PlatformState) error {
-						node, ok := clusterstate.FindNodeByName(nodes, args[0])
-						if !ok {
-							return fmt.Errorf("node %q is not in the candidate", args[0])
-						}
-						if platform.RegistryNode == node.ID {
-							return errors.New("the node holds the registry's local data; registry migration is not implemented")
-						}
-						delete(nodes, node.ID)
-						activeID := state.ConvergedRevision
-						if state.TargetRevision != "" {
-							activeID = state.TargetRevision
-						}
-						active := state.Revisions[activeID]
-						if _, joined := active.Nodes[node.ID]; !joined {
-							enrolledOnly = true
-							observed := state.Nodes[node.ID]
-							observed.Phase = clusterstate.NodePhaseUninstalling
-							observed.LastAction = "cancel-enrollment"
-							observed.LastError = ""
-							observed.UpdatedAt = time.Now().UTC().Truncate(time.Second)
-							state.Nodes[node.ID] = observed
-						}
-						return nil
-					})
+				var err error
+				enrolledOnly, err = clusterstate.StageNodeRemoval(state, args[0], time.Now())
 				return err
 			})
 			if err != nil {
@@ -119,7 +95,7 @@ func newClusterNodeRemoveCmd() *cobra.Command {
 				args[0], state.CandidateRevision)
 			if enrolledOnly {
 				fmt.Fprintln(os.Stdout,
-					"the node was never applied; its agent is cleaning up local enrollment state")
+					"enrollment cancelled; removed from the plan. Any connected agent will clean up its local enrollment state")
 				return nil
 			}
 			printApplyGuidance()
@@ -181,8 +157,9 @@ func newClusterNodeForgetCmd() *cobra.Command {
 			}
 			_, err = store.Update(cmd.Context(), func(state *clusterstate.State) error {
 				var nodeID string
-				for id, node := range state.Nodes {
-					if node.Name == args[0] {
+				for _, node := range clusterstate.SortedNodes(state.Nodes) {
+					id := node.ID
+					if node.Name == args[0] && node.Phase != clusterstate.NodePhaseRemoved && node.Phase != clusterstate.NodePhaseCancelled {
 						nodeID = id
 						if node.Phase != clusterstate.NodePhaseFailed &&
 							node.Phase != clusterstate.NodePhaseDraining &&

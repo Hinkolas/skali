@@ -59,3 +59,18 @@ func TestEnrollmentTokenRejectsMalformedCAPin(t *testing.T) {
 		require.ErrorContains(t, err, "coordinator CA pin", pin)
 	}
 }
+
+func TestTokenEndpointHintsRemainOptionalAndNormalizeWrappedInput(t *testing.T) {
+	token, original, err := NewToken("invitation", "sha256:"+strings.Repeat("a", 64))
+	require.NoError(t, err)
+	hinted, err := WithCoordinators(token, []string{"10.10.1.1", "https://10.10.2.1:6444"})
+	require.NoError(t, err)
+	parsed, err := ParseToken(hinted[:22] + "\r\n  " + hinted[22:])
+	require.NoError(t, err)
+	require.Equal(t, original.Credential, parsed.Credential)
+	require.Equal(t, original.CAPin, parsed.CAPin)
+	require.Equal(t, []string{"https://10.10.1.1:6444", "https://10.10.2.1:6444"}, parsed.Coordinators)
+	old, err := ParseToken(token)
+	require.NoError(t, err)
+	require.Empty(t, old.Coordinators)
+}

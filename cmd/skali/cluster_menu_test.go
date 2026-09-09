@@ -90,3 +90,42 @@ func TestNodeArchCounts(t *testing.T) {
 		nodeArchCounts(&installer.Status{Nodes: []installer.NodeStatus{{Name: "c", Arch: "amd64"}}}))
 	require.Empty(t, nodeArchCounts(&installer.Status{}))
 }
+
+func TestCancelledHistoryHiddenUnlessAllRequested(t *testing.T) {
+	for _, all := range []bool{false, true} {
+		output, err := os.CreateTemp(t.TempDir(), "status")
+		require.NoError(t, err)
+		status := &installer.Status{Host: &installer.Host{Record: &installer.Record{}}, Reconciled: &clusterstate.State{Nodes: map[string]clusterstate.Node{
+			"active":    {ID: "active", Name: "current-node", Phase: clusterstate.NodePhaseActive},
+			"cancelled": {ID: "cancelled", Name: "cancelled-node", Phase: clusterstate.NodePhaseCancelled},
+			"removed":   {ID: "removed", Name: "removed-node", Phase: clusterstate.NodePhaseRemoved},
+		}}}
+		printReconciledStatus(output, status, all)
+		require.NoError(t, output.Close())
+		data, err := os.ReadFile(output.Name())
+		require.NoError(t, err)
+		require.Contains(t, string(data), "current-node")
+		if all {
+			require.Contains(t, string(data), "cancelled-node")
+			require.Contains(t, string(data), "removed-node")
+		} else {
+			require.NotContains(t, string(data), "cancelled-node")
+			require.NotContains(t, string(data), "removed-node")
+		}
+	}
+}
+
+func TestCandidateWithoutK3sIsAwaitingEnrollmentNotBrokenAPI(t *testing.T) {
+	output, err := os.CreateTemp(t.TempDir(), "status")
+	require.NoError(t, err)
+	status := &installer.Status{Host: &installer.Host{State: installer.StateEnrolled, Hostname: "db-01", Record: &installer.Record{
+		Management: installer.ManagementReconciled, Version: installer.RecordVersionReconciled, Cluster: "kilohertz",
+		Coordinator: &installer.CoordinatorRecord{}, Lifecycle: &installer.InstallLifecycle{Status: installer.InstallStatusFailed, Phase: installer.InstallPhaseEnrolled},
+	}}}
+	printStatus(output, status)
+	require.NoError(t, output.Close())
+	data, err := os.ReadFile(output.Name())
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "kubernetes api unreachable")
+	require.Contains(t, string(data), "resume with sudo skali cluster join")
+}

@@ -16,9 +16,10 @@ type PreflightRequest struct {
 }
 
 type PreflightResponse struct {
-	Cluster      string   `json:"cluster"`
-	Role         string   `json:"role"`
-	Coordinators []string `json:"coordinators"`
+	AllowedCapabilities []string `json:"allowedCapabilities,omitempty"`
+	Cluster             string   `json:"cluster"`
+	Role                string   `json:"role"`
+	Coordinators        []string `json:"coordinators"`
 }
 
 type EnrollRequest struct {

@@ -271,7 +271,7 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 	fmt.Fprintln(out, "\nThis host is fresh again.")
 	if record.EnrolledOnly() {
 		fmt.Fprintf(out, "The coordinator may still list candidate node %s; from a server run "+
-			"`skali cluster node remove %s` and `skali cluster apply`.\n",
+			"`skali cluster node remove %s` if it is still pending. Unapplied cancellation needs no apply.\n",
 			record.Node.Name, record.Node.Name)
 	} else if mayLeaveStaleMembership && record.Node.Role == layout.RoleAgent {
 		fmt.Fprintf(out, "The node object %s remains in the cluster; "+

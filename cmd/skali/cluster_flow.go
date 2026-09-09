@@ -14,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/clusterstate"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
@@ -141,7 +142,7 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 	}
 	token := ""
 	if tokenFile == "" {
-		token, err = cliprompt.Secret(reader, "  join token: ")
+		token, err = promptJoinToken(ctx, reader)
 		if err != nil {
 			return err
 		}
@@ -150,29 +151,15 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 		if readErr != nil {
 			return fmt.Errorf("read join token file %s: %w", tokenFile, readErr)
 		}
-		token = strings.TrimSpace(string(data))
+		token = clusterstate.NormalizeToken(string(data))
 		if token == "" {
 			return fmt.Errorf("join token file %s is empty", tokenFile)
 		}
 	}
 	claims, err := installer.InspectJoinToken(token)
 	if reconciledToken(token) {
-		server, promptErr := cliprompt.Line(reader,
-			"  coordinator (host, host:port, or https URL): ")
-		if promptErr != nil {
-			return promptErr
-		}
-		capabilities, promptErr := promptCapabilities(ctx, out, reader)
-		if promptErr != nil {
-			return promptErr
-		}
-		network, promptErr := promptNodeNetwork(ctx, out, reader)
-		if promptErr != nil {
-			return promptErr
-		}
-		fmt.Fprintln(out)
 		record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
-			Server: server, Token: token, Capabilities: capabilities, Network: network,
+			Token: token, Interactive: true,
 		})
 		if enrollErr != nil {
 			return enrollErr

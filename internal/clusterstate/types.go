@@ -46,6 +46,7 @@ const (
 	NodePhaseUninstalling    = "uninstalling"
 	NodePhaseAwaitingCleanup = "awaiting-node-cleanup"
 	NodePhaseRemoved         = "removed"
+	NodePhaseCancelled       = "cancelled"
 	NodePhaseFailed          = "failed"
 
 	OperationPending      = "pending"
@@ -284,7 +285,7 @@ func (s *State) ReplaceCandidateLayout(desired layout.Layout,
 	}
 	known := make(map[string]Node, len(s.Nodes))
 	for _, node := range s.Nodes {
-		if node.Phase != NodePhaseRemoved && node.Phase != NodePhaseUninstalling {
+		if node.Phase != NodePhaseRemoved && node.Phase != NodePhaseCancelled && node.Phase != NodePhaseUninstalling {
 			known[node.Name] = node
 		}
 	}
@@ -375,7 +376,7 @@ func validateRevision(nodes map[string]RevisionNode, platform PlatformState) err
 }
 
 func FindNodeByName(nodes map[string]RevisionNode, name string) (RevisionNode, bool) {
-	for _, node := range nodes {
+	for _, node := range SortedRevisionNodes(nodes) {
 		if node.Name == name {
 			return node, true
 		}
@@ -392,6 +393,9 @@ func SortedRevisionNodes(nodes map[string]RevisionNode) []RevisionNode {
 		if result[i].Role != result[j].Role {
 			return result[i].Role == layout.RoleServer
 		}
+		if result[i].Name == result[j].Name {
+			return result[i].ID < result[j].ID
+		}
 		return result[i].Name < result[j].Name
 	})
 	return result
@@ -405,6 +409,9 @@ func SortedNodes(nodes map[string]Node) []Node {
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Role != result[j].Role {
 			return result[i].Role == layout.RoleServer
+		}
+		if result[i].Name == result[j].Name {
+			return result[i].ID < result[j].ID
 		}
 		return result[i].Name < result[j].Name
 	})

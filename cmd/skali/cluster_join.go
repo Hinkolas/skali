@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -15,7 +15,7 @@ import (
 )
 
 func newClusterJoinCmd() *cobra.Command {
-	var server, tokenFile, role, cluster, nodeIP string
+	var server, tokenFile, rawToken, role, cluster, nodeIP string
 	var publicIPs, extraSANs, coordinatorBind []string
 	var capabilities []string
 	var assumeYes bool
@@ -30,11 +30,10 @@ func newClusterJoinCmd() *cobra.Command {
 			if role != "" && role != layout.RoleAgent && role != layout.RoleServer {
 				return fmt.Errorf("role must be server or agent, got %q", role)
 			}
-			// The full flag set is the consent, like --config elsewhere;
-			// join never prompts. Interactive enrollment lives in the
-			// fresh-host flow of a bare run.
-			if tokenFile == "" || len(capabilities) == 0 {
-				return fmt.Errorf("join requires --token-file and --capabilities")
+			var err error
+			rawToken, err = joinTokenInput(ctx, rawToken, tokenFile, cmd.Flags().Changed("token"), cmd.Flags().Changed("token-file"), os.Getenv("SKALI_JOIN_TOKEN"), cmd.InOrStdin())
+			if err != nil {
+				return err
 			}
 			if len(args) == 1 {
 				if server != "" {
@@ -69,26 +68,21 @@ func newClusterJoinCmd() *cobra.Command {
 				progress.Abort()
 				return err
 			}
-			tokenData, err := readHostFile(ctx, tokenFile)
-			if err != nil {
-				progress.Abort()
-				return fmt.Errorf("read join token file %s: %w", tokenFile, err)
-			}
-			rawToken := strings.TrimSpace(string(tokenData))
-			if reconciledToken(rawToken) {
-				if server == "" {
-					progress.Abort()
-					return fmt.Errorf("reconciled enrollment requires the coordinator host or --server")
-				}
+			if rawToken == "" || reconciledToken(rawToken) {
 				record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
 					Server: server, Token: rawToken, Capabilities: capabilities,
 					Network: network, RequestedRole: role, RequestedCluster: cluster,
+					Interactive: cliprompt.Interactive(),
 				})
 				if enrollErr != nil {
 					progress.Abort()
 					return enrollErr
 				}
 				progress.Done("")
+				if !record.EnrolledOnly() {
+					fmt.Fprintf(out, "node %s is already joined to cluster %q as %s\n", record.Node.Name, record.Cluster, record.Node.Role)
+					return nil
+				}
 				fmt.Fprintf(out, "node %s enrolled in cluster %q as %s; pending cluster apply\n",
 					record.Node.Name, record.Cluster, record.Node.Role)
 				fmt.Fprintln(out, "No k3s files or services were installed.")
@@ -98,7 +92,7 @@ func newClusterJoinCmd() *cobra.Command {
 				Cluster:       cluster,
 				Role:          role,
 				Capabilities:  capabilities,
-				Join:          &installer.JoinOptions{Server: server, TokenFile: tokenFile},
+				Join:          &installer.JoinOptions{Server: server, Token: rawToken},
 				Network:       network,
 				Progress:      progress,
 				RecoverOrphan: true,
@@ -120,11 +114,12 @@ func newClusterJoinCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "coordinator endpoint; legacy composite tokens may supply their k3s endpoint")
-	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to a file holding the join token")
+	cmd.Flags().StringVar(&rawToken, "token", "", "join token (defaults to SKALI_JOIN_TOKEN or saved enrollment)")
+	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to a join token file, or - for stdin")
 	cmd.Flags().StringVar(&role, "role", "", "expected role; must match the invitation or legacy token")
 	cmd.Flags().StringSliceVar(&capabilities, "capabilities", nil, "designated workload capabilities for this node")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "expected cluster name; required only for raw legacy K10 tokens")
-	cmd.Flags().StringVar(&nodeIP, "node-ip", "", "address other cluster nodes reach this node through; defaults to the address of the default route")
+	cmd.Flags().StringVar(&nodeIP, "node-ip", "", "address other cluster nodes reach this node through; defaults to the coordinator route source when unambiguous")
 	cmd.Flags().StringSliceVar(&publicIPs, "public-ip", nil, "address reachable from outside the cluster network; repeatable")
 	cmd.Flags().StringSliceVar(&extraSANs, "tls-san", nil, "additional name or address for the kubernetes api certificate; repeatable")
 	cmd.Flags().StringSliceVar(&coordinatorBind, "coordinator-bind", nil,

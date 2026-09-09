@@ -196,14 +196,15 @@ func (n *NodeRecord) SetNetwork(network NodeNetwork) {
 // CoordinatorRecord contains only non-secret enrollment routing and trust
 // metadata. The agent key and certificate live in separate root-owned files.
 type CoordinatorRecord struct {
-	Endpoints          []string `yaml:"endpoints,omitempty"`
-	CAPin              string   `yaml:"caPin,omitempty"`
-	AgentVersion       string   `yaml:"agentVersion,omitempty"`
-	ConvergedRevision  string   `yaml:"convergedRevision,omitempty"`
-	TargetRevision     string   `yaml:"targetRevision,omitempty"`
-	CandidateRevision  string   `yaml:"candidateRevision,omitempty"`
-	LastOperation      string   `yaml:"lastOperation,omitempty"`
-	LastOperationPhase string   `yaml:"lastOperationPhase,omitempty"`
+	LastHeartbeatAt    time.Time `yaml:"lastHeartbeatAt,omitempty"`
+	Endpoints          []string  `yaml:"endpoints,omitempty"`
+	CAPin              string    `yaml:"caPin,omitempty"`
+	AgentVersion       string    `yaml:"agentVersion,omitempty"`
+	ConvergedRevision  string    `yaml:"convergedRevision,omitempty"`
+	TargetRevision     string    `yaml:"targetRevision,omitempty"`
+	CandidateRevision  string    `yaml:"candidateRevision,omitempty"`
+	LastOperation      string    `yaml:"lastOperation,omitempty"`
+	LastOperationPhase string    `yaml:"lastOperationPhase,omitempty"`
 }
 
 // Endpoints are the public domains of the installation.

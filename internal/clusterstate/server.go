@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -16,9 +17,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const maxRequestBody = 1 << 20
+
+var ErrEnrollmentCancelled = errors.New("enrollment was cancelled; use a new identity and invitation")
 
 type Coordinator struct {
 	Store      *Store
@@ -75,7 +79,7 @@ func (c *Coordinator) preflight(w http.ResponseWriter, r *http.Request) {
 	invitation, err := c.Store.CheckInvitationFor(r.Context(), token,
 		request.Host.InstallationID, request.Host.Capabilities)
 	if err != nil {
-		writeProblem(w, http.StatusUnauthorized, err.Error())
+		writeStoreProblem(w, err, http.StatusUnauthorized)
 		return
 	}
 	state, err := c.Store.Load(r.Context())
@@ -87,17 +91,21 @@ func (c *Coordinator) preflight(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusServiceUnavailable, "cluster is decommissioning")
 		return
 	}
-	if err := validateEnrollmentHost(state, request.Host); err != nil {
-		writeProblem(w, http.StatusConflict, err.Error())
+	if len(request.Host.Capabilities) == 0 {
+		request.Host.Capabilities = invitation.AllowedCapabilities
+	}
+	if err := validateEnrollmentIdentity(state, request.Host); err != nil {
+		writeStoreProblem(w, err, http.StatusConflict)
 		return
 	}
 	if err := validateServerAddress(invitation.Role, request.Host); err != nil {
-		writeProblem(w, http.StatusBadRequest, err.Error())
+		writeStoreProblem(w, err, http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, http.StatusOK, PreflightResponse{
 		Cluster: state.Cluster, Role: invitation.Role,
-		Coordinators: coordinatorEndpoints(state),
+		Coordinators:        coordinatorEndpoints(state),
+		AllowedCapabilities: invitation.AllowedCapabilities,
 	})
 }
 
@@ -115,10 +123,20 @@ func (c *Coordinator) enroll(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "node ID is required")
 		return
 	}
+	block, _ := pem.Decode([]byte(request.CSR))
+	if block == nil {
+		writeProblem(w, http.StatusBadRequest, "invalid enrollment CSR")
+		return
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil || csr.CheckSignature() != nil || csr.Subject.CommonName != request.Host.NodeID {
+		writeProblem(w, http.StatusBadRequest, "invalid enrollment CSR identity or signature")
+		return
+	}
 	invitation, err := c.Store.BindInvitation(r.Context(), token,
 		request.Host.InstallationID, request.Host.Capabilities, []byte(request.CSR))
 	if err != nil {
-		writeProblem(w, http.StatusUnauthorized, err.Error())
+		writeStoreProblem(w, err, http.StatusUnauthorized)
 		return
 	}
 	now := c.Store.now()
@@ -128,6 +146,12 @@ func (c *Coordinator) enroll(w http.ResponseWriter, r *http.Request) {
 		}
 		if existing, exists := state.Nodes[request.Host.NodeID]; exists &&
 			existing.InstallationID == request.Host.InstallationID {
+			if existing.Phase == NodePhaseCancelled || existing.Phase == NodePhaseRemoved || existing.LastAction == "cancel-enrollment" {
+				return ErrEnrollmentCancelled
+			}
+			if existing.Name != request.Host.Name || existing.NodeIP != request.Host.NodeIP || existing.Role != invitation.Role || !sameCapabilities(existing.Capabilities, request.Host.Capabilities) {
+				return errors.New("enrollment retry does not match the saved node settings")
+			}
 			// A retry after the state write but before the certificate
 			// response must not manufacture another candidate revision.
 			return nil
@@ -160,13 +184,13 @@ func (c *Coordinator) enroll(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeProblem(w, http.StatusConflict, err.Error())
+		writeStoreProblem(w, err, http.StatusConflict)
 		return
 	}
 	certificate, err := c.Store.SignCSR(r.Context(), []byte(request.CSR),
 		request.Host.NodeID, request.Host.Name, 7*24*time.Hour)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, err.Error())
+		writeStoreProblem(w, err, http.StatusBadRequest)
 		return
 	}
 	trust, err := c.Store.Trust(r.Context())
@@ -197,14 +221,14 @@ func (c *Coordinator) renew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	node, ok := state.Nodes[nodeID]
-	if !ok || node.Phase == NodePhaseRemoved {
+	if !ok || node.Phase == NodePhaseRemoved || node.Phase == NodePhaseCancelled {
 		writeProblem(w, http.StatusForbidden, "node identity is not active")
 		return
 	}
 	certificate, err := c.Store.SignCSR(r.Context(), []byte(request.CSR),
 		nodeID, node.Name, 7*24*time.Hour)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, err.Error())
+		writeStoreProblem(w, err, http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, http.StatusOK, RenewResponse{Certificate: string(certificate)})
@@ -225,12 +249,20 @@ func (c *Coordinator) poll(w http.ResponseWriter, r *http.Request) {
 		if !exists || node.Phase == NodePhaseRemoved {
 			return errors.New("node identity is not active")
 		}
+		if node.Phase == NodePhaseCancelled {
+			if request.Report.ActionID == "cleanup-"+nodeID && request.Report.ActionOK {
+				node.LastAction = "cleanup-complete"
+			}
+			node.LastSeen = c.Store.now()
+			state.Nodes[nodeID] = node
+			return nil
+		}
 		node.LastSeen = c.Store.now()
 		node.K3sVersion = request.Report.K3sVersion
 		if request.Report.AgentVersion != "" {
 			node.AgentVersion = request.Report.AgentVersion
 		}
-		if request.Report.Phase != "" {
+		if request.Report.Phase != "" && node.Phase != NodePhaseUninstalling && node.Phase != NodePhaseAwaitingCleanup {
 			node.Phase = request.Report.Phase
 		}
 		if request.Report.Error != "" {
@@ -243,12 +275,21 @@ func (c *Coordinator) poll(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeProblem(w, http.StatusForbidden, err.Error())
+		writeStoreProblem(w, err, http.StatusForbidden)
 		return
 	}
+	if state.Nodes[nodeID].Phase == NodePhaseCancelled {
+		response := AgentPollResponse{RetryAfter: 5 * time.Second}
+		if state.Nodes[nodeID].LastAction != "cleanup-complete" && request.Report.ActionID != "cleanup-"+nodeID {
+			response.Action = AgentAction{ID: "cleanup-" + nodeID, Type: "cleanup"}
+		}
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+
 	if c.ActionDone != nil && request.Report.ActionID != "" {
 		if err := c.ActionDone(r.Context(), nodeID, request.Report); err != nil {
-			writeProblem(w, http.StatusConflict, err.Error())
+			writeStoreProblem(w, err, http.StatusConflict)
 			return
 		}
 	}
@@ -281,18 +322,27 @@ func (c *Coordinator) poll(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateEnrollmentHost(state *State, host HostFacts) error {
-	if host.InstallationID == "" || host.Name == "" || host.AgentVersion == "" {
-		return errors.New("joining host is missing installation ID, name, or agent version")
-	}
 	if len(host.Capabilities) == 0 {
 		return errors.New("joining host must request at least one capability")
 	}
+	return validateEnrollmentIdentity(state, host)
+}
+
+func validateEnrollmentIdentity(state *State, host HostFacts) error {
+	if host.InstallationID == "" || host.Name == "" || host.AgentVersion == "" {
+		return errors.New("joining host is missing installation ID, name, or agent version")
+	}
 	for id, node := range state.Nodes {
-		if node.Phase == NodePhaseRemoved {
+		if (id == host.NodeID || node.InstallationID == host.InstallationID) && (node.Phase == NodePhaseCancelled || node.Phase == NodePhaseRemoved || node.LastAction == "cancel-enrollment") {
+			return ErrEnrollmentCancelled
+		}
+		if node.Phase == NodePhaseRemoved || node.Phase == NodePhaseCancelled {
 			continue
 		}
-		if host.NodeID != "" && id == host.NodeID &&
-			node.InstallationID == host.InstallationID {
+		if host.NodeID != "" && id == host.NodeID {
+			if node.InstallationID != host.InstallationID {
+				return errors.New("node ID is already enrolled with a different installation identity")
+			}
 			return nil
 		}
 		if node.InstallationID == host.InstallationID {
@@ -365,7 +415,8 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, target any) bool {
 }
 
 func writeProblem(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	code := map[int]string{400: "invalid_request", 401: "invitation_rejected", 403: "identity_rejected", 409: "enrollment_conflict", 429: "rate_limited", 500: "internal_error", 503: "coordinator_unavailable"}[status]
+	writeJSON(w, status, map[string]string{"code": code, "error": message})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -384,6 +435,39 @@ func (c *Coordinator) recover(next http.Handler) http.Handler {
 				writeProblem(w, http.StatusInternalServerError, "internal coordinator error")
 			}
 		}()
+		started := time.Now()
 		next.ServeHTTP(w, r)
+		if c.Logger != nil {
+			c.Logger.Info("coordinator request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(started))
+		}
 	})
+}
+
+func sameCapabilities(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
+}
+
+func writeStoreProblem(w http.ResponseWriter, err error, fallback int) {
+	var problem *EnrollmentError
+	if errors.As(err, &problem) {
+		writeJSON(w, problem.Status, map[string]string{"code": problem.Code, "error": problem.Message})
+		return
+	}
+	if errors.Is(err, ErrEnrollmentCancelled) {
+		writeJSON(w, http.StatusConflict, map[string]string{"code": "enrollment_cancelled", "error": err.Error()})
+		return
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) {
+		writeProblem(w, http.StatusServiceUnavailable, "coordinator state is temporarily unavailable")
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) || apierrors.IsServiceUnavailable(err) || apierrors.IsInternalError(err) || apierrors.IsConflict(err) {
+		writeProblem(w, http.StatusServiceUnavailable, "coordinator state is temporarily unavailable")
+		return
+	}
+	writeProblem(w, fallback, err.Error())
 }

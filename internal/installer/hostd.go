@@ -27,6 +27,7 @@ const (
 	AgentCACertPath        = AgentStateDir + "/ca.crt"
 	AgentClientCertPath    = AgentStateDir + "/client.crt"
 	AgentClientKeyPath     = AgentStateDir + "/client.key"
+	AgentPendingTokenPath  = AgentStateDir + "/enrollment.token"
 	AgentPendingCSRPath    = AgentStateDir + "/enrollment.csr"
 	AgentPendingKeyPath    = AgentStateDir + "/enrollment.key"
 	CoordinatorAdminSocket = "/run/skali/coordinator.sock"
@@ -267,9 +268,10 @@ func CacheCoordinatorState(ctx context.Context, runner host.Runner,
 		current.TargetRevision == response.TargetRevision &&
 		current.CandidateRevision == response.CandidateRevision &&
 		current.LastOperation == response.OperationID &&
-		current.LastOperationPhase == response.OperationPhase {
+		current.LastOperationPhase == response.OperationPhase && time.Since(current.LastHeartbeatAt) < 15*time.Second {
 		return nil
 	}
+	current.LastHeartbeatAt = time.Now().UTC()
 	current.ConvergedRevision = response.ConvergedRevision
 	current.TargetRevision = response.TargetRevision
 	current.CandidateRevision = response.CandidateRevision
@@ -442,6 +444,9 @@ func RemoveHostd(ctx context.Context, runner host.Runner, removeBinary bool) err
 	for _, unit := range []string{HostdCoordinatorUnit, HostdAgentUnit} {
 		_, _ = runner.Run(ctx, host.Command{Name: "systemctl", Args: []string{"disable", "--now", unit}})
 	}
+	// Stop a delayed cleanup after stopping its producer. Otherwise a new
+	// enrollment could race a cleanup job left by the old identity.
+	_, _ = runner.Run(ctx, host.Command{Name: "systemctl", Args: []string{"stop", "skali-hostd-cleanup.timer", "skali-hostd-cleanup.service"}})
 	for _, path := range []string{HostdCoordinatorPath, HostdAgentUnitPath} {
 		if err := runner.Remove(ctx, path); err != nil {
 			return err

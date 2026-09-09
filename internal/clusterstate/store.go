@@ -139,16 +139,10 @@ func (s *Store) Bootstrap(ctx context.Context, state *State) (Trust, error) {
 			return Trust{}, fmt.Errorf("coordinator state belongs to cluster %q, not %q",
 				existing.Cluster, state.Cluster)
 		}
-		if err := s.persistResources(ctx, existing); err != nil {
-			return Trust{}, err
-		}
 		return trust, nil
 	}
 	if err != nil {
 		return Trust{}, fmt.Errorf("create cluster state: %w", err)
-	}
-	if err := s.persistResources(ctx, state); err != nil {
-		return Trust{}, err
 	}
 	return trust, nil
 }
@@ -217,75 +211,12 @@ func (s *Store) Update(ctx context.Context, mutate func(*State) error) (*State, 
 	if apierrors.IsConflict(err) {
 		return nil, apierrors.NewConflict(stateResource, StateName, err)
 	}
-	if err == nil && result != nil {
-		if mirrorErr := s.persistResources(ctx, result); mirrorErr != nil {
-			return result, mirrorErr
-		}
-	}
 	return result, err
 }
 
-// persistResources mirrors the compact singleton into independently
-// inspectable Kubernetes resources. Revision ConfigMaps are immutable;
-// enrollment and operation resources carry their latest observed/journal
-// state. The singleton remains the CAS authority for multi-object edits.
-func (s *Store) persistResources(ctx context.Context, state *State) error {
-	for id, revision := range state.Revisions {
-		data, err := json.Marshal(revision)
-		if err != nil {
-			return err
-		}
-		name := "skali-revision-" + id
-		immutable := true
-		_, err = s.Client.CoreV1().ConfigMaps(Namespace).Create(ctx, &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name, Labels: map[string]string{RevisionLabel: "true"},
-			},
-			Immutable: &immutable,
-			Data:      map[string]string{"revision.json": string(data)},
-		}, metav1.CreateOptions{})
-		if apierrors.IsAlreadyExists(err) {
-			existing, getErr := s.Client.CoreV1().ConfigMaps(Namespace).
-				Get(ctx, name, metav1.GetOptions{})
-			if getErr != nil {
-				return getErr
-			}
-			if existing.Data["revision.json"] != string(data) {
-				return fmt.Errorf("immutable revision %s does not match the state index", id)
-			}
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("persist immutable revision %s: %w", id, err)
-		}
-	}
-	for id, node := range state.Nodes {
-		data, err := json.Marshal(node)
-		if err != nil {
-			return err
-		}
-		if err := s.upsertResource(ctx, "skali-node-"+id, NodeLabel,
-			"node.json", string(data)); err != nil {
-			return err
-		}
-	}
-	for id, operation := range state.Operations {
-		data, err := json.Marshal(operation)
-		if err != nil {
-			return err
-		}
-		if err := s.upsertResource(ctx, "skali-operation-"+id, OperationLabel,
-			"operation.json", string(data)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // upsertResource writes one last-writer-wins mirror ConfigMap. Mirrors are
-// written by every actor that mutates the singleton (coordinator heartbeats,
-// operations), so both the update and the create can race; conflicts re-read
-// and retry rather than failing the mutation that triggered the mirror.
+// written by the leader mirror worker. A previous leader may still be exiting,
+// so create/update conflicts are re-read and retried.
 func (s *Store) upsertResource(ctx context.Context, name, label, key, value string) error {
 	configMaps := s.Client.CoreV1().ConfigMaps(Namespace)
 	resource := schema.GroupResource{Resource: "configmaps"}
@@ -442,10 +373,10 @@ func (s *Store) CheckInvitationFor(ctx context.Context, token Token, installatio
 		return Invitation{}, err
 	}
 	if invitation.Revoked {
-		return Invitation{}, errors.New("invitation was revoked")
+		return Invitation{}, &EnrollmentError{Status: 401, Code: "invitation_revoked", Message: "invitation was revoked"}
 	}
 	if !s.now().Before(invitation.ExpiresAt) {
-		return Invitation{}, errors.New("invitation expired")
+		return Invitation{}, &EnrollmentError{Status: 401, Code: "invitation_expired", Message: "invitation expired"}
 	}
 	if invitation.UsedBy != "" {
 		if invitation.UsedBy != installationID {
@@ -453,10 +384,12 @@ func (s *Store) CheckInvitationFor(ctx context.Context, token Token, installatio
 		}
 	}
 	if !MatchCredential(string(secret.Data[credentialHashKey]), token.Credential) {
-		return Invitation{}, errors.New("invalid invitation credential")
+		return Invitation{}, &EnrollmentError{Status: 401, Code: "invalid_credential", Message: "invalid invitation credential"}
 	}
-	if err := validateAllowedCapabilities(invitation, capabilities); err != nil {
-		return Invitation{}, err
+	if len(capabilities) > 0 {
+		if err := validateAllowedCapabilities(invitation, capabilities); err != nil {
+			return Invitation{}, err
+		}
 	}
 	return invitation, nil
 }
@@ -478,13 +411,13 @@ func (s *Store) BindInvitation(ctx context.Context, token Token, installationID 
 			return err
 		}
 		if invitation.Revoked {
-			return errors.New("invitation was revoked")
+			return &EnrollmentError{Status: 401, Code: "invitation_revoked", Message: "invitation was revoked"}
 		}
 		if !s.now().Before(invitation.ExpiresAt) {
-			return errors.New("invitation expired")
+			return &EnrollmentError{Status: 401, Code: "invitation_expired", Message: "invitation expired"}
 		}
 		if !MatchCredential(string(secret.Data[credentialHashKey]), token.Credential) {
-			return errors.New("invalid invitation credential")
+			return &EnrollmentError{Status: 401, Code: "invalid_credential", Message: "invalid invitation credential"}
 		}
 		if err := validateAllowedCapabilities(invitation, capabilities); err != nil {
 			return err
@@ -492,7 +425,7 @@ func (s *Store) BindInvitation(ctx context.Context, token Token, installationID 
 		if invitation.UsedBy != "" {
 			if invitation.UsedBy == installationID {
 				if existing := secret.Annotations[annotationCSRHash]; existing != csrHash {
-					return errors.New("enrollment retry used a different CSR")
+					return &EnrollmentError{Status: 401, Code: "identity_mismatch", Message: "enrollment retry used a different CSR"}
 				}
 				result = invitation
 				return nil

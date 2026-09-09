@@ -154,17 +154,24 @@ func DecommissionK3s(ctx context.Context, runner host.Runner, record *Record) er
 
 // ScheduleHostdSelfRemoval lets the current agent acknowledge decommission
 // before a transient systemd unit removes the agent itself.
-func ScheduleHostdSelfRemoval(ctx context.Context, runner host.Runner) error {
-	command := strings.Join([]string{
+func ScheduleHostdSelfRemoval(ctx context.Context, runner host.Runner, preserveBinary ...bool) error {
+	steps := []string{
 		"systemctl disable --now " + HostdCoordinatorUnit + " " + HostdAgentUnit,
 		"rm -f " + HostdCoordinatorPath + " " + HostdAgentUnitPath,
-		"rm -rf " + StateDir,
-		"rm -f " + HostdBinaryPath,
-		"systemctl daemon-reload",
-	}, "; ")
+	}
+	if len(preserveBinary) == 0 || !preserveBinary[0] {
+		steps = append(steps, "rm -f "+HostdBinaryPath)
+	}
+	steps = append(steps, "systemctl daemon-reload",
+		// Retire the entire directory atomically. A new enrollment can create
+		// StateDir afterwards without this delayed job deleting its new files.
+		"skali_cleanup_dir=$(mktemp -d /var/lib/skali-cleanup.XXXXXX) || exit 1",
+		"mv "+StateDir+" \"$skali_cleanup_dir/state\" && rm -rf \"$skali_cleanup_dir\"",
+	)
+	command := strings.Join(steps, "; ")
 	result, err := runner.Run(ctx, host.Command{
 		Name: "systemd-run",
-		Args: []string{"--unit=skali-hostd-cleanup", "--on-active=2s",
+		Args: []string{"--unit=skali-hostd-cleanup", "--on-active=2s", "--collect", "--timer-property=RemainAfterElapse=no",
 			"/bin/sh", "-c", command},
 	})
 	if err != nil {
