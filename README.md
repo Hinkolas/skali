@@ -38,20 +38,29 @@ workload isolation (see [security boundaries](docs/security.md)).
 
 ## Install the CLI
 
-Once `v0.1.0-alpha.1` is published, install that exact prerelease:
+Install the newest release, including prereleases while skali is in alpha:
 
 ```sh
-curl -fsSL https://github.com/Hinkolas/skali/releases/download/v0.1.0-alpha.1/install.sh | SKALI_VERSION=v0.1.0-alpha.1 sh
+curl -fsSL https://raw.githubusercontent.com/Hinkolas/skali/main/install.sh | SKALI_CHANNEL=beta sh
 ```
 
-Before that release exists, build from this checkout with `task install:cli`;
-see [contributor setup](docs/development.md) for prerequisites. Prereleases
-are excluded from GitHub's `latest` URL, so keep the explicit version pin.
+`SKALI_CHANNEL=beta` selects the highest published version, including alpha,
+beta, RC, and stable releases. Use `SKALI_CHANNEL=stable` (the default when
+omitted) for stable releases only; it fails if none has been published yet.
+This selects the installed version; cluster update preferences are configured
+separately. To build from source, use `task install:cli`; see
+[contributor setup](docs/development.md) for prerequisites.
+
+To install a specific version instead, set `SKALI_VERSION`, which overrides
+channel selection. For example:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Hinkolas/skali/main/install.sh | SKALI_VERSION=v0.1.0-alpha.1 sh
+```
 
 The script picks the binary for your OS and architecture (macOS and Linux,
 amd64 and arm64), verifies its checksum, and installs it: `/usr/local/bin`
-on Linux (asks for sudo), `~/.local/bin` on macOS. Set `SKALI_VERSION` on
-the `sh` command, as above, to pin a release. Run it on your laptop to develop
+on Linux (asks for sudo), `~/.local/bin` on macOS. Run it on your laptop to develop
 and deploy, and on every server that should become a skali node.
 
 ## Run a project locally
@@ -89,7 +98,7 @@ Point DNS at the server first: an A record for the platform domain
 must be reachable.
 
 ```sh
-curl -fsSL https://github.com/Hinkolas/skali/releases/download/v0.1.0-alpha.1/install.sh | SKALI_VERSION=v0.1.0-alpha.1 sh
+curl -fsSL https://raw.githubusercontent.com/Hinkolas/skali/main/install.sh | SKALI_CHANNEL=beta sh
 sudo skali cluster
 ```
 
