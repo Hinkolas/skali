@@ -51,11 +51,9 @@ func newExecHandlers(exec ExecService, auth *auth.Service) *execHandlers {
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  32 * 1024,
 			WriteBufferSize: 32 * 1024,
-			// Auth is a bearer header no browser can attach to a WebSocket,
-			// so origin checks add nothing today. The planned web-terminal
-			// phase (short-lived tickets minted through the BFF) must
-			// revisit this before tickets exist.
-			CheckOrigin: func(r *http.Request) bool { return true },
+			// Cookie requests are checked before Resolve below. CLI bearer
+			// clients do not need an Origin header.
+			CheckOrigin: func(r *http.Request) bool { return !cookieAuthFrom(r) || sameOrigin(r) },
 		},
 	}
 }
@@ -65,6 +63,10 @@ func newExecHandlers(exec ExecService, auth *auth.Service) *execHandlers {
 // before the upgrade, so every failure is the normal JSON envelope on the
 // handshake response; after the 101 the connection speaks execproto.
 func (h *execHandlers) open(w http.ResponseWriter, r *http.Request) {
+	if cookieAuthFrom(r) && !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, codeForbidden, "websocket requires a same-origin Origin")
+		return
+	}
 	id, ok := pathID(w, r)
 	if !ok {
 		return
@@ -108,7 +110,7 @@ func (h *execHandlers) open(w http.ResponseWriter, r *http.Request) {
 	// w.Header(); carry the platform headers over explicitly so instance
 	// pinning covers the handshake response too.
 	responseHeader := http.Header{}
-	for _, name := range []string{InstanceHeader, VersionHeader} {
+	for _, name := range []string{InstanceHeader, VersionHeader, "Set-Cookie"} {
 		if value := w.Header().Get(name); value != "" {
 			responseHeader.Set(name, value)
 		}

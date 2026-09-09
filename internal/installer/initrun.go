@@ -40,10 +40,6 @@ type InitOptions struct {
 	// optionally pins the content identity behind a mutable tag.
 	SkalidImage   string
 	SkalidImageID string
-	// WebImage is the web console image reference serving the platform
-	// domain root; WebImageID optionally pins its content identity.
-	WebImage   string
-	WebImageID string
 	// RegistryNode pins the local registry volume to the coordinator's
 	// durable placement choice. Empty retains legacy capability-only
 	// placement.
@@ -263,9 +259,8 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 			PlatformPreference:   platformPreference,
 			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
 			RegistryStorageClass: registryStorageClass,
-			WebImage:             opts.WebImage,
-			WebImageID:           opts.WebImageID,
-			InstallationRecord:   canonical,
+
+			InstallationRecord: canonical,
 		},
 	}
 
@@ -325,9 +320,6 @@ func ValidateInitOptions(opts InitOptions) error {
 	}
 	if opts.SkalidImage == "" {
 		return errors.New("init requires a skalid image")
-	}
-	if opts.WebImage == "" {
-		return errors.New("init requires a web console image")
 	}
 	if opts.Admin == nil && !opts.SkipAdmin {
 		return errors.New("init requires admin credentials")

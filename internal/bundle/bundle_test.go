@@ -28,7 +28,6 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Equal(t, "Cluster", objects.Database[0].GetKind())
 	require.Len(t, objects.Registry, 4)
 	require.Len(t, objects.Skalid, 7)
-	require.Empty(t, objects.Web, "the web console is production-only")
 	require.Len(t, objects.EdgeMetrics, 1)
 	require.Equal(t, "HelmChartConfig", objects.EdgeMetrics[0].GetKind())
 	require.Equal(t, "kube-system", objects.EdgeMetrics[0].GetNamespace(),

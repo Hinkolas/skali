@@ -8,6 +8,7 @@ project_name: skali
 
 before:
   hooks:
+    - scripts/build-web.sh
     - go run ./cmd/skali-schema --schema release --version v{{ .Version }} --output .cache/skali-release/{{ .Version }}/release.json
 
 builds:

@@ -1,5 +1,5 @@
 // Package client is the typed REST client of the skali API, used by cmd/skali.
-// It speaks the same one-shape API as every other client (web BFF, native
+// It speaks the same one-shape API as every other client (web console, native
 // apps): bearer tokens, JSON bodies, the error envelope. Payload shapes mirror
 // api/openapi.yaml.
 package client

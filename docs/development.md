@@ -25,11 +25,11 @@ This page is for working on skali itself. Using skali is covered by the
   console's Updates page, `internal/updates`); it never executes on a host.
   Both units read `/etc/skali/hostd.env`, where `SKALI_RELEASE_BASE` can
   point downloads at a mirror or a test server.
-- **`web/`**: the console, a SvelteKit BFF (adapter-node). Owns the browser
-  session cookie and proxies `/_api/v1/*` to the daemon; the bearer token
-  never reaches browser JavaScript. On a cluster it ships as the `skali-web`
-  deployment: `/` serves the console and `/api` routes to the daemon, one
-  surface over 80/443.
+- **`web/`**: the console, a static SvelteKit SPA. Browser requests go
+  directly to the Go API at `/api/v1/*`; Go owns the HttpOnly session cookie.
+  `task build:web` builds and copies assets into `internal/webui/dist`, and
+  `task build` embeds them in `skalid`. There is no production Node service.
+  Vite proxies `/api` to the local daemon during development.
 
 Auth is email and password (argon2id) with optional TOTP 2FA and backup
 codes; sessions are opaque bearer tokens (sha256 at rest, 30-day sliding
@@ -63,8 +63,7 @@ task dev
 go run ./cmd/skali remote add dev http://localhost:7070
 go run ./cmd/skali remote status
 
-# 6. The console (vite on :5173, BFF to the API)
-cp web/.env.example web/.env
+# 6. The console (Vite on :5173, /api proxied to the local daemon)
 (cd web && npm ci)
 task dev:web
 ```
@@ -136,7 +135,7 @@ them; a test compiles every manifest fence in the skill.
 ```sh
 # Start the project Postgres and run all Go tests, including DB-backed tests:
 task test:db
-cd web && npm run check
+(cd web && npm test && npm run check && npm run lint)
 
 # Live cluster tests (observation, apply/prune, healing) against a
 # disposable pinned k3d cluster:
@@ -172,7 +171,7 @@ task install:server # source install: build everything and run the installer
 ```
 
 Releases are cut by tagging `v*`: goreleaser builds the binaries and
-`install.sh`, and the workflow publishes the `skalid` and `skali-web` images.
+`install.sh`, and the workflow publishes the multi-architecture `skalid` image with its embedded console.
 Tag with `task release:tag V=v0.1.0` rather than `git tag` by hand: it
 validates the goreleaser config, refuses a dirty tree, a branch other than
 main, a HEAD that is not origin/main, a malformed version, or a tag that
@@ -234,3 +233,18 @@ web/           the console (SvelteKit)
 ```
 
 Run `scripts/check-release-snapshot.sh` to rehearse a clean, nonpublishing release and verify its metadata against the built CLI.
+
+### Static console builds
+
+`task build` and the source Dockerfile build the console before compiling
+`skalid`. GoReleaser does the same for releases and `task release:snapshot`
+(including snapshots with Docker skipped), so these commands require Node 22.
+CLI-only installation and ordinary Go tests do not require a frontend build.
+A plain `go run ./cmd/skalid` without built assets keeps the API available and
+returns 503 for console requests; use `task dev:web` for hot reload.
+
+Set `SKALI_COOKIE_SECURE=false` for local HTTP development, as in `.env.example`.
+Managed HTTPS installations explicitly enable secure cookies. The static
+conversion targets fresh installs; recreate disposable clusters that used the
+separate console deployment. New installations and subsequent upgrades only
+need the daemon image; there are no web-image flags or `web` init-config block.

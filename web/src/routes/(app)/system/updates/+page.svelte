@@ -28,7 +28,7 @@
 
 	let { data }: { data: PageData } = $props();
 
-	// Seeded from the server load, then overwritten by polling: every 3s
+	// Seeded from the route load, then overwritten by polling: every 3s
 	// while an update runs (the control plane itself restarts mid-way, so a
 	// failed fetch keeps the last document and says so), once a minute
 	// otherwise. A navigation reseeds it.

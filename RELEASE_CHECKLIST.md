@@ -27,9 +27,8 @@ collected at the end.
       unbounded on long-lived installs.
 - [ ] Password policy is 8 characters minimum with no other checks
       (`internal/auth/auth.go:505-510`); make it a conscious default.
-- [ ] WebSocket `CheckOrigin` returns true
-      (`internal/api/exec_handlers.go:55`); safe today (bearer auth), must
-      be revisited when the web-terminal ticket flow lands.
+- [x] Cookie-authenticated WebSockets enforce same-origin checks before
+      opening exec sessions; CLI bearer clients remain supported.
 - [ ] `.goreleaser.yaml`: no checksum signing (cosign/gpg) or SBOM; a
       compromised release channel can serve a fake checksums.txt too. No
       `mod_timestamp`, so builds are not reproducible.
@@ -78,8 +77,8 @@ but these settings must be applied on GitHub.
       downloads from public release URLs and the README clones it.
 - [ ] **Flip GHCR packages public after the first push.** Packages created
       from a private repo default to private; the released CLI defaults to
-      `ghcr.io/hinkolas/skalid` and `skali-web` with no fallback
-      (`cmd/skali/cluster_flow.go:524,554`, `dev_upgrade.go:110`), so
+      `ghcr.io/hinkolas/skalid` with no fallback
+      (the image resolution paths in `cmd/skali`), so
       `skali dev` and `skali cluster init` fail on every fresh machine
       until this manual one-time setting is made.
 - [ ] **Rehearse the release end to end** on a prerelease tag
@@ -174,9 +173,8 @@ but these settings must be applied on GitHub.
       `localdev.VersionOlder` orders them, so an rc CLI resolves its own
       images and the release rehearsal can run on `v0.1.0-rc.1`;
       goreleaser `release.prerelease: auto` plus `skip_push: auto` on the
-      `latest` manifest, and the `skali-web:latest` tag is skipped for
-      prerelease tags. New `.github/workflows/ci.yml` (go vet + go test
-      against a Postgres service, `npm run check` + `npm run lint`,
+      `latest` manifest keep prereleases from moving the stable image tag. New `.github/workflows/ci.yml` (go vet + go test
+      against a Postgres service, `npm test` + `npm run check` + `npm run lint`,
       `goreleaser check`) runs on every push to main and pull request, and
       on tags via `release.yml`, which publishes only when it passes.
       2026-09-08: gofmt, `go mod tidy`, and generated-code drift checks

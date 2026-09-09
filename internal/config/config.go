@@ -54,7 +54,8 @@ func (b *Base) Validate() error {
 // which macOS AirPlay squats on dev machines.
 type API struct {
 	Base
-	HTTPAddr string `env:"HTTP_ADDR,default=:7070"`
+	HTTPAddr     string `env:"HTTP_ADDR,default=:7070"`
+	CookieSecure bool   `env:"SKALI_COOKIE_SECURE,default=true"`
 
 	// AuthSecret encrypts TOTP secrets, environment values, and backup-target
 	// credentials. Preserve it with system-database backups. Changing it without

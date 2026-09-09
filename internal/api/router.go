@@ -35,6 +35,7 @@ import (
 )
 
 type Deps struct {
+	CookieSecure bool
 	// TrustProxy identifies reverse proxies allowed to supply client addresses.
 	// Nil trusts no forwarded headers.
 	TrustProxy func(netip.Addr) bool
@@ -107,9 +108,8 @@ type Deps struct {
 }
 
 // StripAPIPrefix serves the router both at the root and under /api: the
-// production edge routes /api to skalid while the web console owns /, and
-// in-cluster clients (the BFF, the registry token realm, health probes)
-// keep root paths. Only a whole /api path segment is stripped, so lookalike
+// embedded console uses /api and in-cluster clients keep root paths.
+// Only a whole /api path segment is stripped, so lookalike
 // paths like /apifoo pass through untouched.
 func StripAPIPrefix(next http.Handler) http.Handler {
 	stripped := http.StripPrefix("/api", next)
@@ -140,6 +140,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
+	r.Use(browserRequests(d.CookieSecure, d.TrustProxy))
 	// realIP must precede everything that reads RemoteAddr (rate-limit keys,
 	// session metadata).
 	r.Use(realIP(d.TrustProxy))
@@ -218,8 +219,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 			ac.route(r, "POST", "/auth/login", classPublic, h.login)
 			ac.route(r, "POST", "/auth/2fa/verify", classPublic, h.verifyTwoFactor)
 			// Browser device authorization, CLI side: open a login request
-			// and poll it. The poll answer carries the bearer token, so the
-			// console's BFF never proxies these two.
+			// and poll it. The poll answer carries the CLI bearer token.
 			ac.route(r, "POST", "/auth/device/requests", classPublic, h.startDeviceLogin)
 			ac.route(r, "POST", "/auth/device/token", classPublic, h.pollDevice)
 

@@ -20,7 +20,7 @@
 	];
 
 	let range = $state<MetricsWindow>('24h');
-	// Seeded from the server load, then overwritten by refetches on window
+	// Seeded from the route load, then overwritten by refetches on window
 	// change and every 30s (the sampler cadence); a navigation reseeds it.
 	let metrics = $derived(data.metrics);
 

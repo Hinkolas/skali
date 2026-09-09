@@ -96,7 +96,6 @@ type InitConfig struct {
 	TLS       TLSInitConfig        `yaml:"tls" json:"tls"`
 	Admin     AdminConfig          `yaml:"admin" json:"admin"`
 	Skalid    SkalidConfig         `yaml:"skalid" json:"skalid"`
-	Web       WebConfig            `yaml:"web" json:"web"`
 	Storage   *StorageInitConfig   `yaml:"storage,omitempty" json:"storage,omitempty"`
 	Platforms *PlatformsInitConfig `yaml:"platforms,omitempty" json:"platforms,omitempty"`
 }
@@ -159,15 +158,6 @@ type AdminConfig struct {
 // published bootstrap images exist.
 type SkalidConfig struct {
 	Image string `yaml:"image" json:"image" jsonschema:"skalid image reference to install."`
-	// ImageID pins the content identity behind a mutable tag so a rebuilt
-	// image rolls the deployment. Leave empty for immutable tags.
-	ImageID string `yaml:"imageId,omitempty" json:"imageId,omitempty" jsonschema:"Optional image content identity behind a mutable tag."`
-}
-
-// WebConfig selects the web console image serving the platform domain
-// root; the daemon answers behind /api on the same domain.
-type WebConfig struct {
-	Image string `yaml:"image" json:"image" jsonschema:"skali-web console image reference to install."`
 	// ImageID pins the content identity behind a mutable tag so a rebuilt
 	// image rolls the deployment. Leave empty for immutable tags.
 	ImageID string `yaml:"imageId,omitempty" json:"imageId,omitempty" jsonschema:"Optional image content identity behind a mutable tag."`
@@ -281,9 +271,6 @@ func ParseInitConfig(data []byte) (*InitConfig, error) {
 	}
 	if config.Skalid.Image == "" {
 		return nil, errors.New("init config: skalid.image is required")
-	}
-	if config.Web.Image == "" {
-		return nil, errors.New("init config: web.image is required")
 	}
 	if config.Storage != nil {
 		switch config.Storage.Driver {

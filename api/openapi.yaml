@@ -4,7 +4,7 @@ info:
   description: |
     Client-facing API of skali. Authentication is email+password with
     optional TOTP two-factor; sessions are opaque bearer tokens. The same
-    API serves every client: the web BFF, the `skali` CLI, and future
+    API serves every client: the web console, the `skali` CLI, and future
     native apps.
 
     There is no registration endpoint: users are created by an instance
@@ -32,6 +32,19 @@ info:
     (`/v1/auth/device/*`): the CLI opens a request, the signed-in console
     approves it, and the CLI's session is fresh again.
 
+    The embedded console uses the same API with an HttpOnly `skali_session`
+    cookie. Login and 2FA verification accept `session_transport: cookie` to
+    set that cookie without returning the session token in JSON; the default
+    `bearer` mode and CLI device-token flow retain their token responses.
+    An explicitly supplied Authorization header takes precedence over cookies;
+    malformed or invalid headers never fall back to cookie authentication.
+    Cookie mutations and cookie-mode login/verification require
+    `X-Requested-With: skali` and same-origin checks. No credentialed CORS is
+    enabled. Cookies use SameSite=Lax, Path=/, no Domain, and Secure by default.
+    Their expiry follows the session's sliding expiry. Logout and invalid
+    sessions clear browser cookies; transient failures do not. Authenticated
+    and authentication responses use Cache-Control: no-store.
+
     Every response carries the `Skali-Instance` header: the installation
     identity minted with the database, which changes exactly when a
     cluster is uninstalled and reinstalled. Clients that store remotes
@@ -58,6 +71,7 @@ servers:
 
 security:
   - bearerAuth: []
+  - cookieAuth: []
 
 paths:
   /v1/auth/login:
@@ -79,6 +93,11 @@ paths:
               type: object
               required: [email, password]
               properties:
+                session_transport:
+                  type: string
+                  enum: [bearer, cookie]
+                  default: bearer
+                  description: "Cookie mode sets an HttpOnly session cookie and omits the session token from JSON. Requires X-Requested-With: skali and a same-origin request."
                 email:
                   type: string
                   format: email
@@ -93,9 +112,11 @@ paths:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/SessionCreatedResponse"
+                  - $ref: "#/components/schemas/CookieSessionCreatedResponse"
                   - $ref: "#/components/schemas/ChallengeResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
   /v1/auth/2fa/verify:
@@ -116,6 +137,11 @@ paths:
               type: object
               required: [challenge_token, code]
               properties:
+                session_transport:
+                  type: string
+                  enum: [bearer, cookie]
+                  default: bearer
+                  description: "Cookie mode sets an HttpOnly session cookie and omits the session token from JSON. Requires X-Requested-With: skali and a same-origin request."
                 challenge_token:
                   type: string
                 code:
@@ -127,9 +153,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionCreatedResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/SessionCreatedResponse"
+                  - $ref: "#/components/schemas/CookieSessionCreatedResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
   /v1/auth/logout:
@@ -3353,6 +3382,11 @@ paths:
 
 components:
   securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: skali_session
+      description: HttpOnly, host-only session cookie. Cookie-authenticated mutations require X-Requested-With (value skali) and pass same-origin checks. WebSocket exec requires a same-origin Origin, including its scheme.
     bearerAuth:
       type: http
       scheme: bearer
@@ -3596,6 +3630,20 @@ components:
       required: [session]
       properties:
         session: { $ref: "#/components/schemas/SessionCreated" }
+
+    CookieSessionCreatedResponse:
+      type: object
+      required: [session]
+      properties:
+        session:
+          type: object
+          additionalProperties: false
+          required: [expires_at, user]
+          properties:
+            expires_at:
+              type: string
+              format: date-time
+            user: { $ref: "#/components/schemas/User" }
 
     DeviceRequest:
       type: object

@@ -38,27 +38,38 @@ do not mistake a new encryption key for credential revocation.
 
 The API uses the socket peer for IP-based limits and session addresses unless
 that peer is trusted. Kubernetes-connected daemons discover the running Traefik
-pods in `kube-system` and console pods in `skali-system`; application pods and
+pods in `kube-system`; application pods and
 host-network pods are excluded. Discovery refreshes every five seconds, clears
 on failure, and expires after ten seconds. During startup or an API outage,
 requests remain available but limits may temporarily group users by proxy IP.
 
 For an operator-managed proxy, set `SKALI_TRUSTED_PROXIES` to its exact IPv4/IPv6
-CIDRs, separated by commas. The default adds no static ranges. For a local BFF,
+CIDRs, separated by commas. The default adds no static ranges. For a local development proxy,
 `127.0.0.1/32,::1/128` is sufficient. Never allow the entire pod network or
 `0.0.0.0/0`: that would let application code invent its client address again.
 Trusted proxies must overwrite `X-Real-IP` or append the actual socket peer to
 `X-Forwarded-For`; the API walks the latter from right to left and stops at the
 first untrusted hop. Invalid addresses fall back to the socket peer.
 
-The managed console trusts one Traefik hop (`ADDRESS_HEADER=x-forwarded-for`,
-`XFF_DEPTH=1`). Its ingress NetworkPolicy permits port 3000 only from Traefik
-pods in `kube-system`. Keep the k3s network-policy controller enabled and do not
-add a broader allow policy or expose this pod directly. Node administrators
-remain trusted. With a custom console deployment, enforce the same ingress
-restriction before enabling forwarded address headers. See the
-[SvelteKit proxy configuration](https://svelte.dev/docs/kit/adapter-node#Environment-variables-ADDRESS_HEADER-and-XFF_DEPTH)
-and [Kubernetes NetworkPolicy semantics](https://kubernetes.io/docs/concepts/services-networking/network-policies/).
+## Browser sessions
+
+The embedded static console calls the Go API on the same origin. Login and
+2FA verification accept `session_transport: cookie`, setting a host-only
+`skali_session` cookie with HttpOnly, SameSite=Lax, and Path=/. Its expiry
+follows the database session's sliding expiry. The cookie response omits the
+session token; CLI login defaults to a bearer-token response.
+
+`SKALI_COOKIE_SECURE` defaults to true and is enabled explicitly in managed
+HTTPS installations. Disable it only for local HTTP development. Browser
+mutations and cookie-mode login/verification require `X-Requested-With: skali`
+and Go's cross-origin protection. Credentialed CORS is not enabled. Cookies
+are accepted only when Authorization is absent; a malformed or invalid header
+never falls back to a cookie. Both transports share authorization and sudo gates.
+
+Cookie-authenticated exec WebSockets require a same-origin Origin before any
+session is opened. Scheme detection accepts `X-Forwarded-Proto` only from a
+trusted socket peer; configure TLS-terminating proxies to overwrite it and
+preserve the public Host. CLI bearer WebSockets do not require Origin.
 
 ## Secret scanning
 

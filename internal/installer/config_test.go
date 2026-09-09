@@ -154,8 +154,6 @@ admin:
   passwordFile: /root/skali-admin-password
 skalid:
   image: ghcr.io/hinkolas/skalid:v2.0.0
-web:
-  image: ghcr.io/hinkolas/skali-web:v2.0.0
 `))
 	require.NoError(t, err)
 	require.Equal(t, "skali.example.com", config.Endpoints.API)
@@ -163,7 +161,6 @@ web:
 	require.Equal(t, "ops@example.com", config.TLS.IssuerEmail)
 	require.Equal(t, "/root/skali-admin-password", config.Admin.PasswordFile)
 	require.Equal(t, "ghcr.io/hinkolas/skalid:v2.0.0", config.Skalid.Image)
-	require.Equal(t, "ghcr.io/hinkolas/skali-web:v2.0.0", config.Web.Image)
 	require.Empty(t, config.StorageDriver(), "an omitted storage block keeps the recorded driver")
 }
 
@@ -179,8 +176,6 @@ admin:
   passwordFile: /root/pw
 skalid:
   image: skalid:dev
-web:
-  image: skali-web:dev
 `
 	config, err := ParseInitConfig([]byte(base + "storage:\n  driver: longhorn\n"))
 	require.NoError(t, err)
@@ -206,8 +201,6 @@ admin:
   passwordFile: /root/pw
 skalid:
   image: skalid:dev
-web:
-  image: skali-web:dev
 `
 	config, err := ParseInitConfig([]byte(base))
 	require.NoError(t, err)
@@ -232,11 +225,10 @@ func TestParseInitConfigRejections(t *testing.T) {
 		"tls":       "tls:\n  issuerEmail: ops@example.com\n",
 		"admin":     "admin:\n  email: a@example.com\n  passwordFile: /root/pw\n",
 		"skalid":    "skalid:\n  image: skalid:dev\n",
-		"web":       "web:\n  image: skali-web:dev\n",
 	}
 	build := func(omit string) string {
 		var document strings.Builder
-		for _, key := range []string{"endpoints", "tls", "admin", "skalid", "web"} {
+		for _, key := range []string{"endpoints", "tls", "admin", "skalid"} {
 			if key != omit {
 				document.WriteString(base[key])
 			}
@@ -248,7 +240,6 @@ func TestParseInitConfigRejections(t *testing.T) {
 		"tls":       "tls.issuerEmail is required",
 		"admin":     "admin.email is required",
 		"skalid":    "skalid.image is required",
-		"web":       "web.image is required",
 	}
 	for omit, want := range cases {
 		t.Run("missing "+omit, func(t *testing.T) {

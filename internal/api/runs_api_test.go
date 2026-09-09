@@ -104,9 +104,9 @@ func TestStepLogStream(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, a.journal.Append(ctx, attemptID, nil, "info", "catch-up entry", nil))
 
-	req, err := http.NewRequestWithContext(ctx, "GET", a.srv.URL+"/v1/steps/"+stepID.String()+"/logs/stream", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", a.srv.URL+"/api/v1/steps/"+stepID.String()+"/logs/stream", nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: token})
 	res, err := a.srv.Client().Do(req)
 	require.NoError(t, err)
 	defer res.Body.Close()

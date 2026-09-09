@@ -25,6 +25,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       # qemu: the release Dockerfile has a RUN step, so the arm64 layer
       # executes target-arch instructions on the amd64 runner.
       - uses: docker/setup-qemu-action@v4
@@ -35,22 +41,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # The web console image; goreleaser keeps owning the binaries and the
-      # skalid image. Runs before goreleaser so a failed image build never
-      # leaves a GitHub release without its console.
-      - uses: docker/build-push-action@v7
-        with:
-          context: web
-          file: build/web.Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          # latest follows releases only; a prerelease tag (v0.1.0-rc.1)
-          # publishes its versioned tag alone, matching goreleaser's
-          # skip_push: auto for the skalid manifest.
-          tags: |
-            ghcr.io/hinkolas/skali-web:${{ github.ref_name }}
-            ${{ !contains(github.ref_name, '-') && 'ghcr.io/hinkolas/skali-web:latest' || '' }}
 
       - uses: goreleaser/goreleaser-action@v7
         with:

@@ -10,7 +10,7 @@
 	// sync) must not close the panel that was just opened. Shallow
 	// replaceState doesn't fire afterNavigate at all, so it's safe either way.
 	afterNavigate(({ from, to }) => {
-		if (from && to && from.url.pathname !== to.url.pathname) sidepanel.close();
+		if (from?.url && to?.url && from.url.pathname !== to.url.pathname) sidepanel.close();
 	});
 </script>
 

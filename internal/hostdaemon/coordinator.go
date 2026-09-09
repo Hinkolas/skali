@@ -901,7 +901,7 @@ func (d *CoordinatorDaemon) verifyTarget(ctx context.Context, from,
 	if bundle.StampedHash(ctx, client) == "" {
 		return errors.New("verify platform: bundle convergence stamp is missing")
 	}
-	for _, name := range []string{"skali-registry", "skalid", "skali-web"} {
+	for _, name := range []string{"skali-registry", "skalid"} {
 		deployment, err := client.Clientset.AppsV1().Deployments(bundle.Namespace).
 			Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
@@ -1033,8 +1033,8 @@ func (d *CoordinatorDaemon) snapshotEtcd(ctx context.Context, operationID string
 
 // reconcilePlatform converges the bundle to the live profile, and when the
 // target names a release newer than the recorded bundle, to that release:
-// the published skalid and web images replace the live ones, the record's
-// versions move with them (the record text is a bundle input, so the hash
+// the published skalid image replaces the live one, the record's
+// versions move with it (the record text is a bundle input, so the hash
 // moves too), and the leader's own record is bumped so its status stays
 // truthful. Only the coordinator built from the target release performs the
 // move: its embedded bundle is the one that release ships, and a stale
@@ -1063,7 +1063,7 @@ func (d *CoordinatorDaemon) reconcilePlatform(ctx context.Context, target cluste
 	if err != nil {
 		// An empty stamp means a converge is in flight: init clears it with
 		// its first namespace apply and restamps only after the last stage,
-		// so the live objects LiveProfile reads (the skali-web deployment
+		// so the live objects LiveProfile reads (the skalid deployment
 		// in particular) may not exist yet. Defer to the driver instead of
 		// failing the operation on a half-assembled platform.
 		if bundle.StampedHash(ctx, client) == "" {
@@ -1080,8 +1080,6 @@ func (d *CoordinatorDaemon) reconcilePlatform(ctx context.Context, target cluste
 		}
 		profile.SkalidImage = version.PublishedSkalidImage(want)
 		profile.SkalidImageID = ""
-		profile.Production.WebImage = version.PublishedWebImage(want)
-		profile.Production.WebImageID = ""
 		record.Versions.Bundle = want
 		record.Versions.Installer = want
 		record.Versions.K3s = installer.K3sVersion
