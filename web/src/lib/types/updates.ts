@@ -41,6 +41,7 @@ export interface Release {
 }
 
 export interface UpdateNode {
+	id: string;
 	name: string;
 	role: 'server' | 'agent';
 	k3s_version?: string;
@@ -52,6 +53,7 @@ export interface UpdateNode {
 export type UpdateStepPhase = 'pending' | 'running' | 'complete' | 'failed';
 
 export interface UpdateStep {
+	node_id: string;
 	node: string;
 	action: string;
 	phase: UpdateStepPhase;

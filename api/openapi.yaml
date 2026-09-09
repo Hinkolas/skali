@@ -4411,8 +4411,11 @@ components:
           type: array
           items:
             type: object
-            required: [name, role, phase]
+            required: [id, name, role, phase]
             properties:
+              id:
+                type: string
+                description: Immutable enrollment identity; hostnames can be reused.
               name: { type: string }
               role: { type: string, enum: [server, agent] }
               k3s_version: { type: string }
@@ -4445,8 +4448,11 @@ components:
           type: array
           items:
             type: object
-            required: [node, action, phase]
+            required: [node_id, node, action, phase]
             properties:
+              node_id:
+                type: string
+                description: Enrollment identity of the node this step belongs to.
               node: { type: string }
               action: { type: string }
               phase: { type: string, enum: [pending, running, complete, failed] }
