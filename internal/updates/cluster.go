@@ -27,6 +27,7 @@ type Cluster struct {
 
 // NodeState is one enrolled node as the coordinator sees it.
 type NodeState struct {
+	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	Role         string    `json:"role"`
 	K3sVersion   string    `json:"k3s_version,omitempty"`
@@ -37,6 +38,7 @@ type NodeState struct {
 
 // StepState is one node's part of an operation.
 type StepState struct {
+	NodeID string `json:"node_id"`
 	Node   string `json:"node"`
 	Action string `json:"action"`
 	Phase  string `json:"phase"`
@@ -130,11 +132,13 @@ func project(state *clusterstate.State, now time.Time) *Snapshot {
 		snapshot.PlatformVersion = converged.Platform.Version
 	}
 	for _, node := range clusterstate.SortedNodes(state.Nodes) {
-		if node.Phase == clusterstate.NodePhaseRemoved {
+		// Retired identities remain in the journal, but their hostnames may
+		// already belong to a new enrollment.
+		if node.Phase == clusterstate.NodePhaseRemoved || node.Phase == clusterstate.NodePhaseCancelled {
 			continue
 		}
 		snapshot.Nodes = append(snapshot.Nodes, NodeState{
-			Name: node.Name, Role: node.Role, K3sVersion: node.K3sVersion,
+			ID: node.ID, Name: node.Name, Role: node.Role, K3sVersion: node.K3sVersion,
 			AgentVersion: node.AgentVersion, Phase: node.Phase, LastSeen: node.LastSeen,
 		})
 	}
@@ -191,23 +195,26 @@ func projectOperation(state *clusterstate.State, operation clusterstate.Operatio
 			name = node.Name
 		}
 		projected.Steps = append(projected.Steps, StepState{
-			Node: name, Action: step.Action, Phase: step.Phase, Error: step.LastError,
+			NodeID: id, Node: name, Action: step.Action, Phase: step.Phase, Error: step.LastError,
 		})
 	}
 	// Servers first, then by name: the order the coordinator runs them.
-	roleOf := func(name string) string {
-		if node, ok := clusterstate.FindNodeByName(target.Nodes, name); ok {
+	roleOf := func(id string) string {
+		if node, ok := target.Nodes[id]; ok {
 			return node.Role
 		}
-		if node, ok := clusterstate.FindNodeByName(from.Nodes, name); ok {
+		if node, ok := from.Nodes[id]; ok {
 			return node.Role
 		}
 		return ""
 	}
 	sort.Slice(projected.Steps, func(i, j int) bool {
 		a, b := projected.Steps[i], projected.Steps[j]
-		if roleOf(a.Node) != roleOf(b.Node) {
-			return roleOf(a.Node) == "server"
+		if roleOf(a.NodeID) != roleOf(b.NodeID) {
+			return roleOf(a.NodeID) == "server"
+		}
+		if a.Node == b.Node {
+			return a.NodeID < b.NodeID
 		}
 		return a.Node < b.Node
 	})

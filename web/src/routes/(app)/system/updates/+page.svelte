@@ -382,7 +382,7 @@
 		<Card class="p-5">
 			<h3 class="text-text-primary text-xl font-semibold">Nodes</h3>
 			<div class="mt-3">
-				{#each operation.steps as step (step.node)}
+				{#each operation.steps as step (step.node_id)}
 					<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
 						<span class="size-[8px] flex-none rounded-full {stepDot[step.phase]}"></span>
 						<span class="font-mono text-text-primary text-md">{step.node}</span>
@@ -454,7 +454,7 @@
 		<Card class="p-5">
 			<h3 class="text-text-primary text-xl font-semibold">Cluster</h3>
 			<div class="mt-3">
-				{#each status.nodes as node (node.name)}
+				{#each status.nodes as node (node.id)}
 					<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
 						<span class="font-mono text-text-primary text-md">{node.name}</span>
 						<Pill text={node.role} />
