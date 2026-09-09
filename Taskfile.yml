@@ -235,7 +235,8 @@ tasks:
         msg: "releases are tagged on main"
       - sh: git fetch --quiet origin main --tags && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
         msg: "HEAD is not origin/main; push (or pull) first so the release points at a commit on main"
-      - sh: ! git rev-parse -q --verify "refs/tags/{{.V}}" >/dev/null
+      # Quote the leading ! so YAML does not consume it as a tag marker.
+      - sh: '! git rev-parse -q --verify "refs/tags/{{.V}}" >/dev/null'
         msg: "tag {{.V}} already exists locally"
       - sh: test -z "$(git ls-remote --tags origin "refs/tags/{{.V}}")"
         msg: "tag {{.V}} already exists on origin"
