@@ -6,7 +6,7 @@
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
-	import { FEED_ERROR_PILL, operationSettled } from '$lib/types/updates';
+	import { updatePresentation } from '$lib/types/updates';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -30,23 +30,8 @@
 	const summary = $derived.by(() => {
 		const status = data.updates;
 		if (!status) return { text: 'status unavailable', tone: 'neutral' as const };
-		if (status.operation && !operationSettled(status.operation)) {
-			return {
-				text: `updating to ${status.operation.target_version ?? ''}`,
-				tone: 'warning' as const
-			};
-		}
-		if (status.update_available && status.latest) {
-			return { text: `${status.latest.version} available`, tone: 'warning' as const };
-		}
-		if (status.last_error) {
-			const text = status.last_error_kind
-				? FEED_ERROR_PILL[status.last_error_kind]
-				: 'check failed';
-			return { text, tone: 'warning' as const };
-		}
-		if (status.last_checked_at) return { text: 'up to date', tone: 'success' as const };
-		return { text: 'not checked yet', tone: 'neutral' as const };
+		const presentation = updatePresentation(status);
+		return { text: presentation.title, tone: presentation.tone };
 	});
 </script>
 

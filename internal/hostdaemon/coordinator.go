@@ -47,6 +47,7 @@ var errPlatformInitializationRequired = errors.New("platform initialization is r
 // binary is not: the leader's own node is being upgraded and the restart
 // that follows brings a coordinator that can. Not a failure, a wait.
 var errLeaderStale = errors.New("the coordinator must restart into the target release first")
+var errReleasePending = errors.New("waiting for release verification")
 
 type CoordinatorDaemon struct {
 	Kubeconfig string
@@ -55,6 +56,7 @@ type CoordinatorDaemon struct {
 	Listen   []string
 	Logger   *slog.Logger
 	Identity string
+	NodeID   string
 	Runner   host.Runner
 	// Releases fetches release metadata and checksums for upgrade
 	// operations; nil uses a short-timeout client.
@@ -147,6 +149,11 @@ func (d *CoordinatorDaemon) Run(ctx context.Context) error {
 		}
 	}
 	store := &clusterstate.Store{Client: clientset}
+	localConfig, err := installer.LoadAgentConfig(ctx, d.Runner)
+	if err != nil {
+		return err
+	}
+	d.NodeID = localConfig.NodeID
 	if d.Identity == "" {
 		hostname, _ := os.Hostname()
 		d.Identity = hostname + "-" + uuid.NewString()
@@ -282,7 +289,7 @@ func (d *CoordinatorDaemon) controlLoop(ctx context.Context, store *clusterstate
 		case err := <-reconcileDone:
 			reconcileDone = nil
 			reconcileCancel = nil
-			if err == nil || errors.Is(err, context.Canceled) {
+			if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, errReleasePending) {
 				continue
 			}
 			d.log("cluster reconciliation tick failed", "error", err)
@@ -290,6 +297,17 @@ func (d *CoordinatorDaemon) controlLoop(ctx context.Context, store *clusterstate
 				return clusterstate.FailOperation(state, err.Error(), time.Now())
 			})
 		case <-ticker.C:
+			if d.NodeID != "" {
+				if _, err := store.Update(ctx, func(state *clusterstate.State) error {
+					if state.Updates.Coordinators == nil {
+						state.Updates.Coordinators = map[string]clusterstate.CoordinatorReport{}
+					}
+					state.Updates.Coordinators[d.NodeID] = clusterstate.CoordinatorReport{Version: version.Version, LastSeen: time.Now()}
+					return nil
+				}); err != nil {
+					d.log("coordinator version report failed", "error", err)
+				}
+			}
 			leader, err := d.acquireOrRenew(ctx, client)
 			if err != nil {
 				d.log("coordinator leader lease failed", "error", err)
@@ -463,13 +481,26 @@ func (d *CoordinatorDaemon) actionFor(ctx context.Context, store *clusterstate.S
 				})
 				return clusterstate.AgentAction{}, err
 			}
+			metadata, err := d.releaseMetadata(ctx, target.Platform.Version)
+			if err != nil {
+				return clusterstate.AgentAction{}, err
+			}
 			if _, err := store.Update(ctx, func(current *clusterstate.State) error {
+				if update, ok := current.Updates.Operations[current.CurrentOperation]; ok {
+					if metadata != nil {
+						update.K3s = metadata.K3s
+					}
+					current.Updates.Operations[current.CurrentOperation] = update
+				}
 				return clusterstate.MarkUpgradePreflight(current, time.Now())
 			}); err != nil {
 				return clusterstate.AgentAction{}, err
 			}
 		}
 		action.Version = target.Platform.Version
+		coordinator := state.Updates.Coordinators[nodeID]
+		action.RestartCoordinator = target.Nodes[nodeID].Role == layout.RoleServer &&
+			(coordinator.Version != action.Version || time.Since(coordinator.LastSeen) > clusterstate.HeartbeatWindow)
 		action.HostdSHA256, err = d.hostdChecksum(ctx, target.Platform.Version, target.Nodes[nodeID].Name)
 		if err != nil {
 			_, _ = store.Update(ctx, func(current *clusterstate.State) error {
@@ -516,12 +547,15 @@ func (d *CoordinatorDaemon) upgradePreflight(ctx context.Context, state *cluster
 		return err
 	}
 	if metadata == nil || metadata.K3s == "" {
-		return nil
+		return fmt.Errorf("release %s has no Kubernetes version metadata", release)
 	}
 	for _, desired := range clusterstate.SortedRevisionNodes(target.Nodes) {
+		if _, err := d.hostdChecksum(ctx, release, desired.Name); err != nil {
+			return err
+		}
 		node := state.Nodes[desired.ID]
 		if node.K3sVersion == "" {
-			continue
+			return fmt.Errorf("node %s has not reported its Kubernetes version", desired.Name)
 		}
 		if err := installer.CheckK3sMove(node.K3sVersion, metadata.K3s); err != nil {
 			return fmt.Errorf("node %s: %w", desired.Name, err)
@@ -772,6 +806,14 @@ func (d *CoordinatorDaemon) reconcile(ctx context.Context, store *clusterstate.S
 				!errors.Is(err, errPlatformInitializationRequired) {
 				if errors.Is(err, errLeaderStale) {
 					return nil
+				}
+				return err
+			}
+		}
+		if clusterstate.IsReleaseOperation(state, operation) {
+			if err := d.verifyRelease(ctx, state, target); err != nil {
+				if time.Since(operation.UpdatedAt) < 10*time.Minute {
+					return fmt.Errorf("%w: %v", errReleasePending, err)
 				}
 				return err
 			}
@@ -1111,6 +1153,9 @@ func (d *CoordinatorDaemon) reconcilePlatform(ctx context.Context, target cluste
 	moveBundle := want != "" && (version.Older(record.Versions.Bundle, want) ||
 		(record.Versions.Bundle == want && profile.SkalidImage != version.PublishedSkalidImage(want)))
 	if moveBundle {
+		if installed, ok := version.PublishedSkalidVersion(profile.SkalidImage); ok && version.Older(want, installed) {
+			return fmt.Errorf("platform already runs %s; finish the cluster update to that release instead of downgrading to %s", installed, want)
+		}
 		if version.Version != want {
 			return errLeaderStale
 		}

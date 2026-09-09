@@ -49,6 +49,9 @@ func upgradeAgent(t *testing.T, role string, k3sVersion string) (*Agent, *host.F
 }
 
 func TestUpgradeActionFirstPassReplacesHostdAndRestarts(t *testing.T) {
+	previousVersion := version.Version
+	version.Version = "v0.1.0"
+	t.Cleanup(func() { version.Version = previousVersion })
 	binary := []byte("new-binary")
 	sum := sha256.Sum256(binary)
 	mux := http.NewServeMux()
@@ -131,4 +134,35 @@ func TestReportCarriesAgentVersion(t *testing.T) {
 	require.Equal(t, version.Version, report.AgentVersion)
 	require.Equal(t, installer.K3sVersion, report.K3sVersion)
 	require.Equal(t, clusterstate.NodePhaseActive, report.Phase)
+}
+
+func TestSameReleaseRepairsOnlyCoordinatorAndNeverDowngradesHostd(t *testing.T) {
+	previous := version.Version
+	version.Version = "v0.1.0-alpha.5"
+	t.Cleanup(func() { version.Version = previous })
+	agent, fake := upgradeAgent(t, layout.RoleServer, installer.K3sVersion)
+	fake.Handlers["systemctl"] = func(host.Command) (host.Result, error) { return host.Result{}, nil }
+	report, restarting := agent.execute(context.Background(), clusterstate.AgentAction{
+		ID: "repair", Type: clusterstate.NodeActionUpgrade, Version: version.Version, RestartCoordinator: true,
+	})
+	require.False(t, restarting)
+	require.True(t, report.ActionOK, report.Error)
+	require.Equal(t, []byte("old-binary"), fake.FS[installer.HostdBinaryPath], "no binary download or replacement")
+	restarted := false
+	for _, cmd := range fake.Commands {
+		require.NotEqual(t, "sh", cmd.Name, "Kubernetes is already on the pin")
+		if cmd.Name == "systemctl" {
+			require.Equal(t, []string{"restart", installer.HostdCoordinatorUnit}, cmd.Args)
+			restarted = true
+		}
+	}
+	require.True(t, restarted)
+	agent, fake = upgradeAgent(t, layout.RoleAgent, installer.K3sVersion)
+	report, restarting = agent.execute(context.Background(), clusterstate.AgentAction{
+		ID: "old-target", Type: clusterstate.NodeActionUpgrade, Version: "v0.1.0-alpha.4",
+	})
+	require.False(t, restarting)
+	require.False(t, report.ActionOK)
+	require.Contains(t, report.Error, "downgrade")
+	require.Empty(t, fake.Commands)
 }

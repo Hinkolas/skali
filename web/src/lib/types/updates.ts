@@ -48,6 +48,8 @@ export interface UpdateNode {
 	agent_version?: string;
 	phase: string;
 	last_seen?: string;
+	coordinator_version?: string;
+	coordinator_last_seen?: string;
 }
 
 export type UpdateStepPhase = 'pending' | 'running' | 'complete' | 'failed';
@@ -74,6 +76,22 @@ export interface UpdateOperation {
 
 /** GET /v1/system/updates */
 export interface UpdateStatus {
+	summary: {
+		state:
+			| 'unknown'
+			| 'not_checked'
+			| 'no_release'
+			| 'current'
+			| 'available'
+			| 'incomplete'
+			| 'updating'
+			| 'failed';
+		converged_version?: string;
+		target_version?: string;
+		action: '' | 'update' | 'finish' | 'retry';
+		detail?: string;
+		progress: { done: number; total: number; percent: number; phase: string };
+	};
 	installed: { version: string; platform_version?: string };
 	channel: UpdateChannel;
 	auto_update: boolean;
@@ -87,6 +105,49 @@ export interface UpdateStatus {
 	reason?: string;
 	nodes: UpdateNode[];
 	operation: UpdateOperation | null;
+	last_successful: UpdateOperation | null;
+}
+
+export function updateSummary(status: UpdateStatus): UpdateStatus['summary'] {
+	// A cached console can reach an older daemon during a rolling rollout.
+	return (
+		status.summary ?? {
+			state: 'unknown',
+			action: '',
+			detail:
+				'This platform has not reported cluster-wide update status yet. Reload after the platform rollout completes.',
+			progress: { done: 0, total: 0, percent: 0, phase: 'Preparing' }
+		}
+	);
+}
+
+export function updatePresentation(status: UpdateStatus) {
+	const summary = updateSummary(status);
+	const target = summary?.target_version ?? '';
+	const labels = {
+		current: 'You are up to date',
+		available: `${target} is available`,
+		incomplete: 'Update incomplete',
+		updating: `Updating to ${target}`,
+		failed: 'Update needs attention',
+		unknown: 'Update status unavailable',
+		not_checked: 'Not checked yet',
+		no_release: 'No releases on this channel'
+	};
+	return {
+		title: summary ? labels[summary.state] : labels.unknown,
+		action:
+			summary?.action === 'finish'
+				? 'Finish update'
+				: summary?.action === 'retry'
+					? 'Retry'
+					: 'Update now',
+		tone: (summary?.state === 'current'
+			? 'success'
+			: ['available', 'incomplete', 'updating', 'failed'].includes(summary?.state)
+				? 'warning'
+				: 'neutral') as 'success' | 'warning' | 'neutral'
+	};
 }
 
 export function operationSettled(operation: UpdateOperation | null): boolean {

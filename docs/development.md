@@ -31,6 +31,17 @@ This page is for working on skali itself. Using skali is covered by the
   `task build` embeds them in `skalid`. There is no production Node service.
   Vite proxies `/api` to the local daemon during development.
 
+Release operations are explicitly identified in `updates.json`, a second data
+entry in the authoritative cluster ConfigMap. It records release metadata and
+fresh coordinator reports independently of `state.json`; alpha.4 writers
+preserve the sidecar when re-encoding their older state schema. Both entries
+share the ConfigMap's compare-and-swap transaction. Same-release repairs use
+the existing resumable node-step journal and do not become topology changes.
+The aggregate update status is shared by API validation, the console, and the
+authenticated CLI. Convergence additionally requires exact host/coordinator
+versions, the release's Kubernetes pin, and a completed exact platform rollout.
+See [operator update guidance](updates.md), including bootstrap and recovery.
+
 Auth is email and password (argon2id) with optional TOTP 2FA and backup
 codes; sessions are opaque bearer tokens (sha256 at rest, 30-day sliding
 expiry, instant revocation). There is no signup; users are created by an

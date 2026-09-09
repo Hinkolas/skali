@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Hinkolas/skali/internal/clusterstate"
+	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/version"
 )
@@ -45,9 +46,10 @@ type Settings struct {
 
 // Status is the whole document the console renders.
 type Status struct {
+	Summary   Summary   `json:"summary"`
 	Installed Installed `json:"installed"`
 	Settings
-	// UpdateAvailable is Latest newer than Installed.Version.
+	// UpdateAvailable includes an available release or an incomplete update.
 	UpdateAvailable bool `json:"update_available"`
 	// Managed is whether a cluster coordinator exists to perform updates;
 	// Manageable whether one could start right now, Reason why not.
@@ -56,7 +58,8 @@ type Status struct {
 	Reason     string      `json:"reason,omitempty"`
 	Nodes      []NodeState `json:"nodes"`
 	// Operation is the running update, or the last one when none runs.
-	Operation *OperationState `json:"operation"`
+	Operation      *OperationState `json:"operation"`
+	LastSuccessful *OperationState `json:"last_successful"`
 }
 
 // Installed is what this daemon knows it runs.
@@ -74,8 +77,7 @@ type Service struct {
 	Store   *store.Store
 	Feed    Feed
 	Cluster *Cluster
-	// Version is the running daemon's version: the installed platform
-	// version for every comparison.
+	// Version is the running daemon's version, one component of convergence.
 	Version string
 	// ScanInterval is how often the loop scans; zero means daily.
 	ScanInterval time.Duration
@@ -137,7 +139,19 @@ func (s *Service) status(ctx context.Context, row store.UpdateSetting) (*Status,
 		status.Reason = snapshot.Reason
 		status.Nodes = snapshot.Nodes
 		status.Operation = snapshot.Operation
+		status.LastSuccessful = snapshot.LastSuccessful
 		status.Installed.PlatformVersion = snapshot.PlatformVersion
+	}
+	expectedK3s := ""
+	if snapshot != nil {
+		expectedK3s = snapshot.ExpectedK3s
+		if expectedK3s == "" && snapshot.PlatformVersion == s.Version {
+			expectedK3s = installer.K3sVersion
+		}
+	}
+	status.Summary = summarize(status, expectedK3s, s.clock())
+	if status.Managed {
+		status.UpdateAvailable = status.Summary.Action == "update" || status.Summary.Action == "finish"
 	}
 	return status, nil
 }
@@ -236,8 +250,12 @@ func (s *Service) Apply(ctx context.Context, target string) (*Status, error) {
 	if !version.IsRelease(target) {
 		return nil, &BlockedError{Reason: fmt.Sprintf("%q is not a tagged release", target)}
 	}
-	if version.IsRelease(s.Version) && !version.Older(s.Version, target) {
-		return nil, ErrNotNewer
+	current, err := s.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateTarget(current, target); err != nil {
+		return nil, err
 	}
 	snapshot, err := s.Cluster.Snapshot(ctx)
 	if errors.Is(err, ErrNotManaged) {
@@ -284,15 +302,33 @@ func (s *Service) Resume(ctx context.Context) (*Status, error) {
 		return nil, &BlockedError{Reason: "updates from the console need a coordinator-managed cluster"}
 	}
 	store := &clusterstate.Store{Client: s.Cluster.Client}
-	_, err := store.Update(ctx, func(state *clusterstate.State) error {
+	running, err := s.Store.CountRunningRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	backups, err := s.Store.ListUnfinishedBackups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if running > 0 || len(backups) > 0 {
+		return nil, ErrBusy
+	}
+	_, err = store.Update(ctx, func(state *clusterstate.State) error {
 		if state.CurrentOperation == "" {
 			return errors.New("no update is waiting to be resumed")
 		}
 		operation := state.Operations[state.CurrentOperation]
+		if !clusterstate.IsReleaseOperation(state, operation) {
+			return errors.New("the active operation is a topology change, not a software update")
+		}
 		if operation.Phase != clusterstate.OperationFailed {
 			return clusterstate.ErrOperationActive
 		}
-		_, _, err := clusterstate.FreezeCandidate(state, operation.RebalanceWorkloads, s.clock())
+		target := state.Revisions[operation.TargetRevision].Platform.Version
+		if !version.IsRelease(s.Version) || version.Older(target, s.Version) {
+			return fmt.Errorf("cannot resume update to %s while skalid runs %s", target, s.Version)
+		}
+		_, err := clusterstate.ResumeRelease(state, s.clock())
 		return err
 	})
 	if err != nil {
@@ -362,7 +398,7 @@ func (s *Service) tick(ctx context.Context) {
 		s.log().WarnContext(ctx, "update scan failed", "kind", status.LastErrorKind, "err", status.LastError)
 		return
 	}
-	if !status.AutoUpdate || !status.UpdateAvailable {
+	if !status.AutoUpdate || status.Summary.Action != "update" {
 		return
 	}
 	if status.Operation != nil && !status.Operation.Settled() {

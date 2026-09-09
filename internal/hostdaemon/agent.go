@@ -358,6 +358,9 @@ func (a *Agent) upgrade(ctx context.Context, action clusterstate.AgentAction) (*
 		return nil, err
 	}
 	if version.Version != action.Version {
+		if !version.IsRelease(version.Version) || version.Older(action.Version, version.Version) {
+			return nil, fmt.Errorf("cannot downgrade hostd from %s to %s", version.Version, action.Version)
+		}
 		client := a.Downloads
 		if client == nil {
 			client = &http.Client{Timeout: 10 * time.Minute}
@@ -379,6 +382,15 @@ func (a *Agent) upgrade(ctx context.Context, action clusterstate.AgentAction) (*
 		}
 		a.log("hostd replaced; restarting into the new release", "version", action.Version)
 		return nil, errRestarting
+	}
+	if action.RestartCoordinator && record.Node.Role == layout.RoleServer {
+		result, err := a.Runner.Run(ctx, host.Command{Name: "systemctl", Args: []string{"restart", installer.HostdCoordinatorUnit}})
+		if err != nil {
+			return nil, err
+		}
+		if result.ExitCode != 0 {
+			return nil, fmt.Errorf("restart coordinator: %s", result.Stderr)
+		}
 	}
 	installed := installer.ProbeK3sVersion(ctx, a.Runner)
 	if installed != installer.K3sVersion {

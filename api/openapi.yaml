@@ -4350,6 +4350,8 @@ components:
         operator's settings, the nodes, and the running or last update.
       required:
         - installed
+        - summary
+        - last_successful
         - channel
         - auto_update
         - last_checked_at
@@ -4360,6 +4362,31 @@ components:
         - nodes
         - operation
       properties:
+        summary:
+          type: object
+          required: [state, action, progress]
+          properties:
+            state:
+              type: string
+              enum: [unknown, not_checked, no_release, current, available, incomplete, updating, failed]
+            converged_version: { type: string }
+            target_version: { type: string }
+            action:
+              type: string
+              enum: ["", update, finish, retry]
+            detail: { type: string }
+            progress:
+              type: object
+              required: [done, total, percent, phase]
+              properties:
+                done: { type: integer }
+                total: { type: integer }
+                percent: { type: integer, minimum: 0, maximum: 100 }
+                phase: { type: string }
+        last_successful:
+          oneOf:
+            - $ref: "#/components/schemas/UpdateOperation"
+            - type: "null"
         installed:
           type: object
           required: [version]
@@ -4420,6 +4447,8 @@ components:
               role: { type: string, enum: [server, agent] }
               k3s_version: { type: string }
               agent_version: { type: string }
+              coordinator_version: { type: string }
+              coordinator_last_seen: { type: string, format: date-time }
               phase: { type: string }
               last_seen: { type: string, format: date-time }
         operation:

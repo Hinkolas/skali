@@ -19,19 +19,43 @@ import (
 )
 
 func newClusterUpgradeCmd() *cobra.Command {
-	var yes bool
+	var yes, wait, recover bool
+	var target string
 	cmd := &cobra.Command{
 		Use:   "upgrade",
-		Short: "Upgrade k3s and the Skali bundle to this installer's versions",
+		Short: "Update the whole managed cluster to one Skali release",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := os.Stdout
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
+			if recover {
+				if imageTarFlag != "" {
+					return errors.New("--recover cannot be combined with --image-tar")
+				}
+				return runRecoveryUpdate(cmd.Context(), out, reader, target, yes, wait)
+			}
+			detected, err := installer.Detect(cmd.Context(), runner())
+			if err != nil {
+				return err
+			}
+			if imageTarFlag == "" && detected.Record != nil && detected.Record.Reconciled() {
+				_, _, api, err := currentClient()
+				if err != nil {
+					return fmt.Errorf("select and authenticate a Skali remote first: %w", err)
+				}
+				return runManagedUpdate(cmd.Context(), out, reader, api, target, yes, wait)
+			}
+			if target != "" || wait {
+				return errors.New("--version and --wait require a managed cluster")
+			}
 			return runUpgradeFlow(cmd.Context(), out, reader, yes)
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait for the cluster update to complete")
+	cmd.Flags().BoolVar(&recover, "recover", false, "submit directly from a controller without API activity checks")
+	cmd.Flags().StringVar(&target, "version", "", "exact target release (default: latest on the configured channel)")
 	return cmd
 }
 
@@ -63,6 +87,13 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 			detected.State)
 	}
 	record := detected.Record
+	if record.Reconciled() && imageTarFlag == "" {
+		_, _, api, err := currentClient()
+		if err != nil {
+			return fmt.Errorf("select and authenticate a Skali remote first: %w", err)
+		}
+		return runManagedUpdate(ctx, out, reader, api, "", yes, false)
+	}
 	role := record.Node.Role
 	// A server whose local record never initialized the bundle is a
 	// secondary server when the in-cluster record names the init owner:

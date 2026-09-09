@@ -13,6 +13,6 @@
 	<!-- Environment-wide actions next to the environment the breadcrumb
 	     names, reachable from every page of the project. -->
 	<EnvActions />
-	<SearchButton />
+	<div class="hidden sm:contents"><SearchButton /></div>
 	<UserMenu />
 </header>
