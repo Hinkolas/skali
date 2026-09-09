@@ -67,9 +67,11 @@ but these settings must be applied on GitHub.
 
 ### Non-optional
 
-- [ ] **Verify the pinned alpha install and schema URLs after publication.**
-      README installation uses the GitHub `v0.1.0-alpha.1` release asset with
-      `SKALI_VERSION` set on `sh`; the editor schema URL uses that same tag on
+- [ ] **Verify channel installation, version pinning, and schema URLs after publication.**
+      README installation fetches `install.sh` from `main` with
+      `SKALI_CHANNEL=beta` set on `sh`; verify it selects the newest published
+      version, and that the separate `SKALI_VERSION` example pins the alpha.
+      The editor schema URL uses the `v0.1.0-alpha.1` tag on
       raw.githubusercontent.com. No custom domain is needed to install.
       Schema `$id` values remain stable identifiers under `skali.dev`; they
       are not the download URLs used by the README or installed agent skill.
@@ -175,7 +177,7 @@ but these settings must be applied on GitHub.
       goreleaser `release.prerelease: auto` plus `skip_push: auto` on the
       `latest` manifest keep prereleases from moving the stable image tag. New `.github/workflows/ci.yml` (go vet + go test
       against a Postgres service, `npm test` + `npm run check` + `npm run lint`,
-      `goreleaser check`) runs on every push to main and pull request, and
+      `goreleaser check`) runs on every pull request, and
       on tags via `release.yml`, which publishes only when it passes.
       2026-09-08: gofmt, `go mod tidy`, and generated-code drift checks
       added; govulncheck and `npm audit` moved to the daily `audit.yml`
