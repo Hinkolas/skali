@@ -154,6 +154,20 @@ Ordered loosely by how often I have wanted them.
 
 ## 4. Platform and operations
 
+- [ ] Change cluster settings without repeating first-time initialization.
+      Observed on kilohertz with alpha.6 (2026-09-10): changing the build
+      preference with `skali cluster init --platform-preference
+      linux/arm64,linux/amd64` reapplies the bundle and asks for admin
+      credentials even though an admin already exists. Skip the bootstrap
+      prompt and account-creation job when an admin is present; distinguish
+      a failed lookup from an installation with no admin. Add a dedicated
+      cluster configuration command (name to be decided) for settings such
+      as platform preference, with validation, reviewable changes, and
+      persistence through upgrades. Acceptance: changing the preference on
+      an initialized cluster requires no bootstrap credentials, creates no
+      user, preserves existing accounts/passwords and unrelated settings,
+      and affects subsequent deployments; fresh installs still bootstrap
+      their first admin.
 - [x] Console-driven platform updates: a daily release scan (GitHub
       releases, stable or beta channel), the System / Software update page
       with per-node progress, automatic updates, and the coordinator moving
