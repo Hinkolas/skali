@@ -72,7 +72,7 @@ func newClusterJoinCmd() *cobra.Command {
 				record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
 					Server: server, Token: rawToken, Capabilities: capabilities,
 					Network: network, RequestedRole: role, RequestedCluster: cluster,
-					Interactive: cliprompt.Interactive(),
+					Interactive: cliprompt.Interactive(), Out: out,
 				})
 				if enrollErr != nil {
 					progress.Abort()

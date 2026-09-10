@@ -41,11 +41,12 @@ tasks:
   install:cli:
     desc: Build the skali CLI and install it to ~/.local/bin
     cmds:
-      # Same destination the installer will use: on PATH, no sudo.
+      # Same destination the installer will use: on PATH, no sudo. The Linux
+      # hostd sits next to the CLI, where skali cluster looks for a source
+      # build before falling back to the release download.
       - mkdir -p "$HOME/.local/bin"
-      - mkdir -p "$HOME/.local/share/skali"
       - go build -ldflags "{{.LDFLAGS}}" -o "$HOME/.local/bin/skali" ./cmd/skali
-      - GOOS=linux go build -ldflags "{{.LDFLAGS}}" -o "$HOME/.local/share/skali/skali-hostd_linux_{{ARCH}}" ./cmd/skali-hostd
+      - GOOS=linux go build -ldflags "{{.LDFLAGS}}" -o "$HOME/.local/bin/skali-hostd_linux_{{ARCH}}" ./cmd/skali-hostd
       - echo "installed $("$HOME/.local/bin/skali" --version) to ~/.local/bin/skali"
 
   install:server:

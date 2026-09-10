@@ -25,8 +25,9 @@ import (
 
 // newUpgradeCommand replaces this CLI binary with a published release. It
 // is the in-binary form of install.sh: same channels, same pinned-version
-// override, same checksum verification, same asset names. The cluster is a
-// separate thing and moves with skali cluster upgrade.
+// override, same checksum verification, same asset name. Only the CLI
+// moves: skali-hostd is fetched by the cluster commands that install it,
+// and a cluster moves with skali cluster upgrade.
 func newUpgradeCommand() *cobra.Command {
 	var requested, channelFlag string
 	cmd := &cobra.Command{
@@ -35,8 +36,7 @@ func newUpgradeCommand() *cobra.Command {
 		Long: "Replaces this skali binary with a published release: the newest on a\n" +
 			"channel (stable, or beta to include alpha, beta, and rc releases), or an\n" +
 			"exact --version, which may also downgrade. Downloads are verified against\n" +
-			"the release's checksums before anything is written. A skali-hostd that\n" +
-			"install.sh placed on this machine is refreshed to the same release.\n\n" +
+			"the release's checksums before anything is written.\n\n" +
 			"The channel defaults to stable, or to beta when this build is itself a\n" +
 			"prerelease. A cluster moves with skali cluster upgrade, not this command.",
 		Args: cobra.NoArgs,
@@ -71,15 +71,7 @@ type upgradeOptions struct {
 	// Executable is the binary to replace, symlinks already resolved. It is
 	// resolved once, before the replace: afterwards the running process's
 	// own path reads as deleted on Linux.
-	Executable string
-	// Hostd lists candidate skali-hostd locations; only existing ones are
-	// refreshed.
-	Hostd []string
-	// ManagedHostd is a hostd path owned by a running cluster installation
-	// on this node (the daemon's own binary), which the cluster update flow
-	// replaces and this command must not; empty when this node is not
-	// managed.
-	ManagedHostd string
+	Executable   string
 	Root         bool
 	GOOS, GOARCH string
 }
@@ -107,14 +99,6 @@ func upgradeOptionsFromEnvironment(requested, channelFlag string) (upgradeOption
 	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
 		executable = resolved
 	}
-	base := os.Getenv("SKALI_RELEASE_BASE")
-	if base == "" {
-		base = installer.ReleaseBase
-	}
-	managed := ""
-	if _, err := os.Stat(installer.HostdAgentUnitPath); err == nil {
-		managed = installer.HostdBinaryPath
-	}
 	return upgradeOptions{
 		Requested:      requested,
 		Channel:        channel,
@@ -124,14 +108,12 @@ func upgradeOptionsFromEnvironment(requested, channelFlag string) (upgradeOption
 			URL:       os.Getenv("SKALI_UPDATE_FEED_URL"),
 			UserAgent: "skali/" + versionpkg.Version,
 		},
-		Client:       &http.Client{Timeout: 5 * time.Minute},
-		ReleaseBase:  base,
-		Executable:   executable,
-		Hostd:        hostdCandidatePaths(executable),
-		ManagedHostd: managed,
-		Root:         os.Geteuid() == 0,
-		GOOS:         runtime.GOOS,
-		GOARCH:       runtime.GOARCH,
+		Client:      &http.Client{Timeout: 5 * time.Minute},
+		ReleaseBase: releaseBase(),
+		Executable:  executable,
+		Root:        os.Geteuid() == 0,
+		GOOS:        runtime.GOOS,
+		GOARCH:      runtime.GOARCH,
 	}, nil
 }
 
@@ -236,14 +218,6 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	}
 	fmt.Fprintf(out, "  target   %s%s\n\n", target, label)
 
-	hostd := refreshableHostd(opts.Hostd, opts.ManagedHostd, opts.Root)
-	refresh := 0
-	for _, candidate := range hostd {
-		if candidate.Skip == "" {
-			refresh++
-		}
-	}
-
 	tasks := clirender.NewTasks(out)
 	task := tasks.Start("Fetch checksums for " + target)
 	sums, err := installer.ReleaseChecksums(ctx, opts.Client, opts.ReleaseBase, target)
@@ -269,23 +243,6 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	}
 	task.Done("checksum verified")
 
-	hostdAsset := installer.HostdAsset(opts.GOARCH)
-	var hostdBinary []byte
-	task = tasks.Start("Download " + hostdAsset)
-	switch {
-	case refresh == 0:
-		task.Skip("no installed skali-hostd to refresh")
-	case sums[hostdAsset] == "":
-		task.Skip("release publishes no " + hostdAsset)
-	default:
-		hostdBinary, err = installer.DownloadAsset(ctx, opts.Client, opts.ReleaseBase, target, hostdAsset, sums[hostdAsset])
-		if err != nil {
-			task.Fail()
-			return err
-		}
-		task.Done("checksum verified")
-	}
-
 	task = tasks.Start("Install " + opts.Executable)
 	previous, err := os.ReadFile(opts.Executable)
 	if err != nil {
@@ -308,22 +265,6 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	}
 	task.Done("")
 
-	for _, candidate := range hostd {
-		task = tasks.Start("Refresh " + candidate.Path)
-		switch {
-		case candidate.Skip != "":
-			task.Skip(candidate.Skip)
-		case hostdBinary == nil:
-			task.Skip("release publishes no " + hostdAsset)
-		default:
-			if err := (host.Local{}).ReplaceFile(ctx, candidate.Path, "", hostdBinary, 0o755); err != nil {
-				task.Fail()
-				return fmt.Errorf("refresh %s: %w", candidate.Path, err)
-			}
-			task.Done("")
-		}
-	}
-
 	verb := "upgraded"
 	if outcome.Downgrade {
 		verb = "downgraded"
@@ -343,51 +284,6 @@ func probeWritableDir(dir string) error {
 	name := probe.Name()
 	probe.Close()
 	return os.Remove(name)
-}
-
-// hostdTarget is one existing skali-hostd on this machine: refreshed when
-// Skip is empty, otherwise reported with the reason it is left alone.
-type hostdTarget struct {
-	Path string
-	Skip string
-}
-
-// refreshableHostd keeps the candidates that exist, in order and without
-// duplicates. The binary a running cluster installation owns is left to the
-// cluster update, which restarts the services around it; one in a directory
-// this process cannot write is reported rather than failing an upgrade whose
-// CLI part already succeeded.
-func refreshableHostd(candidates []string, managed string, root bool) []hostdTarget {
-	seen := make(map[string]bool)
-	var targets []hostdTarget
-	for _, path := range candidates {
-		if path == "" {
-			continue
-		}
-		path = filepath.Clean(path)
-		if seen[path] {
-			continue
-		}
-		seen[path] = true
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			continue
-		}
-		if managed != "" && path == filepath.Clean(managed) {
-			targets = append(targets, hostdTarget{Path: path, Skip: "managed by the cluster update"})
-			continue
-		}
-		if err := probeWritableDir(filepath.Dir(path)); err != nil {
-			reason := "directory not writable"
-			if errors.Is(err, fs.ErrPermission) && !root {
-				reason = "directory not writable; run sudo skali upgrade to refresh it"
-			}
-			targets = append(targets, hostdTarget{Path: path, Skip: reason})
-			continue
-		}
-		targets = append(targets, hostdTarget{Path: path})
-	}
-	return targets
 }
 
 // verifyInstalledCLI runs the freshly installed binary and checks it names

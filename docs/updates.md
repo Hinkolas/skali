@@ -121,11 +121,15 @@ skali upgrade --version v0.1.0-alpha.5
 `--version` names an exact published release and overrides the channel; it is
 the way to move back to an earlier release. Every download is verified against
 the release's `checksums.txt` before the binary is replaced, and the new binary
-must report the target version or the previous one is restored. A `skali-hostd`
-that `install.sh` installed next to the CLI is refreshed to the same release so
-a later `skali cluster install` or `join` ships the matching host services.
-On a node that is already part of a managed cluster the running `skali-hostd`
-is left alone; the cluster update owns it.
+must report the target version or the previous one is restored.
+
+Neither `install.sh` nor `skali upgrade` installs `skali-hostd`. The host
+daemon is fetched by `skali cluster install`, `join`, and `repair` on the node
+that needs it, from the release the CLI is, verified the same way and cached
+under `~/.cache/skali/hostd`. A development build has no release to fetch from
+and uses the `skali-hostd` next to its own binary (`task build` puts one in
+`bin/`) or `--hostd-bin`. The running `skali-hostd` on a cluster node is only
+ever replaced by the cluster update.
 
 On Linux the CLI lives in `/usr/local/bin`, so updating it needs
 `sudo skali upgrade`; the command says so before downloading anything. A

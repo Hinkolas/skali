@@ -93,13 +93,11 @@ func fakeCLI(version string) []byte {
 }
 
 // releaseAssets builds a consistent release for the running platform.
-func releaseAssets(cli, hostd []byte) map[string][]byte {
+func releaseAssets(cli []byte) map[string][]byte {
 	cliAsset := installer.CLIAsset(runtime.GOOS, runtime.GOARCH)
-	hostdAsset := installer.HostdAsset(runtime.GOARCH)
 	return map[string][]byte{
-		"checksums.txt": []byte(checksumEntry(cliAsset, cli) + checksumEntry(hostdAsset, hostd)),
+		"checksums.txt": []byte(checksumEntry(cliAsset, cli)),
 		cliAsset:        cli,
-		hostdAsset:      hostd,
 	}
 }
 
@@ -188,17 +186,15 @@ func TestResolveUpgradeChannel(t *testing.T) {
 	require.ErrorContains(t, err, "unknown update channel")
 }
 
-func TestRunUpgradeReplacesCLIAndHostd(t *testing.T) {
+func TestRunUpgradeReplacesCLI(t *testing.T) {
 	t.Parallel()
-	cli, hostd := fakeCLI("v0.1.0-alpha.5"), []byte("hostd v0.1.0-alpha.5")
-	server := newFakeUpgradeServer(t, "v0.1.0-alpha.5", releaseAssets(cli, hostd))
+	cli := fakeCLI("v0.1.0-alpha.5")
+	server := newFakeUpgradeServer(t, "v0.1.0-alpha.5", releaseAssets(cli))
 	dir := t.TempDir()
 	executable := writeExecutable(t, dir, "skali", fakeCLI("v0.1.0-alpha.4"))
-	installed := writeExecutable(t, dir, installer.HostdAsset(runtime.GOARCH), []byte("hostd old"))
 
 	opts := server.options("v0.1.0-alpha.4", updates.ChannelBeta, executable)
 	opts.ChannelImplied = true
-	opts.Hostd = []string{installed, filepath.Join(dir, "absent", "skali-hostd"), installed}
 	var out bytes.Buffer
 	require.NoError(t, runUpgrade(context.Background(), &out, opts))
 
@@ -208,40 +204,23 @@ func TestRunUpgradeReplacesCLIAndHostd(t *testing.T) {
 	info, err := os.Stat(executable)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o755), info.Mode().Perm())
-	gotHostd, err := os.ReadFile(installed)
-	require.NoError(t, err)
-	require.Equal(t, hostd, gotHostd)
 
 	text := out.String()
 	require.Contains(t, text, "current  v0.1.0-alpha.4")
 	require.Contains(t, text, "channel  beta (implied by prerelease build)")
 	require.Contains(t, text, "target   v0.1.0-alpha.5")
 	require.Contains(t, text, "upgraded skali v0.1.0-alpha.4 -> v0.1.0-alpha.5")
-	require.Equal(t, 1, strings.Count(text, "Refresh "), "duplicate and absent candidates collapse")
-	require.Contains(t, server.requested(), "/Hinkolas/skali/releases/download/v0.1.0-alpha.5/"+installer.HostdAsset(runtime.GOARCH))
-}
-
-func TestRunUpgradeSkipsAbsentHostd(t *testing.T) {
-	t.Parallel()
-	cli := fakeCLI("v0.2.0")
-	server := newFakeUpgradeServer(t, "v0.2.0", releaseAssets(cli, []byte("hostd")))
-	dir := t.TempDir()
-	executable := writeExecutable(t, dir, "skali", fakeCLI("v0.1.0"))
-
-	opts := server.options("v0.1.0", updates.ChannelStable, executable)
-	opts.Hostd = []string{filepath.Join(dir, "skali-hostd")}
-	var out bytes.Buffer
-	require.NoError(t, runUpgrade(context.Background(), &out, opts))
-	require.Contains(t, out.String(), "no installed skali-hostd to refresh")
-	for _, path := range server.requested() {
-		require.NotContains(t, path, "skali-hostd", "no hostd download without an installed hostd")
-	}
+	require.Equal(t, []string{
+		"/releases",
+		"/Hinkolas/skali/releases/download/v0.1.0-alpha.5/checksums.txt",
+		"/Hinkolas/skali/releases/download/v0.1.0-alpha.5/" + installer.CLIAsset(runtime.GOOS, runtime.GOARCH),
+	}, server.requested(), "only the CLI moves; skali-hostd is fetched by cluster commands")
 }
 
 func TestRunUpgradeExplicitDowngradeSkipsFeed(t *testing.T) {
 	t.Parallel()
 	cli := fakeCLI("v0.1.0")
-	server := newFakeUpgradeServer(t, "v0.1.0", releaseAssets(cli, []byte("hostd")))
+	server := newFakeUpgradeServer(t, "v0.1.0", releaseAssets(cli))
 	dir := t.TempDir()
 	executable := writeExecutable(t, dir, "skali", fakeCLI("v0.2.0"))
 
@@ -257,7 +236,7 @@ func TestRunUpgradeExplicitDowngradeSkipsFeed(t *testing.T) {
 
 func TestRunUpgradeAlreadyCurrentDownloadsNothing(t *testing.T) {
 	t.Parallel()
-	server := newFakeUpgradeServer(t, "v0.1.0", releaseAssets(fakeCLI("v0.1.0"), []byte("hostd")))
+	server := newFakeUpgradeServer(t, "v0.1.0", releaseAssets(fakeCLI("v0.1.0")))
 	dir := t.TempDir()
 	original := fakeCLI("v0.1.0")
 	executable := writeExecutable(t, dir, "skali", original)
@@ -303,7 +282,7 @@ func TestRunUpgradeMissingReleaseAndAsset(t *testing.T) {
 
 func TestRunUpgradeChecksumMismatchLeavesFileUntouched(t *testing.T) {
 	t.Parallel()
-	assets := releaseAssets(fakeCLI("v0.2.0"), []byte("hostd"))
+	assets := releaseAssets(fakeCLI("v0.2.0"))
 	// The published digest names a different binary than the one served.
 	assets["checksums.txt"] = []byte(checksumEntry(installer.CLIAsset(runtime.GOOS, runtime.GOARCH), []byte("tampered")))
 	server := newFakeUpgradeServer(t, "v0.2.0", assets)
@@ -341,60 +320,15 @@ func TestRunUpgradeUnwritableDirErrorsBeforeDownload(t *testing.T) {
 func TestRunUpgradeVerifyFailureRestoresPrevious(t *testing.T) {
 	t.Parallel()
 	// The release claims v0.2.0 but its binary answers with another version.
-	server := newFakeUpgradeServer(t, "v0.2.0", releaseAssets(fakeCLI("v0.1.9"), []byte("hostd")))
+	server := newFakeUpgradeServer(t, "v0.2.0", releaseAssets(fakeCLI("v0.1.9")))
 	dir := t.TempDir()
 	original := fakeCLI("v0.1.0")
 	executable := writeExecutable(t, dir, "skali", original)
-	installed := writeExecutable(t, dir, installer.HostdAsset(runtime.GOARCH), []byte("hostd old"))
 
-	opts := server.options("v0.1.0", updates.ChannelStable, executable)
-	opts.Hostd = []string{installed}
-	err := runUpgrade(context.Background(), &bytes.Buffer{}, opts)
+	err := runUpgrade(context.Background(), &bytes.Buffer{}, server.options("v0.1.0", updates.ChannelStable, executable))
 	require.ErrorContains(t, err, `reports "skali version v0.1.9", expected v0.2.0`)
 	require.ErrorContains(t, err, "the previous binary was restored")
 	got, readErr := os.ReadFile(executable)
 	require.NoError(t, readErr)
 	require.Equal(t, original, got)
-	gotHostd, readErr := os.ReadFile(installed)
-	require.NoError(t, readErr)
-	require.Equal(t, []byte("hostd old"), gotHostd, "hostd is refreshed only after the CLI verified")
-}
-
-func TestRefreshableHostd(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	loose := writeExecutable(t, dir, "skali-hostd", []byte("a"))
-	managed := writeExecutable(t, dir, "managed-hostd", []byte("b"))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "notafile"), 0o755))
-
-	targets := refreshableHostd([]string{
-		"", loose, filepath.Join(dir, "missing"), filepath.Join(dir, "notafile"), managed, loose + "/",
-	}, managed, false)
-	require.Equal(t, []hostdTarget{
-		{Path: loose},
-		{Path: managed, Skip: "managed by the cluster update"},
-	}, targets)
-
-	if os.Geteuid() != 0 {
-		locked := t.TempDir()
-		inside := writeExecutable(t, locked, "skali-hostd", []byte("c"))
-		require.NoError(t, os.Chmod(locked, 0o555))
-		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
-		targets = refreshableHostd([]string{inside}, "", false)
-		require.Len(t, targets, 1)
-		require.Contains(t, targets[0].Skip, "sudo skali upgrade")
-	}
-}
-
-func TestHostdCandidatePaths(t *testing.T) {
-	t.Parallel()
-	asset := installer.HostdAsset(runtime.GOARCH)
-	paths := hostdCandidatePaths("/opt/skali/bin/skali")
-	require.Equal(t, []string{
-		"/opt/skali/bin/skali-hostd",
-		"/opt/skali/bin/" + asset,
-		installer.HostdBinaryPath,
-		filepath.Join(os.Getenv("HOME"), ".local", "share", "skali", asset),
-	}, paths)
-	require.Equal(t, paths[2:], hostdCandidatePaths(""), "no executable, no CLI-relative entries")
 }

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -118,6 +120,96 @@ func DownloadAsset(ctx context.Context, client *http.Client, base, release, asse
 		return nil, fmt.Errorf("%s for %s does not match its published checksum", asset, release)
 	}
 	return body, nil
+}
+
+// DefaultHostdCacheDir is where FetchHostd keeps verified downloads:
+// $XDG_CACHE_HOME/skali/hostd, defaulting to ~/.cache/skali/hostd (the same
+// XDG convention the CLI config uses; under sudo this is root's cache).
+func DefaultHostdCacheDir() string {
+	base := os.Getenv("XDG_CACHE_HOME")
+	if base == "" {
+		base = filepath.Join(os.Getenv("HOME"), ".cache")
+	}
+	return filepath.Join(base, "skali", "hostd")
+}
+
+// CachedHostd returns a hostd FetchHostd stored earlier for this release and
+// architecture, re-verified against the digest recorded next to it so a
+// damaged cache entry is refetched rather than installed. ok is false when
+// there is no usable entry.
+func CachedHostd(cacheDir, release, arch string) (data []byte, ok bool) {
+	path := filepath.Join(cacheDir, release, HostdAsset(arch))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	recorded, err := os.ReadFile(path + ".sha256")
+	if err != nil {
+		return nil, false
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != strings.TrimSpace(string(recorded)) {
+		return nil, false
+	}
+	return data, true
+}
+
+// FetchHostd downloads a release's skali-hostd for one architecture,
+// verified against the release's checksums.txt, and records it in the cache
+// for CachedHostd. Caching is best effort: a cache that cannot be written
+// does not fail the fetch. The CLI calls this when a cluster command needs
+// the host daemon, so a laptop that never runs one never carries it.
+func FetchHostd(ctx context.Context, client *http.Client, base, release, arch, cacheDir string) ([]byte, error) {
+	asset := HostdAsset(arch)
+	sums, err := ReleaseChecksums(ctx, client, base, release)
+	if err != nil {
+		if errors.Is(err, ErrAssetMissing) {
+			return nil, fmt.Errorf("release %s was not found", release)
+		}
+		return nil, err
+	}
+	if sums[asset] == "" {
+		return nil, fmt.Errorf("release %s publishes no %s", release, asset)
+	}
+	data, err := DownloadAsset(ctx, client, base, release, asset, sums[asset])
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(cacheDir, release)
+	if err := os.MkdirAll(dir, 0o755); err == nil {
+		path := filepath.Join(dir, asset)
+		if writeFileAtomic(path, data, 0o755) == nil {
+			_ = writeFileAtomic(path+".sha256", []byte(sums[asset]+"\n"), 0o644)
+		}
+	}
+	return data, nil
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	name := temp.Name()
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := temp.Chmod(perm); err != nil {
+		temp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 // ErrAssetMissing marks a 404 for a release asset: the release does not

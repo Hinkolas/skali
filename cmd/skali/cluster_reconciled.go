@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -25,30 +26,33 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-// hostdCandidatePaths lists where an installed skali-hostd for this
-// machine's architecture may live, in lookup order: next to the CLI (a
-// release directory or a developer's bin/), then the two places install.sh
-// puts it (the Linux system path, the macOS user path). An empty executable
-// skips the CLI-relative entries.
-func hostdCandidatePaths(executable string) []string {
-	asset := installer.HostdAsset(runtime.GOARCH)
-	var candidates []string
-	if executable != "" {
-		candidates = append(candidates,
-			filepath.Join(filepath.Dir(executable), "skali-hostd"),
-			filepath.Join(filepath.Dir(executable), asset))
+// hostdSiblingPaths lists a skali-hostd shipped next to the CLI binary for
+// this machine's architecture: the bare name a source build produces (bin/)
+// or the goreleaser asset name a release directory holds.
+func hostdSiblingPaths(executable string) []string {
+	dir := filepath.Dir(executable)
+	return []string{
+		filepath.Join(dir, "skali-hostd"),
+		filepath.Join(dir, installer.HostdAsset(runtime.GOARCH)),
 	}
-	return append(candidates,
-		installer.HostdBinaryPath,
-		filepath.Join(os.Getenv("HOME"), ".local", "share", "skali", asset))
 }
 
-func loadHostdBinary() ([]byte, string, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		executable = ""
+// loadHostdBinary resolves the Linux skali-hostd a cluster command installs
+// on a node: an explicit --hostd-bin, a copy next to this binary, or, for a
+// released CLI, this release's asset downloaded from GitHub, verified
+// against its checksums and cached for the next node. The daemon never
+// lives on a machine that only runs deployments, so installing the CLI does
+// not install it. A development build has no release to fetch and must be
+// pointed at a build. out receives a note when a download happens; nil is
+// silent.
+func loadHostdBinary(ctx context.Context, out io.Writer) ([]byte, string, error) {
+	if out == nil {
+		out = io.Discard
 	}
-	candidates := append([]string{hostdBinFlag}, hostdCandidatePaths(executable)...)
+	candidates := []string{hostdBinFlag}
+	if executable, err := os.Executable(); err == nil {
+		candidates = append(candidates, hostdSiblingPaths(executable)...)
+	}
 	for _, path := range candidates {
 		if path == "" {
 			continue
@@ -58,7 +62,32 @@ func loadHostdBinary() ([]byte, string, error) {
 			return data, path, nil
 		}
 	}
-	return nil, "", errors.New("skali-hostd was not found; install this release again or pass --hostd-bin")
+	release := versionpkg.Version
+	if !versionpkg.IsRelease(release) {
+		return nil, "", fmt.Errorf("skali-hostd was not found next to this development build (%s); "+
+			"run task build for a bin/ copy or pass --hostd-bin", release)
+	}
+	cacheDir := installer.DefaultHostdCacheDir()
+	cachePath := filepath.Join(cacheDir, release, installer.HostdAsset(runtime.GOARCH))
+	if data, ok := installer.CachedHostd(cacheDir, release, runtime.GOARCH); ok {
+		return data, cachePath, nil
+	}
+	fmt.Fprintf(out, "downloading %s (%s)\n", installer.HostdAsset(runtime.GOARCH), release)
+	data, err := installer.FetchHostd(ctx, nil, releaseBase(), release, runtime.GOARCH, cacheDir)
+	if err != nil {
+		return nil, "", fmt.Errorf("fetch skali-hostd for %s: %w (pass --hostd-bin to use a local copy)", release, err)
+	}
+	return data, cachePath, nil
+}
+
+// releaseBase is the host release assets download from; SKALI_RELEASE_BASE
+// points it at a fake release for tests, the same knob the host daemons
+// honor.
+func releaseBase() string {
+	if base := os.Getenv("SKALI_RELEASE_BASE"); base != "" {
+		return base
+	}
+	return installer.ReleaseBase
 }
 
 func bootstrapReconciledSeed(ctx context.Context, record *installer.Record,
@@ -160,6 +189,8 @@ type reconciledEnrollmentOptions struct {
 	Interactive      bool
 	Runner           host.Runner
 	HostdBinary      []byte
+	// Out receives progress notes such as a hostd download; nil is silent.
+	Out io.Writer
 }
 
 func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptions) (*installer.Record, error) {
@@ -226,7 +257,7 @@ func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptio
 	}
 	hostdBinary := opts.HostdBinary
 	if len(hostdBinary) == 0 {
-		hostdBinary, _, err = loadHostdBinary()
+		hostdBinary, _, err = loadHostdBinary(ctx, opts.Out)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w\nNo enrollment request was sent.", err)

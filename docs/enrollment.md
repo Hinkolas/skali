@@ -115,9 +115,11 @@ This code must be released and installed before the new commands are available.
 No cluster reset, record deletion, storage migration, or Kubernetes reinstall is
 required. Preserve all installation records and pending enrollment key/CSR files.
 
-1. Install the new release's CLI **and** `skali-hostd` on every active controller,
-   one controller at a time. Restart `skali-coordinator.service` and
-   `skali-node-agent.service` after replacing its binaries. Verify its status
+1. Install the new release's CLI **and** its `skali-hostd_linux_<arch>` asset
+   as `/usr/local/libexec/skali-hostd` on every active controller, one
+   controller at a time (`install.sh` installs the CLI only). Restart
+   `skali-coordinator.service` and `skali-node-agent.service` after replacing
+   its binaries. Verify its status
    before proceeding. Upgrade all active coordinators before using cancellation
    or capability discovery; an old coordinator does not enforce the new
    cancellation state. Pending server candidates are not active coordinators yet.

@@ -91,7 +91,7 @@ func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly boo
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
 	opts.Progress = progress
-	hostdBinary, _, err := loadHostdBinary()
+	hostdBinary, _, err := loadHostdBinary(ctx, out)
 	if err != nil {
 		progress.Abort()
 		return err
@@ -159,7 +159,7 @@ func runInteractiveJoinFlow(ctx context.Context, out *os.File, reader *bufio.Rea
 	claims, err := installer.InspectJoinToken(token)
 	if reconciledToken(token) {
 		record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
-			Token: token, Interactive: true,
+			Token: token, Interactive: true, Out: out,
 		})
 		if enrollErr != nil {
 			return enrollErr

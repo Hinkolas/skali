@@ -72,10 +72,11 @@ skali upgrade --version v0.1.0-rc.2  # exact release, may also downgrade
 ```
 
 The channel defaults to stable, or to beta when the installed CLI is itself a
-prerelease. Downloads are verified against the release checksums, and a
-`skali-hostd` that `install.sh` placed on the machine is refreshed to the same
-release. A system install on Linux needs `sudo skali upgrade`. This updates the
-CLI only; a cluster moves with `skali cluster upgrade`.
+prerelease. Downloads are verified against the release checksums. A system
+install on Linux needs `sudo skali upgrade`. This updates the CLI only; a
+cluster moves with `skali cluster upgrade`, and the `skali-hostd` host daemon
+is fetched by `skali cluster` on the node that needs it, so a laptop that only
+deploys never carries it.
 
 ## Run a project locally
 
