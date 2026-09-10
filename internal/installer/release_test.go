@@ -65,6 +65,17 @@ func TestReleaseAssetsVerifyAgainstChecksums(t *testing.T) {
 	require.ErrorContains(t, err, "no expected checksum")
 	_, err = DownloadHostd(ctx, server.Client(), server.URL, "v0.2.0", "amd64", sums[HostdAsset("arm64")])
 	require.ErrorContains(t, err, "release asset is missing")
+	require.ErrorIs(t, err, ErrAssetMissing)
+
+	// The CLI asset goes through the same generic, checksum-gated download.
+	require.Equal(t, "skali_linux_amd64", CLIAsset("linux", "amd64"))
+	_, err = DownloadAsset(ctx, server.Client(), server.URL, "v0.2.0", CLIAsset("linux", "amd64"), sums["skali_linux_amd64"])
+	require.ErrorIs(t, err, ErrAssetMissing, "listed in checksums.txt but not published")
+	_, err = DownloadAsset(ctx, server.Client(), server.URL, "v0.2.0", CLIAsset("darwin", "arm64"), "")
+	require.ErrorContains(t, err, "skali_darwin_arm64 download has no expected checksum")
+	got, err = DownloadAsset(ctx, server.Client(), server.URL, "v0.2.0", HostdAsset("arm64"), sums[HostdAsset("arm64")])
+	require.NoError(t, err)
+	require.Equal(t, binary, got)
 
 	metadata, err := FetchReleaseMetadata(ctx, server.Client(), server.URL, "v0.2.0")
 	require.NoError(t, err)

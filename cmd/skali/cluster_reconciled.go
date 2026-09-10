@@ -25,18 +25,30 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-func loadHostdBinary() ([]byte, string, error) {
-	candidates := []string{hostdBinFlag}
-	if executable, err := os.Executable(); err == nil {
+// hostdCandidatePaths lists where an installed skali-hostd for this
+// machine's architecture may live, in lookup order: next to the CLI (a
+// release directory or a developer's bin/), then the two places install.sh
+// puts it (the Linux system path, the macOS user path). An empty executable
+// skips the CLI-relative entries.
+func hostdCandidatePaths(executable string) []string {
+	asset := installer.HostdAsset(runtime.GOARCH)
+	var candidates []string
+	if executable != "" {
 		candidates = append(candidates,
 			filepath.Join(filepath.Dir(executable), "skali-hostd"),
-			filepath.Join(filepath.Dir(executable),
-				fmt.Sprintf("skali-hostd_linux_%s", runtime.GOARCH)))
+			filepath.Join(filepath.Dir(executable), asset))
 	}
-	candidates = append(candidates,
+	return append(candidates,
 		installer.HostdBinaryPath,
-		filepath.Join(os.Getenv("HOME"), ".local", "share", "skali",
-			fmt.Sprintf("skali-hostd_linux_%s", runtime.GOARCH)))
+		filepath.Join(os.Getenv("HOME"), ".local", "share", "skali", asset))
+}
+
+func loadHostdBinary() ([]byte, string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		executable = ""
+	}
+	candidates := append([]string{hostdBinFlag}, hostdCandidatePaths(executable)...)
 	for _, path := range candidates {
 		if path == "" {
 			continue

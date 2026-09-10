@@ -104,6 +104,34 @@ cluster ConfigMap. Alpha.4 host writers preserve that entry during the rolling
 upgrade. Completion requires controllers running the new reporting code; an
 old host agent's version alone cannot prove its coordinator restarted.
 
+## Updating the CLI
+
+`skali upgrade` updates the `skali` binary on the machine it runs on and
+nothing else; a cluster moves with `skali cluster upgrade`. It follows the same
+channels as `install.sh`: stable excludes prereleases, beta includes them. The
+default is stable, or beta when the installed CLI is itself a prerelease, so an
+alpha install keeps following alphas without a flag.
+
+```sh
+skali upgrade
+skali upgrade --channel stable
+skali upgrade --version v0.1.0-alpha.5
+```
+
+`--version` names an exact published release and overrides the channel; it is
+the way to move back to an earlier release. Every download is verified against
+the release's `checksums.txt` before the binary is replaced, and the new binary
+must report the target version or the previous one is restored. A `skali-hostd`
+that `install.sh` installed next to the CLI is refreshed to the same release so
+a later `skali cluster install` or `join` ships the matching host services.
+On a node that is already part of a managed cluster the running `skali-hostd`
+is left alone; the cluster update owns it.
+
+On Linux the CLI lives in `/usr/local/bin`, so updating it needs
+`sudo skali upgrade`; the command says so before downloading anything. A
+development build (anything that is not a tagged release) is refused unless
+`--version` says which release should replace it.
+
 ## Maintenance paths
 
 Legacy installations without the managed coordinator retain their per-host

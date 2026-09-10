@@ -187,6 +187,9 @@ The bootstrap script defaults to `SKALI_CHANNEL=stable`; `SKALI_CHANNEL=beta`
 includes alpha, beta, RC, and stable releases, selecting the highest version.
 `SKALI_VERSION=vX.Y.Z` pins an exact tag and overrides channel selection.
 It resolves the release once before fetching the CLI, host daemon, and checksums.
+`skali upgrade` is the same selection in Go (`--channel`, `--version`) for a CLI
+that is already installed; `internal/updates.GitHubFeed` ranks releases for it
+and for the console's update scan alike.
 Tag with `task release:tag V=v0.1.0` rather than `git tag` by hand: it
 validates the goreleaser config, refuses a dirty tree, a branch other than
 main, a HEAD that is not origin/main, a malformed version, or a tag that

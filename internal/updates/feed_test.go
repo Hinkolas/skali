@@ -134,3 +134,22 @@ func TestGitHubFeedBetaIncludesPrereleases(t *testing.T) {
 	_, err = ParseChannel("nightly")
 	require.Error(t, err)
 }
+
+func TestGitHubFeedUserAgent(t *testing.T) {
+	t.Parallel()
+	var agents []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agents = append(agents, r.Header.Get("User-Agent"))
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(server.Close)
+	ctx := context.Background()
+
+	_, err := (&GitHubFeed{URL: server.URL, Client: server.Client()}).Latest(ctx, ChannelStable)
+	require.NoError(t, err)
+	_, err = (&GitHubFeed{URL: server.URL, Client: server.Client(), UserAgent: "skali/v0.1.0"}).Latest(ctx, ChannelStable)
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+	require.True(t, strings.HasPrefix(agents[0], "skalid/"), "the daemon scan is the default identity")
+	require.Equal(t, "skali/v0.1.0", agents[1])
+}

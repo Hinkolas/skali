@@ -29,9 +29,9 @@ var ReleaseBase = version.DefaultReleaseBase
 // hostd units read (systemd EnvironmentFile); it exists for SKALI_RELEASE_BASE.
 const HostdEnvironmentPath = "/etc/skali/hostd.env"
 
-// maxHostdBinaryBytes bounds a hostd download; the binary is a few dozen
+// maxBinaryBytes bounds a binary download; the binaries are a few dozen
 // megabytes, so a response larger than this is not a release asset.
-const maxHostdBinaryBytes = 256 << 20
+const maxBinaryBytes = 256 << 20
 
 // ReleaseMetadata is the release.json asset a release publishes next to
 // its binaries: the k3s pin the release's installer carries, so the
@@ -46,6 +46,12 @@ type ReleaseMetadata struct {
 // goreleaser's <binary>_<os>_<arch> shape.
 func HostdAsset(arch string) string {
 	return "skali-hostd_linux_" + arch
+}
+
+// CLIAsset names the skali CLI binary asset for one platform, the asset
+// install.sh downloads for the host it runs on.
+func CLIAsset(goos, goarch string) string {
+	return "skali_" + goos + "_" + goarch
 }
 
 // ReleaseChecksums reads a release's checksums.txt into asset name to hex
@@ -75,7 +81,7 @@ func ReleaseChecksums(ctx context.Context, client *http.Client, base, release st
 // one (published before the file existed) yields nil, not an error.
 func FetchReleaseMetadata(ctx context.Context, client *http.Client, base, release string) (*ReleaseMetadata, error) {
 	body, err := fetchReleaseAsset(ctx, client, base, release, "release.json", 64<<10)
-	if errors.Is(err, errAssetMissing) {
+	if errors.Is(err, ErrAssetMissing) {
 		return nil, nil
 	}
 	if err != nil {
@@ -92,21 +98,32 @@ func FetchReleaseMetadata(ctx context.Context, client *http.Client, base, releas
 // architecture and verifies it against the expected checksum before
 // returning it; nothing unverified is ever written to the host.
 func DownloadHostd(ctx context.Context, client *http.Client, base, release, arch, expectedSHA256 string) ([]byte, error) {
+	return DownloadAsset(ctx, client, base, release, HostdAsset(arch), expectedSHA256)
+}
+
+// DownloadAsset fetches one binary asset of a release and verifies it
+// against the expected checksum (from ReleaseChecksums) before returning
+// it. An empty expected checksum is refused rather than trusted: it means
+// the release publishes no such asset.
+func DownloadAsset(ctx context.Context, client *http.Client, base, release, asset, expectedSHA256 string) ([]byte, error) {
 	if expectedSHA256 == "" {
-		return nil, errors.New("hostd download has no expected checksum")
+		return nil, fmt.Errorf("%s download has no expected checksum", asset)
 	}
-	body, err := fetchReleaseAsset(ctx, client, base, release, HostdAsset(arch), maxHostdBinaryBytes)
+	body, err := fetchReleaseAsset(ctx, client, base, release, asset, maxBinaryBytes)
 	if err != nil {
 		return nil, err
 	}
 	sum := sha256.Sum256(body)
 	if got := hex.EncodeToString(sum[:]); got != strings.ToLower(expectedSHA256) {
-		return nil, fmt.Errorf("%s for %s does not match its published checksum", HostdAsset(arch), release)
+		return nil, fmt.Errorf("%s for %s does not match its published checksum", asset, release)
 	}
 	return body, nil
 }
 
-var errAssetMissing = errors.New("release asset is missing")
+// ErrAssetMissing marks a 404 for a release asset: the release does not
+// exist, or it publishes no asset by that name. Callers match it with
+// errors.Is to phrase the failure for their user.
+var ErrAssetMissing = errors.New("release asset is missing")
 
 func fetchReleaseAsset(ctx context.Context, client *http.Client, base, release, asset string, limit int64) ([]byte, error) {
 	if client == nil {
@@ -124,7 +141,7 @@ func fetchReleaseAsset(ctx context.Context, client *http.Client, base, release, 
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("%w: %s", errAssetMissing, url)
+		return nil, fmt.Errorf("%w: %s", ErrAssetMissing, url)
 	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download %s: HTTP %d", url, response.StatusCode)
