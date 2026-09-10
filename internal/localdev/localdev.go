@@ -23,6 +23,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/utils"
+	"github.com/Hinkolas/skali/internal/version"
 )
 
 // The pinned local topology. A K3sImage bump must carry k3sBuiltinImages
@@ -473,60 +474,118 @@ func ImageID(ctx context.Context, image string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ImportImages loads local docker images into the cluster's containerd,
-// one image per call through k3d's proven tools-node path. Direct mode is
-// deliberately not used: measured on k3d 5.9.0 it fails mid-stream yet
-// exits zero. k3d's exit code is not trusted either way; every import is
-// verified against the node's own image store and retried once, so a
-// silent import failure surfaces here instead of as an ImagePullBackOff
-// five minutes later.
+// ImportImages loads images into the cluster's containerd, one image per
+// call, each verified against the node's own image store: the tools on the
+// way do not report failure reliably (docker save on a containerd-store
+// host emits a layerless tar and exits zero; k3d's import prints success
+// over a failed ctr import), so presence in the node is the only truth,
+// and a failure carries every underlying error instead of hiding behind a
+// bare "did not arrive".
+//
+// The primary path exports the host daemon's copy and streams it into the
+// node. Public images (the platform images and published skalid releases)
+// have a second path, a pull inside the node: Docker's containerd store
+// never downloads the blobs of layers another image already unpacked, so
+// an image sharing a base with one pulled before it runs fine yet cannot
+// be exported ("does not provide the specified platform"), and re-pulling
+// does not repair it. The node's containerd then fetches the image itself,
+// which is what k3s does for its built-ins anyway. Working-tree builds
+// never take that path: their bits live only in the host daemon, and a
+// registry may serve different ones under the same tag.
 func ImportImages(ctx context.Context, images ...string) error {
+	pullable := make(map[string]bool)
+	for _, image := range RequiredImages() {
+		pullable[image] = true
+	}
 	for _, image := range images {
 		if imageInCluster(ctx, image) {
 			continue
 		}
-		if err := importImage(ctx, image); err != nil {
+		if _, published := version.PublishedSkalidVersion(image); published {
+			pullable[image] = true
+		}
+		if err := importImage(ctx, image, pullable[image]); err != nil {
 			return err
-		}
-		if imageInCluster(ctx, image) {
-			continue
-		}
-		if err := importImage(ctx, image); err != nil {
-			return err
-		}
-		if !imageInCluster(ctx, image) {
-			return fmt.Errorf("localdev: image %s did not arrive in the cluster after import; "+
-				"try `k3d image import -c %s %s` manually", image, ClusterName(), image)
 		}
 	}
 	return nil
 }
 
-// importImage moves one host-daemon image into the node's containerd. The
-// primary path exports a single-platform tar and streams it into the
-// node's ctr: Docker's containerd store keeps pulled images as multi-arch
-// indexes whose full docker-save tars reference never-pulled platform
-// manifests, which the node's ctr rejects ("content digest not found") and
-// k3d then reports as success anyway (measured on k3d 5.9.0). Hosts
-// without the containerd store (no --platform on save) fall back to k3d's
-// import, which handles their classic tars fine.
-func importImage(ctx context.Context, image string) error {
-	node := nodeContainer()
-	if platform, err := hostPlatform(ctx); err == nil {
-		if err := streamImage(ctx, node, platform, image); err == nil {
+// importImage moves one image into the node's containerd: the host daemon
+// export streamed into the node's ctr first, a pull inside the node second
+// when the image is public. Each path counts only once the node's image
+// store holds the image.
+func importImage(ctx context.Context, image string, pullable bool) error {
+	var failures []error
+	err := streamImage(ctx, image)
+	if err == nil {
+		if imageInCluster(ctx, image) {
 			return nil
 		}
+		err = errors.New("the import reported success but the node does not hold the image")
 	}
-	if out, err := exec.CommandContext(ctx, k3dBinary(), "image", "import", "-c", ClusterName(), image).CombinedOutput(); err != nil {
-		return fmt.Errorf("localdev: k3d image import %s: %w\n%s", image, err, out)
+	failures = append(failures, fmt.Errorf("export from the host daemon: %w", err))
+	if pullable {
+		err := pullImageInNode(ctx, image)
+		if err == nil {
+			if imageInCluster(ctx, image) {
+				return nil
+			}
+			err = errors.New("the pull reported success but the node does not hold the image")
+		}
+		failures = append(failures, fmt.Errorf("pull inside the node: %w", err))
+	} else if unexportableHostImage(err) {
+		failures = append(failures, errors.New("the host daemon holds the image but cannot export it "+
+			"(Docker's containerd store skips layers another image already unpacked): "+
+			"rebuild it, or docker load a complete copy"))
 	}
-	return nil
+	return fmt.Errorf("localdev: image %s did not arrive in the cluster:\n%w", image, errors.Join(failures...))
 }
 
-// streamImage pipes a single-platform docker save straight into the node's
-// containerd, no tools node and no tar on disk.
-func streamImage(ctx context.Context, node, platform, image string) error {
-	save := exec.CommandContext(ctx, "docker", "image", "save", "--platform", platform, image)
+// unexportableHostImage recognizes the export failures of an image the host
+// daemon holds without all of its layer blobs: docker save refusing the
+// platform it cannot assemble, or exiting zero with a tar the node's ctr
+// finds incomplete.
+func unexportableHostImage(err error) bool {
+	text := err.Error()
+	return strings.Contains(text, "does not provide the specified platform") ||
+		strings.Contains(text, "content digest") ||
+		strings.Contains(text, "unrecognized image format")
+}
+
+// streamImage pipes a docker save straight into the node's containerd, no
+// tools node and no tar on disk. Docker's containerd store keeps pulled
+// images as multi-arch indexes whose full save tars reference never-pulled
+// platform manifests, which the node's ctr rejects ("content digest not
+// found"), so the export is narrowed to the node's platform. A daemon too
+// old for the --platform flag has the classic store, whose tars are
+// complete and single-platform, and is exported whole.
+func streamImage(ctx context.Context, image string) error {
+	platform, err := hostPlatform(ctx)
+	if err != nil {
+		platform = ""
+	}
+	err = streamImagePlatform(ctx, nodeContainer(), platform, image)
+	if err != nil && platform != "" && lacksPlatformFlag(err) {
+		err = streamImagePlatform(ctx, nodeContainer(), "", image)
+	}
+	return err
+}
+
+// lacksPlatformFlag recognizes a docker CLI that predates --platform on
+// image save.
+func lacksPlatformFlag(err error) bool {
+	return strings.Contains(err.Error(), "unknown flag: --platform")
+}
+
+// streamImagePlatform runs one docker save (narrowed to platform when it
+// is not empty) piped into the node's ctr import.
+func streamImagePlatform(ctx context.Context, node, platform, image string) error {
+	args := []string{"image", "save"}
+	if platform != "" {
+		args = append(args, "--platform", platform)
+	}
+	save := exec.CommandContext(ctx, "docker", append(args, image)...)
 	load := exec.CommandContext(ctx, "docker", "exec", "-i", node, "ctr", "-n", "k8s.io", "images", "import", "-")
 	pipe, err := save.StdoutPipe()
 	if err != nil {
@@ -545,10 +604,20 @@ func streamImage(ctx context.Context, node, platform, image string) error {
 	saveResult := save.Wait()
 	loadResult := load.Wait()
 	if saveResult != nil {
-		return fmt.Errorf("localdev: docker image save %s: %w\n%s", image, saveResult, saveErr.String())
+		return fmt.Errorf("docker image save %s: %w\n%s", image, saveResult, strings.TrimSpace(saveErr.String()))
 	}
 	if loadResult != nil {
-		return fmt.Errorf("localdev: import %s into %s: %w\n%s", image, node, loadResult, loadErr.String())
+		return fmt.Errorf("ctr import %s into %s: %w\n%s", image, node, loadResult, strings.TrimSpace(loadErr.String()))
+	}
+	return nil
+}
+
+// pullImageInNode has the node's containerd fetch a public image itself,
+// through the node's own registry configuration.
+func pullImageInNode(ctx context.Context, image string) error {
+	out, err := exec.CommandContext(ctx, "docker", "exec", nodeContainer(), "crictl", "pull", image).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("crictl pull %s: %w\n%s", image, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

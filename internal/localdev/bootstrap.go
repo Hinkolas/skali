@@ -142,12 +142,21 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	switch status {
 	case ClusterAbsent:
 		progress.Start("Create k3d cluster " + ClusterName())
-		if err := Create(ctx); err != nil {
-			return nil, err
-		}
 		// Create always uses the current pin; a recreation under retained
 		// state must not keep reporting the old cluster's k3s.
 		state.K3sImage = K3sImage
+		// The record precedes the cluster. A record without a cluster is a
+		// plain create on the next pass, while a cluster without a record
+		// is refused above as not ours: saving first means no failure
+		// between here and the converge-time save (a pull timeout, a failed
+		// import) can strand a cluster behind that refusal and a manual
+		// k3d cluster delete.
+		if err := SaveState(state); err != nil {
+			return nil, err
+		}
+		if err := Create(ctx); err != nil {
+			return nil, err
+		}
 		progress.Done(K3sImage + ", pinned")
 	case ClusterStopped:
 		progress.Start("Start k3d cluster " + ClusterName())
@@ -200,10 +209,12 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		return nil, err
 	}
 	importNeeded := status == ClusterAbsent || state.SkalidImage != importedTag || imageID != state.ImportedImageID
-	// Platform images lead the batch: k3s is pulling its built-in
-	// components right now, and every one the import beats is a docker.io
-	// round trip saved, while skalid is not deployed until the converge.
-	var batch []string
+	// Platform images go first: k3s is pulling its built-in components
+	// right now, and every one the import beats is a docker.io round trip
+	// saved, while skalid is not deployed until the converge. Each import
+	// persists immediately: the fast path below returns before the
+	// converge-time save, and a re-import of already-present images is the
+	// cost of losing this record.
 	if len(missing) > 0 {
 		progress.Start("Pull platform images")
 		progress.Note(strings.Join(missing, ", "))
@@ -211,21 +222,22 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 			return nil, err
 		}
 		progress.Done(fmt.Sprintf("%d cached on the host", len(missing)))
-		batch = append(batch, missing...)
-	}
-	if importNeeded {
-		batch = append(batch, state.SkalidImage)
+		progress.Start("Import platform images")
+		if err := ImportImages(ctx, missing...); err != nil {
+			return nil, err
+		}
+		state.ImportedImages = append(state.ImportedImages, missing...)
+		if err := SaveState(state); err != nil {
+			return nil, err
+		}
+		progress.Done(fmt.Sprintf("%d in the cluster", len(missing)))
 	}
 	progress.Start("Import " + state.SkalidImage)
-	if len(batch) > 0 {
-		if err := ImportImages(ctx, batch...); err != nil {
+	if importNeeded {
+		if err := ImportImages(ctx, state.SkalidImage); err != nil {
 			return nil, err
 		}
 		state.ImportedImageID = imageID
-		state.ImportedImages = append(state.ImportedImages, missing...)
-		// Persist immediately: the fast path below returns before the
-		// converge-time save, and a re-import of already-present images is
-		// the cost of losing this record.
 		if err := SaveState(state); err != nil {
 			return nil, err
 		}
