@@ -180,6 +180,17 @@ func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string
 		if err != nil {
 			return ApplyResult{}, err
 		}
+		// Create records its fields under an Update entry of this manager.
+		// To the API server that is a different owner from the same
+		// manager's Apply entry: an apply that merely repeats the values
+		// becomes a co-owner, and the next revision's apply then conflicts
+		// on every field it changes (the revision label, to begin with).
+		// Rewriting the entry's operation to Apply (the client-side-apply
+		// upgrade technique) makes creation and every later apply one owner.
+		ref := ObjectRef{GVK: applied.GroupVersionKind(), Namespace: applied.GetNamespace(), Name: applied.GetName(), UID: created.GetUID()}
+		if err := c.claimCreatedFields(ctx, resource, ref, manager); err != nil {
+			return ApplyResult{}, err
+		}
 		return ApplyResult{Changed: true, Live: created}, nil
 	}
 	data, err := applied.MarshalJSON()
@@ -198,6 +209,33 @@ func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string
 		changed = result.GetGeneration() != priorGeneration
 	}
 	return ApplyResult{Changed: changed, Live: result}, nil
+}
+
+// claimCreatedFields rewrites a freshly created object's managed fields so
+// the creating manager's Update entry becomes its Apply entry. Retries on
+// conflict like DisownFields: controllers writing status right after
+// creation are routine.
+func (c *Client) claimCreatedFields(ctx context.Context, resource dynamic.ResourceInterface, ref ObjectRef, manager string) error {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		live, err := resource.Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("kube: get %s after create: %w", ref, err)
+		}
+		if live.GetUID() != ref.UID {
+			return fmt.Errorf("kube: ownership changed for %s", ref)
+		}
+		rewritten, changed := UpgradeCreateEntry(live.GetManagedFields(), manager)
+		if !changed {
+			return nil
+		}
+		live.SetManagedFields(rewritten)
+		_, err = resource.Update(ctx, live, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("kube: claim managed fields of %s: %w", ref, err)
+	}
+	return nil
 }
 
 // Delete removes one object, reporting whether anything was deleted. A set

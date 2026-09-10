@@ -61,7 +61,7 @@ func TestPreparingDeploymentRunNotAdopted(t *testing.T) {
 	// its run, leaving a stale unhealthy target behind.
 	first := f.executeDeployment(t)
 	f.fake.SetFresh()
-	f.fake.SetWorkload(f.environmentID, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web", "",
+	f.setWebWorkload(t, "",
 		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 	require.NoError(t, f.journal.FinishRun(ctx, first.RunID, journal.RunCancelled))
 
@@ -142,7 +142,7 @@ func TestDeadlineFallbackToActive(t *testing.T) {
 	second := f.deployChanged(t, kernelManifest)
 	require.NotEqual(t, first.RevisionID, second.RevisionID)
 	f.kernel.cfg.RolloutDeadline = time.Nanosecond
-	f.fake.SetWorkload(f.environmentID, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web", "",
+	f.setWebWorkload(t, "",
 		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
@@ -248,7 +248,7 @@ func TestReleaseFailureFallbackToActive(t *testing.T) {
 
 	f.drainQueue(t)
 	secretApplies := countOps(f.cluster.recorded(), "apply Secret/"+f.namespace+"/skali-environment")
-	workloadApplies := countOps(f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	workloadApplies := countOps(f.cluster.recorded(), "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
@@ -273,7 +273,7 @@ func TestReleaseFailureFallbackToActive(t *testing.T) {
 	ops := f.cluster.recorded()
 	require.Greater(t, countOps(ops, "apply Secret/"+f.namespace+"/skali-environment"), secretApplies,
 		"the old revision's values Secret must re-apply promptly")
-	require.Greater(t, countOps(ops, "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3"), workloadApplies)
+	require.Greater(t, countOps(ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t)), workloadApplies)
 	require.Contains(t, ops, "delete Job/"+f.namespace+"/"+bJob)
 	require.Equal(t, jobApplies,
 		countOps(ops, "apply Job/"+f.namespace+"/"+aJob)+countOps(ops, "apply Job/"+f.namespace+"/"+bJob),
@@ -370,7 +370,7 @@ func TestRollbackDeadlineFallbackToActive(t *testing.T) {
 	})
 	require.NoError(t, err)
 	f.kernel.cfg.RolloutDeadline = time.Nanosecond
-	f.fake.SetWorkload(f.environmentID, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web", "",
+	f.setWebWorkload(t, "",
 		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)

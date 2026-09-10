@@ -16,6 +16,7 @@ import (
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/revision"
+	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
@@ -89,6 +90,10 @@ type PodInfo struct {
 	Restarts int32
 	Reason   string
 	Started  time.Time
+	// Color is the pod's blue-green color, empty for uncolored workloads;
+	// Serving reports whether the application's Service selects it.
+	Color   string
+	Serving bool
 }
 
 // Status projects one environment. The single database read resolves the
@@ -140,10 +145,34 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		if err != nil {
 			return nil, err
 		}
+		colors, err := k.desiredColors(ctx, environmentID, target, targetRevision, intercepts)
+		if err != nil {
+			return nil, err
+		}
 		status.Services = k.evaluateServices(targetRevision, k.deps.Observed.Snapshot(environmentID),
-			intercepts, variables)
+			intercepts, variables, colors)
 	}
 	return status, nil
+}
+
+// desiredColors names the blue-green color the target revision renders per
+// application, from the same inputs the reconcile pass uses, so the status
+// projection judges the same Deployment the kernel is switching to.
+func (k *Kernel) desiredColors(ctx context.Context, environmentID uuid.UUID, target store.EnvironmentTarget,
+	rev *revision.Revision, intercepts map[string]map[string]int32) (map[string]string, error) {
+	env, err := k.deps.Store.GetEnvironmentByID(ctx, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("reconcile: get environment: %w", err)
+	}
+	appRestarts, err := k.loadAppRestarts(ctx, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	options, err := k.renderInputs(environmentID, rev, target.RestartedAt, appRestarts, intercepts, env.Priority)
+	if err != nil {
+		return nil, err
+	}
+	return rendering.ApplicationColors(&compiler.Result{Hash: rev.DefinitionHash, Definition: rev.Definition}, options)
 }
 
 // routeVariables loads the plaintexts of exactly the project variables the
@@ -189,7 +218,7 @@ func (k *Kernel) SubscribeStatus(environmentID uuid.UUID) (<-chan observe.Invali
 // projections use the dotted form so keys can never collide across
 // collections.
 func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snapshot,
-	intercepts map[string]map[string]int32, variables map[string]string) []ServiceStatus {
+	intercepts map[string]map[string]int32, variables map[string]string, colors map[string]string) []ServiceStatus {
 	type entry struct {
 		key         string
 		serviceType string
@@ -255,7 +284,17 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 			statuses = append(statuses, status)
 			continue
 		}
-		evaluation := service.Evaluate(snapshot.ForService(item.observedKey))
+		observed := snapshot.ForService(item.observedKey)
+		if desiredColor, blueGreen := colors[item.key]; blueGreen && item.serviceType == "application" {
+			// The kernel's intent rides along: the module judges the desired
+			// color's workload and members against the color the live
+			// Service selects, so a switch is only healthy once it landed.
+			observed = append(observed, module.ObservedResource{
+				Kind: module.KindRollout, Name: item.key,
+				Rollout: &module.RolloutStatus{DesiredColor: desiredColor, ServingColor: servingColor(snapshot, item.key, desiredColor)},
+			})
+		}
+		evaluation := service.Evaluate(observed)
 		status.Health = evaluation.Health
 		status.Diagnostics = evaluation.Diagnostics
 		statuses = append(statuses, status)
@@ -354,8 +393,22 @@ func expressionDisplay(expression compiler.Expression) string {
 	return builder.String()
 }
 
+// servingColor is the blue-green color the application's live Service
+// selects; without a Service the desired color stands in (nothing to switch).
+func servingColor(snapshot observe.Snapshot, service, desired string) string {
+	if svc := liveObject(snapshot, service, module.KindService); svc != nil && svc.Selector != nil {
+		return svc.Color
+	}
+	return desired
+}
+
 func podsFor(snapshot observe.Snapshot, service string) []PodInfo {
 	var pods []PodInfo
+	serving := ""
+	hasService := false
+	if svc := liveObject(snapshot, service, module.KindService); svc != nil && svc.Selector != nil {
+		serving, hasService = svc.Color, true
+	}
 	for _, obj := range snapshot.Objects {
 		if obj.Kind != module.KindPod || obj.Service != service || obj.Pod == nil {
 			continue
@@ -368,6 +421,8 @@ func podsFor(snapshot observe.Snapshot, service string) []PodInfo {
 			Restarts: obj.Pod.Restarts,
 			Reason:   obj.Pod.Reason,
 			Started:  obj.Pod.Started,
+			Color:    obj.Color,
+			Serving:  !hasService || obj.Color == serving,
 		})
 	}
 	return pods

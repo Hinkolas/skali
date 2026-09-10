@@ -44,7 +44,7 @@ func (f *kernelFixture) deployedAndActive(t *testing.T) (serviceRef, volumeRef, 
 	require.NotNil(t, f.target(t).ActiveRevisionID)
 
 	serviceRef = f.seedObject(schema.GroupVersionKind{Version: "v1", Kind: "Service"},
-		module.KindService, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web")
+		module.KindService, f.namespace, f.webServiceName(), "web")
 	volumeRef = f.seedObject(schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"},
 		module.KindVolume, f.namespace, "demo-web-data", "web")
 	namespaceRef = f.seedObject(schema.GroupVersionKind{Version: "v1", Kind: "Namespace"},
@@ -52,10 +52,13 @@ func (f *kernelFixture) deployedAndActive(t *testing.T) (serviceRef, volumeRef, 
 	return serviceRef, volumeRef, namespaceRef
 }
 
-func (f *kernelFixture) workloadRef() kube.ObjectRef {
+// workloadRef names the web Deployment by the name captured while the
+// environment still had a target: teardown clears the pointers the fixture
+// would otherwise derive the name from.
+func (f *kernelFixture) workloadRef(name string) kube.ObjectRef {
 	return kube.ObjectRef{
 		GVK:       schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
-		Namespace: f.namespace, Name: "app-demo-web-714832ea87e5bc991f3f11667354c6c3",
+		Namespace: f.namespace, Name: name,
 	}
 }
 
@@ -71,6 +74,7 @@ func TestTeardownDownRemovesWorkloadsAndKeepsData(t *testing.T) {
 	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
 	ctx := context.Background()
 	serviceRef, _, _ := f.deployedAndActive(t)
+	deploymentName := f.webDeploymentName(t)
 
 	run, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
 	require.NoError(t, err)
@@ -86,8 +90,8 @@ func TestTeardownDownRemovesWorkloadsAndKeepsData(t *testing.T) {
 	require.Equal(t, requeueHealthCheck, requeue, "deletion is asynchronous")
 
 	ops := f.cluster.recorded()
-	require.Contains(t, ops, "delete Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
-	require.Contains(t, ops, "delete Service/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.Contains(t, ops, "delete Deployment/"+f.namespace+"/"+deploymentName)
+	require.Contains(t, ops, "delete Service/"+f.namespace+"/"+f.webServiceName())
 	require.Contains(t, ops, "delete Secret/"+f.namespace+"/skali-environment")
 	for _, op := range ops {
 		require.NotContains(t, op, "PersistentVolumeClaim", "down never touches volumes")
@@ -96,7 +100,7 @@ func TestTeardownDownRemovesWorkloadsAndKeepsData(t *testing.T) {
 
 	// The watch delete events arrive; the next pass settles and concludes
 	// the teardown run. Volumes and the namespace remain observed.
-	f.fake.Remove(f.workloadRef())
+	f.fake.Remove(f.workloadRef(deploymentName))
 	f.fake.Remove(f.podRef())
 	f.fake.Remove(serviceRef)
 	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
@@ -133,6 +137,7 @@ func TestTeardownDownIgnoresTerminalReleasePod(t *testing.T) {
 	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
 	ctx := context.Background()
 	serviceRef, _, _ := f.deployedAndActive(t)
+	deploymentName := f.webDeploymentName(t)
 
 	f.fake.SetReleaseJob(f.environmentID, f.namespace, "demo-web-release-abc123", "web",
 		observe.JobStatus{Succeeded: true, Created: time.Now()})
@@ -152,7 +157,7 @@ func TestTeardownDownIgnoresTerminalReleasePod(t *testing.T) {
 
 	// The application objects disappear, but the release command is still
 	// running: the down must keep waiting for it.
-	f.fake.Remove(f.workloadRef())
+	f.fake.Remove(f.workloadRef(deploymentName))
 	f.fake.Remove(f.podRef())
 	f.fake.Remove(serviceRef)
 	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
@@ -179,6 +184,7 @@ func TestTeardownPurgeRemovesEverything(t *testing.T) {
 	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
 	ctx := context.Background()
 	serviceRef, volumeRef, namespaceRef := f.deployedAndActive(t)
+	deploymentName := f.webDeploymentName(t)
 
 	run, err := f.deploy.Teardown(ctx, f.environmentID, true, f.journal, "tester")
 	require.NoError(t, err)
@@ -199,13 +205,13 @@ func TestTeardownPurgeRemovesEverything(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, requeueHealthCheck, requeue)
 	ops := f.cluster.recorded()
-	require.Contains(t, ops, "delete Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.Contains(t, ops, "delete Deployment/"+f.namespace+"/"+deploymentName)
 	require.Contains(t, ops, "delete PersistentVolumeClaim/"+f.namespace+"/demo-web-data")
 	require.Contains(t, ops, "delete Namespace/"+f.namespace)
 
 	// Everything disappears from observation; the final pass concludes the
 	// run, then deletes the environment row, cascading all its data.
-	f.fake.Remove(f.workloadRef())
+	f.fake.Remove(f.workloadRef(deploymentName))
 	f.fake.Remove(f.podRef())
 	f.fake.Remove(serviceRef)
 	f.fake.Remove(volumeRef)

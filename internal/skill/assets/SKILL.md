@@ -1,6 +1,6 @@
 ---
 name: skali
-description: Author and edit skali.yaml manifests and design applications for the skali platform. Use when writing or reviewing a skali.yaml or skali.yml file, building or porting an app to run on skali (stateless containers, managed Postgres, S3 buckets), choosing databases, buckets, values, or secrets, or fixing skali validate, compile, plan, or deploy errors.
+description: Author and edit skali.yaml manifests and design applications for the skali platform. Use when writing or reviewing a skali.yaml or skali.yml file, building or porting an app to run on skali (stateless containers, managed Postgres, S3 buckets), choosing databases, buckets, values, secrets, or a rollout strategy, or fixing skali validate, compile, plan, or deploy errors.
 ---
 
 <!-- Managed by "skali skill install"; local edits are overwritten on reinstall. -->
@@ -37,9 +37,17 @@ manifest fields: parsing is strict and this reference is complete.
   Every other string field is literal. A `{{...}}` service output may
   appear only in `environment:` and must be the whole value.
 - Health probes gate rollouts: without a readiness probe the platform
-  has a weaker signal that a deployment succeeded.
+  has a weaker signal that a deployment succeeded, and under the default
+  `blue-green` strategy the traffic switch waits for readiness.
+- Deploys are blue-green by default: the new version starts beside the
+  old one, must be fully ready, then takes all traffic at once. Leave
+  `rollout` out unless replicas are many or capacity is tight and every
+  release is compatible with the previous one; then declare
+  `strategy: rolling`. `recreate` only with volumes. See
+  `architecture.md` for the decision rule.
 - Schema migrations belong in `deployment.releaseCommand`, which runs
-  once before replicas roll forward.
+  once before the new version goes live; keep them compatible with the
+  release still serving.
 - An application with a `dev:` block runs on the developer's machine
   under bare `skali dev` (hot reload behind the real cluster routes) and
   its `releaseCommand` does not run there; keep migrations invokable as

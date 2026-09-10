@@ -135,6 +135,7 @@ export interface ReleaseCommand {
 }
 
 export interface Rollout {
+	/** blue-green (default) | rolling | recreate */
 	strategy?: string;
 	maxUnavailable?: number;
 	maxSurge?: number;

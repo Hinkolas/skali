@@ -109,3 +109,25 @@ func TestStripServerFields(t *testing.T) {
 	require.NotContains(t, string(raw), "creationTimestamp",
 		"null creationTimestamp fields must be stripped recursively")
 }
+
+// A Create records the manager's fields under an Update entry; upgrading it
+// to the Apply entry makes later applies by the same manager one owner. An
+// existing Apply entry leaves everything alone, and foreign entries are
+// never touched.
+func TestUpgradeCreateEntry(t *testing.T) {
+	t.Parallel()
+	entries := []metav1.ManagedFieldsEntry{
+		{Manager: FieldManagerProject, Operation: metav1.ManagedFieldsOperationUpdate},
+		{Manager: "k3s", Operation: metav1.ManagedFieldsOperationUpdate},
+	}
+	rewritten, changed := UpgradeCreateEntry(entries, FieldManagerProject)
+	require.True(t, changed)
+	require.Equal(t, metav1.ManagedFieldsOperationApply, rewritten[0].Operation)
+	require.Equal(t, metav1.ManagedFieldsOperationUpdate, rewritten[1].Operation)
+	require.Equal(t, metav1.ManagedFieldsOperationUpdate, entries[0].Operation, "the input is not mutated")
+
+	_, changed = UpgradeCreateEntry(rewritten, FieldManagerProject)
+	require.False(t, changed, "an Apply entry already exists")
+	_, changed = UpgradeCreateEntry(entries[1:], FieldManagerProject)
+	require.False(t, changed, "nothing of ours to upgrade")
+}

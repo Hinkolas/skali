@@ -216,8 +216,8 @@ type Spread struct {
 }
 
 type Deployment struct {
-	ReleaseCommand ReleaseCommand `yaml:"releaseCommand,omitempty" json:"releaseCommand,omitempty"`
-	Rollout        Rollout        `yaml:"rollout,omitempty" json:"rollout,omitempty"`
+	ReleaseCommand ReleaseCommand `yaml:"releaseCommand,omitempty" json:"releaseCommand,omitempty" jsonschema:"Command run once with the new image before the new version goes live; the migration hook."`
+	Rollout        Rollout        `yaml:"rollout,omitempty" json:"rollout,omitempty" jsonschema:"How a new revision replaces the running one."`
 }
 
 type ReleaseCommand struct {
@@ -226,10 +226,10 @@ type ReleaseCommand struct {
 }
 
 type Rollout struct {
-	Strategy       string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
-	MaxUnavailable int    `yaml:"maxUnavailable,omitempty" json:"maxUnavailable,omitempty"`
-	MaxSurge       int    `yaml:"maxSurge,omitempty" json:"maxSurge,omitempty"`
-	Timeout        Text   `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Strategy       string `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"How the new version replaces the old one. blue-green (default) starts it beside the old version, waits until it is fully ready, then switches traffic at once; rolling replaces replicas gradually and needs every release to be compatible with the previous one; recreate stops the old version first, which means downtime, and is required with volumes."`
+	MaxUnavailable int    `yaml:"maxUnavailable,omitempty" json:"maxUnavailable,omitempty" jsonschema:"Rolling only. Replicas that may be unavailable while the rollout runs. Cannot be zero together with maxSurge."`
+	MaxSurge       int    `yaml:"maxSurge,omitempty" json:"maxSurge,omitempty" jsonschema:"Rolling only. Extra replicas allowed above the desired count while the rollout runs. Default 1."`
+	Timeout        Text   `yaml:"timeout,omitempty" json:"timeout,omitempty" jsonschema:"How long the new version may take to become ready before the deployment fails and the previous revision stays active. Default 10m."`
 }
 
 type Shutdown struct {

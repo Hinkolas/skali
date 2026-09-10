@@ -265,13 +265,16 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 	rollout := source.Deployment.Rollout
 	strategy := rollout.Strategy
 	if strategy == "" {
-		strategy = "rolling"
+		// Blue-green is the default: a version never serves before it is
+		// fully ready and old and new never serve together. Volumes are
+		// ReadWriteOnce, so a second copy cannot start; they force recreate.
+		strategy = StrategyBlueGreen
 		if len(source.Volumes) > 0 {
-			strategy = "recreate"
+			strategy = StrategyRecreate
 		}
 	}
-	if !oneOf(strategy, "rolling", "recreate") {
-		b.add(base+".deployment.rollout.strategy", "must be rolling or recreate")
+	if !oneOf(strategy, StrategyBlueGreen, StrategyRolling, StrategyRecreate) {
+		b.add(base+".deployment.rollout.strategy", "must be blue-green, rolling, or recreate")
 	}
 	maxUnavailablePath := base + ".deployment.rollout.maxUnavailable"
 	maxSurgePath := base + ".deployment.rollout.maxSurge"
@@ -285,13 +288,13 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 	if maxSurge < 0 {
 		b.add(maxSurgePath, "must not be negative")
 	}
-	if strategy == "rolling" && !hasMaxSurge {
+	if strategy == StrategyRolling && !hasMaxSurge {
 		maxSurge = 1
 	}
-	if strategy == "rolling" && maxUnavailable == 0 && maxSurge == 0 {
+	if strategy == StrategyRolling && maxUnavailable == 0 && maxSurge == 0 {
 		b.add(base+".deployment.rollout", "maxUnavailable and maxSurge cannot both be zero")
 	}
-	if strategy == "recreate" {
+	if oneOf(strategy, StrategyRecreate, StrategyBlueGreen) {
 		if hasMaxUnavailable {
 			b.add(maxUnavailablePath, "is only valid when strategy is rolling")
 		}
@@ -301,7 +304,7 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 		maxUnavailable = 0
 		maxSurge = 0
 	}
-	if len(source.Volumes) > 0 && strategy == "rolling" {
+	if len(source.Volumes) > 0 && strategy != StrategyRecreate {
 		b.add(base+".deployment.rollout.strategy", "persistent volumes currently require recreate rollout strategy")
 	}
 	result.Deployment.Rollout = Rollout{

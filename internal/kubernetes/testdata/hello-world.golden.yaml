@@ -17,10 +17,11 @@ metadata:
   labels:
     app.kubernetes.io/name: app-hello-world-web-abd78f077498c5242c35cf22a58ff77a
     skali.dev/application: web
+    skali.dev/color: af58387312
     skali.dev/managed: "true"
     skali.dev/project: hello-world
     skali.dev/service: web
-  name: app-hello-world-web-abd78f077498c5242c35cf22a58ff77a
+  name: app-hello-world-web-af58387312-79de8b1708d8d8ccb456d898696c8604
   namespace: skali-hello-world
 spec:
   replicas: 3
@@ -29,18 +30,17 @@ spec:
     matchLabels:
       app.kubernetes.io/name: app-hello-world-web-abd78f077498c5242c35cf22a58ff77a
       skali.dev/application: web
+      skali.dev/color: af58387312
       skali.dev/managed: "true"
       skali.dev/project: hello-world
   strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-    type: RollingUpdate
+    type: Recreate
   template:
     metadata:
       labels:
         app.kubernetes.io/name: app-hello-world-web-abd78f077498c5242c35cf22a58ff77a
         skali.dev/application: web
+        skali.dev/color: af58387312
         skali.dev/managed: "true"
         skali.dev/project: hello-world
         skali.dev/service: web
@@ -75,6 +75,7 @@ spec:
           matchLabels:
             app.kubernetes.io/name: app-hello-world-web-abd78f077498c5242c35cf22a58ff77a
             skali.dev/application: web
+            skali.dev/color: af58387312
             skali.dev/managed: "true"
             skali.dev/project: hello-world
         maxSkew: 1
@@ -102,6 +103,7 @@ spec:
   selector:
     app.kubernetes.io/name: app-hello-world-web-abd78f077498c5242c35cf22a58ff77a
     skali.dev/application: web
+    skali.dev/color: af58387312
     skali.dev/managed: "true"
     skali.dev/project: hello-world
 ---

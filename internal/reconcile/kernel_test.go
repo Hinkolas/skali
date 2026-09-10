@@ -17,6 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
+	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/module/bucket"
@@ -48,10 +49,21 @@ type fakeCluster struct {
 	mu      sync.Mutex
 	ops     []string
 	applied map[string]bool
+	// objects keeps the last applied object per key so tests can inspect
+	// what was sent (a Service's selector, a Deployment's replicas).
+	objects map[string]runtime.Object
 }
 
 func newFakeCluster() *fakeCluster {
-	return &fakeCluster{applied: make(map[string]bool)}
+	return &fakeCluster{applied: make(map[string]bool), objects: make(map[string]runtime.Object)}
+}
+
+// lastApplied returns the most recently applied object under
+// "Kind/namespace/name", nil when none was applied.
+func (f *fakeCluster) lastApplied(key string) runtime.Object {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.objects[key]
 }
 
 func (f *fakeCluster) Apply(_ context.Context, obj runtime.Object, force bool) (kube.ApplyResult, error) {
@@ -64,6 +76,7 @@ func (f *fakeCluster) Apply(_ context.Context, obj runtime.Object, force bool) (
 	defer f.mu.Unlock()
 	changed := !f.applied[key]
 	f.applied[key] = true
+	f.objects[key] = obj
 	entry := "apply " + key
 	if force {
 		entry += " (forced)"
@@ -162,9 +175,13 @@ func (f *kernelFixture) executeDeploymentManifest(t *testing.T, manifestSource s
 	t.Helper()
 	ctx := context.Background()
 	projects := project.New(f.st)
-	draft, err := projects.SubmitDraft(ctx, f.projectID, project.DraftSubmission{
-		Source: []byte(manifestSource), Format: "yaml", ExpectedVersion: 0,
-	})
+	// Resubmitting on top of an earlier draft needs its version; a project
+	// without a draft yet starts at zero.
+	submission := project.DraftSubmission{Source: []byte(manifestSource), Format: "yaml"}
+	if current, err := projects.GetDraft(ctx, f.projectID); err == nil {
+		submission.ExpectedVersion = current.Version
+	}
+	draft, err := projects.SubmitDraft(ctx, f.projectID, submission)
 	require.NoError(t, err)
 	row, err := f.st.GetDefinitionVersionByHash(ctx, store.GetDefinitionVersionByHashParams{
 		ProjectID: f.projectID, DefinitionHash: draft.Hash,
@@ -199,13 +216,64 @@ func (f *kernelFixture) target(t *testing.T) store.EnvironmentTarget {
 	return target
 }
 
+// webDeploymentName is the rendered name of the demo project's web
+// Deployment for the current target revision. Blue-green workloads are
+// named by their pod template color, so the fixture derives the name the
+// way the kernel does instead of repeating a hash.
+func (f *kernelFixture) webDeploymentName(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	target := f.target(t)
+	require.NotNil(t, target.TargetRevisionID, "the fixture has no target revision to name a workload for")
+	rev, err := f.deploy.GetRevision(ctx, *target.TargetRevisionID)
+	require.NoError(t, err)
+	intercepts, err := f.kernel.loadIntercepts(ctx, f.environmentID)
+	require.NoError(t, err)
+	colors, err := f.kernel.desiredColors(ctx, f.environmentID, target, rev, intercepts)
+	require.NoError(t, err)
+	if color, ok := colors["web"]; ok {
+		return rendering.ColoredApplicationName("demo", "web", color)
+	}
+	return rendering.ApplicationName("demo", "web")
+}
+
+// webColor is the blue-green color the current target revision renders for
+// the web application, empty when it renders an uncolored workload.
+func (f *kernelFixture) webColor(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	target := f.target(t)
+	require.NotNil(t, target.TargetRevisionID)
+	rev, err := f.deploy.GetRevision(ctx, *target.TargetRevisionID)
+	require.NoError(t, err)
+	intercepts, err := f.kernel.loadIntercepts(ctx, f.environmentID)
+	require.NoError(t, err)
+	colors, err := f.kernel.desiredColors(ctx, f.environmentID, target, rev, intercepts)
+	require.NoError(t, err)
+	return colors["web"]
+}
+
+// setWebWorkload records the web application's Deployment for the current
+// target revision under its rendered name and color, so the module's
+// color-aware verdict sees the workload the kernel is rolling out.
+func (f *kernelFixture) setWebWorkload(t *testing.T, revision string, status module.WorkloadStatus) {
+	t.Helper()
+	f.fake.SetColoredWorkload(f.environmentID, f.namespace, f.webDeploymentName(t), "web", revision, f.webColor(t), status)
+}
+
+// webServiceName is the rendered name of the demo project's web Service,
+// stable across revisions by contract.
+func (f *kernelFixture) webServiceName() string {
+	return "app-demo-web-714832ea87e5bc991f3f11667354c6c3"
+}
+
 func (f *kernelFixture) markHealthy(t *testing.T) {
 	t.Helper()
 	target := f.target(t)
 	require.NotNil(t, target.TargetRevisionID)
 	row, err := f.st.GetRevisionByID(context.Background(), *target.TargetRevisionID)
 	require.NoError(t, err)
-	f.fake.SetWorkload(f.environmentID, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web", row.Checksum[:16],
+	f.setWebWorkload(t, row.Checksum[:16],
 		module.WorkloadStatus{Desired: 1, Ready: 1, Updated: 1})
 	f.fake.SetPod(f.environmentID, f.namespace, "web", "web-1", "node-a",
 		module.PodStatus{Phase: "Running", Ready: true})
@@ -232,8 +300,8 @@ func TestReconcileAppliesAndActivatesDeployment(t *testing.T) {
 	ops := f.cluster.recorded()
 	require.Contains(t, ops, "apply Namespace//"+f.namespace)
 	require.Contains(t, ops, "apply Secret/"+f.namespace+"/skali-environment")
-	require.Contains(t, ops, "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
-	require.Contains(t, ops, "apply Service/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.Contains(t, ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
+	require.Contains(t, ops, "apply Service/"+f.namespace+"/"+f.webServiceName())
 
 	target := f.target(t)
 	require.Equal(t, result.RevisionID, *target.TargetRevisionID)
@@ -309,7 +377,7 @@ func TestReconcileDeadlineFailsRunKeepsTarget(t *testing.T) {
 	ctx := context.Background()
 	result := f.executeDeployment(t)
 	f.fake.SetFresh()
-	f.fake.SetWorkload(f.environmentID, f.namespace, "app-demo-web-714832ea87e5bc991f3f11667354c6c3", "web", "",
+	f.setWebWorkload(t, "",
 		module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)

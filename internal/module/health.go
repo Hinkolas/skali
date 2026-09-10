@@ -66,6 +66,12 @@ const (
 	// CRD watch; the app module gates route health on their issuance. The
 	// watch registers only on installations that run cert-manager.
 	KindCertificate = "certificate"
+	// KindRollout is synthesized by the kernel for blue-green applications:
+	// the color the revision wants and the color the Service serves. The
+	// app module evaluates the desired color's workload and pods against
+	// it, so a stale snapshot fails safe (no desired color observed means
+	// not healthy) instead of judging whichever Deployment sorts first.
+	KindRollout = "rollout"
 )
 
 // Observation source states. Anything but fresh means the projection may lag
@@ -89,8 +95,12 @@ type ObservedResource struct {
 	// Pods never carry it: the label stays off pod templates so a new
 	// revision does not roll every application.
 	Revision string
+	// Color is the skali.dev/color of blue-green workloads and pods; the
+	// serving color on Services. Empty on uncolored objects.
+	Color string
 
 	Source          *SourceStatus
+	Rollout         *RolloutStatus
 	Workload        *WorkloadStatus
 	Pod             *PodStatus
 	Autoscaler      *AutoscalerStatus
@@ -125,6 +135,35 @@ type SourceStatus struct {
 	State      string    // SourceFresh | SourceStale | SourceUnknown
 	StaleSince time.Time // zero while fresh
 	LastSync   time.Time // zero before the first successful sync
+}
+
+// RolloutStatus is the kernel's blue-green intent for one application:
+// DesiredColor is the color the target revision renders, ServingColor the
+// color the live Service selects (empty while uncolored). Equal colors mean
+// a converged switch.
+type RolloutStatus struct {
+	DesiredColor string
+	ServingColor string
+}
+
+// WorkloadAvailable reports whether a workload is fully available for its
+// desired count: the controller has observed the latest spec, every member
+// is updated, ready, and available, and the progress deadline has not
+// passed. It is the one definition of "ready to take traffic" shared by
+// the kernel's switch decision and the app module's verdict.
+func WorkloadAvailable(workload *WorkloadStatus, desired int32) bool {
+	if workload == nil || desired <= 0 {
+		return false
+	}
+	if workload.ObservedGeneration > 0 && workload.ObservedGeneration < workload.Generation {
+		return false
+	}
+	for _, condition := range workload.Conditions {
+		if condition.Type == "Progressing" && condition.Status == "False" && condition.Reason == "ProgressDeadlineExceeded" {
+			return false
+		}
+	}
+	return workload.Updated >= desired && workload.Ready >= desired && workload.Available >= desired
 }
 
 // WorkloadStatus projects a Deployment-shaped workload. Desired is -1 when

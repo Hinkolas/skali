@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -102,6 +103,19 @@ type Options struct {
 	// endpoints). Required when Intercepts is non-empty.
 	InterceptHostIP string
 
+	// TrafficColors pins, per blue-green application key, the color its
+	// Service selects while a switch is pending. An absent key selects the
+	// rendered color (first deploy, converged, or the switch itself); a
+	// present key selects that color, and the empty string keeps the
+	// selector uncolored so a legacy or rolling Deployment keeps serving
+	// until its replacement is ready. Offline rendering leaves it nil.
+	TrafficColors map[string]string
+	// PendingReplicas sizes, per autoscaled blue-green application key,
+	// the color that is waiting for traffic: the autoscaler steers the
+	// serving color, so the kernel copies its count onto the pending one.
+	// Ignored unless TrafficColors pins that application elsewhere.
+	PendingReplicas map[string]int32
+
 	// PriorityClassName is the PriorityClass every application pod
 	// (Deployments and release Jobs) names, derived from the environment's
 	// priority setting and rendered live like RestartedAt rather than
@@ -180,63 +194,29 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	application := project.Applications[key]
 	name := ApplicationName(project.Name, key)
 	// Selector labels are baked into immutable Deployment and Service
-	// selectors: stable across revisions by contract. Object labels add the
+	// selectors: stable across revisions by contract (blue-green adds the
+	// per-Deployment color on top). Object labels add the
 	// environment/service/revision identity for observation and pruning.
-	selectorLabels := map[string]string{
-		"app.kubernetes.io/name": name,
-		LabelManaged:             "true",
-		LabelProject:             project.Name,
-		LabelApplication:         key,
-	}
-	labels := maps.Clone(selectorLabels)
-	labels[LabelService] = key
-	if options.EnvironmentID != "" {
-		labels[LabelEnvironment] = options.EnvironmentID
-	}
-	if options.RevisionChecksum != "" {
-		labels[LabelRevision] = RevisionLabelValue(options.RevisionChecksum)
-	}
+	selectorLabels, labels := applicationLabels(project, key, options)
 	hostPorts, intercepted := options.Intercepts[key]
-	image := application.Source.Image
-	if application.Source.Kind == "build" {
-		image = options.BuildImages[key]
-		if image == "" && !intercepted {
-			return nil, fmt.Errorf("build source has no prepared image")
+	template, image, err := renderPodTemplate(project, key, labels, selectorLabels, options)
+	if err != nil {
+		if intercepted && errors.Is(err, errNoPreparedImage) {
+			// An intercepted build application renders no workload, so a
+			// missing image is not an error for it.
+			image = ""
+		} else {
+			return nil, err
 		}
 	}
-
-	container := corev1.Container{
-		Name:            key,
-		Image:           image,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Args:            append([]string(nil), application.Command...),
-		Env:             renderEnvironment(key, application.Environment, options.EnvironmentSecretName),
-		Resources:       renderResources(application.Resources),
-	}
-	for _, portKey := range utils.SortedKeys(application.Ports) {
-		port := application.Ports[portKey]
-		container.Ports = append(container.Ports, corev1.ContainerPort{
-			Name:          portKey,
-			ContainerPort: int32(port.Port),
-			Protocol:      kubernetesProtocol(port.Protocol),
-		})
-	}
-	container.StartupProbe = renderProbe(application.Health.Startup)
-	container.ReadinessProbe = renderProbe(application.Health.Readiness)
-	container.LivenessProbe = renderProbe(application.Health.Liveness)
 
 	var objects []runtime.Object
 	for _, volumeKey := range utils.SortedKeys(application.Volumes) {
 		volume := application.Volumes[volumeKey]
-		claimName := VolumeClaimName(project.Name, key, volumeKey)
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
-			Name:      volumeKey,
-			MountPath: volume.MountPath,
-		})
 		claim := &corev1.PersistentVolumeClaim{
 			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PersistentVolumeClaim"},
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      claimName,
+				Name:      VolumeClaimName(project.Name, key, volumeKey),
 				Namespace: options.Namespace,
 				Labels:    maps.Clone(labels),
 			},
@@ -257,65 +237,76 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		objects = append(objects, renderReleaseJob(project, key, name, image, labels, options))
 	}
 
+	// Blue-green applications run one Deployment per color: the color is the
+	// pod template's own hash, so an unchanged template keeps its Deployment
+	// and only a real change starts a new one beside it. The Service keeps
+	// the application's stable name and selects exactly one color.
+	blueGreen := application.Deployment.Rollout.Strategy == compiler.StrategyBlueGreen && !intercepted
+	color := ""
+	deploymentName := name
+	deploymentLabels := maps.Clone(labels)
+	deploySelector := maps.Clone(selectorLabels)
+	if blueGreen {
+		color = TemplateColor(template)
+		deploymentName = ColoredApplicationName(project.Name, key, color)
+		deploymentLabels[LabelColor] = color
+		deploySelector[LabelColor] = color
+		template.Labels[LabelColor] = color
+		for index := range template.Spec.TopologySpreadConstraints {
+			template.Spec.TopologySpreadConstraints[index].LabelSelector = &metav1.LabelSelector{MatchLabels: maps.Clone(deploySelector)}
+		}
+	}
+	// serviceColor is the color the Service selects: the rendered color
+	// unless the kernel pins traffic elsewhere while a switch is pending.
+	serviceColor := color
+	if pinned, held := options.TrafficColors[key]; held {
+		serviceColor = pinned
+	}
+	servingDeployment := deploymentName
+	if serviceColor != color {
+		servingDeployment = name
+		if serviceColor != "" {
+			servingDeployment = ColoredApplicationName(project.Name, key, serviceColor)
+		}
+	}
+
 	autoscalingEnabled := application.Scaling.MaxReplicas > application.Scaling.MinReplicas && !intercepted
 	var replicas *int32
 	if !autoscalingEnabled {
 		replicas = new(int32(application.Scaling.MinReplicas))
+	} else if pending, ok := options.PendingReplicas[key]; ok && servingDeployment != deploymentName {
+		// A color waiting for traffic is sized by the kernel to the serving
+		// count; the autoscaler still steers the serving color.
+		replicas = new(pending)
 	}
-	graceSeconds := int64(time.Duration(application.Shutdown.GracePeriodMillis) * time.Millisecond / time.Second)
-	// The revision label stays off the pod template: it would roll every
-	// application on every revision. The template instead carries a values
-	// identity so exactly the applications whose referenced values changed
-	// roll, and everything else rolls only on a real spec change.
-	templateLabels := maps.Clone(labels)
-	delete(templateLabels, LabelRevision)
 	if !intercepted {
+		strategy, err := renderStrategy(application.Deployment.Rollout)
+		if err != nil {
+			return nil, fmt.Errorf("application %s: %w", key, err)
+		}
 		deployment := &appsv1.Deployment{
 			TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
+				Name:      deploymentName,
 				Namespace: options.Namespace,
-				Labels:    maps.Clone(labels),
+				Labels:    deploymentLabels,
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas:             replicas,
 				RevisionHistoryLimit: new(int32(revisionHistoryLimit)),
-				Selector:             &metav1.LabelSelector{MatchLabels: maps.Clone(selectorLabels)},
-				Strategy:             renderStrategy(application.Deployment.Rollout),
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{
-						Labels:      templateLabels,
-						Annotations: templateAnnotations(options, key, valuesIdentity(application, options)),
-					},
-					Spec: corev1.PodSpec{
-						TerminationGracePeriodSeconds: &graceSeconds,
-						Containers:                    []corev1.Container{container},
-					},
-				},
+				Selector:             &metav1.LabelSelector{MatchLabels: deploySelector},
+				Strategy:             strategy,
+				Template:             template,
 			},
 		}
-		if options.ProgressDeadlineSeconds > 0 {
-			deployment.Spec.ProgressDeadlineSeconds = new(int32(options.ProgressDeadlineSeconds))
+		// The manifest's rollout timeout bounds the controller's progress
+		// deadline per application; the kernel-wide deadline is the default.
+		deadline := options.ProgressDeadlineSeconds
+		if timeout := application.Deployment.Rollout.TimeoutMillis; timeout > 0 {
+			deadline = (timeout + 999) / 1000
 		}
-		if options.PriorityClassName != "" {
-			deployment.Spec.Template.Spec.PriorityClassName = options.PriorityClassName
-		}
-		if options.ManagedCluster {
-			deployment.Spec.Template.Spec.NodeSelector = map[string]string{
-				layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
-			}
-		}
-		deployment.Spec.Template.Spec.Affinity = renderArchAffinity(options, key)
-		for _, volumeKey := range utils.SortedKeys(application.Volumes) {
-			deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-				Name: volumeKey,
-				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: VolumeClaimName(project.Name, key, volumeKey),
-				}},
-			})
-		}
-		if constraint := renderSpread(selectorLabels, application.Placement); constraint != nil {
-			deployment.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{*constraint}
+		if deadline > 0 {
+			deployment.Spec.ProgressDeadlineSeconds = new(int32(deadline))
 		}
 		objects = append(objects, deployment)
 	}
@@ -326,6 +317,9 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		// then routes it by the managed EndpointSlice below, which points at
 		// the local dev process on the host.
 		serviceSelector := maps.Clone(selectorLabels)
+		if serviceColor != "" {
+			serviceSelector[LabelColor] = serviceColor
+		}
 		if intercepted {
 			serviceSelector = nil
 		}
@@ -425,10 +419,12 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				Labels:    maps.Clone(labels),
 			},
 			Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+				// The autoscaler steers the Deployment that carries traffic;
+				// a pending color is sized by the kernel until the switch.
 				ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
 					APIVersion: "apps/v1",
 					Kind:       "Deployment",
-					Name:       name,
+					Name:       servingDeployment,
 				},
 				MinReplicas: new(int32(application.Scaling.MinReplicas)),
 				MaxReplicas: int32(application.Scaling.MaxReplicas),
@@ -446,6 +442,156 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		})
 	}
 	return objects, nil
+}
+
+// errNoPreparedImage reports a build-sourced application rendered without
+// its prepared image. Intercepted applications tolerate it (they render no
+// workload); everything else fails the render.
+var errNoPreparedImage = errors.New("build source has no prepared image")
+
+// renderPodTemplate builds an application's pod template: the one input the
+// blue-green color is derived from. It carries everything that must roll
+// the application when it changes (image, environment, probes, resources,
+// restart stamp, values identity, priority, placement) and nothing that
+// must not (the revision label). Spreading is rendered over the base
+// selector; blue-green callers narrow it to their color after hashing.
+func renderPodTemplate(project compiler.ProjectDefinition, key string, labels, selectorLabels map[string]string,
+	options Options) (corev1.PodTemplateSpec, string, error) {
+	application := project.Applications[key]
+	image := application.Source.Image
+	if application.Source.Kind == "build" {
+		image = options.BuildImages[key]
+		if image == "" {
+			return corev1.PodTemplateSpec{}, "", errNoPreparedImage
+		}
+	}
+
+	container := corev1.Container{
+		Name:            key,
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            append([]string(nil), application.Command...),
+		Env:             renderEnvironment(key, application.Environment, options.EnvironmentSecretName),
+		Resources:       renderResources(application.Resources),
+	}
+	for _, portKey := range utils.SortedKeys(application.Ports) {
+		port := application.Ports[portKey]
+		container.Ports = append(container.Ports, corev1.ContainerPort{
+			Name:          portKey,
+			ContainerPort: int32(port.Port),
+			Protocol:      kubernetesProtocol(port.Protocol),
+		})
+	}
+	container.StartupProbe = renderProbe(application.Health.Startup)
+	container.ReadinessProbe = renderProbe(application.Health.Readiness)
+	container.LivenessProbe = renderProbe(application.Health.Liveness)
+	for _, volumeKey := range utils.SortedKeys(application.Volumes) {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name:      volumeKey,
+			MountPath: application.Volumes[volumeKey].MountPath,
+		})
+	}
+
+	graceSeconds := int64(time.Duration(application.Shutdown.GracePeriodMillis) * time.Millisecond / time.Second)
+	// The revision label stays off the pod template: it would roll every
+	// application on every revision. The template instead carries a values
+	// identity so exactly the applications whose referenced values changed
+	// roll, and everything else rolls only on a real spec change.
+	templateLabels := maps.Clone(labels)
+	delete(templateLabels, LabelRevision)
+	template := corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      templateLabels,
+			Annotations: templateAnnotations(options, key, valuesIdentity(application, options)),
+		},
+		Spec: corev1.PodSpec{
+			TerminationGracePeriodSeconds: &graceSeconds,
+			Containers:                    []corev1.Container{container},
+		},
+	}
+	if options.PriorityClassName != "" {
+		template.Spec.PriorityClassName = options.PriorityClassName
+	}
+	if options.ManagedCluster {
+		template.Spec.NodeSelector = map[string]string{
+			layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
+		}
+	}
+	template.Spec.Affinity = renderArchAffinity(options, key)
+	for _, volumeKey := range utils.SortedKeys(application.Volumes) {
+		template.Spec.Volumes = append(template.Spec.Volumes, corev1.Volume{
+			Name: volumeKey,
+			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: VolumeClaimName(project.Name, key, volumeKey),
+			}},
+		})
+	}
+	if constraint := renderSpread(selectorLabels, application.Placement); constraint != nil {
+		template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{*constraint}
+	}
+	return template, image, nil
+}
+
+// TemplateColor derives a blue-green color from a pod template: the first
+// ten hex characters of the template's JSON hash. Identical templates share
+// a color (and a Deployment); any change starts a new one.
+func TemplateColor(template corev1.PodTemplateSpec) string {
+	data, err := json.Marshal(template)
+	if err != nil {
+		// PodTemplateSpec is a plain API struct; marshalling cannot fail.
+		panic("render: marshal pod template: " + err.Error())
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:10]
+}
+
+// ApplicationColors reports the desired color of every blue-green
+// application that renders a workload, keyed by application key. It is the
+// kernel's input for the traffic decision and shares the template builder
+// with Render, so the two can never disagree.
+func ApplicationColors(result *compiler.Result, options Options) (map[string]string, error) {
+	if options.EnvironmentSecretName == "" {
+		options.EnvironmentSecretName = EnvironmentSecretName
+	}
+	colors := map[string]string{}
+	project := result.Definition
+	for _, key := range utils.SortedKeys(project.Applications) {
+		application := project.Applications[key]
+		if application.Deployment.Rollout.Strategy != compiler.StrategyBlueGreen {
+			continue
+		}
+		if _, intercepted := options.Intercepts[key]; intercepted {
+			continue
+		}
+		selectorLabels, labels := applicationLabels(project, key, options)
+		template, _, err := renderPodTemplate(project, key, labels, selectorLabels, options)
+		if err != nil {
+			return nil, fmt.Errorf("application %s: %w", key, err)
+		}
+		colors[key] = TemplateColor(template)
+	}
+	return colors, nil
+}
+
+// applicationLabels returns an application's immutable selector labels and
+// its full object labels for one render.
+func applicationLabels(project compiler.ProjectDefinition, key string, options Options) (selectorLabels, labels map[string]string) {
+	name := ApplicationName(project.Name, key)
+	selectorLabels = map[string]string{
+		"app.kubernetes.io/name": name,
+		LabelManaged:             "true",
+		LabelProject:             project.Name,
+		LabelApplication:         key,
+	}
+	labels = maps.Clone(selectorLabels)
+	labels[LabelService] = key
+	if options.EnvironmentID != "" {
+		labels[LabelEnvironment] = options.EnvironmentID
+	}
+	if options.RevisionChecksum != "" {
+		labels[LabelRevision] = RevisionLabelValue(options.RevisionChecksum)
+	}
+	return selectorLabels, labels
 }
 
 // DefaultReleaseTimeout bounds a release command whose manifest declares no
@@ -631,16 +777,26 @@ func renderServicePorts(application compiler.Application) []corev1.ServicePort {
 	return ports
 }
 
-func renderStrategy(rollout compiler.Rollout) appsv1.DeploymentStrategy {
-	if rollout.Strategy == "recreate" {
-		return appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
-	}
-	return appsv1.DeploymentStrategy{
-		Type: appsv1.RollingUpdateDeploymentStrategyType,
-		RollingUpdate: &appsv1.RollingUpdateDeployment{
-			MaxUnavailable: new(intstr.FromInt32(int32(rollout.MaxUnavailable))),
-			MaxSurge:       new(intstr.FromInt32(int32(rollout.MaxSurge))),
-		},
+// renderStrategy maps the compiled rollout onto the Deployment controller's
+// strategy. A blue-green color's template never changes by construction
+// (a changed template is a new Deployment), so its controller strategy is
+// moot and renders as Recreate, which states that plainly. An unknown
+// strategy fails the render: a daemon older than the manifest's vocabulary
+// must refuse instead of applying an invalid rolling update.
+func renderStrategy(rollout compiler.Rollout) (appsv1.DeploymentStrategy, error) {
+	switch rollout.Strategy {
+	case compiler.StrategyRecreate, compiler.StrategyBlueGreen:
+		return appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}, nil
+	case compiler.StrategyRolling:
+		return appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxUnavailable: new(intstr.FromInt32(int32(rollout.MaxUnavailable))),
+				MaxSurge:       new(intstr.FromInt32(int32(rollout.MaxSurge))),
+			},
+		}, nil
+	default:
+		return appsv1.DeploymentStrategy{}, fmt.Errorf("unsupported rollout strategy %q", rollout.Strategy)
 	}
 }
 
@@ -737,6 +893,12 @@ func VolumeClaimName(project, application, volume string) string {
 // ApplicationName is shared by workloads and their Service references.
 func ApplicationName(project, application string) string {
 	return objectName("app", project, application)
+}
+
+// ColoredApplicationName names one blue-green color's Deployment. The
+// Service, HPA, and routes keep ApplicationName; only workloads are colored.
+func ColoredApplicationName(project, application, color string) string {
+	return objectName("app", project, application, color)
 }
 
 func RouteName(project, application, route, variant string) string {

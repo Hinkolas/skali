@@ -106,7 +106,7 @@ func TestReconcileDatabaseClaimGatesApplication(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, claims.calls)
 	ops := f.cluster.recorded()
-	require.NotContains(t, ops, "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3",
+	require.NotContains(t, ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t),
 		"the application must wait for the database claim")
 
 	tree, err := f.journal.RunTree(ctx, result.RunID)
@@ -128,7 +128,7 @@ func TestReconcileDatabaseClaimGatesApplication(t *testing.T) {
 	// Pass 2 applies the application; health arrives; pass 3 activates.
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
 	f.markHealthy(t)
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestReconcileClaimProvisionAppliesWithoutProjections(t *testing.T) {
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Equal(t, requeueHealthCheck, requeue)
-	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
 
 	// The substrate flips ONLY the fresh claim state; the observed claim,
 	// tenant, and pool projections all stay stale.
@@ -189,7 +189,7 @@ func TestReconcileClaimProvisionAppliesWithoutProjections(t *testing.T) {
 
 	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3",
+	require.Contains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t),
 		"a provisioned claim must not withhold the workload on projection lag")
 	require.Equal(t, requeueHealthCheck, requeue, "the pass keeps its cadence until healthy")
 
@@ -209,7 +209,7 @@ func TestReconcileDatabaseWithoutSubstrateWaits(t *testing.T) {
 
 	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.NotContains(t, f.cluster.recorded(), "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
 
 	tree, err := f.journal.RunTree(ctx, result.RunID)
 	require.NoError(t, err)

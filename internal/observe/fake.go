@@ -66,6 +66,62 @@ func (f *Fake) SetWorkload(environmentID uuid.UUID, namespace, objectName, servi
 	})
 }
 
+// SetColoredWorkload records one blue-green color's Deployment of a service.
+func (f *Fake) SetColoredWorkload(environmentID uuid.UUID, namespace, objectName, service, revision, color string, status module.WorkloadStatus) {
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
+			Namespace: namespace,
+			Name:      objectName,
+		},
+		Kind:        module.KindWorkload,
+		Name:        service,
+		Environment: environmentID,
+		Service:     service,
+		Revision:    revision,
+		Color:       color,
+		Workload:    &status,
+	})
+}
+
+// SetService records a service's Service object with its live selector; the
+// kernel reads the serving blue-green color from it.
+func (f *Fake) SetService(environmentID uuid.UUID, namespace, objectName, service string, selector map[string]string) {
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Version: "v1", Kind: "Service"},
+			Namespace: namespace,
+			Name:      objectName,
+		},
+		Kind:        module.KindService,
+		Name:        objectName,
+		Environment: environmentID,
+		Service:     service,
+		Color:       selector["skali.dev/color"],
+		Selector:    selector,
+	})
+}
+
+// SetColoredPod records one pod of a blue-green color.
+func (f *Fake) SetColoredPod(environmentID uuid.UUID, namespace, service, podName, node, color string, status module.PodStatus) {
+	pod := status
+	pod.Node = node
+	f.Upsert(Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Version: "v1", Kind: "Pod"},
+			Namespace: namespace,
+			Name:      podName,
+		},
+		Kind:        module.KindPod,
+		Name:        podName,
+		Environment: environmentID,
+		Service:     service,
+		Color:       color,
+		Node:        node,
+		Pod:         &pod,
+	})
+}
+
 // SetPod records one pod of a service.
 func (f *Fake) SetPod(environmentID uuid.UUID, namespace, service, podName, node string, status module.PodStatus) {
 	pod := status

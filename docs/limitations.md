@@ -28,6 +28,26 @@ Declared sizes are only enforced on the `longhorn` driver; on `local` the
 size is advisory and volumes pin their pods to one node. See
 [`storage.md`](storage.md).
 
+## A deploy briefly needs room for two copies of an application
+
+The default `blue-green` rollout starts the new version at full replica
+count beside the old one and only switches traffic once every new replica
+is ready. Consequences:
+
+- The cluster must hold twice the application's replicas for the length of
+  the deploy. When it cannot, declare `strategy: rolling` for that
+  application (and keep its releases compatible with the previous one).
+- Switching an application between `rolling` and `blue-green` serves both
+  versions for that one rollout: the existing Deployment keeps its
+  uncolored selector while the new one starts, and both match the Service
+  until the switch. From then on old and new never serve together.
+- Browsers holding a page from the previous version may still request
+  assets only that version had. The switch shrinks the window to the time
+  between the page and its asset requests; only the framework's own
+  new-deployment detection (a version check and reload) closes it.
+- Metrics count the pending version's pods for the duration of the deploy,
+  so per-service CPU and memory read roughly double while it runs.
+
 ## Deleting a project requires purging its environments first
 
 A project is deleted only once it has no environments: the API refuses

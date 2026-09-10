@@ -297,3 +297,116 @@ func TestDecodeAndRemoval(t *testing.T) {
 	_, err = Module{}.Decode(definition, "missing")
 	require.Error(t, err)
 }
+
+func coloredWorkload(color string, desired, ready, updated int32, conditions ...module.Condition) module.ObservedResource {
+	resource := workload(desired, ready, updated, conditions...)
+	resource.Color = color
+	return resource
+}
+
+func coloredPod(name, color string, ready bool, reason string) module.ObservedResource {
+	resource := pod(name, ready, reason, 0)
+	resource.Color = color
+	return resource
+}
+
+func rollout(desired, serving string) module.ObservedResource {
+	return module.ObservedResource{
+		Kind: module.KindRollout, Name: "web",
+		Rollout: &module.RolloutStatus{DesiredColor: desired, ServingColor: serving},
+	}
+}
+
+func codesOf(evaluation module.Evaluation) []string {
+	codes := make([]string, 0, len(evaluation.Diagnostics))
+	for _, diagnostic := range evaluation.Diagnostics {
+		codes = append(codes, diagnostic.Code)
+	}
+	return codes
+}
+
+// Blue-green: the verdict follows the desired color alone. While the
+// Service still selects the previous color the service is progressing (new
+// members starting, or ready and about to take traffic), never healthy, so
+// activation waits for the switch to land.
+func TestEvaluateBlueGreenPendingAndSwitching(t *testing.T) {
+	t.Parallel()
+	svc := decode(t)
+
+	// The new color is not observed yet while the old one serves.
+	evaluation := svc.Evaluate([]module.ObservedResource{
+		freshSource(), rollout("new", "old"), coloredWorkload("old", 2, 2, 2),
+	})
+	require.Equal(t, module.HealthProgressing, evaluation.Health)
+	require.Equal(t, "color-pending", evaluation.Diagnostics[0].Code)
+
+	// Starting: one of two members ready; the old color's members are not
+	// counted against it.
+	evaluation = svc.Evaluate([]module.ObservedResource{
+		freshSource(), rollout("new", "old"),
+		coloredWorkload("old", 2, 2, 2), coloredWorkload("new", 2, 1, 2),
+		coloredPod("web-old-a", "old", true, ""), coloredPod("web-old-b", "old", true, ""),
+		coloredPod("web-new-a", "new", true, ""), coloredPod("web-new-b", "new", false, "ContainerCreating"),
+	})
+	require.Equal(t, module.HealthProgressing, evaluation.Health)
+	require.Equal(t, "color-pending", evaluation.Diagnostics[0].Code)
+	require.Equal(t, "starting 2 new replicas (1/2 ready)", evaluation.Diagnostics[0].Message)
+	require.Contains(t, codesOf(evaluation), "member-not-ready")
+
+	// Fully ready but traffic has not moved: still progressing, switching.
+	evaluation = svc.Evaluate([]module.ObservedResource{
+		freshSource(), rollout("new", "old"),
+		coloredWorkload("old", 2, 2, 2), coloredWorkload("new", 2, 2, 2),
+	})
+	require.Equal(t, module.HealthProgressing, evaluation.Health)
+	require.Equal(t, "switching-traffic", evaluation.Diagnostics[0].Code)
+
+	// The switch landed: healthy, and the retiring color's members (already
+	// terminating) never degrade the verdict.
+	evaluation = svc.Evaluate([]module.ObservedResource{
+		freshSource(), rollout("new", "new"),
+		coloredWorkload("old", 2, 0, 2), coloredWorkload("new", 2, 2, 2),
+		coloredPod("web-old-a", "old", false, "Terminating"),
+		coloredPod("web-new-a", "new", true, ""), coloredPod("web-new-b", "new", true, ""),
+	})
+	require.Equal(t, module.HealthHealthy, evaluation.Health)
+	require.NotContains(t, codesOf(evaluation), "member-not-ready")
+}
+
+// A new color that exhausted its progress deadline is degraded while the
+// previous color keeps serving; only a serving color with no ready member
+// makes the service unhealthy.
+func TestEvaluateBlueGreenFailedColor(t *testing.T) {
+	t.Parallel()
+	svc := decode(t)
+	exceeded := module.Condition{Type: "Progressing", Status: "False", Reason: "ProgressDeadlineExceeded", Message: "timed out"}
+
+	evaluation := svc.Evaluate([]module.ObservedResource{
+		freshSource(), rollout("new", "old"),
+		coloredWorkload("old", 2, 2, 2), coloredWorkload("new", 2, 0, 2, exceeded),
+		coloredPod("web-new-a", "new", false, "CrashLoopBackOff"),
+	})
+	require.Equal(t, module.HealthDegraded, evaluation.Health)
+	require.Equal(t, "color-failed", evaluation.Diagnostics[0].Code)
+	require.Contains(t, codesOf(evaluation), "progress-deadline-exceeded")
+
+	evaluation = svc.Evaluate([]module.ObservedResource{
+		freshSource(), rollout("new", "old"),
+		coloredWorkload("old", 2, 0, 2), coloredWorkload("new", 2, 1, 2),
+	})
+	require.Equal(t, module.HealthUnhealthy, evaluation.Health)
+	require.Equal(t, "no-ready-replicas", evaluation.Diagnostics[0].Code)
+
+	// Legacy migration: the serving color is the uncolored Deployment.
+	evaluation = svc.Evaluate([]module.ObservedResource{
+		freshSource(), rollout("new", ""),
+		workload(2, 2, 2), coloredWorkload("new", 2, 2, 2),
+	})
+	require.Equal(t, module.HealthProgressing, evaluation.Health)
+	require.Equal(t, "switching-traffic", evaluation.Diagnostics[0].Code)
+
+	// No workload of any color: unknown, as before.
+	evaluation = svc.Evaluate([]module.ObservedResource{freshSource(), rollout("new", "new")})
+	require.Equal(t, module.HealthUnknown, evaluation.Health)
+	require.Equal(t, "missing-resource", evaluation.Diagnostics[0].Code)
+}

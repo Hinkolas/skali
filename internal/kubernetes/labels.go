@@ -5,7 +5,10 @@ package kubernetes
 // (managed, project, application, app.kubernetes.io/name) are baked into
 // immutable Deployment and Service selectors and must never gain
 // per-revision or per-environment values; object labels carry the full
-// identity and may change between revisions.
+// identity and may change between revisions. LabelColor is the one
+// exception by design: blue-green applications run one Deployment per pod
+// template hash, and the color narrows each Deployment's selector to its
+// own pods while the Service selector names the color that serves.
 const (
 	LabelManaged         = "skali.dev/managed"
 	LabelProject         = "skali.dev/project"
@@ -64,3 +67,11 @@ func RevisionLabelValue(checksum string) string {
 	}
 	return checksum[:16]
 }
+
+// LabelColor names one blue-green color: the pod template hash of a
+// Deployment. It is the one selector label with a per-object value, and it
+// is stable for that object's whole life: a changed template is a new
+// Deployment with a new color, never a changed selector. The Service of a
+// blue-green application selects exactly one color; switching it is the
+// traffic switch.
+const LabelColor = "skali.dev/color"

@@ -324,6 +324,103 @@ applications:
 	require.ErrorContains(t, err, "project value names match ^[A-Z_][A-Z0-9_]*$")
 }
 
+func TestRolloutDefaultsToBlueGreen(t *testing.T) {
+	t.Parallel()
+	result, err := compileManifest(t, `
+version: "1"
+name: rollout-default
+applications:
+  api:
+    image: example.invalid/api:1
+    scaling:
+      replicas:
+        min: 2
+        max: 5
+      autoscaling:
+        cpu:
+          targetUtilization: 70
+`)
+	require.NoError(t, err)
+	require.Equal(t, Rollout{Strategy: StrategyBlueGreen}, result.Definition.Applications["api"].Deployment.Rollout,
+		"no rolling-update controls and no timeout default leak into the blue-green IR")
+}
+
+func TestRolloutRejectsUnknownStrategy(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: invalid-rollout
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        strategy: canary
+`)
+	require.ErrorContains(t, err, "strategy: must be blue-green, rolling, or recreate")
+}
+
+func TestBlueGreenRejectsRollingUpdateControls(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: invalid-blue-green
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        strategy: blue-green
+        maxUnavailable: 0
+`)
+	require.ErrorContains(t, err, "maxUnavailable: is only valid when strategy is rolling")
+}
+
+func TestVolumeBackedApplicationRejectsBlueGreenStrategy(t *testing.T) {
+	t.Parallel()
+	_, err := compileManifest(t, `
+version: "1"
+name: invalid-volume-rollout
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        strategy: blue-green
+    volumes:
+      data:
+        mountPath: /data
+        size: 1GB
+`)
+	require.ErrorContains(t, err, "persistent volumes currently require recreate rollout strategy")
+}
+
+func TestRolloutTimeoutIsCompiledForEveryStrategy(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		StrategyBlueGreen: "",
+		StrategyRolling:   "",
+		StrategyRecreate:  "    volumes:\n      data:\n        mountPath: /data\n        size: 1GB\n",
+	}
+	for strategy, extra := range cases {
+		result, err := compileManifest(t, `
+version: "1"
+name: rollout-timeout
+applications:
+  api:
+    image: example.invalid/api:1
+    deployment:
+      rollout:
+        strategy: `+strategy+`
+        timeout: 15m
+`+extra)
+		require.NoError(t, err, strategy)
+		rollout := result.Definition.Applications["api"].Deployment.Rollout
+		require.Equal(t, strategy, rollout.Strategy)
+		require.Equal(t, int64(15*60*1000), rollout.TimeoutMillis, strategy)
+	}
+}
+
 func TestRollingUpdateDefaultsSurgeWhenUnavailableIsSpecified(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
@@ -334,6 +431,7 @@ applications:
     image: example.invalid/api:1
     deployment:
       rollout:
+        strategy: rolling
         maxUnavailable: 0
 `)
 	require.NoError(t, err)
@@ -354,6 +452,7 @@ applications:
     image: example.invalid/api:1
     deployment:
       rollout:
+        strategy: rolling
         maxUnavailable: 0
         maxSurge: 0
 `)
@@ -370,6 +469,7 @@ applications:
     image: example.invalid/api:1
     deployment:
       rollout:
+        strategy: rolling
         maxUnavailable: -1
 `)
 	require.ErrorContains(t, err, "maxUnavailable: must not be negative")

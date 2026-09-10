@@ -28,6 +28,10 @@ export interface PodStatus {
 	restarts: number;
 	reason?: string;
 	started_at: string | null;
+	/** Blue-green color of the pod's Deployment; absent on rolling and recreate workloads. */
+	color?: string;
+	/** Whether the application's Service currently selects this pod. */
+	serving: boolean;
 }
 
 export type CertificateState = 'pending' | 'issuing' | 'active' | 'failing' | 'expired';

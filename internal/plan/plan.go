@@ -119,6 +119,14 @@ func (p *Plan) diffApplications(active, candidate *revision.Revision) {
 			var reasons []string
 			if string(activeSpec) != string(candidateSpec) {
 				reasons = append(reasons, "configuration changed")
+				// A strategy change is called out by name: a compiler default
+				// change moves every application that relied on it, and the
+				// row should say why rather than leave a bare "changed".
+				before := active.Definition.Applications[key].Deployment.Rollout.Strategy
+				after := candidate.Definition.Applications[key].Deployment.Rollout.Strategy
+				if before != after {
+					reasons = append(reasons, "rollout strategy "+before+" to "+after)
+				}
 				if removed := removedVolumes(active, candidate, key); len(removed) > 0 {
 					change.Destructive = true
 					reasons = append(reasons, "deletes persistent volumes: "+strings.Join(removed, ", "))
