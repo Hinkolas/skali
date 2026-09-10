@@ -79,7 +79,7 @@ func TestInstallScript(t *testing.T) {
 			for name, script := range shims {
 				require.NoError(t, os.WriteFile(filepath.Join(toolsDir, name), []byte("#!/bin/sh\n"+script+"\n"), 0755))
 			}
-			assets := map[string]string{"skali_linux_amd64": "fixture CLI", "skali-hostd_linux_amd64": "fixture host daemon"}
+			assets := map[string]string{"skali_linux_amd64": "fixture CLI"}
 			checksums := ""
 			for name, body := range assets {
 				checksums += fmt.Sprintf("%x  %s\n", sha256.Sum256([]byte(body)), name)
@@ -172,9 +172,9 @@ func TestInstallScript(t *testing.T) {
 			got, err := os.ReadFile(filepath.Join(dest, "skali"))
 			require.NoError(t, err)
 			require.Equal(t, "fixture CLI", string(got))
-			got, err = os.ReadFile(filepath.Join(dest, "skali-hostd"))
+			entries, err := os.ReadDir(dest)
 			require.NoError(t, err)
-			require.Equal(t, "fixture host daemon", string(got))
+			require.Len(t, entries, 1, "the CLI is the only binary installed; skali cluster fetches skali-hostd itself")
 			if tc.pin != "" && tc.pin != "latest" {
 				mu.Lock()
 				defer mu.Unlock()

@@ -136,7 +136,7 @@ func newClusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 						Server: config.Join.Server, Token: rawToken,
 						Capabilities: config.Capabilities, Network: config.NodeNetwork(),
 						RequestedRole: config.Role, RequestedCluster: config.Cluster,
-					})
+						Out: out})
 					if enrollErr != nil {
 						progress.Abort()
 						return enrollErr
@@ -154,7 +154,7 @@ func newClusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 			var hostdBinary []byte
 			if config.Join == nil {
 				opts.Management = installer.ManagementReconciled
-				hostdBinary, _, err = loadHostdBinary()
+				hostdBinary, _, err = loadHostdBinary(ctx, out)
 				if err != nil {
 					progress.Abort()
 					return err

@@ -96,7 +96,7 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 				return errors.New("seed coordinator repair was not confirmed")
 			}
 		}
-		hostdBinary, _, err := loadHostdBinary()
+		hostdBinary, _, err := loadHostdBinary(ctx, out)
 		if err != nil {
 			return err
 		}
@@ -168,7 +168,7 @@ func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes 
 	progress := newTaskProgress(tasks)
 	var hostdBinary []byte
 	if detected.Record != nil && detected.Record.Reconciled() {
-		hostdBinary, _, _ = loadHostdBinary()
+		hostdBinary, _, _ = loadHostdBinary(ctx, out)
 	}
 	actions, refusals := installer.PlanRepairs(diagnosis, installer.RepairDeps{
 		Runner:       runner(),

@@ -63,6 +63,21 @@ amd64 and arm64), verifies its checksum, and installs it: `/usr/local/bin`
 on Linux (asks for sudo), `~/.local/bin` on macOS. Run it on your laptop to develop
 and deploy, and on every server that should become a skali node.
 
+To update an installed CLI later, let it replace itself:
+
+```sh
+skali upgrade                        # newest release on your channel
+skali upgrade --channel beta         # include alpha, beta, and RC releases
+skali upgrade --version v0.1.0-rc.2  # exact release, may also downgrade
+```
+
+The channel defaults to stable, or to beta when the installed CLI is itself a
+prerelease. Downloads are verified against the release checksums. A system
+install on Linux needs `sudo skali upgrade`. This updates the CLI only; a
+cluster moves with `skali cluster upgrade`, and the `skali-hostd` host daemon
+is fetched by `skali cluster` on the node that needs it, so a laptop that only
+deploys never carries it.
+
 ## Run a project locally
 
 Requirements: Docker. skali installs a pinned copy of

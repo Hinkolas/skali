@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,6 +67,17 @@ func TestReleaseAssetsVerifyAgainstChecksums(t *testing.T) {
 	require.ErrorContains(t, err, "no expected checksum")
 	_, err = DownloadHostd(ctx, server.Client(), server.URL, "v0.2.0", "amd64", sums[HostdAsset("arm64")])
 	require.ErrorContains(t, err, "release asset is missing")
+	require.ErrorIs(t, err, ErrAssetMissing)
+
+	// The CLI asset goes through the same generic, checksum-gated download.
+	require.Equal(t, "skali_linux_amd64", CLIAsset("linux", "amd64"))
+	_, err = DownloadAsset(ctx, server.Client(), server.URL, "v0.2.0", CLIAsset("linux", "amd64"), sums["skali_linux_amd64"])
+	require.ErrorIs(t, err, ErrAssetMissing, "listed in checksums.txt but not published")
+	_, err = DownloadAsset(ctx, server.Client(), server.URL, "v0.2.0", CLIAsset("darwin", "arm64"), "")
+	require.ErrorContains(t, err, "skali_darwin_arm64 download has no expected checksum")
+	got, err = DownloadAsset(ctx, server.Client(), server.URL, "v0.2.0", HostdAsset("arm64"), sums[HostdAsset("arm64")])
+	require.NoError(t, err)
+	require.Equal(t, binary, got)
 
 	metadata, err := FetchReleaseMetadata(ctx, server.Client(), server.URL, "v0.2.0")
 	require.NoError(t, err)
@@ -77,6 +90,50 @@ func TestReleaseAssetsVerifyAgainstChecksums(t *testing.T) {
 	require.Nil(t, metadata)
 	_, err = ReleaseChecksums(ctx, older.Client(), older.URL, "v0.3.0")
 	require.ErrorContains(t, err, "release asset is missing")
+}
+
+func TestFetchHostdCachesVerifiedDownloads(t *testing.T) {
+	t.Parallel()
+	binary := []byte("hostd-arm64-binary")
+	server := fakeRelease(t, "v0.2.0", map[string][]byte{
+		"checksums.txt":           []byte(checksumLine("skali-hostd_linux_arm64", binary)),
+		"skali-hostd_linux_arm64": binary,
+	})
+	ctx := context.Background()
+	cache := t.TempDir()
+
+	_, ok := CachedHostd(cache, "v0.2.0", "arm64")
+	require.False(t, ok, "empty cache")
+
+	got, err := FetchHostd(ctx, server.Client(), server.URL, "v0.2.0", "arm64", cache)
+	require.NoError(t, err)
+	require.Equal(t, binary, got)
+	cached, ok := CachedHostd(cache, "v0.2.0", "arm64")
+	require.True(t, ok)
+	require.Equal(t, binary, cached)
+	info, err := os.Stat(filepath.Join(cache, "v0.2.0", "skali-hostd_linux_arm64"))
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+
+	// A damaged entry is not trusted.
+	require.NoError(t, os.WriteFile(filepath.Join(cache, "v0.2.0", "skali-hostd_linux_arm64"), []byte("bitrot"), 0o755))
+	_, ok = CachedHostd(cache, "v0.2.0", "arm64")
+	require.False(t, ok)
+
+	// Unwritable cache: the fetch still succeeds.
+	if os.Geteuid() != 0 {
+		locked := t.TempDir()
+		require.NoError(t, os.Chmod(locked, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+		got, err = FetchHostd(ctx, server.Client(), server.URL, "v0.2.0", "arm64", locked)
+		require.NoError(t, err)
+		require.Equal(t, binary, got)
+	}
+
+	_, err = FetchHostd(ctx, server.Client(), server.URL, "v0.2.0", "amd64", cache)
+	require.ErrorContains(t, err, "publishes no skali-hostd_linux_amd64")
+	_, err = FetchHostd(ctx, server.Client(), server.URL, "v0.3.0", "arm64", cache)
+	require.ErrorContains(t, err, "release v0.3.0 was not found")
 }
 
 func TestCheckK3sMove(t *testing.T) {

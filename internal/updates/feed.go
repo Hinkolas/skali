@@ -116,6 +116,9 @@ type GitHubFeed struct {
 	// URL is the releases listing, https://api.github.com/repos/<repo>/releases.
 	URL    string
 	Client *http.Client
+	// UserAgent identifies the caller to GitHub; skalid's daily scan is the
+	// default, the CLI names itself.
+	UserAgent string
 }
 
 // DefaultFeedURL is the GitHub releases API for the release repository.
@@ -200,7 +203,11 @@ func (f *GitHubFeed) get(ctx context.Context, url string, limit int64) ([]byte, 
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("User-Agent", "skalid/"+version.Version)
+	agent := f.UserAgent
+	if agent == "" {
+		agent = "skalid/" + version.Version
+	}
+	request.Header.Set("User-Agent", agent)
 	response, err := f.client().Do(request)
 	if err != nil {
 		// No answer at all: the host is down, unresolvable, or unreachable

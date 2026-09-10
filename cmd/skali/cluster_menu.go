@@ -442,7 +442,7 @@ func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reade
 		return nil
 	}
 	if record.Reconciled() && record.Node.Role == layout.RoleServer && record.Join == nil {
-		hostdBinary, _, err := loadHostdBinary()
+		hostdBinary, _, err := loadHostdBinary(ctx, out)
 		if err != nil {
 			return err
 		}

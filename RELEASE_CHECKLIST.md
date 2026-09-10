@@ -88,8 +88,11 @@ but these settings must be applied on GitHub.
       `git tag` by hand): `install.sh` on a clean Linux server and
       a clean Mac, `sudo skali cluster` through init with the published
       images, `skali dev` outside the repo, `skali cluster upgrade` from a
-      released binary, and `skali cluster reset-password` (never run on a
-      live cluster yet). Then tag `v0.1.0-alpha.2` and update to it from the console
+      released binary, `skali upgrade` from the previous released binary
+      (`sudo` on the Linux server, plain on the Mac), a `skali cluster join`
+      from a released CLI with no local `skali-hostd` (it downloads the
+      release's asset and caches it), and `skali cluster reset-password`
+      (never run on a live cluster yet). Then tag `v0.1.0-alpha.2` and update to it from the console
       (System / Software update on the beta channel): every node's hostd
       and k3s move, the bundle rolls, and the console reconnects.
 - [ ] **Cluster nodes reach GitHub.** Console updates download
