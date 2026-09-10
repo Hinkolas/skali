@@ -234,7 +234,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	}
 
 	if len(application.Deployment.ReleaseCommand.Command) > 0 && !intercepted {
-		objects = append(objects, renderReleaseJob(project, key, name, image, labels, options))
+		objects = append(objects, renderReleaseJob(project, key, image, labels, options))
 	}
 
 	// Blue-green applications run one Deployment per color: the color is the
@@ -623,7 +623,7 @@ func IsReleaseServiceIdentity(service string) bool { return strings.HasPrefix(se
 // whose partial effects are unknown. The Job's own deadline enforces the
 // manifest timeout, so a hung command fails visibly rather than pending
 // forever.
-func renderReleaseJob(project compiler.ProjectDefinition, key, name, image string,
+func renderReleaseJob(project compiler.ProjectDefinition, key, image string,
 	labels map[string]string, options Options) *batchv1.Job {
 	application := project.Applications[key]
 	timeout := time.Duration(application.Deployment.ReleaseCommand.TimeoutMillis) * time.Millisecond
@@ -636,9 +636,11 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, name, image strin
 	// the application; the pod template does not. Release pods with the
 	// application's bare key and name label would match its immutable
 	// Service/Deployment selectors and join its health evaluation and member
-	// listings.
+	// listings. The name label goes through objectName so it stays within
+	// the 63-byte label limit: the application name is already maximal for
+	// long project and application keys, so appending a suffix overflows.
 	podLabels := maps.Clone(labels)
-	podLabels["app.kubernetes.io/name"] = name + "-release"
+	podLabels["app.kubernetes.io/name"] = objectName("release", project.Name, key)
 	podLabels[LabelService] = ReleaseServiceIdentity(key)
 
 	container := corev1.Container{
