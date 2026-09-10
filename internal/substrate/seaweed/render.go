@@ -636,7 +636,7 @@ func RenderS3Edge(namespace, domain string) []runtime.Object {
 	httpRoute := edge.IngressRoute(namespace, "seaweed-s3-http", labels,
 		[]string{edge.EntryPointWeb},
 		[]edge.Route{{
-			Match:       edge.HostMatch(domain, "/"),
+			Match:       edge.HTTPMatch(domain, "/"),
 			Service:     edge.Service{Name: S3Service, PortNumber: int(S3Port)},
 			Middlewares: []string{edge.RedirectMiddlewareName},
 		}},

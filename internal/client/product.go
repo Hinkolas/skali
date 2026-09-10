@@ -235,11 +235,12 @@ type RunTree struct {
 }
 
 type LogEntry struct {
-	Attempt int64     `json:"attempt"`
-	Seq     int64     `json:"seq"`
-	TS      time.Time `json:"ts"`
-	Level   string    `json:"level"`
-	Message string    `json:"message"`
+	Fields  map[string]any `json:"fields,omitempty"`
+	Attempt int64          `json:"attempt"`
+	Seq     int64          `json:"seq"`
+	TS      time.Time      `json:"ts"`
+	Level   string         `json:"level"`
+	Message string         `json:"message"`
 }
 
 type Target struct {
@@ -726,13 +727,17 @@ type RouteStatus struct {
 }
 
 type CertificateStatus struct {
-	Name        string     `json:"name"`
-	SecretName  string     `json:"secret_name"`
-	State       string     `json:"state"` // pending | issuing | active | failing | expired
-	Reason      string     `json:"reason,omitempty"`
-	Message     string     `json:"message,omitempty"`
-	NotAfter    *time.Time `json:"not_after"`
-	RenewalTime *time.Time `json:"renewal_time"`
+	FailedAttempts           int32      `json:"failed_attempts"`
+	LastFailureTime          *time.Time `json:"last_failure_time"`
+	NextRetryTime            *time.Time `json:"next_retry_time"`
+	NextPrivateKeySecretName string     `json:"next_private_key_secret_name,omitempty"`
+	Name                     string     `json:"name"`
+	SecretName               string     `json:"secret_name"`
+	State                    string     `json:"state"` // pending | issuing | active | failing | expired
+	Reason                   string     `json:"reason,omitempty"`
+	Message                  string     `json:"message,omitempty"`
+	NotAfter                 *time.Time `json:"not_after"`
+	RenewalTime              *time.Time `json:"renewal_time"`
 }
 
 // ValueEntry is one stored environment value; values are write-only, so an

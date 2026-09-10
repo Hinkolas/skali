@@ -112,3 +112,15 @@ type sink struct{ data []byte }
 
 func (s *sink) Write(p []byte) (int, error) { s.data = append(s.data, p...); return len(p), nil }
 func (s *sink) String() string              { return string(s.data) }
+
+func TestMultilineCheckpointRows(t *testing.T) {
+	tree := &client.RunTree{Run: client.Run{ID: "1", Kind: "deployment"}, Steps: []client.Step{{ID: "tls", Title: "Issue TLS certificate", Status: "waiting"}}}
+	lines := Lines(tree, func(string) []string {
+		return []string{"Attempt 2\nNext retry: 2026-09-10T23:00:00Z\nACME order invalid"}
+	})
+	require.Len(t, lines, 5)
+	require.Equal(t, "          Next retry: 2026-09-10T23:00:00Z", lines[3])
+	for _, line := range lines {
+		require.NotContains(t, line, "\n", "each counted row must be one physical terminal line")
+	}
+}

@@ -2,6 +2,8 @@ package reconcile
 
 import (
 	"context"
+	"fmt"
+	"github.com/Hinkolas/skali/internal/kube"
 	"testing"
 	"time"
 
@@ -146,4 +148,125 @@ func TestCertificateRenewalDoesNotBlock(t *testing.T) {
 	require.Equal(t, "succeeded", run.Status,
 		"a failing renewal of a valid certificate must never fail a deploy")
 	require.Equal(t, second.RevisionID, *f.target(t).ActiveRevisionID)
+}
+
+// A failed attempt in this rollout whose backoff outlives the budget fails
+// on the TLS checkpoint, rather than consuming the entire rollout timeout.
+func TestCertificateBackoffFailsPromptly(t *testing.T) {
+	f := certFixture(t, Config{RolloutDeadline: 10 * time.Minute})
+	ctx := context.Background()
+	result := f.executeDeploymentManifest(t, certManifest)
+	f.fake.SetFresh()
+	f.markHealthy(t)
+	failure := f.target(t).UpdatedAt.Add(time.Second)
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", module.CertificateStatus{
+		FailedAttempts: 2, LastFailureTime: failure, NextRetryTime: failure.Add(2 * time.Hour), Reason: "Failed", Message: "ACME order invalid: DNS points at the wrong IP", DNSNames: []string{"app.example.com"},
+	})
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, requeueHealthCheck, requeue)
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", run.Status)
+	step, found, err := f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+certName)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "failed", step.Status)
+	message, err := f.kernel.deps.Journal.LatestStepMessage(ctx, step.ID)
+	require.NoError(t, err)
+	require.Contains(t, message, "failed attempts: 2")
+	require.Contains(t, message, "next attempt: 3")
+	require.Contains(t, message, "Next automatic retry is after the rollout deadline")
+	require.Contains(t, message, "DNS points at the wrong IP")
+	require.Equal(t, result.RevisionID, *f.target(t).TargetRevisionID, "first deploy keeps converging after the run fails")
+}
+
+func TestCertificateRedeployRecoveryAndCheckpoint(t *testing.T) {
+	f := certFixture(t, Config{RolloutDeadline: 10 * time.Minute})
+	ctx := context.Background()
+	result := f.executeDeploymentManifest(t, certManifest)
+	f.fake.SetFresh()
+	f.markHealthy(t)
+	failure := f.target(t).UpdatedAt.Add(-time.Hour)
+	failing := module.CertificateStatus{FailedAttempts: 1, LastFailureTime: failure, NextRetryTime: failure.Add(time.Hour), Reason: "Failed", Message: "old order invalid", DNSNames: []string{"app.example.com"}}
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", failing)
+	retries := 0
+	f.kernel.deps.RetryCertificate = func(_ context.Context, ref kube.ObjectRef, promoted time.Time) (bool, error) {
+		require.Equal(t, certName, ref.Name)
+		require.Equal(t, f.target(t).UpdatedAt, promoted)
+		retries++
+		issuing := failing
+		issuing.Issuing = true
+		issuing.NextRetryTime = time.Time{}
+		issuing.Reason = "ManuallyTriggered"
+		f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", issuing)
+		return true, nil
+	}
+	for i := 0; i < 3; i++ {
+		_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 1, retries)
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "running", run.Status)
+	step, found, err := f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+certName)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "waiting", step.Status)
+	message, err := f.kernel.deps.Journal.LatestStepMessage(ctx, step.ID)
+	require.NoError(t, err)
+	require.Contains(t, message, "attempt 2")
+	// A successful issuance closes its own checkpoint and activates.
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", module.CertificateStatus{Ready: true, NotAfter: time.Now().Add(time.Hour)})
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	step, _, err = f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+certName)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", step.Status)
+	run, err = f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", run.Status)
+}
+
+func TestCertificateInspectionFailureDoesNotFailEarly(t *testing.T) {
+	f := certFixture(t, Config{RolloutDeadline: 10 * time.Minute})
+	ctx := context.Background()
+	result := f.executeDeploymentManifest(t, certManifest)
+	f.fake.SetFresh()
+	f.markHealthy(t)
+	failure := f.target(t).UpdatedAt.Add(time.Second)
+	cert := module.CertificateStatus{FailedAttempts: 1, LastFailureTime: failure, NextRetryTime: failure.Add(time.Hour)}
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", cert)
+	f.kernel.deps.InspectCertificate = func(context.Context, kube.ObjectRef) (*module.CertificateStatus, map[string]string, error) {
+		return &cert, nil, fmt.Errorf("orders: forbidden")
+	}
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "running", run.Status)
+	step, _, err := f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+certName)
+	require.NoError(t, err)
+	message, err := f.kernel.deps.Journal.LatestStepMessage(ctx, step.ID)
+	require.NoError(t, err)
+	require.Contains(t, message, "orders: forbidden")
+}
+
+func TestCertificateRecoveryDoesNotDependOnJournal(t *testing.T) {
+	f := certFixture(t, Config{RolloutDeadline: 10 * time.Minute})
+	ctx := context.Background()
+	f.executeDeploymentManifest(t, certManifest)
+	f.fake.SetFresh()
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	_, err = f.st.Pool.Exec(ctx, "DELETE FROM runs")
+	require.NoError(t, err)
+	failure := f.target(t).UpdatedAt.Add(-time.Hour)
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", module.CertificateStatus{LastFailureTime: failure, FailedAttempts: 1})
+	retries := 0
+	f.kernel.deps.RetryCertificate = func(context.Context, kube.ObjectRef, time.Time) (bool, error) { retries++; return true, nil }
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, 1, retries)
 }

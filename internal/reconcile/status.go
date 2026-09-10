@@ -73,13 +73,17 @@ type RouteStatus struct {
 // CertificateInfo projects one route certificate's lifecycle for status
 // surfaces. State is one of pending, issuing, active, failing, expired.
 type CertificateInfo struct {
-	Name        string
-	SecretName  string
-	State       string
-	Reason      string
-	Message     string
-	NotAfter    time.Time
-	RenewalTime time.Time
+	FailedAttempts           int32
+	LastFailureTime          time.Time
+	NextRetryTime            time.Time
+	NextPrivateKeySecretName string
+	Name                     string
+	SecretName               string
+	State                    string
+	Reason                   string
+	Message                  string
+	NotAfter                 time.Time
+	RenewalTime              time.Time
 }
 
 type PodInfo struct {
@@ -336,13 +340,17 @@ func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot,
 				status.Domain = certificate.DNSNames[0]
 			}
 			status.Certificate = &CertificateInfo{
-				Name:        name,
-				SecretName:  certificate.SecretName,
-				State:       certificateState(certificate, time.Now()),
-				Reason:      certificate.Reason,
-				Message:     certificate.Message,
-				NotAfter:    certificate.NotAfter,
-				RenewalTime: certificate.RenewalTime,
+				FailedAttempts:           certificate.FailedAttempts,
+				LastFailureTime:          certificate.LastFailureTime,
+				NextRetryTime:            certificate.NextRetryTime,
+				NextPrivateKeySecretName: certificate.NextPrivateKeySecretName,
+				Name:                     name,
+				SecretName:               certificate.SecretName,
+				State:                    certificateState(certificate, time.Now()),
+				Reason:                   certificate.Reason,
+				Message:                  certificate.Message,
+				NotAfter:                 certificate.NotAfter,
+				RenewalTime:              certificate.RenewalTime,
 			}
 		}
 		routes = append(routes, status)
@@ -357,10 +365,10 @@ func certificateState(certificate *module.CertificateStatus, now time.Time) stri
 		return "expired"
 	case certificate.Ready:
 		return "active"
-	case certificate.FailedAttempts > 0:
-		return "failing"
 	case certificate.Issuing:
 		return "issuing"
+	case certificate.FailedAttempts > 0:
+		return "failing"
 	case !certificate.NotAfter.IsZero():
 		// Not ready with a valid certificate on hand: a renewal that is
 		// not succeeding, which failing describes better than pending.

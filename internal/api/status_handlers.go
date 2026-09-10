@@ -74,13 +74,17 @@ type routeStatusPayload struct {
 }
 
 type certificatePayload struct {
-	Name        string     `json:"name"`
-	SecretName  string     `json:"secret_name"`
-	State       string     `json:"state"` // pending | issuing | active | failing | expired
-	Reason      string     `json:"reason,omitempty"`
-	Message     string     `json:"message,omitempty"`
-	NotAfter    *time.Time `json:"not_after"`
-	RenewalTime *time.Time `json:"renewal_time"`
+	FailedAttempts           int32      `json:"failed_attempts"`
+	LastFailureTime          *time.Time `json:"last_failure_time"`
+	NextRetryTime            *time.Time `json:"next_retry_time"`
+	NextPrivateKeySecretName string     `json:"next_private_key_secret_name,omitempty"`
+	Name                     string     `json:"name"`
+	SecretName               string     `json:"secret_name"`
+	State                    string     `json:"state"` // pending | issuing | active | failing | expired
+	Reason                   string     `json:"reason,omitempty"`
+	Message                  string     `json:"message,omitempty"`
+	NotAfter                 *time.Time `json:"not_after"`
+	RenewalTime              *time.Time `json:"renewal_time"`
 }
 
 type environmentStatusPayload struct {
@@ -166,11 +170,13 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 			}
 			if route.Certificate != nil {
 				certificate := &certificatePayload{
-					Name:       route.Certificate.Name,
-					SecretName: route.Certificate.SecretName,
-					State:      route.Certificate.State,
-					Reason:     route.Certificate.Reason,
-					Message:    route.Certificate.Message,
+					FailedAttempts:           route.Certificate.FailedAttempts,
+					NextPrivateKeySecretName: route.Certificate.NextPrivateKeySecretName,
+					Name:                     route.Certificate.Name,
+					SecretName:               route.Certificate.SecretName,
+					State:                    route.Certificate.State,
+					Reason:                   route.Certificate.Reason,
+					Message:                  route.Certificate.Message,
 				}
 				if !route.Certificate.NotAfter.IsZero() {
 					notAfter := route.Certificate.NotAfter
@@ -179,6 +185,14 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 				if !route.Certificate.RenewalTime.IsZero() {
 					renewal := route.Certificate.RenewalTime
 					certificate.RenewalTime = &renewal
+				}
+				if !route.Certificate.LastFailureTime.IsZero() {
+					value := route.Certificate.LastFailureTime
+					certificate.LastFailureTime = &value
+				}
+				if !route.Certificate.NextRetryTime.IsZero() {
+					value := route.Certificate.NextRetryTime
+					certificate.NextRetryTime = &value
 				}
 				routeEntry.Certificate = certificate
 			}

@@ -377,7 +377,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			// The plain-HTTP router redirects on `automatic` and serves the
 			// backend directly on `optional`, the per-route escape hatch for
 			// consumers that cannot follow redirects.
-			httpRoute := edge.Route{Match: match, Service: backend}
+			httpRoute := edge.Route{Match: edge.HTTPMatch(domain, route.Path), Service: backend}
 			if route.TLS == "automatic" {
 				httpRoute.Middlewares = []string{edge.RedirectMiddlewareName}
 			}

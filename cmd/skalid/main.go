@@ -240,6 +240,14 @@ func runServe() error {
 		kernelDeps.LiveRouteHosts = kubeClient.LiveRouteHosts
 		kernelDeps.JobLogs = kubeClient.TailJobLogs
 		kernelDeps.RefreshObservation = source.Refresh
+		if cfg.CertManager {
+			kernelDeps.RetryCertificate = func(ctx context.Context, ref kube.ObjectRef, promoted time.Time) (bool, error) {
+				return edgeobserve.RetryFailedCertificate(ctx, kubeClient.Dynamic, ref, promoted)
+			}
+			kernelDeps.InspectCertificate = func(ctx context.Context, ref kube.ObjectRef) (*module.CertificateStatus, map[string]string, error) {
+				return edgeobserve.InspectCertificate(ctx, kubeClient.Dynamic, ref)
+			}
+		}
 	}
 	if !cfg.ManagedCluster {
 		// Intercept EndpointSlices route to the host machine; skalid runs

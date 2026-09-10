@@ -32,14 +32,20 @@
 	{#each steps as step (step.id)}
 		{@const meta = stepMeta[step.status]}
 		{@const Icon = meta.icon}
+		{@const tls = step.key.startsWith('tls:')}
+		{@const isExpanded =
+			expanded[step.id] ?? (tls && (step.status === 'waiting' || step.status === 'failed'))}
 		<div style:padding-left="{depth * 18}px">
 			<button
 				type="button"
-				onclick={() => (expanded[step.id] = !expanded[step.id])}
+				aria-expanded={isExpanded}
+				onclick={() => (expanded[step.id] = !isExpanded)}
 				class="flex w-full cursor-pointer items-center gap-2.5 rounded-[9px] px-2 py-1.75 text-left transition-colors hover:bg-white/3"
 			>
 				<Icon size={15} class="flex-none {meta.class} {meta.spin ? 'animate-spin' : ''}" />
-				<span class="text-text-secondary min-w-0 truncate text-base">{step.title}</span>
+				<span class="text-text-secondary min-w-0 text-base {tls ? 'break-words' : 'truncate'}"
+					>{step.title}</span
+				>
 				{#if step.progress_total}
 					<span class="font-mono text-text-faint flex-none text-xs">
 						{step.progress_current ?? 0}/{step.progress_total}
@@ -49,9 +55,13 @@
 					{step.started_at ? formatDuration(step.started_at, step.finished_at) : ''}
 				</span>
 			</button>
-			{#if expanded[step.id]}
+			{#if isExpanded}
 				<div class="mb-1.5 ml-6.5">
-					<StepLogView stepId={step.id} live={step.status === 'running'} />
+					<StepLogView
+						stepId={step.id}
+						live={step.status === 'running' || step.status === 'waiting'}
+						{tls}
+					/>
 				</div>
 			{/if}
 			{#if step.children?.length}

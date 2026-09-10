@@ -252,6 +252,7 @@ applications:
 	require.NotNil(t, publicHTTP)
 	httpRoutes, _, err := unstructured.NestedSlice(publicHTTP.Object, "spec", "routes")
 	require.NoError(t, err)
+	require.Contains(t, httpRoutes[0].(map[string]any)["match"], `!PathPrefix("/.well-known/acme-challenge/")`)
 	require.Contains(t, httpRoutes[0].(map[string]any), "middlewares",
 		"automatic routes redirect plain HTTP")
 	require.NotNil(t, byName["Certificate/"+RouteTLSName("policies", "api", "public")])
@@ -262,6 +263,7 @@ applications:
 	require.NotNil(t, relaxedHTTP)
 	relaxedRoutes, _, err := unstructured.NestedSlice(relaxedHTTP.Object, "spec", "routes")
 	require.NoError(t, err)
+	require.Contains(t, relaxedRoutes[0].(map[string]any)["match"], `!PathPrefix("/.well-known/acme-challenge/")`)
 	require.NotContains(t, relaxedRoutes[0].(map[string]any), "middlewares",
 		"optional routes keep serving plain HTTP")
 	require.NotNil(t, byName["Certificate/"+RouteTLSName("policies", "api", "relaxed")])

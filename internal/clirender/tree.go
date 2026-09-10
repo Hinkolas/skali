@@ -92,10 +92,14 @@ func stepLines(step *client.Step, depth int, logs func(stepID string) []string, 
 	showTail := step.Status == "running" || step.Status == "waiting" || step.Status == "failed"
 	if logs != nil && showTail && len(step.Children) == 0 {
 		for _, entry := range logs(step.ID) {
-			if view.width > 0 {
-				entry = Truncate(entry, view.width-len(tailIndent)-1)
+			// Structured checkpoint messages contain several lines. Split
+			// before truncating and counting terminal rows for repaint.
+			for _, text := range strings.Split(entry, "\n") {
+				if view.width > 0 {
+					text = Truncate(text, view.width-len(tailIndent)-1)
+				}
+				lines = append(lines, tailIndent+view.style.Dim(text))
 			}
-			lines = append(lines, tailIndent+view.style.Dim(entry))
 		}
 	}
 	for index := range step.Children {

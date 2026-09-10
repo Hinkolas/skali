@@ -76,6 +76,8 @@ func ConvertCertificate(object *unstructured.Unstructured) (observe.Object, bool
 	}
 	status.NotAfter = timestamp(object, "status", "notAfter")
 	status.RenewalTime = timestamp(object, "status", "renewalTime")
+	status.LastFailureTime = timestamp(object, "status", "lastFailureTime")
+	status.NextPrivateKeySecretName, _, _ = unstructured.NestedString(object.Object, "status", "nextPrivateKeySecretName")
 	if attempts, found, _ := unstructured.NestedInt64(object.Object, "status", "failedIssuanceAttempts"); found {
 		status.FailedAttempts = int32(attempts)
 	}
@@ -105,6 +107,7 @@ func ConvertCertificate(object *unstructured.Unstructured) (observe.Object, bool
 	if !status.Ready && issuingReason != "" {
 		status.Reason, status.Message = issuingReason, issuingMessage
 	}
+	status.NextRetryTime = module.CertificateRetryTime(status.FailedAttempts, status.LastFailureTime, status.Issuing, status.Ready)
 	return observe.Object{
 		Ref: kube.ObjectRef{GVK: edge.CertificateGVK, Namespace: object.GetNamespace(),
 			Name: name, UID: object.GetUID()},

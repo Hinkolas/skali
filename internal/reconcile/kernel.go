@@ -73,15 +73,17 @@ type ClaimState struct {
 // Deps wires the kernel. Cluster and Source are nil in API-only mode (no
 // cluster resolved): the kernel then idles and reports observation unknown.
 type Deps struct {
-	Store          *store.Store
-	Deploy         *deploy.Service
-	Values         *valuestore.Service
-	Journal        *journal.Service
-	Registry       *module.Registry
-	Observed       *observe.Store
-	Source         *observe.KubeSource
-	Cluster        Cluster
-	LiveRouteHosts func(context.Context, uuid.UUID) (map[string]bool, error)
+	Store              *store.Store
+	Deploy             *deploy.Service
+	Values             *valuestore.Service
+	Journal            *journal.Service
+	Registry           *module.Registry
+	Observed           *observe.Store
+	Source             *observe.KubeSource
+	Cluster            Cluster
+	LiveRouteHosts     func(context.Context, uuid.UUID) (map[string]bool, error)
+	RetryCertificate   func(context.Context, kube.ObjectRef, time.Time) (bool, error)
+	InspectCertificate func(context.Context, kube.ObjectRef) (*module.CertificateStatus, map[string]string, error)
 	// Claims is nil without a substrate (API-only mode); database services
 	// then wait visibly instead of provisioning.
 	Claims ClaimManager
