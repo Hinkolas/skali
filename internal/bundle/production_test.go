@@ -227,6 +227,8 @@ func TestRenderProductionObjects(t *testing.T) {
 	redirect := objects.Skalid[8]
 	require.Equal(t, "IngressRoute", redirect.GetKind())
 	require.Equal(t, "skalid-http", redirect.GetName())
+	consoleRules, _, _ := unstructured.NestedSlice(redirect.Object, "spec", "routes")
+	require.Contains(t, consoleRules[0].(map[string]any)["match"], "!PathPrefix(`/.well-known/acme-challenge/`)")
 	redirectPoints, _, _ := unstructured.NestedStringSlice(redirect.Object, "spec", "entryPoints")
 	require.Equal(t, []string{"web"}, redirectPoints)
 	redirectJSON, err := redirect.MarshalJSON()
@@ -303,6 +305,8 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.Equal(t, "Host(`registry.example.com`) && PathPrefix(`/token`)", tokenRule["match"])
 	require.Equal(t, "skalid", tokenRule["services"].([]any)[0].(map[string]any)["name"])
 	require.NotNil(t, registryRedirect)
+	redirectRules, _, _ := unstructured.NestedSlice(registryRedirect.Object, "spec", "routes")
+	require.Contains(t, redirectRules[0].(map[string]any)["match"], "!PathPrefix(`/.well-known/acme-challenge/`)")
 	require.NotNil(t, middleware)
 	require.Equal(t, "redirect-https", middleware.GetName())
 

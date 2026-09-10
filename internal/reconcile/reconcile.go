@@ -344,7 +344,8 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			"blocked", strings.Join(blocked, "; "))
 	}
 
-	if healthy {
+	tlsBlocked, tlsFailed := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID))
+	if healthy && !tlsBlocked {
 		return retireRequeue, k.activate(ctx, attachment, target, rev)
 	}
 	if attachment.created {
@@ -356,7 +357,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		// Release commands extend the deadline by their own budget: their
 		// Jobs enforce the manifest timeouts, so the rollout deadline only
 		// needs to cover everything after them.
-		if time.Since(target.UpdatedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline)+releaseBudget(rev.Definition) {
+		if tlsFailed || time.Since(target.UpdatedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline)+releaseBudget(rev.Definition) {
 			// Product policy: past the deadline the run fails
 			// with diagnostics and the target returns to the last active
 			// revision when one exists. The guarded compare-and-swap makes
@@ -387,7 +388,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			return soonest(requeueHealthCheck, retireRequeue), nil
 		}
 		attachment.waitStep(ctx, "verify", "Verify health",
-			strings.Join(healthSummary(statuses), "; "))
+			strings.Join(healthSummary(statuses), "\n"))
 	}
 	return soonest(requeueHealthCheck, retireRequeue), nil
 }
@@ -850,7 +851,11 @@ func healthSummary(statuses []ServiceStatus) []string {
 	for _, status := range statuses {
 		line := status.Key + ": " + string(status.Health)
 		if len(status.Diagnostics) > 0 {
-			line += " (" + status.Diagnostics[0].Message + ")"
+			if strings.HasPrefix(status.Diagnostics[0].Code, "certificate-") {
+				line += " (see TLS certificate checkpoint)"
+			} else {
+				line += " (" + status.Diagnostics[0].Message + ")"
+			}
 		}
 		lines = append(lines, line)
 	}

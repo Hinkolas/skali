@@ -150,7 +150,7 @@ spec:
   - web
   routes:
   - kind: Rule
-    match: Host("hello.localhost") && PathPrefix("/")
+    match: Host("hello.localhost") && PathPrefix("/") && !PathPrefix("/.well-known/acme-challenge/")
     middlewares:
     - name: redirect-https
     services:

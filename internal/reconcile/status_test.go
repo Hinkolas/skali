@@ -22,6 +22,7 @@ func TestCertificateState(t *testing.T) {
 	}{
 		{"fresh, nothing happened yet", module.CertificateStatus{}, "pending"},
 		{"issuing in flight", module.CertificateStatus{Issuing: true}, "issuing"},
+		{"retry in flight", module.CertificateStatus{Issuing: true, FailedAttempts: 2}, "issuing"},
 		{"failed attempts", module.CertificateStatus{FailedAttempts: 2}, "failing"},
 		{"issued and valid", module.CertificateStatus{Ready: true, NotAfter: future}, "active"},
 		{"renewal failing on a valid certificate",

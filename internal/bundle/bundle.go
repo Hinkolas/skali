@@ -859,7 +859,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`+"`%[3]s`"+`) && PathPrefix(`+"`/`"+`)
+    - match: Host(`+"`%[3]s`"+`) && PathPrefix(`+"`/`"+`) && !PathPrefix(`+"`/.well-known/acme-challenge/`"+`)
       kind: Rule
       middlewares:
         - name: redirect-https
@@ -995,7 +995,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`+"`%[2]s`"+`) && PathPrefix(`+"`/`"+`)
+    - match: Host(`+"`%[2]s`"+`) && PathPrefix(`+"`/`"+`) && !PathPrefix(`+"`/.well-known/acme-challenge/`"+`)
       kind: Rule
       middlewares:
         - name: redirect-https
@@ -1037,6 +1037,15 @@ rules:
   - apiGroups: [cert-manager.io]
     resources: [certificates]
     verbs: ["*"]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates/status]
+    verbs: [get, update]
+  - apiGroups: [cert-manager.io]
+    resources: [certificaterequests]
+    verbs: [get, list]
+  - apiGroups: [acme.cert-manager.io]
+    resources: [orders, challenges]
+    verbs: [get, list]
   - apiGroups: [discovery.k8s.io]
     resources: [endpointslices]
     verbs: ["*"]

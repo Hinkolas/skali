@@ -1020,9 +1020,22 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 		TTY:   tty,
 		Style: clirender.StyleFor(out),
 		Logs: func(stepID string) []string {
-			logs, _, err := api.StepLogs(ctx, stepID, "", 0)
+			logs, cursor, err := api.StepLogs(ctx, stepID, "", 0)
 			if err != nil || len(logs) == 0 {
 				return nil
+			}
+			if logs[len(logs)-1].Fields["tls"] == true {
+				// A TLS checkpoint is a series of complete snapshots. Reach
+				// its latest page, then show current state rather than three
+				// superseded snapshots. The full history remains in run logs.
+				for len(logs) == 500 && cursor != "" {
+					page, next, err := api.StepLogs(ctx, stepID, cursor, 0)
+					if err != nil || len(page) == 0 {
+						break
+					}
+					logs, cursor = page, next
+				}
+				return clirender.CertificateLogLines(logs[len(logs)-1], time.Now())
 			}
 			tail := logs
 			if len(tail) > 3 {

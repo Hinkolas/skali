@@ -4225,6 +4225,18 @@ components:
       type: object
       required: [name, secret_name, state, not_after, renewal_time]
       properties:
+        failed_attempts:
+          type: integer
+          description: Consecutive failed issuance attempts; reset on successful issuance.
+        last_failure_time:
+          type: [string, "null"]
+          format: date-time
+        next_retry_time:
+          type: [string, "null"]
+          format: date-time
+          description: Estimated using bundled cert-manager backoff; null during active issuance.
+        next_private_key_secret_name:
+          type: string
         name:
           type: string
         secret_name:

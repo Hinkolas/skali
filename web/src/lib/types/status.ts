@@ -37,6 +37,10 @@ export interface PodStatus {
 export type CertificateState = 'pending' | 'issuing' | 'active' | 'failing' | 'expired';
 
 export interface CertificateStatus {
+	failed_attempts: number;
+	last_failure_time: string | null;
+	next_retry_time: string | null;
+	next_private_key_secret_name?: string;
 	name: string;
 	secret_name: string;
 	state: CertificateState;

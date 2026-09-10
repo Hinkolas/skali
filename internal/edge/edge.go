@@ -64,6 +64,12 @@ func HostMatch(domain, path string) string {
 	return "Host(" + strconv.Quote(domain) + ") && PathPrefix(" + strconv.Quote(path) + ")"
 }
 
+// HTTPMatch reserves HTTP-01 for the solver, independently of router
+// priority and whether a usable HTTPS certificate exists yet.
+func HTTPMatch(domain, path string) string {
+	return HostMatch(domain, path) + ` && !PathPrefix("/.well-known/acme-challenge/")`
+}
+
 // IngressRoute builds a traefik.io/v1alpha1 IngressRoute. A non-empty
 // tlsSecret makes the routers TLS-only on their entrypoints.
 func IngressRoute(namespace, name string, labels map[string]string, entryPoints []string, routes []Route, tlsSecret string) *unstructured.Unstructured {

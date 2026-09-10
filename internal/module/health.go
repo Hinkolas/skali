@@ -121,13 +121,27 @@ type CertificateStatus struct {
 	Issuing bool
 	// Reason and Message carry the Ready condition's explanation, falling
 	// back to the Issuing condition while issuance is in flight.
-	Reason         string
-	Message        string
-	NotAfter       time.Time
-	RenewalTime    time.Time
-	FailedAttempts int32
-	SecretName     string
-	DNSNames       []string
+	Reason                   string
+	Message                  string
+	NotAfter                 time.Time
+	RenewalTime              time.Time
+	FailedAttempts           int32
+	LastFailureTime          time.Time
+	NextRetryTime            time.Time // estimate from the bundled cert-manager backoff; zero during issuance
+	NextPrivateKeySecretName string
+	SecretName               string
+	DNSNames                 []string
+}
+
+// CertificateRetryTime follows the bundled cert-manager defaults (1h to
+// 32h). This is an estimate: controller scheduling and CA rate limits can
+// delay the attempt further. Never confuse renewalTime with failure retry.
+func CertificateRetryTime(failed int32, lastFailure time.Time, issuing, ready bool) time.Time {
+	if lastFailure.IsZero() || issuing || ready {
+		return time.Time{}
+	}
+	shift := min(max(failed-1, 0), 5)
+	return lastFailure.Add(time.Hour * time.Duration(1<<shift))
 }
 
 // SourceStatus describes the freshness of the observation source itself.

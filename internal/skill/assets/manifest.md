@@ -146,7 +146,28 @@ serves plain HTTP only. Local development serves every route over plain
 HTTP on `*.localhost` domains regardless of the policy. On production, a
 first deploy of a route waits for its certificate: the run fails at the
 rollout deadline with the issuance reason if DNS does not point at the
-cluster yet, and a redeploy after fixing DNS picks the certificate up.
+cluster yet. Each route has an **Issue TLS certificate** checkpoint with the
+issuance attempt, consecutive failure count, last failure, estimated next retry,
+and the current CertificateRequest, ACME Order and validation challenge details.
+The CLI preserves these as separate lines; the console follows waiting
+checkpoints live and shows a retry countdown. Retry times use the bundled
+cert-manager backoff (1 hour, doubling up to 32 hours); controller scheduling
+and CA rate limits can delay an attempt further.
+
+After fixing DNS, redeploying requests a fresh issuance for a failed certificate
+that has no usable certificate. This uses cert-manager's manual-renewal
+transition once for a failure predating that promotion; repeated reconciliation
+and daemon restarts do not bypass backoff again. A new failure whose next retry
+falls after the rollout deadline fails the TLS checkpoint promptly. A first
+deployment keeps converging after its run fails, so late issuance can still
+activate it. A still-valid certificate with a failing renewal does not block a
+deployment.
+
+Check public A **and** AAAA records and inbound HTTP port 80 when validation
+fails. HTTP routers reserve `/.well-known/acme-challenge/` for cert-manager's
+solver and do not redirect it to HTTPS. If the ACME response reports a rate
+limit, honor the CA's retry window before redeploying; forcing another attempt
+does not reset a CA limit.
 
 `strategy` selects how the edge balances requests across an application's
 replicas: `round-robin` rotates evenly, `least-requests` sends each

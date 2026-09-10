@@ -128,3 +128,21 @@ func certificateObject(status map[string]any) *unstructured.Unstructured {
 		"status": status,
 	}}
 }
+
+func TestCertificateRetrySchedule(t *testing.T) {
+	failure := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		attempts int64
+		hours    int
+	}{{0, 1}, {1, 1}, {2, 2}, {3, 4}, {6, 32}, {1000000, 32}} {
+		obj := certificateObject(map[string]any{"failedIssuanceAttempts": tc.attempts, "lastFailureTime": failure.Format(time.RFC3339)})
+		converted, ok := ConvertCertificate(obj)
+		require.True(t, ok)
+		require.Equal(t, failure, converted.Certificate.LastFailureTime)
+		require.Equal(t, failure.Add(time.Duration(tc.hours)*time.Hour), converted.Certificate.NextRetryTime)
+	}
+	obj := certificateObject(map[string]any{"failedIssuanceAttempts": int64(3), "lastFailureTime": failure.Format(time.RFC3339), "nextPrivateKeySecretName": "next-key", "conditions": []any{map[string]any{"type": "Issuing", "status": "True"}}})
+	converted, _ := ConvertCertificate(obj)
+	require.True(t, converted.Certificate.NextRetryTime.IsZero(), "an active retry is not in backoff")
+	require.Equal(t, "next-key", converted.Certificate.NextPrivateKeySecretName)
+}

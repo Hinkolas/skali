@@ -309,6 +309,15 @@ func findCertificate(observed []module.ObservedResource, name string) *module.Ce
 
 func certificateDetail(certificate *module.CertificateStatus) string {
 	parts := []string{}
+	if certificate.FailedAttempts > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed issuance attempts", certificate.FailedAttempts))
+	}
+	if certificate.Issuing {
+		parts = append(parts, fmt.Sprintf("issuing attempt %d", certificate.FailedAttempts+1))
+	}
+	if !certificate.NextRetryTime.IsZero() {
+		parts = append(parts, "next retry estimated at "+certificate.NextRetryTime.UTC().Format(time.RFC3339))
+	}
 	if certificate.Reason != "" {
 		parts = append(parts, certificate.Reason)
 	}
