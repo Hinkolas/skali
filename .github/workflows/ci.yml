@@ -3,6 +3,12 @@ name: ci
 # Shared checks for contributions and releases: every pull request and
 # (via workflow_call) every release tag. Advisory scans
 # live in audit.yml so a new upstream CVE cannot turn an unrelated push red.
+#
+# On pull requests the `changes` job classifies the diff and the go, web and
+# release-config jobs only run for the areas that changed; a docs-only PR
+# runs the secret scan and nothing else. A job skipped by its `if` reports
+# as passing for branch protection, so the required-check names stay stable.
+# Release tags run everything.
 on:
   pull_request:
   workflow_call:
@@ -18,6 +24,57 @@ concurrency:
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.classify.outputs.go }}
+      web: ${{ steps.classify.outputs.web }}
+      release: ${{ steps.classify.outputs.release }}
+    steps:
+      - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          go=false; web=false; release=false
+          if [ "$EVENT" != pull_request ]; then
+            # Tags (via release.yml) and manual runs check everything.
+            go=true; web=true; release=true
+          elif ! files=$(git diff --name-only "$BASE...$HEAD"); then
+            echo "::warning::could not diff $BASE...$HEAD; running every check"
+            go=true; web=true; release=true
+          else
+            # First match wins. Anything not listed is treated as source and
+            # runs the Go checks plus the release rehearsal, so a new
+            # directory defaults to being checked. Only top-level markdown is
+            # documentation: markdown under internal/ is embedded in binaries.
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              case "$f" in
+                .github/workflows/ci.yml) go=true; web=true; release=true ;;
+                README.md|ROADMAP.md|RELEASE_CHECKLIST.md|SECURITY.md|LICENSE|docs/*|.github/*|.claude/*|.gitignore|.gitleaks.toml|.env.example|Taskfile.yml|compose.yaml) ;;
+                web/*) web=true; release=true ;;
+                .goreleaser.yaml|.dockerignore|scripts/*|build/*|install.sh) release=true ;;
+                *) go=true; release=true ;;
+              esac
+            done <<EOT
+          $files
+          EOT
+          fi
+          echo "go=$go web=$web release=$release"
+          {
+            echo "go=$go"
+            echo "web=$web"
+            echo "release=$release"
+          } >>"$GITHUB_OUTPUT"
+
   secrets:
     runs-on: ubuntu-latest
     steps:
@@ -37,6 +94,8 @@ jobs:
           "$work/gitleaks" git --redact --config .gitleaks.toml --log-opts=--all .
 
   go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     services:
       # DB-backed tests create an ephemeral database per test on this
@@ -92,6 +151,8 @@ jobs:
           sudo /tmp/skali-backup-tests -test.run 'TestArchive|TestLinuxNonRoot|TestTarUntar'
 
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -109,7 +170,11 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  # The snapshot rehearsal builds the console and every binary, so it runs
+  # for Go and web changes as well as for release tooling itself.
   release-config:
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

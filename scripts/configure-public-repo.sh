@@ -41,6 +41,11 @@ gh api --method PATCH "repos/$repo" --input - --silent <<'JSON'
 JSON
 gh api --method PUT "repos/$repo/branches/main/protection" \
   --input "$root/.github/main-protection.json" --silent
+# Small PRs are fire-and-forget: gh pr merge --auto merges once the required
+# checks pass and the branch is removed afterwards.
+gh api --method PATCH "repos/$repo" --input - --silent <<'JSON'
+{"allow_auto_merge":true,"delete_branch_on_merge":true}
+JSON
 
 gh api "repos/$repo/private-vulnerability-reporting"
 gh api "repos/$repo/vulnerability-alerts" --silent
