@@ -87,6 +87,10 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, intercepts, env.Priority,
 		k.deps.Observed.Snapshot(environmentID))
 	if err != nil {
+		var gateway *hostGatewayUnavailable
+		if errors.As(err, &gateway) {
+			return k.waitHostGateway(ctx, attachment, environmentID, target, rev, gateway.cause)
+		}
 		// An unrenderable revision is permanent for this target: journal the
 		// diagnostic, never prune (compiler-error absence must not delete
 		// anything), and wait for a new target instead of spinning. The
@@ -100,6 +104,10 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		}
 		return 0, nil
 	}
+	// A pass that waited on the host gateway closes that wait now that the
+	// desired state rendered.
+	attachment.resolveWait(ctx, "render", "Render desired state",
+		[]string{"the host gateway resolved; desired state rendered"})
 	batches, waiting, err := planBatches(rev.Definition)
 	if err != nil {
 		slog.Warn("reconcile: ordering failed", "environment", environmentID, "error", err)
@@ -385,6 +393,37 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 }
 
 // soonest picks the shorter of two requeue delays, ignoring zero (none).
+// hostGatewayUnavailable marks a desired set blocked on the host gateway
+// name not resolving; unlike every other desired-set error it is transient.
+type hostGatewayUnavailable struct{ cause error }
+
+func (e *hostGatewayUnavailable) Error() string { return e.cause.Error() }
+func (e *hostGatewayUnavailable) Unwrap() error { return e.cause }
+
+// waitHostGateway handles a desired set blocked on the host gateway. On the
+// local platform the CoreDNS entry for host.k3d.internal lands after the
+// cluster boots (and is repaired by the next skali dev pass when a node
+// restart dropped it), so a lookup that fails now succeeds a little later
+// and the resolver caches nothing on failure. The pass waits visibly and
+// re-picks on the health cadence instead of failing the run. An adopted
+// rollout run past its deadline fails as any stalled rollout would; the
+// target stays either way, so a late resolution still activates.
+func (k *Kernel) waitHostGateway(ctx context.Context, attachment *runAttachment, environmentID uuid.UUID,
+	target store.EnvironmentTarget, rev *revision.Revision, cause error) (time.Duration, error) {
+	slog.Warn("reconcile: host gateway unresolved, waiting", "environment", environmentID, "error", cause)
+	if attachment.adopted() && rolloutRun(attachment.run.Kind) &&
+		time.Since(target.UpdatedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline) {
+		attachment.completeStep(ctx, "render", "Render desired state", journal.StepFailed,
+			[]string{"rendering the desired state failed: " + cause.Error(),
+				"the host gateway did not resolve within the rollout deadline"})
+		attachment.finish(ctx, journal.RunFailed)
+		return requeueHealthCheck, nil
+	}
+	attachment.waitStep(ctx, "render", "Render desired state",
+		"waiting for the host gateway to resolve in the cluster: "+cause.Error())
+	return requeueHealthCheck, nil
+}
+
 func soonest(a, b time.Duration) time.Duration {
 	if b > 0 && (a <= 0 || b < a) {
 		return b
@@ -620,7 +659,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		}
 		hostIP, err := k.deps.HostGateway(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("reconcile: resolve host gateway: %w", err)
+			return nil, &hostGatewayUnavailable{cause: fmt.Errorf("reconcile: resolve host gateway: %w", err)}
 		}
 		interceptHostIP = hostIP
 		interceptPorts = make(map[string]map[string]int32, len(intercepts))
