@@ -113,6 +113,20 @@ func TestArtifactChangeUpdatesTheApplication(t *testing.T) {
 	require.Equal(t, "artifact "+strings.Repeat("2", 12)+" replaces "+strings.Repeat("1", 12), updated.Detail)
 }
 
+func TestRolloutStrategyChangeIsExplained(t *testing.T) {
+	t.Parallel()
+	active := buildRevision(t, strings.Replace(baseManifest, "    image: example.invalid/web:1\n",
+		"    image: example.invalid/web:1\n    deployment:\n      rollout:\n        strategy: rolling\n", 1), nil)
+	candidate := buildRevision(t, baseManifest, nil)
+
+	result := Diff(active, candidate)
+	updated := changeFor(t, result, "applications.web")
+	require.Equal(t, ActionUpdate, updated.Action)
+	require.False(t, updated.Destructive)
+	require.Contains(t, updated.Detail, "configuration changed")
+	require.Contains(t, updated.Detail, "rollout strategy rolling to blue-green")
+}
+
 func TestPendingArtifactPlansWithoutAHash(t *testing.T) {
 	t.Parallel()
 	active := buildRevision(t, baseManifest, nil)

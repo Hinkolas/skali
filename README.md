@@ -12,7 +12,7 @@ it.
 
 - **Applications** from a Dockerfile or a prebuilt image, replicated, with
   readiness and liveness probes, release commands for migrations, and
-  zero-downtime rollouts.
+  blue-green rollouts by default (rolling and recreate selectable).
 - **Managed PostgreSQL** (CloudNativePG) and **S3 buckets** (SeaweedFS),
   provisioned from the manifest with credentials injected as environment
   variables.

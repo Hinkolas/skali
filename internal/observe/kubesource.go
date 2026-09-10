@@ -176,7 +176,7 @@ func (k *KubeSource) register() {
 		func(o metav1.ListOptions) (watch.Interface, error) {
 			return core.Services(all).Watch(context.Background(), o)
 		},
-		managed, ""), convertPlain(schema.GroupVersionKind{Version: "v1", Kind: "Service"}, module.KindService))
+		managed, ""), convertService)
 
 	k.addObjectInformer("Ingress", &networkingv1.Ingress{}, k.listWatch("Ingress",
 		func(o metav1.ListOptions) (runtime.Object, error) {
@@ -625,6 +625,7 @@ func convertDeployment(raw any) (Object, bool) {
 		Kind: module.KindWorkload, Name: service,
 		Labels:      deployment.Labels,
 		Environment: environment, Service: service, Revision: revision,
+		Color:         deployment.Labels[rendering.LabelColor],
 		Generation:    deployment.Generation,
 		ManagedFields: deployment.ManagedFields,
 		Workload: &module.WorkloadStatus{
@@ -712,8 +713,9 @@ func convertPod(raw any) (Object, bool) {
 		Kind: module.KindPod, Name: pod.Name,
 		Labels:      pod.Labels,
 		Environment: environment, Service: service, Revision: revision,
-		Node: pod.Spec.NodeName,
-		Pod:  status,
+		Color: pod.Labels[rendering.LabelColor],
+		Node:  pod.Spec.NodeName,
+		Pod:   status,
 	}, true
 }
 
@@ -763,6 +765,29 @@ func convertNamespace(raw any) (Object, bool) {
 
 // convertPlain projects kinds that carry identity but no typed status
 // (Services, Ingresses, PVCs): enough for ownership indexing and pruning.
+// convertService projects a Service with its live selector: the kernel reads
+// the serving color of a blue-green application from it, so the switch
+// decision rests on what the cluster routes today, never on intent.
+func convertService(raw any) (Object, bool) {
+	service, ok := raw.(*corev1.Service)
+	if !ok {
+		return Object{}, false
+	}
+	environment, key, revision := identity(service)
+	return Object{
+		Ref: kube.ObjectRef{
+			GVK:       schema.GroupVersionKind{Version: "v1", Kind: "Service"},
+			Namespace: service.Namespace, Name: service.Name, UID: service.UID,
+		},
+		Kind: module.KindService, Name: service.Name,
+		Labels:      service.Labels,
+		Environment: environment, Service: key, Revision: revision,
+		Color:      service.Spec.Selector[rendering.LabelColor],
+		Selector:   service.Spec.Selector,
+		Generation: service.Generation,
+	}, true
+}
+
 func convertPlain(gvk schema.GroupVersionKind, kind string) func(any) (Object, bool) {
 	return func(raw any) (Object, bool) {
 		meta, ok := raw.(metav1.Object)

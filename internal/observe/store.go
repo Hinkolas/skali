@@ -29,8 +29,15 @@ type Object struct {
 	Environment uuid.UUID // uuid.Nil when the object is not environment-owned
 	Service     string
 	Revision    string
-	Node        string // pods only
-	Generation  int64
+	// Color is the skali.dev/color label of blue-green workloads and their
+	// pods; for Services it is the color the live selector names. Empty on
+	// uncolored (rolling, recreate, legacy) objects.
+	Color string
+	// Selector is the live spec.selector of Services, the source of truth
+	// for which color currently receives traffic.
+	Selector   map[string]string
+	Node       string // pods only
+	Generation int64
 
 	// ManagedFields are retained for workload objects so the scale planner
 	// can decide ownership transitions without a request-time read.
@@ -422,6 +429,7 @@ func (s Snapshot) ForService(key string) []module.ObservedResource {
 				Kind:           obj.Kind,
 				Name:           obj.Name,
 				Revision:       obj.Revision,
+				Color:          obj.Color,
 				Workload:       obj.Workload,
 				Pod:            obj.Pod,
 				Autoscaler:     obj.Autoscaler,

@@ -45,6 +45,10 @@ type podPayload struct {
 	Restarts  int32      `json:"restarts"`
 	Reason    string     `json:"reason,omitempty"`
 	StartedAt *time.Time `json:"started_at"`
+	// Color is the pod's blue-green color (empty on uncolored workloads);
+	// Serving reports whether the application's Service selects it.
+	Color   string `json:"color,omitempty"`
+	Serving bool   `json:"serving"`
 }
 
 type serviceStatusPayload struct {
@@ -143,6 +147,8 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 				Ready:    pod.Ready,
 				Restarts: pod.Restarts,
 				Reason:   pod.Reason,
+				Color:    pod.Color,
+				Serving:  pod.Serving,
 			}
 			if !pod.Started.IsZero() {
 				started := pod.Started

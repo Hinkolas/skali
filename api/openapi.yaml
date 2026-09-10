@@ -4134,7 +4134,7 @@ components:
 
     PodStatus:
       type: object
-      required: [name, node, phase, ready, restarts]
+      required: [name, node, phase, ready, restarts, serving]
       properties:
         name:
           type: string
@@ -4151,6 +4151,17 @@ components:
         started_at:
           type: [string, "null"]
           format: date-time
+        color:
+          type: string
+          description: >-
+            The pod's blue-green color (its Deployment's pod template hash).
+            Absent on rolling and recreate workloads.
+        serving:
+          type: boolean
+          description: >-
+            Whether the application's Service selects this pod. During a
+            blue-green switch the new color reports false until traffic
+            moves; the previous color reports false while it drains.
 
     ServiceStatus:
       type: object

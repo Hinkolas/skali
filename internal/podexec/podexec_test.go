@@ -184,3 +184,35 @@ func TestResolveOverrides(t *testing.T) {
 	require.Equal(t, []string{"bun", "run", "seed:demo"}, session.Command)
 	require.False(t, session.TTY)
 }
+
+// A blue-green application's default exec target is a pod of the color the
+// Service selects: a newer pod of a color still starting (or already
+// retiring) is not what an operator means by "the running service". An
+// explicit pod name bypasses the preference.
+func TestResolvePrefersServingColor(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	service, observed, envID, namespace := testEnv(t)
+
+	started := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	observed.SetColoredPod(envID, namespace, "web", "web-serving", "node-a", "aaaaaaaaaa",
+		module.PodStatus{Phase: "Running", Ready: true, Started: started})
+	observed.SetColoredPod(envID, namespace, "web", "web-pending", "node-a", "bbbbbbbbbb",
+		module.PodStatus{Phase: "Running", Ready: true, Started: started.Add(time.Minute)})
+	observed.SetService(envID, namespace, "app-demo-web", "web", map[string]string{"skali.dev/color": "aaaaaaaaaa"})
+
+	session, err := service.Resolve(ctx, envID, Options{Service: "web"})
+	require.NoError(t, err)
+	require.Equal(t, "web-serving", session.Pod)
+
+	session, err = service.Resolve(ctx, envID, Options{Service: "web", Pod: "web-pending"})
+	require.NoError(t, err)
+	require.Equal(t, "web-pending", session.Pod)
+
+	// A Service selecting a color no candidate carries leaves every pod
+	// eligible rather than failing the exec.
+	observed.SetService(envID, namespace, "app-demo-web", "web", map[string]string{"skali.dev/color": "cccccccccc"})
+	session, err = service.Resolve(ctx, envID, Options{Service: "web"})
+	require.NoError(t, err)
+	require.Equal(t, "web-pending", session.Pod)
+}

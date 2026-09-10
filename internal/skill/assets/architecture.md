@@ -69,19 +69,50 @@ skali drives deployments through signals the application must provide:
   confirms the process can serve requests is the minimum; readiness
   should fail while the app cannot reach its dependencies.
 - Migrations. `deployment.releaseCommand` runs once with the new image
-  and resolved service outputs before replicas roll forward. Put schema
-  migrations there, and keep them backward compatible with the previous
-  release, since old replicas keep serving during the rollout.
+  and resolved service outputs before the new version goes live. Put
+  schema migrations there and keep them compatible with the release that
+  is still serving: under the default `blue-green` the old version keeps
+  serving until the switch, under `rolling` both versions serve at once.
+  Expand in one release, contract in a later one.
 - Shutdown. Replicas receive SIGTERM and have `shutdown.gracePeriod`
   (default 30s) to finish in-flight work. Handle SIGTERM: stop accepting
   work, drain, exit.
+
+## Choosing a rollout strategy
+
+Apply in order; the first match wins.
+
+1. The application declares `volumes:`: `recreate`. Nothing else compiles.
+   Every deploy is downtime, so keep such applications off the
+   user-facing path.
+2. The application runs many replicas (more than about ten) or the
+   cluster cannot hold twice its replicas for a few minutes, and every
+   release is compatible with the previous one (APIs, sessions, caches,
+   schema): `rolling` with `maxUnavailable: 0` and the `maxSurge` the
+   cluster can absorb.
+3. Otherwise leave `rollout` out. The default `blue-green` fits web
+   frontends, APIs, workers, and anything that serves content-hashed
+   assets: the new version is fully ready before it takes any traffic,
+   old and new never serve together, and a broken version never goes
+   live. The price is double replicas during the deploy; size
+   `resources.requests` so the cluster can hold them.
+
+One gap remains under every strategy: browsers that loaded the previous
+version may request assets only that version had. Keep the framework's
+new-deployment detection and reload on (SvelteKit `version.pollInterval`,
+Next.js build id checks); `blue-green` shrinks that window but cannot
+close it.
 
 ## Scaling and placement
 
 Declare capacity in the manifest, not in code:
 
-- `scaling.replicas` with `min: 2` or more for anything user-facing, so
-  deploys and node failures do not cause downtime.
+- `scaling.replicas` with `min: 2` or more for anything user-facing, so a
+  node failure or a replica restart does not cause downtime. Deploys are
+  covered by the rollout strategy, not by replica count.
+- `resources.requests` small enough that the cluster can run twice the
+  replicas during a `blue-green` deploy; when it cannot, follow the
+  rollout rule above.
 - CPU autoscaling (`scaling.autoscaling.cpu.targetUtilization`) when
   load varies; it requires `max > min`.
 - `placement.spread` with `enforcement: preferred` keeps replicas on
@@ -125,6 +156,9 @@ ignore both blocks entirely.
   from service outputs.
 - Schema migrations in `deployment.releaseCommand`, backward compatible
   for one release.
+- Rollout strategy chosen by the rule above: default `blue-green`,
+  `rolling` only for many replicas with releases compatible with the
+  previous one, `recreate` only with volumes.
 - SIGTERM handled; in-flight work fits the grace period.
 - At least two replicas for user-facing applications; no volume unless a
   dependency leaves no choice.
@@ -195,10 +229,6 @@ applications:
       releaseCommand:
         command: ["/app/wiki", "migrate", "up"]
         timeout: 5m
-      rollout:
-        strategy: rolling
-        maxUnavailable: 0
-        maxSurge: 1
     shutdown:
       gracePeriod: 30s
 

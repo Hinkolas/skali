@@ -139,7 +139,10 @@ go run ./cmd/skali compile \
 The editor schemas in [`schemas/`](../schemas/) are generated from the Go
 types: run `task generate` (or `go generate ./internal/manifest`) after
 changing manifest wire types, and keep `internal/skill/assets/` in step with
-them; a test compiles every manifest fence in the skill.
+them; a test compiles every manifest fence in the skill. When a compiled
+default changes, refresh the revision and render goldens with
+`UPDATE_GOLDEN=1 go test ./internal/revision ./internal/kubernetes` and read
+the diff before keeping it.
 
 ## Tests
 

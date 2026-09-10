@@ -21,7 +21,8 @@ Working and used daily:
   on mixed-architecture clusters.
 - Applications, Postgres databases (shared CNPG substrate), S3 buckets
   (SeaweedFS), persistent volumes (local-path or Longhorn), routes with
-  Traefik IngressRoute, TLS, load-balancing strategy.
+  Traefik IngressRoute, TLS, load-balancing strategy, blue-green rollouts
+  by default (rolling and recreate selectable).
 - `skali cluster`: install, join (agents and HA servers), init, upgrade,
   status, diagnose, repair, tier, uninstall, addresses, storage-migrate,
   reset-password; macOS via Lima.
@@ -138,6 +139,12 @@ Ordered loosely by how often I have wanted them.
       Longhorn opt-in (enforced sizes, replication, node-loss survival);
       the driver enum is the seam for provider-native drivers like
       hcloud-csi later; see docs/storage.md.
+- [x] Blue-green rollouts as the default for applications without volumes:
+      the new version starts beside the old one, becomes fully ready, then
+      takes traffic in one selector switch; a version that never becomes
+      ready never serves. Rolling (maxUnavailable/maxSurge) and recreate
+      stay selectable, volumes still force recreate and one replica; see
+      docs/limitations.md for the capacity and strategy-switch notes.
 - [ ] Templates / examples catalog and Compose import.
 - [ ] LAN / HTTP-only installation profile for home and office clusters.
 - [ ] Notifications (deploy finished, run failed) to chat/webhook.

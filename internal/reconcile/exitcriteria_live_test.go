@@ -17,6 +17,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
+	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/app"
@@ -90,15 +91,13 @@ func TestLiveOutOfBandDeletionHeals(t *testing.T) {
 
 	result := f.deployManifest(t, liveManifest(f.projectName, 1, false))
 	f.waitActive(t, result.RevisionID, 3*time.Minute)
-	deploymentName := f.projectName + "-web"
 
 	heal := func(t *testing.T) {
 		t.Helper()
-		before, err := f.clientset.AppsV1().Deployments(f.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
-		require.NoError(t, err)
-		require.NoError(t, f.clientset.AppsV1().Deployments(f.namespace).Delete(ctx, deploymentName, metav1.DeleteOptions{}))
+		before := f.webDeployment(t)
+		require.NoError(t, f.clientset.AppsV1().Deployments(f.namespace).Delete(ctx, before.Name, metav1.DeleteOptions{}))
 		require.Eventually(t, func() bool {
-			live, err := f.clientset.AppsV1().Deployments(f.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+			live, err := f.clientset.AppsV1().Deployments(f.namespace).Get(ctx, before.Name, metav1.GetOptions{})
 			return err == nil && live.UID != before.UID
 		}, time.Minute, 200*time.Millisecond, "the watch-driven enqueue must recreate the deployment")
 		require.Eventually(t, func() bool {
@@ -136,16 +135,16 @@ func TestLiveHPAOwnershipAndTransitions(t *testing.T) {
 	f := newLiveFixture(t, Config{RolloutDeadline: 5 * time.Minute}, nil)
 	f.start(t)
 	ctx := context.Background()
-	deploymentName := f.projectName + "-web"
 
 	// A tap recording every replica count the API server ever serves for
-	// the deployment; the default-reset bug would surface as a 1 here.
+	// the web deployment (found by label: the renderer derives the name);
+	// the default-reset bug would surface as a 1 here.
 	tapCtx, stopTap := context.WithCancel(ctx)
 	defer stopTap()
 	seen := make(chan int32, 256)
 	go func() {
 		watcher, err := f.clientset.AppsV1().Deployments(f.namespace).Watch(tapCtx, metav1.ListOptions{
-			FieldSelector: "metadata.name=" + deploymentName,
+			LabelSelector: rendering.LabelApplication + "=web",
 		})
 		if err != nil {
 			return
@@ -168,8 +167,8 @@ func TestLiveHPAOwnershipAndTransitions(t *testing.T) {
 	autoscaled := f.deployManifest(t, liveManifest(f.projectName, 1, true))
 	f.waitActive(t, autoscaled.RevisionID, 3*time.Minute)
 
-	live, err := f.clientset.AppsV1().Deployments(f.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
-	require.NoError(t, err)
+	live := f.webDeployment(t)
+	deploymentName := live.Name
 	require.NotNil(t, live.Spec.Replicas)
 	require.Equal(t, int32(3), *live.Spec.Replicas,
 		"releasing replicas ownership must not move the live count")
@@ -197,7 +196,7 @@ func TestLiveHPAOwnershipAndTransitions(t *testing.T) {
 	fixedAgain := f.deployManifest(t, liveManifest(f.projectName, 2, false))
 	f.waitActive(t, fixedAgain.RevisionID, 3*time.Minute)
 	require.Eventually(t, func() bool {
-		_, err := f.clientset.AutoscalingV2().HorizontalPodAutoscalers(f.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+		_, err := f.clientset.AutoscalingV2().HorizontalPodAutoscalers(f.namespace).Get(ctx, rendering.ApplicationName(f.projectName, "web"), metav1.GetOptions{})
 		return err != nil
 	}, time.Minute, 200*time.Millisecond, "the autoscaler must be pruned")
 	live, err = f.clientset.AppsV1().Deployments(f.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
@@ -261,9 +260,7 @@ func TestLiveRestartRebuildsCacheBeforeFreshHealth(t *testing.T) {
 
 	result := f.deployManifest(t, liveManifest(f.projectName, 1, false))
 	f.waitActive(t, result.RevisionID, 3*time.Minute)
-	deploymentName := f.projectName + "-web"
-	before, err := f.clientset.AppsV1().Deployments(f.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
-	require.NoError(t, err)
+	before := f.webDeployment(t)
 
 	stop()
 
@@ -286,7 +283,7 @@ func TestLiveRestartRebuildsCacheBeforeFreshHealth(t *testing.T) {
 
 	// The unchanged revision must be a server-side-apply no-op: the
 	// deployment's generation did not move across the restart.
-	after, err := f.clientset.AppsV1().Deployments(f.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+	after, err := f.clientset.AppsV1().Deployments(f.namespace).Get(ctx, before.Name, metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, before.Generation, after.Generation)
 

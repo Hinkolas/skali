@@ -148,6 +148,9 @@ func (s *Service) Resolve(ctx context.Context, environmentID uuid.UUID, opts Opt
 		}
 		candidates = append(candidates, object)
 	}
+	if opts.Service != "" && opts.Pod == "" {
+		candidates = preferServing(candidates, snapshot, namespace, opts.Service)
+	}
 
 	target, err := pickPod(candidates, opts)
 	if err != nil {
@@ -182,6 +185,34 @@ func (s *Service) Stream(ctx context.Context, session *Session, streams Streams)
 		TTY:    session.TTY,
 		Resize: streams.Resize,
 	})
+}
+
+// preferServing narrows a blue-green application's candidates to the color
+// its Service selects, so a default exec lands on a pod that carries traffic
+// rather than on a color still starting or already retiring. Without a
+// colored Service, or when no candidate matches, every pod stays eligible.
+func preferServing(candidates []observe.Object, snapshot observe.Snapshot, namespace, service string) []observe.Object {
+	serving := ""
+	found := false
+	for _, object := range snapshot.Objects {
+		if object.Kind == module.KindService && object.Service == service && object.Ref.Namespace == namespace && object.Selector != nil {
+			serving, found = object.Color, object.Color != ""
+			break
+		}
+	}
+	if !found {
+		return candidates
+	}
+	var matching []observe.Object
+	for _, object := range candidates {
+		if object.Color == serving {
+			matching = append(matching, object)
+		}
+	}
+	if len(matching) == 0 {
+		return candidates
+	}
+	return matching
 }
 
 // pickPod chooses the exec target among the service's observed pods: the

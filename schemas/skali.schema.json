@@ -83,6 +83,7 @@
             "properties": {
               "releaseCommand": {
                 "type": "object",
+                "description": "Command run once with the new image before the new version goes live; the migration hook.",
                 "properties": {
                   "command": {
                     "type": "array",
@@ -104,18 +105,23 @@
               },
               "rollout": {
                 "type": "object",
+                "description": "How a new revision replaces the running one.",
                 "properties": {
                   "maxSurge": {
                     "type": "integer",
+                    "description": "Rolling only. Extra replicas allowed above the desired count while the rollout runs. Default 1.",
                     "minimum": 0
                   },
                   "maxUnavailable": {
                     "type": "integer",
+                    "description": "Rolling only. Replicas that may be unavailable while the rollout runs. Cannot be zero together with maxSurge.",
                     "minimum": 0
                   },
                   "strategy": {
                     "type": "string",
+                    "description": "How the new version replaces the old one. blue-green (default) starts it beside the old version, waits until it is fully ready, then switches traffic at once; rolling replaces replicas gradually and needs every release to be compatible with the previous one; recreate stops the old version first, which means downtime, and is required with volumes.",
                     "enum": [
+                      "blue-green",
                       "rolling",
                       "recreate"
                     ]

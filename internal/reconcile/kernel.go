@@ -124,12 +124,24 @@ type Config struct {
 	// routes and gates rollout health on their issuance. Local development
 	// leaves it false: no cert-manager, HTTP-only edge.
 	Certificates bool
+	// RetireDrain is how long a Deployment that stopped serving (the
+	// previous blue-green color, a superseded pending color, a legacy
+	// workload) keeps running before it is pruned; zero means the default
+	// of fifteen seconds.
+	RetireDrain time.Duration
 }
 
 type Kernel struct {
 	deps  Deps
 	cfg   Config
 	queue workqueue.TypedRateLimitingInterface[uuid.UUID]
+
+	// retired holds, per Deployment that stopped serving, when it was first
+	// seen not serving; the drain window counts from there. In-memory by
+	// design: after a restart timers re-arm and a retired Deployment lives
+	// one extra window at most.
+	retireMu sync.Mutex
+	retired  map[retireKey]time.Time
 }
 
 func New(deps Deps, cfg Config) *Kernel {
@@ -145,12 +157,16 @@ func New(deps Deps, cfg Config) *Kernel {
 	if cfg.RolloutDeadline <= 0 {
 		cfg.RolloutDeadline = 10 * time.Minute
 	}
+	if cfg.RetireDrain <= 0 {
+		cfg.RetireDrain = defaultRetireDrain
+	}
 	// The failure backoff is capped at the health-check cadence: a transient
 	// error must never park an in-flight rollout longer than an ordinary
 	// waiting pass.
 	return &Kernel{
-		deps: deps,
-		cfg:  cfg,
+		deps:    deps,
+		cfg:     cfg,
+		retired: map[retireKey]time.Time{},
 		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck)),
 	}

@@ -119,3 +119,27 @@ func removePath(fields map[string]any, segments []string) bool {
 	}
 	return removed
 }
+
+// UpgradeCreateEntry turns the manager's Update entry (what a Create
+// records) into its Apply entry when the manager has no Apply entry yet, so
+// later server-side applies by the same manager own the created fields
+// instead of conflicting with a second owner of the same name. The second
+// return reports whether anything changed.
+func UpgradeCreateEntry(entries []metav1.ManagedFieldsEntry, manager string) ([]metav1.ManagedFieldsEntry, bool) {
+	for _, entry := range entries {
+		if entry.Manager == manager && entry.Operation == metav1.ManagedFieldsOperationApply {
+			return entries, false
+		}
+	}
+	rewritten := make([]metav1.ManagedFieldsEntry, len(entries))
+	copy(rewritten, entries)
+	changed := false
+	for index := range rewritten {
+		entry := &rewritten[index]
+		if entry.Manager == manager && entry.Operation == metav1.ManagedFieldsOperationUpdate {
+			entry.Operation = metav1.ManagedFieldsOperationApply
+			changed = true
+		}
+	}
+	return rewritten, changed
+}

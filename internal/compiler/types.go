@@ -143,6 +143,17 @@ type ReleaseCommand struct {
 	TimeoutMillis int64    "json:\"timeoutMillis,omitempty\""
 }
 
+// Rollout strategies. BlueGreen is the default for applications without
+// volumes: the new version starts beside the old one, becomes fully
+// available, then takes all traffic in one switch. Rolling replaces
+// replicas gradually within maxUnavailable/maxSurge. Recreate stops the
+// old version first and is the only strategy volumes allow.
+const (
+	StrategyBlueGreen = "blue-green"
+	StrategyRolling   = "rolling"
+	StrategyRecreate  = "recreate"
+)
+
 type Rollout struct {
 	Strategy       string "json:\"strategy,omitempty\""
 	MaxUnavailable int    "json:\"maxUnavailable,omitempty\""

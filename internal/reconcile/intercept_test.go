@@ -81,9 +81,9 @@ func TestReconcileInterceptedApplication(t *testing.T) {
 	require.Zero(t, requeue, "an intercepted-only revision activates on the first pass")
 
 	ops := f.cluster.recorded()
-	require.Contains(t, ops, "apply Service/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.Contains(t, ops, "apply Service/"+f.namespace+"/"+f.webServiceName())
 	require.Contains(t, ops, "apply EndpointSlice/"+f.namespace+"/intercept-demo-web-affcdc6d146a6bd037773cb30f69840a")
-	require.NotContains(t, ops, "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.NotContains(t, ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
 
 	target := f.target(t)
 	require.NotNil(t, target.ActiveRevisionID)
@@ -105,7 +105,7 @@ func TestReconcileInterceptedApplication(t *testing.T) {
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	ops = f.cluster.recorded()
-	require.Contains(t, ops, "apply Deployment/"+f.namespace+"/app-demo-web-714832ea87e5bc991f3f11667354c6c3")
+	require.Contains(t, ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
 	require.Contains(t, ops, "delete EndpointSlice/"+f.namespace+"/intercept-demo-web-affcdc6d146a6bd037773cb30f69840a")
 
 	// With the workload healthy again the flip-back activates.

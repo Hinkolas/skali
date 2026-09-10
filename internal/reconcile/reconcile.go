@@ -81,7 +81,11 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		return 0, err
 	}
 
-	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, intercepts, env.Priority)
+	// The traffic decision reads the live Service selectors and workload
+	// availability before rendering: blue-green applications keep their
+	// serving color until the new one is fully available.
+	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, intercepts, env.Priority,
+		k.deps.Observed.Snapshot(environmentID))
 	if err != nil {
 		// An unrenderable revision is permanent for this target: journal the
 		// diagnostic, never prune (compiler-error absence must not delete
@@ -146,7 +150,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	// Pre-pass health gates later batches: a dependency that is not ready
 	// produces a visible waiting step, not an opaque retry.
-	preHealth := healthByService(k.evaluateServices(rev, snapshot, intercepts, nil))
+	preHealth := healthByService(k.evaluateServices(rev, snapshot, intercepts, nil, desired.colors))
 	var unhealthyEarlier []string
 	for _, batch := range batches {
 		blockedOn := strings.Join(unhealthyEarlier, ", ")
@@ -212,9 +216,19 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 					return 0, nil
 				}
 			}
-			ops := planServiceOps(objs,
-				liveObject(snapshot, service, module.KindWorkload),
-				liveObject(snapshot, service, module.KindAutoscaler))
+			// The live workload is matched by the rendered Deployment's own
+			// name: an application may briefly own several Deployments (one
+			// per color during a blue-green switch), and the replica
+			// ownership dance must reason about the one being applied.
+			var liveWorkload *observe.Object
+			if objs.deployment != nil {
+				liveWorkload = liveObjectByRef(snapshot, module.KindWorkload,
+					objs.deployment.Namespace, objs.deployment.Name)
+			}
+			plan := desired.plans[service]
+			ops := planServiceOps(objs, liveWorkload,
+				liveObject(snapshot, service, module.KindAutoscaler),
+				plan.held() && plan.pendingReplicas != nil)
 			serviceChanged, err := k.executeOps(ctx, ops)
 			if err != nil {
 				k.journalOpFailure(ctx, attachment, "apply:"+service, "Apply "+service, serviceChanged, err)
@@ -248,10 +262,18 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		}
 	}
 
+	// Blue-green switches narrate on the run: a waiting step while the new
+	// color starts, a completed step when traffic moves.
+	journalTraffic(ctx, attachment, desired.plans, k.cfg.RetireDrain)
+
 	// Prune only with a complete desired set in hand, only stateless kinds,
-	// only objects owned by this environment, with UID preconditions.
+	// only objects owned by this environment, with UID preconditions. The
+	// blue-green color still serving and every retiring color inside its
+	// drain window are protected; the drain's remaining time requeues the
+	// pass so a converged environment still prunes on time.
+	protected, retireRequeue := k.retirements(desired.plans, snapshot, time.Now())
 	var pruned []string
-	for _, ref := range planPrune(snapshot.Objects, desired.refs) {
+	for _, ref := range planPrune(snapshot.Objects, desired.refs, protected) {
 		deleted, err := k.deps.Cluster.Delete(ctx, ref)
 		if err != nil {
 			k.journalOpFailure(ctx, attachment, "prune", "Prune removed objects", pruned, err)
@@ -272,7 +294,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
-	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID), intercepts, nil)
+	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID), intercepts, nil, desired.colors)
 	// A service blocked on a projection the observation never delivered
 	// cannot be healed by waiting: the object exists on the cluster but its
 	// creation fell into an informer-establishment gap, and no further
@@ -315,7 +337,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	}
 
 	if healthy {
-		return 0, k.activate(ctx, attachment, target, rev)
+		return retireRequeue, k.activate(ctx, attachment, target, rev)
 	}
 	if attachment.created {
 		// The healing work is recorded; health recovery arrives via watch
@@ -326,7 +348,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		// Release commands extend the deadline by their own budget: their
 		// Jobs enforce the manifest timeouts, so the rollout deadline only
 		// needs to cover everything after them.
-		if time.Since(target.UpdatedAt) > k.cfg.RolloutDeadline+releaseBudget(rev.Definition) {
+		if time.Since(target.UpdatedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline)+releaseBudget(rev.Definition) {
 			// Product policy: past the deadline the run fails
 			// with diagnostics and the target returns to the last active
 			// revision when one exists. The guarded compare-and-swap makes
@@ -354,12 +376,20 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// reconciliation continues on the ordinary cadence so a late
 			// recovery still activates, instead of the environment silently
 			// leaving the queue until the audit.
-			return requeueHealthCheck, nil
+			return soonest(requeueHealthCheck, retireRequeue), nil
 		}
 		attachment.waitStep(ctx, "verify", "Verify health",
 			strings.Join(healthSummary(statuses), "; "))
 	}
-	return requeueHealthCheck, nil
+	return soonest(requeueHealthCheck, retireRequeue), nil
+}
+
+// soonest picks the shorter of two requeue delays, ignoring zero (none).
+func soonest(a, b time.Duration) time.Duration {
+	if b > 0 && (a <= 0 || b < a) {
+		return b
+	}
+	return a
 }
 
 // activate moves the active pointer, guarded so a late activation of a
@@ -486,26 +516,25 @@ func (k *Kernel) loadAppRestarts(ctx context.Context, environmentID uuid.UUID) (
 // the environment's live setting (normal or high); it selects the
 // PriorityClass of every application pod and, like the restart stamps, is
 // not part of the revision.
-func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
-	restartedAt *time.Time, appRestarts map[string]string,
-	intercepts map[string]map[string]int32, priority string) (*desiredSet, error) {
+// secretVersions maps the revision's secret references to their stored
+// versions: the values Secret read set and the per-application values
+// identity share it.
+func secretVersions(rev *revision.Revision) map[string]int {
 	refs := make(map[string]int, len(rev.Secrets))
 	for name, secret := range rev.Secrets {
 		refs[name] = secret.Version
 	}
-	variables, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
-	if err != nil {
-		return nil, err
-	}
-	data, err := rendering.EnvironmentSecretData(rev.Definition, variables)
-	if err != nil {
-		return nil, err
-	}
+	return refs
+}
 
-	namespace := rendering.RenderNamespace(rev.Project, rev.Environment, environmentID.String())
-	secret := rendering.RenderEnvironmentSecret(rev.Project, rev.Environment,
-		environmentID.String(), rev.Checksum, data)
-
+// renderInputs builds the render options that shape application pod
+// templates, and therefore blue-green colors: prepared images and
+// platforms, secret versions, restart stamps, priority, cluster mode.
+// desiredSet adds the variables and intercept routing on top; the status
+// projection needs exactly these to name each application's desired color
+// without decrypting anything.
+func (k *Kernel) renderInputs(environmentID uuid.UUID, rev *revision.Revision, restartedAt *time.Time,
+	appRestarts map[string]string, intercepts map[string]map[string]int32, priority string) (rendering.Options, error) {
 	buildImages := map[string]string{}
 	appPlatforms := map[string][]string{}
 	for key, application := range rev.Definition.Applications {
@@ -524,7 +553,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 			continue
 		}
 		if !resolved {
-			return nil, fmt.Errorf("reconcile: revision has no artifact for application %s", key)
+			return rendering.Options{}, fmt.Errorf("reconcile: revision has no artifact for application %s", key)
 		}
 		image := artifact.Reference
 		if artifact.Digest != "" {
@@ -535,6 +564,49 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 			appPlatforms[key] = artifact.Platforms
 		}
 	}
+	options := rendering.Options{
+		Namespace:               rendering.RenderNamespace(rev.Project, rev.Environment, environmentID.String()).Name,
+		BuildImages:             buildImages,
+		AppPlatforms:            appPlatforms,
+		EnvironmentID:           environmentID.String(),
+		RevisionChecksum:        rev.Checksum,
+		SecretVersions:          secretVersions(rev),
+		ProgressDeadlineSeconds: int64(k.cfg.RolloutDeadline / time.Second),
+		ManagedCluster:          k.cfg.ManagedCluster,
+		StorageClass:            k.cfg.StorageClass,
+		Certificates:            k.cfg.Certificates,
+		Intercepts:              intercepts,
+		PriorityClassName:       layout.PriorityClassFor(priority),
+		AppRestartedAt:          appRestarts,
+	}
+	if restartedAt != nil {
+		options.RestartedAt = restartedAt.UTC().Format(time.RFC3339)
+	}
+	return options, nil
+}
+
+func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
+	restartedAt *time.Time, appRestarts map[string]string,
+	intercepts map[string]map[string]int32, priority string, snapshot observe.Snapshot) (*desiredSet, error) {
+	refs := secretVersions(rev)
+	variables, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
+	if err != nil {
+		return nil, err
+	}
+	data, err := rendering.EnvironmentSecretData(rev.Definition, variables)
+	if err != nil {
+		return nil, err
+	}
+
+	namespace := rendering.RenderNamespace(rev.Project, rev.Environment, environmentID.String())
+	secret := rendering.RenderEnvironmentSecret(rev.Project, rev.Environment,
+		environmentID.String(), rev.Checksum, data)
+
+	renderOptions, err := k.renderInputs(environmentID, rev, restartedAt, appRestarts, intercepts, priority)
+	if err != nil {
+		return nil, err
+	}
+	renderOptions.Variables = variables
 
 	// Intercept declarations are keyed by manifest port name; rendering
 	// needs them per rendered service port. A failure here is permanent for
@@ -567,29 +639,18 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		}
 	}
 
-	renderOptions := rendering.Options{
-		Namespace:               namespace.Name,
-		Variables:               variables,
-		BuildImages:             buildImages,
-		AppPlatforms:            appPlatforms,
-		EnvironmentID:           environmentID.String(),
-		RevisionChecksum:        rev.Checksum,
-		SecretVersions:          refs,
-		ProgressDeadlineSeconds: int64(k.cfg.RolloutDeadline / time.Second),
-		ManagedCluster:          k.cfg.ManagedCluster,
-		StorageClass:            k.cfg.StorageClass,
-		Certificates:            k.cfg.Certificates,
-		Intercepts:              interceptPorts,
-		InterceptHostIP:         interceptHostIP,
-		PriorityClassName:       layout.PriorityClassFor(priority),
-		AppRestartedAt:          appRestarts,
+	renderOptions.Intercepts = interceptPorts
+	renderOptions.InterceptHostIP = interceptHostIP
+	result := &compiler.Result{Hash: rev.DefinitionHash, Definition: rev.Definition}
+	// Colors come from the same options the render sees, so the traffic
+	// decision and the rendered selectors can never disagree.
+	colors, err := rendering.ApplicationColors(result, renderOptions)
+	if err != nil {
+		return nil, err
 	}
-	if restartedAt != nil {
-		renderOptions.RestartedAt = restartedAt.UTC().Format(time.RFC3339)
-	}
-	objects, err := rendering.Render(
-		&compiler.Result{Hash: rev.DefinitionHash, Definition: rev.Definition},
-		renderOptions)
+	plans := planTraffic(rev, colors, snapshot, namespace.Name, intercepts)
+	renderOptions.TrafficColors, renderOptions.PendingReplicas = trafficOptions(plans)
+	objects, err := rendering.Render(result, renderOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -609,7 +670,8 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	shared := services[""]
 	delete(services, "")
 	return &desiredSet{namespace: namespace, secret: secret,
-		environment: shared.rest, services: services, refs: refsList}, nil
+		environment: shared.rest, services: services, refs: refsList,
+		colors: colors, plans: plans}, nil
 }
 
 // ensureClaims records the revision's infrastructure claims (databases and
@@ -679,6 +741,18 @@ func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *rev
 		byPlaintext[value] = name
 	}
 	return redactor.Merge(redact.New(byPlaintext))
+}
+
+// liveObjectByRef finds one observed object of a kind by namespace and
+// name, for kinds an application may own more than once.
+func liveObjectByRef(snapshot observe.Snapshot, kind, namespace, name string) *observe.Object {
+	for index := range snapshot.Objects {
+		obj := &snapshot.Objects[index]
+		if obj.Kind == kind && obj.Ref.Namespace == namespace && obj.Ref.Name == name {
+			return obj
+		}
+	}
+	return nil
 }
 
 func liveObject(snapshot observe.Snapshot, service, kind string) *observe.Object {

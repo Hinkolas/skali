@@ -11,6 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -19,7 +22,9 @@ import (
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
+	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
+	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/observe"
@@ -75,6 +80,7 @@ func newLiveFixture(t *testing.T, cfg Config, config *rest.Config) *liveFixture 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
 	clientset := kubetest.Clientset(t)
+	ensurePriorityClasses(t, clientset)
 
 	st := store.NewStore(pool)
 	projects := project.New(st)
@@ -110,7 +116,9 @@ func newLiveFixture(t *testing.T, cfg Config, config *rest.Config) *liveFixture 
 	require.NoError(t, err)
 	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
-	namespace := "skali-" + projectName + "-production"
+	// Environment namespaces are named by environment identity, the same
+	// derivation the kernel's namespace render uses.
+	namespace := "skali-" + env.ID.String()
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -179,6 +187,19 @@ func (f *liveFixture) deployManifest(t *testing.T, manifest string) *deploy.Exec
 	return result
 }
 
+// webDeployment returns the one live Deployment of the fixture's web
+// application. Names are derived by the renderer (and vary per color under
+// blue-green), so tests find the workload by its application label.
+func (f *liveFixture) webDeployment(t *testing.T) *appsv1.Deployment {
+	t.Helper()
+	list, err := f.clientset.AppsV1().Deployments(f.namespace).List(context.Background(), metav1.ListOptions{
+		LabelSelector: rendering.LabelApplication + "=web",
+	})
+	require.NoError(t, err)
+	require.Len(t, list.Items, 1, "exactly one web Deployment expected")
+	return &list.Items[0]
+}
+
 func (f *liveFixture) waitActive(t *testing.T, revisionID uuid.UUID, timeout time.Duration) {
 	t.Helper()
 	require.Eventually(t, func() bool {
@@ -208,9 +229,7 @@ func TestLiveDeployToActive(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "succeeded", tree.Run.Status)
 
-	deployment, err := f.clientset.AppsV1().Deployments(f.namespace).Get(
-		context.Background(), f.projectName+"-web", metav1.GetOptions{})
-	require.NoError(t, err)
+	deployment := f.webDeployment(t)
 	require.Equal(t, int32(1), deployment.Status.ReadyReplicas)
 
 	// The environment status projection agrees without any cluster read.
@@ -221,4 +240,25 @@ func TestLiveDeployToActive(t *testing.T) {
 	require.Len(t, status.Services, 1)
 	require.Equal(t, module.HealthHealthy, status.Services[0].Health)
 	require.NotEmpty(t, status.Services[0].Pods)
+}
+
+// ensurePriorityClasses installs the PriorityClasses the platform bundle
+// would: every application pod names one, and admission rejects pods whose
+// class does not exist, so a bare test cluster needs them before any deploy.
+func ensurePriorityClasses(t *testing.T, clientset *kubernetes.Clientset) {
+	t.Helper()
+	ctx := context.Background()
+	for name, value := range map[string]int32{
+		layout.PriorityClassCritical: layout.PriorityClassCriticalValue,
+		layout.PriorityClassHigh:     layout.PriorityClassHighValue,
+		layout.PriorityClassNormal:   layout.PriorityClassNormalValue,
+	} {
+		_, err := clientset.SchedulingV1().PriorityClasses().Create(ctx, &schedulingv1.PriorityClass{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Value:      value,
+		}, metav1.CreateOptions{})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			require.NoError(t, err)
+		}
+	}
 }

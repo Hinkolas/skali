@@ -62,12 +62,22 @@ type serviceObjects struct {
 // live count persists. Autoscaled to fixed: delete the HPA so its
 // controller stops writing, then one forced apply WITH replicas retakes
 // ownership through an explicit value, never through the default.
-func planServiceOps(objs serviceObjects, liveWorkload, liveAutoscaler *observe.Object) []Op {
+//
+// holdReplicas marks a blue-green color waiting for traffic on an autoscaled
+// application: the autoscaler still steers the serving color, and this
+// Deployment carries the explicit count the kernel sized it with, so
+// skalid keeps owning its replicas until the switch hands them over.
+func planServiceOps(objs serviceObjects, liveWorkload, liveAutoscaler *observe.Object, holdReplicas bool) []Op {
 	ops := make([]Op, 0, 4+len(objs.pvcs)+len(objs.rest))
 	for _, pvc := range objs.pvcs {
 		ops = append(ops, Op{Kind: OpApply, Object: pvc})
 	}
 	switch {
+	case objs.autoscaler != nil && holdReplicas:
+		ops = append(ops, Op{Kind: OpApply, Object: objs.autoscaler})
+		if objs.deployment != nil {
+			ops = append(ops, Op{Kind: OpApply, Object: objs.deployment})
+		}
 	case objs.autoscaler != nil:
 		ops = append(ops, Op{Kind: OpApply, Object: objs.autoscaler})
 		if liveWorkload != nil && kube.OwnsField(liveWorkload.ManagedFields, kube.FieldManagerProject, kube.ReplicasFieldPath) {
@@ -130,7 +140,10 @@ var prunableKinds = map[schema.GroupKind]bool{
 // absent from the desired set, with their UIDs as delete preconditions.
 // Callers must skip pruning entirely when the desired set could not be
 // built: absence caused by a compiler error never prunes anything.
-func planPrune(observed []observe.Object, desired []kube.ObjectRef) []kube.ObjectRef {
+// protected names Deployments that outlive the desired set on purpose: the
+// blue-green color still carrying traffic and every retiring color inside
+// its drain window.
+func planPrune(observed []observe.Object, desired []kube.ObjectRef, protected map[retireKey]bool) []kube.ObjectRef {
 	type refKey struct {
 		group, kind, namespace, name string
 	}
@@ -153,6 +166,9 @@ func planPrune(observed []observe.Object, desired []kube.ObjectRef) []kube.Objec
 			continue
 		}
 		if want[refKey{obj.Ref.GVK.Group, obj.Ref.GVK.Kind, obj.Ref.Namespace, obj.Ref.Name}] {
+			continue
+		}
+		if gk.Kind == "Deployment" && protected[retireKey{obj.Ref.Namespace, obj.Ref.Name}] {
 			continue
 		}
 		prune = append(prune, obj.Ref)
@@ -224,6 +240,10 @@ type desiredSet struct {
 	environment []runtime.Object
 	services    map[string]serviceObjects
 	refs        []kube.ObjectRef // every desired object, for prune planning
+	// colors is the desired blue-green color per application key; plans
+	// the per-application traffic decision this render was made under.
+	colors map[string]string
+	plans  map[string]trafficPlan
 }
 
 // groupObjects splits the flat rendered object list per service key.

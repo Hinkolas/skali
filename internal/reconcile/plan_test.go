@@ -56,12 +56,34 @@ func ownedWorkload(t *testing.T, owned bool) *observe.Object {
 	}
 }
 
+// A blue-green color waiting for traffic on an autoscaled application keeps
+// its explicit replica count: the autoscaler is applied (still pointing at
+// the serving color) and the pending Deployment applies with its count, with
+// no ownership release in between.
+func TestPendingColorKeepsExplicitReplicas(t *testing.T) {
+	t.Parallel()
+	objs := serviceObjects{deployment: planDeployment(new(int32(3))), autoscaler: planAutoscaler()}
+	ops := planServiceOps(objs, ownedWorkload(t, true), nil, true)
+	require.Len(t, ops, 2)
+	require.Equal(t, OpApply, ops[0].Kind)
+	require.Equal(t, "HorizontalPodAutoscaler", ops[0].Object.GetObjectKind().GroupVersionKind().Kind)
+	require.Equal(t, OpApply, ops[1].Kind)
+	require.Equal(t, "Deployment", ops[1].Object.GetObjectKind().GroupVersionKind().Kind)
+	require.False(t, ops[1].Force)
+
+	// Once the switch lands the ordinary autoscaled transition runs against
+	// the new color: release replicas, then apply without them.
+	ops = planServiceOps(objs, ownedWorkload(t, true), nil, false)
+	require.Len(t, ops, 3)
+	require.Equal(t, OpDisown, ops[1].Kind)
+}
+
 // Fixed to autoscaled: the exact transition order is the contract; a wrong
 // order transiently resets the replica count through the default.
 func TestPlanScaleOpsFixedToAutoscaled(t *testing.T) {
 	t.Parallel()
 	objs := serviceObjects{deployment: planDeployment(nil), autoscaler: planAutoscaler()}
-	ops := planServiceOps(objs, ownedWorkload(t, true), nil)
+	ops := planServiceOps(objs, ownedWorkload(t, true), nil, false)
 	require.Len(t, ops, 3)
 	require.Equal(t, OpApply, ops[0].Kind)
 	require.Equal(t, "HorizontalPodAutoscaler", ops[0].Object.GetObjectKind().GroupVersionKind().Kind)
@@ -72,7 +94,7 @@ func TestPlanScaleOpsFixedToAutoscaled(t *testing.T) {
 	require.False(t, ops[2].Force)
 
 	// Steady state autoscaled (ownership already released): no disown.
-	ops = planServiceOps(objs, ownedWorkload(t, false), nil)
+	ops = planServiceOps(objs, ownedWorkload(t, false), nil, false)
 	require.Len(t, ops, 2)
 	require.Equal(t, OpApply, ops[0].Kind)
 	require.Equal(t, OpApply, ops[1].Kind)
@@ -91,7 +113,7 @@ func TestPlanScaleOpsAutoscaledToFixed(t *testing.T) {
 		},
 		Kind: module.KindAutoscaler,
 	}
-	ops := planServiceOps(objs, ownedWorkload(t, false), liveHPA)
+	ops := planServiceOps(objs, ownedWorkload(t, false), liveHPA, false)
 	require.Len(t, ops, 2)
 	require.Equal(t, OpDelete, ops[0].Kind)
 	require.Equal(t, liveHPA.Ref, ops[0].Ref)
@@ -99,13 +121,13 @@ func TestPlanScaleOpsAutoscaledToFixed(t *testing.T) {
 	require.True(t, ops[1].Force, "retaking replicas ownership requires one forced apply")
 
 	// Steady state fixed (we own replicas, no HPA): a plain apply.
-	ops = planServiceOps(objs, ownedWorkload(t, true), nil)
+	ops = planServiceOps(objs, ownedWorkload(t, true), nil, false)
 	require.Len(t, ops, 1)
 	require.Equal(t, OpApply, ops[0].Kind)
 	require.False(t, ops[0].Force)
 
 	// First creation: nothing live, plain apply.
-	ops = planServiceOps(objs, nil, nil)
+	ops = planServiceOps(objs, nil, nil, false)
 	require.Len(t, ops, 1)
 	require.False(t, ops[0].Force)
 }
@@ -127,7 +149,7 @@ func TestPlanPruneNeverTouchesStatefulKinds(t *testing.T) {
 	desired := []kube.ObjectRef{
 		{GVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, Namespace: "ns", Name: "kept"},
 	}
-	prune := planPrune(observed, desired)
+	prune := planPrune(observed, desired, nil)
 	require.Len(t, prune, 2)
 	for _, ref := range prune {
 		require.NotEqual(t, "PersistentVolumeClaim", ref.GVK.Kind)

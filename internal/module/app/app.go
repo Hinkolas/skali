@@ -120,6 +120,9 @@ func (s *service) evaluateWorkload(observed []module.ObservedResource) module.Ev
 		}}}
 	}
 
+	if rollout := findRollout(observed); rollout != nil {
+		return s.evaluateBlueGreen(observed, rollout)
+	}
 	workload := findWorkload(observed, s.key)
 	if workload == nil {
 		return module.Evaluation{Health: module.HealthUnknown, Diagnostics: []module.Diagnostic{{
@@ -127,7 +130,64 @@ func (s *service) evaluateWorkload(observed []module.ObservedResource) module.Ev
 			Message: "no workload observed for " + s.key,
 		}}}
 	}
+	return s.verdict(workload, observed, memberDiagnostics(observed))
+}
 
+// evaluateBlueGreen judges a blue-green application by the color the
+// revision wants: its workload and its members alone. While the live Service
+// still selects another color the verdict is progressing (the new color is
+// starting, or ready and about to take traffic), so activation waits for
+// the switch to land; a new color that exhausted its progress deadline is
+// degraded, and the previous color keeps serving. Only a serving color with
+// no ready member makes the service unhealthy.
+func (s *service) evaluateBlueGreen(observed []module.ObservedResource, rollout *module.RolloutStatus) module.Evaluation {
+	desiredColor, servingColor := rollout.DesiredColor, rollout.ServingColor
+	members := membersOfColor(observed, desiredColor)
+	workload := workloadOfColor(observed, s.key, desiredColor)
+	if workload == nil {
+		if servingColor != desiredColor && workloadOfColor(observed, s.key, servingColor) != nil {
+			return module.Evaluation{Health: module.HealthProgressing, Diagnostics: []module.Diagnostic{
+				infoDiag("color-pending", "new replicas are not observed yet", s.key),
+			}}
+		}
+		return module.Evaluation{Health: module.HealthUnknown, Diagnostics: []module.Diagnostic{{
+			Severity: "error", Code: "missing-resource",
+			Message: "no workload observed for " + s.key,
+		}}}
+	}
+	base := s.verdict(workload, observed, memberDiagnostics(members))
+	if servingColor == desiredColor {
+		return base
+	}
+
+	// The switch is pending: the previous color serves while this one starts.
+	if serving := workloadOfColor(observed, s.key, servingColor); serving != nil && serving.Ready == 0 {
+		return module.Evaluation{Health: module.HealthUnhealthy, Diagnostics: prepend(base.Diagnostics,
+			errorDiag("no-ready-replicas", "no serving member is ready while the new replicas start", s.key))}
+	}
+	desired := workload.Desired
+	if desired < 0 {
+		desired = autoscalerDesire(observed, s.key)
+	}
+	switch {
+	case base.Health == module.HealthHealthy:
+		return module.Evaluation{Health: module.HealthProgressing, Diagnostics: prepend(base.Diagnostics,
+			infoDiag("switching-traffic", fmt.Sprintf("%d new replicas ready; switching traffic", desired), s.key))}
+	case hasCondition(workload, "Progressing", "False", "ProgressDeadlineExceeded"):
+		return module.Evaluation{Health: module.HealthDegraded, Diagnostics: prepend(base.Diagnostics,
+			warnDiag("color-failed", "new replicas failed to become ready; previous replicas keep serving", s.key))}
+	default:
+		return module.Evaluation{Health: module.HealthProgressing, Diagnostics: prepend(base.Diagnostics,
+			infoDiag("color-pending", fmt.Sprintf("starting %d new replicas (%d/%d ready)", desired, workload.Ready, desired), s.key))}
+	}
+}
+
+// verdict is the workload judgement shared by plain and blue-green
+// evaluation: unknown at zero desired members, progressing on controller
+// lag or an unfinished update, then healthy, degraded, or unhealthy by
+// ready count and the progress deadline.
+func (s *service) verdict(workload *module.WorkloadStatus, observed []module.ObservedResource,
+	members []module.Diagnostic) module.Evaluation {
 	desired := workload.Desired
 	if desired < 0 {
 		// The autoscaler owns the replica count; adopt its desire when
@@ -150,7 +210,7 @@ func (s *service) evaluateWorkload(observed []module.ObservedResource) module.Ev
 		}}}
 	}
 
-	diagnostics := append(conditionDiagnostics(workload, s.key), memberDiagnostics(observed)...)
+	diagnostics := append(conditionDiagnostics(workload, s.key), members...)
 	deadlineExceeded := hasCondition(workload, "Progressing", "False", "ProgressDeadlineExceeded")
 	ready := workload.Ready
 
@@ -272,6 +332,39 @@ func floorHealth(current, ceiling module.Health) module.Health {
 		return current
 	}
 	return ceiling
+}
+
+// findRollout returns the kernel's blue-green intent when present.
+func findRollout(observed []module.ObservedResource) *module.RolloutStatus {
+	for _, resource := range observed {
+		if resource.Kind == module.KindRollout && resource.Rollout != nil {
+			return resource.Rollout
+		}
+	}
+	return nil
+}
+
+// workloadOfColor finds the service's workload of one color; the empty
+// color names the uncolored (legacy or rolling) Deployment.
+func workloadOfColor(observed []module.ObservedResource, key, color string) *module.WorkloadStatus {
+	for _, resource := range observed {
+		if resource.Kind == module.KindWorkload && resource.Name == key && resource.Workload != nil && resource.Color == color {
+			return resource.Workload
+		}
+	}
+	return nil
+}
+
+// membersOfColor keeps the pods of one color, so retiring members of the
+// previous color never count against the new one.
+func membersOfColor(observed []module.ObservedResource, color string) []module.ObservedResource {
+	members := make([]module.ObservedResource, 0, len(observed))
+	for _, resource := range observed {
+		if resource.Kind == module.KindPod && resource.Color == color {
+			members = append(members, resource)
+		}
+	}
+	return members
 }
 
 func findWorkload(observed []module.ObservedResource, key string) *module.WorkloadStatus {

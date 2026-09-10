@@ -223,10 +223,8 @@ spreading lets the same manifest run on a single-node dev cluster.
         command: ["/app/web", "migrate", "up"]
         timeout: 5m
       rollout:
-        strategy: rolling    # rolling | recreate; default rolling
-        maxUnavailable: 0
-        maxSurge: 1          # default 1 under rolling
-        timeout: 10m
+        strategy: blue-green # blue-green | rolling | recreate; default blue-green, recreate with volumes
+        timeout: 10m         # wait for the new version to become ready; default 10m
     shutdown:
       gracePeriod: 30s       # default 30s
     volumes:
@@ -236,12 +234,41 @@ spreading lets the same manifest run on a single-node dev cluster.
 ```
 
 The release command runs once with the new image and resolved service
-outputs before replicas roll forward; it is the migration hook. Its
+outputs before the new version goes live; it is the migration hook. Its
 `timeout` (default 10m) bounds the run; a failed or timed-out release
-command fails the deployment before any replica rolls. Under
-`rolling`, `maxUnavailable` and `maxSurge` cannot both be zero; under
-`recreate`, setting either is an error. Replicas receive SIGTERM and have
-the grace period to finish before being killed.
+command fails the deployment before users see anything change.
+
+`strategy` decides how the new version replaces the old one:
+
+- `blue-green` (default): the new version starts next to the old one at
+  full replica count and must become fully ready; then traffic switches
+  to it in one step, the old version drains and is removed. Old and new
+  replicas never serve at the same time, a version that never becomes
+  ready never receives traffic, and rollback is an ordinary deploy of the
+  previous revision. Costs twice the replicas for the duration of the
+  deploy. Restarts take the same path.
+- `rolling`: replicas are replaced a few at a time within
+  `maxUnavailable` and `maxSurge` (default 1), which cannot both be zero.
+  Both versions serve during the rollout, so every release must be
+  compatible with the previous one: APIs, session and cache formats,
+  schema. Choose it when the replica count is large or the cluster cannot
+  hold a second full copy of the application.
+- `recreate`: the old version stops before the new one starts; downtime on
+  every deploy. Required and default for applications with `volumes:`;
+  the other two strategies are rejected there.
+
+```yaml
+      rollout:
+        strategy: rolling
+        maxUnavailable: 0    # rolling only
+        maxSurge: 1          # rolling only; default 1
+```
+
+`maxUnavailable` and `maxSurge` are errors under any other strategy.
+`timeout` applies to every strategy: when the new version is not ready in
+time the deployment fails and the previous revision stays active.
+Replicas receive SIGTERM and have the grace period to finish before being
+killed.
 
 Volumes are the escape hatch, not the paved path: an application with
 volumes is forced to `recreate` rollouts and a single replica. Prefer

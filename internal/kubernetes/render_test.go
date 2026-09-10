@@ -406,6 +406,12 @@ func TestRenderSelectorStableAcrossRevisions(t *testing.T) {
 	require.NotContains(t, first.Spec.Template.Labels, LabelRevision)
 	require.Equal(t, first.Labels[LabelEnvironment], first.Spec.Template.Labels[LabelEnvironment])
 	require.Equal(t, first.Spec.Template, second.Spec.Template)
+
+	// Blue-green (the default): identical templates share a color, so the
+	// two revisions name the same Deployment and nothing rolls.
+	require.Equal(t, first.Name, second.Name)
+	require.NotEmpty(t, first.Spec.Selector.MatchLabels[LabelColor])
+	require.Equal(t, first.Spec.Selector.MatchLabels[LabelColor], first.Spec.Template.Labels[LabelColor])
 }
 
 func TestRenderVolumeBackedApplicationUsesRecreate(t *testing.T) {
@@ -749,4 +755,197 @@ func TestRenderInterceptedApplication(t *testing.T) {
 		Intercepts: map[string]map[string]int32{"web": {"http": 5173}},
 	})
 	require.ErrorContains(t, err, "host gateway")
+}
+
+// Blue-green colors follow the pod template: anything that must roll the
+// application (image, values identity, restart stamp, priority) yields a
+// new color and therefore a new Deployment beside the old one, while the
+// Service, the HPA name, and the route backends keep the application name.
+func TestRenderBlueGreenColorChangesWithTemplate(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	base := Options{
+		Namespace: "skali-hello-world",
+		Variables: map[string]string{"APP_DOMAIN": "hello.localhost"},
+		BuildImages: map[string]string{
+			"web": "localhost:5510/skali/hello-world/web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		},
+		EnvironmentID:    "0198f2f4-0000-7000-8000-000000000001",
+		RevisionChecksum: "6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2",
+	}
+	render := func(t *testing.T, options Options) (*appsv1.Deployment, *corev1.Service) {
+		t.Helper()
+		objects, err := Render(result, options)
+		require.NoError(t, err)
+		var deployment *appsv1.Deployment
+		var service *corev1.Service
+		for _, object := range objects {
+			switch typed := object.(type) {
+			case *appsv1.Deployment:
+				deployment = typed
+			case *corev1.Service:
+				service = typed
+			}
+		}
+		require.NotNil(t, deployment)
+		require.NotNil(t, service)
+		return deployment, service
+	}
+
+	deployment, service := render(t, base)
+	colors, err := ApplicationColors(result, base)
+	require.NoError(t, err)
+	color := colors["web"]
+	require.Len(t, color, 10)
+	require.Equal(t, ColoredApplicationName("hello-world", "web", color), deployment.Name)
+	require.Equal(t, color, deployment.Labels[LabelColor])
+	require.Equal(t, color, deployment.Spec.Selector.MatchLabels[LabelColor])
+	require.Equal(t, color, deployment.Spec.Template.Labels[LabelColor])
+	require.Equal(t, color, deployment.Spec.Template.Spec.TopologySpreadConstraints[0].LabelSelector.MatchLabels[LabelColor])
+	require.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
+	require.Equal(t, ApplicationName("hello-world", "web"), service.Name)
+	require.Equal(t, color, service.Spec.Selector[LabelColor], "a converged Service selects the rendered color")
+	require.NotContains(t, service.Labels, LabelColor, "the color is a selector, never a Service label")
+
+	variants := map[string]func(*Options){
+		"image": func(o *Options) {
+			o.BuildImages = map[string]string{"web": "localhost:5510/skali/hello-world/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"}
+		},
+		"restart":  func(o *Options) { o.RestartedAt = "2026-09-10T10:00:00Z" },
+		"priority": func(o *Options) { o.PriorityClassName = "skali-high" },
+	}
+	for name, mutate := range variants {
+		options := base
+		mutate(&options)
+		changed, changedService := render(t, options)
+		require.NotEqual(t, deployment.Name, changed.Name, name)
+		require.NotEqual(t, color, changed.Labels[LabelColor], name)
+		require.Equal(t, service.Name, changedService.Name, name)
+	}
+
+	// The revision checksum alone changes neither the template nor the color.
+	options := base
+	options.RevisionChecksum = "2a91a76be9e54c04a85c2c115e72066b63a07f917fbb633a562305ab3315f035"
+	same, _ := render(t, options)
+	require.Equal(t, deployment.Name, same.Name)
+}
+
+// While a switch is pending the kernel pins the Service to the serving
+// color; the empty string keeps the selector uncolored so a legacy or
+// rolling Deployment serves until its blue-green replacement is ready.
+func TestRenderTrafficColorsHold(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.ParseFile(filepath.Join("..", "..", "examples", "hello-world", "skali.yml"))
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+	base := Options{
+		Namespace: "skali-hello-world",
+		Variables: map[string]string{"APP_DOMAIN": "hello.localhost"},
+		BuildImages: map[string]string{
+			"web": "localhost:5510/skali/hello-world/web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		},
+	}
+	serviceOf := func(t *testing.T, options Options) *corev1.Service {
+		t.Helper()
+		objects, err := Render(result, options)
+		require.NoError(t, err)
+		for _, object := range objects {
+			if service, ok := object.(*corev1.Service); ok {
+				return service
+			}
+		}
+		t.Fatal("no Service rendered")
+		return nil
+	}
+
+	held := base
+	held.TrafficColors = map[string]string{"web": "0123456789"}
+	require.Equal(t, "0123456789", serviceOf(t, held).Spec.Selector[LabelColor])
+
+	legacy := base
+	legacy.TrafficColors = map[string]string{"web": ""}
+	require.NotContains(t, serviceOf(t, legacy).Spec.Selector, LabelColor)
+
+	// Rolling applications honor the pin too: opting out of blue-green
+	// keeps the colored Deployment serving until the rolling one is ready.
+	rollingDoc, err := manifest.Parse([]byte(`
+version: "1"
+name: opt-out
+applications:
+  api:
+    image: example.invalid/api:1
+    ports:
+      http:
+        port: 8080
+    deployment:
+      rollout:
+        strategy: rolling
+`), "skali.yml")
+	require.NoError(t, err)
+	rolling, err := compiler.Compile(rollingDoc)
+	require.NoError(t, err)
+	objects, err := Render(rolling, Options{Namespace: "skali-opt-out", TrafficColors: map[string]string{"api": "0123456789"}})
+	require.NoError(t, err)
+	for _, object := range objects {
+		if service, ok := object.(*corev1.Service); ok {
+			require.Equal(t, "0123456789", service.Spec.Selector[LabelColor])
+		}
+		if deployment, ok := object.(*appsv1.Deployment); ok {
+			require.Equal(t, ApplicationName("opt-out", "api"), deployment.Name)
+			require.NotContains(t, deployment.Spec.Selector.MatchLabels, LabelColor)
+		}
+	}
+}
+
+// The manifest's rollout timeout becomes the Deployment's progress deadline,
+// overriding the kernel-wide default; without it the default stands.
+func TestRenderRolloutTimeoutOverridesDeadline(t *testing.T) {
+	t.Parallel()
+	render := func(t *testing.T, rollout string) *appsv1.Deployment {
+		t.Helper()
+		document, err := manifest.Parse([]byte(`
+version: "1"
+name: deadline
+applications:
+  api:
+    image: example.invalid/api:1
+`+rollout), "skali.yml")
+		require.NoError(t, err)
+		result, err := compiler.Compile(document)
+		require.NoError(t, err)
+		objects, err := Render(result, Options{Namespace: "skali-deadline", ProgressDeadlineSeconds: 600})
+		require.NoError(t, err)
+		deployment, ok := objects[0].(*appsv1.Deployment)
+		require.True(t, ok)
+		return deployment
+	}
+	require.EqualValues(t, 600, *render(t, "").Spec.ProgressDeadlineSeconds)
+	require.EqualValues(t, 90, *render(t, "    deployment:\n      rollout:\n        timeout: 90s\n").Spec.ProgressDeadlineSeconds)
+}
+
+// An unknown strategy in a stored definition (a daemon older than the
+// manifest vocabulary) fails the render instead of applying an invalid
+// rolling update with both bounds at zero.
+func TestRenderRejectsUnknownStrategy(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+version: "1"
+name: unknown
+applications:
+  api:
+    image: example.invalid/api:1
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+	api := result.Definition.Applications["api"]
+	api.Deployment.Rollout.Strategy = "canary"
+	result.Definition.Applications["api"] = api
+	_, err = Render(result, Options{Namespace: "skali-unknown"})
+	require.ErrorContains(t, err, `unsupported rollout strategy "canary"`)
 }

@@ -116,6 +116,9 @@ applications:
       releaseCommand:
         command: ["/app/file-sharing", "migrate", "up"]
         timeout: 5m
+      # Opts out of the blue-green default: this service is compatible with
+      # its previous release and the cluster should not hold two full copies
+      # of it during a deploy. Leave the block out to get blue-green.
       rollout:
         strategy: rolling
         maxUnavailable: 0
