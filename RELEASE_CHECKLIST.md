@@ -111,7 +111,8 @@ but these settings must be applied on GitHub.
       and resolved conversations; zero required approvals supports a solo
       maintainer. Existing branch protection is never overwritten.
       Confirm that Security / Report a vulnerability is available and that
-      the four required check names match an actual PR run.
+      the five required check names match an actual PR run (the changes job
+      must be required: a skipped job counts as passing).
       On 2026-09-09 GitHub refused branch protection for the private repository
       on the current plan (403); private vulnerability reporting returned 404.
       Dependabot alerts were enabled successfully.
