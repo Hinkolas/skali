@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -331,4 +333,35 @@ func TestRunUpgradeVerifyFailureRestoresPrevious(t *testing.T) {
 	got, readErr := os.ReadFile(executable)
 	require.NoError(t, readErr)
 	require.Equal(t, original, got)
+}
+
+func TestRetryTextFileBusy(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	err := retryTextFileBusy(context.Background(), func() error {
+		calls++
+		if calls < 3 {
+			return &os.PathError{Op: "fork/exec", Path: "skali", Err: syscall.ETXTBSY}
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 3, calls, "ETXTBSY is retried until the file is runnable")
+
+	calls = 0
+	other := errors.New("exit status 1")
+	err = retryTextFileBusy(context.Background(), func() error {
+		calls++
+		return other
+	})
+	require.ErrorIs(t, err, other)
+	require.Equal(t, 1, calls, "any other failure returns at once")
+
+	calls = 0
+	err = retryTextFileBusy(context.Background(), func() error {
+		calls++
+		return syscall.ETXTBSY
+	})
+	require.ErrorIs(t, err, syscall.ETXTBSY)
+	require.Equal(t, textFileBusyRetries+1, calls, "a file that never frees up gives up after the bounded retries")
 }

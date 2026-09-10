@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -292,7 +293,12 @@ func probeWritableDir(dir string) error {
 func verifyInstalledCLI(ctx context.Context, executable, want string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, executable, "--version").Output()
+	var output []byte
+	err := retryTextFileBusy(ctx, func() error {
+		var err error
+		output, err = exec.CommandContext(ctx, executable, "--version").Output()
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("run %s --version: %w", executable, err)
 	}
@@ -301,4 +307,29 @@ func verifyInstalledCLI(ctx context.Context, executable, want string) error {
 		return fmt.Errorf("the new binary reports %q, expected %s", strings.TrimSpace(string(output)), want)
 	}
 	return nil
+}
+
+// textFileBusyRetries bounds the wait for a just-written executable to
+// become runnable.
+const textFileBusyRetries = 20
+
+// retryTextFileBusy runs attempt again while it fails with ETXTBSY. Linux
+// refuses to execute a file another process holds open for writing, and a
+// binary this process just wrote is exactly that for a moment: any child
+// forked elsewhere in the process between the write and its own exec
+// inherits the write descriptor until it execs (close-on-exec cannot help
+// across that window). The condition clears within milliseconds; any other
+// error returns at once.
+func retryTextFileBusy(ctx context.Context, attempt func() error) error {
+	for try := 0; ; try++ {
+		err := attempt()
+		if !errors.Is(err, syscall.ETXTBSY) || try >= textFileBusyRetries {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
