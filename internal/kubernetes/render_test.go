@@ -543,6 +543,58 @@ applications:
 	}
 }
 
+// Long project and application keys make the application name maximal
+// (30-byte prefix plus hash). The release pod's name label is derived
+// through the same helper rather than by appending a suffix, so it stays
+// within the 63-byte label limit like every other object name.
+func TestRenderReleaseJobLongNamesKeepLabelsValid(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+version: "1"
+name: trackr-escpos
+applications:
+  proxy:
+    image: example.invalid/proxy:1
+    ports:
+      http:
+        port: 3000
+    deployment:
+      releaseCommand:
+        command: ["/bin/migrate"]
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+	objects, err := Render(result, Options{
+		Namespace:        "skali-trackr-escpos-production",
+		EnvironmentID:    "0198f2f4-0000-7000-8000-000000000002",
+		RevisionChecksum: "6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2",
+	})
+	require.NoError(t, err)
+
+	var job *batchv1.Job
+	var service *corev1.Service
+	for _, obj := range objects {
+		switch typed := obj.(type) {
+		case *batchv1.Job:
+			job = typed
+		case *corev1.Service:
+			service = typed
+		}
+	}
+	require.NotNil(t, job)
+	require.NotNil(t, service)
+
+	name := job.Spec.Template.Labels["app.kubernetes.io/name"]
+	require.Equal(t, objectName("release", "trackr-escpos", "proxy"), name)
+	require.LessOrEqual(t, len(name), 63, "release pod name label must fit the Kubernetes label limit")
+	for key, value := range job.Spec.Template.Labels {
+		require.LessOrEqual(t, len(value), 63, "label %s exceeds 63 bytes", key)
+	}
+	require.NotEqual(t, service.Spec.Selector["app.kubernetes.io/name"], name,
+		"release pods must not match the application's Service selector")
+}
+
 func environmentVariableFromSecret(variable, secret, key string) corev1.EnvVar {
 	return corev1.EnvVar{
 		Name: variable,
