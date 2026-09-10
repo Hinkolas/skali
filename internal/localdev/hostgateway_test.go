@@ -52,3 +52,21 @@ func TestPingResolvedIP(t *testing.T) {
 	require.Equal(t, "", pingResolvedIP("ping: bad address 'host.docker.internal'\n"))
 	require.Equal(t, "", pingResolvedIP(""))
 }
+
+func TestNslookupResolved(t *testing.T) {
+	answer := "Server:\t\t10.43.0.10\nAddress:\t10.43.0.10:53\n\nName:\thost.k3d.internal\nAddress: 192.168.65.254\n"
+	if !nslookupResolved(answer, "host.k3d.internal", "192.168.65.254") {
+		t.Error("resolved answer not recognized")
+	}
+	if nslookupResolved(answer, "host.k3d.internal", "10.43.0.10") {
+		t.Error("the server banner address must not count as the answer")
+	}
+	nx := "Server:\t\t10.43.0.10\nAddress:\t10.43.0.10:53\n\nNon-authoritative answer:\n\n** server can't find host.k3d.internal: NXDOMAIN\n"
+	if nslookupResolved(nx, "host.k3d.internal", "192.168.65.254") {
+		t.Error("NXDOMAIN taken for a resolution")
+	}
+	stale := "Name:\thost.k3d.internal\nAddress: 172.17.0.1\n"
+	if nslookupResolved(stale, "host.k3d.internal", "192.168.65.254") {
+		t.Error("a stale address must not count")
+	}
+}

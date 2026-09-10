@@ -230,6 +230,24 @@ func (a *runAttachment) waitStep(ctx context.Context, key, title, reason string)
 	_ = a.journal.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded)
 }
 
+// resolveWait closes a step an earlier pass left waiting, once the wait is
+// over; a run that never waited on this key journals nothing, so the step
+// only ever appears when there was something to wait for.
+func (a *runAttachment) resolveWait(ctx context.Context, key, title string, logs []string) {
+	if a.run == nil {
+		return
+	}
+	step, found, err := a.journal.FindStep(ctx, a.run.ID, key)
+	if err != nil {
+		warn("find waiting step", err, "key", key)
+		return
+	}
+	if !found || journal.StepStatus(step.Status) != journal.StepWaiting {
+		return
+	}
+	a.completeStep(ctx, key, title, journal.StepSucceeded, logs)
+}
+
 // finish concludes the attached run. The rollout parent step of an adopted
 // deployment run closes with the run.
 func (a *runAttachment) finish(ctx context.Context, status journal.RunStatus) {

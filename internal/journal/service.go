@@ -196,6 +196,19 @@ func (s *Service) EnsureStep(ctx context.Context, runID uuid.UUID, parentID *uui
 	return &step, nil
 }
 
+// FindStep reads the step of a run by key without creating it; ok is false
+// when the run never journaled that key.
+func (s *Service) FindStep(ctx context.Context, runID uuid.UUID, key string) (*store.Step, bool, error) {
+	step, err := s.st.GetStepByRunAndKey(ctx, store.GetStepByRunAndKeyParams{RunID: runID, Key: key})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("journal: read step: %w", err)
+	}
+	return &step, true, nil
+}
+
 func (s *Service) SetStepStatus(ctx context.Context, stepID uuid.UUID, to StepStatus) error {
 	var runID uuid.UUID
 	err := s.st.WithTx(ctx, func(q *store.Queries) error {

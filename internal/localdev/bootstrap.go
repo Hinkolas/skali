@@ -192,10 +192,21 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	justStarted = justStarted || restarted
 
 	// Any node restart silently drops the host gateway entry k3d injected
-	// at creation (see hostgateway.go); skalid needs it to resolve, so it
-	// is verified on every pass, before the fast path can return.
-	if err := ensureHostGateway(ctx, client, progress); err != nil {
+	// at creation, and a fresh cluster never keeps it (see hostgateway.go);
+	// skalid needs it to resolve, so it is repaired on every pass, before
+	// the fast path can return, and a repair is proven through the cluster
+	// DNS before the pass ends.
+	gatewayRepaired, err := ensureHostGateway(ctx, client, progress)
+	if err != nil {
 		return nil, err
+	}
+	finish := func() (*State, error) {
+		if gatewayRepaired {
+			if err := verifyHostGateway(ctx, client, progress); err != nil {
+				return nil, err
+			}
+		}
+		return state, nil
 	}
 
 	// The docker image ID is the content identity behind the mutable dev
@@ -270,7 +281,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		if healthy {
 			progress.Start("Converge platform")
 			progress.Skip("unchanged since last converge")
-			return state, nil
+			return finish()
 		}
 	}
 
@@ -287,7 +298,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		return nil, err
 	}
 	progress.Done(MasterURL())
-	return state, nil
+	return finish()
 }
 
 // bundleProfile derives the bundle profile of this installation.
