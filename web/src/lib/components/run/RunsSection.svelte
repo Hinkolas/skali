@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Rocket from '@lucide/svelte/icons/rocket';
 	import { api, ApiError } from '$lib/api/client';
-	import type { Run } from '$lib/types/runs';
+	import type { Run, RunKind } from '$lib/types/runs';
 	import { runUnsettled, type RunsList } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
 	import { formatDuration, relativeTime } from '$lib/format';
@@ -15,13 +15,29 @@
 	import RunDetailPanel from './RunDetailPanel.svelte';
 
 	// The environment's run feed: seeded by the caller's load, kept live by
-	// the runs-list SSE stream while mounted. `limit` keeps only the newest
+	// the runs-list SSE stream while mounted. `kinds` narrows the feed to
+	// some run kinds (a database's backups), `limit` keeps only the newest
 	// rows (the overview's digest); the Deployments tab shows the journal.
-	let { envId, seed, limit }: { envId: string | null; seed: Run[] | null; limit?: number } =
-		$props();
+	let {
+		envId,
+		seed,
+		kinds,
+		limit,
+		emptyTitle = 'No runs yet',
+		emptyDescription = 'deploys, rollbacks, and teardowns appear here'
+	}: {
+		envId: string | null;
+		seed: Run[] | null;
+		kinds?: RunKind[];
+		limit?: number;
+		emptyTitle?: string;
+		emptyDescription?: string;
+	} = $props();
 
 	let live = $state<Run[] | null>(null);
-	const runs = $derived((live ?? seed ?? []).slice(0, limit));
+	const runs = $derived(
+		(live ?? seed ?? []).filter((r) => !kinds || kinds.includes(r.kind)).slice(0, limit)
+	);
 
 	$effect(() => {
 		if (!envId) return;
@@ -73,11 +89,7 @@
 </script>
 
 {#if runs.length === 0}
-	<EmptyState
-		icon={Rocket}
-		title="No runs yet"
-		description="deploys, rollbacks, and teardowns appear here"
-	/>
+	<EmptyState icon={Rocket} title={emptyTitle} description={emptyDescription} />
 {:else}
 	<Table columns={['Run', 'Actor', 'Started', 'Duration', 'Status', '']} {grid}>
 		{#each runs as run (run.id)}

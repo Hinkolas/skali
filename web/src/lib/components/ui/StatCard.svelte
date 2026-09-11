@@ -34,7 +34,7 @@
 		</div>
 	{/if}
 	{#if hasFooter}
-		<div class="mt-2.5 flex items-center gap-3">
+		<div class="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
 			{#if stat.chip}
 				<TrendChip text={stat.chip.text} tone={stat.chip.tone} />
 			{/if}
@@ -42,7 +42,7 @@
 				<span class="text-text-muted text-md">{stat.note}</span>
 			{/if}
 			{#each stat.split ?? [] as part (part.label)}
-				<span class="text-text-muted flex items-center gap-1.5 font-mono text-xs">
+				<span class="text-text-muted flex items-center gap-1.5 font-mono text-xs whitespace-nowrap">
 					{#if part.class}
 						<span class="size-[8px] flex-none rounded-full {part.class}"></span>
 					{/if}
