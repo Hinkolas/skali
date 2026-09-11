@@ -11,7 +11,7 @@
 	// bar (usage against a limit), or nothing. Chip and note sit below it
 	// either way so the footer line lands at the same height across tiles.
 	const hasSparkline = $derived((stat.sparkline?.length ?? 0) > 1);
-	const hasFooter = $derived(Boolean(stat.chip || stat.note));
+	const hasFooter = $derived(Boolean(stat.chip || stat.note || stat.split?.length));
 </script>
 
 <Card class="px-4.5 py-4">
@@ -40,6 +40,13 @@
 			{#if stat.note}
 				<span class="text-text-muted text-md">{stat.note}</span>
 			{/if}
+			{#each stat.split ?? [] as part (part.label)}
+				<span class="text-text-muted flex items-center gap-1.5 font-mono text-xs">
+					<span class="size-[8px] flex-none rounded-full {part.class}"></span>
+					{part.label}
+					<span class="text-text-primary">{part.value}</span>
+				</span>
+			{/each}
 		</div>
 	{/if}
 </Card>

@@ -13,7 +13,8 @@
 		storageFootprint,
 		storageForEnvironment,
 		sumSeries,
-		toChartPoints
+		toChartPoints,
+		windowTotal
 	} from '$lib/types/metrics';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -68,8 +69,9 @@
 
 	// The four tiles come from stored samples for the selected environment
 	// (24h window): the headline is the newest bucket, the sparkline is the
-	// whole window summed across apps, and the storage tile reads the
-	// footprint API instead (no series there).
+	// whole window summed across apps. Traffic is the exception: bytes are
+	// per-bucket deltas, so its headline is the window total. Storage has
+	// its own section below and no tile.
 	const stats = $derived.by((): StatCardData[] => {
 		const m = data.metrics;
 		const apps = m?.applications ?? [];
@@ -136,27 +138,34 @@
 			};
 		}
 
-		// Best-known storage footprint of the selected environment: measured
-		// where the sampler has real numbers, reserved sizes elsewhere.
-		let storageStat: StatCardData = { label: 'STORAGE', ...noData };
-		if (envStorage.length > 0) {
-			const used = envStorage.reduce((acc, s) => acc + storageFootprint(s), 0);
-			const declared = envStorage.reduce((acc, s) => acc + s.capacity_bytes, 0);
-			const parts = formatBytes(used).split(' ');
-			const kinds = Object.entries(storageKinds).filter(([, v]) => v > 0).length;
-			storageStat =
-				declared > 0
-					? {
-							label: 'STORAGE',
-							value: parts[0],
-							unit: `${parts[1]} / ${formatBytes(declared)}`,
-							progress: { pct: Math.min(100, (used / declared) * 100), class: 'bg-accent' },
-							note: `${envStorage.length} service${envStorage.length === 1 ? '' : 's'}, ${kinds} kind${kinds === 1 ? '' : 's'}`
-						}
-					: { label: 'STORAGE', value: parts[0], unit: parts[1] };
+		// Edge traffic in both directions over the window: request bytes are
+		// what clients sent in, response bytes what the apps sent out. Only
+		// traffic through the edge proxy counts (public routes), not internal
+		// service-to-service, database, or bucket transfers.
+		const inBytes = windowTotal(apps, (a) => a.edge?.request_bytes);
+		const outBytes = windowTotal(apps, (a) => a.edge?.response_bytes);
+		let trafficStat: StatCardData = { label: 'TRAFFIC', ...noData };
+		if (inBytes != null || outBytes != null) {
+			const inSeries = sumSeries(apps, (a) => a.edge?.request_bytes);
+			const outSeries = sumSeries(apps, (a) => a.edge?.response_bytes);
+			const totalSeries = inSeries.map((v, i) => {
+				const o = outSeries[i];
+				return v == null && o == null ? null : (v ?? 0) + (o ?? 0);
+			});
+			const totalParts = formatBytes((inBytes ?? 0) + (outBytes ?? 0)).split(' ');
+			trafficStat = {
+				label: 'TRAFFIC',
+				value: totalParts[0],
+				unit: `${totalParts[1]} / 24h`,
+				sparkline: series(totalSeries),
+				split: [
+					{ label: 'in', value: formatBytes(inBytes ?? 0), class: 'bg-chart-1' },
+					{ label: 'out', value: formatBytes(outBytes ?? 0), class: 'bg-chart-2' }
+				]
+			};
 		}
 
-		return [requestsStat, cpuStat, memStat, storageStat];
+		return [requestsStat, cpuStat, memStat, trafficStat];
 	});
 
 	// Storage rows of the selected environment, largest footprint first.
