@@ -29,7 +29,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 	return {
 		user: user,
-		org: buildOrg(meta, projects.length, nodes.length),
+		org: buildOrg(meta, url.hostname, projects.length, nodes.length),
 		projects,
 		nodes,
 		nodesObservation: nodesBody?.observation ?? null

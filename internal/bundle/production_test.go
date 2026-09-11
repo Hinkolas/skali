@@ -29,6 +29,7 @@ func productionProfile() Profile {
 		AuthSecret:   strings.Repeat("a", 32),
 		RegistryHost: RegistryInternalHost,
 		Production: &Production{
+			ClusterName:     "khz",
 			IngressHost:     "skali.example.com",
 			RegistryDomain:  "registry.example.com",
 			TokenKeyPEM:     "-----BEGIN EC PRIVATE KEY-----\nfake\n-----END EC PRIVATE KEY-----\n",
@@ -196,6 +197,9 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(raw), `"SKALI_CAPABILITIES"`)
 	require.Contains(t, string(raw), "application;database;object-storage;registry;edge")
+	// The recorded cluster name is the installation's display name.
+	require.Contains(t, string(raw), `"SKALI_INSTANCE_NAME"`)
+	require.Contains(t, string(raw), `"value":"khz"`)
 
 	// The platform edge: an explicit Certificate for the api domain and a
 	// websecure IngressRoute splitting the platform domain by path, /api to
