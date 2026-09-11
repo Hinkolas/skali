@@ -6,7 +6,6 @@
 	import type { ServiceView } from '$lib/models/service';
 	import type { ClusterNode } from '$lib/types/nodes';
 	import type { Project } from '$lib/types/project';
-	import { toast } from '$lib/stores/toast.svelte';
 	import SidebarOrgNav from './SidebarOrgNav.svelte';
 	import SidebarProjectNav from './SidebarProjectNav.svelte';
 	import SidebarStatus from './SidebarStatus.svelte';
@@ -50,14 +49,6 @@
 			</div>
 			<div class="text-text-primary text-xl font-semibold tracking-[-0.01em]">skali</div>
 		</a>
-		<button
-			type="button"
-			onclick={() => toast.info('Collapsing the sidebar is coming soon')}
-			class="text-text-ghost hover:text-text-secondary ml-auto cursor-pointer px-1 text-base transition-colors"
-			aria-label="Collapse sidebar"
-		>
-			«
-		</button>
 	</div>
 
 	{#if data.project}
