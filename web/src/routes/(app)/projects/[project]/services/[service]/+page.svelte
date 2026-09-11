@@ -20,6 +20,7 @@
 		services={data.services}
 		{envId}
 		runs={data.runs}
+		metrics={data.metrics}
 		storage={data.storage}
 		temporaryStorage={data.temporaryStorage}
 	/>

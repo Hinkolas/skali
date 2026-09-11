@@ -15,11 +15,13 @@
 	import RunDetailPanel from './RunDetailPanel.svelte';
 
 	// The environment's run feed: seeded by the caller's load, kept live by
-	// the runs-list SSE stream while mounted.
-	let { envId, seed }: { envId: string | null; seed: Run[] | null } = $props();
+	// the runs-list SSE stream while mounted. `limit` keeps only the newest
+	// rows (the overview's digest); the Deployments tab shows the journal.
+	let { envId, seed, limit }: { envId: string | null; seed: Run[] | null; limit?: number } =
+		$props();
 
 	let live = $state<Run[] | null>(null);
-	const runs = $derived(live ?? seed ?? []);
+	const runs = $derived((live ?? seed ?? []).slice(0, limit));
 
 	$effect(() => {
 		if (!envId) return;

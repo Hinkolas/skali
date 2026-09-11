@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { formatBytes, formatCores, formatCount } from '$lib/format';
 	import { toChartPoints, type EnvironmentMetrics, type MetricsWindow } from '$lib/types/metrics';
+	import Card from '$lib/components/ui/Card.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import TimeSeriesChart from '$lib/components/ui/TimeSeriesChart.svelte';
 	import type { PageData } from './$types';
@@ -140,7 +141,7 @@
 
 	{#if hasData}
 		<div class="grid grid-cols-1 gap-3.5 pb-6">
-			<div class="border-border-subtle rounded-[15px] border p-4.5">
+			<Card class="p-4.5">
 				<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">CPU</div>
 				<TimeSeriesChart
 					series={cpuSeries}
@@ -148,8 +149,8 @@
 					formatValue={formatCores}
 					label="CPU usage over the selected window"
 				/>
-			</div>
-			<div class="border-border-subtle rounded-[15px] border p-4.5">
+			</Card>
+			<Card class="p-4.5">
 				<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">Memory</div>
 				<TimeSeriesChart
 					series={memSeries}
@@ -157,9 +158,9 @@
 					formatValue={formatBytes}
 					label="Memory usage over the selected window"
 				/>
-			</div>
+			</Card>
 			{#if app?.edge}
-				<div class="border-border-subtle rounded-[15px] border p-4.5">
+				<Card class="p-4.5">
 					<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">
 						Requests <span class="normal-case">/ {stepLabel}</span>
 					</div>
@@ -169,8 +170,8 @@
 						formatValue={formatCount}
 						label="Edge requests per bucket over the selected window"
 					/>
-				</div>
-				<div class="border-border-subtle rounded-[15px] border p-4.5">
+				</Card>
+				<Card class="p-4.5">
 					<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">
 						Bandwidth <span class="normal-case">/ {stepLabel}</span>
 					</div>
@@ -180,7 +181,7 @@
 						formatValue={formatBytes}
 						label="Edge request and response bytes per bucket over the selected window"
 					/>
-				</div>
+				</Card>
 			{/if}
 		</div>
 	{:else}

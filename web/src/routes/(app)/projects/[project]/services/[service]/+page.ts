@@ -1,11 +1,12 @@
 // Per-type overview data: the connection projection for databases and
-// buckets, the environment's run feed for applications. The service itself
-// is selected from the project layout using the service route parameter.
+// buckets, the environment's run feed and usage samples for applications.
+// The service itself is selected from the project layout using the service
+// route parameter.
 
 import { error } from '@sveltejs/kit';
 import { apiFetch } from '$lib/api/client';
 import type { BucketConnection, DatabaseConnection } from '$lib/types/connections';
-import type { ProjectStorage, ServiceStorage } from '$lib/types/metrics';
+import type { EnvironmentMetrics, ProjectStorage, ServiceStorage } from '$lib/types/metrics';
 import type { Run } from '$lib/types/runs';
 import type { PageLoad } from './$types';
 
@@ -35,6 +36,7 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 			connection: null,
 			bucketConnection: null,
 			runs: null,
+			metrics: null,
 			storage: null,
 			temporaryStorage: null
 		};
@@ -65,6 +67,7 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 			connection: res.ok ? ((await res.json()) as DatabaseConnection) : null,
 			bucketConnection: null,
 			runs: null,
+			metrics: null,
 			...storage
 		};
 	}
@@ -77,17 +80,20 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 			connection: null,
 			bucketConnection: res.ok ? ((await res.json()) as BucketConnection) : null,
 			runs: null,
+			metrics: null,
 			...storage
 		};
 	}
-	const [res, storage] = await Promise.all([
+	const [res, metricsRes, storage] = await Promise.all([
 		apiFetch(fetch, `/v1/environments/${env.id}/runs`),
+		apiFetch(fetch, `/v1/environments/${env.id}/metrics?window=24h`),
 		storagePromise
 	]);
 	return {
 		connection: null,
 		bucketConnection: null,
 		runs: res.ok ? ((await res.json()) as { runs: Run[] }).runs : null,
+		metrics: metricsRes.ok ? ((await metricsRes.json()) as EnvironmentMetrics) : null,
 		...storage
 	};
 };
