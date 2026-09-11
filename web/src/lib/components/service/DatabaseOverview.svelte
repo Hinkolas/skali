@@ -6,8 +6,15 @@
 	import type { ServiceStorage } from '$lib/types/metrics';
 	import type { Run } from '$lib/types/runs';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { formatBytes, relativeTime } from '$lib/format';
-	import { describeCron, describeSeconds } from '$lib/cron';
+	import { describeCron } from '$lib/cron';
+	import {
+		backupSchedule,
+		connectedStat,
+		dependents,
+		footprintStat,
+		lastBackupStat,
+		phaseStat
+	} from '$lib/models/claims';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import RunsSection from '$lib/components/run/RunsSection.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
@@ -36,96 +43,21 @@
 		storage?: ServiceStorage | null;
 	} = $props();
 
-	const ref = $derived(`databases.${service.key}`);
-	const apps = $derived(
-		services.filter((s) => s.type === 'application' && s.dependencies.includes(ref))
-	);
-	const healthyApps = $derived(
-		apps.filter((a) => envStatus.service('application', a.key)?.health === 'healthy').length
-	);
-
-	// The first schedule that includes this database, by name.
-	const schedule = $derived(
-		Object.entries(backups)
-			.toSorted(([a], [b]) => a.localeCompare(b))
-			.find(
-				([, b]) => b.include.allDatabases || (b.include.databases ?? []).includes(service.key)
-			) ?? null
-	);
-	// Snapshots are taken per environment, so its backup runs are this
-	// database's backups too.
-	const lastBackup = $derived(
-		(runs ?? []).find((r) => r.kind === 'backup' && r.status === 'succeeded') ?? null
-	);
+	const live = (key: string) => envStatus.service('application', key);
+	const apps = $derived(dependents(services, 'database', service.key));
+	const schedule = $derived(backupSchedule(backups, 'database', service.key));
 
 	// Measured logical size from the sampler when it exists; the declared
 	// request stays the fallback and the denominator.
-	const sizeStat = $derived.by((): StatCardData => {
-		const declared = service.config.storageBytes;
-		if (storage?.used_bytes != null) {
-			const parts = formatBytes(storage.used_bytes).split(' ');
-			return declared
-				? {
-						label: 'SIZE',
-						value: parts[0],
-						unit: `${parts[1]} / ${formatBytes(declared)}`,
-						progress: {
-							pct: Math.min(100, (storage.used_bytes / declared) * 100),
-							class: 'bg-service-db'
-						}
-					}
-				: { label: 'SIZE', value: parts[0], unit: parts[1], note: 'logical size' };
-		}
-		return {
-			label: 'SIZE',
-			value: declared ? formatBytes(declared) : 'default',
-			note: 'requested, not yet measured'
-		};
-	});
-
-	const backupStat = $derived.by((): StatCardData => {
-		const split: StatCardData['split'] = [];
-		if (schedule) {
-			split.push({ label: 'schedule', value: describeCron(schedule[1].schedule) });
-			split.push({ label: 'keep', value: describeSeconds(schedule[1].retentionSeconds) });
-		}
-		if (lastBackup) {
-			const [ago, ...rest] = relativeTime(lastBackup.finished_at ?? lastBackup.created_at).split(
-				' '
-			);
-			return { label: 'LAST BACKUP', value: ago, unit: rest.join(' '), split };
-		}
-		return {
-			label: 'LAST BACKUP',
-			value: 'none',
-			note: schedule ? undefined : 'no schedule covers this database',
-			split
-		};
-	});
-
 	const stats = $derived.by((): StatCardData[] => [
-		sizeStat,
-		backupStat,
-		{
-			label: 'CONNECTED',
-			value: `${apps.length}`,
-			unit: `app${apps.length === 1 ? '' : 's'}`,
-			note:
-				apps.length === 0
-					? 'no application depends on it'
-					: `${healthyApps}/${apps.length} healthy · private network`
-		},
-		{
-			label: 'PHASE',
-			value: connection?.phase ?? 'unknown',
-			chip:
-				connection?.phase === 'provisioned'
-					? { text: 'ready', tone: 'success' }
-					: { text: 'settling', tone: 'neutral' },
-			note: connection?.credential_version
-				? `credentials v${connection.credential_version}`
-				: undefined
-		}
+		footprintStat('SIZE', storage?.used_bytes, service.config.storageBytes, 'bg-service-db', {
+			declared: 'requested, not yet measured',
+			undeclared: 'default size, not yet measured',
+			measured: 'logical size'
+		}),
+		lastBackupStat(schedule, runs, 'database'),
+		connectedStat(apps, live, 'private network'),
+		phaseStat(connection)
 	]);
 
 	const RECENT_BACKUPS = 5;
@@ -154,7 +86,7 @@
 <div class="mb-3.5 flex items-baseline gap-2.5">
 	<h2 class="text-text-primary text-xl font-semibold">Recent backups</h2>
 	<div class="text-text-muted text-md">
-		snapshots of this environment{schedule ? ` · ${describeCron(schedule[1].schedule)}` : ''}
+		snapshots of this environment{schedule ? ` · ${describeCron(schedule.backup.schedule)}` : ''}
 	</div>
 </div>
 

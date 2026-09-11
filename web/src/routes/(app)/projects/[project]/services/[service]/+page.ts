@@ -1,6 +1,7 @@
 // Per-type overview data: the connection projection for databases and
-// buckets, the environment's run feed for applications and databases, usage
-// samples for applications.
+// buckets, the environment's run feed for every type (deploys for
+// applications, backups for the stateful ones), usage samples for
+// applications.
 // The service itself is selected from the project layout using the service
 // route parameter.
 
@@ -59,8 +60,8 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		}
 	);
 
-	// Backups are environment snapshots, so a database's backup history is
-	// the environment's run feed filtered to that kind.
+	// Backups are environment snapshots, so a database's or bucket's backup
+	// history is the environment's run feed filtered to that kind.
 	if (service.type === 'database') {
 		const [res, runsRes, storage] = await Promise.all([
 			apiFetch(fetch, `/v1/environments/${env.id}/databases/${service.key}/connection`),
@@ -76,14 +77,15 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		};
 	}
 	if (service.type === 'bucket') {
-		const [res, storage] = await Promise.all([
+		const [res, runsRes, storage] = await Promise.all([
 			apiFetch(fetch, `/v1/environments/${env.id}/buckets/${service.key}/connection`),
+			apiFetch(fetch, `/v1/environments/${env.id}/runs`),
 			storagePromise
 		]);
 		return {
 			connection: null,
 			bucketConnection: res.ok ? ((await res.json()) as BucketConnection) : null,
-			runs: null,
+			runs: runsRes.ok ? ((await runsRes.json()) as { runs: Run[] }).runs : null,
 			metrics: null,
 			...storage
 		};

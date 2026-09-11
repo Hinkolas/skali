@@ -40,6 +40,8 @@
 		services={data.services}
 		connection={data.bucketConnection}
 		{envId}
+		runs={data.runs}
+		backups={data.definition?.backups ?? {}}
 		storage={data.storage}
 	/>
 {/if}
