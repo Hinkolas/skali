@@ -1,13 +1,13 @@
 <script lang="ts">
 	/**
-	 * The skali mark (src/lib/assets/skali-mark.png): near-black glyph on a
-	 * transparent square, cropped to its bounding box. It reads as
-	 * text-surface-base on the gradient tiles, so no recolouring is needed;
-	 * size it from the parent with a width/height class.
+	 * The mark shown inside the gradient logo tiles (sidebar, login, error
+	 * pages). A plain lucide icon for now: it inherits the tile's
+	 * text-surface-base colour through currentColor, so size it from the
+	 * parent with a width/height class and nothing else.
 	 */
-	import mark from '$lib/assets/skali-mark.png';
+	import Server from '@lucide/svelte/icons/server';
 
 	let { class: cls = '' }: { class?: string } = $props();
 </script>
 
-<img src={mark} alt="" class={cls} draggable="false" />
+<Server class={cls} strokeWidth={2.25} aria-hidden="true" />
