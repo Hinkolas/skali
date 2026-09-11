@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Plus from '@lucide/svelte/icons/plus';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Container from '@lucide/svelte/icons/container';
+	import { slide } from 'svelte/transition';
 	import type { StatCardData } from '$lib/models/view';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { HEALTH_META, STORAGE_KIND_META } from '$lib/service-types';
@@ -14,6 +16,7 @@
 		toChartPoints
 	} from '$lib/types/metrics';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
 	import StackedBar from '$lib/components/ui/StackedBar.svelte';
@@ -164,6 +167,11 @@
 	);
 	const storageKinds = $derived(storageByKind(envStorage));
 	const storageTotal = $derived(envStorage.reduce((acc, s) => acc + storageFootprint(s), 0));
+
+	// The per-service breakdown is folded away by default: the summary bar
+	// answers the common question, and with many services the row list
+	// would otherwise push the service cards below the fold.
+	let storageOpen = $state(false);
 </script>
 
 <svelte:head>
@@ -190,60 +198,86 @@
 		<h2 class="text-text-primary text-xl font-semibold">Storage</h2>
 		<div class="text-text-muted text-md">env {data.env?.name ?? 'none'}</div>
 	</div>
-	<div class="border-border-subtle mb-6.5 rounded-[15px] border px-4.5 py-4">
-		<StackedBar
-			segments={Object.entries(STORAGE_KIND_META).map(([kind, meta]) => ({
-				label: `${meta.label} ${formatBytes(storageKinds[kind as keyof typeof storageKinds] ?? 0)}`,
-				value: storageKinds[kind as keyof typeof storageKinds] ?? 0,
-				class: meta.class
-			}))}
-			total={storageTotal}
-		/>
-		<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-			{#each Object.entries(STORAGE_KIND_META) as [kind, meta] (kind)}
-				{#if (storageKinds[kind as keyof typeof storageKinds] ?? 0) > 0}
-					<span class="flex items-center gap-1.5 font-mono text-text-faint text-xs">
-						<span class="size-[8px] rounded-full {meta.class}"></span>
-						{meta.label}
-						{formatBytes(storageKinds[kind as keyof typeof storageKinds])}
-					</span>
-				{/if}
-			{/each}
-		</div>
-		<div class="border-border-subtle mt-3.5 border-t">
-			{#each envStorage as entry (`${entry.kind}:${entry.service_key}`)}
-				{@const meta = STORAGE_KIND_META[entry.kind]}
-				<div
-					class="border-border-subtle grid grid-cols-[1.6fr_1fr_1.4fr] items-center gap-3 border-b py-2.5 last:border-0"
-				>
-					<div class="flex items-center gap-2">
-						<span class="size-[8px] flex-none rounded-full {meta.class}"></span>
-						<span class="font-mono text-text-primary truncate text-sm">{entry.service_key}</span>
-					</div>
-					<div class="font-mono text-text-muted text-sm">
-						{#if entry.used_bytes != null}
-							{formatBytes(entry.used_bytes)}
-						{:else}
-							reserved {formatBytes(entry.capacity_bytes)}
-						{/if}
-					</div>
-					<div class="flex items-center gap-2.5">
-						{#if entry.used_bytes != null && entry.capacity_bytes > 0}
-							<div class="min-w-0 flex-1">
-								<ProgressBar
-									pct={Math.min(100, (entry.used_bytes / entry.capacity_bytes) * 100)}
-									class={meta.class}
-								/>
-							</div>
-							<span class="font-mono text-text-faint flex-none text-xs">
-								of {formatBytes(entry.capacity_bytes)}
+	<Card class="mb-6.5">
+		<button
+			type="button"
+			onclick={() => (storageOpen = !storageOpen)}
+			aria-expanded={storageOpen}
+			aria-controls="storage-breakdown"
+			class="flex w-full cursor-pointer items-center gap-4 px-4.5 py-4 text-left"
+		>
+			<div class="min-w-0 flex-1">
+				<StackedBar
+					segments={Object.entries(STORAGE_KIND_META).map(([kind, meta]) => ({
+						label: `${meta.label} ${formatBytes(storageKinds[kind as keyof typeof storageKinds] ?? 0)}`,
+						value: storageKinds[kind as keyof typeof storageKinds] ?? 0,
+						class: meta.class
+					}))}
+					total={storageTotal}
+					class="h-2.5"
+				/>
+				<div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+					{#each Object.entries(STORAGE_KIND_META) as [kind, meta] (kind)}
+						{#if (storageKinds[kind as keyof typeof storageKinds] ?? 0) > 0}
+							<span class="text-text-faint flex items-center gap-1.5 font-mono text-xs">
+								<span class="size-[8px] rounded-full {meta.class}"></span>
+								{meta.label}
+								{formatBytes(storageKinds[kind as keyof typeof storageKinds])}
 							</span>
 						{/if}
-					</div>
+					{/each}
 				</div>
-			{/each}
-		</div>
-	</div>
+			</div>
+			<span class="text-text-muted flex flex-none items-center gap-1.5 text-md">
+				{envStorage.length} service{envStorage.length === 1 ? '' : 's'}
+				<ChevronDown
+					size={16}
+					class="text-text-faint transition-transform duration-200 {storageOpen
+						? 'rotate-180'
+						: ''}"
+				/>
+			</span>
+		</button>
+		{#if storageOpen}
+			<div
+				id="storage-breakdown"
+				transition:slide={{ duration: 180 }}
+				class="border-border-subtle border-t px-4.5 pt-1 pb-1.5"
+			>
+				{#each envStorage as entry (`${entry.kind}:${entry.service_key}`)}
+					{@const meta = STORAGE_KIND_META[entry.kind]}
+					<div
+						class="border-border-subtle grid grid-cols-[1.6fr_1fr_1.4fr] items-center gap-3 border-b py-2.5 last:border-0"
+					>
+						<div class="flex items-center gap-2">
+							<span class="size-[8px] flex-none rounded-full {meta.class}"></span>
+							<span class="text-text-primary truncate font-mono text-sm">{entry.service_key}</span>
+						</div>
+						<div class="text-text-muted font-mono text-sm">
+							{#if entry.used_bytes != null}
+								{formatBytes(entry.used_bytes)}
+							{:else}
+								reserved {formatBytes(entry.capacity_bytes)}
+							{/if}
+						</div>
+						<div class="flex items-center gap-2.5">
+							{#if entry.used_bytes != null && entry.capacity_bytes > 0}
+								<div class="min-w-0 flex-1">
+									<ProgressBar
+										pct={Math.min(100, (entry.used_bytes / entry.capacity_bytes) * 100)}
+										class={meta.class}
+									/>
+								</div>
+								<span class="text-text-faint flex-none font-mono text-xs">
+									of {formatBytes(entry.capacity_bytes)}
+								</span>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</Card>
 {/if}
 
 <div class="mb-3.5 flex items-baseline gap-2.5">
