@@ -167,6 +167,10 @@
 	);
 	const storageKinds = $derived(storageByKind(envStorage));
 	const storageTotal = $derived(envStorage.reduce((acc, s) => acc + storageFootprint(s), 0));
+	// Declared capacity across the environment's services: the summary bar's
+	// full width, so the unfilled track is what is still free. Falls back to
+	// the footprint (a full bar) where nothing declares a size.
+	const storageCapacity = $derived(envStorage.reduce((acc, s) => acc + s.capacity_bytes, 0));
 
 	// The per-service breakdown is folded away by default: the summary bar
 	// answers the common question, and with many services the row list
@@ -213,7 +217,7 @@
 						value: storageKinds[kind as keyof typeof storageKinds] ?? 0,
 						class: meta.class
 					}))}
-					total={storageTotal}
+					total={storageCapacity > 0 ? storageCapacity : storageTotal}
 					class="h-2.5"
 				/>
 				<div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -226,6 +230,11 @@
 							</span>
 						{/if}
 					{/each}
+					{#if storageCapacity > 0}
+						<span class="text-text-muted ml-auto font-mono text-xs">
+							{formatBytes(storageTotal)} of {formatBytes(storageCapacity)}
+						</span>
+					{/if}
 				</div>
 			</div>
 			<span class="text-text-muted flex flex-none items-center gap-1.5 text-md">
