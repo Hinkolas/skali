@@ -1,5 +1,6 @@
 <script lang="ts">
 	import LogoMark from '$lib/components/ui/LogoMark.svelte';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { OrgView } from '$lib/models/org';
 	import type { ServiceView } from '$lib/models/service';
@@ -36,12 +37,19 @@
 	<!-- px-1 lines the logo box up with the nav pill edge (same inset as the
 	     nav item containers), not the item icons. -->
 	<div class="flex h-14 flex-none items-center gap-2.5 px-1">
-		<div
-			class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135"
+		<!-- Tile and wordmark are one link home: the cluster dashboard. -->
+		<a
+			href={resolve('/(app)/[section]', { section: 'dashboard' })}
+			class="flex items-center gap-2.5 rounded-lg transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+			aria-label="skali dashboard"
 		>
-			<LogoMark class="size-4" />
-		</div>
-		<div class="text-xl font-semibold tracking-[-0.01em]">skali</div>
+			<div
+				class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135"
+			>
+				<LogoMark class="size-4" />
+			</div>
+			<div class="text-text-primary text-xl font-semibold tracking-[-0.01em]">skali</div>
+		</a>
 		<button
 			type="button"
 			onclick={() => toast.info('Collapsing the sidebar is coming soon')}
