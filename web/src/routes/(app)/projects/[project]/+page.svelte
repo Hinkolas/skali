@@ -14,6 +14,8 @@
 		storageForEnvironment,
 		sumSeries,
 		toChartPoints,
+		seriesAverage,
+		seriesPeak,
 		windowTotal
 	} from '$lib/types/metrics';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
@@ -84,35 +86,35 @@
 		let requestsStat: StatCardData = { label: 'REQUESTS', ...noData };
 		if (requests != null && m) {
 			const perMinute = 60 / m.step_seconds;
+			const rateSeries = requestSeries.map((v) => (v == null ? null : v * perMinute));
+			const total = windowTotal(apps, (a) => a.edge?.requests);
+			const peak = seriesPeak(rateSeries);
 			requestsStat = {
 				label: 'REQUESTS',
 				value: formatCount(requests * perMinute),
 				unit: '/min',
-				sparkline: series(requestSeries.map((v) => (v == null ? null : v * perMinute)))
+				sparkline: series(rateSeries),
+				split: [
+					{ label: 'total', value: `${formatCount(total ?? 0)} / 24h` },
+					{ label: 'peak', value: `${formatCount(peak ?? 0)} /min` }
+				]
 			};
-			// Compare the newest bucket with the one an hour earlier.
-			const now = requestSeries.length - 1;
-			const before = now - Math.round(3600 / m.step_seconds);
-			const prev = before >= 0 ? requestSeries[before] : null;
-			if (prev != null && prev > 0 && requestSeries[now] != null) {
-				const delta = Math.round(((requestSeries[now]! - prev) / prev) * 100);
-				requestsStat.chip = {
-					text: `${delta >= 0 ? '+' : ''}${delta}%`,
-					tone: delta >= 0 ? 'success' : 'neutral'
-				};
-				requestsStat.note = 'vs last hour';
-			}
 		}
 
 		const cpuSeries = sumSeries(apps, (a) => a.cpu_millicores);
 		const cpu = currentTotal(apps, (a) => a.cpu_millicores);
 		let cpuStat: StatCardData = { label: 'CPU', ...noData };
 		if (cpu != null) {
-			// The limit picks the unit so numerator and denominator match.
+			// The limit picks the unit so numerator, denominator, and the sub
+			// stats all match.
 			const inCores = limits.cpu != null ? limits.cpu >= 1000 : cpu >= 1000;
+			const fmt = (v: number) =>
+				inCores ? (v / 1000).toFixed(v < 100 ? 2 : 1) : `${Math.round(v)}`;
+			const avg = seriesAverage(cpuSeries);
+			const peak = seriesPeak(cpuSeries);
 			cpuStat = {
 				label: 'CPU',
-				value: inCores ? (cpu / 1000).toFixed(cpu < 100 ? 2 : 1) : `${Math.round(cpu)}`,
+				value: fmt(cpu),
 				unit:
 					limits.cpu != null
 						? inCores
@@ -121,7 +123,11 @@
 						: inCores
 							? 'cores'
 							: 'mCPU',
-				sparkline: series(cpuSeries)
+				sparkline: series(cpuSeries),
+				split: [
+					{ label: 'avg', value: fmt(avg ?? cpu) },
+					{ label: 'peak', value: fmt(peak ?? cpu) }
+				]
 			};
 		}
 
@@ -130,11 +136,17 @@
 		let memStat: StatCardData = { label: 'MEMORY', ...noData };
 		if (mem != null) {
 			const memParts = formatBytes(mem).split(' ');
+			const avg = seriesAverage(memSeries);
+			const peak = seriesPeak(memSeries);
 			memStat = {
 				label: 'MEMORY',
 				value: memParts[0],
 				unit: limits.mem != null ? `${memParts[1]} / ${formatBytes(limits.mem)}` : memParts[1],
-				sparkline: series(memSeries)
+				sparkline: series(memSeries),
+				split: [
+					{ label: 'avg', value: formatBytes(avg ?? mem) },
+					{ label: 'peak', value: formatBytes(peak ?? mem) }
+				]
 			};
 		}
 

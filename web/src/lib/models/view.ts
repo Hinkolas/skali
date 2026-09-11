@@ -13,6 +13,7 @@ export interface StatCardData {
 	progress?: { pct: number; class: string };
 	/** Trend preview of the value over the loaded window; gaps are nulls. */
 	sparkline?: ChartPoint[];
-	/** Footer breakdown of the headline into named parts (dot, label, value). */
-	split?: { label: string; value: string; class: string }[];
+	/** Footer sub stats: named parts of the headline (with a dot class) or
+	 * plain context values such as avg and peak (without one). */
+	split?: { label: string; value: string; class?: string }[];
 }

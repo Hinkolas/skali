@@ -8,8 +8,9 @@
 	let { stat }: { stat: StatCardData } = $props();
 
 	// The preview slot holds one of: a sparkline (series data), a progress
-	// bar (usage against a limit), or nothing. Chip and note sit below it
-	// either way so the footer line lands at the same height across tiles.
+	// bar (usage against a limit), or nothing. Chip, note, and sub stats sit
+	// below it either way so the footer line lands at the same height across
+	// tiles.
 	const hasSparkline = $derived((stat.sparkline?.length ?? 0) > 1);
 	const hasFooter = $derived(Boolean(stat.chip || stat.note || stat.split?.length));
 </script>
@@ -33,7 +34,7 @@
 		</div>
 	{/if}
 	{#if hasFooter}
-		<div class="mt-2.5 flex items-center gap-2">
+		<div class="mt-2.5 flex items-center gap-3">
 			{#if stat.chip}
 				<TrendChip text={stat.chip.text} tone={stat.chip.tone} />
 			{/if}
@@ -42,7 +43,9 @@
 			{/if}
 			{#each stat.split ?? [] as part (part.label)}
 				<span class="text-text-muted flex items-center gap-1.5 font-mono text-xs">
-					<span class="size-[8px] flex-none rounded-full {part.class}"></span>
+					{#if part.class}
+						<span class="size-[8px] flex-none rounded-full {part.class}"></span>
+					{/if}
 					{part.label}
 					<span class="text-text-primary">{part.value}</span>
 				</span>

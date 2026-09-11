@@ -177,3 +177,22 @@ export function sumSeries(
 	}
 	return out;
 }
+
+/** Highest non-null value of a series; null when all gaps. */
+export function seriesPeak(values: (number | null)[]): number | null {
+	let peak: number | null = null;
+	for (const v of values) if (v != null && (peak == null || v > peak)) peak = v;
+	return peak;
+}
+
+/** Mean of the non-null values of a series; null when all gaps. */
+export function seriesAverage(values: (number | null)[]): number | null {
+	let sum = 0;
+	let n = 0;
+	for (const v of values) {
+		if (v == null) continue;
+		sum += v;
+		n++;
+	}
+	return n === 0 ? null : sum / n;
+}
