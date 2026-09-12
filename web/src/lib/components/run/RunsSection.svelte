@@ -5,6 +5,7 @@
 	import { runUnsettled, type RunsList } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
 	import { formatDuration, relativeTime } from '$lib/format';
+	import { clock } from '$lib/stores/clock.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
@@ -119,7 +120,7 @@
 						{relativeTime(run.started_at ?? run.created_at)}
 					</div>
 					<div class="font-mono text-text-muted text-sm whitespace-nowrap">
-						{run.started_at ? formatDuration(run.started_at, run.finished_at) : ''}
+						{run.started_at ? formatDuration(run.started_at, run.finished_at, clock.now) : ''}
 					</div>
 				</div>
 				<div

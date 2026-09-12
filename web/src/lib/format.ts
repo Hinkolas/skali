@@ -73,10 +73,15 @@ export function relativeTime(iso: string | null): string {
 	return `${Math.floor(secs / 86400)}d ago`;
 }
 
-/** "42s" / "3m 12s" between two instants; a missing end means "until now". */
-export function formatDuration(startIso: string | null, endIso: string | null): string {
+/** "42s" / "3m 12s" between two instants; a missing end means "until now".
+ * Pass `now` (e.g. the shared clock) for a value that keeps ticking. */
+export function formatDuration(
+	startIso: string | null,
+	endIso: string | null,
+	now: number = Date.now()
+): string {
 	if (!startIso) return '';
-	const end = endIso ? new Date(endIso).getTime() : Date.now();
+	const end = endIso ? new Date(endIso).getTime() : now;
 	const secs = Math.max(0, Math.round((end - new Date(startIso).getTime()) / 1000));
 	if (secs < 60) return `${secs}s`;
 	const mins = Math.floor(secs / 60);

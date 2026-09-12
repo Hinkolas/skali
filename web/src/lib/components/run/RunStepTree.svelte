@@ -9,6 +9,7 @@
 	import type { NavIcon } from '$lib/navigation';
 	import type { Step, StepStatus } from '$lib/types/runs';
 	import { formatDuration } from '$lib/format';
+	import { clock } from '$lib/stores/clock.svelte';
 	import RunStepTree from './RunStepTree.svelte';
 	import StepLogView from './StepLogView.svelte';
 
@@ -52,7 +53,7 @@
 					</span>
 				{/if}
 				<span class="font-mono text-text-ghost ml-auto flex-none text-xs">
-					{step.started_at ? formatDuration(step.started_at, step.finished_at) : ''}
+					{step.started_at ? formatDuration(step.started_at, step.finished_at, clock.now) : ''}
 				</span>
 			</button>
 			{#if isExpanded}
