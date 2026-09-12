@@ -97,6 +97,7 @@ func describeDeployPolicy(settings *client.EnvironmentSettings) string {
 
 func newEnvCreateCommand() *cobra.Command {
 	var project, remote, priority string
+	var yes bool
 	command := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create an environment",
@@ -115,6 +116,27 @@ func newEnvCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			printHeader(out, style,
+				headerRow{"remote", scope.remoteName, scope.api.Master()},
+				headerRow{"project", scope.project.Name, ""},
+				headerRow{"environment", args[0], "new"})
+			if !yes {
+				description := "You become its admin; members inherit their project role."
+				if priority == "high" {
+					description = "High priority keeps it running when resources are tight; it starts read-only for inheriting members."
+				}
+				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title:       fmt.Sprintf("Create environment %s in project %s?", args[0], scope.project.Name),
+					Description: description,
+					Default:     true,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
+			}
 			created, err := scope.api.CreateEnvironment(ctx, scope.project.ID, args[0], priority)
 			if err != nil {
 				return err
@@ -132,12 +154,14 @@ func newEnvCreateCommand() *cobra.Command {
 	}
 	addAccessScopeFlags(command, &project, &remote)
 	command.Flags().StringVar(&priority, "priority", "", "normal (default) or high (instance admins only)")
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
 }
 
 func newEnvSetCommand() *cobra.Command {
 	var project, environment, remote string
 	var maxRole, deployPolicy, promoteFrom, priority string
+	var yes bool
 	command := &cobra.Command{
 		Use:   "set",
 		Short: "Change an environment's ceiling, deploy policy, or priority",
@@ -190,6 +214,26 @@ func newEnvSetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			style := clirender.StyleFor(out)
+			printHeader(out, style,
+				headerRow{"remote", scope.remoteName, scope.api.Master()},
+				headerRow{"project", scope.project.Name, ""},
+				headerRow{"environment", scope.environment.Name, ""})
+			for _, change := range settingsChanges(scope.environment.Settings, patch) {
+				fmt.Fprintln(out, "  "+change)
+			}
+			if !yes {
+				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title:   fmt.Sprintf("Change environment %s?", scope.environment.Name),
+					Default: true,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
+			}
 			var updated *client.Environment
 			err = withReauth(ctx, out, in, scope.api, func() (err error) {
 				updated, err = scope.api.UpdateEnvironmentSettings(ctx, scope.environment.ID, patch)
@@ -215,7 +259,45 @@ func newEnvSetCommand() *cobra.Command {
 	command.Flags().StringVar(&deployPolicy, "deploy-policy", "", "direct or promote-only")
 	command.Flags().StringVar(&promoteFrom, "promote-from", "", "comma-separated source environments for promotions, or any")
 	command.Flags().StringVar(&priority, "priority", "", "normal or high")
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
+}
+
+// settingsChanges lists what an env set patch changes, as "setting  from
+// -> to" rows; the current value is blank when the server never reported
+// the settings.
+func settingsChanges(current *client.EnvironmentSettings, patch client.EnvironmentSettingsPatch) []string {
+	if current == nil {
+		current = &client.EnvironmentSettings{}
+	}
+	var rows []string
+	row := func(label, from, to string) {
+		if from == "" {
+			from = "unset"
+		}
+		rows = append(rows, fmt.Sprintf("%-14s %s -> %s", label, from, to))
+	}
+	if patch.MaxRole != nil {
+		row("max role", current.MaxRole, *patch.MaxRole)
+	}
+	if patch.DeployPolicy != nil {
+		row("deploy policy", current.DeployPolicy, *patch.DeployPolicy)
+	}
+	if patch.PromoteFrom != nil {
+		from := strings.Join(current.PromoteFrom, ", ")
+		if from == "" {
+			from = "any"
+		}
+		to := strings.Join(*patch.PromoteFrom, ", ")
+		if to == "" {
+			to = "any"
+		}
+		row("promote from", from, to)
+	}
+	if patch.Priority != nil {
+		row("priority", current.Priority, *patch.Priority)
+	}
+	return rows
 }
 
 // resolveEnvScope resolves the environment an env command changes: the
