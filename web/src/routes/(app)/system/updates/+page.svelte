@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { updated } from '$app/state';
 	import ArrowDownToLine from '@lucide/svelte/icons/arrow-down-to-line';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import Check from '@lucide/svelte/icons/check';
@@ -64,6 +65,7 @@
 				if (cancelled) return;
 				status = fresh;
 				disconnected = false;
+				if (running) void updated.check();
 			} catch {
 				// The daemon is rolling or unreachable; keep the last document.
 				if (!cancelled) disconnected = true;
@@ -74,6 +76,27 @@
 			cancelled = true;
 			clearInterval(timer);
 		};
+	});
+
+	// The update replaces skalid, and with it the console this tab runs.
+	// While a run is active the bundle check rides along with the status
+	// poll (the shell's own poll is a minute apart); once the run the
+	// operator watched settles and the bundle did change, reload so the
+	// page that shows the new release is the new release. Nothing on this
+	// page holds unsaved input, so the reload loses nothing.
+	let watched = false;
+	$effect(() => {
+		if (running) {
+			watched = true;
+			return;
+		}
+		if (!watched) return;
+		watched = false;
+		untrack(() => {
+			void updated.check().then((changed) => {
+				if (changed) window.location.reload();
+			});
+		});
 	});
 
 	// The side panel shows the per-node picture. While it is open, every
