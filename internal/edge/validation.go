@@ -19,6 +19,13 @@ func CanonicalDomain(value string) (string, error) {
 			return "", fmt.Errorf("must be an ASCII DNS hostname: %s", describeCharacter(value, index, c))
 		}
 	}
+	// host:port is the likeliest well-formed non-hostname, especially for
+	// local development where the application listens on a port; the
+	// route's port field names the application port, the domain never
+	// carries one.
+	if host, port, ok := strings.Cut(value, ":"); ok && host != "" && port != "" && strings.Trim(port, "0123456789") == "" {
+		return "", fmt.Errorf("must be a DNS hostname without a port: character %d starts :%s; routes reach the application through the route's port field", utf8.RuneCountInString(host)+1, port)
+	}
 	value = strings.ToLower(strings.TrimSuffix(value, "."))
 	if value == "" {
 		return "", fmt.Errorf("must be a DNS hostname: the value is empty")
