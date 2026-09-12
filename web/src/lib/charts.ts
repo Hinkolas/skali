@@ -49,3 +49,19 @@ export function nearestIndex(pts: ChartPoint[], t: number): number {
 	}
 	return t - pts[lo].t <= pts[hi].t - t ? lo : hi;
 }
+
+/**
+ * Local midnights strictly inside (t0, t1), for the x axis of multi-day
+ * windows. Built by date arithmetic on a fresh Date per step so DST shifts
+ * land on the calendar midnight, not 24h after the previous one.
+ */
+export function localMidnights(t0: number, t1: number): number[] {
+	const start = new Date(t0);
+	const out: number[] = [];
+	for (let i = 1; ; i++) {
+		const t = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i).getTime();
+		if (t >= t1) break;
+		out.push(t);
+	}
+	return out;
+}

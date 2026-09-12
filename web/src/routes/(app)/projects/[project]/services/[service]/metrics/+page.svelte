@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import Gauge from '@lucide/svelte/icons/gauge';
 	import { api } from '$lib/api/client';
 	import { formatBytes, formatCores, formatCount } from '$lib/format';
@@ -21,26 +22,37 @@
 	];
 
 	let range = $state<MetricsWindow>('24h');
-	// Seeded from the route load, then overwritten by refetches on window
-	// change and every 30s (the sampler cadence); a navigation reseeds it.
-	let metrics = $derived(data.metrics);
+	// The route load seeds the 24h window; every other window, and the
+	// seeded one once another has been shown, is fetched here and refreshed
+	// every 30s (the sampler cadence). While a fetch is in flight the seed
+	// serves its own window at once and any other window keeps the last
+	// series on screen instead of flashing empty.
+	let fetched = $state<EnvironmentMetrics | null>(null);
+	const metrics = $derived.by(() => {
+		if (fetched?.window === range) return fetched;
+		if (data.metrics?.window === range) return data.metrics;
+		return fetched ?? data.metrics;
+	});
 
 	$effect(() => {
 		const envId = data.env?.id;
 		if (!designed || !envId) return;
 		const selected = range;
+		// `fetched` is read untracked: a completed fetch must not re-run
+		// this effect, or it would fetch again in a loop.
+		const seeded = selected === (data.metrics?.window ?? '24h') && untrack(() => fetched) === null;
 		let cancelled = false;
 		const fetchSeries = async () => {
 			try {
 				const fresh = await api.get<EnvironmentMetrics>(
 					`/v1/environments/${envId}/metrics?window=${selected}`
 				);
-				if (!cancelled) metrics = fresh;
+				if (!cancelled) fetched = fresh;
 			} catch {
 				// Keep the last good series; the next tick retries.
 			}
 		};
-		if (selected !== (data.metrics?.window ?? '24h')) void fetchSeries();
+		if (!seeded) void fetchSeries();
 		const timer = setInterval(fetchSeries, 30_000);
 		return () => {
 			cancelled = true;

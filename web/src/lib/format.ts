@@ -34,6 +34,11 @@ export function formatCores(millicores: number): string {
 
 export const formatPct = (n: number) => `${Math.round(n)}%`;
 
+/** "Jul 6" — x-axis ticks on windows spanning days. */
+export function formatDay(t: number): string {
+	return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 /** "14:32" — sparse x-axis ticks. */
 export function formatClock(t: number): string {
 	return new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });

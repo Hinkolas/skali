@@ -1,6 +1,12 @@
 <script lang="ts">
-	import { nearestIndex, niceMax, type ChartPoint, type ChartSeries } from '$lib/charts';
-	import { formatClock, formatTimestamp } from '$lib/format';
+	import {
+		localMidnights,
+		nearestIndex,
+		niceMax,
+		type ChartPoint,
+		type ChartSeries
+	} from '$lib/charts';
+	import { formatClock, formatDay, formatTimestamp } from '$lib/format';
 
 	// Line/area time-series chart. Contract: all series share identical
 	// timestamps (they come from the same sample array), so one hover index
@@ -87,7 +93,27 @@
 		series.map((s) => ({ line: linePath(s.points), area: areaPath(s.points) }))
 	);
 	const yTicks = $derived([dom[0], (dom[0] + dom[1]) / 2, dom[1]]);
-	const xTicks = $derived([0, 1 / 3, 2 / 3, 1].map((f) => t0 + f * (t1 - t0)));
+
+	// Within a couple of days the x axis reads as clock times at four even
+	// positions. Over longer spans clock times say nothing, so the ticks
+	// move to local midnights labeled by date, thinned to at most seven and
+	// kept clear of both edges where a centered label would clip.
+	const DAY = 86_400_000;
+	const daily = $derived(t1 - t0 > 2 * DAY);
+	const xTicks = $derived.by((): { t: number; anchor: string }[] => {
+		if (!daily) {
+			return [0, 1 / 3, 2 / 3, 1].map((f, i) => ({
+				t: t0 + f * (t1 - t0),
+				anchor: i === 0 ? 'start' : i === 3 ? 'end' : 'middle'
+			}));
+		}
+		const midnights = localMidnights(t0, t1).filter((t) => {
+			const frac = (t - t0) / (t1 - t0);
+			return frac > 0.03 && frac < 0.97;
+		});
+		const every = Math.ceil(midnights.length / 7);
+		return midnights.filter((_, i) => i % every === 0).map((t) => ({ t, anchor: 'middle' }));
+	});
 
 	function onmove(e: PointerEvent & { currentTarget: SVGRectElement }) {
 		const rect = e.currentTarget.getBoundingClientRect();
@@ -111,14 +137,14 @@
 					{formatValue(tick)}
 				</text>
 			{/each}
-			{#each xTicks as tick, i (tick)}
+			{#each xTicks as tick (tick.t)}
 				<text
-					x={px(tick)}
+					x={px(tick.t)}
 					y={height - 4}
-					text-anchor={i === 0 ? 'start' : i === xTicks.length - 1 ? 'end' : 'middle'}
+					text-anchor={tick.anchor}
 					class="fill-text-ghost font-mono text-2xs"
 				>
-					{formatClock(tick)}
+					{daily ? formatDay(tick.t) : formatClock(tick.t)}
 				</text>
 			{/each}
 
