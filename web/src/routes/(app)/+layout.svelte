@@ -53,8 +53,13 @@
 			<div class="min-w-0 flex-1"><Topbar /></div>
 		</div>
 		<div class="flex min-h-0 flex-1 gap-4">
+			<!-- scrollbar-gutter keeps the scrollbar's column reserved on short
+			     pages too, so content does not shift sideways when navigating
+			     between a page that scrolls and one that does not. both-edges
+			     mirrors that column on the left so the content stays centered;
+			     px-4 plus the gutter lands close to the pt-5.5 top inset. -->
 			<main
-				class="bg-surface-raised border-border-default min-w-0 flex-1 overflow-y-auto rounded-2xl border px-4 pt-4 sm:px-5.5 sm:pt-5.5"
+				class="bg-surface-raised border-border-default min-w-0 flex-1 overflow-y-auto rounded-2xl border px-4 pt-4 [scrollbar-gutter:stable_both-edges] sm:pt-5.5"
 			>
 				{@render children()}
 			</main>

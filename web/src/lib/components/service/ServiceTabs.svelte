@@ -20,11 +20,12 @@
 	};
 </script>
 
-<!-- -mx-5.5 bleeds the divider to the card edges; px-2.5 plus the tabs' own
-     px-3 puts the first label back on the card's 5.5 content inset. -->
+<!-- -mx-4 bleeds the divider across the main pane's padding (up to its
+     scrollbar gutters); px-1 plus the tabs' own px-3 puts the first label
+     back on the pane's px-4 content inset. -->
 <nav
 	aria-label="Service"
-	class="border-border-default -mx-5.5 mb-6 flex items-center gap-1 border-b px-2.5"
+	class="border-border-default -mx-4 mb-6 flex items-center gap-1 border-b px-1"
 >
 	{#each SERVICE_TABS[service.type] as tab (tab.slug)}
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
