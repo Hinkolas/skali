@@ -4,11 +4,11 @@
 	// states; every edit happens in MemberAccessModal, so the list keeps one
 	// column width whether the project has one environment or twelve.
 	import Plus from '@lucide/svelte/icons/plus';
+	import Settings2 from '@lucide/svelte/icons/settings-2';
 	import { ROLE_HINT, requiredTitle } from '$lib/access';
 	import { modal } from '$lib/stores/modal.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
 	import AddMemberModal, { modalOptions as addMemberModalOptions } from './AddMemberModal.svelte';
 	import MemberAccessModal, {
 		modalOptions as memberAccessModalOptions
@@ -72,9 +72,9 @@
 			no members yet · instance admins see every project without membership
 		</div>
 	{:else}
-		<div
-			class="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,16rem)_9.5rem_auto] items-center gap-x-4"
-		>
+		<!-- Badge scale shared by the role and the explicit per-environment
+		     roles, so the row's right side reads as one family of states. -->
+		<div class="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,18rem)_auto_auto] items-center gap-x-4">
 			{#each members as member (member.user_id)}
 				{@const isSelf = member.user_id === self?.id}
 				{@const explicit = overrides(member)}
@@ -103,24 +103,41 @@
 					</span>
 					<span class="flex flex-wrap justify-end gap-1.5">
 						{#each explicit as [env, role] (env)}
-							<span title="explicit role on {env}, ignores the ceiling">
-								<Pill text="{env}: {role}" tone={role === 'none' ? 'warning' : 'neutral'} />
+							<span
+								class="font-mono inline-flex h-7 items-center rounded-full px-2.5 text-xs {role ===
+								'none'
+									? 'bg-status-warning/10 text-status-warning'
+									: 'bg-white/6 text-text-muted'}"
+								title="explicit role on {env}, ignores the ceiling"
+							>
+								{env}<span class="opacity-50">:</span>{role}
 							</span>
 						{/each}
 					</span>
-					<span
-						class="text-text-secondary font-mono text-right text-md whitespace-nowrap"
-						title={ROLE_HINT[member.role]}
-					>
-						{#if member.instance_admin}
-							admin <span class="text-text-faint text-xs">(instance)</span>
-						{:else}
-							{member.role}
-						{/if}
+					<span class="justify-self-end">
+						<span
+							class="font-mono inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-md {member.instance_admin
+								? 'bg-accent/12 text-accent-light'
+								: 'bg-white/6 text-text-secondary'}"
+							title={member.instance_admin
+								? 'Instance admins are admin everywhere; the membership is informational.'
+								: ROLE_HINT[member.role]}
+						>
+							{member.instance_admin ? 'admin' : member.role}
+							{#if member.instance_admin}
+								<span class="text-accent-light/60 text-xs">instance</span>
+							{/if}
+						</span>
 					</span>
 					<span class="justify-self-end">
-						<Button size="sm" variant="ghost" onclick={() => openMember(member)}>
-							{canEdit ? 'Manage' : 'View'}
+						<Button
+							size="icon"
+							variant="ghost"
+							ariaLabel="{canEdit ? 'Manage' : 'View'} {member.name || member.email}"
+							title={canEdit ? 'Manage access' : 'View access'}
+							onclick={() => openMember(member)}
+						>
+							<Settings2 size={15} />
 						</Button>
 					</span>
 				</div>
