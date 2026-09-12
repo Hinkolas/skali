@@ -77,7 +77,7 @@ export const SERVICE_TABS: Record<ServiceType, NavItemDef[]> = {
 		{ label: 'Environment', slug: 'environment', icon: KeyRound, stub: true },
 		{ label: 'Domains', slug: 'domains', icon: Globe, stub: true },
 		{ label: 'Scaling', slug: 'scaling', icon: Scaling, stub: true },
-		{ label: 'Settings', slug: 'settings', icon: Settings2 }
+		{ label: 'Config', slug: 'config', icon: Settings2 }
 	],
 	database: [
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },
@@ -85,12 +85,12 @@ export const SERVICE_TABS: Record<ServiceType, NavItemDef[]> = {
 		{ label: 'Backups', slug: 'backups', icon: Archive, stub: true },
 		{ label: 'Metrics', slug: 'metrics', icon: Gauge, stub: true },
 		{ label: 'Access', slug: 'access', icon: KeyRound, stub: true },
-		{ label: 'Settings', slug: 'settings', icon: Settings2 }
+		{ label: 'Config', slug: 'config', icon: Settings2 }
 	],
 	bucket: [
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },
 		{ label: 'Metrics', slug: 'metrics', icon: Gauge, stub: true },
-		{ label: 'Settings', slug: 'settings', icon: Settings2 }
+		{ label: 'Config', slug: 'config', icon: Settings2 }
 	]
 };
 
