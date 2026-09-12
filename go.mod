@@ -3,6 +3,7 @@ module github.com/Hinkolas/skali
 go 1.26.8
 
 require (
+	charm.land/bubbletea/v2 v2.0.2
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/creack/pty v1.1.24
@@ -40,7 +41,6 @@ require (
 
 require (
 	charm.land/bubbles/v2 v2.0.0 // indirect
-	charm.land/bubbletea/v2 v2.0.2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
