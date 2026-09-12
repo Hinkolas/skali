@@ -33,47 +33,62 @@ func newBackupCommand() *cobra.Command {
 
 func newBackupRestoreCommand() *cobra.Command {
 	var (
+		project     string
 		environment string
 		remote      string
 		yes         bool
 	)
 	command := &cobra.Command{
-		Use:   "restore SNAPSHOT-ID",
+		Use:   "restore [snapshot-id]",
 		Short: "Restore a snapshot's data into an environment",
 		Long: "Stops the environment, replaces every matching database, bucket,\n" +
 			"and volume with the snapshot's data, then resumes the current\n" +
 			"revision. Current data is overwritten. The environment must be\n" +
 			"deployed first; restore moves data, not configuration.\n\n" +
-			"The snapshot restores into the environment it was taken from unless\n" +
-			"--environment names another environment of the same project.",
-		Args: cobra.ExactArgs(1),
+			"Without a snapshot id the project's snapshots are offered to pick\n" +
+			"from. The snapshot restores into the environment it was taken from\n" +
+			"unless --environment names another environment of the same project.\n" +
+			"The resolved remote, project, snapshot, and environment are shown\n" +
+			"and confirmed by typing the environment name; --yes skips that.",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeSnapshotArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
 			out := command.OutOrStdout()
 			style := clirender.StyleFor(out)
-			snapshotID := args[0]
+			in := bufio.NewReader(command.InOrStdin())
 			start, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			scope, err := resolveQueryProject(ctx, start, "", environment, remote)
+			scope, err := resolveQueryProject(ctx, start, project, environment, remote)
 			if err != nil {
 				return err
 			}
-			snapshot, err := findSnapshot(ctx, scope, snapshotID)
+			var snapshot *client.BackupSnapshot
+			if len(args) == 1 {
+				snapshot, err = findSnapshot(ctx, scope, args[0])
+			} else {
+				snapshot, err = chooseSnapshot(ctx, out, in, scope, environment, command.CommandPath())
+			}
 			if err != nil {
 				return err
 			}
+			snapshotID := snapshot.ID
 			targetEnvironment, err := restoreEnvironment(scope, snapshot, environment)
 			if err != nil {
 				return err
 			}
+			printHeader(out, style,
+				headerRow{"remote", scope.remoteName, scope.api.Master()},
+				headerRow{"project", scope.project.Name, ""},
+				headerRow{"snapshot", snapshotID, fmt.Sprintf("%s, %s, %s", snapshot.Environment, snapshotTime(snapshot), utils.FormatBytes(snapshot.Bytes))},
+				headerRow{"environment", targetEnvironment.Name, ""})
 			if !yes {
 				if !cliprompt.Interactive() {
 					return errors.New("non-interactive use requires --yes")
 				}
-				session := promptSession(out, bufio.NewReader(command.InOrStdin()))
-				confirmed, err := session.ConfirmTyped(ctx,
+				confirmed, err := promptSession(out, in).ConfirmTyped(ctx,
 					fmt.Sprintf("Restore snapshot %s into %s?", snapshotID, targetEnvironment.Name),
 					fmt.Sprintf("The snapshot was taken from %s on %s. The environment stops, its "+
 						"current data is replaced with the snapshot's, and the current "+
@@ -88,7 +103,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			}
 			runID, err := scope.api.RestoreBackup(ctx, targetEnvironment.ID, snapshotID)
 			if isReauthRequired(err) {
-				if err = reauthSession(ctx, out, bufio.NewReader(command.InOrStdin()), scope.api); err != nil {
+				if err = reauthSession(ctx, out, in, scope.api); err != nil {
 					return err
 				}
 				runID, err = scope.api.RestoreBackup(ctx, targetEnvironment.ID, snapshotID)
@@ -115,6 +130,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			}
 		},
 	}
+	command.Flags().StringVar(&project, "project", "", "project holding the snapshot; defaults to the checkout's project")
 	command.Flags().StringVar(&environment, "environment", "",
 		"environment to restore into; defaults to the environment the snapshot was taken from")
 	command.Flags().StringVar(&remote, "remote", "",
@@ -135,8 +151,65 @@ func findSnapshot(ctx context.Context, scope *queryProject, snapshotID string) (
 			return &snapshots[i], nil
 		}
 	}
-	return nil, fmt.Errorf("no snapshot %s in project %s on %s; see skali backup ls",
+	return nil, fmt.Errorf("no snapshot %s in project %s on %s; see skali backup list",
 		snapshotID, scope.project.Name, scope.api.Master())
+}
+
+// chooseSnapshot offers the project's snapshots, newest first, when the
+// command was given none; --environment narrows the offer like it narrows
+// the list. Without a terminal the caller has to name one.
+func chooseSnapshot(ctx context.Context, out io.Writer, in *bufio.Reader, scope *queryProject, environment, commandPath string) (*client.BackupSnapshot, error) {
+	snapshots, err := scope.api.ListProjectBackups(ctx, scope.project.ID)
+	if err != nil {
+		return nil, err
+	}
+	if environment != "" {
+		snapshots = slices.DeleteFunc(snapshots, func(snapshot client.BackupSnapshot) bool {
+			return snapshot.Environment != environment
+		})
+	}
+	if len(snapshots) == 0 {
+		if environment != "" {
+			return nil, fmt.Errorf("no snapshots of environment %s in project %s on %s", environment, scope.project.Name, scope.api.Master())
+		}
+		return nil, fmt.Errorf("no snapshots in project %s on %s; take one with skali backup create", scope.project.Name, scope.api.Master())
+	}
+	if !cliprompt.Interactive() {
+		return nil, fmt.Errorf("name the snapshot to restore: %s <snapshot-id>; skali backup list shows them", commandPath)
+	}
+	chosen, err := promptSession(out, in).Select(ctx, cliprompt.SelectOptions{
+		Title:       "Restore which snapshot?",
+		Description: fmt.Sprintf("Snapshots of project %s on the backup target, newest first.", scope.project.Name),
+		Options:     snapshotOptions(snapshots),
+	})
+	if err != nil {
+		return nil, confirmError(err)
+	}
+	for index := range snapshots {
+		if snapshots[index].ID == chosen {
+			return &snapshots[index], nil
+		}
+	}
+	return nil, errors.New("aborted")
+}
+
+// snapshotOptions labels each snapshot by when and where it was taken and
+// how much it holds; the id stays the value restore sends.
+func snapshotOptions(snapshots []client.BackupSnapshot) []cliprompt.Option {
+	width := 0
+	for _, snapshot := range snapshots {
+		width = max(width, len(snapshot.Environment))
+	}
+	options := make([]cliprompt.Option, 0, len(snapshots))
+	for index := range snapshots {
+		snapshot := &snapshots[index]
+		options = append(options, cliprompt.Option{
+			Label:       fmt.Sprintf("%s  %-*s  %s", snapshotTime(snapshot), width, snapshot.Environment, utils.FormatBytes(snapshot.Bytes)),
+			Description: utils.ShortChecksum(snapshot.RevisionChecksum),
+			Value:       snapshot.ID,
+		})
+	}
+	return options
 }
 
 // restoreEnvironment picks the environment a snapshot restores into: the
@@ -173,6 +246,7 @@ func newBackupCreateCommand() *cobra.Command {
 		environment string
 		remote      string
 		detach      bool
+		yes         bool
 	)
 	command := &cobra.Command{
 		Use:   "create",
@@ -180,7 +254,9 @@ func newBackupCreateCommand() *cobra.Command {
 		Long: "Backs up every database, bucket, and application volume of the\n" +
 			"environment to the configured S3 target as one complete snapshot.\n" +
 			"Configuration and secret values are not included: a snapshot\n" +
-			"restores data into a redeployed environment.",
+			"restores data into a redeployed environment.\n\n" +
+			"The resolved remote, project, and environment are shown and\n" +
+			"confirmed before the snapshot starts; --yes skips the question.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			ctx := command.Context()
@@ -193,6 +269,23 @@ func newBackupCreateCommand() *cobra.Command {
 			target, err := resolveQueryTarget(ctx, start, environment, remote)
 			if err != nil {
 				return err
+			}
+			printHeader(out, style,
+				headerRow{"remote", target.remoteName, target.master},
+				headerRow{"project", target.project, ""},
+				headerRow{"environment", target.environment, ""})
+			if !yes {
+				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title:       fmt.Sprintf("Back up environment %s?", target.environment),
+					Description: "Every database, bucket, and application volume is snapshotted to the backup target.",
+					Default:     true,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
 			}
 			result, err := target.api.CreateBackup(ctx, target.environmentID)
 			if err != nil {
@@ -226,14 +319,16 @@ func newBackupCreateCommand() *cobra.Command {
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().BoolVar(&detach, "detach", false, "start the backup and return without following it")
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
 }
 
 func newBackupLsCommand() *cobra.Command {
-	var environment, remote string
+	var project, environment, remote string
 	command := &cobra.Command{
-		Use:   "ls",
-		Short: "List the project's snapshots on the backup target",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List the project's snapshots on the backup target",
 		Long: "Lists the snapshots of every environment of the project, newest\n" +
 			"first, as the backup target holds them; --environment narrows the\n" +
 			"list to one environment. Snapshots of environments that no longer\n" +
@@ -247,7 +342,7 @@ func newBackupLsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveQueryProject(ctx, start, "", environment, remote)
+			scope, err := resolveQueryProject(ctx, start, project, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -274,6 +369,7 @@ func newBackupLsCommand() *cobra.Command {
 			return nil
 		},
 	}
+	command.Flags().StringVar(&project, "project", "", "project whose snapshots to list; defaults to the checkout's project")
 	command.Flags().StringVar(&environment, "environment", "", "only list snapshots of this environment")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")

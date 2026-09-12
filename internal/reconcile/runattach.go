@@ -150,6 +150,12 @@ func (a *runAttachment) ensure(ctx context.Context) {
 // a single finished attempt. A terminal step of the same key (an earlier
 // pass in this run already did this) skips silently.
 func (a *runAttachment) completeStep(ctx context.Context, key, title string, status journal.StepStatus, logs []string) {
+	a.completeStepFields(ctx, key, title, status, logs, nil)
+}
+
+// completeStepFields is completeStep with structured fields attached to
+// every log line, for clients that render the outcome from data.
+func (a *runAttachment) completeStepFields(ctx context.Context, key, title string, status journal.StepStatus, logs []string, fields map[string]any) {
 	if a.run == nil {
 		return
 	}
@@ -175,11 +181,11 @@ func (a *runAttachment) completeStep(ctx context.Context, key, title string, sta
 	}
 	writer := a.journal.Writer(attempt.ID, a.redactor)
 	for _, line := range logs {
+		level := "info"
 		if status == journal.StepFailed {
-			_ = writer.Error(ctx, line)
-		} else {
-			_ = writer.Info(ctx, line)
+			level = "error"
 		}
+		_ = writer.Log(ctx, level, line, fields)
 	}
 	attemptStatus := journal.AttemptSucceeded
 	if status == journal.StepFailed {
@@ -199,6 +205,12 @@ func (a *runAttachment) completeStep(ctx context.Context, key, title string, sta
 // narrates its actual progress. Only an in-flight run carries waiting
 // steps; idle drift passes stay silent.
 func (a *runAttachment) waitStep(ctx context.Context, key, title, reason string) {
+	a.waitStepFields(ctx, key, title, reason, nil)
+}
+
+// waitStepFields is waitStep with structured fields on the journaled
+// reason; the reason text still decides whether anything new is written.
+func (a *runAttachment) waitStepFields(ctx context.Context, key, title, reason string, fields map[string]any) {
 	if a.run == nil {
 		return
 	}
@@ -226,7 +238,7 @@ func (a *runAttachment) waitStep(ctx context.Context, key, title, reason string)
 		return
 	}
 	writer := a.journal.Writer(attempt.ID, a.redactor)
-	_ = writer.Info(ctx, reason)
+	_ = writer.Log(ctx, "info", reason, fields)
 	_ = a.journal.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded)
 }
 

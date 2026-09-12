@@ -11,6 +11,10 @@ manifest:
 - `skali compile` prints the compiled project definition, showing
   defaults and normalized units.
 
+`skali completion install` puts shell completions in place for the login
+shell (`install.sh` already does this); values such as environments, remotes,
+run ids, and manifest commands then complete on tab.
+
 ## Local development
 
 - `skali dev` is the paved path: it ensures the disposable local platform
@@ -25,23 +29,24 @@ manifest:
 - `skali dev run <name>` runs a named command from the manifest
   (`applications.<app>.commands`) on this machine with the application's
   resolved environment; `skali dev run <app> -- <command>...` runs a raw
-  command. Database and bucket addresses are rewritten to the local
-  platform's loopback ports, so seeds and migrations just work.
+  command; bare `skali dev run` lists the declared commands. Database and
+  bucket addresses are rewritten to the local platform's loopback ports,
+  so seeds and migrations just work.
 - `skali dev exec [app]` opens a shell inside the running container
   instead; `skali run` manages journal runs, not project commands.
 
 ## Access
 
-- `skali access ls` shows who holds which role on the project: the project
+- `skali access list` shows who holds which role on the project: the project
   role per member and the effective role per environment (`*` marks an
   explicit per-environment role). `skali access set <email> <role>` grants
   or changes a project role (read, deploy, maintain, admin); with
   `--environment <name>` it sets an explicit role on that environment only
-  (`none` locks it). `skali access rm <email>` removes a member.
-- `skali env ls` lists environments with your access, priority, deploy
+  (`none` locks it). `skali access remove <email>` removes a member.
+- `skali env list` lists environments with your access, priority, deploy
   policy, and ceiling; `skali env create <name>`, `skali env set
   --environment <name> --max-role read --deploy-policy promote-only`, and
-  `skali env rm <name>` (purge) configure them. Writes need a recent login;
+  `skali env remove <name>` (purge) configure them. Writes need a recent login;
   the CLI asks for the password when it has aged.
 - A deploy needs `deploy` on the environment for an unchanged definition and
   `maintain` to change the definition or stage values; refusals name the

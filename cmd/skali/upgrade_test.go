@@ -365,3 +365,37 @@ func TestRetryTextFileBusy(t *testing.T) {
 	require.ErrorIs(t, err, syscall.ETXTBSY)
 	require.Equal(t, textFileBusyRetries+1, calls, "a file that never frees up gives up after the bounded retries")
 }
+
+func TestRunUpgradeRefreshesInstalledCompletions(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	cli := fakeCLI("v0.2.0")
+	server := newFakeUpgradeServer(t, "v0.2.0", releaseAssets(cli))
+	dir := t.TempDir()
+	executable := writeExecutable(t, dir, "skali", fakeCLI("v0.1.0"))
+	home := t.TempDir()
+	stale := filepath.Join(home, ".local", "share", "zsh", "site-functions", "_skali")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stale), 0o755))
+	require.NoError(t, os.WriteFile(stale, []byte("#compdef skali\nstale\n"), 0o644))
+
+	opts := server.options("v0.1.0", updates.ChannelStable, executable)
+	opts.Home = home
+	var out bytes.Buffer
+	require.NoError(t, runUpgrade(context.Background(), &out, opts))
+	require.Contains(t, out.String(), "Refresh shell completions")
+	refreshed, err := os.ReadFile(stale)
+	require.NoError(t, err)
+	require.Equal(t, "skali version v0.2.0\n", string(refreshed), "the new binary generates the script")
+	_, err = os.Stat(filepath.Join(home, ".local", "share", "bash-completion", "completions", "skali"))
+	require.ErrorIs(t, err, os.ErrNotExist, "shells without a script get none")
+
+	// A home without scripts gets none installed by the upgrade (system
+	// site-functions directories may still hold one on this machine).
+	out.Reset()
+	fresh := t.TempDir()
+	opts.Home = fresh
+	opts.Executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.1.0"))
+	require.NoError(t, runUpgrade(context.Background(), &out, opts))
+	entries, err := os.ReadDir(fresh)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}

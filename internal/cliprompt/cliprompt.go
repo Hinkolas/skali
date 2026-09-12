@@ -212,8 +212,7 @@ func (s *Session) Select(ctx context.Context, options SelectOptions) (string, er
 		Title(promptTitle(options.Title, "use arrow keys, enter to select", s.noColor)).
 		Description(options.Description).
 		Options(choices...).
-		Value(&value).
-		Height(listHeight(len(choices), options.Description))
+		Value(&value)
 	if err := s.run(ctx, field); err != nil {
 		return "", err
 	}
@@ -238,13 +237,18 @@ func (s *Session) MultiSelect(ctx context.Context, options MultiSelectOptions) (
 		}
 		choices = append(choices, choice)
 	}
-	field := huh.NewMultiSelect[string]().
-		Title(promptTitle(options.Title, "use arrows and space, enter to confirm", s.noColor)).
-		Description(options.Description).
-		Options(choices...).
-		Value(&values).
-		Height(listHeight(len(choices), options.Description)).
-		Filterable(len(choices) > 7)
+	title := promptTitle(options.Title, "use arrows and space, enter to confirm", s.noColor)
+	field := &autoHeightMultiSelect{
+		MultiSelect: huh.NewMultiSelect[string]().
+			Title(title).
+			Description(options.Description).
+			Options(choices...).
+			Value(&values).
+			Filterable(len(choices) > 7),
+		title:       title,
+		description: options.Description,
+		options:     len(choices),
+	}
 	if options.Limit > 0 {
 		field.Limit(options.Limit)
 	}
@@ -415,16 +419,6 @@ func optionLabel(options []Option, value string) string {
 		}
 	}
 	return value
-}
-
-func listHeight(count int, description string) int {
-	// Huh's Height includes the title and description. Account for both so
-	// the option viewport itself always has room for every choice.
-	height := count + 1
-	if description != "" {
-		height++
-	}
-	return height
 }
 
 func skaliTheme(noColor bool) huh.Theme {

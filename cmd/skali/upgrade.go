@@ -31,7 +31,7 @@ import (
 // and a cluster moves with skali cluster upgrade.
 func newUpgradeCommand() *cobra.Command {
 	var requested, channelFlag string
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Update this skali CLI to a published release",
 		Long: "Replaces this skali binary with a published release: the newest on a\n" +
@@ -49,9 +49,9 @@ func newUpgradeCommand() *cobra.Command {
 			return runUpgrade(command.Context(), command.OutOrStdout(), opts)
 		},
 	}
-	cmd.Flags().StringVar(&requested, "version", "", "exact release tag to install (overrides --channel; may downgrade)")
-	cmd.Flags().StringVar(&channelFlag, "channel", "", "release channel, stable or beta (default stable; beta for a prerelease build)")
-	return cmd
+	command.Flags().StringVar(&requested, "version", "", "exact release tag to install (overrides --channel; may downgrade)")
+	command.Flags().StringVar(&channelFlag, "channel", "", "release channel, stable or beta (default stable; beta for a prerelease build)")
+	return command
 }
 
 // upgradeOptions is everything runUpgrade needs, resolved once by the
@@ -75,6 +75,9 @@ type upgradeOptions struct {
 	Executable   string
 	Root         bool
 	GOOS, GOARCH string
+	// Home locates installed completion scripts to refresh; empty skips
+	// the refresh.
+	Home string
 }
 
 // upgradeOutcome is the judgement of one upgrade request: a target to
@@ -100,6 +103,7 @@ func upgradeOptionsFromEnvironment(requested, channelFlag string) (upgradeOption
 	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
 		executable = resolved
 	}
+	home, _ := os.UserHomeDir()
 	return upgradeOptions{
 		Requested:      requested,
 		Channel:        channel,
@@ -115,6 +119,7 @@ func upgradeOptionsFromEnvironment(requested, channelFlag string) (upgradeOption
 		Root:        os.Geteuid() == 0,
 		GOOS:        runtime.GOOS,
 		GOARCH:      runtime.GOARCH,
+		Home:        home,
 	}, nil
 }
 
@@ -265,6 +270,10 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 		return fmt.Errorf("%w; the previous binary was restored", err)
 	}
 	task.Done("")
+
+	if warning := refreshCompletions(ctx, tasks, opts.Executable, opts.Home); warning != "" {
+		fmt.Fprintln(out, style.Yellow("warning: "+warning))
+	}
 
 	verb := "upgraded"
 	if outcome.Downgrade {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -309,7 +310,11 @@ type fakeInstall struct {
 	envs     map[string][]client.Environment
 	backups  map[string][]client.BackupSnapshot
 	members  map[string][]client.Member
-	posts    []string
+	runs     map[string]client.Run
+	// steps and revisions are keyed by run id and environment id.
+	steps     map[string][]client.Step
+	revisions map[string][]client.RevisionSummary
+	posts     []string
 	// reauthRequired makes every gated write answer reauth_required until
 	// the session reauthenticates once; reauths counts those calls.
 	reauthRequired bool
@@ -321,9 +326,12 @@ type fakeInstall struct {
 func newFakeInstall(t *testing.T) *fakeInstall {
 	t.Helper()
 	f := &fakeInstall{
-		envs:    map[string][]client.Environment{},
-		backups: map[string][]client.BackupSnapshot{},
-		members: map[string][]client.Member{},
+		envs:      map[string][]client.Environment{},
+		backups:   map[string][]client.BackupSnapshot{},
+		members:   map[string][]client.Member{},
+		runs:      map[string]client.Run{},
+		steps:     map[string][]client.Step{},
+		revisions: map[string][]client.RevisionSummary{},
 	}
 	writeError := func(w http.ResponseWriter, status int, code, message string) {
 		w.WriteHeader(status)
@@ -440,6 +448,26 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			_ = json.NewEncoder(w).Encode(map[string]any{"environments": envs})
 		}
 	})
+	mux.HandleFunc("/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		id := strings.TrimPrefix(r.URL.Path, "/v1/runs/")
+		if cancelled, ok := strings.CutSuffix(id, "/cancel"); ok {
+			f.posts = append(f.posts, "cancel:"+cancelled)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "cancelled", "fallback": true})
+			return
+		}
+		run, ok := f.runs[id]
+		if !ok {
+			writeError(w, http.StatusNotFound, "not_found", "not found")
+			return
+		}
+		steps := f.steps[id]
+		if steps == nil {
+			steps = []client.Step{}
+		}
+		_ = json.NewEncoder(w).Encode(client.RunTree{Run: run, Steps: steps})
+	})
 	mux.HandleFunc("/v1/environments/", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -476,6 +504,23 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			_ = json.NewEncoder(w).Encode(map[string]any{"environment": env})
 		case sub == "":
 			_ = json.NewEncoder(w).Encode(map[string]any{"environment": env})
+		case sub == "runs":
+			runs := []client.Run{}
+			for _, id := range slices.Sorted(maps.Keys(f.runs)) {
+				if run := f.runs[id]; run.EnvironmentID != nil && *run.EnvironmentID == env.ID {
+					runs = append(runs, run)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"runs": runs})
+		case sub == "revisions":
+			revisions := f.revisions[env.ID]
+			if revisions == nil {
+				revisions = []client.RevisionSummary{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"revisions": revisions})
+		case sub == "backups" && r.Method == http.MethodPost:
+			f.posts = append(f.posts, "backup:"+env.ID)
+			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-backup-1", "backup_id": "snap-1"})
 		case sub == "access" && len(parts) == 3:
 			if !gate(w) {
 				return

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/utils"
 )
@@ -31,9 +33,10 @@ func newRunCommand() *cobra.Command {
 
 	var environment string
 	list := &cobra.Command{
-		Use:   "list",
-		Short: "List the environment's runs",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List the environment's runs",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			start, err := os.Getwd()
 			if err != nil {
@@ -71,9 +74,10 @@ func newRunCommand() *cobra.Command {
 	command.AddCommand(list)
 
 	show := &cobra.Command{
-		Use:   "show <run-id>",
-		Short: "Print a run's step tree",
-		Args:  cobra.ExactArgs(1),
+		Use:               "show <run-id>",
+		Short:             "Print a run's step tree",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeRunIDArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			api, err := queryClient(remote)
 			if err != nil {
@@ -93,9 +97,12 @@ func newRunCommand() *cobra.Command {
 	}
 
 	attach := &cobra.Command{
-		Use:   "attach <run-id>",
-		Short: "Attach the terminal to a run until it settles",
-		Args:  cobra.ExactArgs(1),
+		Use:               "attach <run-id>",
+		Short:             "Attach the terminal to a run until it settles",
+		ValidArgsFunction: completeRunIDArg,
+		Long: "Renders the run's step tree live until it ends. d detaches and\n" +
+			"leaves the run running; Ctrl-C pressed twice cancels it.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			api, err := queryClient(remote)
 			if err != nil {
@@ -112,23 +119,68 @@ func newRunCommand() *cobra.Command {
 		},
 	}
 
+	var cancelYes bool
 	cancel := &cobra.Command{
-		Use:   "cancel <run-id>",
-		Short: "Cancel a run",
+		Use:               "cancel <run-id>",
+		Short:             "Cancel a run",
+		ValidArgsFunction: completeRunIDArg,
 		Long: "Cancels a pending or running run. A promoted but not yet activated\n" +
-			"deployment returns the target to the prior active revision.",
+			"deployment returns the target to the prior active revision. The run\n" +
+			"is shown and confirmed first; --yes skips the question.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			api, err := queryClient(remote)
-			if err != nil {
-				return err
-			}
-			fallback, err := api.CancelRun(command.Context(), args[0])
-			if err != nil {
-				return err
-			}
+			ctx := command.Context()
 			out := command.OutOrStdout()
-			fmt.Fprintf(out, "run %s cancelled\n", args[0])
+			style := clirender.StyleFor(out)
+			start, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			remoteName, _, api, err := resolveQueryRemote(start, remote)
+			if err != nil {
+				return err
+			}
+			tree, err := api.GetRun(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			run := tree.Run
+			switch run.Status {
+			case "succeeded", "failed", "cancelled":
+				return fmt.Errorf("run %s is already %s", run.ID, run.Status)
+			}
+			rows := []headerRow{
+				{"remote", remoteName, api.Master()},
+				{"run", run.ID, run.Kind},
+				{"status", run.Status, ""},
+			}
+			if run.EnvironmentID != nil {
+				if environment, err := api.GetEnvironment(ctx, *run.EnvironmentID); err == nil {
+					rows = append(rows, headerRow{"environment", environment.Name, ""})
+				}
+			}
+			printHeader(out, style, rows...)
+			if !cancelYes {
+				description := "The run stops at its current step."
+				if run.Kind == "deployment" {
+					description = "A promoted but not yet activated deployment returns the target to the prior active revision."
+				}
+				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title:       fmt.Sprintf("Cancel this %s run?", run.Kind),
+					Description: description,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
+			}
+			fallback, err := api.CancelRun(ctx, run.ID)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "run %s cancelled\n", run.ID)
 			if fallback {
 				fmt.Fprintln(out, "the target returned to the prior active revision")
 			}
@@ -136,15 +188,15 @@ func newRunCommand() *cobra.Command {
 		},
 	}
 
+	cancel.Flags().BoolVar(&cancelYes, "yes", false, "skip the confirmation")
+
 	var stepKey string
 	logs := &cobra.Command{
-		Use:   "logs <run-id>",
-		Short: "Print the logs of one step",
-		Args:  cobra.ExactArgs(1),
+		Use:               "logs <run-id>",
+		Short:             "Print the logs of one step",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeRunIDArg,
 		RunE: func(command *cobra.Command, args []string) error {
-			if stepKey == "" {
-				return errors.New("--step is required")
-			}
 			api, err := queryClient(remote)
 			if err != nil {
 				return err
@@ -169,6 +221,7 @@ func newRunCommand() *cobra.Command {
 		},
 	}
 	logs.Flags().StringVar(&stepKey, "step", "", "step key, e.g. artifacts.web.build")
+	_ = logs.MarkFlagRequired("step")
 
 	command.AddCommand(show, attach, cancel, logs)
 	return command
@@ -177,9 +230,10 @@ func newRunCommand() *cobra.Command {
 func newLogsCommand() *cobra.Command {
 	var environment, service, remote string
 	command := &cobra.Command{
-		Use:   "logs [service]",
-		Short: "Stream live application logs",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "logs [service]",
+		Short:             "Stream live application logs",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeServiceArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			if len(args) == 1 {
 				service = args[0]

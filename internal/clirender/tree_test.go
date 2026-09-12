@@ -96,16 +96,95 @@ func TestWaitingStepShowsTail(t *testing.T) {
 func TestRendererRewritesOnTTY(t *testing.T) {
 	t.Parallel()
 	var out sink
-	renderer := &Renderer{Out: &out, TTY: true}
+	renderer := &Renderer{Out: &out, TTY: true, Size: func() (int, int) { return 80, 0 }}
 	tree := &client.RunTree{Run: client.Run{ID: "0", Kind: "deployment"},
 		Steps: []client.Step{{ID: "s", Title: "Step", Status: "running"}}}
 	renderer.Render(tree)
 	first := out.String()
-	require.NotContains(t, first, "\x1b[")
+	require.NotContains(t, first, "\x1b[2A", "the first frame has nothing to move over")
+	require.Contains(t, first, "run 0  deployment")
+	require.Contains(t, first, "run   Step")
 
 	tree.Steps[0].Status = "succeeded"
 	renderer.Render(tree)
-	require.Contains(t, out.String()[len(first):], "\x1b[2A\x1b[J", "the second render replaces the block")
+	second := out.String()[len(first):]
+	require.Contains(t, second, "\x1b[2A", "the second frame returns to the top of the block")
+	require.NotContains(t, second, "run 0  deployment", "an unchanged row is skipped, not rewritten")
+	require.Contains(t, second, "\r\x1b[2K  ok    Step\n", "the changed row is cleared and rewritten")
+	require.True(t, strings.HasPrefix(second, "\x1b[?2026h"), "frames are bracketed for synchronized output")
+	require.True(t, strings.HasSuffix(second, "\x1b[?2026l"))
+
+	// Fewer rows than before clear what the old block left below.
+	tree.Steps = nil
+	renderer.Render(tree)
+	third := out.String()[len(first)+len(second):]
+	require.Contains(t, third, "\x1b[J")
+}
+
+func TestRendererFoldsThenCutsToWindowHeight(t *testing.T) {
+	t.Parallel()
+	tree := &client.RunTree{Run: client.Run{ID: "0", Kind: "deployment"}, Steps: []client.Step{
+		{ID: "prep", Title: "Prepare artifacts", Status: "succeeded", Children: []client.Step{
+			{ID: "b1", Title: "Build one", Status: "succeeded"},
+			{ID: "b2", Title: "Build two", Status: "succeeded"},
+		}},
+		{ID: "roll", Title: "Roll out revision", Status: "running", Children: []client.Step{
+			{ID: "apply", Title: "Apply web", Status: "running"},
+			{ID: "tls", Title: "Issue TLS certificate", Status: "waiting"},
+		}},
+	}}
+	logs := func(id string) []string {
+		if id == "tls" {
+			return []string{"phase: pending", "order: pending"}
+		}
+		return nil
+	}
+
+	// Nine rows in full; a window of ten rows shows all of them.
+	full := &Renderer{Out: &sink{}, TTY: true, Logs: logs, Size: func() (int, int) { return 80, 10 }}
+	full.Render(tree)
+	require.Len(t, full.previous, 9)
+	require.Contains(t, strings.Join(full.previous, "\n"), "Build one")
+
+	// Eight rows: folding the succeeded step's children fits exactly.
+	folded := &Renderer{Out: &sink{}, TTY: true, Logs: logs, Size: func() (int, int) { return 80, 8 }}
+	folded.Render(tree)
+	require.Len(t, folded.previous, 7)
+	require.NotContains(t, strings.Join(folded.previous, "\n"), "Build one")
+	require.Contains(t, strings.Join(folded.previous, "\n"), "order: pending")
+
+	// Five rows: the top is cut and the cut is announced.
+	cut := &Renderer{Out: &sink{}, TTY: true, Logs: logs, Size: func() (int, int) { return 80, 5 }}
+	cut.Render(tree)
+	require.Len(t, cut.previous, 4)
+	require.Equal(t, "… 4 earlier rows", cut.previous[0])
+	require.Contains(t, cut.previous[3], "order: pending")
+
+	// Finish prints everything and leaves nothing to rewrite.
+	cut.Finish(tree)
+	require.Nil(t, cut.previous)
+	require.Contains(t, cut.Out.(*sink).String(), "Build one")
+}
+
+func TestRendererKeepsRowsWithinWidth(t *testing.T) {
+	t.Parallel()
+	tree := &client.RunTree{Run: client.Run{ID: "0", Kind: "deployment"},
+		Steps: []client.Step{{ID: "s", Title: strings.Repeat("long title ", 10), Status: "running"}}}
+	renderer := &Renderer{Out: &sink{}, TTY: true, Size: func() (int, int) { return 40, 0 }}
+	renderer.Render(tree)
+	for _, row := range renderer.previous {
+		require.LessOrEqual(t, len([]rune(row)), 39)
+	}
+}
+
+func TestTailStepIDs(t *testing.T) {
+	t.Parallel()
+	tree := &client.RunTree{Steps: []client.Step{
+		{ID: "done", Status: "succeeded"},
+		{ID: "parent", Status: "running", Children: []client.Step{{ID: "leaf", Status: "waiting"}}},
+		{ID: "failed", Status: "failed"},
+	}}
+	require.Equal(t, []string{"leaf", "failed"}, TailStepIDs(tree))
 }
 
 type sink struct{ data []byte }
@@ -123,4 +202,24 @@ func TestMultilineCheckpointRows(t *testing.T) {
 	for _, line := range lines {
 		require.NotContains(t, line, "\n", "each counted row must be one physical terminal line")
 	}
+}
+
+func TestRendererFooterIsLiveOnly(t *testing.T) {
+	t.Parallel()
+	tree := &client.RunTree{Run: client.Run{ID: "0", Kind: "deployment"},
+		Steps: []client.Step{{ID: "s", Title: "Step", Status: "running"}}}
+	renderer := &Renderer{Out: &sink{}, TTY: true, Footer: "d detaches", Size: func() (int, int) { return 80, 0 }}
+	renderer.Render(tree)
+	require.Equal(t, "d detaches", renderer.previous[len(renderer.previous)-1], "the footer is the block's last row")
+
+	// The footer survives the height cap: the top is cut, not the hint.
+	capped := &Renderer{Out: &sink{}, TTY: true, Footer: "d detaches", Size: func() (int, int) { return 80, 3 }}
+	capped.Render(tree)
+	require.Len(t, capped.previous, 2)
+	require.Equal(t, "d detaches", capped.previous[1])
+
+	out := &sink{}
+	final := &Renderer{Out: out, TTY: true, Footer: "d detaches", Size: func() (int, int) { return 80, 0 }}
+	final.Finish(tree)
+	require.NotContains(t, out.String(), "d detaches", "the finished tree carries no footer")
 }

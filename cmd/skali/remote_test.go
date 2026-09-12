@@ -98,7 +98,7 @@ func TestRemoteTokenCommand(t *testing.T) {
 	})
 
 	output, err := runCapturingStdout(t, func() error {
-		return execute(newRemoteTokenCmd())
+		return execute(newRemoteTokenCommand())
 	})
 	require.NoError(t, err)
 	require.Equal(t, "session-token-value\n", output)
@@ -113,7 +113,7 @@ func TestRemoteTokenCommandNotLoggedIn(t *testing.T) {
 		},
 	})
 
-	err := execute(newRemoteTokenCmd())
+	err := execute(newRemoteTokenCommand())
 	require.ErrorContains(t, err, "not logged in")
 	require.ErrorContains(t, err, "skali remote login")
 }
@@ -205,7 +205,7 @@ func TestRemoteAddBareHostname(t *testing.T) {
 	err := withStdin(t, "password\n", func() error {
 		var runErr error
 		output, runErr = runCapturingStdout(t, func() error {
-			return execute(newRemoteAddCmd(), "bare", host, "--email", "dana@example.com")
+			return execute(newRemoteAddCommand(), "bare", host, "--email", "dana@example.com")
 		})
 		return runErr
 	})
@@ -222,7 +222,7 @@ func TestRemoteAddReservedName(t *testing.T) {
 
 	// The reserved name refuses before any network access, so no server
 	// exists here.
-	err := execute(newRemoteAddCmd(), "local", "https://skali.example.com")
+	err := execute(newRemoteAddCommand(), "local", "https://skali.example.com")
 	require.ErrorContains(t, err, "reserved")
 	require.ErrorContains(t, err, "skali dev")
 
@@ -236,7 +236,7 @@ func TestRemoteAddSwappedArguments(t *testing.T) {
 
 	// A URL in the name slot is the old argument order; the error teaches
 	// the new one before any network access.
-	err := execute(newRemoteAddCmd(), "https://skali.example.com", "example")
+	err := execute(newRemoteAddCommand(), "https://skali.example.com", "example")
 	require.ErrorContains(t, err, "the name comes first")
 	require.ErrorContains(t, err, "skali remote add <name> https://skali.example.com")
 	require.Empty(t, loadConfig(t).Remotes)
@@ -253,7 +253,7 @@ func TestRemoteAddDuplicate(t *testing.T) {
 
 	// The duplicate check precedes the reachability probe, so the
 	// unroutable master is never contacted.
-	err := execute(newRemoteAddCmd(), "skali.example.com", "https://skali.example.com")
+	err := execute(newRemoteAddCommand(), "skali.example.com", "https://skali.example.com")
 	require.ErrorContains(t, err, "already exists")
 	require.ErrorContains(t, err, "skali remote login skali.example.com")
 }
@@ -261,7 +261,7 @@ func TestRemoteAddDuplicate(t *testing.T) {
 func TestRemoteAddUnreachable(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	err := execute(newRemoteAddCmd(), "dead", deadURL(t))
+	err := execute(newRemoteAddCommand(), "dead", deadURL(t))
 	require.ErrorContains(t, err, "not reachable")
 
 	cfg := loadConfig(t)
@@ -281,7 +281,7 @@ func TestRemoteAddSuccess(t *testing.T) {
 	err := withStdin(t, "password\n", func() error {
 		var runErr error
 		output, runErr = runCapturingStdout(t, func() error {
-			return execute(newRemoteAddCmd(), "myremote", srv.URL, "--email", "dana@example.com")
+			return execute(newRemoteAddCommand(), "myremote", srv.URL, "--email", "dana@example.com")
 		})
 		return runErr
 	})
@@ -311,7 +311,7 @@ func TestRemoteAddTwoFactor(t *testing.T) {
 
 	err := withStdin(t, "password\n123456\n", func() error {
 		_, runErr := runCapturingStdout(t, func() error {
-			return execute(newRemoteAddCmd(), "myremote", srv.URL, "--email", "dana@example.com")
+			return execute(newRemoteAddCommand(), "myremote", srv.URL, "--email", "dana@example.com")
 		})
 		return runErr
 	})
@@ -331,7 +331,7 @@ func TestRemoteAddFailedLoginLeavesNothing(t *testing.T) {
 	srv := fakeMaster(t, mux)
 
 	err := withStdin(t, "wrong\n", func() error {
-		return execute(newRemoteAddCmd(), "myremote", srv.URL, "--email", "dana@example.com")
+		return execute(newRemoteAddCommand(), "myremote", srv.URL, "--email", "dana@example.com")
 	})
 	require.ErrorContains(t, err, "not added")
 	require.ErrorContains(t, err, "invalid_credentials")
@@ -344,7 +344,7 @@ func TestRemoteAddFailedLoginLeavesNothing(t *testing.T) {
 func TestRemoteLoginUnknownName(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	err := execute(newRemoteLoginCmd(), "nope")
+	err := execute(newRemoteLoginCommand(), "nope")
 	require.ErrorContains(t, err, `remote "nope" does not exist`)
 	require.ErrorContains(t, err, "skali remote add")
 }
@@ -366,7 +366,7 @@ func TestRemoteLoginSwitchesCurrentOnSuccess(t *testing.T) {
 
 	err := withStdin(t, "password\n", func() error {
 		_, runErr := runCapturingStdout(t, func() error {
-			return execute(newRemoteLoginCmd(), "b", "--email", "dana@example.com")
+			return execute(newRemoteLoginCommand(), "b", "--email", "dana@example.com")
 		})
 		return runErr
 	})
@@ -389,13 +389,13 @@ func TestRemoteUse(t *testing.T) {
 	})
 
 	output, err := runCapturingStdout(t, func() error {
-		return execute(newRemoteUseCmd(), "b")
+		return execute(newRemoteUseCommand(), "b")
 	})
 	require.NoError(t, err)
 	require.Contains(t, output, `switched to remote "b"`)
 	require.Equal(t, "b", loadConfig(t).CurrentRemote)
 
-	err = execute(newRemoteUseCmd(), "nope")
+	err = execute(newRemoteUseCommand(), "nope")
 	require.ErrorContains(t, err, `remote "nope" does not exist`)
 }
 
@@ -403,10 +403,10 @@ func TestRemoteListAndBareRemote(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	output, err := runCapturingStdout(t, func() error {
-		return execute(newRemoteListCmd())
+		return execute(newRemoteListCommand())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "no remotes; run `skali remote add <name> <url>`")
+	require.Contains(t, output, "no remotes; skali remote add <name> <url> adds one")
 
 	seedConfig(t, &cliconfig.Config{
 		CurrentRemote: "b",
@@ -418,11 +418,11 @@ func TestRemoteListAndBareRemote(t *testing.T) {
 
 	// Bare `skali remote` behaves exactly like `skali remote list`.
 	output, err = runCapturingStdout(t, func() error {
-		return execute(newRemoteCmd())
+		return execute(newRemoteCommand())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "  a  https://a.example.com\n")
-	require.Contains(t, output, "* b  https://b.example.com  [logged in]\n")
+	require.Contains(t, output, "a            https://a.example.com  not logged in\n")
+	require.Contains(t, output, "b (current)  https://b.example.com  logged in\n")
 }
 
 func TestRemoteListHidesLocal(t *testing.T) {
@@ -436,10 +436,10 @@ func TestRemoteListHidesLocal(t *testing.T) {
 	})
 
 	output, err := runCapturingStdout(t, func() error {
-		return execute(newRemoteListCmd())
+		return execute(newRemoteListCommand())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "* b  https://b.example.com  [logged in]\n")
+	require.Contains(t, output, "b (current)  https://b.example.com  logged in\n")
 	require.NotContains(t, output, "local")
 
 	// Only the dev-owned local remote on file still reads as no remotes.
@@ -447,10 +447,10 @@ func TestRemoteListHidesLocal(t *testing.T) {
 		"local": {Master: "http://127.0.0.1:8080", Token: "tok"},
 	}})
 	output, err = runCapturingStdout(t, func() error {
-		return execute(newRemoteListCmd())
+		return execute(newRemoteListCommand())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "no remotes; run `skali remote add <name> <url>`")
+	require.Contains(t, output, "no remotes; skali remote add <name> <url> adds one")
 }
 
 func TestRemoteUseLocalRefused(t *testing.T) {
@@ -463,7 +463,7 @@ func TestRemoteUseLocalRefused(t *testing.T) {
 		},
 	})
 
-	err := execute(newRemoteUseCmd(), "local")
+	err := execute(newRemoteUseCommand(), "local")
 	require.ErrorContains(t, err, "managed by skali dev")
 	require.Equal(t, "a", loadConfig(t).CurrentRemote)
 }
@@ -471,14 +471,14 @@ func TestRemoteUseLocalRefused(t *testing.T) {
 func TestRemoteLoginLocalRefused(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	err := execute(newRemoteLoginCmd(), "local")
+	err := execute(newRemoteLoginCommand(), "local")
 	require.ErrorContains(t, err, "managed by skali dev")
 }
 
 func TestRemoteLogoutLocalRefused(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	err := execute(newRemoteLogoutCmd(), "local")
+	err := execute(newRemoteLogoutCommand(), "local")
 	require.ErrorContains(t, err, "managed by skali dev")
 }
 
@@ -495,7 +495,7 @@ func TestRemoteRemove(t *testing.T) {
 	})
 
 	output, err := runCapturingStdout(t, func() error {
-		return execute(newRemoteRemoveCmd(), "b")
+		return execute(newRemoteRemoveCommand(), "b")
 	})
 	require.NoError(t, err)
 	require.Contains(t, output, `removed remote "b"`)
@@ -514,7 +514,7 @@ func TestRemoteRemoveLocalRefused(t *testing.T) {
 		},
 	})
 
-	err := execute(newRemoteRemoveCmd(), "local")
+	err := execute(newRemoteRemoveCommand(), "local")
 	require.ErrorContains(t, err, "managed by skali dev")
 	require.ErrorContains(t, err, "skali dev reset")
 	require.NotNil(t, loadConfig(t).Remotes["local"])
@@ -523,7 +523,7 @@ func TestRemoteRemoveLocalRefused(t *testing.T) {
 func TestRemoteRemoveUnknown(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	err := execute(newRemoteRemoveCmd(), "nope")
+	err := execute(newRemoteRemoveCommand(), "nope")
 	require.ErrorContains(t, err, `remote "nope" does not exist`)
 }
 
@@ -538,7 +538,7 @@ func TestRemoteRemoveCurrentClearsCurrent(t *testing.T) {
 	})
 
 	output, err := runCapturingStdout(t, func() error {
-		return execute(newRemoteRemoveCmd(), "a")
+		return execute(newRemoteRemoveCommand(), "a")
 	})
 	require.NoError(t, err)
 	require.Contains(t, output, `removed remote "a"`)
@@ -563,7 +563,7 @@ func TestRemoteStatus(t *testing.T) {
 	})
 
 	output, err := runCapturingStdout(t, func() error {
-		return execute(newRemoteStatusCmd())
+		return execute(newRemoteStatusCommand())
 	})
 	require.NoError(t, err)
 	require.Contains(t, output, "remote:  myremote\n")
@@ -590,8 +590,58 @@ func TestRemoteStatusExpiredSession(t *testing.T) {
 	})
 
 	output, err := runCapturingStdout(t, func() error {
-		return execute(newRemoteStatusCmd())
+		return execute(newRemoteStatusCommand())
 	})
 	require.NoError(t, err)
 	require.Contains(t, output, "session: expired or revoked; run `skali remote login`")
+}
+
+func TestRemoteListTable(t *testing.T) {
+	stageRemotes(t, "khz", map[string]*cliconfig.Remote{
+		"khz":   {Master: "https://skali.khz.dev/api", Token: "tok"},
+		"lab":   {Master: "https://lab.example/api"},
+		"local": {Master: "http://127.0.0.1:7070", Token: "tok"},
+	})
+	command := newRemoteListCommand()
+	out := &strings.Builder{}
+	command.SetOut(out)
+	require.NoError(t, execute(command))
+	text := out.String()
+	require.Regexp(t, `^remotes  \S+config\.yaml\n\n`, text)
+	require.Contains(t, text, "NAME           MASTER                     SESSION\n")
+	require.Contains(t, text, "khz (current)  https://skali.khz.dev/api  logged in\n")
+	require.Contains(t, text, "lab            https://lab.example/api    not logged in\n")
+	require.NotContains(t, text, "local", "the dev-owned remote is not offered")
+
+	stageRemotes(t, "", nil)
+	out.Reset()
+	command = newRemoteListCommand()
+	command.SetOut(out)
+	require.NoError(t, execute(command))
+	require.Contains(t, out.String(), "no remotes; skali remote add <name> <url> adds one")
+}
+
+func TestRemoteUseWithoutNameNeedsTerminal(t *testing.T) {
+	stageRemotes(t, "khz", map[string]*cliconfig.Remote{
+		"khz": {Master: "https://skali.khz.dev/api"},
+		"lab": {Master: "https://lab.example/api"},
+	})
+	command := newRemoteUseCommand()
+	command.SetOut(io.Discard)
+	command.SetIn(strings.NewReader(""))
+	err := execute(command)
+	require.ErrorContains(t, err, "name the remote to switch to")
+	require.ErrorContains(t, err, "use <name>")
+
+	command = newRemoteUseCommand()
+	command.SetOut(io.Discard)
+	require.NoError(t, execute(command, "lab"))
+	cfg, err := cliconfig.Load()
+	require.NoError(t, err)
+	require.Equal(t, "lab", cfg.CurrentRemote)
+
+	stageRemotes(t, "", nil)
+	command = newRemoteUseCommand()
+	command.SetOut(io.Discard)
+	require.ErrorContains(t, execute(command), "no remotes")
 }

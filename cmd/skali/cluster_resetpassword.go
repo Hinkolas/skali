@@ -19,13 +19,13 @@ import (
 // newClusterResetPasswordCmd is the lockout recovery path: there is no
 // email-based reset by design, so a forgotten admin password is reset by
 // whoever holds root on a server node.
-func newClusterResetPasswordCmd() *cobra.Command {
+func newClusterResetPasswordCommand() *cobra.Command {
 	var (
 		email            string
 		disableTwoFactor bool
 		passwordStdin    bool
 	)
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "reset-password",
 		Short: "Reset a user's password from a server node",
 		Long: "Reset a user's password without knowing the old one. This is the recovery\n" +
@@ -33,17 +33,17 @@ func newClusterResetPasswordCmd() *cobra.Command {
 			"access and needs no working login. Every session of the user is revoked;\n" +
 			"--disable-2fa also removes a lost authenticator.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			out := os.Stdout
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
-			return runResetPassword(cmd.Context(), out, reader, email, passwordStdin, disableTwoFactor)
+			return runResetPassword(command.Context(), out, reader, email, passwordStdin, disableTwoFactor)
 		},
 	}
-	cmd.Flags().StringVar(&email, "email", "", "login email of the user (prompted when omitted)")
-	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the new password from stdin instead of prompting")
-	cmd.Flags().BoolVar(&disableTwoFactor, "disable-2fa", false, "also remove the user's two-factor enrollment")
-	return cmd
+	command.Flags().StringVar(&email, "email", "", "login email of the user (prompted when omitted)")
+	command.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the new password from stdin instead of prompting")
+	command.Flags().BoolVar(&disableTwoFactor, "disable-2fa", false, "also remove the user's two-factor enrollment")
+	return command
 }
 
 func runResetPassword(ctx context.Context, out *os.File, reader *bufio.Reader,

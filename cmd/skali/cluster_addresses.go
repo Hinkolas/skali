@@ -22,16 +22,16 @@ import (
 // exists because the declaration is what the coordinator binds and what
 // other nodes are told to join through, and a cluster installed before the
 // declaration existed has both pinned to whatever k3s picked.
-func newClusterAddressesCmd() *cobra.Command {
+func newClusterAddressesCommand() *cobra.Command {
 	var clusterIP string
 	var publicIPs, extraSANs, coordinatorBind []string
 	var assumeYes bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "addresses",
 		Short: "Declare how this host is addressed inside and outside the cluster",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, _ []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 			reader := bufio.NewReader(os.Stdin)
 
@@ -103,13 +103,13 @@ func newClusterAddressesCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&clusterIP, "cluster-ip", "", "address other cluster nodes reach this node through")
-	cmd.Flags().StringSliceVar(&publicIPs, "public-ip", nil, "address reachable from outside the cluster network; repeatable")
-	cmd.Flags().StringSliceVar(&extraSANs, "tls-san", nil, "additional name or address for the kubernetes api certificate; repeatable")
-	cmd.Flags().StringSliceVar(&coordinatorBind, "coordinator-bind", nil,
+	command.Flags().StringVar(&clusterIP, "cluster-ip", "", "address other cluster nodes reach this node through")
+	command.Flags().StringSliceVar(&publicIPs, "public-ip", nil, "address reachable from outside the cluster network; repeatable")
+	command.Flags().StringSliceVar(&extraSANs, "tls-san", nil, "additional name or address for the kubernetes api certificate; repeatable")
+	command.Flags().StringSliceVar(&coordinatorBind, "coordinator-bind", nil,
 		"scopes the enrollment coordinator listens on: cluster, public, or both")
-	cmd.Flags().BoolVar(&assumeYes, "yes", false, "record the declaration without confirmation")
-	return cmd
+	command.Flags().BoolVar(&assumeYes, "yes", false, "record the declaration without confirmation")
+	return command
 }
 
 // publishNodeAddresses moves the cluster-wide view of this server: the

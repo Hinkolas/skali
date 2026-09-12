@@ -149,7 +149,9 @@ rollout deadline with the issuance reason if DNS does not point at the
 cluster yet. Each route has an **Issue TLS certificate** checkpoint with the
 issuance attempt, consecutive failure count, last failure, estimated next retry,
 and the current CertificateRequest, ACME Order and validation challenge details.
-The CLI preserves these as separate lines; the console follows waiting
+The CLI shows the checkpoint as one row per issuance attempt with its
+failure reason or current wait and the retry countdown; `skali --verbose`
+prints every recorded field instead. The console follows waiting
 checkpoints live and shows a retry countdown. Retry times use the bundled
 cert-manager backoff (1 hour, doubling up to 32 hours); controller scheduling
 and CA rate limits can delay an attempt further.

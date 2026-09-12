@@ -154,6 +154,7 @@ func newDevCommand() *cobra.Command {
 			Force:              force || rebuild,
 			Rebuild:            rebuild,
 			PruneValues:        pruneValues,
+			Attach:             attachSessionEnds,
 			OnDeploymentOpened: func(id string) { window.Store(id) },
 			OnDeploymentClosed: func() { window.Store("") },
 			SkipReadySummary:   true,
@@ -225,7 +226,7 @@ func newDevCommand() *cobra.Command {
 			"started with -d. A rollout already in flight is adopted: dev\n" +
 			"attaches to it instead of failing; --force cancels it and\n" +
 			"redeploys. Use -d for a background project that keeps running,\n" +
-			"skali dev down to pause it explicitly, and skali dev ls to see\n" +
+			"skali dev down to pause it explicitly, and skali dev list to see\n" +
 			"everything on the local platform. The platform's own lifecycle\n" +
 			"lives under skali dev start, stop, upgrade, and reset. Local\n" +
 			"values never leave this machine.",
@@ -284,9 +285,10 @@ func newDevCommand() *cobra.Command {
 	}
 
 	logs := &cobra.Command{
-		Use:   "logs [service]",
-		Short: "Stream the local project's runtime logs",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "logs [service]",
+		Short:             "Stream the local project's runtime logs",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeServiceArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			service := ""
 			if len(args) == 1 {
@@ -320,10 +322,11 @@ func newDevCommand() *cobra.Command {
 	down.Flags().BoolVar(&yes, "yes", false, "skip the confirmation for --purge")
 
 	ls := &cobra.Command{
-		Use:   "ls",
-		Short: "List projects on the local platform",
-		Args:  cobra.NoArgs,
-		RunE:  runDevLs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List projects on the local platform",
+		Args:    cobra.NoArgs,
+		RunE:    runDevLs,
 	}
 
 	stop := &cobra.Command{
@@ -467,7 +470,7 @@ func teardownLocalEnvironment(ctx context.Context, out io.Writer, api *client.Cl
 		verb = "purge"
 	}
 	fmt.Fprintf(out, "%s %s  %s %s\n", style.Dim("run"), style.Bold(runID), verb, name)
-	status, err := attachRun(ctx, out, api, runID, localRemoteName)
+	status, err := attachRunMode(ctx, out, api, runID, localRemoteName, attachSessionEnds)
 	if err != nil {
 		// The purge epilogue deletes the environment row and every run
 		// with it; losing the run mid-poll means the purge finished.
@@ -527,12 +530,12 @@ func finishInterrupted(command *cobra.Command, window string, keepRunning bool) 
 	}
 	switch status {
 	case "detached":
-		fmt.Fprintln(out, "the pause continues on the server; check skali dev ls")
+		fmt.Fprintln(out, "the pause continues on the server; check skali dev list")
 		return nil
 	case "interrupted":
 		// The epilogue's own deadline expired while the server was still
 		// finishing; claiming a completed pause here would be a guess.
-		fmt.Fprintln(out, "the pause is still finishing on the server; check skali dev ls")
+		fmt.Fprintln(out, "the pause is still finishing on the server; check skali dev list")
 		return nil
 	}
 	fmt.Fprintf(out, "\n%s%s is paused; its data is retained\n", style.Check(), name)
@@ -573,7 +576,7 @@ func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
 	if running.Kind != "deployment" {
 		fmt.Fprintf(out, "a %s is in flight; waiting for run %s to finish\n",
 			running.Kind, style.Bold(running.ID))
-		status, err := attachRun(ctx, out, api, running.ID, localRemoteName)
+		status, err := attachRunMode(ctx, out, api, running.ID, localRemoteName, attachSessionEnds)
 		if err != nil {
 			return "", err
 		}
@@ -584,7 +587,7 @@ func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
 	}
 	fmt.Fprintf(out, "a deployment is already in flight; attaching to run %s\n",
 		style.Bold(running.ID))
-	status, err := attachRun(ctx, out, api, running.ID, localRemoteName)
+	status, err := attachRunMode(ctx, out, api, running.ID, localRemoteName, attachSessionEnds)
 	if err != nil {
 		return "", err
 	}
@@ -688,7 +691,7 @@ func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID 
 			return err
 		}
 		if time.Now().After(deadline) {
-			return errors.New("the purge is still finishing on the server; check skali dev ls")
+			return errors.New("the purge is still finishing on the server; check skali dev list")
 		}
 		select {
 		case <-ctx.Done():

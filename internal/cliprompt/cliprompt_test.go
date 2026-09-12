@@ -369,11 +369,6 @@ func TestSettledPromptClosesMutedFlow(t *testing.T) {
 		answer.Render("Create a new cluster"))
 }
 
-func TestListHeightShowsEveryOption(t *testing.T) {
-	require.Equal(t, 7, listHeight(6, ""))
-	require.Equal(t, 8, listHeight(6, "Additional context"))
-}
-
 func TestTerminalMultiSelectKeys(t *testing.T) {
 	session, _, ctx, cancel := terminal(" \x1b[B \r")
 	defer cancel()

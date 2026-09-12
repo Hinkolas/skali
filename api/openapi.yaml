@@ -829,7 +829,7 @@ paths:
       description: |
         Destructive: removes the project with its drafts and revisions.
         Refused with 409 while the project still has environments; purge
-        each one first (skali env rm), which releases its namespace.
+        each one first (skali env remove), which releases its namespace.
         Requires recent authentication (sudo mode).
       tags: [projects]
       responses:

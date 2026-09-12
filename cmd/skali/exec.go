@@ -48,7 +48,8 @@ func newExecCommand() *cobra.Command {
 		Short: "Run a command in a running app container",
 		Long: "Exec opens a command or interactive shell inside a running container of\n" +
 			"one service, like docker exec. Without a command it starts /bin/sh.",
-		Args: cobra.ArbitraryArgs,
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeServiceArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			service, argv, err := parseExecArgs(command, args)
 			if err != nil {

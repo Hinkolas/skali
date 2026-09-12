@@ -15,14 +15,14 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-func newClusterInitCmd() *cobra.Command {
+func newClusterInitCommand() *cobra.Command {
 	var configPath, layoutPath, storageDriver, platformPreference string
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Skali on the joined cluster (run once on a server)",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 
 			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
@@ -155,13 +155,13 @@ func newClusterInitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "", "non-interactive init configuration (init.yaml)")
-	cmd.Flags().StringVar(&layoutPath, "layout", "", "cluster-layout document asserting the expected membership")
-	cmd.Flags().StringVar(&storageDriver, "storage-driver", "",
+	command.Flags().StringVar(&configPath, "config", "", "non-interactive init configuration (init.yaml)")
+	command.Flags().StringVar(&layoutPath, "layout", "", "cluster-layout document asserting the expected membership")
+	command.Flags().StringVar(&storageDriver, "storage-driver", "",
 		"application storage driver: local (default) or longhorn; re-run init with longhorn to enable it on an existing cluster")
-	cmd.Flags().StringVar(&platformPreference, "platform-preference", "",
+	command.Flags().StringVar(&platformPreference, "platform-preference", "",
 		"ordered build platform preference for mixed-architecture clusters, comma-separated (for example linux/arm64); empty keeps the recorded choice")
-	return cmd
+	return command
 }
 
 // splitPreferenceFlag splits the comma-separated --platform-preference

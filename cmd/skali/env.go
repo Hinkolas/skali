@@ -36,9 +36,10 @@ func newEnvCommand() *cobra.Command {
 func newEnvLsCommand() *cobra.Command {
 	var project, remote string
 	command := &cobra.Command{
-		Use:   "ls",
-		Short: "List the project's environments with your access and their settings",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List the project's environments with your access and their settings",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			scope, err := resolveAccessScope(command.Context(), project, "", remote)
 			if err != nil {
@@ -96,9 +97,11 @@ func describeDeployPolicy(settings *client.EnvironmentSettings) string {
 
 func newEnvCreateCommand() *cobra.Command {
 	var project, remote, priority string
+	var yes bool
 	command := &cobra.Command{
-		Use:   "create <name>",
-		Short: "Create an environment",
+		Use:               "create <name>",
+		ValidArgsFunction: cobra.NoFileCompletions,
+		Short:             "Create an environment",
 		Long: "Creates an environment in the project; you become its admin. Priority high\n" +
 			"(instance admins only) marks an environment that keeps running when\n" +
 			"resources are tight; it starts with a read ceiling for inheriting members.",
@@ -113,6 +116,27 @@ func newEnvCreateCommand() *cobra.Command {
 			scope, err := resolveAccessScope(ctx, project, "", remote)
 			if err != nil {
 				return err
+			}
+			printHeader(out, style,
+				headerRow{"remote", scope.remoteName, scope.api.Master()},
+				headerRow{"project", scope.project.Name, ""},
+				headerRow{"environment", args[0], "new"})
+			if !yes {
+				description := "You become its admin; members inherit their project role."
+				if priority == "high" {
+					description = "High priority keeps it running when resources are tight; it starts read-only for inheriting members."
+				}
+				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title:       fmt.Sprintf("Create environment %s in project %s?", args[0], scope.project.Name),
+					Description: description,
+					Default:     true,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
 			}
 			created, err := scope.api.CreateEnvironment(ctx, scope.project.ID, args[0], priority)
 			if err != nil {
@@ -131,12 +155,14 @@ func newEnvCreateCommand() *cobra.Command {
 	}
 	addAccessScopeFlags(command, &project, &remote)
 	command.Flags().StringVar(&priority, "priority", "", "normal (default) or high (instance admins only)")
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
 }
 
 func newEnvSetCommand() *cobra.Command {
 	var project, environment, remote string
 	var maxRole, deployPolicy, promoteFrom, priority string
+	var yes bool
 	command := &cobra.Command{
 		Use:   "set",
 		Short: "Change an environment's ceiling, deploy policy, or priority",
@@ -189,6 +215,26 @@ func newEnvSetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			style := clirender.StyleFor(out)
+			printHeader(out, style,
+				headerRow{"remote", scope.remoteName, scope.api.Master()},
+				headerRow{"project", scope.project.Name, ""},
+				headerRow{"environment", scope.environment.Name, ""})
+			for _, change := range settingsChanges(scope.environment.Settings, patch) {
+				fmt.Fprintln(out, "  "+change)
+			}
+			if !yes {
+				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title:   fmt.Sprintf("Change environment %s?", scope.environment.Name),
+					Default: true,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
+			}
 			var updated *client.Environment
 			err = withReauth(ctx, out, in, scope.api, func() (err error) {
 				updated, err = scope.api.UpdateEnvironmentSettings(ctx, scope.environment.ID, patch)
@@ -214,7 +260,45 @@ func newEnvSetCommand() *cobra.Command {
 	command.Flags().StringVar(&deployPolicy, "deploy-policy", "", "direct or promote-only")
 	command.Flags().StringVar(&promoteFrom, "promote-from", "", "comma-separated source environments for promotions, or any")
 	command.Flags().StringVar(&priority, "priority", "", "normal or high")
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
+}
+
+// settingsChanges lists what an env set patch changes, as "setting  from
+// -> to" rows; the current value is blank when the server never reported
+// the settings.
+func settingsChanges(current *client.EnvironmentSettings, patch client.EnvironmentSettingsPatch) []string {
+	if current == nil {
+		current = &client.EnvironmentSettings{}
+	}
+	var rows []string
+	row := func(label, from, to string) {
+		if from == "" {
+			from = "unset"
+		}
+		rows = append(rows, fmt.Sprintf("%-14s %s -> %s", label, from, to))
+	}
+	if patch.MaxRole != nil {
+		row("max role", current.MaxRole, *patch.MaxRole)
+	}
+	if patch.DeployPolicy != nil {
+		row("deploy policy", current.DeployPolicy, *patch.DeployPolicy)
+	}
+	if patch.PromoteFrom != nil {
+		from := strings.Join(current.PromoteFrom, ", ")
+		if from == "" {
+			from = "any"
+		}
+		to := strings.Join(*patch.PromoteFrom, ", ")
+		if to == "" {
+			to = "any"
+		}
+		row("promote from", from, to)
+	}
+	if patch.Priority != nil {
+		row("priority", current.Priority, *patch.Priority)
+	}
+	return rows
 }
 
 // resolveEnvScope resolves the environment an env command changes: the
@@ -263,8 +347,10 @@ func newEnvRmCommand() *cobra.Command {
 	var project, remote string
 	var yes bool
 	command := &cobra.Command{
-		Use:   "rm <name>",
-		Short: "Purge an environment: its workloads, volumes, values, revisions, and history",
+		Use:               "remove <name>",
+		Aliases:           []string{"rm"},
+		Short:             "Purge an environment: its workloads, volumes, values, revisions, and history",
+		ValidArgsFunction: completeEnvironmentArg,
 		Long: "Tears the environment down with purge: the namespace with its volumes goes,\n" +
 			"and the environment is deleted with all values, revisions, and history. This\n" +
 			"is one-way. Environment admin and a recent login are required.",

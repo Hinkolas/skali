@@ -137,9 +137,9 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		return "", err
 	}
 	api := promote.api
-	fmt.Fprintf(out, "%s       %s %s\n", style.Dim("remote"), promote.remoteName,
-		style.Dim("("+promote.master+")"))
-	fmt.Fprintf(out, "%s      %s\n", style.Dim("project"), promote.projectName)
+	printHeader(out, style,
+		headerRow{"remote", promote.remoteName, promote.master},
+		headerRow{"project", promote.projectName, ""})
 
 	pointer, err := api.Target(ctx, promote.source.ID)
 	if err != nil {

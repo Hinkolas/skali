@@ -16,21 +16,21 @@ import (
 	"github.com/Hinkolas/skali/internal/installer"
 )
 
-func newClusterTierCmd() *cobra.Command {
+func newClusterTierCommand() *cobra.Command {
 	var yes bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "tier",
 		Short: "Apply the available database availability tier",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			out := os.Stdout
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
-			return runTierFlow(cmd.Context(), out, reader, yes)
+			return runTierFlow(command.Context(), out, reader, yes)
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
-	return cmd
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	return command
 }
 
 // runTierFlow plans, confirms, and applies a database availability-tier

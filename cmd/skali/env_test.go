@@ -30,16 +30,26 @@ func TestEnvLsRendersSettings(t *testing.T) {
 
 func TestEnvCreatePassesPriority(t *testing.T) {
 	install := seedAccessScope(t)
-	out, err := runCommand(t, newEnvCommand(), "", "create", "feature")
+	out, err := runCommand(t, newEnvCommand(), "", "create", "feature", "--yes")
 	require.NoError(t, err)
+	require.Contains(t, out, "project      flowdemo")
+	require.Contains(t, out, "environment  feature (new)")
 	require.Contains(t, out, "created environment feature in project flowdemo")
 	require.Contains(t, out, "priority normal, ceiling admin, deploy policy direct")
-	out, err = runCommand(t, newEnvCommand(), "", "create", "prod2", "--priority", "high")
+	out, err = runCommand(t, newEnvCommand(), "\n", "create", "prod2", "--priority", "high")
+	require.NoError(t, err)
+	require.Contains(t, out, "Create environment prod2 in project flowdemo? [Y/n]")
+	require.Contains(t, out, "High priority keeps it running")
 	require.NoError(t, err)
 	require.Contains(t, out, "priority high, ceiling read")
 	require.Contains(t, out, "consider skali env set --deploy-policy promote-only")
 	_, err = runCommand(t, newEnvCommand(), "", "create", "x", "--priority", "urgent")
 	require.ErrorContains(t, err, "--priority must be normal or high")
+	// Declining, and an unanswerable prompt, create nothing.
+	_, err = runCommand(t, newEnvCommand(), "n\n", "create", "nope")
+	require.ErrorContains(t, err, "aborted")
+	_, err = runCommand(t, newEnvCommand(), "", "create", "nope")
+	require.ErrorContains(t, err, "non-interactive use requires --yes")
 	require.Equal(t, []string{"environment:p1:feature", "environment:p1:prod2"}, install.posts)
 }
 
@@ -51,15 +61,21 @@ func TestEnvSetBuildsPatch(t *testing.T) {
 	require.ErrorContains(t, err, "--max-role must be one of none, read, deploy, maintain, admin")
 
 	// The bound environment is the default target.
-	out, err := runCommand(t, newEnvCommand(), "", "set", "--max-role", "read",
+	out, err := runCommand(t, newEnvCommand(), "\n", "set", "--max-role", "read",
 		"--deploy-policy", "promote-only", "--promote-from", "staging, qa")
 	require.NoError(t, err)
+	// The summary names the target and every change before asking.
+	require.Contains(t, out, "environment  production")
+	require.Contains(t, out, "max role       admin -> read")
+	require.Contains(t, out, "deploy policy  direct -> promote-only")
+	require.Contains(t, out, "promote from   any -> staging, qa")
+	require.Contains(t, out, "Change environment production? [Y/n]")
 	require.Contains(t, out, "environment    production (flowdemo on r)")
 	require.Contains(t, out, "max role       read")
 	require.Contains(t, out, "deploy policy  promote-only (from staging, qa)")
 	require.Contains(t, out, "priority       normal")
 	// --promote-from any clears the list; --environment picks another.
-	out, err = runCommand(t, newEnvCommand(), "", "set", "--environment", "staging", "--promote-from", "any", "--deploy-policy", "promote-only")
+	out, err = runCommand(t, newEnvCommand(), "", "set", "--yes", "--environment", "staging", "--promote-from", "any", "--deploy-policy", "promote-only")
 	require.NoError(t, err)
 	require.Contains(t, out, "environment    staging")
 	require.Contains(t, out, "deploy policy  promote-only (from any)")
@@ -71,13 +87,20 @@ func TestEnvSetBuildsPatch(t *testing.T) {
 
 	// A priority change names the class the application pods roll onto; an
 	// unchanged priority does not.
-	out, err = runCommand(t, newEnvCommand(), "", "set", "--priority", "high")
+	out, err = runCommand(t, newEnvCommand(), "", "set", "--yes", "--priority", "high")
 	require.NoError(t, err)
+	require.Contains(t, out, "priority       normal -> high")
 	require.Contains(t, out, "priority       high")
 	require.Contains(t, out, "application pods roll onto priority class skali-high")
-	out, err = runCommand(t, newEnvCommand(), "", "set", "--priority", "high")
+	out, err = runCommand(t, newEnvCommand(), "", "set", "--yes", "--priority", "high")
 	require.NoError(t, err)
 	require.NotContains(t, out, "application pods roll")
+
+	// Declining changes nothing.
+	posts := len(install.posts)
+	_, err = runCommand(t, newEnvCommand(), "n\n", "set", "--priority", "normal")
+	require.ErrorContains(t, err, "aborted")
+	require.Len(t, install.posts, posts)
 }
 
 func TestEnvRmPurgesAfterConfirmation(t *testing.T) {

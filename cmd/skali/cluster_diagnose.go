@@ -11,18 +11,18 @@ import (
 	"github.com/Hinkolas/skali/internal/installer"
 )
 
-func newClusterDiagnoseCmd() *cobra.Command {
+func newClusterDiagnoseCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "diagnose",
 		Short: "Diagnose this installation from host state and the Kubernetes API",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
 				return err
 			}
-			diagnosis, err := runDiagnosis(cmd, out)
+			diagnosis, err := runDiagnosis(command, out)
 			if err != nil {
 				return err
 			}
@@ -37,8 +37,8 @@ func newClusterDiagnoseCmd() *cobra.Command {
 // runDiagnosis guards the host state, runs the read-only diagnosis, and
 // prints the full report. The report always prints completely before any
 // exit-code decision.
-func runDiagnosis(cmd *cobra.Command, out *os.File) (*installer.Diagnosis, error) {
-	ctx := cmd.Context()
+func runDiagnosis(command *cobra.Command, out *os.File) (*installer.Diagnosis, error) {
+	ctx := command.Context()
 	detected, err := installer.Detect(ctx, runner())
 	if err != nil {
 		return nil, err

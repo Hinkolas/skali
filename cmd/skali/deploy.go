@@ -39,7 +39,11 @@ func newDeployCommand() *cobra.Command {
 			"confirmation, local builds and imports pushed to the managed registry,\n" +
 			"server-side verification, and the journaled rollout, rendered live.\n" +
 			"The environment's stored values apply unless --env-file is passed or\n" +
-			"a discovered .env/.env.* file is selected interactively.",
+			"a discovered .env/.env.* file is selected interactively.\n\n" +
+			"Builds and pushes need this terminal; once they are done the run\n" +
+			"continues on the server and the live view says so: d detaches and\n" +
+			"leaves it running, Ctrl-C pressed twice cancels it. --detach returns\n" +
+			"as soon as the run is handed over.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if opts.BuildMode != "" && opts.BuildMode != "local" && opts.BuildMode != "auto" {

@@ -78,6 +78,14 @@ cluster moves with `skali cluster upgrade`, and the `skali-hostd` host daemon
 is fetched by `skali cluster` on the node that needs it, so a laptop that only
 deploys never carries it.
 
+The installer also installs shell completions for your login shell, so
+`skali <TAB>` completes commands, flags, and values such as environments,
+remotes, run ids, and the manifest's applications. `skali completion install
+--shell fish` adds another shell, `SKALI_COMPLETIONS=none` skips the step, and
+`skali upgrade` keeps an installed script current. Zsh picks the script up from
+Homebrew's `site-functions` directory when there is one; otherwise the command
+prints the one `fpath` line to add to `~/.zshrc`.
+
 ## Run a project locally
 
 Requirements: Docker. skali installs a pinned copy of
@@ -94,7 +102,7 @@ skali dev
 deploys it, and follows its logs. The example is then served at
 `http://hello-world.localhost:8080`. Ctrl-C pauses the project (data is kept),
 `skali dev` brings it back, `skali dev -d` keeps it running in the
-background. `skali dev ls`, `skali dev status`, `skali dev exec`, and
+background. `skali dev list`, `skali dev status`, `skali dev exec`, and
 `skali dev reset` do what they say; reset is the only destructive one and
 asks first.
 
