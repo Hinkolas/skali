@@ -15,6 +15,8 @@ export type AccessRole = 'none' | 'read' | 'deploy' | 'maintain' | 'admin';
 /** The caller's standing on a project: membership role and effective role per environment name. */
 export interface ProjectAccess {
 	role: AccessRole;
+	/** A membership row backs the role; false only for an instance admin, who sees every project without one. */
+	member: boolean;
 	environments: Record<string, AccessRole>;
 }
 

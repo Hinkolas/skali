@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { Project, ServiceHealth } from '$lib/types/project';
+	import type { Project } from '$lib/types/project';
 	import { relativeTime } from '$lib/format';
+	import { HEALTH_META } from '$lib/service-types';
+	import { projectServiceCount, projectWorstHealth } from '$lib/models/project';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
@@ -9,32 +11,9 @@
 
 	const environments = $derived(project.summary?.environments ?? []);
 	const counts = $derived(project.summary?.service_counts);
-	const serviceCount = $derived(
-		(counts?.applications ?? 0) + (counts?.databases ?? 0) + (counts?.buckets ?? 0)
-	);
-
-	const healthDot: Record<ServiceHealth, string> = {
-		healthy: 'bg-status-success',
-		progressing: 'bg-status-warning',
-		degraded: 'bg-status-warning',
-		unhealthy: 'bg-status-danger',
-		unknown: 'bg-text-ghost'
-	};
+	const serviceCount = $derived(projectServiceCount(project));
 	// The card dot shows the worst environment health.
-	const rank: Record<ServiceHealth, number> = {
-		healthy: 1,
-		unknown: 2,
-		progressing: 3,
-		degraded: 4,
-		unhealthy: 5
-	};
-	// Locked environments carry no health and stay out of the rollup.
-	const worst = $derived(
-		environments.reduce<ServiceHealth>(
-			(acc, e) => (e.health && rank[e.health] > rank[acc] ? e.health : acc),
-			environments.length ? 'healthy' : 'unknown'
-		)
-	);
+	const worst = $derived(projectWorstHealth(project));
 </script>
 
 <a
@@ -56,7 +35,7 @@
 				{/if}
 			</span>
 		{/if}
-		<span class="ml-auto size-[8px] flex-none rounded-full {healthDot[worst]}"></span>
+		<span class="ml-auto size-[8px] flex-none rounded-full {HEALTH_META[worst].dot}"></span>
 	</div>
 	<div class="flex gap-1.5">
 		{#if counts?.applications}

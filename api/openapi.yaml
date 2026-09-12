@@ -3479,11 +3479,17 @@ components:
       type: object
       description: |
         The caller's standing on a project: the membership role (instance
-        admins report `admin`) and the effective role per environment name
-        (locked environments report `none`).
-      required: [role, environments]
+        admins report `admin`), whether a membership row backs it, and the
+        effective role per environment name (locked environments report
+        `none`).
+      required: [role, member, environments]
       properties:
         role: { $ref: "#/components/schemas/AccessRole" }
+        member:
+          type: boolean
+          description: |
+            A membership row exists for the caller. False only for an
+            instance admin, who sees every project without one.
         environments:
           type: object
           additionalProperties: { $ref: "#/components/schemas/AccessRole" }
