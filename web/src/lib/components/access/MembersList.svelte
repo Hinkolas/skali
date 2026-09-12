@@ -1,14 +1,11 @@
 <script lang="ts">
-	// The project's members, one calm row each: identity, override summary,
-	// project role, and a Manage button. Per-environment detail lives in
-	// MemberAccessModal, so the list stays the same width whether the project
-	// has one environment or twelve. Project admins edit; everyone else reads.
-	import { invalidateAll } from '$app/navigation';
+	// The project's members, one calm row each: identity, explicit
+	// per-environment roles, project role, and a Manage button. The row only
+	// states; every edit happens in MemberAccessModal, so the list keeps one
+	// column width whether the project has one environment or twelve.
 	import Plus from '@lucide/svelte/icons/plus';
-	import { api, ApiError } from '$lib/api/client';
-	import { PROJECT_ROLES, ROLE_HINT, requiredTitle } from '$lib/access';
+	import { ROLE_HINT, requiredTitle } from '$lib/access';
 	import { modal } from '$lib/stores/modal.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
@@ -16,7 +13,6 @@
 	import MemberAccessModal, {
 		modalOptions as memberAccessModalOptions
 	} from './MemberAccessModal.svelte';
-	import RolePicker, { type RoleOption } from './RolePicker.svelte';
 	import type { AuthUser } from '$lib/types/auth';
 	import type { Member, Project } from '$lib/types/project';
 
@@ -33,29 +29,6 @@
 	} = $props();
 
 	const readOnlyTitle = $derived(requiredTitle('admin', 'project', project.name));
-
-	const projectRoleOptions: RoleOption[] = PROJECT_ROLES.map((r) => ({
-		value: r,
-		hint: ROLE_HINT[r]
-	}));
-
-	// Per-row busy flags keep the rest of the list editable while one call
-	// is in flight.
-	let busy = $state<Record<string, boolean>>({});
-
-	function setProjectRole(member: Member, role: string) {
-		void (async () => {
-			busy[member.user_id] = true;
-			try {
-				await api.put(`/v1/projects/${project.id}/members/${member.user_id}`, { role });
-				await invalidateAll();
-			} catch (err) {
-				toast.error(err instanceof ApiError ? err.message : 'Could not change the role');
-			} finally {
-				delete busy[member.user_id];
-			}
-		})();
-	}
 
 	function initials(member: Member) {
 		const source = member.name || member.email;
@@ -99,7 +72,9 @@
 			no members yet · instance admins see every project without membership
 		</div>
 	{:else}
-		<div class="grid grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] items-center gap-x-4">
+		<div
+			class="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,16rem)_9.5rem_auto] items-center gap-x-4"
+		>
 			{#each members as member (member.user_id)}
 				{@const isSelf = member.user_id === self?.id}
 				{@const explicit = overrides(member)}
@@ -133,24 +108,14 @@
 							</span>
 						{/each}
 					</span>
-					<span>
+					<span
+						class="text-text-secondary font-mono text-right text-md whitespace-nowrap"
+						title={ROLE_HINT[member.role]}
+					>
 						{#if member.instance_admin}
-							<span
-								class="text-text-secondary font-mono inline-flex items-center px-2 py-1 text-md"
-								title="Instance admins are admin everywhere; the membership is informational."
-							>
-								admin <span class="text-text-faint ml-1 text-xs">(instance)</span>
-							</span>
+							admin <span class="text-text-faint text-xs">(instance)</span>
 						{:else}
-							<RolePicker
-								value={member.role}
-								options={projectRoleOptions}
-								label="Project role of {member.email}"
-								disabled={!canEdit}
-								title={canEdit ? undefined : readOnlyTitle}
-								busy={!!busy[member.user_id]}
-								onchange={(role) => setProjectRole(member, role)}
-							/>
+							{member.role}
 						{/if}
 					</span>
 					<span class="justify-self-end">
