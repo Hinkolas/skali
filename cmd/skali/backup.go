@@ -39,20 +39,23 @@ func newBackupRestoreCommand() *cobra.Command {
 		yes         bool
 	)
 	command := &cobra.Command{
-		Use:   "restore <snapshot-id>",
+		Use:   "restore [snapshot-id]",
 		Short: "Restore a snapshot's data into an environment",
 		Long: "Stops the environment, replaces every matching database, bucket,\n" +
 			"and volume with the snapshot's data, then resumes the current\n" +
 			"revision. Current data is overwritten. The environment must be\n" +
 			"deployed first; restore moves data, not configuration.\n\n" +
-			"The snapshot restores into the environment it was taken from unless\n" +
-			"--environment names another environment of the same project.",
-		Args: cobra.ExactArgs(1),
+			"Without a snapshot id the project's snapshots are offered to pick\n" +
+			"from. The snapshot restores into the environment it was taken from\n" +
+			"unless --environment names another environment of the same project.\n" +
+			"The resolved remote, project, snapshot, and environment are shown\n" +
+			"and confirmed by typing the environment name; --yes skips that.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
 			out := command.OutOrStdout()
 			style := clirender.StyleFor(out)
-			snapshotID := args[0]
+			in := bufio.NewReader(command.InOrStdin())
 			start, err := os.Getwd()
 			if err != nil {
 				return err
@@ -61,20 +64,30 @@ func newBackupRestoreCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snapshot, err := findSnapshot(ctx, scope, snapshotID)
+			var snapshot *client.BackupSnapshot
+			if len(args) == 1 {
+				snapshot, err = findSnapshot(ctx, scope, args[0])
+			} else {
+				snapshot, err = chooseSnapshot(ctx, out, in, scope, environment, command.CommandPath())
+			}
 			if err != nil {
 				return err
 			}
+			snapshotID := snapshot.ID
 			targetEnvironment, err := restoreEnvironment(scope, snapshot, environment)
 			if err != nil {
 				return err
 			}
+			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("remote"), scope.remoteName, style.Dim("("+scope.api.Master()+")"))
+			fmt.Fprintf(out, "%s      %s\n", style.Dim("project"), scope.project.Name)
+			fmt.Fprintf(out, "%s     %s %s\n", style.Dim("snapshot"), snapshotID,
+				style.Dim(fmt.Sprintf("(%s, %s, %s)", snapshot.Environment, snapshotTime(snapshot), utils.FormatBytes(snapshot.Bytes))))
+			fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), targetEnvironment.Name)
 			if !yes {
 				if !cliprompt.Interactive() {
 					return errors.New("non-interactive use requires --yes")
 				}
-				session := promptSession(out, bufio.NewReader(command.InOrStdin()))
-				confirmed, err := session.ConfirmTyped(ctx,
+				confirmed, err := promptSession(out, in).ConfirmTyped(ctx,
 					fmt.Sprintf("Restore snapshot %s into %s?", snapshotID, targetEnvironment.Name),
 					fmt.Sprintf("The snapshot was taken from %s on %s. The environment stops, its "+
 						"current data is replaced with the snapshot's, and the current "+
@@ -89,7 +102,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			}
 			runID, err := scope.api.RestoreBackup(ctx, targetEnvironment.ID, snapshotID)
 			if isReauthRequired(err) {
-				if err = reauthSession(ctx, out, bufio.NewReader(command.InOrStdin()), scope.api); err != nil {
+				if err = reauthSession(ctx, out, in, scope.api); err != nil {
 					return err
 				}
 				runID, err = scope.api.RestoreBackup(ctx, targetEnvironment.ID, snapshotID)
@@ -139,6 +152,63 @@ func findSnapshot(ctx context.Context, scope *queryProject, snapshotID string) (
 	}
 	return nil, fmt.Errorf("no snapshot %s in project %s on %s; see skali backup list",
 		snapshotID, scope.project.Name, scope.api.Master())
+}
+
+// chooseSnapshot offers the project's snapshots, newest first, when the
+// command was given none; --environment narrows the offer like it narrows
+// the list. Without a terminal the caller has to name one.
+func chooseSnapshot(ctx context.Context, out io.Writer, in *bufio.Reader, scope *queryProject, environment, commandPath string) (*client.BackupSnapshot, error) {
+	snapshots, err := scope.api.ListProjectBackups(ctx, scope.project.ID)
+	if err != nil {
+		return nil, err
+	}
+	if environment != "" {
+		snapshots = slices.DeleteFunc(snapshots, func(snapshot client.BackupSnapshot) bool {
+			return snapshot.Environment != environment
+		})
+	}
+	if len(snapshots) == 0 {
+		if environment != "" {
+			return nil, fmt.Errorf("no snapshots of environment %s in project %s on %s", environment, scope.project.Name, scope.api.Master())
+		}
+		return nil, fmt.Errorf("no snapshots in project %s on %s; take one with skali backup create", scope.project.Name, scope.api.Master())
+	}
+	if !cliprompt.Interactive() {
+		return nil, fmt.Errorf("name the snapshot to restore: %s <snapshot-id>; skali backup list shows them", commandPath)
+	}
+	chosen, err := promptSession(out, in).Select(ctx, cliprompt.SelectOptions{
+		Title:       "Restore which snapshot?",
+		Description: fmt.Sprintf("Snapshots of project %s on the backup target, newest first.", scope.project.Name),
+		Options:     snapshotOptions(snapshots),
+	})
+	if err != nil {
+		return nil, confirmError(err)
+	}
+	for index := range snapshots {
+		if snapshots[index].ID == chosen {
+			return &snapshots[index], nil
+		}
+	}
+	return nil, errors.New("aborted")
+}
+
+// snapshotOptions labels each snapshot by when and where it was taken and
+// how much it holds; the id stays the value restore sends.
+func snapshotOptions(snapshots []client.BackupSnapshot) []cliprompt.Option {
+	width := 0
+	for _, snapshot := range snapshots {
+		width = max(width, len(snapshot.Environment))
+	}
+	options := make([]cliprompt.Option, 0, len(snapshots))
+	for index := range snapshots {
+		snapshot := &snapshots[index]
+		options = append(options, cliprompt.Option{
+			Label:       fmt.Sprintf("%s  %-*s  %s", snapshotTime(snapshot), width, snapshot.Environment, utils.FormatBytes(snapshot.Bytes)),
+			Description: utils.ShortChecksum(snapshot.RevisionChecksum),
+			Value:       snapshot.ID,
+		})
+	}
+	return options
 }
 
 // restoreEnvironment picks the environment a snapshot restores into: the

@@ -134,6 +134,47 @@ func TestBackupCreateConfirmsWithSummary(t *testing.T) {
 	require.Len(t, install.posts, 2)
 }
 
+func TestBackupRestoreSummaryAndBareInvocation(t *testing.T) {
+	seedBackupScope(t)
+	restore := func(stdin string, args ...string) (string, error) {
+		command := newBackupRestoreCommand()
+		command.SetArgs(args)
+		out := &bytes.Buffer{}
+		command.SetOut(out)
+		command.SetErr(out)
+		command.SetIn(strings.NewReader(stdin))
+		err := command.ExecuteContext(context.Background())
+		return out.String(), err
+	}
+
+	// A named snapshot prints the resolved summary before the typed
+	// confirmation, which a non-terminal cannot answer.
+	out, err := restore("", testSnapshotStaging)
+	require.ErrorContains(t, err, "non-interactive use requires --yes")
+	require.Contains(t, out, "project      flowdemo")
+	require.Contains(t, out, "snapshot     "+testSnapshotStaging)
+	require.Contains(t, out, "(staging, ")
+	require.Contains(t, out, "environment  staging")
+
+	// Without an id and without a terminal the error names the form.
+	_, err = restore("")
+	require.ErrorContains(t, err, "name the snapshot to restore")
+	require.ErrorContains(t, err, "restore <snapshot-id>")
+	_, err = restore("", "--environment", "nothing")
+	require.ErrorContains(t, err, "no snapshots of environment nothing")
+
+	// The picker rows lead with when and where, and carry the id as value.
+	options := snapshotOptions([]client.BackupSnapshot{
+		{ID: "a", Environment: "production", CreatedAt: "2026-08-15T10:00:00Z", RevisionChecksum: "sha256:abcdef1234567890", Bytes: 1 << 20},
+		{ID: "b", Environment: "qa", CreatedAt: "2026-08-14T10:00:00Z", RevisionChecksum: "sha256:0123456789abcdef", Bytes: 2048},
+	})
+	require.Len(t, options, 2)
+	require.Equal(t, "a", options[0].Value)
+	require.Regexp(t, `^2026-08-1\d \d\d:\d\d  production  1\.0MiB$`, options[0].Label)
+	require.Regexp(t, `^2026-08-1\d \d\d:\d\d  qa          2\.0KiB$`, options[1].Label)
+	require.Equal(t, "abcdef123456", options[0].Description)
+}
+
 func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {
 	seedBackupScope(t)
 	scope, err := resolveQueryProject(context.Background(), ".", "", "", "")
