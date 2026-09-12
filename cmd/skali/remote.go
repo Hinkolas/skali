@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 
@@ -90,7 +90,7 @@ func newRemoteAddCommand() *cobra.Command {
 				}
 				return probeErr
 			}
-			sess, instance, err := loginRemote(command.Context(), cliprompt.New(os.Stdin, os.Stderr), master, email, noBrowser)
+			sess, instance, err := loginRemote(command.Context(), cliprompt.New(command.InOrStdin(), command.ErrOrStderr()), command.ErrOrStderr(), master, email, noBrowser)
 			if err != nil {
 				return fmt.Errorf("remote %q not added: %w", remoteName, err)
 			}
@@ -148,7 +148,7 @@ func newRemoteLoginCommand() *cobra.Command {
 			// probe fetches the identity the master answers with today, and
 			// a change (the cluster was reinstalled) must be confirmed. An
 			// unreachable master skips the probe; the login surfaces it.
-			prompts := cliprompt.New(os.Stdin, os.Stderr)
+			prompts := cliprompt.New(command.InOrStdin(), command.ErrOrStderr())
 			if target.Instance != "" {
 				probe := client.New(target.Master, "", userAgent())
 				_ = probe.Health(command.Context())
@@ -167,7 +167,7 @@ func newRemoteLoginCommand() *cobra.Command {
 					}
 				}
 			}
-			sess, instance, err := loginRemote(command.Context(), prompts, target.Master, email, noBrowser)
+			sess, instance, err := loginRemote(command.Context(), prompts, command.ErrOrStderr(), target.Master, email, noBrowser)
 			if err != nil {
 				return err
 			}
@@ -491,10 +491,11 @@ func parseMasterURL(raw string) (string, error) {
 // loginRemote picks the login path: the browser when the terminal is
 // interactive and nobody opted out (an explicit --email means the person
 // wants the typed path), the prompts otherwise. A master without the
-// device flow (an older daemon answers 404) falls back to the prompts.
-func loginRemote(ctx context.Context, prompts *cliprompt.Session, master, email string, noBrowser bool) (*client.SessionCreated, string, error) {
+// device flow (an older daemon answers 404) falls back to the prompts. The
+// browser flow writes its instructions to out.
+func loginRemote(ctx context.Context, prompts *cliprompt.Session, out io.Writer, master, email string, noBrowser bool) (*client.SessionCreated, string, error) {
 	if email == "" && browserAuthAvailable(noBrowser) {
-		sess, instance, err := deviceLogin(ctx, os.Stderr, master)
+		sess, instance, err := deviceLogin(ctx, out, master)
 		if !client.IsNotFound(err) {
 			return sess, instance, err
 		}

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -143,9 +142,6 @@ func newRunCommand() *cobra.Command {
 		Short: "Print the logs of one step",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			if stepKey == "" {
-				return errors.New("--step is required")
-			}
 			api, err := queryClient(remote)
 			if err != nil {
 				return err
@@ -170,6 +166,7 @@ func newRunCommand() *cobra.Command {
 		},
 	}
 	logs.Flags().StringVar(&stepKey, "step", "", "step key, e.g. artifacts.web.build")
+	_ = logs.MarkFlagRequired("step")
 
 	command.AddCommand(show, attach, cancel, logs)
 	return command
