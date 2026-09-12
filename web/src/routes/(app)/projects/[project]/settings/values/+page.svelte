@@ -10,12 +10,15 @@
 	import { withEnv } from '$lib/urls';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
+	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import Menu from '$lib/components/ui/Menu.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
+	import SecretInput from '$lib/components/ui/SecretInput.svelte';
 	import SettingsNav from '$lib/components/project/SettingsNav.svelte';
 	import type { PageData } from './$types';
 
@@ -195,21 +198,16 @@
 				{#each declared as variable (variable.name)}
 					{@const entry = entryByName.get(variable.name)}
 					{@const pending = dirty[variable.name]}
+					{@const missing = !entry && variable.required && !variable.hasDefault}
 					{@const users = (consumers[variable.name] ?? []).toSorted()}
+					<!-- The field tells the value's story: what is stored shows as a
+					     masked placeholder with its version, a missing required value
+					     as an amber field, a pending edit as an accent one. -->
 					<div
-						class="border-border-subtle grid grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_9rem] items-center gap-3 border-b py-2.5 last:border-0"
+						class="border-border-subtle grid grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_auto] items-center gap-3 border-b py-2.5 last:border-0"
 					>
 						<div class="flex min-w-0 flex-col gap-1" title={variable.name}>
-							<div class="flex items-center gap-2">
-								<span class="font-mono text-text-primary truncate text-md">{variable.name}</span>
-								{#if variable.required && !variable.hasDefault}
-									<Pill text="required" tone="neutral" />
-								{:else if variable.hasDefault}
-									<span class="font-mono text-text-faint truncate text-xs">
-										default "{variable.default ?? ''}"
-									</span>
-								{/if}
-							</div>
+							<span class="font-mono text-text-primary truncate text-md">{variable.name}</span>
 							<div class="flex flex-wrap items-center gap-1">
 								{#each users as app (app)}
 									<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
@@ -232,48 +230,66 @@
 								{/each}
 							</div>
 						</div>
-						<div class="min-w-0">
-							<TextInput
-								type="password"
-								size="sm"
-								autocomplete="off"
-								mono
-								disabled={!mayEdit}
-								placeholder={entry
-									? `set · v${entry.version} · type to overwrite`
-									: variable.hasDefault
-										? `not set · default "${variable.default ?? ''}" applies`
-										: 'not set · type to set'}
-								value={pending ?? ''}
-								oninput={(e) => {
-									const next = (e.currentTarget as HTMLInputElement).value;
-									if (next === '') delete dirty[variable.name];
-									else dirty[variable.name] = next;
-								}}
-							/>
-						</div>
-						<div class="flex items-center justify-end gap-1">
-							{#if pending === ''}
-								<span class="text-status-warning whitespace-nowrap text-md">will set empty</span>
-								<Button size="sm" variant="ghost" onclick={() => delete dirty[variable.name]}>
-									Keep
-								</Button>
-							{:else if pending === undefined && mayEdit}
-								<Button size="sm" variant="ghost" onclick={() => (dirty[variable.name] = '')}>
-									Set empty
-								</Button>
-								{#if entry}
-									<Button
-										size="sm"
-										variant="ghost"
-										onclick={() =>
-											unsetValue(variable.name, variable.required && !variable.hasDefault)}
+						<SecretInput
+							label={variable.name}
+							disabled={!mayEdit}
+							tone={pending !== undefined ? 'pending' : missing ? 'warning' : 'default'}
+							placeholder={pending === ''
+								? 'will be set to an empty value'
+								: entry
+									? '••••••••••••'
+									: missing
+										? 'required · not set'
+										: variable.hasDefault
+											? `default "${variable.default ?? ''}"`
+											: 'not set'}
+							value={pending ?? ''}
+							oninput={(e) => {
+								const next = (e.currentTarget as HTMLInputElement).value;
+								if (next === '') delete dirty[variable.name];
+								else dirty[variable.name] = next;
+							}}
+							onclear={pending !== undefined ? () => delete dirty[variable.name] : undefined}
+						>
+							{#snippet trailing()}
+								{#if pending !== undefined}
+									<span class="text-accent-light"
+										>{pending === '' ? 'empty · unsaved' : 'unsaved'}</span
 									>
-										Unset
-									</Button>
+								{:else if entry}
+									<span title="stored version">v{entry.version}</span>
 								{/if}
-							{/if}
-						</div>
+							{/snippet}
+						</SecretInput>
+						<Menu
+							label="Actions on {variable.name}"
+							align="end"
+							triggerClass="flex size-7 cursor-pointer items-center justify-center rounded-[8px] text-text-tertiary transition-colors hover:bg-white/5 hover:text-text-primary disabled:cursor-default disabled:opacity-60"
+						>
+							{#snippet trigger()}
+								<Ellipsis size={15} />
+							{/snippet}
+							<MenuItem
+								disabled={!mayEdit || pending === ''}
+								title={mayEdit ? 'Stage an empty string as the value.' : editTitle}
+								onselect={() => (dirty[variable.name] = '')}
+							>
+								Set empty
+							</MenuItem>
+							<MenuItem
+								danger
+								disabled={!mayEdit || !entry}
+								title={!mayEdit
+									? editTitle
+									: entry
+										? 'Remove the stored value now.'
+										: 'Nothing is stored.'}
+								onselect={() =>
+									unsetValue(variable.name, variable.required && !variable.hasDefault)}
+							>
+								Unset
+							</MenuItem>
+						</Menu>
 					</div>
 				{/each}
 			</div>
