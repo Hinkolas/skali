@@ -133,15 +133,17 @@
 		description="this page will arrive in a future version"
 	/>
 {:else}
-	<div class="mb-3.5 flex items-baseline gap-2.5">
-		<h2 class="text-text-primary text-xl font-semibold">Usage</h2>
-		<div class="text-text-muted text-md">usage and edge traffic across the app's pods</div>
-		<div class="ml-auto flex items-center gap-1" role="group" aria-label="Window">
+	<div class="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+		<div class="flex min-w-56 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+			<h2 class="text-text-primary text-xl font-semibold">Usage</h2>
+			<div class="text-text-muted text-md">usage and edge traffic across the app's pods</div>
+		</div>
+		<div class="ml-auto flex flex-none items-center gap-1" role="group" aria-label="Window">
 			{#each WINDOWS as option (option.value)}
 				<button
 					type="button"
 					onclick={() => (range = option.value)}
-					class="cursor-pointer rounded-full px-3 py-1 text-sm transition-colors {range ===
+					class="cursor-pointer rounded-full px-3 py-1 text-sm whitespace-nowrap transition-colors {range ===
 					option.value
 						? 'bg-white/8 text-text-primary'
 						: 'text-text-tertiary hover:text-text-secondary'}"

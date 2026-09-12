@@ -7,6 +7,7 @@
 		align = 'start',
 		triggerClass = '',
 		panelClass = 'min-w-52',
+		class: className = '',
 		trigger,
 		children
 	}: {
@@ -19,6 +20,8 @@
 		triggerClass?: string;
 		/** Width/extra classes for the panel. */
 		panelClass?: string;
+		/** Classes for the root wrapper: min-w-0 lets a truncating trigger shrink in a flex row, grid placement puts the menu in a cell. */
+		class?: string;
 		trigger: Snippet<[{ open: boolean }]>;
 		children: Snippet;
 	} = $props();
@@ -142,7 +145,7 @@
 	onscrollcapture={onWindowScroll}
 />
 
-<div bind:this={root} class="relative">
+<div bind:this={root} class="relative {className}">
 	<button
 		bind:this={triggerEl}
 		type="button"

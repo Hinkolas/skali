@@ -98,7 +98,7 @@
 </div>
 
 {#if storage || temporaryStorage}
-	<div class="mb-3.5 flex items-baseline gap-2.5">
+	<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 		<h2 class="text-text-primary text-xl font-semibold">Storage</h2>
 		<div class="text-text-muted text-md">this application's footprint</div>
 	</div>
@@ -107,9 +107,11 @@
 	</div>
 {/if}
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
-	<h2 class="text-text-primary text-xl font-semibold">Recent runs</h2>
-	<div class="text-text-muted text-md">the newest {RECENT_RUNS} in this environment</div>
+<div class="mb-3.5 flex items-center gap-3">
+	<div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+		<h2 class="text-text-primary text-xl font-semibold">Recent runs</h2>
+		<div class="text-text-muted text-md">the newest {RECENT_RUNS} in this environment</div>
+	</div>
 	<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
 	<a
 		href={withEnv(
@@ -119,7 +121,7 @@
 			}),
 			envName
 		)}
-		class="text-text-muted hover:text-text-primary ml-auto flex items-center gap-1 text-md transition-colors"
+		class="text-text-muted hover:text-text-primary flex flex-none items-center gap-1 text-md whitespace-nowrap transition-colors"
 	>
 		All deployments <ArrowRight size={13} />
 	</a>

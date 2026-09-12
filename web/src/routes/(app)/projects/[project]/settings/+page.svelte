@@ -282,7 +282,7 @@
 	</Card>
 
 	<Card class="p-5 pb-2.5">
-		<div class="mb-3 flex items-center">
+		<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
 			<h3 class="text-text-primary text-xl font-semibold">Environments</h3>
 			<div class="ml-auto">
 				<Button
@@ -391,7 +391,7 @@
 	</Card>
 
 	<Card class="@4xl:col-span-2 p-5 pb-2.5">
-		<div class="mb-3 flex items-center gap-2.5">
+		<div class="mb-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
 			<h3 class="text-text-primary text-xl font-semibold">Revisions</h3>
 			{#if data.env}
 				<Pill text={data.env.name} />
@@ -457,8 +457,8 @@
 	</Card>
 
 	<Card class="border-status-danger/30 @4xl:col-span-2 p-5">
-		<div class="flex items-center">
-			<div>
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-3">
+			<div class="min-w-48 flex-1">
 				<h3 class="text-text-primary text-xl font-semibold">Danger zone</h3>
 				<div class="text-text-muted mt-1 text-base">
 					Deleting a project removes its environments, values, revisions, and history.

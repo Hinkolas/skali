@@ -64,14 +64,16 @@
 </script>
 
 <Card class="flex flex-col p-5">
-	<div class="mb-4 flex items-center gap-2.5">
-		<h3 class="text-text-primary text-xl font-semibold">Connection</h3>
-		<span
-			class="font-mono text-status-success bg-status-success/10 rounded-full px-2 py-0.5 text-2xs"
-		>
-			private network
-		</span>
-		<div class="ml-auto">
+	<div class="mb-4 flex items-center gap-3">
+		<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1">
+			<h3 class="text-text-primary text-xl font-semibold">Connection</h3>
+			<span
+				class="font-mono text-status-success bg-status-success/10 rounded-full px-2 py-0.5 text-2xs whitespace-nowrap"
+			>
+				private network
+			</span>
+		</div>
+		<div class="flex-none">
 			<Button
 				size="sm"
 				busy={revealing}

@@ -74,7 +74,7 @@
 	<DbConnectionPanel {service} {connection} {envId} />
 </div>
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Connected applications</h2>
 	<div class="text-text-muted text-md">via private network</div>
 </div>
@@ -83,7 +83,7 @@
 	<ConnectedAppsList {service} {services} />
 </div>
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Recent backups</h2>
 	<div class="text-text-muted text-md">
 		snapshots of this environment{schedule ? ` · ${describeCron(schedule.backup.schedule)}` : ''}

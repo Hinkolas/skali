@@ -31,7 +31,7 @@
 		const status = data.updates;
 		if (!status) return { text: 'status unavailable', tone: 'neutral' as const };
 		const presentation = updatePresentation(status);
-		return { text: presentation.title, tone: presentation.tone };
+		return { text: presentation.pill, tone: presentation.tone };
 	});
 </script>
 

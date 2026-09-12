@@ -49,9 +49,9 @@
 		{#each sessions as session (session.id)}
 			{@const device = describeUserAgent(session.user_agent)}
 			<div
-				class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {grid}"
+				class="border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-1.5 @2xl:grid @2xl:items-center {grid}"
 			>
-				<div class="flex min-w-0 items-center gap-2.5">
+				<div class="flex min-w-0 items-center gap-2.5 @max-2xl:flex-1">
 					<div
 						class="bg-surface-input text-text-tertiary grid size-7 flex-none place-items-center rounded-lg"
 					>
@@ -72,14 +72,20 @@
 						</span>
 					{/if}
 				</div>
-				<div class="font-mono text-text-muted truncate text-sm">
-					{session.ip_address || '—'}
+				<!-- Address, signed in and expiry: grid cells on a wide pane, one meta
+				     line under the device on a narrow one (pl-9.5 = icon + gap). -->
+				<div
+					class="@2xl:contents @max-2xl:order-1 @max-2xl:flex @max-2xl:basis-full @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-1 @max-2xl:pl-9.5"
+				>
+					<div class="font-mono text-text-muted truncate text-sm">
+						{session.ip_address || '—'}
+					</div>
+					<div class="font-mono text-text-muted text-sm" title={formatDate(session.created_at)}>
+						{relativeTime(session.created_at)}
+					</div>
+					<div class="font-mono text-text-muted text-sm">{formatDate(session.expires_at)}</div>
 				</div>
-				<div class="font-mono text-text-muted text-sm" title={formatDate(session.created_at)}>
-					{relativeTime(session.created_at)}
-				</div>
-				<div class="font-mono text-text-muted text-sm">{formatDate(session.expires_at)}</div>
-				<div class="flex justify-end">
+				<div class="flex justify-end @max-2xl:ml-auto">
 					{#if !session.current}
 						<button
 							type="button"

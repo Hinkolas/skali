@@ -184,7 +184,7 @@
 		{/if}
 
 		<Card class="p-5 pb-2.5">
-			<div class="mb-3 flex items-center gap-2.5">
+			<div class="mb-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
 				<h3 class="text-text-primary text-xl font-semibold">Variables</h3>
 				<Pill text={data.env.name} />
 				<span class="text-text-muted text-md">
@@ -202,9 +202,10 @@
 					{@const users = (consumers[variable.name] ?? []).toSorted()}
 					<!-- The field tells the value's story: what is stored shows as a
 					     masked placeholder with its version, a missing required value
-					     as an amber field, a pending edit as an accent one. -->
+					     as an amber field, a pending edit as an accent one. On a narrow
+					     pane the field takes its own line under name and menu. -->
 					<div
-						class="border-border-subtle grid grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_auto] items-center gap-3 border-b py-2.5 last:border-0"
+						class="border-border-subtle grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b py-2.5 last:border-0 @2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_auto]"
 					>
 						<div class="flex min-w-0 flex-col gap-1" title={variable.name}>
 							<span class="font-mono text-text-primary truncate text-md">{variable.name}</span>
@@ -230,40 +231,43 @@
 								{/each}
 							</div>
 						</div>
-						<SecretInput
-							label={variable.name}
-							disabled={!mayEdit}
-							tone={pending !== undefined ? 'pending' : missing ? 'warning' : 'default'}
-							placeholder={pending === ''
-								? 'will be set to an empty value'
-								: entry
-									? '••••••••••••'
-									: missing
-										? 'required · not set'
-										: variable.hasDefault
-											? `default "${variable.default ?? ''}"`
-											: 'not set'}
-							value={pending ?? ''}
-							oninput={(e) => {
-								const next = (e.currentTarget as HTMLInputElement).value;
-								if (next === '') delete dirty[variable.name];
-								else dirty[variable.name] = next;
-							}}
-							onclear={pending !== undefined ? () => delete dirty[variable.name] : undefined}
-						>
-							{#snippet trailing()}
-								{#if pending !== undefined}
-									<span class="text-accent-light"
-										>{pending === '' ? 'empty · unsaved' : 'unsaved'}</span
-									>
-								{:else if entry}
-									<span title="stored version">v{entry.version}</span>
-								{/if}
-							{/snippet}
-						</SecretInput>
+						<div class="@max-2xl:col-span-2 @max-2xl:row-start-2">
+							<SecretInput
+								label={variable.name}
+								disabled={!mayEdit}
+								tone={pending !== undefined ? 'pending' : missing ? 'warning' : 'default'}
+								placeholder={pending === ''
+									? 'will be set to an empty value'
+									: entry
+										? '••••••••••••'
+										: missing
+											? 'required · not set'
+											: variable.hasDefault
+												? `default "${variable.default ?? ''}"`
+												: 'not set'}
+								value={pending ?? ''}
+								oninput={(e) => {
+									const next = (e.currentTarget as HTMLInputElement).value;
+									if (next === '') delete dirty[variable.name];
+									else dirty[variable.name] = next;
+								}}
+								onclear={pending !== undefined ? () => delete dirty[variable.name] : undefined}
+							>
+								{#snippet trailing()}
+									{#if pending !== undefined}
+										<span class="text-accent-light"
+											>{pending === '' ? 'empty · unsaved' : 'unsaved'}</span
+										>
+									{:else if entry}
+										<span title="stored version">v{entry.version}</span>
+									{/if}
+								{/snippet}
+							</SecretInput>
+						</div>
 						<Menu
 							label="Actions on {variable.name}"
 							align="end"
+							class="@max-2xl:col-start-2 @max-2xl:row-start-1"
 							triggerClass="flex size-7 cursor-pointer items-center justify-center rounded-[8px] text-text-tertiary transition-colors hover:bg-white/5 hover:text-text-primary disabled:cursor-default disabled:opacity-60"
 						>
 							{#snippet trigger()}
@@ -297,7 +301,7 @@
 
 		{#if orphanedEntries.length > 0}
 			<Card class="p-5">
-				<div class="mb-3.5 flex items-baseline gap-2.5">
+				<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 					<h3 class="text-text-primary text-xl font-semibold">No longer referenced</h3>
 					<span class="text-text-muted text-md">
 						stored but not referenced by the current draft; ignored by deployments

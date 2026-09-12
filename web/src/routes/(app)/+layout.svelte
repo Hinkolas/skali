@@ -37,7 +37,7 @@
 <div class="bg-glow-app flex h-screen gap-2.5 px-2.5 pb-2.5">
 	<div class="hidden md:contents"><Sidebar /></div>
 	<div class="flex min-w-0 flex-1 flex-col">
-		<div class="flex min-w-0 items-center gap-3">
+		<div class="flex min-w-0 items-center gap-2 sm:gap-3">
 			<details class="relative flex-none md:hidden" bind:open={navigationOpen}>
 				<summary
 					aria-label="Navigation"

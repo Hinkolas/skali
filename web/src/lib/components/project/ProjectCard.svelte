@@ -41,18 +41,20 @@
 	href={resolve('/(app)/projects/[project]', { project: project.name })}
 	class="bg-surface-card border-border-raised hover:border-accent/35 flex flex-col gap-3.5 rounded-[15px] border px-5 py-4.5 transition-colors"
 >
-	<div class="flex items-center gap-2.5">
+	<div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
 		<div class="text-text-primary truncate text-xl font-semibold">
 			{project.display_name || project.name}
 		</div>
 		{#if environments.length > 0}
-			<Pill
-				text={environments[0].name}
-				tone={environments[0].name === 'production' ? 'success' : 'neutral'}
-			/>
-			{#if environments.length > 1}
-				<Pill text="+{environments.length - 1}" tone="neutral" />
-			{/if}
+			<span class="flex items-center gap-2.5">
+				<Pill
+					text={environments[0].name}
+					tone={environments[0].name === 'production' ? 'success' : 'neutral'}
+				/>
+				{#if environments.length > 1}
+					<Pill text="+{environments.length - 1}" tone="neutral" />
+				{/if}
+			</span>
 		{/if}
 		<span class="ml-auto size-[8px] flex-none rounded-full {healthDot[worst]}"></span>
 	</div>

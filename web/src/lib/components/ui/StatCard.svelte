@@ -10,7 +10,11 @@
 	// The preview slot holds one of: a sparkline (series data), a progress
 	// bar (usage against a limit), or nothing. Chip, note, and sub stats sit
 	// below it either way so the footer line lands at the same height across
-	// tiles.
+	// tiles. The unit is one unbreakable token: on a narrow tile "MiB / 4.7
+	// GiB" drops under the value whole instead of splitting mid-phrase. The
+	// sub stats break between label and value when they must ("schedule" over
+	// "daily at 03:00"), never inside the value; nowrap on the whole made a
+	// long one push past the tile edge.
 	const hasSparkline = $derived((stat.sparkline?.length ?? 0) > 1);
 	const hasFooter = $derived(Boolean(stat.chip || stat.note || stat.split?.length));
 </script>
@@ -20,7 +24,8 @@
 		{stat.label}
 	</div>
 	<div class="text-text-primary text-4xl font-semibold tracking-[-0.02em]">
-		{stat.value}{#if stat.unit}<span class="text-text-muted ml-1 text-base font-medium"
+		{stat.value}{#if stat.unit}<span
+				class="text-text-muted ml-1 inline-block text-base font-medium whitespace-nowrap"
 				>{stat.unit}</span
 			>{/if}
 	</div>
@@ -42,12 +47,12 @@
 				<span class="text-text-muted text-md">{stat.note}</span>
 			{/if}
 			{#each stat.split ?? [] as part (part.label)}
-				<span class="text-text-muted flex items-center gap-1.5 font-mono text-xs whitespace-nowrap">
+				<span class="text-text-muted flex flex-wrap items-center gap-x-1.5 font-mono text-xs">
 					{#if part.class}
 						<span class="size-[8px] flex-none rounded-full {part.class}"></span>
 					{/if}
 					{part.label}
-					<span class="text-text-primary">{part.value}</span>
+					<span class="text-text-primary whitespace-nowrap">{part.value}</span>
 				</span>
 			{/each}
 		</div>

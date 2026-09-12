@@ -89,7 +89,7 @@
 </div>
 
 {#if envStorage.length > 0}
-	<div class="mb-3.5 flex items-baseline gap-2.5">
+	<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 		<h2 class="text-text-primary text-xl font-semibold">Storage</h2>
 		<div class="text-text-muted text-md">env {data.env?.name ?? 'none'}</div>
 	</div>
@@ -180,7 +180,7 @@
 	</Card>
 {/if}
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Services</h2>
 	<div class="text-text-muted text-md">
 		{data.services.length === 0 ? 'defined in skali.yaml' : `env ${data.env?.name ?? 'none'}`}

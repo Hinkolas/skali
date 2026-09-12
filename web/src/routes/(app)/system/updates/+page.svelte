@@ -147,7 +147,7 @@
 					tone: 'danger',
 					sub: operation
 						? `stopped ${relativeTime(operation.updated_at)} · started ${relativeTime(operation.started_at)}`
-						: 'A step did not complete.'
+						: 'a step did not complete'
 				};
 			case 'incomplete':
 				return {

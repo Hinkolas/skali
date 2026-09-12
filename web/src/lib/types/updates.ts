@@ -134,8 +134,21 @@ export function updatePresentation(status: UpdateStatus) {
 		not_checked: 'Not checked yet',
 		no_release: 'No releases on this channel'
 	};
+	// The short lowercase form for mono pills (the System hub), next to the
+	// nodes pill's "not observed" and the feed error pills.
+	const pills = {
+		current: 'up to date',
+		available: `${target} available`,
+		incomplete: 'update incomplete',
+		updating: `updating to ${target}`,
+		failed: 'needs attention',
+		unknown: 'status unavailable',
+		not_checked: 'not checked yet',
+		no_release: 'no releases yet'
+	};
 	return {
 		title: summary ? labels[summary.state] : labels.unknown,
+		pill: summary ? pills[summary.state] : pills.unknown,
 		action:
 			summary?.action === 'finish'
 				? 'Finish update'

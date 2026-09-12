@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Rocket from '@lucide/svelte/icons/rocket';
 	import RotateCw from '@lucide/svelte/icons/rotate-cw';
@@ -84,13 +85,17 @@
 		label="Environment actions"
 		align="end"
 		panelClass="min-w-44"
-		triggerClass="border-border-strong text-text-secondary bg-white/2 flex h-8 cursor-pointer items-center gap-2 rounded-[11px] border px-3.5 text-base font-medium transition-colors hover:bg-white/5"
+		triggerClass="border-border-strong text-text-secondary bg-white/2 flex h-8 cursor-pointer items-center gap-2 rounded-[11px] border px-2.5 text-base font-medium transition-colors hover:bg-white/5 sm:px-3.5"
 	>
 		{#snippet trigger({ open })}
-			Actions
+			<!-- Phone width shows the glyph alone; the label stays for assistive tech. -->
+			<Ellipsis size={15} class="flex-none sm:hidden" />
+			<span class="sr-only sm:not-sr-only">Actions</span>
 			<ChevronDown
 				size={13}
-				class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
+				class="text-text-ghost hidden flex-none transition-transform sm:block {open
+					? 'rotate-180'
+					: ''}"
 			/>
 		{/snippet}
 		<MenuItem icon={Rocket} disabled={!!promoteTitle} title={promoteTitle} onselect={openPromote}>

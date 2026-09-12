@@ -13,7 +13,7 @@
 </script>
 
 <Card class="flex flex-col p-5 {className}">
-	<div class="mb-4 flex items-baseline gap-2.5">
+	<div class="mb-4 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 		<h3 class="text-text-primary text-xl font-semibold">{title}</h3>
 		{#if hint}
 			<span class="text-text-muted text-md">{hint}</span>

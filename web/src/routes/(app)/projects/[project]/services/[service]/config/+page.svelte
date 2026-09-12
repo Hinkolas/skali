@@ -15,7 +15,7 @@
 	<title>Config · {service.name} — skali</title>
 </svelte:head>
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Configuration</h2>
 	<div class="text-text-muted text-md">
 		declared in skali.yaml · edit the manifest and deploy to change it
