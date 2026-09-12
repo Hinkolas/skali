@@ -117,12 +117,20 @@ func (s *Style) Cross() string {
 // TerminalWidth reports the width of out when it is a terminal; the
 // fallback keeps truncation sane for pipes that claimed a style anyway.
 func TerminalWidth(out io.Writer) int {
+	width, _ := TerminalSize(out)
+	return width
+}
+
+// TerminalSize reports the columns and rows of out when it is a terminal.
+// Anything else gets the width fallback and no height, which disables
+// height-bound rendering.
+func TerminalSize(out io.Writer) (width, height int) {
 	if file, ok := out.(interface{ Fd() uintptr }); ok {
-		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 0 {
-			return width
+		if columns, rows, err := term.GetSize(int(file.Fd())); err == nil && columns > 0 {
+			return columns, rows
 		}
 	}
-	return 100
+	return 100, 0
 }
 
 // Truncate bounds text to width terminal cells, marking the cut.

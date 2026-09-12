@@ -1015,38 +1015,12 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 	defer stop()
 
 	tty := clirender.IsTerminal(os.Stdout)
+	tails := &stepLogTails{api: api, lines: map[string][]string{}}
 	renderer := &clirender.Renderer{
 		Out:   out,
 		TTY:   tty,
 		Style: clirender.StyleFor(out),
-		Logs: func(stepID string) []string {
-			logs, cursor, err := api.StepLogs(ctx, stepID, "", 0)
-			if err != nil || len(logs) == 0 {
-				return nil
-			}
-			if logs[len(logs)-1].Fields["tls"] == true {
-				// A TLS checkpoint is a series of complete snapshots. Reach
-				// its latest page, then show current state rather than three
-				// superseded snapshots. The full history remains in run logs.
-				for len(logs) == 500 && cursor != "" {
-					page, next, err := api.StepLogs(ctx, stepID, cursor, 0)
-					if err != nil || len(page) == 0 {
-						break
-					}
-					logs, cursor = page, next
-				}
-				return clirender.CertificateLogLines(logs[len(logs)-1], time.Now())
-			}
-			tail := logs
-			if len(tail) > 3 {
-				tail = tail[len(tail)-3:]
-			}
-			lines := make([]string, len(tail))
-			for index, entry := range tail {
-				lines[index] = entry.Message
-			}
-			return lines
-		},
+		Logs:  tails.get,
 	}
 
 	poll := time.NewTicker(500 * time.Millisecond)
@@ -1071,11 +1045,13 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 		if tree.Run.Kind != "" {
 			kind = tree.Run.Kind
 		}
-		renderer.Render(tree)
+		tails.refresh(ctx, tree)
 		switch tree.Run.Status {
 		case "succeeded", "failed", "cancelled":
+			renderer.Finish(tree)
 			return tree.Run.Status, nil
 		}
+		renderer.Render(tree)
 		for waiting := true; waiting; {
 			select {
 			case <-attachCtx.Done():
@@ -1093,6 +1069,73 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 			}
 		}
 	}
+}
+
+// stepLogTails holds the log tail shown under each live step. The renderer
+// reads it on every spinner frame, so the fetch happens once per server
+// poll, for all tail-worthy steps at once; fetching per frame used to block
+// the animation on a network round trip per step.
+type stepLogTails struct {
+	api   *client.Client
+	lines map[string][]string
+}
+
+func (t *stepLogTails) get(stepID string) []string { return t.lines[stepID] }
+
+// refresh fetches the tails the next frame of tree will show. A failed
+// fetch keeps the step's previous tail rather than blanking it.
+func (t *stepLogTails) refresh(ctx context.Context, tree *client.RunTree) {
+	ids := clirender.TailStepIDs(tree)
+	fresh := make(map[string][]string, len(ids))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			lines, ok := t.fetch(ctx, id)
+			if !ok {
+				lines = t.lines[id]
+			}
+			mu.Lock()
+			fresh[id] = lines
+			mu.Unlock()
+		}(id)
+	}
+	wg.Wait()
+	t.lines = fresh
+}
+
+func (t *stepLogTails) fetch(ctx context.Context, stepID string) ([]string, bool) {
+	logs, cursor, err := t.api.StepLogs(ctx, stepID, "", 0)
+	if err != nil {
+		return nil, false
+	}
+	if len(logs) == 0 {
+		return nil, true
+	}
+	if logs[len(logs)-1].Fields["tls"] == true {
+		// A TLS checkpoint is a series of complete snapshots. Reach its
+		// latest page, then show current state rather than three
+		// superseded snapshots. The full history remains in run logs.
+		for len(logs) == 500 && cursor != "" {
+			page, next, err := t.api.StepLogs(ctx, stepID, cursor, 0)
+			if err != nil || len(page) == 0 {
+				break
+			}
+			logs, cursor = page, next
+		}
+		return clirender.CertificateLogLines(logs[len(logs)-1], time.Now()), true
+	}
+	tail := logs
+	if len(tail) > 3 {
+		tail = tail[len(tail)-3:]
+	}
+	lines := make([]string, len(tail))
+	for index, entry := range tail {
+		lines[index] = entry.Message
+	}
+	return lines, true
 }
 
 // runDeployFlow is the transcript loop shared by skali plan, deploy, and

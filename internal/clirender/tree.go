@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/Hinkolas/skali/internal/client"
 )
 
@@ -29,19 +31,30 @@ var glyphs = map[string]string{
 // durationColumn right-aligns step durations.
 const durationColumn = 58
 
-// Renderer writes run trees; on a TTY every Render replaces the previous
-// block in place, and Tick advances the spinner between snapshots.
+// Renderer writes run trees. On a TTY the tree is a live block: every
+// Render and Tick rewrites only the rows that changed, each frame is one
+// write bracketed by synchronized-output markers, and the block never grows
+// past the window (finished steps fold their children first, then the top
+// is cut), so the cursor can always return to its first row and the
+// scrollback keeps no stale copies. Finish prints the complete tree once.
+// Without a TTY every snapshot is appended line by line.
 type Renderer struct {
 	Out   io.Writer
 	TTY   bool
 	Style *Style
 	// Logs supplies the tail lines shown under running, waiting, and
-	// failed steps, keyed by step id.
+	// failed steps, keyed by step id. It runs on every frame, so it must
+	// answer from memory; see TailStepIDs for what to prefetch.
 	Logs func(stepID string) []string
+	// Size reports the terminal's columns and rows; nil queries Out. A
+	// zero height disables the cap.
+	Size func() (width, height int)
 
-	frame         int
-	previousLines int
-	lastTree      *client.RunTree
+	frame    int
+	previous []string // rows of the block currently on screen
+	width    int
+	height   int
+	lastTree *client.RunTree
 }
 
 // treeView carries the per-render display parameters through the pure
@@ -51,6 +64,33 @@ type treeView struct {
 	frame int
 	now   time.Time // zero suppresses live elapsed times
 	width int       // zero suppresses tail truncation
+	// fold hides the children of succeeded steps, the first thing a
+	// too-tall live block gives up.
+	fold bool
+}
+
+// showsTail reports whether a step's log tail is displayed: live or failed
+// leaves only, the children of composite steps speak for themselves.
+func showsTail(step *client.Step) bool {
+	return (step.Status == "running" || step.Status == "waiting" || step.Status == "failed") &&
+		len(step.Children) == 0
+}
+
+// TailStepIDs lists the steps whose log tail a render would show, so the
+// caller can fetch those tails ahead of the frame.
+func TailStepIDs(tree *client.RunTree) []string {
+	var ids []string
+	var walk func(steps []client.Step)
+	walk = func(steps []client.Step) {
+		for index := range steps {
+			if showsTail(&steps[index]) {
+				ids = append(ids, steps[index].ID)
+			}
+			walk(steps[index].Children)
+		}
+	}
+	walk(tree.Steps)
+	return ids
 }
 
 // Lines builds the plain display block for one tree snapshot.
@@ -89,8 +129,7 @@ func stepLines(step *client.Step, depth int, logs func(stepID string) []string, 
 		tailIndent = indent + "        "
 	}
 	lines := []string{line}
-	showTail := step.Status == "running" || step.Status == "waiting" || step.Status == "failed"
-	if logs != nil && showTail && len(step.Children) == 0 {
+	if logs != nil && showsTail(step) {
 		for _, entry := range logs(step.ID) {
 			// Structured checkpoint messages contain several lines. Split
 			// before truncating and counting terminal rows for repaint.
@@ -101,6 +140,9 @@ func stepLines(step *client.Step, depth int, logs func(stepID string) []string, 
 				lines = append(lines, tailIndent+view.style.Dim(text))
 			}
 		}
+	}
+	if view.fold && step.Status == "succeeded" {
+		return lines
 	}
 	for index := range step.Children {
 		lines = append(lines, stepLines(&step.Children[index], depth+1, logs, view)...)
@@ -135,7 +177,15 @@ func styledStepLine(step *client.Step, indent string, view *treeView) (line, tai
 // Render writes the current snapshot, replacing the previous one on a TTY.
 func (r *Renderer) Render(tree *client.RunTree) {
 	r.lastTree = tree
-	r.paint()
+	r.paint(false)
+}
+
+// Finish writes the final snapshot in full: the live block is replaced by
+// the complete tree, however tall, and later output appends below it.
+func (r *Renderer) Finish(tree *client.RunTree) {
+	r.lastTree = tree
+	r.paint(true)
+	r.previous = nil
 }
 
 // Tick advances the spinner and repaints the last snapshot; between two
@@ -145,28 +195,98 @@ func (r *Renderer) Tick() {
 		return
 	}
 	r.frame++
-	r.paint()
+	r.paint(false)
 }
 
-func (r *Renderer) paint() {
+func (r *Renderer) paint(final bool) {
+	width, height := r.size()
 	view := &treeView{style: r.Style, frame: r.frame}
 	if r.Style.on() {
 		view.now = time.Now()
-		view.width = TerminalWidth(r.Out)
+	}
+	if r.TTY {
+		view.width = width
 	}
 	lines := treeLines(r.lastTree, r.Logs, view)
-	if r.TTY && r.previousLines > 0 {
-		// Move to the top of the previous block and clear to the end.
-		fmt.Fprintf(r.Out, "\x1b[%dA\x1b[J", r.previousLines)
+	if !r.TTY {
+		for _, line := range lines {
+			fmt.Fprintln(r.Out, line)
+		}
+		return
 	}
-	for _, line := range lines {
-		fmt.Fprintln(r.Out, line)
+	fitWidth(lines, width)
+	if !final && height > 1 && len(lines) > height-1 {
+		view.fold = true
+		lines = treeLines(r.lastTree, r.Logs, view)
+		fitWidth(lines, width)
+		lines = cutTop(lines, height-1, r.Style)
 	}
-	r.previousLines = len(lines)
+
+	var frame strings.Builder
+	frame.WriteString("\x1b[?2026h")
+	if len(r.previous) > 0 {
+		fmt.Fprintf(&frame, "\x1b[%dA", len(r.previous))
+		if width != r.width || height != r.height {
+			// A resize invalidates the row bookkeeping; repaint everything.
+			frame.WriteString("\x1b[J")
+			r.previous = nil
+		}
+	}
+	for index, line := range lines {
+		if index < len(r.previous) && r.previous[index] == line {
+			frame.WriteString("\n")
+			continue
+		}
+		frame.WriteString("\r\x1b[2K")
+		frame.WriteString(line)
+		frame.WriteString("\n")
+	}
+	if len(lines) < len(r.previous) {
+		frame.WriteString("\x1b[J")
+	}
+	frame.WriteString("\x1b[?2026l")
+	_, _ = io.WriteString(r.Out, frame.String())
+	r.previous = lines
+	r.width, r.height = width, height
+}
+
+func (r *Renderer) size() (int, int) {
+	if r.Size != nil {
+		return r.Size()
+	}
+	return TerminalSize(r.Out)
+}
+
+// fitWidth keeps every line on one row: a wrapped line would break the
+// row count the cursor movement relies on.
+func fitWidth(lines []string, width int) {
+	if width <= 1 {
+		return
+	}
+	for index, line := range lines {
+		lines[index] = ansi.Truncate(line, width-1, "…")
+	}
+}
+
+// cutTop keeps the newest rows of a block that still exceeds the window
+// after folding, replacing the hidden top with a count.
+func cutTop(lines []string, rows int, style *Style) []string {
+	if rows <= 0 || len(lines) <= rows {
+		return lines
+	}
+	if rows == 1 {
+		return lines[len(lines)-1:]
+	}
+	hidden := len(lines) - (rows - 1)
+	marker := fmt.Sprintf("… %d earlier rows", hidden)
+	if style.on() {
+		marker = style.Dim(marker)
+	}
+	return append([]string{marker}, lines[hidden:]...)
 }
 
 // Detach stops rewriting: whatever is on screen stays.
-func (r *Renderer) Detach() { r.previousLines = 0 }
+func (r *Renderer) Detach() { r.previous = nil }
 
 // stepDuration is the finished step's runtime; with a non-zero now,
 // running and waiting steps report their live elapsed time instead.
