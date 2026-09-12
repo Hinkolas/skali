@@ -219,16 +219,16 @@
 	{/snippet}
 </PageHeader>
 
-<div class="grid grid-cols-2 gap-3.5 pb-6">
+<div class="grid grid-cols-1 gap-3.5 @4xl:grid-cols-2 pb-6">
 	{#if disconnected}
-		<p class="text-status-warning col-span-2 flex items-center gap-2 text-md" role="status">
+		<p class="text-status-warning @4xl:col-span-2 flex items-center gap-2 text-md" role="status">
 			<LoaderCircle class="size-4 animate-spin" />
 			Reconnecting to the platform. An accepted update continues in the background.
 		</p>
 	{/if}
 	{#if feedFailure}
 		<div
-			class="border-status-warning/25 bg-status-warning/10 col-span-2 flex items-start gap-3 rounded-[13px] border p-4"
+			class="border-status-warning/25 bg-status-warning/10 @4xl:col-span-2 flex items-start gap-3 rounded-[13px] border p-4"
 			role="status"
 		>
 			{#if feedFailure.offline}<CloudOff size={18} />{:else}<TriangleAlert size={18} />{/if}
@@ -371,7 +371,7 @@
 		</div>
 	</Card>
 
-	<Card class="col-span-2 p-5">
+	<Card class="@4xl:col-span-2 p-5">
 		<details bind:this={detailsElement} bind:open={detailsOpen}>
 			<summary class="text-text-primary cursor-pointer text-lg font-medium">Update details</summary>
 			<div class="mt-4">

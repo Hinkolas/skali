@@ -59,7 +59,7 @@
 			     mirrors that column on the left so the content stays centered;
 			     px-4 plus the gutter lands close to the pt-5.5 top inset. -->
 			<main
-				class="bg-surface-raised border-border-default min-w-0 flex-1 overflow-y-auto rounded-2xl border px-4 pt-4 [scrollbar-gutter:stable_both-edges] sm:pt-5.5"
+				class="@container bg-surface-raised border-border-default min-w-0 flex-1 overflow-y-auto rounded-2xl border px-4 pt-4 [scrollbar-gutter:stable_both-edges] sm:pt-5.5"
 			>
 				{@render children()}
 			</main>

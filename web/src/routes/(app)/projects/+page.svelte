@@ -40,7 +40,7 @@
 </PageHeader>
 
 {#if data.projects.length > 0}
-	<div class="grid grid-cols-3 gap-3.5 pb-6">
+	<div class="grid grid-cols-1 gap-3.5 pb-6 @2xl:grid-cols-2 @5xl:grid-cols-3">
 		{#each data.projects as project (project.id)}
 			<ProjectCard {project} />
 		{/each}

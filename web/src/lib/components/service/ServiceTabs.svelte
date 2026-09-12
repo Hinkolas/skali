@@ -22,10 +22,11 @@
 
 <!-- -mx-4 bleeds the divider across the main pane's padding (up to its
      scrollbar gutters); px-1 plus the tabs' own px-3 puts the first label
-     back on the pane's px-4 content inset. -->
+     back on the pane's px-4 content inset. On a narrow pane the bar scrolls
+     sideways instead of clipping the last tabs. -->
 <nav
 	aria-label="Service"
-	class="border-border-default -mx-4 mb-6 flex items-center gap-1 border-b px-1"
+	class="border-border-default -mx-4 mb-6 flex items-center gap-1 overflow-x-auto border-b px-1 [scrollbar-width:none]"
 >
 	{#each SERVICE_TABS[service.type] as tab (tab.slug)}
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
@@ -34,7 +35,7 @@
 		<!-- eslint-disable svelte/no-navigation-without-resolve -- path mirrors the route params, env appended by $lib/urls -->
 		<a
 			href={withEnv(path, env)}
-			class="relative flex items-center gap-2 px-3 py-2.5 text-lg transition-colors {active
+			class="relative flex flex-none items-center gap-2 px-3 py-2.5 text-lg transition-colors {active
 				? 'text-text-primary font-medium'
 				: 'text-text-tertiary hover:text-text-secondary'}"
 		>

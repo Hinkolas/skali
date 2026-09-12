@@ -32,7 +32,7 @@
 	]);
 </script>
 
-<div class="grid grid-cols-2 gap-3.5 pb-6">
+<div class="grid grid-cols-1 gap-3.5 @4xl:grid-cols-2 pb-6">
 	<ConfigCard title="Visibility" hint="who may read objects">
 		<Choice
 			label="Visibility"
@@ -68,7 +68,7 @@
 	</ConfigCard>
 
 	<ConfigCard title="Quotas" hint="caps enforced by the object store">
-		<div class="grid grid-cols-3 gap-3">
+		<div class="grid grid-cols-1 gap-3 @xl:grid-cols-3">
 			{#each quotas as quota (quota.label)}
 				<div
 					class="flex flex-col gap-1 rounded-[11px] border px-3.5 py-3 {quota.set

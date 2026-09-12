@@ -89,7 +89,7 @@
 	const placement = $derived(c.placement);
 </script>
 
-<div class="grid grid-cols-2 gap-3.5 pb-6">
+<div class="grid grid-cols-1 gap-3.5 @4xl:grid-cols-2 pb-6">
 	<ConfigCard
 		title="Source"
 		hint={c.source.kind === 'image' ? 'a published image' : 'built from the repository'}
@@ -310,9 +310,9 @@
 	<ConfigCard
 		title="Health checks"
 		hint="how the platform decides a pod is well"
-		class="col-span-2"
+		class="@4xl:col-span-2"
 	>
-		<div class="grid grid-cols-3 gap-3">
+		<div class="grid grid-cols-1 gap-3 @xl:grid-cols-3">
 			{#each PROBES as probe (probe.key)}
 				{@const declared = c.health?.[probe.key]}
 				<div
@@ -461,7 +461,7 @@
 		hint="{environment.length} variable{environment.length === 1
 			? ''
 			: 's'} · values resolve at deploy"
-		class="col-span-2"
+		class="@4xl:col-span-2"
 	>
 		{#if environment.length > 0}
 			<div class="flex flex-col">

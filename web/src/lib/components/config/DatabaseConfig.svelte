@@ -13,7 +13,7 @@
 	const c = $derived(service.config);
 </script>
 
-<div class="grid grid-cols-2 gap-3.5 pb-6">
+<div class="grid grid-cols-1 gap-3.5 @4xl:grid-cols-2 pb-6">
 	<ConfigCard title="Engine" hint="major version pinned by skali.yaml">
 		<div class="flex items-baseline gap-2">
 			<span class="text-text-primary text-4xl font-semibold tracking-[-0.02em]">{c.engine}</span>

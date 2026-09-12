@@ -82,7 +82,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="mb-6.5 grid grid-cols-4 gap-3.5">
+<div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
 	{#each stats as stat (stat.label)}
 		<StatCard {stat} />
 	{/each}
@@ -188,7 +188,7 @@
 </div>
 
 {#if data.services.length > 0}
-	<div class="grid grid-cols-3 gap-3.5 pb-6">
+	<div class="grid grid-cols-1 gap-3.5 pb-6 @2xl:grid-cols-2 @5xl:grid-cols-3">
 		{#each data.services as service (`${service.type}:${service.key}`)}
 			<ServiceCard project={data.project} {service} />
 		{/each}

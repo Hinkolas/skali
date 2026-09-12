@@ -238,7 +238,7 @@
 
 <SettingsNav project={data.project} />
 
-<div class="grid grid-cols-2 gap-3.5 pb-6">
+<div class="grid grid-cols-1 gap-3.5 @4xl:grid-cols-2 pb-6">
 	<Card class="p-5">
 		<h3 class="text-text-primary mb-3.5 text-xl font-semibold">General</h3>
 		<Field
@@ -390,7 +390,7 @@
 		</div>
 	</Card>
 
-	<Card class="col-span-2 p-5 pb-2.5">
+	<Card class="@4xl:col-span-2 p-5 pb-2.5">
 		<div class="mb-3 flex items-center gap-2.5">
 			<h3 class="text-text-primary text-xl font-semibold">Revisions</h3>
 			{#if data.env}
@@ -456,7 +456,7 @@
 		</div>
 	</Card>
 
-	<Card class="border-status-danger/30 col-span-2 p-5">
+	<Card class="border-status-danger/30 @4xl:col-span-2 p-5">
 		<div class="flex items-center">
 			<div>
 				<h3 class="text-text-primary text-xl font-semibold">Danger zone</h3>

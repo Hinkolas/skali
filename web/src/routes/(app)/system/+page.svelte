@@ -45,7 +45,7 @@
 	{/snippet}
 </PageHeader>
 
-<div class="grid grid-cols-2 gap-3.5 pb-6">
+<div class="grid grid-cols-1 gap-3.5 @4xl:grid-cols-2 pb-6">
 	<Card class="flex overflow-hidden">
 		<a
 			href={resolve('/(app)/system/nodes')}

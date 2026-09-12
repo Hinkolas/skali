@@ -63,13 +63,13 @@
 	const RECENT_BACKUPS = 5;
 </script>
 
-<div class="mb-6.5 grid grid-cols-4 gap-3.5">
+<div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
 	{#each stats as stat (stat.label)}
 		<StatCard {stat} />
 	{/each}
 </div>
 
-<div class="mb-6.5 grid grid-cols-2 gap-3.5">
+<div class="mb-6.5 grid grid-cols-1 gap-3.5 @4xl:grid-cols-2">
 	<DbInstancePanel {service} {connection} />
 	<DbConnectionPanel {service} {connection} {envId} />
 </div>
