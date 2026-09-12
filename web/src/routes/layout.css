@@ -105,6 +105,18 @@
 
 	/* Violet glows for primary buttons / logo tiles */
 	--shadow-glow: 0 0 18px rgb(124 92 255 / 0.28);
+
+	/* A highlight sweeping across an active progress fill: the bar reads as
+	   working even while the percentage sits still between steps. */
+	--animate-progress-sheen: progress-sheen 1.8s ease-in-out infinite;
+	@keyframes progress-sheen {
+		from {
+			transform: translateX(-100%);
+		}
+		to {
+			transform: translateX(100%);
+		}
+	}
 	--shadow-glow-lg: 0 0 26px rgb(124 92 255 / 0.4);
 }
 

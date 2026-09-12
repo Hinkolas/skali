@@ -1,160 +1,108 @@
 <script lang="ts">
-	import { page } from '$app/state';
-	import { api, ApiError } from '$lib/api/client';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
-	import type { Environment } from '$lib/types/project';
 	import type { BucketView, ServiceView } from '$lib/models/service';
 	import type { StatCardData } from '$lib/models/view';
-	import type { BucketConnection, BucketCredentials } from '$lib/types/connections';
+	import type { BucketConnection } from '$lib/types/connections';
+	import type { Backup } from '$lib/types/definition';
 	import type { ServiceStorage } from '$lib/types/metrics';
-	import { formatBytes } from '$lib/format';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import CopyField from '$lib/components/ui/CopyField.svelte';
+	import type { Run } from '$lib/types/runs';
+	import { envStatus } from '$lib/stores/envstatus.svelte';
+	import { describeCron } from '$lib/cron';
+	import {
+		backupSchedule,
+		connectedStat,
+		dependents,
+		footprintStat,
+		lastBackupStat,
+		phaseStat
+	} from '$lib/models/claims';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
+	import RunsSection from '$lib/components/run/RunsSection.svelte';
+	import BucketConnectionPanel from './BucketConnectionPanel.svelte';
+	import BucketDetailsPanel from './BucketDetailsPanel.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
-	import RevealCredentialsModal, {
-		modalOptions as revealModalOptions
-	} from './RevealCredentialsModal.svelte';
 
+	// The bucket's overview: how full it is against its quota, how it is
+	// backed up, who holds its keys, what the claim asked for and how to
+	// reach it, then the newest snapshots of its environment.
 	let {
 		service,
 		services,
 		connection,
 		envId,
+		runs = null,
+		backups = {},
 		storage = null
 	}: {
 		service: BucketView;
 		services: ServiceView[];
 		connection: BucketConnection | null;
 		envId: string | null;
+		runs?: Run[] | null;
+		/** The project's backup schedules, keyed by name. */
+		backups?: Record<string, Backup>;
 		storage?: ServiceStorage | null;
 	} = $props();
 
-	let revealing = $state(false);
+	const live = (key: string) => envStatus.service('application', key);
+	const apps = $derived(dependents(services, 'bucket', service.key));
+	const schedule = $derived(backupSchedule(backups, 'bucket', service.key));
 
-	// Credentials are configuration: maintain on the environment reveals them.
-	const env = $derived(page.data.env as Environment | null);
-	const mayReveal = $derived(roleAtLeast(env?.access, 'maintain'));
-	const revealTitle = $derived(
-		mayReveal ? undefined : requiredTitle('maintain', 'environment', env?.name ?? '')
-	);
-
-	async function reveal() {
-		if (!envId) return;
-		revealing = true;
-		try {
-			const credentials = await api.post<BucketCredentials>(
-				`/v1/environments/${envId}/buckets/${service.key}/credentials/reveal`
-			);
-			modal.open(
-				RevealCredentialsModal,
-				{
-					title: `${service.name} S3 keypair`,
-					fields: [
-						{ label: 'Access key', value: credentials.access_key },
-						{ label: 'Secret key', value: credentials.secret_key, masked: true }
-					]
-				},
-				revealModalOptions
-			);
-		} catch (err) {
-			toast.error(err instanceof ApiError ? err.message : 'Could not reveal the keypair');
-		} finally {
-			revealing = false;
-		}
-	}
-
-	// Measured bucket usage from the sampler when it exists; the declared
+	// Measured object bytes from the sampler when they exist; the declared
 	// quota stays the fallback and the denominator.
-	const usageStat = $derived.by((): StatCardData => {
-		const quota = service.config.storageQuotaBytes;
-		if (storage?.used_bytes != null) {
-			const parts = formatBytes(storage.used_bytes).split(' ');
-			return quota
-				? {
-						label: 'USED',
-						value: parts[0],
-						unit: `${parts[1]} / ${formatBytes(quota)}`,
-						progress: {
-							pct: Math.min(100, (storage.used_bytes / quota) * 100),
-							class: 'bg-service-storage'
-						}
-					}
-				: { label: 'USED', value: parts[0], unit: parts[1] };
-		}
-		return {
-			label: 'QUOTA',
-			value: quota ? formatBytes(quota) : 'none',
-			note: 'requested in skali.yaml'
-		};
-	});
-
 	const stats = $derived.by((): StatCardData[] => [
-		usageStat,
-		{ label: 'VISIBILITY', value: service.config.visibility },
-		{ label: 'VERSIONING', value: service.config.versioning },
-		{
-			label: 'PHASE',
-			value: connection?.phase ?? 'unknown',
-			chip:
-				connection?.phase === 'provisioned'
-					? { text: 'ready', tone: 'success' }
-					: { text: 'settling', tone: 'neutral' }
-		}
+		footprintStat(
+			'USED',
+			storage?.used_bytes,
+			service.config.storageQuotaBytes,
+			'bg-service-storage',
+			{
+				declared: 'quota, not yet measured',
+				undeclared: 'no quota, not yet measured',
+				measured: 'no quota'
+			}
+		),
+		lastBackupStat(schedule, runs, 'bucket'),
+		connectedStat(apps, live, 'keys injected'),
+		phaseStat(connection)
 	]);
+
+	const RECENT_BACKUPS = 5;
 </script>
 
-<div class="mb-6 grid grid-cols-4 gap-3.5">
+<div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
 	{#each stats as stat (stat.label)}
 		<StatCard {stat} />
 	{/each}
 </div>
 
-<div class="mb-6">
-	<Card class="p-5">
-		<div class="mb-4 flex items-center gap-2.5">
-			<h3 class="text-text-primary text-xl font-semibold">S3 connection</h3>
-			<div class="ml-auto">
-				<Button
-					size="sm"
-					busy={revealing}
-					disabled={!connection?.endpoint || !mayReveal}
-					title={revealTitle}
-					onclick={reveal}
-				>
-					Reveal keypair
-				</Button>
-			</div>
-		</div>
-		{#if connection?.endpoint}
-			<div class="flex flex-col gap-2.25">
-				<CopyField label="Endpoint" value={connection.endpoint} />
-				<CopyField label="Bucket" value={connection.bucket ?? ''} />
-				<CopyField label="Region" value={connection.region ?? ''} />
-			</div>
-		{:else}
-			<div
-				class="border-border-strong grid min-h-[132px] place-items-center rounded-[11px] border border-dashed"
-			>
-				<div class="flex flex-col gap-2 p-5 text-center">
-					<div class="text-text-muted text-base">Not provisioned yet</div>
-					<div class="font-mono text-text-faint text-md">
-						phase {connection?.phase ?? 'unknown'} · connection facts appear once the claim settles
-					</div>
-				</div>
-			</div>
-		{/if}
-	</Card>
+<div class="mb-6.5 grid grid-cols-1 gap-3.5 @4xl:grid-cols-2">
+	<BucketDetailsPanel {service} />
+	<BucketConnectionPanel {service} {connection} {envId} />
 </div>
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Connected applications</h2>
 	<div class="text-text-muted text-md">keys injected as env values</div>
 </div>
 
-<div class="pb-6">
+<div class="mb-6.5">
 	<ConnectedAppsList {service} {services} />
+</div>
+
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+	<h2 class="text-text-primary text-xl font-semibold">Recent backups</h2>
+	<div class="text-text-muted text-md">
+		snapshots of this environment{schedule ? ` · ${describeCron(schedule.backup.schedule)}` : ''}
+	</div>
+</div>
+
+<div class="pb-6">
+	<RunsSection
+		{envId}
+		seed={runs}
+		kinds={['backup', 'restore']}
+		limit={RECENT_BACKUPS}
+		emptyTitle="No backups yet"
+		emptyDescription="snapshots and restores of this environment appear here"
+	/>
 </div>

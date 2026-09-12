@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import Gauge from '@lucide/svelte/icons/gauge';
 	import { api } from '$lib/api/client';
 	import { formatBytes, formatCores, formatCount } from '$lib/format';
 	import { toChartPoints, type EnvironmentMetrics, type MetricsWindow } from '$lib/types/metrics';
+	import Card from '$lib/components/ui/Card.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import TimeSeriesChart from '$lib/components/ui/TimeSeriesChart.svelte';
 	import type { PageData } from './$types';
@@ -20,26 +22,37 @@
 	];
 
 	let range = $state<MetricsWindow>('24h');
-	// Seeded from the route load, then overwritten by refetches on window
-	// change and every 30s (the sampler cadence); a navigation reseeds it.
-	let metrics = $derived(data.metrics);
+	// The route load seeds the 24h window; every other window, and the
+	// seeded one once another has been shown, is fetched here and refreshed
+	// every 30s (the sampler cadence). While a fetch is in flight the seed
+	// serves its own window at once and any other window keeps the last
+	// series on screen instead of flashing empty.
+	let fetched = $state<EnvironmentMetrics | null>(null);
+	const metrics = $derived.by(() => {
+		if (fetched?.window === range) return fetched;
+		if (data.metrics?.window === range) return data.metrics;
+		return fetched ?? data.metrics;
+	});
 
 	$effect(() => {
 		const envId = data.env?.id;
 		if (!designed || !envId) return;
 		const selected = range;
+		// `fetched` is read untracked: a completed fetch must not re-run
+		// this effect, or it would fetch again in a loop.
+		const seeded = selected === (data.metrics?.window ?? '24h') && untrack(() => fetched) === null;
 		let cancelled = false;
 		const fetchSeries = async () => {
 			try {
 				const fresh = await api.get<EnvironmentMetrics>(
 					`/v1/environments/${envId}/metrics?window=${selected}`
 				);
-				if (!cancelled) metrics = fresh;
+				if (!cancelled) fetched = fresh;
 			} catch {
 				// Keep the last good series; the next tick retries.
 			}
 		};
-		if (selected !== (data.metrics?.window ?? '24h')) void fetchSeries();
+		if (!seeded) void fetchSeries();
 		const timer = setInterval(fetchSeries, 30_000);
 		return () => {
 			cancelled = true;
@@ -120,15 +133,18 @@
 		description="this page will arrive in a future version"
 	/>
 {:else}
-	<div class="mb-3.5 flex items-baseline gap-2.5">
-		<h2 class="text-text-primary text-xl font-semibold">Usage</h2>
-		<div class="text-text-muted text-md">usage and edge traffic across the app's pods</div>
-		<div class="ml-auto flex items-center gap-1" role="group" aria-label="Window">
+	<div class="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+		<div class="flex min-w-56 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+			<h2 class="text-text-primary text-xl font-semibold">Usage</h2>
+			<div class="text-text-muted text-md">usage and edge traffic across the app's pods</div>
+		</div>
+		<div class="ml-auto flex flex-none items-center gap-1" role="group" aria-label="Window">
 			{#each WINDOWS as option (option.value)}
 				<button
 					type="button"
 					onclick={() => (range = option.value)}
-					class="rounded-full px-3 py-1 text-sm transition-colors {range === option.value
+					class="cursor-pointer rounded-full px-3 py-1 text-sm whitespace-nowrap transition-colors {range ===
+					option.value
 						? 'bg-white/8 text-text-primary'
 						: 'text-text-tertiary hover:text-text-secondary'}"
 				>
@@ -140,7 +156,7 @@
 
 	{#if hasData}
 		<div class="grid grid-cols-1 gap-3.5 pb-6">
-			<div class="border-border-subtle rounded-[15px] border p-4.5">
+			<Card class="p-4.5">
 				<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">CPU</div>
 				<TimeSeriesChart
 					series={cpuSeries}
@@ -148,8 +164,8 @@
 					formatValue={formatCores}
 					label="CPU usage over the selected window"
 				/>
-			</div>
-			<div class="border-border-subtle rounded-[15px] border p-4.5">
+			</Card>
+			<Card class="p-4.5">
 				<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">Memory</div>
 				<TimeSeriesChart
 					series={memSeries}
@@ -157,9 +173,9 @@
 					formatValue={formatBytes}
 					label="Memory usage over the selected window"
 				/>
-			</div>
+			</Card>
 			{#if app?.edge}
-				<div class="border-border-subtle rounded-[15px] border p-4.5">
+				<Card class="p-4.5">
 					<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">
 						Requests <span class="normal-case">/ {stepLabel}</span>
 					</div>
@@ -169,8 +185,8 @@
 						formatValue={formatCount}
 						label="Edge requests per bucket over the selected window"
 					/>
-				</div>
-				<div class="border-border-subtle rounded-[15px] border p-4.5">
+				</Card>
+				<Card class="p-4.5">
 					<div class="text-text-muted mb-2.5 text-sm tracking-wide uppercase">
 						Bandwidth <span class="normal-case">/ {stepLabel}</span>
 					</div>
@@ -180,7 +196,7 @@
 						formatValue={formatBytes}
 						label="Edge request and response bytes per bucket over the selected window"
 					/>
-				</div>
+				</Card>
 			{/if}
 		</div>
 	{:else}

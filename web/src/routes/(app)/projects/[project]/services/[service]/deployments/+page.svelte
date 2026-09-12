@@ -9,7 +9,7 @@
 	<title>Deployments · {data.service.name} — skali</title>
 </svelte:head>
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Runs</h2>
 	<div class="text-text-muted text-md">
 		the environment's full journal: deploys, rollbacks, teardowns

@@ -13,13 +13,20 @@ export interface OrgView {
 	node_count: number;
 }
 
+/**
+ * The daemon reports its installation name when it has one: the cluster
+ * name the operator chose at init, carried in by the production bundle as
+ * SKALI_INSTANCE_NAME. Without one (local dev, API-only runs) the host the
+ * console is served from is the next best identity.
+ */
 export function buildOrg(
 	meta: SystemMeta | null,
+	hostname: string,
 	projectCount: number,
 	nodeCount: number
 ): OrgView {
 	return {
-		name: meta?.name || 'skali',
+		name: meta?.name || hostname || 'skali',
 		version: meta?.version ?? '',
 		update_available: meta?.update_available?.version ?? null,
 		project_count: projectCount,

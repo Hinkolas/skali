@@ -100,6 +100,7 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 		AuthSecret:    string(authSecret.Data["AUTH_SECRET"]),
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
+			ClusterName:        record.Cluster,
 			IngressHost:        record.Endpoints.API,
 			RegistryDomain:     record.Endpoints.Registry,
 			S3Domain:           record.Endpoints.S3,

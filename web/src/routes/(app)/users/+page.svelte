@@ -40,7 +40,7 @@
 		);
 	});
 
-	const userGrid = 'grid-cols-[2.2fr_0.9fr_0.9fr_1.1fr_121px]';
+	const userGrid = 'grid-cols-[2fr_1.3fr_0.7fr_1fr_121px]';
 
 	function initials(u: AuthUser): string {
 		const base = u.name.trim() || u.email;
@@ -124,7 +124,7 @@
 				data-bwignore
 				placeholder="Search users…"
 				aria-label="Search users by name or email"
-				class="bg-surface-input text-text-primary border-border-strong focus:border-accent/50 focus:ring-3 focus:ring-accent/10 w-56 rounded-[11px] border py-2.25 pr-3 pl-8.5 text-base transition-[border-color,box-shadow] duration-150 focus:outline-none"
+				class="bg-surface-input text-text-primary border-border-strong focus:border-accent/50 focus:ring-3 focus:ring-accent/10 w-40 rounded-[11px] border py-2.25 pr-3 pl-8.5 lg:w-56 text-base transition-[border-color,box-shadow] duration-150 focus:outline-none"
 			/>
 		</div>
 		<Button variant="primary" onclick={newUser}>
@@ -144,9 +144,9 @@
 		{#each shown as user (user.id)}
 			{@const self = user.id === data.user.id}
 			<div
-				class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {userGrid}"
+				class="border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-2 @2xl:grid @2xl:items-center {userGrid}"
 			>
-				<div class="flex min-w-0 items-center gap-3">
+				<div class="flex min-w-0 items-center gap-3 @max-2xl:basis-full">
 					<span
 						class="text-accent-nav grid size-8 flex-none place-items-center rounded-full bg-linear-135 from-[#37324e] to-[#232030] text-sm font-semibold"
 					>
@@ -168,35 +168,43 @@
 						<span class="text-text-faint truncate text-md">{user.email}</span>
 					</span>
 				</div>
-				<div>
-					<span
-						class="font-mono rounded-full px-2 py-0.5 text-2xs {user.role === 'admin'
-							? 'text-accent-light bg-accent/15'
-							: 'text-text-muted bg-white/6'}"
-					>
-						{user.role}
-					</span>
-					{#if user.role === 'member' && user.create_projects}
+				<!-- Role, 2FA and created: grid cells on a wide pane, one meta line
+				     under the identity on a narrow one (pl-11 = avatar + gap), with
+				     the actions at its end so a long name never has to truncate. -->
+				<div
+					class="@2xl:contents @max-2xl:order-1 @max-2xl:flex @max-2xl:min-w-0 @max-2xl:flex-1 @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-4 @max-2xl:gap-y-1 @max-2xl:pl-11"
+				>
+					<div class="flex flex-wrap items-center gap-1.5">
 						<span
-							class="font-mono bg-white/6 text-text-muted ml-1.5 rounded-full px-2 py-0.5 text-2xs"
-							title="May create projects and becomes admin of them"
+							class="font-mono rounded-full px-2 py-0.5 text-2xs whitespace-nowrap {user.role ===
+							'admin'
+								? 'text-accent-light bg-accent/15'
+								: 'text-text-muted bg-white/6'}"
 						>
-							creates projects
+							{user.role}
 						</span>
-					{/if}
+						{#if user.role === 'member' && user.create_projects}
+							<span
+								class="font-mono bg-white/6 text-text-muted rounded-full px-2 py-0.5 text-2xs whitespace-nowrap"
+								title="May create projects and becomes admin of them"
+							>
+								creates projects
+							</span>
+						{/if}
+					</div>
+					<div>
+						{#if user.two_factor_enabled}
+							<span class="text-status-success flex items-center gap-1.5 text-md">
+								<ShieldCheck size={14} />
+								enabled
+							</span>
+						{:else}
+							<span class="text-text-ghost text-md @max-2xl:hidden">—</span>
+						{/if}
+					</div>
+					<div class="font-mono text-text-muted text-sm">{formatDate(user.created_at)}</div>
 				</div>
-				<div>
-					{#if user.two_factor_enabled}
-						<span class="text-status-success flex items-center gap-1.5 text-md">
-							<ShieldCheck size={14} />
-							enabled
-						</span>
-					{:else}
-						<span class="text-text-ghost text-md">—</span>
-					{/if}
-				</div>
-				<div class="font-mono text-text-muted text-sm">{formatDate(user.created_at)}</div>
-				<div class="flex items-center justify-end gap-1">
+				<div class="flex items-center justify-end gap-1 @max-2xl:order-1 @max-2xl:ml-auto">
 					<button
 						type="button"
 						onclick={() => editUser(user)}

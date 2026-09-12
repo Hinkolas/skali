@@ -15,8 +15,11 @@
 	} = $props();
 </script>
 
-<div class="mb-5.5 flex flex-col items-start gap-3 sm:flex-row sm:gap-0">
-	<div>
+<!-- One wrapping row: the actions sit on the title's right while they fit
+     and drop underneath, left-aligned, when the pane is too narrow (phones,
+     a tablet pane beside the sidebar) instead of pushing past its edge. -->
+<div class="mb-5.5 flex flex-wrap items-start gap-x-6 gap-y-3">
+	<div class="min-w-0">
 		<div class="flex items-center gap-3">
 			<h1 class="text-text-primary text-5xl font-semibold tracking-[-0.02em]">{title}</h1>
 			{#if titleTrailing}
@@ -31,7 +34,7 @@
 	</div>
 	<div class="flex-1"></div>
 	{#if actions}
-		<div class="flex items-center gap-2.5">
+		<div class="flex flex-wrap items-center gap-2.5">
 			{@render actions()}
 		</div>
 	{/if}

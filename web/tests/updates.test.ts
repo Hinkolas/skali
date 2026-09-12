@@ -1,5 +1,11 @@
 import { expect, test } from 'vitest';
-import { updatePresentation, updateSummary, type UpdateStatus } from '../src/lib/types/updates';
+import {
+	commonVersion,
+	tallyVersions,
+	updatePresentation,
+	updateSummary,
+	type UpdateStatus
+} from '../src/lib/types/updates';
 
 test('incomplete and unknown updates cannot appear up to date', () => {
 	for (const state of [
@@ -37,4 +43,16 @@ test('only a verified current cluster has a success label', () => {
 		updatePresentation({ summary: { state: 'current', action: '' } } as UpdateStatus)
 	).toMatchObject({ title: 'You are up to date', tone: 'success' });
 	expect(updatePresentation({} as UpdateStatus).tone).toBe('neutral');
+});
+
+test('tallyVersions names one version or spells out a split', () => {
+	expect(tallyVersions(['v1', 'v1', 'v1'])).toBe('v1');
+	expect(tallyVersions(['v2', 'v1', 'v2'])).toBe('2 on v2 · 1 on v1');
+	expect(tallyVersions(['v1', undefined])).toBe('v1 · 1 not reported');
+	expect(tallyVersions([undefined])).toBe('not reported');
+});
+
+test('commonVersion picks the most reported version', () => {
+	expect(commonVersion(['v1', 'v2', 'v2'])).toBe('v2');
+	expect(commonVersion([undefined])).toBeUndefined();
 });

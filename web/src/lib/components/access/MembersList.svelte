@@ -1,21 +1,18 @@
 <script lang="ts">
-	// The project's members, one calm row each: identity, override summary,
-	// project role, and a Manage button. Per-environment detail lives in
-	// MemberAccessModal, so the list stays the same width whether the project
-	// has one environment or twelve. Project admins edit; everyone else reads.
-	import { invalidateAll } from '$app/navigation';
+	// The project's members, one calm row each: identity, explicit
+	// per-environment roles, project role, and a Manage button. The row only
+	// states; every edit happens in MemberAccessModal, so the list keeps one
+	// column width whether the project has one environment or twelve.
 	import Plus from '@lucide/svelte/icons/plus';
-	import { api, ApiError } from '$lib/api/client';
-	import { PROJECT_ROLES, ROLE_HINT, requiredTitle } from '$lib/access';
+	import Settings2 from '@lucide/svelte/icons/settings-2';
+	import { ROLE_HINT, requiredTitle } from '$lib/access';
 	import { modal } from '$lib/stores/modal.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import AddMemberModal, { modalOptions as addMemberModalOptions } from './AddMemberModal.svelte';
 	import MemberAccessModal, {
 		modalOptions as memberAccessModalOptions
 	} from './MemberAccessModal.svelte';
-	import RolePicker, { type RoleOption } from './RolePicker.svelte';
 	import type { AuthUser } from '$lib/types/auth';
 	import type { Member, Project } from '$lib/types/project';
 
@@ -32,29 +29,6 @@
 	} = $props();
 
 	const readOnlyTitle = $derived(requiredTitle('admin', 'project', project.name));
-
-	const projectRoleOptions: RoleOption[] = PROJECT_ROLES.map((r) => ({
-		value: r,
-		hint: ROLE_HINT[r]
-	}));
-
-	// Per-row busy flags keep the rest of the list editable while one call
-	// is in flight.
-	let busy = $state<Record<string, boolean>>({});
-
-	function setProjectRole(member: Member, role: string) {
-		void (async () => {
-			busy[member.user_id] = true;
-			try {
-				await api.put(`/v1/projects/${project.id}/members/${member.user_id}`, { role });
-				await invalidateAll();
-			} catch (err) {
-				toast.error(err instanceof ApiError ? err.message : 'Could not change the role');
-			} finally {
-				delete busy[member.user_id];
-			}
-		})();
-	}
 
 	function initials(member: Member) {
 		const source = member.name || member.email;
@@ -77,12 +51,14 @@
 	}
 </script>
 
-<Card class="p-5">
-	<div class="mb-3.5 flex items-center gap-2.5">
-		<h3 class="text-text-primary text-xl font-semibold">Members</h3>
-		<span class="text-text-muted text-md">who may do what on {project.name}</span>
+<Card class="p-5 pb-2.5">
+	<div class="mb-3 flex items-center gap-3">
+		<div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+			<h3 class="text-text-primary text-xl font-semibold">Members</h3>
+			<span class="text-text-muted text-md">who may do what on {project.name}</span>
+		</div>
 		{#if canEdit}
-			<div class="ml-auto">
+			<div class="flex-none">
 				<Button
 					size="sm"
 					onclick={() => modal.open(AddMemberModal, { project }, addMemberModalOptions)}
@@ -98,67 +74,68 @@
 			no members yet · instance admins see every project without membership
 		</div>
 	{:else}
-		<div class="grid grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] items-center gap-x-4">
+		<!-- Flex rows, not a table: the identity gets the space first and the
+		     access badges plus button wrap under it when the row runs out of
+		     room, so a long name is the last thing to give. The role and the
+		     explicit per-environment roles share one badge scale. -->
+		<div class="flex flex-col">
 			{#each members as member (member.user_id)}
 				{@const isSelf = member.user_id === self?.id}
 				{@const explicit = overrides(member)}
 				<div
-					class="border-border-subtle col-span-full grid grid-cols-subgrid items-center border-b py-2.5 last:border-0"
+					class="border-border-subtle flex flex-wrap items-center gap-x-4 gap-y-2 border-b py-2.5 last:border-0"
 				>
 					<span
 						class="text-accent-nav grid size-7 flex-none place-items-center rounded-full bg-linear-135 from-[#37324e] to-[#232030] text-sm font-semibold"
 					>
 						{initials(member)}
 					</span>
-					<span class="flex min-w-0 flex-col">
+					<span class="flex min-w-48 flex-1 flex-col">
 						<span class="text-text-primary truncate text-md">
 							{member.name || member.email}
 							{#if isSelf}
-								<span
-									class="font-mono bg-white/6 text-text-muted ml-1 rounded-full px-1.5 text-2xs"
-								>
-									you
-								</span>
+								<span class="text-text-faint">(you)</span>
 							{/if}
 						</span>
 						{#if member.name}
 							<span class="text-text-faint font-mono truncate text-xs">{member.email}</span>
 						{/if}
 					</span>
-					<span class="justify-self-end">
-						{#if explicit.length > 0}
+					<span class="ml-auto flex items-center gap-3">
+						<span class="flex flex-wrap items-center justify-end gap-1.5">
+							{#each explicit as [env, role] (env)}
+								<span
+									class="font-mono inline-flex h-7 items-center rounded-full px-2.5 text-xs {role ===
+									'none'
+										? 'bg-status-warning/10 text-status-warning'
+										: 'bg-white/6 text-text-muted'}"
+									title="explicit role on {env}, ignores the ceiling"
+								>
+									{env}<span class="opacity-50">:</span>{role}
+								</span>
+							{/each}
 							<span
-								class="font-mono text-text-faint text-xs"
-								title={explicit.map(([env, role]) => `${env}: ${role}`).join(', ')}
+								class="font-mono inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-md {member.instance_admin
+									? 'bg-accent/12 text-accent-light'
+									: 'bg-white/6 text-text-secondary'}"
+								title={member.instance_admin
+									? 'Instance admins are admin everywhere; the membership is informational.'
+									: ROLE_HINT[member.role]}
 							>
-								{explicit.length}
-								{explicit.length === 1 ? 'override' : 'overrides'}
+								{member.instance_admin ? 'admin' : member.role}
+								{#if member.instance_admin}
+									<span class="text-accent-light/60 text-xs">instance</span>
+								{/if}
 							</span>
-						{/if}
-					</span>
-					<span>
-						{#if member.instance_admin}
-							<span
-								class="text-text-secondary font-mono inline-flex items-center px-2 py-1 text-md"
-								title="Instance admins are admin everywhere; the membership is informational."
-							>
-								admin <span class="text-text-faint ml-1 text-xs">(instance)</span>
-							</span>
-						{:else}
-							<RolePicker
-								value={member.role}
-								options={projectRoleOptions}
-								label="Project role of {member.email}"
-								disabled={!canEdit}
-								title={canEdit ? undefined : readOnlyTitle}
-								busy={!!busy[member.user_id]}
-								onchange={(role) => setProjectRole(member, role)}
-							/>
-						{/if}
-					</span>
-					<span class="justify-self-end">
-						<Button size="sm" variant="ghost" onclick={() => openMember(member)}>
-							{canEdit ? 'Manage' : 'View'}
+						</span>
+						<Button
+							size="icon"
+							variant="ghost"
+							ariaLabel="{canEdit ? 'Manage' : 'View'} {member.name || member.email}"
+							title={canEdit ? 'Manage access' : 'View access'}
+							onclick={() => openMember(member)}
+						>
+							<Settings2 size={15} />
 						</Button>
 					</span>
 				</div>

@@ -15,17 +15,17 @@
 	}
 </script>
 
-<Card class="flex items-center gap-4 px-5.5 py-4.5">
+<Card class="flex flex-wrap items-center gap-4 px-5.5 py-4.5">
 	<div
 		class="bg-surface-input text-text-tertiary grid size-9 flex-none place-items-center rounded-[11px]"
 	>
 		<KeyRound size={18} strokeWidth={1.75} />
 	</div>
-	<div class="min-w-0 flex-1">
+	<div class="min-w-48 flex-1">
 		<h2 class="text-text-primary text-lg font-semibold tracking-tight">Password</h2>
 		<p class="text-text-muted mt-0.5 text-base">
 			Changing it signs out every other session; only this one survives.
 		</p>
 	</div>
-	<Button variant="secondary" onclick={changePassword}>Change password</Button>
+	<Button variant="secondary" class="ml-auto" onclick={changePassword}>Change password</Button>
 </Card>

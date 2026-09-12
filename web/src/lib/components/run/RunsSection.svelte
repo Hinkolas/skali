@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Rocket from '@lucide/svelte/icons/rocket';
 	import { api, ApiError } from '$lib/api/client';
-	import type { Run } from '$lib/types/runs';
+	import type { Run, RunKind } from '$lib/types/runs';
 	import { runUnsettled, type RunsList } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
 	import { formatDuration, relativeTime } from '$lib/format';
@@ -15,11 +15,29 @@
 	import RunDetailPanel from './RunDetailPanel.svelte';
 
 	// The environment's run feed: seeded by the caller's load, kept live by
-	// the runs-list SSE stream while mounted.
-	let { envId, seed }: { envId: string | null; seed: Run[] | null } = $props();
+	// the runs-list SSE stream while mounted. `kinds` narrows the feed to
+	// some run kinds (a database's backups), `limit` keeps only the newest
+	// rows (the overview's digest); the Deployments tab shows the journal.
+	let {
+		envId,
+		seed,
+		kinds,
+		limit,
+		emptyTitle = 'No runs yet',
+		emptyDescription = 'deploys, rollbacks, and teardowns appear here'
+	}: {
+		envId: string | null;
+		seed: Run[] | null;
+		kinds?: RunKind[];
+		limit?: number;
+		emptyTitle?: string;
+		emptyDescription?: string;
+	} = $props();
 
 	let live = $state<Run[] | null>(null);
-	const runs = $derived(live ?? seed ?? []);
+	const runs = $derived(
+		(live ?? seed ?? []).filter((r) => !kinds || kinds.includes(r.kind)).slice(0, limit)
+	);
 
 	$effect(() => {
 		if (!envId) return;
@@ -71,17 +89,13 @@
 </script>
 
 {#if runs.length === 0}
-	<EmptyState
-		icon={Rocket}
-		title="No runs yet"
-		description="deploys, rollbacks, and teardowns appear here"
-	/>
+	<EmptyState icon={Rocket} title={emptyTitle} description={emptyDescription} />
 {:else}
 	<Table columns={['Run', 'Actor', 'Started', 'Duration', 'Status', '']} {grid}>
 		{#each runs as run (run.id)}
 			{@const status = statusClass[run.status]}
 			<div
-				class="border-border-subtle grid items-center border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 {grid}"
+				class="border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-1.5 @2xl:grid @2xl:items-center {grid}"
 			>
 				<button
 					type="button"
@@ -95,14 +109,22 @@
 						</span>
 					{/if}
 				</button>
-				<div class="text-text-muted truncate pr-2 text-md">{run.actor}</div>
-				<div class="font-mono text-text-muted text-sm">
-					{relativeTime(run.started_at ?? run.created_at)}
+				<!-- Actor, started and duration: grid cells on a wide pane, one meta
+				     line under the kind on a narrow one. -->
+				<div
+					class="@2xl:contents @max-2xl:order-1 @max-2xl:flex @max-2xl:basis-full @max-2xl:items-center @max-2xl:gap-x-3"
+				>
+					<div class="text-text-muted min-w-0 truncate pr-2 text-md">{run.actor}</div>
+					<div class="font-mono text-text-muted text-sm whitespace-nowrap">
+						{relativeTime(run.started_at ?? run.created_at)}
+					</div>
+					<div class="font-mono text-text-muted text-sm whitespace-nowrap">
+						{run.started_at ? formatDuration(run.started_at, run.finished_at) : ''}
+					</div>
 				</div>
-				<div class="font-mono text-text-muted text-sm">
-					{run.started_at ? formatDuration(run.started_at, run.finished_at) : ''}
-				</div>
-				<div class="flex items-center gap-1.5 text-md {status.text}">
+				<div
+					class="flex items-center gap-1.5 text-md whitespace-nowrap {status.text} @max-2xl:ml-auto"
+				>
 					<span class="size-[8px] rounded-full {status.dot}"></span>
 					{run.status}
 				</div>

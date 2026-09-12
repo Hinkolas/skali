@@ -1368,6 +1368,9 @@ func (s *seeder) reset(ctx context.Context) error {
 			return err
 		}
 		statements := []string{
+			// Hostname claims restrict environment deletion on purpose (a
+			// purge releases them first); the reset releases them the same way.
+			`DELETE FROM hostname_claims WHERE environment_id IN (SELECT id FROM environments WHERE project_id = $1)`,
 			`DELETE FROM database_tenants WHERE claim_id IN (SELECT id FROM database_claims WHERE project_id = $1)`,
 			`DELETE FROM database_placements WHERE claim_id IN (SELECT id FROM database_claims WHERE project_id = $1)`,
 			`DELETE FROM database_claims WHERE project_id = $1`,

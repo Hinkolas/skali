@@ -43,7 +43,9 @@
 		</span>
 		<ChevronDown
 			size={14}
-			class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
+			class="text-text-ghost hidden flex-none transition-transform sm:block {open
+				? 'rotate-180'
+				: ''}"
 		/>
 	{/snippet}
 

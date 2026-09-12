@@ -1,11 +1,14 @@
 // Per-type overview data: the connection projection for databases and
-// buckets, the environment's run feed for applications. The service itself
-// is selected from the project layout using the service route parameter.
+// buckets, the environment's run feed for every type (deploys for
+// applications, backups for the stateful ones), usage samples for
+// applications.
+// The service itself is selected from the project layout using the service
+// route parameter.
 
 import { error } from '@sveltejs/kit';
 import { apiFetch } from '$lib/api/client';
 import type { BucketConnection, DatabaseConnection } from '$lib/types/connections';
-import type { ProjectStorage, ServiceStorage } from '$lib/types/metrics';
+import type { EnvironmentMetrics, ProjectStorage, ServiceStorage } from '$lib/types/metrics';
 import type { Run } from '$lib/types/runs';
 import type { PageLoad } from './$types';
 
@@ -35,6 +38,7 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 			connection: null,
 			bucketConnection: null,
 			runs: null,
+			metrics: null,
 			storage: null,
 			temporaryStorage: null
 		};
@@ -56,38 +60,46 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		}
 	);
 
+	// Backups are environment snapshots, so a database's or bucket's backup
+	// history is the environment's run feed filtered to that kind.
 	if (service.type === 'database') {
-		const [res, storage] = await Promise.all([
+		const [res, runsRes, storage] = await Promise.all([
 			apiFetch(fetch, `/v1/environments/${env.id}/databases/${service.key}/connection`),
+			apiFetch(fetch, `/v1/environments/${env.id}/runs`),
 			storagePromise
 		]);
 		return {
 			connection: res.ok ? ((await res.json()) as DatabaseConnection) : null,
 			bucketConnection: null,
-			runs: null,
+			runs: runsRes.ok ? ((await runsRes.json()) as { runs: Run[] }).runs : null,
+			metrics: null,
 			...storage
 		};
 	}
 	if (service.type === 'bucket') {
-		const [res, storage] = await Promise.all([
+		const [res, runsRes, storage] = await Promise.all([
 			apiFetch(fetch, `/v1/environments/${env.id}/buckets/${service.key}/connection`),
+			apiFetch(fetch, `/v1/environments/${env.id}/runs`),
 			storagePromise
 		]);
 		return {
 			connection: null,
 			bucketConnection: res.ok ? ((await res.json()) as BucketConnection) : null,
-			runs: null,
+			runs: runsRes.ok ? ((await runsRes.json()) as { runs: Run[] }).runs : null,
+			metrics: null,
 			...storage
 		};
 	}
-	const [res, storage] = await Promise.all([
+	const [res, metricsRes, storage] = await Promise.all([
 		apiFetch(fetch, `/v1/environments/${env.id}/runs`),
+		apiFetch(fetch, `/v1/environments/${env.id}/metrics?window=24h`),
 		storagePromise
 	]);
 	return {
 		connection: null,
 		bucketConnection: null,
 		runs: res.ok ? ((await res.json()) as { runs: Run[] }).runs : null,
+		metrics: metricsRes.ok ? ((await metricsRes.json()) as EnvironmentMetrics) : null,
 		...storage
 	};
 };

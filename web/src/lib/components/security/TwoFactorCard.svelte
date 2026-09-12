@@ -76,7 +76,7 @@
 	}
 </script>
 
-<Card class="flex items-center gap-4 px-5.5 py-4.5">
+<Card class="flex flex-wrap items-center gap-4 px-5.5 py-4.5">
 	<div
 		class="bg-surface-input text-text-tertiary grid size-9 flex-none place-items-center rounded-[11px]"
 	>
@@ -86,7 +86,7 @@
 			<ShieldOff size={18} strokeWidth={1.75} />
 		{/if}
 	</div>
-	<div class="min-w-0 flex-1">
+	<div class="min-w-48 flex-1">
 		<h2 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
 			<span class="text-text-primary">Two-factor authentication</span>
 			{#if enabled}
@@ -105,10 +105,12 @@
 			{/if}
 		</p>
 	</div>
-	{#if enabled}
-		<Button variant="secondary" onclick={regenerate}>Regenerate backup codes</Button>
-		<Button variant="danger" onclick={disable}>Disable</Button>
-	{:else}
-		<Button variant="primary" {busy} onclick={enable}>Enable 2FA</Button>
-	{/if}
+	<div class="ml-auto flex items-center gap-2.5">
+		{#if enabled}
+			<Button variant="secondary" onclick={regenerate}>Regenerate backup codes</Button>
+			<Button variant="danger" onclick={disable}>Disable</Button>
+		{:else}
+			<Button variant="primary" {busy} onclick={enable}>Enable 2FA</Button>
+		{/if}
+	</div>
 </Card>

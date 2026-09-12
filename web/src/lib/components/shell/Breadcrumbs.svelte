@@ -54,21 +54,32 @@
 </script>
 
 <!-- -ml-2 cancels the first crumb's padding so its text aligns flush with
-     the main card's left edge below. -->
+     the main card's left edge below. Under xl the chain keeps only the
+     project and the environment (what the Actions menu acts on) and drops
+     the organization and the service: the service is the page title right
+     below and the sidebar lists them all. The project trigger is the one
+     crumb allowed to shrink; max-w-full matters because a button keeps its
+     fit-content width even as a flex container. -->
 <nav aria-label="Breadcrumbs" class="-ml-2 flex min-w-0 items-center gap-1">
 	<a
 		href={resolve('/(app)/projects')}
-		class="text-text-tertiary hover:text-text-primary truncate rounded-lg px-2 py-1 text-base font-medium transition-colors"
+		class="text-text-tertiary hover:text-text-primary truncate rounded-lg px-2 py-1 text-base font-medium transition-colors {data.project
+			? 'hidden xl:block'
+			: ''}"
 	>
 		{data.org.name}
 	</a>
 
 	{#if data.project}
 		{@const project = data.project}
-		<span class="text-text-ghost text-md">/</span>
-		<Menu label="Switch project" triggerClass="{crumbTrigger} text-text-primary">
+		<span class="text-text-ghost hidden text-md xl:block">/</span>
+		<Menu
+			label="Switch project"
+			class="min-w-0"
+			triggerClass="{crumbTrigger} max-w-full min-w-0 text-text-primary"
+		>
 			{#snippet trigger({ open })}
-				{project.display_name || project.name}
+				<span class="truncate">{project.display_name || project.name}</span>
 				<ChevronDown
 					size={13}
 					class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
@@ -144,30 +155,32 @@
 	{#if data.project && data.service}
 		{@const project = data.project}
 		{@const service = data.service}
-		<span class="text-text-ghost text-md">/</span>
-		<Menu label="Switch service" triggerClass="{crumbTrigger} text-text-primary">
-			{#snippet trigger({ open })}
-				{service.name}
-				<ChevronDown
-					size={13}
-					class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
-				/>
-			{/snippet}
-			{#each data.services ?? [] as s (`${s.type}:${s.key}`)}
-				<MenuItem
-					href={withEnv(
-						resolve('/(app)/projects/[project]/services/[service]', {
-							project: project.name,
-							service: s.key
-						}),
-						env
-					)}
-					selected={s.key === service.key && s.type === service.type}
-				>
-					<TypeBadge kind={s.type} form="tile" />
-					<span class="truncate">{s.name}</span>
-				</MenuItem>
-			{/each}
-		</Menu>
+		<div class="hidden xl:contents">
+			<span class="text-text-ghost text-md">/</span>
+			<Menu label="Switch service" triggerClass="{crumbTrigger} text-text-primary">
+				{#snippet trigger({ open })}
+					{service.name}
+					<ChevronDown
+						size={13}
+						class="text-text-ghost flex-none transition-transform {open ? 'rotate-180' : ''}"
+					/>
+				{/snippet}
+				{#each data.services ?? [] as s (`${s.type}:${s.key}`)}
+					<MenuItem
+						href={withEnv(
+							resolve('/(app)/projects/[project]/services/[service]', {
+								project: project.name,
+								service: s.key
+							}),
+							env
+						)}
+						selected={s.key === service.key && s.type === service.type}
+					>
+						<TypeBadge kind={s.type} form="tile" />
+						<span class="truncate">{s.name}</span>
+					</MenuItem>
+				{/each}
+			</Menu>
+		</div>
 	{/if}
 </nav>

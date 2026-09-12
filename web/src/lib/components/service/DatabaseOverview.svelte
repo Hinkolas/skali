@@ -2,91 +2,101 @@
 	import type { DatabaseView, ServiceView } from '$lib/models/service';
 	import type { StatCardData } from '$lib/models/view';
 	import type { DatabaseConnection } from '$lib/types/connections';
+	import type { Backup } from '$lib/types/definition';
 	import type { ServiceStorage } from '$lib/types/metrics';
-	import { formatBytes } from '$lib/format';
+	import type { Run } from '$lib/types/runs';
+	import { envStatus } from '$lib/stores/envstatus.svelte';
+	import { describeCron } from '$lib/cron';
+	import {
+		backupSchedule,
+		connectedStat,
+		dependents,
+		footprintStat,
+		lastBackupStat,
+		phaseStat
+	} from '$lib/models/claims';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
+	import RunsSection from '$lib/components/run/RunsSection.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
 	import DbConnectionPanel from './DbConnectionPanel.svelte';
-	import DbExternalPanel from './DbExternalPanel.svelte';
+	import DbInstancePanel from './DbInstancePanel.svelte';
 
+	// The database's overview: how full it is, how it is backed up, who
+	// talks to it, the server it runs on and how to reach it, then the
+	// newest snapshots of its environment.
 	let {
 		service,
 		services,
 		connection,
 		envId,
+		runs = null,
+		backups = {},
 		storage = null
 	}: {
 		service: DatabaseView;
 		services: ServiceView[];
 		connection: DatabaseConnection | null;
 		envId: string | null;
+		runs?: Run[] | null;
+		/** The project's backup schedules, keyed by name. */
+		backups?: Record<string, Backup>;
 		storage?: ServiceStorage | null;
 	} = $props();
 
+	const live = (key: string) => envStatus.service('application', key);
+	const apps = $derived(dependents(services, 'database', service.key));
+	const schedule = $derived(backupSchedule(backups, 'database', service.key));
+
 	// Measured logical size from the sampler when it exists; the declared
 	// request stays the fallback and the denominator.
-	const storageStat = $derived.by((): StatCardData => {
-		const declared = service.config.storageBytes;
-		if (storage?.used_bytes != null) {
-			const parts = formatBytes(storage.used_bytes).split(' ');
-			return declared
-				? {
-						label: 'SIZE',
-						value: parts[0],
-						unit: `${parts[1]} / ${formatBytes(declared)}`,
-						progress: {
-							pct: Math.min(100, (storage.used_bytes / declared) * 100),
-							class: 'bg-service-db'
-						}
-					}
-				: { label: 'SIZE', value: parts[0], unit: parts[1], note: 'logical size' };
-		}
-		return {
-			label: 'STORAGE',
-			value: declared ? formatBytes(declared) : 'default',
-			note: 'requested in skali.yaml'
-		};
-	});
-
 	const stats = $derived.by((): StatCardData[] => [
-		storageStat,
-		{
-			label: 'ENGINE',
-			value: service.config.engine,
-			unit: connection ? `v${connection.major}` : service.config.version
-		},
-		{
-			label: 'ISOLATION',
-			value: service.config.isolation,
-			chip: { text: service.config.availability, tone: 'neutral' }
-		},
-		{
-			label: 'PHASE',
-			value: connection?.phase ?? 'unknown',
-			chip:
-				connection?.phase === 'provisioned'
-					? { text: 'ready', tone: 'success' }
-					: { text: 'settling', tone: 'neutral' }
-		}
+		footprintStat('SIZE', storage?.used_bytes, service.config.storageBytes, 'bg-service-db', {
+			declared: 'requested, not yet measured',
+			undeclared: 'default size, not yet measured',
+			measured: 'logical size'
+		}),
+		lastBackupStat(schedule, runs, 'database'),
+		connectedStat(apps, live, 'private network'),
+		phaseStat(connection)
 	]);
+
+	const RECENT_BACKUPS = 5;
 </script>
 
-<div class="mb-6 grid grid-cols-4 gap-3.5">
+<div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
 	{#each stats as stat (stat.label)}
 		<StatCard {stat} />
 	{/each}
 </div>
 
-<div class="mb-6 grid grid-cols-2 gap-3.5">
+<div class="mb-6.5 grid grid-cols-1 gap-3.5 @4xl:grid-cols-2">
+	<DbInstancePanel {service} {connection} />
 	<DbConnectionPanel {service} {connection} {envId} />
-	<DbExternalPanel />
 </div>
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Connected applications</h2>
 	<div class="text-text-muted text-md">via private network</div>
 </div>
 
-<div class="pb-6">
+<div class="mb-6.5">
 	<ConnectedAppsList {service} {services} />
+</div>
+
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+	<h2 class="text-text-primary text-xl font-semibold">Recent backups</h2>
+	<div class="text-text-muted text-md">
+		snapshots of this environment{schedule ? ` · ${describeCron(schedule.backup.schedule)}` : ''}
+	</div>
+</div>
+
+<div class="pb-6">
+	<RunsSection
+		{envId}
+		seed={runs}
+		kinds={['backup', 'restore']}
+		limit={RECENT_BACKUPS}
+		emptyTitle="No backups yet"
+		emptyDescription="snapshots and restores of this environment appear here"
+	/>
 </div>

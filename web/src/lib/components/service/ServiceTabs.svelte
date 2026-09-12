@@ -20,11 +20,13 @@
 	};
 </script>
 
-<!-- -mx-5.5 bleeds the divider to the card edges; px-2.5 plus the tabs' own
-     px-3 puts the first label back on the card's 5.5 content inset. -->
+<!-- -mx-4 bleeds the divider across the main pane's padding (up to its
+     scrollbar gutters); px-1 plus the tabs' own px-3 puts the first label
+     back on the pane's px-4 content inset. On a narrow pane the bar scrolls
+     sideways instead of clipping the last tabs. -->
 <nav
 	aria-label="Service"
-	class="border-border-default -mx-5.5 mb-6 flex items-center gap-1 border-b px-2.5"
+	class="border-border-default -mx-4 mb-6 flex items-center gap-1 overflow-x-auto overflow-y-hidden border-b px-1 [scrollbar-width:none]"
 >
 	{#each SERVICE_TABS[service.type] as tab (tab.slug)}
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
@@ -33,15 +35,14 @@
 		<!-- eslint-disable svelte/no-navigation-without-resolve -- path mirrors the route params, env appended by $lib/urls -->
 		<a
 			href={withEnv(path, env)}
-			class="relative flex items-center gap-2 px-3 py-2.5 text-lg transition-colors {active
+			class="relative flex flex-none items-center gap-2 px-3 py-2.5 text-lg transition-colors {active
 				? 'text-text-primary font-medium'
 				: 'text-text-tertiary hover:text-text-secondary'}"
 		>
 			<Icon size={15} strokeWidth={1.75} class="flex-none opacity-90" />
 			{tab.label}
 			{#if active}
-				<span
-					class="absolute inset-x-3 -bottom-px h-0.5 rounded-full {underlineClass[service.type]}"
+				<span class="absolute inset-x-3 bottom-0 h-0.5 rounded-full {underlineClass[service.type]}"
 				></span>
 			{/if}
 		</a>

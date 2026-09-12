@@ -34,6 +34,21 @@ export function formatCores(millicores: number): string {
 
 export const formatPct = (n: number) => `${Math.round(n)}%`;
 
+/** "500ms" / "2s" / "5 min" for manifest timeouts and intervals. */
+export function formatMillis(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	const secs = ms / 1000;
+	if (secs < 60) return `${+secs.toFixed(1)}s`;
+	const mins = secs / 60;
+	if (mins < 60) return `${+mins.toFixed(1)} min`;
+	return `${+(mins / 60).toFixed(1)} h`;
+}
+
+/** "Jul 6" — x-axis ticks on windows spanning days. */
+export function formatDay(t: number): string {
+	return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 /** "14:32" — sparse x-axis ticks. */
 export function formatClock(t: number): string {
 	return new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });

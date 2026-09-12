@@ -1,19 +1,15 @@
 <script lang="ts">
 	import Plus from '@lucide/svelte/icons/plus';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Container from '@lucide/svelte/icons/container';
-	import type { StatCardData } from '$lib/models/view';
+	import { slide } from 'svelte/transition';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { HEALTH_META, STORAGE_KIND_META } from '$lib/service-types';
-	import { formatBytes, formatCount } from '$lib/format';
-	import {
-		currentTotal,
-		storageByKind,
-		storageFootprint,
-		storageForEnvironment,
-		sumSeries,
-		toChartPoints
-	} from '$lib/types/metrics';
+	import { formatBytes } from '$lib/format';
+	import { usageLimits, usageStats } from '$lib/models/usage';
+	import { storageByKind, storageFootprint, storageForEnvironment } from '$lib/types/metrics';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
 	import StackedBar from '$lib/components/ui/StackedBar.svelte';
@@ -44,117 +40,15 @@
 		return HEALTH_META.degraded.dot;
 	});
 
-	// Declared per-replica limits from the draft definition, scaled by the
-	// live pod count (falling back to minReplicas), summed across the apps
-	// that declare them: the tiles' at-a-glance denominator. An approximation
-	// when the running revision trails the draft, but honest enough for a
-	// headline number.
-	const limits = $derived.by(() => {
-		let cpu = 0;
-		let mem = 0;
-		for (const [key, app] of Object.entries(data.definition?.applications ?? {})) {
-			const declared = app.resources?.limits;
-			if (!declared) continue;
-			const live = status?.services.find((s) => s.type === 'application' && s.key === key);
-			const replicas = live?.pods?.length || app.scaling?.minReplicas || 1;
-			cpu += (declared.milliCpu ?? 0) * replicas;
-			mem += (declared.memoryBytes ?? 0) * replicas;
-		}
-		return { cpu: cpu || null, mem: mem || null };
-	});
-
-	// The four tiles come from stored samples for the selected environment
-	// (24h window): the headline is the newest bucket, the sparkline is the
-	// whole window summed across apps, and the storage tile reads the
-	// footprint API instead (no series there).
-	const stats = $derived.by((): StatCardData[] => {
-		const m = data.metrics;
-		const apps = m?.applications ?? [];
-		const noData: Pick<StatCardData, 'value' | 'note'> = { value: 'n/a', note: 'no data yet' };
-		const series = (values: (number | null)[]) =>
-			m ? toChartPoints(m.timestamps, values) : undefined;
-
-		const requestSeries = sumSeries(apps, (a) => a.edge?.requests);
-		const requests = currentTotal(apps, (a) => a.edge?.requests ?? []);
-		let requestsStat: StatCardData = { label: 'REQUESTS', ...noData };
-		if (requests != null && m) {
-			const perMinute = 60 / m.step_seconds;
-			requestsStat = {
-				label: 'REQUESTS',
-				value: formatCount(requests * perMinute),
-				unit: '/min',
-				sparkline: series(requestSeries.map((v) => (v == null ? null : v * perMinute)))
-			};
-			// Compare the newest bucket with the one an hour earlier.
-			const now = requestSeries.length - 1;
-			const before = now - Math.round(3600 / m.step_seconds);
-			const prev = before >= 0 ? requestSeries[before] : null;
-			if (prev != null && prev > 0 && requestSeries[now] != null) {
-				const delta = Math.round(((requestSeries[now]! - prev) / prev) * 100);
-				requestsStat.chip = {
-					text: `${delta >= 0 ? '+' : ''}${delta}%`,
-					tone: delta >= 0 ? 'success' : 'neutral'
-				};
-				requestsStat.note = 'vs last hour';
-			}
-		}
-
-		const cpuSeries = sumSeries(apps, (a) => a.cpu_millicores);
-		const cpu = currentTotal(apps, (a) => a.cpu_millicores);
-		let cpuStat: StatCardData = { label: 'CPU', ...noData };
-		if (cpu != null) {
-			// The limit picks the unit so numerator and denominator match.
-			const inCores = limits.cpu != null ? limits.cpu >= 1000 : cpu >= 1000;
-			cpuStat = {
-				label: 'CPU',
-				value: inCores ? (cpu / 1000).toFixed(cpu < 100 ? 2 : 1) : `${Math.round(cpu)}`,
-				unit:
-					limits.cpu != null
-						? inCores
-							? `/ ${+(limits.cpu / 1000).toFixed(1)} cores`
-							: `/ ${Math.round(limits.cpu)} mCPU`
-						: inCores
-							? 'cores'
-							: 'mCPU',
-				sparkline: series(cpuSeries)
-			};
-		}
-
-		const memSeries = sumSeries(apps, (a) => a.memory_bytes);
-		const mem = currentTotal(apps, (a) => a.memory_bytes);
-		let memStat: StatCardData = { label: 'MEMORY', ...noData };
-		if (mem != null) {
-			const memParts = formatBytes(mem).split(' ');
-			memStat = {
-				label: 'MEMORY',
-				value: memParts[0],
-				unit: limits.mem != null ? `${memParts[1]} / ${formatBytes(limits.mem)}` : memParts[1],
-				sparkline: series(memSeries)
-			};
-		}
-
-		// Best-known storage footprint of the selected environment: measured
-		// where the sampler has real numbers, reserved sizes elsewhere.
-		let storageStat: StatCardData = { label: 'STORAGE', ...noData };
-		if (envStorage.length > 0) {
-			const used = envStorage.reduce((acc, s) => acc + storageFootprint(s), 0);
-			const declared = envStorage.reduce((acc, s) => acc + s.capacity_bytes, 0);
-			const parts = formatBytes(used).split(' ');
-			const kinds = Object.entries(storageKinds).filter(([, v]) => v > 0).length;
-			storageStat =
-				declared > 0
-					? {
-							label: 'STORAGE',
-							value: parts[0],
-							unit: `${parts[1]} / ${formatBytes(declared)}`,
-							progress: { pct: Math.min(100, (used / declared) * 100), class: 'bg-accent' },
-							note: `${envStorage.length} service${envStorage.length === 1 ? '' : 's'}, ${kinds} kind${kinds === 1 ? '' : 's'}`
-						}
-					: { label: 'STORAGE', value: parts[0], unit: parts[1] };
-		}
-
-		return [requestsStat, cpuStat, memStat, storageStat];
-	});
+	// Usage tiles for every application of the environment, summed; the
+	// limits are the declared per-replica limits scaled by the live pod
+	// count (see $lib/models/usage).
+	const limits = $derived(
+		usageLimits(data.definition?.applications ?? {}, (key) =>
+			status?.services.find((s) => s.type === 'application' && s.key === key)
+		)
+	);
+	const stats = $derived(usageStats(data.metrics, data.metrics?.applications ?? [], limits));
 
 	// Storage rows of the selected environment, largest footprint first.
 	const envStorage = $derived(
@@ -164,6 +58,15 @@
 	);
 	const storageKinds = $derived(storageByKind(envStorage));
 	const storageTotal = $derived(envStorage.reduce((acc, s) => acc + storageFootprint(s), 0));
+	// Declared capacity across the environment's services: the summary bar's
+	// full width, so the unfilled track is what is still free. Falls back to
+	// the footprint (a full bar) where nothing declares a size.
+	const storageCapacity = $derived(envStorage.reduce((acc, s) => acc + s.capacity_bytes, 0));
+
+	// The per-service breakdown is folded away by default: the summary bar
+	// answers the common question, and with many services the row list
+	// would otherwise push the service cards below the fold.
+	let storageOpen = $state(false);
 </script>
 
 <svelte:head>
@@ -179,74 +82,105 @@
 	{/snippet}
 </PageHeader>
 
-<div class="mb-6.5 grid grid-cols-4 gap-3.5">
+<div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
 	{#each stats as stat (stat.label)}
 		<StatCard {stat} />
 	{/each}
 </div>
 
 {#if envStorage.length > 0}
-	<div class="mb-3.5 flex items-baseline gap-2.5">
+	<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 		<h2 class="text-text-primary text-xl font-semibold">Storage</h2>
 		<div class="text-text-muted text-md">env {data.env?.name ?? 'none'}</div>
 	</div>
-	<div class="border-border-subtle mb-6.5 rounded-[15px] border px-4.5 py-4">
-		<StackedBar
-			segments={Object.entries(STORAGE_KIND_META).map(([kind, meta]) => ({
-				label: `${meta.label} ${formatBytes(storageKinds[kind as keyof typeof storageKinds] ?? 0)}`,
-				value: storageKinds[kind as keyof typeof storageKinds] ?? 0,
-				class: meta.class
-			}))}
-			total={storageTotal}
-		/>
-		<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-			{#each Object.entries(STORAGE_KIND_META) as [kind, meta] (kind)}
-				{#if (storageKinds[kind as keyof typeof storageKinds] ?? 0) > 0}
-					<span class="flex items-center gap-1.5 font-mono text-text-faint text-xs">
-						<span class="size-[8px] rounded-full {meta.class}"></span>
-						{meta.label}
-						{formatBytes(storageKinds[kind as keyof typeof storageKinds])}
-					</span>
-				{/if}
-			{/each}
-		</div>
-		<div class="border-border-subtle mt-3.5 border-t">
-			{#each envStorage as entry (`${entry.kind}:${entry.service_key}`)}
-				{@const meta = STORAGE_KIND_META[entry.kind]}
-				<div
-					class="border-border-subtle grid grid-cols-[1.6fr_1fr_1.4fr] items-center gap-3 border-b py-2.5 last:border-0"
-				>
-					<div class="flex items-center gap-2">
-						<span class="size-[8px] flex-none rounded-full {meta.class}"></span>
-						<span class="font-mono text-text-primary truncate text-sm">{entry.service_key}</span>
-					</div>
-					<div class="font-mono text-text-muted text-sm">
-						{#if entry.used_bytes != null}
-							{formatBytes(entry.used_bytes)}
-						{:else}
-							reserved {formatBytes(entry.capacity_bytes)}
-						{/if}
-					</div>
-					<div class="flex items-center gap-2.5">
-						{#if entry.used_bytes != null && entry.capacity_bytes > 0}
-							<div class="min-w-0 flex-1">
-								<ProgressBar
-									pct={Math.min(100, (entry.used_bytes / entry.capacity_bytes) * 100)}
-									class={meta.class}
-								/>
-							</div>
-							<span class="font-mono text-text-faint flex-none text-xs">
-								of {formatBytes(entry.capacity_bytes)}
+	<Card class="mb-6.5">
+		<button
+			type="button"
+			onclick={() => (storageOpen = !storageOpen)}
+			aria-expanded={storageOpen}
+			aria-controls="storage-breakdown"
+			class="flex w-full cursor-pointer items-center gap-4 px-4.5 py-4 text-left"
+		>
+			<div class="min-w-0 flex-1">
+				<StackedBar
+					segments={Object.entries(STORAGE_KIND_META).map(([kind, meta]) => ({
+						label: `${meta.label} ${formatBytes(storageKinds[kind as keyof typeof storageKinds] ?? 0)}`,
+						value: storageKinds[kind as keyof typeof storageKinds] ?? 0,
+						class: meta.class
+					}))}
+					total={storageCapacity > 0 ? storageCapacity : storageTotal}
+					class="h-2.5"
+				/>
+				<div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+					{#each Object.entries(STORAGE_KIND_META) as [kind, meta] (kind)}
+						{#if (storageKinds[kind as keyof typeof storageKinds] ?? 0) > 0}
+							<span class="text-text-faint flex items-center gap-1.5 font-mono text-xs">
+								<span class="size-[8px] rounded-full {meta.class}"></span>
+								{meta.label}
+								{formatBytes(storageKinds[kind as keyof typeof storageKinds])}
 							</span>
 						{/if}
-					</div>
+					{/each}
+					{#if storageCapacity > 0}
+						<span class="text-text-muted ml-auto font-mono text-xs">
+							{formatBytes(storageTotal)} of {formatBytes(storageCapacity)}
+						</span>
+					{/if}
 				</div>
-			{/each}
-		</div>
-	</div>
+			</div>
+			<span class="text-text-muted flex flex-none items-center gap-1.5 text-md">
+				{envStorage.length} service{envStorage.length === 1 ? '' : 's'}
+				<ChevronDown
+					size={16}
+					class="text-text-faint transition-transform duration-200 {storageOpen
+						? 'rotate-180'
+						: ''}"
+				/>
+			</span>
+		</button>
+		{#if storageOpen}
+			<div
+				id="storage-breakdown"
+				transition:slide={{ duration: 180 }}
+				class="border-border-subtle border-t px-4.5 pt-1 pb-1.5"
+			>
+				{#each envStorage as entry (`${entry.kind}:${entry.service_key}`)}
+					{@const meta = STORAGE_KIND_META[entry.kind]}
+					<div
+						class="border-border-subtle grid grid-cols-[1.6fr_1fr_1.4fr] items-center gap-3 border-b py-2.5 last:border-0"
+					>
+						<div class="flex items-center gap-2">
+							<span class="size-[8px] flex-none rounded-full {meta.class}"></span>
+							<span class="text-text-primary truncate font-mono text-sm">{entry.service_key}</span>
+						</div>
+						<div class="text-text-muted font-mono text-sm">
+							{#if entry.used_bytes != null}
+								{formatBytes(entry.used_bytes)}
+							{:else}
+								reserved {formatBytes(entry.capacity_bytes)}
+							{/if}
+						</div>
+						<div class="flex items-center gap-2.5">
+							{#if entry.used_bytes != null && entry.capacity_bytes > 0}
+								<div class="min-w-0 flex-1">
+									<ProgressBar
+										pct={Math.min(100, (entry.used_bytes / entry.capacity_bytes) * 100)}
+										class={meta.class}
+									/>
+								</div>
+								<span class="text-text-faint flex-none font-mono text-xs">
+									of {formatBytes(entry.capacity_bytes)}
+								</span>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</Card>
 {/if}
 
-<div class="mb-3.5 flex items-baseline gap-2.5">
+<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Services</h2>
 	<div class="text-text-muted text-md">
 		{data.services.length === 0 ? 'defined in skali.yaml' : `env ${data.env?.name ?? 'none'}`}
@@ -254,7 +188,7 @@
 </div>
 
 {#if data.services.length > 0}
-	<div class="grid grid-cols-3 gap-3.5 pb-6">
+	<div class="grid grid-cols-1 gap-3.5 pb-6 @2xl:grid-cols-2 @5xl:grid-cols-3">
 		{#each data.services as service (`${service.type}:${service.key}`)}
 			<ServiceCard project={data.project} {service} />
 		{/each}

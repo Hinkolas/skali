@@ -37,7 +37,7 @@
 <div class="bg-glow-app flex h-screen gap-2.5 px-2.5 pb-2.5">
 	<div class="hidden md:contents"><Sidebar /></div>
 	<div class="flex min-w-0 flex-1 flex-col">
-		<div class="flex min-w-0 items-center gap-3">
+		<div class="flex min-w-0 items-center gap-2 sm:gap-3">
 			<details class="relative flex-none md:hidden" bind:open={navigationOpen}>
 				<summary
 					aria-label="Navigation"
@@ -53,11 +53,24 @@
 			<div class="min-w-0 flex-1"><Topbar /></div>
 		</div>
 		<div class="flex min-h-0 flex-1 gap-4">
-			<main
-				class="bg-surface-raised border-border-default min-w-0 flex-1 overflow-y-auto rounded-2xl border px-4 pt-4 sm:px-5.5 sm:pt-5.5"
+			<!-- scrollbar-gutter keeps the scrollbar's column reserved on short
+			     pages too, so content does not shift sideways when navigating
+			     between a page that scrolls and one that does not. both-edges
+			     mirrors that column on the left so the content stays centered;
+			     px-4 plus the gutter lands close to the pt-5.5 top inset.
+
+			     The border and radius sit on a wrapper rather than the scroll
+			     container: Gecko paints a scroll frame with a reserved gutter
+			     without its rounded clip, which squared the card in Firefox. -->
+			<div
+				class="bg-surface-raised border-border-default flex min-w-0 flex-1 overflow-hidden rounded-2xl border"
 			>
-				{@render children()}
-			</main>
+				<main
+					class="@container min-w-0 flex-1 overflow-y-auto px-4 pt-4 [scrollbar-gutter:stable_both-edges] sm:pt-5.5"
+				>
+					{@render children()}
+				</main>
+			</div>
 			<!-- Right-hand detail panel (store-driven); a flex sibling so <main>
 			     cedes space instead of being overlaid. -->
 			<SidePanel />

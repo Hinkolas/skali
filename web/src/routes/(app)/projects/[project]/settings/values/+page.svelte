@@ -4,15 +4,21 @@
 	import Lock from '@lucide/svelte/icons/lock';
 	import { api, ApiError } from '$lib/api/client';
 	import { requiredTitle, roleAtLeast } from '$lib/access';
+	import { resolve } from '$app/paths';
+	import type { Expression } from '$lib/types/definition';
 	import type { StageValuesResult } from '$lib/types/values';
+	import { withEnv } from '$lib/urls';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
+	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import Menu from '$lib/components/ui/Menu.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
+	import SecretInput from '$lib/components/ui/SecretInput.svelte';
 	import SettingsNav from '$lib/components/project/SettingsNav.svelte';
 	import type { PageData } from './$types';
 
@@ -29,6 +35,26 @@
 	// Runtime variables are the storable contract; build-only variables
 	// resolve from a local env file at deploy time and have no stored row.
 	const declared = $derived(data.definition?.requiredVariables ?? []);
+
+	// Which applications read each variable: every ${VAR} part in an app's
+	// environment or route domains. Saying who consumes a value tells the
+	// reader what a change reaches.
+	const consumers = $derived.by(() => {
+		const byName: Record<string, string[]> = {};
+		const note = (expr: Expression | undefined, app: string) => {
+			for (const part of expr?.parts ?? []) {
+				if (part.kind !== 'project_variable' || !part.name) continue;
+				const apps = (byName[part.name] ??= []);
+				if (!apps.includes(app)) apps.push(app);
+			}
+		};
+		for (const [key, app] of Object.entries(data.definition?.applications ?? {})) {
+			for (const expr of Object.values(app.environment ?? {})) note(expr, key);
+			for (const route of Object.values(app.routes ?? {})) note(route.domain, key);
+		}
+		return byName;
+	});
+	const projectName = $derived(data.project.name);
 	const entryByName = $derived(new Map(data.values.map((v) => [v.name, v])));
 	const declaredNames = $derived(new Set(declared.map((d) => d.name)));
 	const orphanedEntries = $derived(data.values.filter((v) => !declaredNames.has(v.name)));
@@ -148,7 +174,7 @@
 		description="reference values with $&lbrace;VAR&rbrace; in skali.yaml; they become editable here"
 	/>
 {:else}
-	<div class="flex max-w-3xl flex-col gap-3.5 pb-6">
+	<div class="flex flex-col gap-3.5 pb-6">
 		{#if errorMessage}
 			<div
 				class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[11px] border px-4 py-3 text-base"
@@ -157,11 +183,12 @@
 			</div>
 		{/if}
 
-		<Card class="p-5">
-			<div class="mb-3.5 flex items-baseline gap-2.5">
+		<Card class="p-5 pb-2.5">
+			<div class="mb-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
 				<h3 class="text-text-primary text-xl font-semibold">Variables</h3>
+				<Pill text={data.env.name} />
 				<span class="text-text-muted text-md">
-					environment {data.env.name} · write-only · saved values roll out with Redeploy or the next deployment
+					write-only · saved values roll out with Redeploy or the next deployment
 					{#if !mayEdit}
 						· {editTitle} to change
 					{/if}
@@ -171,55 +198,102 @@
 				{#each declared as variable (variable.name)}
 					{@const entry = entryByName.get(variable.name)}
 					{@const pending = dirty[variable.name]}
-					<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
-						<div class="flex w-52 flex-none items-center gap-2" title={variable.name}>
+					{@const missing = !entry && variable.required && !variable.hasDefault}
+					{@const users = (consumers[variable.name] ?? []).toSorted()}
+					<!-- The field tells the value's story: what is stored shows as a
+					     masked placeholder with its version, a missing required value
+					     as an amber field, a pending edit as an accent one. On a narrow
+					     pane the field takes its own line under name and menu. -->
+					<div
+						class="border-border-subtle grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b py-2.5 last:border-0 @2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_auto]"
+					>
+						<div class="flex min-w-0 flex-col gap-1" title={variable.name}>
 							<span class="font-mono text-text-primary truncate text-md">{variable.name}</span>
-							{#if variable.required && !variable.hasDefault}
-								<Pill text="required" tone="neutral" />
-							{/if}
+							<div class="flex flex-wrap items-center gap-1">
+								{#each users as app (app)}
+									<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+									<a
+										href={withEnv(
+											resolve('/(app)/projects/[project]/services/[service]', {
+												project: projectName,
+												service: app
+											}),
+											data.env?.name
+										)}
+										class="bg-service-app/12 text-service-app rounded-[6px] px-1.5 py-0.5 font-mono text-2xs hover:underline"
+										title="read by {app}"
+									>
+										{app}
+									</a>
+									<!-- eslint-enable svelte/no-navigation-without-resolve -->
+								{:else}
+									<span class="font-mono text-text-ghost text-2xs">used at build time only</span>
+								{/each}
+							</div>
 						</div>
-						<div class="min-w-0 flex-1">
-							<TextInput
-								type="password"
-								size="sm"
-								autocomplete="off"
-								mono
+						<div class="@max-2xl:col-span-2 @max-2xl:row-start-2">
+							<SecretInput
+								label={variable.name}
 								disabled={!mayEdit}
-								placeholder={entry
-									? `set · v${entry.version} · type to overwrite`
-									: variable.hasDefault
-										? `not set · default "${variable.default ?? ''}" applies`
-										: 'not set · type to set'}
+								tone={pending !== undefined ? 'pending' : missing ? 'warning' : 'default'}
+								placeholder={pending === ''
+									? 'will be set to an empty value'
+									: entry
+										? '••••••••••••'
+										: missing
+											? 'required · not set'
+											: variable.hasDefault
+												? `default "${variable.default ?? ''}"`
+												: 'not set'}
 								value={pending ?? ''}
 								oninput={(e) => {
 									const next = (e.currentTarget as HTMLInputElement).value;
 									if (next === '') delete dirty[variable.name];
 									else dirty[variable.name] = next;
 								}}
-							/>
+								onclear={pending !== undefined ? () => delete dirty[variable.name] : undefined}
+							>
+								{#snippet trailing()}
+									{#if pending !== undefined}
+										<span class="text-accent-light"
+											>{pending === '' ? 'empty · unsaved' : 'unsaved'}</span
+										>
+									{:else if entry}
+										<span title="stored version">v{entry.version}</span>
+									{/if}
+								{/snippet}
+							</SecretInput>
 						</div>
-						<div class="flex w-36 flex-none items-center justify-end gap-1">
-							{#if pending === ''}
-								<span class="text-status-warning whitespace-nowrap text-md">will set empty</span>
-								<Button size="sm" variant="ghost" onclick={() => delete dirty[variable.name]}>
-									Keep
-								</Button>
-							{:else if pending === undefined && mayEdit}
-								<Button size="sm" variant="ghost" onclick={() => (dirty[variable.name] = '')}>
-									Set empty
-								</Button>
-								{#if entry}
-									<Button
-										size="sm"
-										variant="ghost"
-										onclick={() =>
-											unsetValue(variable.name, variable.required && !variable.hasDefault)}
-									>
-										Unset
-									</Button>
-								{/if}
-							{/if}
-						</div>
+						<Menu
+							label="Actions on {variable.name}"
+							align="end"
+							class="@max-2xl:col-start-2 @max-2xl:row-start-1"
+							triggerClass="flex size-7 cursor-pointer items-center justify-center rounded-[8px] text-text-tertiary transition-colors hover:bg-white/5 hover:text-text-primary disabled:cursor-default disabled:opacity-60"
+						>
+							{#snippet trigger()}
+								<Ellipsis size={15} />
+							{/snippet}
+							<MenuItem
+								disabled={!mayEdit || pending === ''}
+								title={mayEdit ? 'Stage an empty string as the value.' : editTitle}
+								onselect={() => (dirty[variable.name] = '')}
+							>
+								Set empty
+							</MenuItem>
+							<MenuItem
+								danger
+								disabled={!mayEdit || !entry}
+								title={!mayEdit
+									? editTitle
+									: entry
+										? 'Remove the stored value now.'
+										: 'Nothing is stored.'}
+								onselect={() =>
+									unsetValue(variable.name, variable.required && !variable.hasDefault)}
+							>
+								Unset
+							</MenuItem>
+						</Menu>
 					</div>
 				{/each}
 			</div>
@@ -227,7 +301,7 @@
 
 		{#if orphanedEntries.length > 0}
 			<Card class="p-5">
-				<div class="mb-3.5 flex items-baseline gap-2.5">
+				<div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 					<h3 class="text-text-primary text-xl font-semibold">No longer referenced</h3>
 					<span class="text-text-muted text-md">
 						stored but not referenced by the current draft; ignored by deployments

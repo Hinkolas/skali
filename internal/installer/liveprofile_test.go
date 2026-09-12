@@ -111,6 +111,7 @@ func TestLiveProfileHashStability(t *testing.T) {
 		AuthSecret:    "auth-secret-value",
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
+			ClusterName:     record.Cluster,
 			IngressHost:     record.Endpoints.API,
 			RegistryDomain:  record.Endpoints.Registry,
 			TokenKeyPEM:     "key-pem",

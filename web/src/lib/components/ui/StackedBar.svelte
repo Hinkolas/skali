@@ -12,10 +12,13 @@
 
 	let {
 		segments,
-		total
+		total,
+		class: className = 'h-1.5'
 	}: {
 		segments: StackedSegment[];
 		total: number;
+		/** Height (and any track overrides); the default is the dense table size. */
+		class?: string;
 	} = $props();
 
 	const shares = $derived.by(() => {
@@ -28,7 +31,7 @@
 	});
 </script>
 
-<div class="flex h-1.5 gap-px overflow-hidden rounded-full bg-white/6">
+<div class="flex gap-px overflow-hidden rounded-full bg-white/6 {className}">
 	{#each shares as segment (segment.label)}
 		<div class="h-full {segment.class}" style:width="{segment.pct}%" title={segment.label}></div>
 	{/each}

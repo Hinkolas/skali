@@ -242,6 +242,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		AuthSecret:    authSecret,
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
+			ClusterName:          record.Cluster,
 			IngressHost:          opts.Endpoints.API,
 			RegistryDomain:       opts.Endpoints.Registry,
 			S3Domain:             opts.Endpoints.S3,

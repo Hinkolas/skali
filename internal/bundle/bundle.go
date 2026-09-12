@@ -181,6 +181,10 @@ type Profile struct {
 // Production parameterizes the production-only parts of the bundle. Every
 // field except ACMEServer is required; Render validates before rendering.
 type Production struct {
+	// ClusterName is the operator-chosen name recorded at init (cluster in
+	// init.yaml, "production" by default). skalid reports it as the
+	// installation's display name.
+	ClusterName string
 	// IngressHost is the public api/ui domain (endpoints.api in
 	// init.yaml); it becomes the skalid ingress host and certificate
 	// subject.
@@ -932,6 +936,9 @@ spec:
 		// edge while artifact references stay on the internal name.
 		capabilitiesEnv = "\n            - name: SKALI_RESERVED_HOSTS\n              value: " + strings.Join([]string{production.IngressHost, production.RegistryDomain, production.S3Domain}, ";") + "\n            - name: SKALI_CAPABILITIES\n              value: " +
 			strings.Join(production.Capabilities, ";") +
+			// The recorded cluster name is the installation's display name
+			// (the console's breadcrumb root).
+			"\n            - name: SKALI_INSTANCE_NAME\n              value: " + production.ClusterName +
 			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
 			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
 			"\n            - name: SKALI_REGISTRY_NODE_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: node-secret"

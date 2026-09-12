@@ -5,6 +5,12 @@
 	// Card-wrapped data table: tracked uppercase header + caller-rendered rows.
 	// `grid` must be a literal grid-template class shared with the row markup,
 	// e.g. 'grid-cols-[1.4fr_1.6fr_1fr_1fr_1fr_0.9fr]'.
+	//
+	// Below the @2xl pane width the header is dropped: rows there leave the
+	// grid for wrapping flex rows (identity first, status and actions on the
+	// right, the remaining cells as one meta line beneath), so the column
+	// labels would sit above nothing. Every row markup carries both layouts
+	// through the same @max-2xl / @2xl variants.
 	let {
 		columns,
 		grid,
@@ -18,7 +24,7 @@
 
 <Card class="overflow-hidden">
 	<div
-		class="border-border-subtle text-text-ghost grid border-b px-4.5 py-2.5 text-xs font-semibold tracking-[0.12em] uppercase {grid}"
+		class="border-border-subtle text-text-ghost grid border-b px-4.5 py-2.5 text-xs font-semibold tracking-[0.12em] uppercase @max-2xl:hidden {grid}"
 	>
 		<!-- Keyed by position: header labels are positional and may repeat
 		     (e.g. two unlabeled spacer columns). -->

@@ -63,15 +63,17 @@
 	}
 </script>
 
-<Card class="p-5">
-	<div class="mb-4 flex items-center gap-2.5">
-		<h3 class="text-text-primary text-xl font-semibold">Internal connection</h3>
-		<span
-			class="font-mono text-status-success bg-status-success/10 rounded-full px-2 py-0.5 text-2xs"
-		>
-			private network
-		</span>
-		<div class="ml-auto">
+<Card class="flex flex-col p-5">
+	<div class="mb-4 flex items-center gap-3">
+		<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1">
+			<h3 class="text-text-primary text-xl font-semibold">Connection</h3>
+			<span
+				class="font-mono text-status-success bg-status-success/10 rounded-full px-2 py-0.5 text-2xs whitespace-nowrap"
+			>
+				private network
+			</span>
+		</div>
+		<div class="flex-none">
 			<Button
 				size="sm"
 				busy={revealing}
@@ -84,13 +86,10 @@
 		</div>
 	</div>
 	{#if connection?.host}
-		<div class="flex flex-col gap-2.25">
+		<div class="flex flex-1 flex-col gap-2.25">
 			<CopyField label="Host" value={connection.host} />
 			<CopyField label="Port" value={String(connection.port ?? '')} />
 			<CopyField label="Database" value={connection.database ?? ''} />
-			{#if connection.credential_version}
-				<CopyField label="Credential version" value="v{connection.credential_version}" />
-			{/if}
 		</div>
 	{:else}
 		<div
@@ -104,4 +103,15 @@
 			</div>
 		</div>
 	{/if}
+	<!-- Public access is a planned feature; until it exists the fact that the
+	     database is private is one line, not a card of its own. -->
+	<div class="border-border-subtle mt-4 flex items-center gap-2.5 border-t pt-3.5">
+		<span class="text-text-muted text-md">Public access</span>
+		<span class="font-mono text-text-faint text-sm"
+			>disabled · reachable only inside the cluster</span
+		>
+		<span class="ml-auto" title="Public database access is coming soon">
+			<Button size="sm" variant="ghost" disabled>Enable</Button>
+		</span>
+	</div>
 </Card>
