@@ -78,11 +78,11 @@ func newBackupRestoreCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("remote"), scope.remoteName, style.Dim("("+scope.api.Master()+")"))
-			fmt.Fprintf(out, "%s      %s\n", style.Dim("project"), scope.project.Name)
-			fmt.Fprintf(out, "%s     %s %s\n", style.Dim("snapshot"), snapshotID,
-				style.Dim(fmt.Sprintf("(%s, %s, %s)", snapshot.Environment, snapshotTime(snapshot), utils.FormatBytes(snapshot.Bytes))))
-			fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), targetEnvironment.Name)
+			printHeader(out, style,
+				headerRow{"remote", scope.remoteName, scope.api.Master()},
+				headerRow{"project", scope.project.Name, ""},
+				headerRow{"snapshot", snapshotID, fmt.Sprintf("%s, %s, %s", snapshot.Environment, snapshotTime(snapshot), utils.FormatBytes(snapshot.Bytes))},
+				headerRow{"environment", targetEnvironment.Name, ""})
 			if !yes {
 				if !cliprompt.Interactive() {
 					return errors.New("non-interactive use requires --yes")
@@ -269,9 +269,10 @@ func newBackupCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("remote"), target.remoteName, style.Dim("("+target.master+")"))
-			fmt.Fprintf(out, "%s      %s\n", style.Dim("project"), target.project)
-			fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), target.environment)
+			printHeader(out, style,
+				headerRow{"remote", target.remoteName, target.master},
+				headerRow{"project", target.project, ""},
+				headerRow{"environment", target.environment, ""})
 			if !yes {
 				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
 					Title:       fmt.Sprintf("Back up environment %s?", target.environment),

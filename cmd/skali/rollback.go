@@ -75,8 +75,7 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 		return fmt.Errorf("environment %s has no revisions", target.environment)
 	}
 
-	fmt.Fprintf(out, "%s  %s %s\n", style.Dim("environment"),
-		target.environment, style.Dim("("+target.remoteName+")"))
+	printHeader(out, style, headerRow{"environment", target.environment, target.remoteName})
 
 	var chosen *client.RevisionSummary
 	if opts.Revision != "" {

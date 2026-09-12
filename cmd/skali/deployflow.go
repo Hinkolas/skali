@@ -1234,11 +1234,9 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 	api := remoteClient(cfg, remote)
 
 	if opts.UseBinding {
-		fmt.Fprintf(out, "%s       %s %s\n", style.Dim("remote"), remoteName,
-			style.Dim("("+remote.Master+")"))
+		printHeader(out, style, headerRow{"remote", remoteName, remote.Master})
 	}
-	fmt.Fprintf(out, "%s      %s %s\n", style.Dim("project"),
-		projectName, style.Dim("("+filepath.Base(project.Path)+")"))
+	printHeader(out, style, headerRow{"project", projectName, filepath.Base(project.Path)})
 
 	// The bound environment is the default; --environment overrides it for
 	// one invocation without rewriting the binding.
@@ -1391,7 +1389,7 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 		}
 	}
 
-	fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), opts.Environment)
+	printHeader(out, style, headerRow{"environment", opts.Environment, ""})
 	return environment, nil
 }
 
