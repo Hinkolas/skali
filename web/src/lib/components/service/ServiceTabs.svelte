@@ -26,7 +26,7 @@
      sideways instead of clipping the last tabs. -->
 <nav
 	aria-label="Service"
-	class="border-border-default -mx-4 mb-6 flex items-center gap-1 overflow-x-auto border-b px-1 [scrollbar-width:none]"
+	class="border-border-default -mx-4 mb-6 flex items-center gap-1 overflow-x-auto overflow-y-hidden border-b px-1 [scrollbar-width:none]"
 >
 	{#each SERVICE_TABS[service.type] as tab (tab.slug)}
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
@@ -42,8 +42,7 @@
 			<Icon size={15} strokeWidth={1.75} class="flex-none opacity-90" />
 			{tab.label}
 			{#if active}
-				<span
-					class="absolute inset-x-3 -bottom-px h-0.5 rounded-full {underlineClass[service.type]}"
+				<span class="absolute inset-x-3 bottom-0 h-0.5 rounded-full {underlineClass[service.type]}"
 				></span>
 			{/if}
 		</a>
