@@ -168,3 +168,29 @@ export const OPERATION_PHASE_LABEL: Record<string, string> = {
 	complete: 'Complete',
 	failed: 'Failed'
 };
+
+/** The version most nodes report, or undefined when none reported one. */
+export function commonVersion(values: (string | undefined)[]): string | undefined {
+	const counts = new Map<string, number>();
+	for (const v of values) if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+	return [...counts.entries()].toSorted((a, b) => b[1] - a[1])[0]?.[0];
+}
+
+/**
+ * One line for a component across nodes: the version when they agree,
+ * "n on vA · m on vB" when they do not, plus how many never reported.
+ */
+export function tallyVersions(values: (string | undefined)[]): string {
+	const counts = new Map<string, number>();
+	let missing = 0;
+	for (const v of values) {
+		if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+		else missing++;
+	}
+	if (counts.size === 0) return 'not reported';
+	const parts = [...counts.entries()]
+		.toSorted((a, b) => b[1] - a[1])
+		.map(([v, n]) => (counts.size === 1 ? v : `${n} on ${v}`));
+	if (missing > 0) parts.push(`${missing} not reported`);
+	return parts.join(' · ');
+}
