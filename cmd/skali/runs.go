@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/utils"
 )
@@ -112,29 +115,75 @@ func newRunCommand() *cobra.Command {
 		},
 	}
 
+	var cancelYes bool
 	cancel := &cobra.Command{
 		Use:   "cancel <run-id>",
 		Short: "Cancel a run",
 		Long: "Cancels a pending or running run. A promoted but not yet activated\n" +
-			"deployment returns the target to the prior active revision.",
+			"deployment returns the target to the prior active revision. The run\n" +
+			"is shown and confirmed first; --yes skips the question.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			api, err := queryClient(remote)
-			if err != nil {
-				return err
-			}
-			fallback, err := api.CancelRun(command.Context(), args[0])
-			if err != nil {
-				return err
-			}
+			ctx := command.Context()
 			out := command.OutOrStdout()
-			fmt.Fprintf(out, "run %s cancelled\n", args[0])
+			style := clirender.StyleFor(out)
+			start, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			remoteName, _, api, err := resolveQueryRemote(start, remote)
+			if err != nil {
+				return err
+			}
+			tree, err := api.GetRun(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			run := tree.Run
+			switch run.Status {
+			case "succeeded", "failed", "cancelled":
+				return fmt.Errorf("run %s is already %s", run.ID, run.Status)
+			}
+			rows := []headerRow{
+				{"remote", remoteName, api.Master()},
+				{"run", run.ID, run.Kind},
+				{"status", run.Status, ""},
+			}
+			if run.EnvironmentID != nil {
+				if environment, err := api.GetEnvironment(ctx, *run.EnvironmentID); err == nil {
+					rows = append(rows, headerRow{"environment", environment.Name, ""})
+				}
+			}
+			printHeader(out, style, rows...)
+			if !cancelYes {
+				description := "The run stops at its current step."
+				if run.Kind == "deployment" {
+					description = "A promoted but not yet activated deployment returns the target to the prior active revision."
+				}
+				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title:       fmt.Sprintf("Cancel this %s run?", run.Kind),
+					Description: description,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
+			}
+			fallback, err := api.CancelRun(ctx, run.ID)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "run %s cancelled\n", run.ID)
 			if fallback {
 				fmt.Fprintln(out, "the target returned to the prior active revision")
 			}
 			return nil
 		},
 	}
+
+	cancel.Flags().BoolVar(&cancelYes, "yes", false, "skip the confirmation")
 
 	var stepKey string
 	logs := &cobra.Command{

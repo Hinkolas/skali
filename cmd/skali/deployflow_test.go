@@ -309,6 +309,7 @@ type fakeInstall struct {
 	envs     map[string][]client.Environment
 	backups  map[string][]client.BackupSnapshot
 	members  map[string][]client.Member
+	runs     map[string]client.Run
 	posts    []string
 	// reauthRequired makes every gated write answer reauth_required until
 	// the session reauthenticates once; reauths counts those calls.
@@ -324,6 +325,7 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 		envs:    map[string][]client.Environment{},
 		backups: map[string][]client.BackupSnapshot{},
 		members: map[string][]client.Member{},
+		runs:    map[string]client.Run{},
 	}
 	writeError := func(w http.ResponseWriter, status int, code, message string) {
 		w.WriteHeader(status)
@@ -439,6 +441,22 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"environments": envs})
 		}
+	})
+	mux.HandleFunc("/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		id := strings.TrimPrefix(r.URL.Path, "/v1/runs/")
+		if cancelled, ok := strings.CutSuffix(id, "/cancel"); ok {
+			f.posts = append(f.posts, "cancel:"+cancelled)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "cancelled", "fallback": true})
+			return
+		}
+		run, ok := f.runs[id]
+		if !ok {
+			writeError(w, http.StatusNotFound, "not_found", "not found")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(client.RunTree{Run: run, Steps: []client.Step{}})
 	})
 	mux.HandleFunc("/v1/environments/", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
