@@ -3,6 +3,7 @@
 	import MenuIcon from '@lucide/svelte/icons/menu';
 	import { setUser } from '$lib/stores/auth.svelte';
 	import { modal } from '$lib/stores/modal.svelte';
+	import ConsoleUpdated from '$lib/components/shell/ConsoleUpdated.svelte';
 	import Sidebar from '$lib/components/shell/Sidebar.svelte';
 	import Topbar from '$lib/components/shell/Topbar.svelte';
 	import SidePanel from '$lib/components/ui/SidePanel.svelte';
@@ -68,6 +69,7 @@
 				<main
 					class="@container min-w-0 flex-1 overflow-y-auto px-4 pt-4 [scrollbar-gutter:stable_both-edges] sm:pt-5.5"
 				>
+					<ConsoleUpdated />
 					{@render children()}
 				</main>
 			</div>
