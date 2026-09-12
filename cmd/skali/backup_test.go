@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -94,6 +95,43 @@ func TestBackupLsProjectFlagOutsideCheckout(t *testing.T) {
 	out := runBackupLs(t, "--project", "flowdemo")
 	require.Contains(t, out, testSnapshotProduction)
 	require.Contains(t, out, testSnapshotStaging)
+}
+
+func TestBackupCreateConfirmsWithSummary(t *testing.T) {
+	install := seedBackupScope(t)
+	create := func(stdin string, args ...string) (string, error) {
+		command := newBackupCreateCommand()
+		command.SetArgs(append([]string{"--detach"}, args...))
+		out := &bytes.Buffer{}
+		command.SetOut(out)
+		command.SetErr(out)
+		command.SetIn(strings.NewReader(stdin))
+		err := command.ExecuteContext(context.Background())
+		return out.String(), err
+	}
+
+	// The summary names what would be backed up; declining starts nothing.
+	out, err := create("n\n")
+	require.ErrorContains(t, err, "aborted")
+	require.Contains(t, out, "project      flowdemo")
+	require.Contains(t, out, "environment  production")
+	require.Contains(t, out, "Back up environment production? [Y/n]")
+	require.Empty(t, install.posts)
+
+	// Enter takes the default and starts the backup.
+	out, err = create("\n", "--environment", "staging")
+	require.NoError(t, err)
+	require.Contains(t, out, "environment  staging")
+	require.Contains(t, out, "back up staging")
+	require.Equal(t, []string{"backup:p1-e2"}, install.posts)
+
+	// Closed stdin without --yes points at the flag; --yes asks nothing.
+	_, err = create("")
+	require.ErrorContains(t, err, "non-interactive use requires --yes")
+	out, err = create("", "--yes")
+	require.NoError(t, err)
+	require.NotContains(t, out, "[Y/n]")
+	require.Len(t, install.posts, 2)
 }
 
 func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {

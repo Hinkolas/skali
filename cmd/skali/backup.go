@@ -175,6 +175,7 @@ func newBackupCreateCommand() *cobra.Command {
 		environment string
 		remote      string
 		detach      bool
+		yes         bool
 	)
 	command := &cobra.Command{
 		Use:   "create",
@@ -182,7 +183,9 @@ func newBackupCreateCommand() *cobra.Command {
 		Long: "Backs up every database, bucket, and application volume of the\n" +
 			"environment to the configured S3 target as one complete snapshot.\n" +
 			"Configuration and secret values are not included: a snapshot\n" +
-			"restores data into a redeployed environment.",
+			"restores data into a redeployed environment.\n\n" +
+			"The resolved remote, project, and environment are shown and\n" +
+			"confirmed before the snapshot starts; --yes skips the question.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			ctx := command.Context()
@@ -195,6 +198,22 @@ func newBackupCreateCommand() *cobra.Command {
 			target, err := resolveQueryTarget(ctx, start, environment, remote)
 			if err != nil {
 				return err
+			}
+			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("remote"), target.remoteName, style.Dim("("+target.master+")"))
+			fmt.Fprintf(out, "%s      %s\n", style.Dim("project"), target.project)
+			fmt.Fprintf(out, "%s  %s\n", style.Dim("environment"), target.environment)
+			if !yes {
+				confirmed, err := promptSession(out, bufio.NewReader(command.InOrStdin())).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title:       fmt.Sprintf("Back up environment %s?", target.environment),
+					Description: "Every database, bucket, and application volume is snapshotted to the backup target.",
+					Default:     true,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
 			}
 			result, err := target.api.CreateBackup(ctx, target.environmentID)
 			if err != nil {
@@ -228,6 +247,7 @@ func newBackupCreateCommand() *cobra.Command {
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().BoolVar(&detach, "detach", false, "start the backup and return without following it")
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
 }
 

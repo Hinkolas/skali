@@ -476,6 +476,9 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			_ = json.NewEncoder(w).Encode(map[string]any{"environment": env})
 		case sub == "":
 			_ = json.NewEncoder(w).Encode(map[string]any{"environment": env})
+		case sub == "backups" && r.Method == http.MethodPost:
+			f.posts = append(f.posts, "backup:"+env.ID)
+			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-backup-1", "backup_id": "snap-1"})
 		case sub == "access" && len(parts) == 3:
 			if !gate(w) {
 				return
