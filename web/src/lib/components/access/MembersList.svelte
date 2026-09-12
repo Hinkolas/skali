@@ -72,21 +72,23 @@
 			no members yet · instance admins see every project without membership
 		</div>
 	{:else}
-		<!-- Badge scale shared by the role and the explicit per-environment
-		     roles, so the row's right side reads as one family of states. -->
-		<div class="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,18rem)_auto_auto] items-center gap-x-4">
+		<!-- Flex rows, not a table: the identity gets the space first and the
+		     access badges plus button wrap under it when the row runs out of
+		     room, so a long name is the last thing to give. The role and the
+		     explicit per-environment roles share one badge scale. -->
+		<div class="flex flex-col">
 			{#each members as member (member.user_id)}
 				{@const isSelf = member.user_id === self?.id}
 				{@const explicit = overrides(member)}
 				<div
-					class="border-border-subtle col-span-full grid grid-cols-subgrid items-center border-b py-2.5 last:border-0"
+					class="border-border-subtle flex flex-wrap items-center gap-x-4 gap-y-2 border-b py-2.5 last:border-0"
 				>
 					<span
 						class="text-accent-nav grid size-7 flex-none place-items-center rounded-full bg-linear-135 from-[#37324e] to-[#232030] text-sm font-semibold"
 					>
 						{initials(member)}
 					</span>
-					<span class="flex min-w-0 flex-col">
+					<span class="flex min-w-48 flex-1 flex-col">
 						<span class="text-text-primary truncate text-md">
 							{member.name || member.email}
 							{#if isSelf}
@@ -97,35 +99,33 @@
 							<span class="text-text-faint font-mono truncate text-xs">{member.email}</span>
 						{/if}
 					</span>
-					<span class="flex flex-wrap justify-end gap-1.5">
-						{#each explicit as [env, role] (env)}
+					<span class="ml-auto flex items-center gap-3">
+						<span class="flex flex-wrap items-center justify-end gap-1.5">
+							{#each explicit as [env, role] (env)}
+								<span
+									class="font-mono inline-flex h-7 items-center rounded-full px-2.5 text-xs {role ===
+									'none'
+										? 'bg-status-warning/10 text-status-warning'
+										: 'bg-white/6 text-text-muted'}"
+									title="explicit role on {env}, ignores the ceiling"
+								>
+									{env}<span class="opacity-50">:</span>{role}
+								</span>
+							{/each}
 							<span
-								class="font-mono inline-flex h-7 items-center rounded-full px-2.5 text-xs {role ===
-								'none'
-									? 'bg-status-warning/10 text-status-warning'
-									: 'bg-white/6 text-text-muted'}"
-								title="explicit role on {env}, ignores the ceiling"
+								class="font-mono inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-md {member.instance_admin
+									? 'bg-accent/12 text-accent-light'
+									: 'bg-white/6 text-text-secondary'}"
+								title={member.instance_admin
+									? 'Instance admins are admin everywhere; the membership is informational.'
+									: ROLE_HINT[member.role]}
 							>
-								{env}<span class="opacity-50">:</span>{role}
+								{member.instance_admin ? 'admin' : member.role}
+								{#if member.instance_admin}
+									<span class="text-accent-light/60 text-xs">instance</span>
+								{/if}
 							</span>
-						{/each}
-					</span>
-					<span class="justify-self-end">
-						<span
-							class="font-mono inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-md {member.instance_admin
-								? 'bg-accent/12 text-accent-light'
-								: 'bg-white/6 text-text-secondary'}"
-							title={member.instance_admin
-								? 'Instance admins are admin everywhere; the membership is informational.'
-								: ROLE_HINT[member.role]}
-						>
-							{member.instance_admin ? 'admin' : member.role}
-							{#if member.instance_admin}
-								<span class="text-accent-light/60 text-xs">instance</span>
-							{/if}
 						</span>
-					</span>
-					<span class="justify-self-end">
 						<Button
 							size="icon"
 							variant="ghost"
