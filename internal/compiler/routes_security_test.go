@@ -49,4 +49,13 @@ applications:
 	_, err = ResolveRoutes(result.Definition, map[string]string{"A": "bad`host", "B": "example.com"})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "bad`host")
+	// The error locates the fault and names the value it resolved from
+	// without repeating the resolved text.
+	require.ErrorContains(t, err, "applications.web.routes.a.domain: must be an ASCII DNS hostname: character 4 is '`' (resolved from ${A})")
+	_, err = ResolveRoutes(result.Definition, map[string]string{"A": "b1.eplan.localhost\u00a0", "B": "example.com"})
+	require.ErrorContains(t, err, "character 19 is a non-breaking space (U+00A0) (resolved from ${A})")
+	require.NotContains(t, err.Error(), "eplan")
+	routes, err := ResolveRoutes(result.Definition, map[string]string{"A": "b1.eplan.localhost", "B": "example.com"})
+	require.NoError(t, err)
+	require.Equal(t, "b1.eplan.localhost", routes[0].Domain)
 }

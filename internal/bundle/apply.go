@@ -3,6 +3,7 @@ package bundle
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -43,11 +44,53 @@ func (a *Applier) timeout() time.Duration {
 func (a *Applier) ApplyObjects(ctx context.Context, objects []unstructured.Unstructured) error {
 	for index := range objects {
 		object := &objects[index]
-		if _, err := a.Client.ApplyAs(ctx, object, kube.FieldManagerInstaller, true); err != nil {
+		if err := a.applyObject(ctx, object); err != nil {
 			return fmt.Errorf("bundle: apply %s %s: %w", object.GetKind(), object.GetName(), err)
 		}
 	}
 	return nil
+}
+
+// applyObject server-side-applies one object. A Job's pod template is
+// immutable, so an upgrade that renders the bundle's job with a new image
+// (skali-bootstrap-user carries the skalid image) cannot be applied over
+// the finished job from the previous release: the API server rejects it
+// as invalid. The bundle's jobs are idempotent by contract, so the
+// finished job is deleted and the new one created in its place.
+func (a *Applier) applyObject(ctx context.Context, object *unstructured.Unstructured) error {
+	_, err := a.Client.ApplyAs(ctx, object, kube.FieldManagerInstaller, true)
+	if err == nil || !jobTemplateConflict(object, err) {
+		return err
+	}
+	if err := a.deleteJob(ctx, object.GetNamespace(), object.GetName()); err != nil {
+		return err
+	}
+	_, err = a.Client.ApplyAs(ctx, object, kube.FieldManagerInstaller, true)
+	return err
+}
+
+// jobTemplateConflict recognizes the API server refusing a changed pod
+// template on an existing Job.
+func jobTemplateConflict(object *unstructured.Unstructured, err error) bool {
+	return object.GetKind() == "Job" && errors.IsInvalid(err) &&
+		strings.Contains(err.Error(), "field is immutable")
+}
+
+// deleteJob removes a job and its pods and waits until the name is free
+// again; a job that is already gone is fine.
+func (a *Applier) deleteJob(ctx context.Context, namespace, name string) error {
+	propagation := metav1.DeletePropagationBackground
+	jobs := a.Client.Clientset.BatchV1().Jobs(namespace)
+	if err := jobs.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("replace job: %w", err)
+	}
+	return a.wait(ctx, "job "+name+" removal", func(ctx context.Context) (bool, error) {
+		_, err := jobs.Get(ctx, name, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, err
+	})
 }
 
 // ApplyObjectsRetry applies like ApplyObjects but retries the whole set

@@ -289,6 +289,40 @@ func (e Expression) HasProjectVariables() bool {
 	return false
 }
 
+// HasReferences reports whether any part resolves from outside the
+// manifest text: a project value or a service output.
+func (e Expression) HasReferences() bool {
+	for _, part := range e.Parts {
+		if part.Kind != "literal" {
+			return true
+		}
+	}
+	return false
+}
+
+// Source reconstructs the manifest spelling of the expression: literal
+// text with ${NAME}, ${NAME:-default}, and {{collection.key.output}}
+// tokens. It names references, never their resolved values, so it is safe
+// to quote in an error.
+func (e Expression) Source() string {
+	var result strings.Builder
+	for _, part := range e.Parts {
+		switch part.Kind {
+		case "project_variable":
+			if part.HasDefault {
+				fmt.Fprintf(&result, "${%s:-%s}", part.Name, part.Default)
+			} else {
+				fmt.Fprintf(&result, "${%s}", part.Name)
+			}
+		case "service_output":
+			fmt.Fprintf(&result, "{{%s.%s.%s}}", part.Collection, part.Service, part.Output)
+		default:
+			result.WriteString(part.Value)
+		}
+	}
+	return result.String()
+}
+
 // Literal returns the concatenated literal text of a pure-literal
 // expression. Reference parts contribute nothing.
 func (e Expression) Literal() string {

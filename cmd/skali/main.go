@@ -47,9 +47,23 @@ func newRootCommand() *cobra.Command {
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
 		newDevCommand(), newRunCommand(), newLogsCommand(), newExecCommand(),
 		newValuesCommand(), newBackupCommand(), newEnvCommand(), newAccessCommand(),
-		newClusterCommand(), newSkillCommand(), newUpgradeCommand(), newCompletionCommand())
+		newClusterCommand(), newSkillCommand(), newUpgradeCommand(), newVersionCommand(), newCompletionCommand())
 	registerCompletions(root)
 	return root
+}
+
+// newVersionCommand prints the CLI version; the same text as --version,
+// reachable as the verb people try first when filing a report.
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the CLI version",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(command.OutOrStdout(), "%s version %s\n", command.Root().Name(), versionpkg.Version)
+			return err
+		},
+	}
 }
 
 func main() {
