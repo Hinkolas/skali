@@ -2,7 +2,6 @@
 	import type { ApplicationView } from '$lib/models/service';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { HEALTH_META } from '$lib/service-types';
-	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
 	import PodList from './PodList.svelte';
@@ -44,11 +43,6 @@
 		<span class="flex items-center gap-1.5 text-md {meta.text}">
 			<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
 		</span>
-		<div class="ml-auto flex gap-2">
-			<span title="Shell access is coming soon">
-				<Button size="sm" disabled>Shell</Button>
-			</span>
-		</div>
 	</div>
 	<div class="flex flex-col">
 		<KeyValueRow k="Source" v={source} />
