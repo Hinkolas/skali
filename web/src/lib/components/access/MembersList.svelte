@@ -90,11 +90,7 @@
 						<span class="text-text-primary truncate text-md">
 							{member.name || member.email}
 							{#if isSelf}
-								<span
-									class="font-mono bg-white/6 text-text-muted ml-1 rounded-full px-1.5 text-2xs"
-								>
-									you
-								</span>
+								<span class="text-text-faint">(you)</span>
 							{/if}
 						</span>
 						{#if member.name}
