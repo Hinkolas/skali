@@ -134,10 +134,14 @@ func stepLines(step *client.Step, depth int, logs func(stepID string) []string, 
 			// Structured checkpoint messages contain several lines. Split
 			// before truncating and counting terminal rows for repaint.
 			for _, text := range strings.Split(entry, "\n") {
-				if view.width > 0 {
-					text = Truncate(text, view.width-len(tailIndent)-1)
+				if room := view.width - len(tailIndent) - 1; view.width > 0 && room > 1 {
+					text = ansi.Truncate(text, room, "…")
 				}
-				lines = append(lines, tailIndent+view.style.Dim(text))
+				// Compact rows arrive styled; plain detail rows are dimmed.
+				if !strings.Contains(text, "\x1b[") {
+					text = view.style.Dim(text)
+				}
+				lines = append(lines, tailIndent+text)
 			}
 		}
 	}

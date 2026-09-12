@@ -365,8 +365,8 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// environment has nothing to fall back to and keeps its
 			// target, where level-triggered reconciliation continues and a
 			// late recovery still activates.
-			attachment.completeStep(ctx, "verify", "Verify health", journal.StepFailed,
-				healthSummary(statuses))
+			attachment.completeStepFields(ctx, "verify", "Verify health", journal.StepFailed,
+				[]string{strings.Join(healthSummary(statuses), "\n")}, healthFields(statuses))
 			attachment.finish(ctx, journal.RunFailed)
 			rows, err := k.deps.Deploy.FallbackTargetLocked(ctx, store.FallbackEnvironmentTargetParams{
 				EnvironmentID:    environmentID,
@@ -387,8 +387,8 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// leaving the queue until the audit.
 			return soonest(requeueHealthCheck, retireRequeue), nil
 		}
-		attachment.waitStep(ctx, "verify", "Verify health",
-			strings.Join(healthSummary(statuses), "\n"))
+		attachment.waitStepFields(ctx, "verify", "Verify health",
+			strings.Join(healthSummary(statuses), "\n"), healthFields(statuses))
 	}
 	return soonest(requeueHealthCheck, retireRequeue), nil
 }
@@ -861,6 +861,30 @@ func healthSummary(statuses []ServiceStatus) []string {
 	}
 	sort.Strings(lines)
 	return lines
+}
+
+// healthFields is the structured twin of healthSummary: one record per
+// service so clients can render the snapshot as a status list instead of
+// parsing the readable lines. The certificate diagnostics point at the TLS
+// checkpoint like the summary does.
+func healthFields(statuses []ServiceStatus) map[string]any {
+	services := make([]map[string]any, 0, len(statuses))
+	for _, status := range statuses {
+		record := map[string]any{"key": status.Key, "type": status.Type, "health": string(status.Health)}
+		if len(status.Diagnostics) > 0 {
+			diagnostic := status.Diagnostics[0]
+			record["code"] = diagnostic.Code
+			record["severity"] = diagnostic.Severity
+			if strings.HasPrefix(diagnostic.Code, "certificate-") {
+				record["message"] = "waiting for the TLS certificate"
+			} else {
+				record["message"] = diagnostic.Message
+			}
+		}
+		services = append(services, record)
+	}
+	sort.Slice(services, func(i, j int) bool { return services[i]["key"].(string) < services[j]["key"].(string) })
+	return map[string]any{"health": true, "services": services}
 }
 
 func describeObject(obj runtime.Object) string {

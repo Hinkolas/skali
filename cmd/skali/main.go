@@ -22,6 +22,10 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
+// verboseTranscript is the --verbose switch: live step tails show the
+// server's full detail instead of the compact status rows.
+var verboseTranscript bool
+
 // newRootCommand assembles the whole CLI surface.
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
@@ -31,6 +35,9 @@ func newRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+
+	root.PersistentFlags().BoolVar(&verboseTranscript, "verbose", false,
+		"show every recorded detail under live steps (TLS issuance fields, health snapshots) instead of the compact status rows")
 
 	root.AddCommand(newRemoteCommand(), newValidateCommand(), newCompileCommand(),
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),

@@ -1015,11 +1015,12 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 	defer stop()
 
 	tty := clirender.IsTerminal(os.Stdout)
-	tails := &stepLogTails{api: api, lines: map[string][]string{}}
+	style := clirender.StyleFor(out)
+	tails := &stepLogTails{api: api, style: style, verbose: verboseTranscript, lines: map[string][]string{}}
 	renderer := &clirender.Renderer{
 		Out:   out,
 		TTY:   tty,
-		Style: clirender.StyleFor(out),
+		Style: style,
 		Logs:  tails.get,
 	}
 
@@ -1076,8 +1077,10 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 // poll, for all tail-worthy steps at once; fetching per frame used to block
 // the animation on a network round trip per step.
 type stepLogTails struct {
-	api   *client.Client
-	lines map[string][]string
+	api     *client.Client
+	style   *clirender.Style
+	verbose bool
+	lines   map[string][]string
 }
 
 func (t *stepLogTails) get(stepID string) []string { return t.lines[stepID] }
@@ -1114,10 +1117,13 @@ func (t *stepLogTails) fetch(ctx context.Context, stepID string) ([]string, bool
 	if len(logs) == 0 {
 		return nil, true
 	}
-	if logs[len(logs)-1].Fields["tls"] == true {
+	last := logs[len(logs)-1]
+	switch {
+	case last.Fields["tls"] == true:
 		// A TLS checkpoint is a series of complete snapshots. Reach its
-		// latest page, then show current state rather than three
-		// superseded snapshots. The full history remains in run logs.
+		// latest page, then show the attempt history compactly, or the
+		// current snapshot's every field in verbose mode. The full history
+		// remains in run logs.
 		for len(logs) == 500 && cursor != "" {
 			page, next, err := t.api.StepLogs(ctx, stepID, cursor, 0)
 			if err != nil || len(page) == 0 {
@@ -1125,7 +1131,13 @@ func (t *stepLogTails) fetch(ctx context.Context, stepID string) ([]string, bool
 			}
 			logs, cursor = page, next
 		}
-		return clirender.CertificateLogLines(logs[len(logs)-1], time.Now()), true
+		if t.verbose {
+			return clirender.CertificateDetailLines(logs[len(logs)-1], time.Now()), true
+		}
+		return clirender.CertificateLines(logs, time.Now(), t.style), true
+	case last.Fields["health"] == true && !t.verbose:
+		// Health snapshots supersede each other: only the latest matters.
+		return clirender.HealthLines(last, t.style), true
 	}
 	tail := logs
 	if len(tail) > 3 {
