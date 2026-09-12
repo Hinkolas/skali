@@ -50,7 +50,8 @@ func newBackupRestoreCommand() *cobra.Command {
 			"unless --environment names another environment of the same project.\n" +
 			"The resolved remote, project, snapshot, and environment are shown\n" +
 			"and confirmed by typing the environment name; --yes skips that.",
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeSnapshotArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
 			out := command.OutOrStdout()

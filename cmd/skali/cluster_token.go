@@ -256,9 +256,10 @@ func newClusterTokenListCommand() *cobra.Command {
 
 func newClusterTokenRevokeCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "revoke <id>",
-		Short: "Revoke an unused reconciled-cluster invitation",
-		Args:  cobra.ExactArgs(1),
+		Use:               "revoke <id>",
+		ValidArgsFunction: cobra.NoFileCompletions,
+		Short:             "Revoke an unused reconciled-cluster invitation",
+		Args:              cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {

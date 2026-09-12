@@ -33,8 +33,9 @@ func newDevRunCommand() *cobra.Command {
 			"<app> those of one application. For a shell inside the running\n" +
 			"container, see skali dev exec; skali run manages journal runs, not\n" +
 			"project commands.",
-		Args: cobra.ArbitraryArgs,
-		RunE: runDevRun,
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeDevRunArgs,
+		RunE:              runDevRun,
 	}
 }
 

@@ -20,9 +20,10 @@ func newClusterJoinCommand() *cobra.Command {
 	var capabilities []string
 	var assumeYes bool
 	command := &cobra.Command{
-		Use:   "join [coordinator]",
-		Short: "Join this host to an existing cluster",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "join [coordinator]",
+		Short:             "Join this host to an existing cluster",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
 			out := os.Stdout

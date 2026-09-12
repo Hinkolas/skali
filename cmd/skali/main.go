@@ -35,6 +35,10 @@ func newRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// The completion group below replaces cobra's stock one so it can also
+	// install the script.
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.PersistentPreRun = recordCompletionLine
 
 	root.PersistentFlags().BoolVar(&verboseTranscript, "verbose", false,
 		"show every recorded detail under live steps (TLS issuance fields, health snapshots) instead of the compact status rows")
@@ -43,7 +47,8 @@ func newRootCommand() *cobra.Command {
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
 		newDevCommand(), newRunCommand(), newLogsCommand(), newExecCommand(),
 		newValuesCommand(), newBackupCommand(), newEnvCommand(), newAccessCommand(),
-		newClusterCommand(), newSkillCommand(), newUpgradeCommand())
+		newClusterCommand(), newSkillCommand(), newUpgradeCommand(), newCompletionCommand())
+	registerCompletions(root)
 	return root
 }
 

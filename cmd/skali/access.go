@@ -191,7 +191,8 @@ func newAccessSetCommand() *cobra.Command {
 			"admin), adding them as a member when needed. With --environment sets an\n" +
 			"explicit role on that environment only (none locks it for them); the user\n" +
 			"must already be a member. <user> is an email address or a user id.",
-		Args: cobra.ExactArgs(2),
+		Args:              cobra.ExactArgs(2),
+		ValidArgsFunction: completeAccessSetArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
 			out := command.OutOrStdout()
@@ -255,7 +256,8 @@ func newAccessRmCommand() *cobra.Command {
 			"per-environment roles go with it and the project disappears for them.\n" +
 			"With --environment drops only the explicit role there, so their project\n" +
 			"role applies again.",
-		Args: cobra.ExactArgs(1),
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeMemberArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
 			out := command.OutOrStdout()

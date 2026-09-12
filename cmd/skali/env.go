@@ -99,8 +99,9 @@ func newEnvCreateCommand() *cobra.Command {
 	var project, remote, priority string
 	var yes bool
 	command := &cobra.Command{
-		Use:   "create <name>",
-		Short: "Create an environment",
+		Use:               "create <name>",
+		ValidArgsFunction: cobra.NoFileCompletions,
+		Short:             "Create an environment",
 		Long: "Creates an environment in the project; you become its admin. Priority high\n" +
 			"(instance admins only) marks an environment that keeps running when\n" +
 			"resources are tight; it starts with a read ceiling for inheriting members.",
@@ -346,9 +347,10 @@ func newEnvRmCommand() *cobra.Command {
 	var project, remote string
 	var yes bool
 	command := &cobra.Command{
-		Use:     "remove <name>",
-		Aliases: []string{"rm"},
-		Short:   "Purge an environment: its workloads, volumes, values, revisions, and history",
+		Use:               "remove <name>",
+		Aliases:           []string{"rm"},
+		Short:             "Purge an environment: its workloads, volumes, values, revisions, and history",
+		ValidArgsFunction: completeEnvironmentArg,
 		Long: "Tears the environment down with purge: the namespace with its volumes goes,\n" +
 			"and the environment is deleted with all values, revisions, and history. This\n" +
 			"is one-way. Environment admin and a recent login are required.",

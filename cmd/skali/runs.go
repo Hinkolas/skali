@@ -74,9 +74,10 @@ func newRunCommand() *cobra.Command {
 	command.AddCommand(list)
 
 	show := &cobra.Command{
-		Use:   "show <run-id>",
-		Short: "Print a run's step tree",
-		Args:  cobra.ExactArgs(1),
+		Use:               "show <run-id>",
+		Short:             "Print a run's step tree",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeRunIDArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			api, err := queryClient(remote)
 			if err != nil {
@@ -96,8 +97,9 @@ func newRunCommand() *cobra.Command {
 	}
 
 	attach := &cobra.Command{
-		Use:   "attach <run-id>",
-		Short: "Attach the terminal to a run until it settles",
+		Use:               "attach <run-id>",
+		Short:             "Attach the terminal to a run until it settles",
+		ValidArgsFunction: completeRunIDArg,
 		Long: "Renders the run's step tree live until it ends. d detaches and\n" +
 			"leaves the run running; Ctrl-C pressed twice cancels it.",
 		Args: cobra.ExactArgs(1),
@@ -119,8 +121,9 @@ func newRunCommand() *cobra.Command {
 
 	var cancelYes bool
 	cancel := &cobra.Command{
-		Use:   "cancel <run-id>",
-		Short: "Cancel a run",
+		Use:               "cancel <run-id>",
+		Short:             "Cancel a run",
+		ValidArgsFunction: completeRunIDArg,
 		Long: "Cancels a pending or running run. A promoted but not yet activated\n" +
 			"deployment returns the target to the prior active revision. The run\n" +
 			"is shown and confirmed first; --yes skips the question.",
@@ -189,9 +192,10 @@ func newRunCommand() *cobra.Command {
 
 	var stepKey string
 	logs := &cobra.Command{
-		Use:   "logs <run-id>",
-		Short: "Print the logs of one step",
-		Args:  cobra.ExactArgs(1),
+		Use:               "logs <run-id>",
+		Short:             "Print the logs of one step",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeRunIDArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			api, err := queryClient(remote)
 			if err != nil {
@@ -226,9 +230,10 @@ func newRunCommand() *cobra.Command {
 func newLogsCommand() *cobra.Command {
 	var environment, service, remote string
 	command := &cobra.Command{
-		Use:   "logs [service]",
-		Short: "Stream live application logs",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "logs [service]",
+		Short:             "Stream live application logs",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeServiceArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			if len(args) == 1 {
 				service = args[0]

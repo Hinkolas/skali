@@ -31,9 +31,10 @@ func newClusterNodeCommand() *cobra.Command {
 
 func newClusterNodeCapabilitiesCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "capabilities <node> <capability>...",
-		Short: "Stage a node capability set",
-		Args:  cobra.MinimumNArgs(2),
+		Use:               "capabilities <node> <capability>...",
+		Short:             "Stage a node capability set",
+		Args:              cobra.MinimumNArgs(2),
+		ValidArgsFunction: completeNodeCapabilities,
 		RunE: func(command *cobra.Command, args []string) error {
 			capabilities := append([]string(nil), args[1:]...)
 			slices.Sort(capabilities)
@@ -74,10 +75,11 @@ func newClusterNodeCapabilitiesCommand() *cobra.Command {
 
 func newClusterNodeRemoveCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:     "remove <node>",
-		Aliases: []string{"rm"},
-		Short:   "Stage a managed node for drain and removal",
-		Args:    cobra.ExactArgs(1),
+		Use:               "remove <node>",
+		ValidArgsFunction: cobra.NoFileCompletions,
+		Aliases:           []string{"rm"},
+		Short:             "Stage a managed node for drain and removal",
+		Args:              cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
@@ -107,9 +109,10 @@ func newClusterNodeRemoveCommand() *cobra.Command {
 
 func newClusterNodeRestoreCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "restore <node>",
-		Short: "Cancel a staged node removal",
-		Args:  cobra.ExactArgs(1),
+		Use:               "restore <node>",
+		ValidArgsFunction: cobra.NoFileCompletions,
+		Short:             "Cancel a staged node removal",
+		Args:              cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
@@ -145,9 +148,10 @@ func newClusterNodeRestoreCommand() *cobra.Command {
 func newClusterNodeForgetCommand() *cobra.Command {
 	var force bool
 	command := &cobra.Command{
-		Use:   "forget <node>",
-		Short: "Finalize an unreachable removed host without local cleanup",
-		Args:  cobra.ExactArgs(1),
+		Use:               "forget <node>",
+		ValidArgsFunction: cobra.NoFileCompletions,
+		Short:             "Finalize an unreachable removed host without local cleanup",
+		Args:              cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			if !force {
 				return errors.New("forgetting an unreachable host requires --force")

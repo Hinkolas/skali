@@ -37,8 +37,9 @@ func newRemoteAddCommand() *cobra.Command {
 	var email string
 	var noBrowser bool
 	command := &cobra.Command{
-		Use:   "add <name> <host-or-url>",
-		Short: "Add a remote and log in to it",
+		Use:               "add <name> <host-or-url>",
+		ValidArgsFunction: cobra.NoFileCompletions,
+		Short:             "Add a remote and log in to it",
 		Long: "Add a named remote for a skali master and perform the initial login,\n" +
 			"like skali remote add example https://skali.example.com. A bare hostname\n" +
 			"tries https then http and targets the cluster's /api path\n" +
@@ -120,7 +121,8 @@ func newRemoteLoginCommand() *cobra.Command {
 			"In a terminal the login opens the web console in your browser and waits\n" +
 			"for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and\n" +
 			"non-interactive runs ask for email and password on the terminal instead.",
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeRemoteArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			out := command.OutOrStdout()
 			cfg, err := cliconfig.Load()
@@ -190,9 +192,10 @@ func newRemoteLoginCommand() *cobra.Command {
 
 func newRemoteLogoutCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "logout [name]",
-		Short: "Revoke a remote's session and forget its token",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "logout [name]",
+		Short:             "Revoke a remote's session and forget its token",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeRemoteArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			out := command.OutOrStdout()
 			cfg, err := cliconfig.Load()
@@ -281,9 +284,10 @@ func runRemoteList(command *cobra.Command, args []string) error {
 
 func newRemoteUseCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "use <name>",
-		Short: "Switch the current remote",
-		Args:  cobra.ExactArgs(1),
+		Use:               "use <name>",
+		Short:             "Switch the current remote",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeRemoteArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			out := command.OutOrStdout()
 			cfg, err := cliconfig.Load()
@@ -402,10 +406,11 @@ func newRemoteTokenCommand() *cobra.Command {
 
 func newRemoteRemoveCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:     "remove <name>",
-		Aliases: []string{"rm"},
-		Short:   "Remove a remote and revoke its session",
-		Args:    cobra.ExactArgs(1),
+		Use:               "remove <name>",
+		Aliases:           []string{"rm"},
+		Short:             "Remove a remote and revoke its session",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeRemoteArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			out := command.OutOrStdout()
 			name := args[0]

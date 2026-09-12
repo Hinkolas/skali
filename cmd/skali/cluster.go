@@ -24,9 +24,9 @@ func newClusterCommand() *cobra.Command {
 	cluster := &cobra.Command{
 		Use:   "cluster",
 		Short: "Install, maintain, and recover a Skali cluster",
-		// The nearest PersistentPreRun wins in cobra and the skali root has
-		// none, so this fires for every cluster subcommand and never for
-		// the developer-workflow commands.
+		// The nearest PersistentPreRun wins in cobra, so this fires for
+		// every cluster subcommand and never for the developer-workflow
+		// commands; the root's own hook only records completion requests.
 		PersistentPreRun: func(command *cobra.Command, args []string) {
 			useManagedLima()
 		},

@@ -285,9 +285,10 @@ func newDevCommand() *cobra.Command {
 	}
 
 	logs := &cobra.Command{
-		Use:   "logs [service]",
-		Short: "Stream the local project's runtime logs",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "logs [service]",
+		Short:             "Stream the local project's runtime logs",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeServiceArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			service := ""
 			if len(args) == 1 {
