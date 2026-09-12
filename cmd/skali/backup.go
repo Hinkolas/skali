@@ -38,7 +38,7 @@ func newBackupRestoreCommand() *cobra.Command {
 		yes         bool
 	)
 	command := &cobra.Command{
-		Use:   "restore SNAPSHOT-ID",
+		Use:   "restore <snapshot-id>",
 		Short: "Restore a snapshot's data into an environment",
 		Long: "Stops the environment, replaces every matching database, bucket,\n" +
 			"and volume with the snapshot's data, then resumes the current\n" +
@@ -135,7 +135,7 @@ func findSnapshot(ctx context.Context, scope *queryProject, snapshotID string) (
 			return &snapshots[i], nil
 		}
 	}
-	return nil, fmt.Errorf("no snapshot %s in project %s on %s; see skali backup ls",
+	return nil, fmt.Errorf("no snapshot %s in project %s on %s; see skali backup list",
 		snapshotID, scope.project.Name, scope.api.Master())
 }
 
@@ -232,8 +232,9 @@ func newBackupCreateCommand() *cobra.Command {
 func newBackupLsCommand() *cobra.Command {
 	var environment, remote string
 	command := &cobra.Command{
-		Use:   "ls",
-		Short: "List the project's snapshots on the backup target",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List the project's snapshots on the backup target",
 		Long: "Lists the snapshots of every environment of the project, newest\n" +
 			"first, as the backup target holds them; --environment narrows the\n" +
 			"list to one environment. Snapshots of environments that no longer\n" +

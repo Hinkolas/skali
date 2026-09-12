@@ -31,9 +31,10 @@ func newRunCommand() *cobra.Command {
 
 	var environment string
 	list := &cobra.Command{
-		Use:   "list",
-		Short: "List the environment's runs",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List the environment's runs",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			start, err := os.Getwd()
 			if err != nil {

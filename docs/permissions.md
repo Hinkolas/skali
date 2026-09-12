@@ -451,20 +451,20 @@ API first; then CLI and console, both thin over the same routes.
 CLI (settled 2026-08-19): one ladder, one verb set, the level picked by
 `--environment`:
 
-- `skali access ls` prints the grid (members as rows, environments as
+- `skali access list` prints the grid (members as rows, environments as
   columns, `*` marks an explicit per-environment role, `-` an environment
   the caller may not read, `(locked)` in its header).
 - `skali access set <user> <role> [--environment ENV]` sets the project
   role (read..admin; adds the membership) or, with `--environment`, the
   explicit role on that environment (none..admin; the user must already be
   a member, the 409 prints the hint). `<user>` is an email or a user id.
-- `skali access rm <user> [--environment ENV]` removes the membership
+- `skali access remove <user> [--environment ENV]` removes the membership
   (confirmed, `--yes` to skip; the cells go with it) or only the explicit
   role on one environment.
-- `skali env ls|create|set|rm`: `ls` shows access, priority, policy,
+- `skali env list|create|set|remove`: `list` shows access, priority, policy,
   ceiling, creation time (locked rows show `locked`); `create <name>
   [--priority high]`; `set [--environment ENV] --max-role --deploy-policy
-  --promote-from a,b|any --priority`; `rm <name>` is the purge teardown
+  --promote-from a,b|any --priority`; `remove <name>` is the purge teardown
   behind a red banner and confirmation (the raw DELETE leaves cluster state
   orphaned and has no command).
 - All take `--project` (default: the checkout's binding or manifest) and

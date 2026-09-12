@@ -37,7 +37,7 @@ func newRemoteAddCmd() *cobra.Command {
 	var email string
 	var noBrowser bool
 	cmd := &cobra.Command{
-		Use:   "add <name> <host or url>",
+		Use:   "add <name> <host-or-url>",
 		Short: "Add a remote and log in to it",
 		Long: `Add a named remote for a skali master and perform the initial login,
 like "skali remote add example https://skali.example.com". A bare hostname
@@ -237,10 +237,11 @@ func newRemoteLogoutCmd() *cobra.Command {
 
 func newRemoteListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List remotes",
-		Args:  cobra.NoArgs,
-		RunE:  runRemoteList,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List remotes",
+		Args:    cobra.NoArgs,
+		RunE:    runRemoteList,
 	}
 }
 
@@ -396,9 +397,10 @@ func newRemoteTokenCmd() *cobra.Command {
 
 func newRemoteRemoveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove <name>",
-		Short: "Remove a remote and revoke its session",
-		Args:  cobra.ExactArgs(1),
+		Use:     "remove <name>",
+		Aliases: []string{"rm"},
+		Short:   "Remove a remote and revoke its session",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if name == localRemoteName {

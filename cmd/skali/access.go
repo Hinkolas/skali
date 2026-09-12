@@ -81,9 +81,10 @@ func addAccessScopeFlags(command *cobra.Command, project, remote *string) {
 func newAccessLsCommand() *cobra.Command {
 	var project, remote string
 	command := &cobra.Command{
-		Use:   "ls",
-		Short: "Show members and their effective role on every environment",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "Show members and their effective role on every environment",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			ctx := command.Context()
 			scope, err := resolveAccessScope(ctx, project, "", remote)
@@ -198,7 +199,7 @@ func newAccessSetCommand() *cobra.Command {
 			user, role := args[0], args[1]
 			if environment == "" {
 				if role == "none" {
-					return errors.New("none is not a project role: lock one environment with --environment, or remove the membership with skali access rm")
+					return errors.New("none is not a project role: lock one environment with --environment, or remove the membership with skali access remove")
 				}
 				if !slices.Contains(projectRoles, role) {
 					return fmt.Errorf("role must be one of %s", strings.Join(projectRoles, ", "))
@@ -247,8 +248,9 @@ func newAccessRmCommand() *cobra.Command {
 	var project, environment, remote string
 	var yes bool
 	command := &cobra.Command{
-		Use:   "rm <user>",
-		Short: "Remove a member, or drop their explicit role on one environment",
+		Use:     "remove <user>",
+		Aliases: []string{"rm"},
+		Short:   "Remove a member, or drop their explicit role on one environment",
 		Long: "Without --environment removes the membership; the user's explicit\n" +
 			"per-environment roles go with it and the project disappears for them.\n" +
 			"With --environment drops only the explicit role there, so their project\n" +

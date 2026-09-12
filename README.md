@@ -94,7 +94,7 @@ skali dev
 deploys it, and follows its logs. The example is then served at
 `http://hello-world.localhost:8080`. Ctrl-C pauses the project (data is kept),
 `skali dev` brings it back, `skali dev -d` keeps it running in the
-background. `skali dev ls`, `skali dev status`, `skali dev exec`, and
+background. `skali dev list`, `skali dev status`, `skali dev exec`, and
 `skali dev reset` do what they say; reset is the only destructive one and
 asks first.
 

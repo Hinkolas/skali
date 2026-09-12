@@ -21,7 +21,7 @@ namespaces. Consequences:
 
 - Renaming a volume key is a removal plus a creation: the new volume
   starts empty and the old one stays behind as above.
-- `skali env rm` (a purge) is the one path that removes everything: the
+- `skali env remove` (a purge) is the one path that removes everything: the
   namespace goes with every volume in it.
 
 Declared sizes are only enforced on the `longhorn` driver; on `local` the
@@ -53,7 +53,7 @@ is ready. Consequences:
 A project is deleted only once it has no environments: the API refuses
 otherwise (409), because environment records are released by the
 reconciler after a purge confirms the namespace is gone, and deleting them
-any other way would orphan running workloads. Run `skali env rm <name>` for
+any other way would orphan running workloads. Run `skali env remove <name>` for
 each environment, then delete the project. A namespace that was orphaned
 before this guard existed can only be removed by hand
 (`kubectl delete namespace skali-<project>-<environment>`); skalid logs

@@ -31,7 +31,7 @@ func newClusterNodeCmd() *cobra.Command {
 
 func newClusterNodeCapabilitiesCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "capabilities NODE CAPABILITY...",
+		Use:   "capabilities <node> <capability>...",
 		Short: "Stage a node capability set",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -74,9 +74,10 @@ func newClusterNodeCapabilitiesCmd() *cobra.Command {
 
 func newClusterNodeRemoveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove NODE",
-		Short: "Stage a managed node for drain and removal",
-		Args:  cobra.ExactArgs(1),
+		Use:     "remove <node>",
+		Aliases: []string{"rm"},
+		Short:   "Stage a managed node for drain and removal",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, _, err := reconciledClusterStore(cmd.Context())
 			if err != nil {
@@ -106,7 +107,7 @@ func newClusterNodeRemoveCmd() *cobra.Command {
 
 func newClusterNodeRestoreCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "restore NODE",
+		Use:   "restore <node>",
 		Short: "Cancel a staged node removal",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -144,7 +145,7 @@ func newClusterNodeRestoreCmd() *cobra.Command {
 func newClusterNodeForgetCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "forget NODE",
+		Use:   "forget <node>",
 		Short: "Finalize an unreachable removed host without local cleanup",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -232,7 +233,7 @@ func newClusterChangesCmd() *cobra.Command {
 
 func newClusterChangesImportCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "import CLUSTER-LAYOUT",
+		Use:   "import <cluster-layout>",
 		Short: "Replace the candidate using already-enrolled nodes from a layout",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

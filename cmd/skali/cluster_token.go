@@ -219,9 +219,10 @@ func promptInvitationCapabilities(ctx context.Context, out *os.File) ([]string, 
 
 func newClusterTokenListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List reconciled-cluster invitations",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List reconciled-cluster invitations",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, _, err := reconciledClusterStore(cmd.Context())
 			if err != nil {
@@ -255,7 +256,7 @@ func newClusterTokenListCmd() *cobra.Command {
 
 func newClusterTokenRevokeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "revoke ID",
+		Use:   "revoke <id>",
 		Short: "Revoke an unused reconciled-cluster invitation",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

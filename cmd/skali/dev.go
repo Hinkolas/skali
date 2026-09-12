@@ -225,7 +225,7 @@ func newDevCommand() *cobra.Command {
 			"started with -d. A rollout already in flight is adopted: dev\n" +
 			"attaches to it instead of failing; --force cancels it and\n" +
 			"redeploys. Use -d for a background project that keeps running,\n" +
-			"skali dev down to pause it explicitly, and skali dev ls to see\n" +
+			"skali dev down to pause it explicitly, and skali dev list to see\n" +
 			"everything on the local platform. The platform's own lifecycle\n" +
 			"lives under skali dev start, stop, upgrade, and reset. Local\n" +
 			"values never leave this machine.",
@@ -320,10 +320,11 @@ func newDevCommand() *cobra.Command {
 	down.Flags().BoolVar(&yes, "yes", false, "skip the confirmation for --purge")
 
 	ls := &cobra.Command{
-		Use:   "ls",
-		Short: "List projects on the local platform",
-		Args:  cobra.NoArgs,
-		RunE:  runDevLs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List projects on the local platform",
+		Args:    cobra.NoArgs,
+		RunE:    runDevLs,
 	}
 
 	stop := &cobra.Command{
@@ -527,12 +528,12 @@ func finishInterrupted(command *cobra.Command, window string, keepRunning bool) 
 	}
 	switch status {
 	case "detached":
-		fmt.Fprintln(out, "the pause continues on the server; check skali dev ls")
+		fmt.Fprintln(out, "the pause continues on the server; check skali dev list")
 		return nil
 	case "interrupted":
 		// The epilogue's own deadline expired while the server was still
 		// finishing; claiming a completed pause here would be a guess.
-		fmt.Fprintln(out, "the pause is still finishing on the server; check skali dev ls")
+		fmt.Fprintln(out, "the pause is still finishing on the server; check skali dev list")
 		return nil
 	}
 	fmt.Fprintf(out, "\n%s%s is paused; its data is retained\n", style.Check(), name)
@@ -688,7 +689,7 @@ func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID 
 			return err
 		}
 		if time.Now().After(deadline) {
-			return errors.New("the purge is still finishing on the server; check skali dev ls")
+			return errors.New("the purge is still finishing on the server; check skali dev list")
 		}
 		select {
 		case <-ctx.Done():

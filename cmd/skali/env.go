@@ -36,9 +36,10 @@ func newEnvCommand() *cobra.Command {
 func newEnvLsCommand() *cobra.Command {
 	var project, remote string
 	command := &cobra.Command{
-		Use:   "ls",
-		Short: "List the project's environments with your access and their settings",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List the project's environments with your access and their settings",
+		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			scope, err := resolveAccessScope(command.Context(), project, "", remote)
 			if err != nil {
@@ -263,8 +264,9 @@ func newEnvRmCommand() *cobra.Command {
 	var project, remote string
 	var yes bool
 	command := &cobra.Command{
-		Use:   "rm <name>",
-		Short: "Purge an environment: its workloads, volumes, values, revisions, and history",
+		Use:     "remove <name>",
+		Aliases: []string{"rm"},
+		Short:   "Purge an environment: its workloads, volumes, values, revisions, and history",
 		Long: "Tears the environment down with purge: the namespace with its volumes goes,\n" +
 			"and the environment is deleted with all values, revisions, and history. This\n" +
 			"is one-way. Environment admin and a recent login are required.",

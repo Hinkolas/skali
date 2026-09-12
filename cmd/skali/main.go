@@ -22,7 +22,8 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-func main() {
+// newRootCommand assembles the whole CLI surface.
+func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "skali",
 		Short:         "Deploy apps and manage skali clusters",
@@ -36,8 +37,11 @@ func main() {
 		newDevCommand(), newRunCommand(), newLogsCommand(), newExecCommand(),
 		newValuesCommand(), newBackupCommand(), newEnvCommand(), newAccessCommand(),
 		newClusterCommand(), newSkillCommand(), newUpgradeCommand())
+	return root
+}
 
-	if err := root.Execute(); err != nil {
+func main() {
+	if err := newRootCommand().Execute(); err != nil {
 		// A remote exec command's own exit status is a result, not an
 		// error: pass it through silently, the process already wrote its
 		// stderr through the session.
