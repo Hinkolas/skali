@@ -27,7 +27,14 @@ func ResolveRoutes(def ProjectDefinition, variables map[string]string) ([]Resolv
 			}
 			domain, err := edge.CanonicalDomain(raw)
 			if err != nil {
-				return nil, &RouteError{field + ".domain", err.Error()}
+				detail := err.Error()
+				// Name where the value came from, so a rejected domain can
+				// be traced to the value it resolved from; the resolved text
+				// itself stays out of the error.
+				if route.Domain.HasReferences() {
+					detail += " (resolved from " + route.Domain.Source() + ")"
+				}
+				return nil, &RouteError{field + ".domain", detail}
 			}
 			if err := edge.ValidatePath(route.Path); err != nil {
 				return nil, &RouteError{field + ".path", err.Error()}
