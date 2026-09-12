@@ -11,6 +11,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
+	import Pill from '$lib/components/ui/Pill.svelte';
 	import AddMemberModal, { modalOptions as addMemberModalOptions } from './AddMemberModal.svelte';
 	import MemberAccessModal, {
 		modalOptions as memberAccessModalOptions
@@ -77,8 +78,8 @@
 	}
 </script>
 
-<Card class="p-5">
-	<div class="mb-3.5 flex items-center gap-2.5">
+<Card class="p-5 pb-2.5">
+	<div class="mb-3 flex items-center gap-2.5">
 		<h3 class="text-text-primary text-xl font-semibold">Members</h3>
 		<span class="text-text-muted text-md">who may do what on {project.name}</span>
 		{#if canEdit}
@@ -125,16 +126,12 @@
 							<span class="text-text-faint font-mono truncate text-xs">{member.email}</span>
 						{/if}
 					</span>
-					<span class="justify-self-end">
-						{#if explicit.length > 0}
-							<span
-								class="font-mono text-text-faint text-xs"
-								title={explicit.map(([env, role]) => `${env}: ${role}`).join(', ')}
-							>
-								{explicit.length}
-								{explicit.length === 1 ? 'override' : 'overrides'}
+					<span class="flex flex-wrap justify-end gap-1.5">
+						{#each explicit as [env, role] (env)}
+							<span title="explicit role on {env}, ignores the ceiling">
+								<Pill text="{env}: {role}" tone={role === 'none' ? 'warning' : 'neutral'} />
 							</span>
-						{/if}
+						{/each}
 					</span>
 					<span>
 						{#if member.instance_admin}

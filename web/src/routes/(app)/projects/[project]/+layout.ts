@@ -38,9 +38,8 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 		apiFetch(fetch, `/v1/projects/${project.id}/draft`),
 		env ? apiFetch(fetch, `/v1/environments/${env.id}/status`) : Promise.resolve(null)
 	]);
-	const definition = draftRes.ok
-		? ((await draftRes.json()) as DraftResponse).draft.definition
-		: null;
+	const draft = draftRes.ok ? ((await draftRes.json()) as DraftResponse).draft : null;
+	const definition = draft?.definition ?? null;
 	const status = statusRes && statusRes.ok ? ((await statusRes.json()) as EnvironmentStatus) : null;
 
 	return {
@@ -48,6 +47,11 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 		environments,
 		env,
 		definition,
+		// The draft's identity (hash, version, where it came from) for the
+		// settings page; the definition above is what everything else reads.
+		draft: draft
+			? { version: draft.version, format: draft.format, source: draft.source, hash: draft.hash }
+			: null,
 		services: servicesFromDefinition(definition),
 		status
 	};

@@ -7,6 +7,10 @@
 	import { api, ApiError } from '$lib/api/client';
 	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
 	import { formatDateTime, relativeTime } from '$lib/format';
+	import { HEALTH_META } from '$lib/service-types';
+	import { withEnv } from '$lib/urls';
+	import type { RevisionSummary } from '$lib/types/revisions';
+	import type { EnvironmentStatus } from '$lib/types/status';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { modal } from '$lib/stores/modal.svelte';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
@@ -15,6 +19,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import Field from '$lib/components/ui/Field.svelte';
+	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
 	import Menu from '$lib/components/ui/Menu.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
@@ -88,6 +93,66 @@
 			});
 		}
 		return pills;
+	}
+
+	// One line of live facts per environment: aggregate health, state, and
+	// the newest deploy. Health follows the project
+	// overview's rule: all healthy is green, any unhealthy is red, anything
+	// else in between is amber; an unobserved environment stays grey.
+	function healthDot(status: EnvironmentStatus | null): string {
+		if (!status || status.services.length === 0) return HEALTH_META.unknown.dot;
+		if (status.services.every((s) => s.health === 'healthy')) return HEALTH_META.healthy.dot;
+		if (status.services.some((s) => s.health === 'unhealthy')) return HEALTH_META.unhealthy.dot;
+		if (status.services.every((s) => s.health === 'unknown')) return HEALTH_META.unknown.dot;
+		return HEALTH_META.degraded.dot;
+	}
+	function environmentFacts(environment: Environment): string[] {
+		const insight = data.insights[environment.id];
+		if (!insight) return [];
+		const facts: string[] = [];
+		const status = insight.status;
+		if (status) {
+			facts.push(status.state);
+			if (status.services.length > 0) {
+				const healthy = status.services.filter((s) => s.health === 'healthy').length;
+				facts.push(`${healthy}/${status.services.length} healthy`);
+			}
+		}
+		const deploy = insight.lastDeploy;
+		if (deploy) {
+			const who = deploy.actor.split('@')[0];
+			const when = relativeTime(deploy.finished_at ?? deploy.started_at ?? deploy.created_at);
+			const verb = deploy.kind === 'rollback' ? 'rolled back' : 'deployed';
+			if (deploy.status === 'running' || deploy.status === 'pending') {
+				facts.push(`${deploy.kind === 'rollback' ? 'rolling back' : 'deploying'} · ${who}`);
+			} else if (deploy.status === 'succeeded') {
+				facts.push(`${verb} ${when} by ${who}`);
+			} else {
+				facts.push(`${deploy.kind} ${deploy.status} ${when} · ${who}`);
+			}
+		} else if (status) {
+			facts.push('never deployed');
+		}
+		return facts;
+	}
+	// The row's title carries the slow-moving facts the line leaves out.
+	function environmentTitle(environment: Environment): string {
+		const parts = [`your role: ${environment.access}`];
+		if (environment.created_at) parts.push(`created ${formatDateTime(environment.created_at)}`);
+		return parts.join(' · ');
+	}
+
+	// What a revision changed against the one before it (the list is newest
+	// first): the manifest, the values, or both. The oldest is the initial one.
+	function revisionChange(revision: RevisionSummary, index: number): string {
+		const previous = data.revisions[index + 1];
+		if (!previous) return 'initial';
+		const manifest = previous.definition_hash !== revision.definition_hash;
+		const values = previous.values_hash !== revision.values_hash;
+		if (manifest && values) return 'manifest + values';
+		if (manifest) return 'manifest';
+		if (values) return 'values';
+		return 'redeploy';
 	}
 
 	// Writable derived: resets to the loaded value whenever the project data
@@ -176,35 +241,48 @@
 <div class="grid grid-cols-2 gap-3.5 pb-6">
 	<Card class="p-5">
 		<h3 class="text-text-primary mb-3.5 text-xl font-semibold">General</h3>
-		<div class="flex flex-col gap-3.5">
-			<Field label="Project name" description="Stable identity; matches the manifest name.">
-				<TextInput value={data.project.name} mono disabled />
-			</Field>
-			<Field
-				label="Display name"
-				description="Shown in lists and headers; empty falls back to the name."
-			>
-				<div class="flex gap-2">
-					<TextInput
-						bind:value={displayName}
-						placeholder={data.project.name}
-						disabled={!projectAdmin}
-					/>
-					<Button
-						busy={savingName}
-						disabled={!projectAdmin || displayName === data.project.display_name}
-						title={projectAdmin ? undefined : projectAdminTitle}
-						onclick={saveDisplayName}
-					>
-						Save
-					</Button>
-				</div>
-			</Field>
+		<Field
+			label="Display name"
+			description="Shown in lists and headers; empty falls back to the name."
+		>
+			<div class="flex gap-2">
+				<TextInput
+					bind:value={displayName}
+					placeholder={data.project.name}
+					disabled={!projectAdmin}
+				/>
+				<Button
+					busy={savingName}
+					disabled={!projectAdmin || displayName === data.project.display_name}
+					title={projectAdmin ? undefined : projectAdminTitle}
+					onclick={saveDisplayName}
+				>
+					Save
+				</Button>
+			</div>
+		</Field>
+		<!-- Everything else about a project is decided by the manifest and
+		     the CLI; stated as facts rather than dressed as disabled inputs. -->
+		<div class="mt-4 flex flex-col">
+			<KeyValueRow k="Name" v={data.project.name} labelWidth="w-36" />
+			<KeyValueRow
+				k="Source"
+				v={data.project.source_mode === 'file' ? 'file · skali.yaml in the repository' : 'managed'}
+				labelWidth="w-36"
+			/>
+			<KeyValueRow
+				k="Manifest"
+				v={data.draft
+					? `draft v${data.draft.version} · ${data.draft.hash.slice(0, 10)} · ${data.services.length} service${data.services.length === 1 ? '' : 's'}`
+					: 'no draft yet · the first deploy submits one'}
+				labelWidth="w-36"
+			/>
+			<KeyValueRow k="Created" v={formatDateTime(data.project.created_at)} labelWidth="w-36" />
 		</div>
 	</Card>
 
-	<Card class="p-5">
-		<div class="mb-3.5 flex items-center">
+	<Card class="p-5 pb-2.5">
+		<div class="mb-3 flex items-center">
 			<h3 class="text-text-primary text-xl font-semibold">Environments</h3>
 			<div class="ml-auto">
 				<Button
@@ -225,34 +303,48 @@
 				{@const locked = environment.access === 'none'}
 				{@const envAdmin = roleAtLeast(environment.access, 'admin')}
 				{@const envAdminTitle = requiredTitle('admin', 'environment', environment.name)}
-				<div class="border-border-subtle flex items-center gap-3 border-b py-2 last:border-0">
-					<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-						{#if locked}
-							<Lock size={13} class="text-text-ghost flex-none" />
+				{@const facts = environmentFacts(environment)}
+				<div
+					class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0"
+					title={environmentTitle(environment)}
+				>
+					<span
+						class="size-[8px] flex-none rounded-full {locked
+							? 'bg-text-ghost'
+							: healthDot(data.insights[environment.id]?.status ?? null)}"
+					></span>
+					<div class="flex min-w-0 flex-1 flex-col gap-1">
+						<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+							{#if locked}
+								<Lock size={13} class="text-text-ghost flex-none" />
+								<span class="font-mono text-text-primary text-md">{environment.name}</span>
+							{:else}
+								<!-- eslint-disable svelte/no-navigation-without-resolve -- same page, env switched by $lib/urls -->
+								<a
+									href={withEnv(page.url.pathname, environment.name)}
+									class="font-mono text-text-primary text-md hover:underline"
+									title="switch the console to {environment.name}"
+								>
+									{environment.name}
+								</a>
+								<!-- eslint-enable svelte/no-navigation-without-resolve -->
+							{/if}
+							{#if environment.id === data.env?.id}
+								<Pill text="current" tone="success" />
+							{/if}
+							{#each environmentPills(environment) as pill (pill.text)}
+								<span title={pill.title}><Pill text={pill.text} tone={pill.tone} /></span>
+							{/each}
+						</div>
+						{#if facts.length > 0}
+							<div class="font-mono text-text-faint flex flex-wrap gap-x-2 text-xs">
+								{#each facts as fact, i (i)}
+									<span class="whitespace-nowrap">{fact}{i < facts.length - 1 ? ' ·' : ''}</span>
+								{/each}
+							</div>
 						{/if}
-						<span class="font-mono text-text-primary text-md">{environment.name}</span>
-						{#if environment.id === data.env?.id}
-							<Pill text="current" tone="success" />
-						{/if}
-						{#each environmentPills(environment) as pill (pill.text)}
-							<span title={pill.title}><Pill text={pill.text} tone={pill.tone} /></span>
-						{/each}
 					</div>
 					<div class="ml-auto flex flex-none items-center gap-3">
-						<span
-							class="font-mono text-text-faint text-xs whitespace-nowrap"
-							title="your effective role here"
-						>
-							{environment.access}
-						</span>
-						{#if environment.created_at}
-							<span
-								class="font-mono text-text-faint text-xs whitespace-nowrap"
-								title="created {formatDateTime(environment.created_at)}"
-							>
-								{relativeTime(environment.created_at)}
-							</span>
-						{/if}
 						{#if !locked}
 							<Button
 								size="sm"
@@ -298,11 +390,12 @@
 		</div>
 	</Card>
 
-	<Card class="col-span-2 p-5">
-		<div class="mb-3.5 flex items-baseline gap-2.5">
+	<Card class="col-span-2 p-5 pb-2.5">
+		<div class="mb-3 flex items-baseline gap-2.5">
 			<h3 class="text-text-primary text-xl font-semibold">Revisions</h3>
 			{#if data.env}
-				<span class="text-text-muted text-md">environment {data.env.name}</span>
+				<Pill text={data.env.name} />
+				<span class="text-text-muted text-md">what each deploy changed · newest first</span>
 			{/if}
 		</div>
 		<div class="flex flex-col">
@@ -311,11 +404,11 @@
 					<Lock size={12} /> this environment is locked for you
 				</div>
 			{/if}
-			{#each data.revisions as revision (revision.id)}
+			{#each data.revisions as revision, index (revision.id)}
 				{@const isTarget = revision.id === data.target?.target_revision_id}
 				{@const isActive = revision.id === data.target?.active_revision_id}
 				{@const mayRollback = roleAtLeast(data.env?.access, 'deploy')}
-				<div class="border-border-subtle flex items-center gap-3 border-b py-2.75 last:border-0">
+				<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
 					<span class="font-mono text-text-primary text-md" title={revision.id}>
 						{revision.checksum.slice(0, 10)}
 					</span>
@@ -330,6 +423,12 @@
 						title={formatDateTime(revision.created_at)}
 					>
 						{relativeTime(revision.created_at)}
+					</span>
+					<span
+						class="font-mono text-text-muted text-xs"
+						title="compared with the revision before it"
+					>
+						{revisionChange(revision, index)}
 					</span>
 					<div class="ml-auto">
 						{#if !isTarget}

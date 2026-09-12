@@ -4,7 +4,10 @@
 	import Lock from '@lucide/svelte/icons/lock';
 	import { api, ApiError } from '$lib/api/client';
 	import { requiredTitle, roleAtLeast } from '$lib/access';
+	import { resolve } from '$app/paths';
+	import type { Expression } from '$lib/types/definition';
 	import type { StageValuesResult } from '$lib/types/values';
+	import { withEnv } from '$lib/urls';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
@@ -29,6 +32,26 @@
 	// Runtime variables are the storable contract; build-only variables
 	// resolve from a local env file at deploy time and have no stored row.
 	const declared = $derived(data.definition?.requiredVariables ?? []);
+
+	// Which applications read each variable: every ${VAR} part in an app's
+	// environment or route domains. Saying who consumes a value tells the
+	// reader what a change reaches.
+	const consumers = $derived.by(() => {
+		const byName: Record<string, string[]> = {};
+		const note = (expr: Expression | undefined, app: string) => {
+			for (const part of expr?.parts ?? []) {
+				if (part.kind !== 'project_variable' || !part.name) continue;
+				const apps = (byName[part.name] ??= []);
+				if (!apps.includes(app)) apps.push(app);
+			}
+		};
+		for (const [key, app] of Object.entries(data.definition?.applications ?? {})) {
+			for (const expr of Object.values(app.environment ?? {})) note(expr, key);
+			for (const route of Object.values(app.routes ?? {})) note(route.domain, key);
+		}
+		return byName;
+	});
+	const projectName = $derived(data.project.name);
 	const entryByName = $derived(new Map(data.values.map((v) => [v.name, v])));
 	const declaredNames = $derived(new Set(declared.map((d) => d.name)));
 	const orphanedEntries = $derived(data.values.filter((v) => !declaredNames.has(v.name)));
@@ -157,11 +180,12 @@
 			</div>
 		{/if}
 
-		<Card class="p-5">
-			<div class="mb-3.5 flex items-baseline gap-2.5">
+		<Card class="p-5 pb-2.5">
+			<div class="mb-3 flex items-baseline gap-2.5">
 				<h3 class="text-text-primary text-xl font-semibold">Variables</h3>
+				<Pill text={data.env.name} />
 				<span class="text-text-muted text-md">
-					environment {data.env.name} · write-only · saved values roll out with Redeploy or the next deployment
+					write-only · saved values roll out with Redeploy or the next deployment
 					{#if !mayEdit}
 						· {editTitle} to change
 					{/if}
@@ -171,14 +195,44 @@
 				{#each declared as variable (variable.name)}
 					{@const entry = entryByName.get(variable.name)}
 					{@const pending = dirty[variable.name]}
-					<div class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0">
-						<div class="flex w-52 flex-none items-center gap-2" title={variable.name}>
-							<span class="font-mono text-text-primary truncate text-md">{variable.name}</span>
-							{#if variable.required && !variable.hasDefault}
-								<Pill text="required" tone="neutral" />
-							{/if}
+					{@const users = (consumers[variable.name] ?? []).toSorted()}
+					<div
+						class="border-border-subtle grid grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_9rem] items-center gap-3 border-b py-2.5 last:border-0"
+					>
+						<div class="flex min-w-0 flex-col gap-1" title={variable.name}>
+							<div class="flex items-center gap-2">
+								<span class="font-mono text-text-primary truncate text-md">{variable.name}</span>
+								{#if variable.required && !variable.hasDefault}
+									<Pill text="required" tone="neutral" />
+								{:else if variable.hasDefault}
+									<span class="font-mono text-text-faint truncate text-xs">
+										default "{variable.default ?? ''}"
+									</span>
+								{/if}
+							</div>
+							<div class="flex flex-wrap items-center gap-1">
+								{#each users as app (app)}
+									<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+									<a
+										href={withEnv(
+											resolve('/(app)/projects/[project]/services/[service]', {
+												project: projectName,
+												service: app
+											}),
+											data.env?.name
+										)}
+										class="bg-service-app/12 text-service-app rounded-[6px] px-1.5 py-0.5 font-mono text-2xs hover:underline"
+										title="read by {app}"
+									>
+										{app}
+									</a>
+									<!-- eslint-enable svelte/no-navigation-without-resolve -->
+								{:else}
+									<span class="font-mono text-text-ghost text-2xs">used at build time only</span>
+								{/each}
+							</div>
 						</div>
-						<div class="min-w-0 flex-1">
+						<div class="min-w-0">
 							<TextInput
 								type="password"
 								size="sm"
@@ -198,7 +252,7 @@
 								}}
 							/>
 						</div>
-						<div class="flex w-36 flex-none items-center justify-end gap-1">
+						<div class="flex items-center justify-end gap-1">
 							{#if pending === ''}
 								<span class="text-status-warning whitespace-nowrap text-md">will set empty</span>
 								<Button size="sm" variant="ghost" onclick={() => delete dirty[variable.name]}>
