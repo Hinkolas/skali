@@ -25,8 +25,9 @@ manifest:
 - `skali dev run <name>` runs a named command from the manifest
   (`applications.<app>.commands`) on this machine with the application's
   resolved environment; `skali dev run <app> -- <command>...` runs a raw
-  command. Database and bucket addresses are rewritten to the local
-  platform's loopback ports, so seeds and migrations just work.
+  command; bare `skali dev run` lists the declared commands. Database and
+  bucket addresses are rewritten to the local platform's loopback ports,
+  so seeds and migrations just work.
 - `skali dev exec [app]` opens a shell inside the running container
   instead; `skali run` manages journal runs, not project commands.
 
