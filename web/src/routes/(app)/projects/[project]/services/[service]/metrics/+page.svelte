@@ -141,7 +141,8 @@
 				<button
 					type="button"
 					onclick={() => (range = option.value)}
-					class="rounded-full px-3 py-1 text-sm transition-colors {range === option.value
+					class="cursor-pointer rounded-full px-3 py-1 text-sm transition-colors {range ===
+					option.value
 						? 'bg-white/8 text-text-primary'
 						: 'text-text-tertiary hover:text-text-secondary'}"
 				>
