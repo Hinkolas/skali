@@ -33,6 +33,7 @@ func newBackupCommand() *cobra.Command {
 
 func newBackupRestoreCommand() *cobra.Command {
 	var (
+		project     string
 		environment string
 		remote      string
 		yes         bool
@@ -56,7 +57,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveQueryProject(ctx, start, "", environment, remote)
+			scope, err := resolveQueryProject(ctx, start, project, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -115,6 +116,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			}
 		},
 	}
+	command.Flags().StringVar(&project, "project", "", "project holding the snapshot; defaults to the checkout's project")
 	command.Flags().StringVar(&environment, "environment", "",
 		"environment to restore into; defaults to the environment the snapshot was taken from")
 	command.Flags().StringVar(&remote, "remote", "",
@@ -230,7 +232,7 @@ func newBackupCreateCommand() *cobra.Command {
 }
 
 func newBackupLsCommand() *cobra.Command {
-	var environment, remote string
+	var project, environment, remote string
 	command := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -248,7 +250,7 @@ func newBackupLsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := resolveQueryProject(ctx, start, "", environment, remote)
+			scope, err := resolveQueryProject(ctx, start, project, environment, remote)
 			if err != nil {
 				return err
 			}
@@ -275,6 +277,7 @@ func newBackupLsCommand() *cobra.Command {
 			return nil
 		},
 	}
+	command.Flags().StringVar(&project, "project", "", "project whose snapshots to list; defaults to the checkout's project")
 	command.Flags().StringVar(&environment, "environment", "", "only list snapshots of this environment")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")

@@ -80,6 +80,22 @@ func TestBackupLsEnvironmentFilters(t *testing.T) {
 	require.Contains(t, out, "no snapshots of environment nothing")
 }
 
+func TestBackupLsProjectFlagOutsideCheckout(t *testing.T) {
+	seedBackupScope(t)
+	// Outside any checkout the project must be named; the flag the error
+	// points at exists on the command.
+	t.Chdir(t.TempDir())
+	command := newBackupLsCommand()
+	command.SetArgs(nil)
+	command.SetOut(&bytes.Buffer{})
+	err := command.ExecuteContext(context.Background())
+	require.ErrorIs(t, err, errProjectRequired)
+
+	out := runBackupLs(t, "--project", "flowdemo")
+	require.Contains(t, out, testSnapshotProduction)
+	require.Contains(t, out, testSnapshotStaging)
+}
+
 func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {
 	seedBackupScope(t)
 	scope, err := resolveQueryProject(context.Background(), ".", "", "", "")
