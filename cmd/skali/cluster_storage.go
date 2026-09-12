@@ -19,14 +19,14 @@ import (
 // migrate through the backup/restore runbook instead: those need skalid's
 // backup machinery, which this host-side command deliberately has no
 // access to.
-func newClusterStorageMigrateCmd() *cobra.Command {
+func newClusterStorageMigrateCommand() *cobra.Command {
 	var yes bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "storage-migrate",
 		Short: "Move the registry volume onto the replicated storage class",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 			banner(out)
 			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
@@ -88,6 +88,6 @@ func newClusterStorageMigrateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
-	return cmd
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	return command
 }

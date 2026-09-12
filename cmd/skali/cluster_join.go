@@ -14,24 +14,24 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-func newClusterJoinCmd() *cobra.Command {
+func newClusterJoinCommand() *cobra.Command {
 	var server, tokenFile, rawToken, role, cluster, nodeIP string
 	var publicIPs, extraSANs, coordinatorBind []string
 	var capabilities []string
 	var assumeYes bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "join [coordinator]",
 		Short: "Join this host to an existing cluster",
 		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 
 			if role != "" && role != layout.RoleAgent && role != layout.RoleServer {
 				return fmt.Errorf("role must be server or agent, got %q", role)
 			}
 			var err error
-			rawToken, err = joinTokenInput(ctx, rawToken, tokenFile, cmd.Flags().Changed("token"), cmd.Flags().Changed("token-file"), os.Getenv("SKALI_JOIN_TOKEN"), cmd.InOrStdin())
+			rawToken, err = joinTokenInput(ctx, rawToken, tokenFile, command.Flags().Changed("token"), command.Flags().Changed("token-file"), os.Getenv("SKALI_JOIN_TOKEN"), command.InOrStdin())
 			if err != nil {
 				return err
 			}
@@ -113,19 +113,19 @@ func newClusterJoinCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&server, "server", "", "coordinator endpoint; legacy composite tokens may supply their k3s endpoint")
-	cmd.Flags().StringVar(&rawToken, "token", "", "join token (defaults to SKALI_JOIN_TOKEN or saved enrollment)")
-	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to a join token file, or - for stdin")
-	cmd.Flags().StringVar(&role, "role", "", "expected role; must match the invitation or legacy token")
-	cmd.Flags().StringSliceVar(&capabilities, "capabilities", nil, "designated workload capabilities for this node")
-	cmd.Flags().StringVar(&cluster, "cluster", "", "expected cluster name; required only for raw legacy K10 tokens")
-	cmd.Flags().StringVar(&nodeIP, "node-ip", "", "address other cluster nodes reach this node through; defaults to the coordinator route source when unambiguous")
-	cmd.Flags().StringSliceVar(&publicIPs, "public-ip", nil, "address reachable from outside the cluster network; repeatable")
-	cmd.Flags().StringSliceVar(&extraSANs, "tls-san", nil, "additional name or address for the kubernetes api certificate; repeatable")
-	cmd.Flags().StringSliceVar(&coordinatorBind, "coordinator-bind", nil,
+	command.Flags().StringVar(&server, "server", "", "coordinator endpoint; legacy composite tokens may supply their k3s endpoint")
+	command.Flags().StringVar(&rawToken, "token", "", "join token (defaults to SKALI_JOIN_TOKEN or saved enrollment)")
+	command.Flags().StringVar(&tokenFile, "token-file", "", "path to a join token file, or - for stdin")
+	command.Flags().StringVar(&role, "role", "", "expected role; must match the invitation or legacy token")
+	command.Flags().StringSliceVar(&capabilities, "capabilities", nil, "designated workload capabilities for this node")
+	command.Flags().StringVar(&cluster, "cluster", "", "expected cluster name; required only for raw legacy K10 tokens")
+	command.Flags().StringVar(&nodeIP, "node-ip", "", "address other cluster nodes reach this node through; defaults to the coordinator route source when unambiguous")
+	command.Flags().StringSliceVar(&publicIPs, "public-ip", nil, "address reachable from outside the cluster network; repeatable")
+	command.Flags().StringSliceVar(&extraSANs, "tls-san", nil, "additional name or address for the kubernetes api certificate; repeatable")
+	command.Flags().StringSliceVar(&coordinatorBind, "coordinator-bind", nil,
 		"scopes the enrollment coordinator listens on: cluster, public, or both (servers only)")
-	cmd.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
-	return cmd
+	command.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
+	return command
 }
 
 // serverCountWarning returns the quorum note after a server join left the

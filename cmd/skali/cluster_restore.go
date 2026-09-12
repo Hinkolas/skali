@@ -19,14 +19,14 @@ import (
 // ready summary as init. Hidden until it exists: today it only prints that
 // contract and fails, which is worse than absent in the disaster it is
 // meant for. Tracked in ROADMAP.md under "Documented recovery runbook".
-func newClusterRestoreCmd() *cobra.Command {
+func newClusterRestoreCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:    "restore",
 		Short:  "Restore a Skali installation from saved inputs",
 		Hidden: true,
 		Args:   cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 			banner(out)
 			if _, err := darwinPrelude(ctx, out, vmPolicyStatus, ""); err != nil {

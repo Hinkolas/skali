@@ -14,25 +14,25 @@ import (
 	"github.com/Hinkolas/skali/internal/installer/limavm"
 )
 
-func newClusterInstallCmd() *cobra.Command {
-	return newClusterInstallCommand("install",
+func newClusterInstallCommand() *cobra.Command {
+	return clusterInstallCommand("install",
 		"Install k3s and prepare this host as a Skali node", false)
 }
 
-func newClusterCreateCmd() *cobra.Command {
-	return newClusterInstallCommand("create",
+func newClusterCreateCommand() *cobra.Command {
+	return clusterInstallCommand("create",
 		"Create a reconciled cluster seed and coordinator", true)
 }
 
-func newClusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
+func clusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 	var configPath string
 	var assumeYes bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   use,
 		Short: short,
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 
 			if configPath == "" {
@@ -183,7 +183,7 @@ func newClusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "", "non-interactive node configuration (node.yaml)")
-	cmd.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
-	return cmd
+	command.Flags().StringVar(&configPath, "config", "", "non-interactive node configuration (node.yaml)")
+	command.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
+	return command
 }

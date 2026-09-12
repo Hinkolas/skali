@@ -16,7 +16,7 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-func newValidateCmd() *cobra.Command {
+func newValidateCommand() *cobra.Command {
 	var (
 		manifestPath string
 		envFile      string
@@ -63,7 +63,7 @@ func newValidateCmd() *cobra.Command {
 	return command
 }
 
-func newCompileCmd() *cobra.Command {
+func newCompileCommand() *cobra.Command {
 	var (
 		manifestPath string
 		target       string

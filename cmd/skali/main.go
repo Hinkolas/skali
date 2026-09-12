@@ -32,7 +32,7 @@ func newRootCommand() *cobra.Command {
 		SilenceErrors: true,
 	}
 
-	root.AddCommand(newRemoteCmd(), newValidateCmd(), newCompileCmd(),
+	root.AddCommand(newRemoteCommand(), newValidateCommand(), newCompileCommand(),
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
 		newDevCommand(), newRunCommand(), newLogsCommand(), newExecCommand(),
 		newValuesCommand(), newBackupCommand(), newEnvCommand(), newAccessCommand(),

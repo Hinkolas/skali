@@ -10,14 +10,14 @@ import (
 	"github.com/Hinkolas/skali/internal/installer"
 )
 
-func newClusterStatusCmd() *cobra.Command {
+func newClusterStatusCommand() *cobra.Command {
 	var all bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "status",
 		Short: "Show the installation state and health of this host",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 
 			banner(out)
@@ -55,6 +55,6 @@ func newClusterStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "include cancelled and removed node history")
-	return cmd
+	command.Flags().BoolVar(&all, "all", false, "include cancelled and removed node history")
+	return command
 }

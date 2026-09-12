@@ -17,40 +17,40 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-func newRemoteCmd() *cobra.Command {
-	cmd := &cobra.Command{
+func newRemoteCommand() *cobra.Command {
+	command := &cobra.Command{
 		Use:   "remote",
 		Short: "Manage the skali masters this machine talks to",
-		Long: `Manage named remotes: the skali masters this machine can talk to, each
-with its own session. Bare "skali remote" lists them; "skali remote add"
-creates one and logs in; "skali remote login" re-authenticates.`,
+		Long: "Manage named remotes: the skali masters this machine can talk to, each\n" +
+			"with its own session. Bare skali remote lists them; skali remote add\n" +
+			"creates one and logs in; skali remote login re-authenticates.",
 		Args: cobra.NoArgs,
 		RunE: runRemoteList,
 	}
-	cmd.AddCommand(newRemoteAddCmd(), newRemoteLoginCmd(), newRemoteLogoutCmd(),
-		newRemoteListCmd(), newRemoteUseCmd(), newRemoteStatusCmd(),
-		newRemoteTokenCmd(), newRemoteRemoveCmd())
-	return cmd
+	command.AddCommand(newRemoteAddCommand(), newRemoteLoginCommand(), newRemoteLogoutCommand(),
+		newRemoteListCommand(), newRemoteUseCommand(), newRemoteStatusCommand(),
+		newRemoteTokenCommand(), newRemoteRemoveCommand())
+	return command
 }
 
-func newRemoteAddCmd() *cobra.Command {
+func newRemoteAddCommand() *cobra.Command {
 	var email string
 	var noBrowser bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "add <name> <host-or-url>",
 		Short: "Add a remote and log in to it",
-		Long: `Add a named remote for a skali master and perform the initial login,
-like "skali remote add example https://skali.example.com". A bare hostname
-tries https then http and targets the cluster's /api path
-(skali.example.com becomes https://skali.example.com/api); an explicit URL
-is used verbatim. On success the new remote becomes the current one; on
-failure nothing is stored.
-
-In a terminal the login opens the web console in your browser and waits
-for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and
-non-interactive runs ask for email and password on the terminal instead.`,
+		Long: "Add a named remote for a skali master and perform the initial login,\n" +
+			"like skali remote add example https://skali.example.com. A bare hostname\n" +
+			"tries https then http and targets the cluster's /api path\n" +
+			"(skali.example.com becomes https://skali.example.com/api); an explicit URL\n" +
+			"is used verbatim. On success the new remote becomes the current one; on\n" +
+			"failure nothing is stored.\n\n" +
+			"In a terminal the login opens the web console in your browser and waits\n" +
+			"for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and\n" +
+			"non-interactive runs ask for email and password on the terminal instead.",
 		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			out := command.OutOrStdout()
 			cfg, err := cliconfig.Load()
 			if err != nil {
 				return err
@@ -75,7 +75,7 @@ non-interactive runs ask for email and password on the terminal instead.`,
 			master := ""
 			var probeErr error
 			for _, candidate := range candidates {
-				if err := client.New(candidate, "", userAgent()).Health(cmd.Context()); err != nil {
+				if err := client.New(candidate, "", userAgent()).Health(command.Context()); err != nil {
 					if probeErr == nil {
 						probeErr = fmt.Errorf("master %s is not reachable: %w", candidate, err)
 					}
@@ -90,7 +90,7 @@ non-interactive runs ask for email and password on the terminal instead.`,
 				}
 				return probeErr
 			}
-			sess, instance, err := loginRemote(cmd.Context(), cliprompt.New(os.Stdin, os.Stderr), master, email, noBrowser)
+			sess, instance, err := loginRemote(command.Context(), cliprompt.New(os.Stdin, os.Stderr), master, email, noBrowser)
 			if err != nil {
 				return fmt.Errorf("remote %q not added: %w", remoteName, err)
 			}
@@ -99,30 +99,30 @@ non-interactive runs ask for email and password on the terminal instead.`,
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("logged in to %s as %s (remote %q)\n", master, sess.User.Email, remoteName)
+			fmt.Fprintf(out, "logged in to %s as %s (remote %q)\n", master, sess.User.Email, remoteName)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&email, "email", "", "login email (prompted when omitted; implies --no-browser)")
-	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "log in with email and password on the terminal instead of the browser")
-	return cmd
+	command.Flags().StringVar(&email, "email", "", "login email (prompted when omitted; implies --no-browser)")
+	command.Flags().BoolVar(&noBrowser, "no-browser", false, "log in with email and password on the terminal instead of the browser")
+	return command
 }
 
-func newRemoteLoginCmd() *cobra.Command {
+func newRemoteLoginCommand() *cobra.Command {
 	var email string
 	var noBrowser bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "login [name]",
 		Short: "Log in again (browser, or email and password with --no-browser)",
-		Long: `Re-authenticate an existing remote and store the fresh session token.
-Without a name the current remote is used; with one, that remote becomes
-current when the login succeeds. Remotes are created with "skali remote add".
-
-In a terminal the login opens the web console in your browser and waits
-for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and
-non-interactive runs ask for email and password on the terminal instead.`,
+		Long: "Re-authenticate an existing remote and store the fresh session token.\n" +
+			"Without a name the current remote is used; with one, that remote becomes\n" +
+			"current when the login succeeds. Remotes are created with skali remote add.\n\n" +
+			"In a terminal the login opens the web console in your browser and waits\n" +
+			"for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and\n" +
+			"non-interactive runs ask for email and password on the terminal instead.",
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			out := command.OutOrStdout()
 			cfg, err := cliconfig.Load()
 			if err != nil {
 				return err
@@ -151,10 +151,10 @@ non-interactive runs ask for email and password on the terminal instead.`,
 			prompts := cliprompt.New(os.Stdin, os.Stderr)
 			if target.Instance != "" {
 				probe := client.New(target.Master, "", userAgent())
-				_ = probe.Health(cmd.Context())
+				_ = probe.Health(command.Context())
 				observed := probe.ObservedInstance()
 				if observed != "" && observed != target.Instance {
-					trusted, err := prompts.Confirm(cmd.Context(), cliprompt.ConfirmOptions{
+					trusted, err := prompts.Confirm(command.Context(), cliprompt.ConfirmOptions{
 						Title: fmt.Sprintf("The installation identity of remote %q has changed", name),
 						Description: "The cluster was probably uninstalled and reinstalled. " +
 							"Trust the new installation and log in to it?",
@@ -167,7 +167,7 @@ non-interactive runs ask for email and password on the terminal instead.`,
 					}
 				}
 			}
-			sess, instance, err := loginRemote(cmd.Context(), prompts, target.Master, email, noBrowser)
+			sess, instance, err := loginRemote(command.Context(), prompts, target.Master, email, noBrowser)
 			if err != nil {
 				return err
 			}
@@ -179,21 +179,22 @@ non-interactive runs ask for email and password on the terminal instead.`,
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("logged in to %s as %s (remote %q)\n", target.Master, sess.User.Email, name)
+			fmt.Fprintf(out, "logged in to %s as %s (remote %q)\n", target.Master, sess.User.Email, name)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&email, "email", "", "login email (prompted when omitted; implies --no-browser)")
-	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "log in with email and password on the terminal instead of the browser")
-	return cmd
+	command.Flags().StringVar(&email, "email", "", "login email (prompted when omitted; implies --no-browser)")
+	command.Flags().BoolVar(&noBrowser, "no-browser", false, "log in with email and password on the terminal instead of the browser")
+	return command
 }
 
-func newRemoteLogoutCmd() *cobra.Command {
+func newRemoteLogoutCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout [name]",
 		Short: "Revoke a remote's session and forget its token",
 		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			out := command.OutOrStdout()
 			cfg, err := cliconfig.Load()
 			if err != nil {
 				return err
@@ -216,26 +217,26 @@ func newRemoteLogoutCmd() *cobra.Command {
 				}
 			}
 			if target.Token == "" {
-				fmt.Println("not logged in")
+				fmt.Fprintln(out, "not logged in")
 				return nil
 			}
 			// Best effort server-side; the local token is cleared regardless,
 			// so an unreachable master can't keep you "logged in".
 			c := remoteClient(cfg, target)
-			if err := c.Logout(cmd.Context()); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: server-side revoke failed: %v\n", err)
+			if err := c.Logout(command.Context()); err != nil {
+				fmt.Fprintf(command.ErrOrStderr(), "warning: server-side revoke failed: %v\n", err)
 			}
 			target.Token = ""
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("logged out of remote %q\n", name)
+			fmt.Fprintf(out, "logged out of remote %q\n", name)
 			return nil
 		},
 	}
 }
 
-func newRemoteListCmd() *cobra.Command {
+func newRemoteListCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -245,7 +246,8 @@ func newRemoteListCmd() *cobra.Command {
 	}
 }
 
-func runRemoteList(cmd *cobra.Command, args []string) error {
+func runRemoteList(command *cobra.Command, args []string) error {
+	out := command.OutOrStdout()
 	cfg, err := cliconfig.Load()
 	if err != nil {
 		return err
@@ -259,7 +261,7 @@ func runRemoteList(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(names) == 0 {
-		fmt.Println("no remotes; run `skali remote add <name> <url>`")
+		fmt.Fprintln(out, "no remotes; run `skali remote add <name> <url>`")
 		return nil
 	}
 	sort.Strings(names)
@@ -272,17 +274,18 @@ func runRemoteList(cmd *cobra.Command, args []string) error {
 		if cfg.Remotes[name].Token != "" {
 			loggedIn = "  [logged in]"
 		}
-		fmt.Printf("%s %s  %s%s\n", marker, name, cfg.Remotes[name].Master, loggedIn)
+		fmt.Fprintf(out, "%s %s  %s%s\n", marker, name, cfg.Remotes[name].Master, loggedIn)
 	}
 	return nil
 }
 
-func newRemoteUseCmd() *cobra.Command {
+func newRemoteUseCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <name>",
 		Short: "Switch the current remote",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			out := command.OutOrStdout()
 			cfg, err := cliconfig.Load()
 			if err != nil {
 				return err
@@ -298,53 +301,54 @@ func newRemoteUseCmd() *cobra.Command {
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("switched to remote %q\n", name)
+			fmt.Fprintf(out, "switched to remote %q\n", name)
 			return nil
 		},
 	}
 }
 
-func newRemoteStatusCmd() *cobra.Command {
+func newRemoteStatusCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show the current remote, master reachability, session, and user",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			out := command.OutOrStdout()
 			cfg, name, c, err := currentClient()
 			if err != nil {
 				return err
 			}
 			remote := cfg.Remotes[name]
-			fmt.Printf("remote:  %s\nmaster:  %s\n", name, remote.Master)
+			fmt.Fprintf(out, "remote:  %s\nmaster:  %s\n", name, remote.Master)
 
-			if err := c.Health(cmd.Context()); err != nil {
+			if err := c.Health(command.Context()); err != nil {
 				if mismatch, ok := errors.AsType[*client.InstanceMismatchError](err); ok {
-					fmt.Println("health:  ok, but the installation identity changed (cluster reinstalled?)")
-					fmt.Printf("         pinned %s, server answers %s\n", mismatch.Pinned, mismatch.Observed)
-					fmt.Printf("         trust it with `skali remote login %s` or drop it with `skali remote remove %s`\n", name, name)
+					fmt.Fprintln(out, "health:  ok, but the installation identity changed (cluster reinstalled?)")
+					fmt.Fprintf(out, "         pinned %s, server answers %s\n", mismatch.Pinned, mismatch.Observed)
+					fmt.Fprintf(out, "         trust it with `skali remote login %s` or drop it with `skali remote remove %s`\n", name, name)
 					return nil
 				}
-				fmt.Printf("health:  unreachable (%v)\n", err)
+				fmt.Fprintf(out, "health:  unreachable (%v)\n", err)
 				return nil
 			}
-			fmt.Println("health:  ok")
+			fmt.Fprintln(out, "health:  ok")
 			if version := c.ObservedVersion(); version != "" {
 				if version == versionpkg.Version {
-					fmt.Printf("server:  skalid %s\n", version)
+					fmt.Fprintf(out, "server:  skalid %s\n", version)
 				} else {
-					fmt.Printf("server:  skalid %s (this CLI is %s)\n", version, versionpkg.Version)
+					fmt.Fprintf(out, "server:  skalid %s (this CLI is %s)\n", version, versionpkg.Version)
 				}
 			}
 
 			if remote.Token == "" {
-				fmt.Println("session: not logged in")
+				fmt.Fprintln(out, "session: not logged in")
 				return nil
 			}
-			info, err := c.CurrentSession(cmd.Context())
+			info, err := c.CurrentSession(command.Context())
 			if err != nil {
 				var apiErr *client.APIError
 				if errors.As(err, &apiErr) && apiErr.Code == "invalid_token" {
-					fmt.Println("session: expired or revoked; run `skali remote login`")
+					fmt.Fprintln(out, "session: expired or revoked; run `skali remote login`")
 					return nil
 				}
 				return err
@@ -353,21 +357,21 @@ func newRemoteStatusCmd() *cobra.Command {
 			if info.User.Name != "" {
 				user += " (" + info.User.Name + ")"
 			}
-			fmt.Printf("user:    %s\n", user)
+			fmt.Fprintf(out, "user:    %s\n", user)
 			if info.User.Role != "" {
 				role := info.User.Role
 				if info.User.Role != "admin" && info.User.CreateProjects {
 					role += " (may create projects)"
 				}
-				fmt.Printf("role:    %s\n", role)
+				fmt.Fprintf(out, "role:    %s\n", role)
 			}
-			fmt.Printf("session: valid, expires %s\n", info.Session.ExpiresAt.Local().Format("2006-01-02 15:04"))
+			fmt.Fprintf(out, "session: valid, expires %s\n", info.Session.ExpiresAt.Local().Format("2006-01-02 15:04"))
 			return nil
 		},
 	}
 }
 
-func newRemoteTokenCmd() *cobra.Command {
+func newRemoteTokenCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "token",
 		Short: "Print the stored session token (for scripting API requests)",
@@ -377,7 +381,8 @@ func newRemoteTokenCmd() *cobra.Command {
 			"session; docker login is only needed for third-party OCI tooling, with\n" +
 			"any username and the token as the password.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			out := command.OutOrStdout()
 			cfg, err := cliconfig.Load()
 			if err != nil {
 				return err
@@ -389,19 +394,20 @@ func newRemoteTokenCmd() *cobra.Command {
 			if remote.Token == "" {
 				return fmt.Errorf("not logged in on remote %q; run `skali remote login` first", name)
 			}
-			fmt.Println(remote.Token)
+			fmt.Fprintln(out, remote.Token)
 			return nil
 		},
 	}
 }
 
-func newRemoteRemoveCmd() *cobra.Command {
+func newRemoteRemoveCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:     "remove <name>",
 		Aliases: []string{"rm"},
 		Short:   "Remove a remote and revoke its session",
 		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
+			out := command.OutOrStdout()
 			name := args[0]
 			if name == localRemoteName {
 				return errors.New("remote \"local\" is managed by skali dev; run `skali dev reset` to remove the local platform")
@@ -419,8 +425,8 @@ func newRemoteRemoveCmd() *cobra.Command {
 				// session server-side, but an unreachable master cannot
 				// block the removal either.
 				c := remoteClient(cfg, target)
-				if err := c.Logout(cmd.Context()); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: server-side revoke failed: %v\n", err)
+				if err := c.Logout(command.Context()); err != nil {
+					fmt.Fprintf(command.ErrOrStderr(), "warning: server-side revoke failed: %v\n", err)
 				}
 			}
 			delete(cfg.Remotes, name)
@@ -431,9 +437,9 @@ func newRemoteRemoveCmd() *cobra.Command {
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("removed remote %q\n", name)
+			fmt.Fprintf(out, "removed remote %q\n", name)
 			if cleared && len(cfg.Remotes) > 0 {
-				fmt.Println("no remote selected; run `skali remote use <name>`")
+				fmt.Fprintln(out, "no remote selected; run `skali remote use <name>`")
 			}
 			return nil
 		},

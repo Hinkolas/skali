@@ -17,18 +17,18 @@ import (
 )
 
 func newSkillCommand() *cobra.Command {
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "skill",
 		Short: "Manage the skali skill for coding agents",
 	}
-	cmd.AddCommand(newSkillInstallCommand())
-	return cmd
+	command.AddCommand(newSkillInstallCommand())
+	return command
 }
 
 func newSkillInstallCommand() *cobra.Command {
 	var agentNames []string
 	var all bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "install",
 		Short: "Install the skali skill for coding agents",
 		Long: "Installs the embedded skali skill (SKILL.md plus reference files on " +
@@ -37,12 +37,12 @@ func newSkillInstallCommand() *cobra.Command {
 			"is owned by this command: rerun install after upgrading skali to refresh " +
 			"the content.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, _ []string) error {
 			if len(agentNames) == 0 && !all && !cliprompt.Interactive() {
 				return errors.New("non-interactive runs must select agents: pass --agent claude, --agent codex, or --all")
 			}
 			out := os.Stdout
-			agents, err := selectAgents(cmd.Context(), promptSession(out, bufio.NewReader(os.Stdin)), agentNames, all)
+			agents, err := selectAgents(command.Context(), promptSession(out, bufio.NewReader(os.Stdin)), agentNames, all)
 			if err != nil {
 				return err
 			}
@@ -53,10 +53,10 @@ func newSkillInstallCommand() *cobra.Command {
 			return installSkill(out, home, agents)
 		},
 	}
-	cmd.Flags().StringSliceVar(&agentNames, "agent", nil, "agent to install for: claude or codex; repeatable")
-	cmd.Flags().BoolVar(&all, "all", false, "install for every supported agent")
-	cmd.MarkFlagsMutuallyExclusive("agent", "all")
-	return cmd
+	command.Flags().StringSliceVar(&agentNames, "agent", nil, "agent to install for: claude or codex; repeatable")
+	command.Flags().BoolVar(&all, "all", false, "install for every supported agent")
+	command.MarkFlagsMutuallyExclusive("agent", "all")
+	return command
 }
 
 // selectAgents resolves the requested agents from flags, or asks with every

@@ -17,16 +17,16 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-func newClusterTokenCmd() *cobra.Command {
+func newClusterTokenCommand() *cobra.Command {
 	var role, server string
 	var allowedCapabilities []string
 	var ttl time.Duration
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "token",
 		Short: "Print the join command for this cluster",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 
 			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
@@ -52,7 +52,7 @@ func newClusterTokenCmd() *cobra.Command {
 
 			// Flags stay authoritative: prompts fire only interactively
 			// and only for what the operator did not already decide.
-			if !cmd.Flags().Changed("role") && cliprompt.Interactive() {
+			if !command.Flags().Changed("role") && cliprompt.Interactive() {
 				role, err = promptTokenRole(ctx, out, detected.Record.Reconciled())
 				if err != nil {
 					return err
@@ -61,7 +61,7 @@ func newClusterTokenCmd() *cobra.Command {
 
 			if detected.Record.Reconciled() {
 
-				if !cmd.Flags().Changed("capabilities") && cliprompt.Interactive() {
+				if !command.Flags().Changed("capabilities") && cliprompt.Interactive() {
 					allowedCapabilities, err = promptInvitationCapabilities(ctx, out)
 					if err != nil {
 						return err
@@ -145,13 +145,13 @@ func newClusterTokenCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&role, "role", layout.RoleAgent, "role the token enrolls: agent or server (interactive runs ask)")
-	cmd.Flags().StringVar(&server, "server", "", "advertised coordinator endpoint override (k3s endpoint for legacy clusters)")
-	cmd.Flags().StringSliceVar(&allowedCapabilities, "capabilities", nil,
+	command.Flags().StringVar(&role, "role", layout.RoleAgent, "role the token enrolls: agent or server (interactive runs ask)")
+	command.Flags().StringVar(&server, "server", "", "advertised coordinator endpoint override (k3s endpoint for legacy clusters)")
+	command.Flags().StringSliceVar(&allowedCapabilities, "capabilities", nil,
 		"optional capabilities this invitation allows (default: all)")
-	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "invitation lifetime for reconciled clusters")
-	cmd.AddCommand(newClusterTokenListCmd(), newClusterTokenRevokeCmd())
-	return cmd
+	command.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "invitation lifetime for reconciled clusters")
+	command.AddCommand(newClusterTokenListCommand(), newClusterTokenRevokeCommand())
+	return command
 }
 
 // promptTokenRole asks which role the token should enroll and explains the
@@ -217,18 +217,18 @@ func promptInvitationCapabilities(ctx context.Context, out *os.File) ([]string, 
 	return selected, nil
 }
 
-func newClusterTokenListCmd() *cobra.Command {
+func newClusterTokenListCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List reconciled-cluster invitations",
 		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, _, err := reconciledClusterStore(cmd.Context())
+		RunE: func(command *cobra.Command, _ []string) error {
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			invitations, err := store.Invitations(cmd.Context())
+			invitations, err := store.Invitations(command.Context())
 			if err != nil {
 				return err
 			}
@@ -254,17 +254,17 @@ func newClusterTokenListCmd() *cobra.Command {
 	}
 }
 
-func newClusterTokenRevokeCmd() *cobra.Command {
+func newClusterTokenRevokeCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "revoke <id>",
 		Short: "Revoke an unused reconciled-cluster invitation",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			store, _, err := reconciledClusterStore(cmd.Context())
+		RunE: func(command *cobra.Command, args []string) error {
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			if err := store.RevokeInvitation(cmd.Context(), args[0]); err != nil {
+			if err := store.RevokeInvitation(command.Context(), args[0]); err != nil {
 				return err
 			}
 			fmt.Fprintf(os.Stdout, "revoked invitation %s\n", args[0])

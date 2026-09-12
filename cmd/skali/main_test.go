@@ -25,6 +25,13 @@ func TestCommandVerbConsistency(t *testing.T) {
 		case "ls", "rm", "delete", "del":
 			t.Errorf("%s: use list or remove as the canonical verb", path)
 		}
+		if short := command.Short; short != "" {
+			require.Equal(t, strings.ToUpper(short[:1]), short[:1], "%s: Short must start uppercase", path)
+			require.False(t, strings.HasSuffix(short, "."), "%s: Short must not end with a period", path)
+		}
+		if long := command.Long; long != "" {
+			require.True(t, strings.HasSuffix(strings.TrimSpace(long), ".") || strings.HasSuffix(strings.TrimSpace(long), ")"), "%s: Long must end with a sentence", path)
+		}
 		for _, token := range strings.Fields(command.Use)[1:] {
 			if strings.HasPrefix(token, "-") {
 				continue

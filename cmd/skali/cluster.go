@@ -27,11 +27,11 @@ func newClusterCommand() *cobra.Command {
 		// The nearest PersistentPreRun wins in cobra and the skali root has
 		// none, so this fires for every cluster subcommand and never for
 		// the developer-workflow commands.
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PersistentPreRun: func(command *cobra.Command, args []string) {
 			useManagedLima()
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterRoot(cmd)
+		RunE: func(command *cobra.Command, args []string) error {
+			return runClusterRoot(command)
 		},
 	}
 
@@ -41,12 +41,12 @@ func newClusterCommand() *cobra.Command {
 		"docker-save tar of the skalid image, imported into the node during init (source installs)")
 	cluster.PersistentFlags().StringVar(&hostdBinFlag, "hostd-bin", "",
 		"Linux skali-hostd binary to install on managed nodes (source installs)")
-	cluster.AddCommand(newClusterCreateCmd(), newClusterInstallCmd(), newClusterInitCmd(), newClusterStatusCmd(),
-		newClusterUpgradeCmd(), newClusterUninstallCmd(), newClusterTokenCmd(), newClusterJoinCmd(),
-		newClusterTierCmd(), newClusterDiagnoseCmd(), newClusterRepairCmd(), newClusterRestoreCmd(),
-		newClusterNodeCmd(), newClusterChangesCmd(), newClusterPlanCmd(), newClusterApplyCmd(),
-		newClusterRebalanceCmd(), newClusterAddressesCmd(), newClusterStorageMigrateCmd(),
-		newClusterResetPasswordCmd())
+	cluster.AddCommand(newClusterCreateCommand(), newClusterInstallCommand(), newClusterInitCommand(), newClusterStatusCommand(),
+		newClusterUpgradeCommand(), newClusterUninstallCommand(), newClusterTokenCommand(), newClusterJoinCommand(),
+		newClusterTierCommand(), newClusterDiagnoseCommand(), newClusterRepairCommand(), newClusterRestoreCommand(),
+		newClusterNodeCommand(), newClusterChangesCommand(), newClusterPlanCommand(), newClusterApplyCommand(),
+		newClusterRebalanceCommand(), newClusterAddressesCommand(), newClusterStorageMigrateCommand(),
+		newClusterResetPasswordCommand())
 	clusterCmd = cluster
 	return cluster
 }

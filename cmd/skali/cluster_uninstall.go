@@ -16,14 +16,14 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-func newClusterUninstallCmd() *cobra.Command {
+func newClusterUninstallCommand() *cobra.Command {
 	var scope, confirmName string
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove the Skali bundle or this node, with scoped confirmation",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
 			out := os.Stdout
 			if scope == "" && !cliprompt.Interactive() {
 				return fmt.Errorf("non-interactive run requires --scope bundle|node and --confirm <cluster>")
@@ -32,9 +32,9 @@ func newClusterUninstallCmd() *cobra.Command {
 			return runUninstallFlow(ctx, out, reader, scope, confirmName)
 		},
 	}
-	cmd.Flags().StringVar(&scope, "scope", "", "removal scope: bundle (keep bare k3s) or node (remove k3s and all skali state)")
-	cmd.Flags().StringVar(&confirmName, "confirm", "", "cluster name, confirming the removal non-interactively")
-	return cmd
+	command.Flags().StringVar(&scope, "scope", "", "removal scope: bundle (keep bare k3s) or node (remove k3s and all skali state)")
+	command.Flags().StringVar(&confirmName, "confirm", "", "cluster name, confirming the removal non-interactively")
+	return command
 }
 
 // runUninstallFlow guards, scopes, confirms, and executes a removal. The

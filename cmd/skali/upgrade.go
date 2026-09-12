@@ -31,7 +31,7 @@ import (
 // and a cluster moves with skali cluster upgrade.
 func newUpgradeCommand() *cobra.Command {
 	var requested, channelFlag string
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Update this skali CLI to a published release",
 		Long: "Replaces this skali binary with a published release: the newest on a\n" +
@@ -49,9 +49,9 @@ func newUpgradeCommand() *cobra.Command {
 			return runUpgrade(command.Context(), command.OutOrStdout(), opts)
 		},
 	}
-	cmd.Flags().StringVar(&requested, "version", "", "exact release tag to install (overrides --channel; may downgrade)")
-	cmd.Flags().StringVar(&channelFlag, "channel", "", "release channel, stable or beta (default stable; beta for a prerelease build)")
-	return cmd
+	command.Flags().StringVar(&requested, "version", "", "exact release tag to install (overrides --channel; may downgrade)")
+	command.Flags().StringVar(&channelFlag, "channel", "", "release channel, stable or beta (default stable; beta for a prerelease build)")
+	return command
 }
 
 // upgradeOptions is everything runUpgrade needs, resolved once by the

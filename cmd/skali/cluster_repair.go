@@ -18,21 +18,21 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-func newClusterRepairCmd() *cobra.Command {
+func newClusterRepairCommand() *cobra.Command {
 	var yes bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "repair",
 		Short: "Diagnose and repair this installation with scoped, confirmed actions",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			out := os.Stdout
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
-			return runRepairFlow(cmd.Context(), out, reader, yes)
+			return runRepairFlow(command.Context(), out, reader, yes)
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "confirm every planned repair action")
-	return cmd
+	command.Flags().BoolVar(&yes, "yes", false, "confirm every planned repair action")
+	return command
 }
 
 // runRepairFlow is diagnose-first: run the read-only diagnosis, print it,

@@ -24,8 +24,8 @@ import (
 // runClusterRoot is the bare `skali cluster` entry: detect, render the state
 // header, and offer the maintenance menu interactively. Detection is
 // read-only; no maintenance action runs without being selected.
-func runClusterRoot(cmd *cobra.Command) error {
-	ctx := cmd.Context()
+func runClusterRoot(command *cobra.Command) error {
+	ctx := command.Context()
 	out := os.Stdout
 
 	banner(out)

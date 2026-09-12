@@ -19,22 +19,22 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
-func newClusterNodeCmd() *cobra.Command {
+func newClusterNodeCommand() *cobra.Command {
 	node := &cobra.Command{
 		Use:   "node",
 		Short: "Stage reconciled-cluster node changes",
 	}
-	node.AddCommand(newClusterNodeCapabilitiesCmd(), newClusterNodeRemoveCmd(),
-		newClusterNodeRestoreCmd(), newClusterNodeForgetCmd())
+	node.AddCommand(newClusterNodeCapabilitiesCommand(), newClusterNodeRemoveCommand(),
+		newClusterNodeRestoreCommand(), newClusterNodeForgetCommand())
 	return node
 }
 
-func newClusterNodeCapabilitiesCmd() *cobra.Command {
+func newClusterNodeCapabilitiesCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "capabilities <node> <capability>...",
 		Short: "Stage a node capability set",
 		Args:  cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			capabilities := append([]string(nil), args[1:]...)
 			slices.Sort(capabilities)
 			capabilities = slices.Compact(capabilities)
@@ -44,11 +44,11 @@ func newClusterNodeCapabilitiesCmd() *cobra.Command {
 						capability, strings.Join(layout.Capabilities, ", "))
 				}
 			}
-			store, _, err := reconciledClusterStore(cmd.Context())
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+			state, err := store.Update(command.Context(), func(state *clusterstate.State) error {
 				_, err := state.EditCandidate(time.Now(),
 					func(nodes map[string]clusterstate.RevisionNode, _ *clusterstate.PlatformState) error {
 						node, ok := clusterstate.FindNodeByName(nodes, args[0])
@@ -72,19 +72,19 @@ func newClusterNodeCapabilitiesCmd() *cobra.Command {
 	}
 }
 
-func newClusterNodeRemoveCmd() *cobra.Command {
+func newClusterNodeRemoveCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:     "remove <node>",
 		Aliases: []string{"rm"},
 		Short:   "Stage a managed node for drain and removal",
 		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			store, _, err := reconciledClusterStore(cmd.Context())
+		RunE: func(command *cobra.Command, args []string) error {
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
 			enrolledOnly := false
-			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+			state, err := store.Update(command.Context(), func(state *clusterstate.State) error {
 				var err error
 				enrolledOnly, err = clusterstate.StageNodeRemoval(state, args[0], time.Now())
 				return err
@@ -105,17 +105,17 @@ func newClusterNodeRemoveCmd() *cobra.Command {
 	}
 }
 
-func newClusterNodeRestoreCmd() *cobra.Command {
+func newClusterNodeRestoreCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "restore <node>",
 		Short: "Cancel a staged node removal",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			store, _, err := reconciledClusterStore(cmd.Context())
+		RunE: func(command *cobra.Command, args []string) error {
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+			state, err := store.Update(command.Context(), func(state *clusterstate.State) error {
 				baseID := state.ConvergedRevision
 				if state.TargetRevision != "" {
 					baseID = state.TargetRevision
@@ -142,21 +142,21 @@ func newClusterNodeRestoreCmd() *cobra.Command {
 	}
 }
 
-func newClusterNodeForgetCmd() *cobra.Command {
+func newClusterNodeForgetCommand() *cobra.Command {
 	var force bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "forget <node>",
 		Short: "Finalize an unreachable removed host without local cleanup",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			if !force {
 				return errors.New("forgetting an unreachable host requires --force")
 			}
-			store, _, err := reconciledClusterStore(cmd.Context())
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			_, err = store.Update(cmd.Context(), func(state *clusterstate.State) error {
+			_, err = store.Update(command.Context(), func(state *clusterstate.State) error {
 				var nodeID string
 				for _, node := range clusterstate.SortedNodes(state.Nodes) {
 					id := node.ID
@@ -198,22 +198,22 @@ func newClusterNodeForgetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "accept possible stale k3s and agent state on the unreachable host")
-	return cmd
+	command.Flags().BoolVar(&force, "force", false, "accept possible stale k3s and agent state on the unreachable host")
+	return command
 }
 
-func newClusterChangesCmd() *cobra.Command {
+func newClusterChangesCommand() *cobra.Command {
 	changes := &cobra.Command{Use: "changes", Short: "Manage the candidate cluster revision"}
-	changes.AddCommand(newClusterChangesImportCmd(), &cobra.Command{
+	changes.AddCommand(newClusterChangesImportCommand(), &cobra.Command{
 		Use:   "discard",
 		Short: "Discard every unapplied candidate change",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, _, err := reconciledClusterStore(cmd.Context())
+		RunE: func(command *cobra.Command, _ []string) error {
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+			state, err := store.Update(command.Context(), func(state *clusterstate.State) error {
 				if state.TargetRevision != "" {
 					state.CandidateRevision = state.TargetRevision
 				} else {
@@ -231,12 +231,12 @@ func newClusterChangesCmd() *cobra.Command {
 	return changes
 }
 
-func newClusterChangesImportCmd() *cobra.Command {
+func newClusterChangesImportCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "import <cluster-layout>",
 		Short: "Replace the candidate using already-enrolled nodes from a layout",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			document, err := layout.ParseFile(args[0])
 			if err != nil {
 				return err
@@ -244,11 +244,11 @@ func newClusterChangesImportCmd() *cobra.Command {
 			if diagnostics := layout.Validate(document); len(diagnostics) > 0 {
 				return diagnostics
 			}
-			store, _, err := reconciledClusterStore(cmd.Context())
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			state, err := store.Update(cmd.Context(), func(state *clusterstate.State) error {
+			state, err := store.Update(command.Context(), func(state *clusterstate.State) error {
 				_, err := state.ReplaceCandidateLayout(document.Layout, time.Now())
 				return err
 			})
@@ -263,18 +263,18 @@ func newClusterChangesImportCmd() *cobra.Command {
 	}
 }
 
-func newClusterPlanCmd() *cobra.Command {
+func newClusterPlanCommand() *cobra.Command {
 	var rebalance bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "plan",
 		Short: "Preview the candidate cluster transition",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, _, err := reconciledClusterStore(cmd.Context())
+		RunE: func(command *cobra.Command, _ []string) error {
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			state, err := store.Load(cmd.Context())
+			state, err := store.Load(command.Context())
 			if err != nil {
 				return err
 			}
@@ -286,23 +286,23 @@ func newClusterPlanCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&rebalance, "rebalance-workloads", false,
+	command.Flags().BoolVar(&rebalance, "rebalance-workloads", false,
 		"include controlled rolling redistribution of healthy managed workloads")
-	return cmd
+	return command
 }
 
-func newClusterApplyCmd() *cobra.Command {
+func newClusterApplyCommand() *cobra.Command {
 	var yes, rebalance, wait bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply every pending cluster topology change",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, _, err := reconciledClusterStore(cmd.Context())
+		RunE: func(command *cobra.Command, _ []string) error {
+			store, _, err := reconciledClusterStore(command.Context())
 			if err != nil {
 				return err
 			}
-			state, err := store.Load(cmd.Context())
+			state, err := store.Load(command.Context())
 			if err != nil {
 				return err
 			}
@@ -325,7 +325,7 @@ func newClusterApplyCmd() *cobra.Command {
 					title = "Apply these destructive cluster changes?"
 				}
 				confirmed, err := promptSession(os.Stdout, reader).Confirm(
-					cmd.Context(), cliprompt.ConfirmOptions{Title: title})
+					command.Context(), cliprompt.ConfirmOptions{Title: title})
 				if err != nil {
 					return err
 				}
@@ -335,7 +335,7 @@ func newClusterApplyCmd() *cobra.Command {
 			}
 			candidateID := state.CandidateRevision
 			var operation clusterstate.Operation
-			_, err = store.Update(cmd.Context(), func(current *clusterstate.State) error {
+			_, err = store.Update(command.Context(), func(current *clusterstate.State) error {
 				if current.CandidateRevision != candidateID {
 					return errors.New("candidate changed after planning; run cluster plan again")
 				}
@@ -348,30 +348,30 @@ func newClusterApplyCmd() *cobra.Command {
 			}
 			printAcceptedOperation(operation)
 			if wait {
-				return waitClusterOperation(cmd.Context(), store, operation.ID)
+				return waitClusterOperation(command.Context(), store, operation.ID)
 			}
 			fmt.Fprintln(os.Stdout, "Reconciliation continues in the background. Run `skali cluster status`.")
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "apply without an interactive confirmation")
-	cmd.Flags().BoolVar(&rebalance, "rebalance-workloads", false,
+	command.Flags().BoolVar(&yes, "yes", false, "apply without an interactive confirmation")
+	command.Flags().BoolVar(&rebalance, "rebalance-workloads", false,
 		"also redistribute eligible healthy managed workloads")
-	cmd.Flags().BoolVar(&wait, "wait", false, "wait until the target revision converges")
-	return cmd
+	command.Flags().BoolVar(&wait, "wait", false, "wait until the target revision converges")
+	return command
 }
 
-func newClusterRebalanceCmd() *cobra.Command {
+func newClusterRebalanceCommand() *cobra.Command {
 	var workloads, yes, wait bool
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "rebalance",
 		Short: "Reconcile the current topology and optionally redistribute workloads",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, _ []string) error {
 			if !workloads {
 				return errors.New("the current topology is continuously reconciled; use --workloads to redistribute healthy workloads")
 			}
-			apply := newClusterApplyCmd()
+			apply := newClusterApplyCommand()
 			args := []string{"--rebalance-workloads"}
 			if yes {
 				args = append(args, "--yes")
@@ -380,14 +380,14 @@ func newClusterRebalanceCmd() *cobra.Command {
 				args = append(args, "--wait")
 			}
 			apply.SetArgs(args)
-			apply.SetContext(cmd.Context())
+			apply.SetContext(command.Context())
 			return apply.Execute()
 		},
 	}
-	cmd.Flags().BoolVar(&workloads, "workloads", false, "roll eligible managed workloads to use the current topology")
-	cmd.Flags().BoolVar(&yes, "yes", false, "rebalance without an interactive confirmation")
-	cmd.Flags().BoolVar(&wait, "wait", false, "wait for rebalancing to complete")
-	return cmd
+	command.Flags().BoolVar(&workloads, "workloads", false, "roll eligible managed workloads to use the current topology")
+	command.Flags().BoolVar(&yes, "yes", false, "rebalance without an interactive confirmation")
+	command.Flags().BoolVar(&wait, "wait", false, "wait for rebalancing to complete")
+	return command
 }
 
 func candidatePlan(state *clusterstate.State, rebalance bool) (clusterstate.Plan, error) {

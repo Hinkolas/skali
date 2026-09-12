@@ -18,14 +18,14 @@ import (
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
-func newClusterUpgradeCmd() *cobra.Command {
+func newClusterUpgradeCommand() *cobra.Command {
 	var yes, wait, recover bool
 	var target string
-	cmd := &cobra.Command{
+	command := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Update the whole managed cluster to one Skali release",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			out := os.Stdout
 			banner(out)
 			reader := bufio.NewReader(os.Stdin)
@@ -33,9 +33,9 @@ func newClusterUpgradeCmd() *cobra.Command {
 				if imageTarFlag != "" {
 					return errors.New("--recover cannot be combined with --image-tar")
 				}
-				return runRecoveryUpdate(cmd.Context(), out, reader, target, yes, wait)
+				return runRecoveryUpdate(command.Context(), out, reader, target, yes, wait)
 			}
-			detected, err := installer.Detect(cmd.Context(), runner())
+			detected, err := installer.Detect(command.Context(), runner())
 			if err != nil {
 				return err
 			}
@@ -44,19 +44,19 @@ func newClusterUpgradeCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("select and authenticate a Skali remote first: %w", err)
 				}
-				return runManagedUpdate(cmd.Context(), out, reader, api, target, yes, wait)
+				return runManagedUpdate(command.Context(), out, reader, api, target, yes, wait)
 			}
 			if target != "" || wait {
 				return errors.New("--version and --wait require a managed cluster")
 			}
-			return runUpgradeFlow(cmd.Context(), out, reader, yes)
+			return runUpgradeFlow(command.Context(), out, reader, yes)
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
-	cmd.Flags().BoolVar(&wait, "wait", false, "wait for the cluster update to complete")
-	cmd.Flags().BoolVar(&recover, "recover", false, "submit directly from a controller without API activity checks")
-	cmd.Flags().StringVar(&target, "version", "", "exact target release (default: latest on the configured channel)")
-	return cmd
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	command.Flags().BoolVar(&wait, "wait", false, "wait for the cluster update to complete")
+	command.Flags().BoolVar(&recover, "recover", false, "submit directly from a controller without API activity checks")
+	command.Flags().StringVar(&target, "version", "", "exact target release (default: latest on the configured channel)")
+	return command
 }
 
 // runUpgradeFlow plans, confirms, and executes a version upgrade on this
