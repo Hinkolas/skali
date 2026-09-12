@@ -154,6 +154,7 @@ func newDevCommand() *cobra.Command {
 			Force:              force || rebuild,
 			Rebuild:            rebuild,
 			PruneValues:        pruneValues,
+			Attach:             attachSessionEnds,
 			OnDeploymentOpened: func(id string) { window.Store(id) },
 			OnDeploymentClosed: func() { window.Store("") },
 			SkipReadySummary:   true,
@@ -468,7 +469,7 @@ func teardownLocalEnvironment(ctx context.Context, out io.Writer, api *client.Cl
 		verb = "purge"
 	}
 	fmt.Fprintf(out, "%s %s  %s %s\n", style.Dim("run"), style.Bold(runID), verb, name)
-	status, err := attachRun(ctx, out, api, runID, localRemoteName)
+	status, err := attachRunMode(ctx, out, api, runID, localRemoteName, attachSessionEnds)
 	if err != nil {
 		// The purge epilogue deletes the environment row and every run
 		// with it; losing the run mid-poll means the purge finished.
@@ -574,7 +575,7 @@ func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
 	if running.Kind != "deployment" {
 		fmt.Fprintf(out, "a %s is in flight; waiting for run %s to finish\n",
 			running.Kind, style.Bold(running.ID))
-		status, err := attachRun(ctx, out, api, running.ID, localRemoteName)
+		status, err := attachRunMode(ctx, out, api, running.ID, localRemoteName, attachSessionEnds)
 		if err != nil {
 			return "", err
 		}
@@ -585,7 +586,7 @@ func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
 	}
 	fmt.Fprintf(out, "a deployment is already in flight; attaching to run %s\n",
 		style.Bold(running.ID))
-	status, err := attachRun(ctx, out, api, running.ID, localRemoteName)
+	status, err := attachRunMode(ctx, out, api, running.ID, localRemoteName, attachSessionEnds)
 	if err != nil {
 		return "", err
 	}

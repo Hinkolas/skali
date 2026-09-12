@@ -203,3 +203,23 @@ func TestMultilineCheckpointRows(t *testing.T) {
 		require.NotContains(t, line, "\n", "each counted row must be one physical terminal line")
 	}
 }
+
+func TestRendererFooterIsLiveOnly(t *testing.T) {
+	t.Parallel()
+	tree := &client.RunTree{Run: client.Run{ID: "0", Kind: "deployment"},
+		Steps: []client.Step{{ID: "s", Title: "Step", Status: "running"}}}
+	renderer := &Renderer{Out: &sink{}, TTY: true, Footer: "d detaches", Size: func() (int, int) { return 80, 0 }}
+	renderer.Render(tree)
+	require.Equal(t, "d detaches", renderer.previous[len(renderer.previous)-1], "the footer is the block's last row")
+
+	// The footer survives the height cap: the top is cut, not the hint.
+	capped := &Renderer{Out: &sink{}, TTY: true, Footer: "d detaches", Size: func() (int, int) { return 80, 3 }}
+	capped.Render(tree)
+	require.Len(t, capped.previous, 2)
+	require.Equal(t, "d detaches", capped.previous[1])
+
+	out := &sink{}
+	final := &Renderer{Out: out, TTY: true, Footer: "d detaches", Size: func() (int, int) { return 80, 0 }}
+	final.Finish(tree)
+	require.NotContains(t, out.String(), "d detaches", "the finished tree carries no footer")
+}

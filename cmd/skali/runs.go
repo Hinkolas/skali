@@ -98,7 +98,9 @@ func newRunCommand() *cobra.Command {
 	attach := &cobra.Command{
 		Use:   "attach <run-id>",
 		Short: "Attach the terminal to a run until it settles",
-		Args:  cobra.ExactArgs(1),
+		Long: "Renders the run's step tree live until it ends. d detaches and\n" +
+			"leaves the run running; Ctrl-C pressed twice cancels it.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			api, err := queryClient(remote)
 			if err != nil {

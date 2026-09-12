@@ -48,6 +48,9 @@ type deployOptions struct {
 	Yes              bool
 	AllowDestructive bool
 	Detach           bool
+	// Attach chooses the key bindings while following the run; the dev
+	// session keeps Ctrl-C for itself.
+	Attach attachMode
 	// Force deploys even when the environment is up to date; application
 	// workloads restart at promotion. Data is never touched.
 	Force bool
@@ -1010,11 +1013,36 @@ func runAttachHint(remote, runID string) string {
 // one, so it returns "interrupted" without claiming anything. remoteHint
 // names the invocation's explicit --remote for the reattach hint; empty
 // means the default resolution finds the run again.
-func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string) (string, error) {
-	attachCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-	defer stop()
+// attachMode decides what Ctrl-C means while attached to a run.
+type attachMode int
 
-	tty := clirender.IsTerminal(os.Stdout)
+const (
+	// attachCancelsRun is the deploy-like attach: the local work is done and
+	// the run continues on the server, so d detaches and Ctrl-C, pressed
+	// twice, cancels the run. Without a terminal an interrupt detaches.
+	attachCancelsRun attachMode = iota
+	// attachSessionEnds is the dev session's attach: the caller owns the
+	// signal (Ctrl-C ends the session and pauses the project), so an
+	// interrupt only ends the wait; d still detaches.
+	attachSessionEnds
+)
+
+// interruptCancelWindow is how long a first Ctrl-C stays armed for the
+// second press that cancels the run.
+const interruptCancelWindow = 3 * time.Second
+
+// attachRun follows a server-side run to its end with the deploy-like key
+// bindings; see attachRunMode.
+func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string) (string, error) {
+	return attachRunMode(ctx, out, api, runID, remoteHint, attachCancelsRun)
+}
+
+// attachRunMode renders a run's step tree live until the run ends, the
+// user detaches, or, in the cancel mode, asks for the run to be cancelled.
+// It returns the run's final status, "detached", or "interrupted" (the
+// parent context ended).
+func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string, mode attachMode) (string, error) {
+	tty := clirender.IsTerminal(out)
 	style := clirender.StyleFor(out)
 	tails := &stepLogTails{api: api, style: style, verbose: verboseTranscript, lines: map[string][]string{}}
 	renderer := &clirender.Renderer{
@@ -1023,6 +1051,31 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 		Style: style,
 		Logs:  tails.get,
 	}
+
+	// In the session mode the interrupt ends the wait through the context;
+	// in the cancel mode it is a key press to interpret.
+	attachCtx, stop := ctx, func() {}
+	interrupts := make(chan os.Signal, 2)
+	if mode == attachSessionEnds {
+		attachCtx, stop = signal.NotifyContext(ctx, os.Interrupt)
+	} else {
+		signal.Notify(interrupts, os.Interrupt)
+		defer signal.Stop(interrupts)
+	}
+	defer stop()
+	var keys <-chan byte
+	release := func() {}
+	if tty {
+		keys, release = terminalKeys.subscribe()
+	}
+	defer release()
+
+	hint := attachHint(mode, style)
+	if tty {
+		renderer.Footer = hint
+	}
+	var disarm <-chan time.Time
+	cancelRequested := false
 
 	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
@@ -1035,6 +1088,38 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 	}
 
 	kind := "run"
+	detach := func() (string, error) {
+		renderer.Detach()
+		fmt.Fprintf(out, "\ndetached from run %s; the %s continues on the server\n", runID, kind)
+		fmt.Fprintf(out, "  reattach  %s\n", runAttachHint(remoteHint, runID))
+		return "detached", nil
+	}
+	// interrupt handles Ctrl-C in the cancel mode: the first press arms,
+	// the second within the window cancels the run, and once the
+	// cancellation is requested a further press detaches from the wait.
+	interrupt := func() (done bool, status string, err error) {
+		if !tty {
+			status, err = detach()
+			return true, status, err
+		}
+		switch {
+		case cancelRequested:
+			status, err = detach()
+			return true, status, err
+		case disarm != nil:
+			cancelRequested = true
+			disarm = nil
+			renderer.Footer = style.Yellow("cancelling the run, waiting for the server")
+			if _, err := api.CancelRun(ctx, runID); err != nil && !isRunAlreadyFinished(err) {
+				return true, "", err
+			}
+		default:
+			disarm = time.After(interruptCancelWindow)
+			renderer.Footer = style.Yellow("press Ctrl-C again to cancel the run, d to detach")
+		}
+		renderer.Tick()
+		return false, "", nil
+	}
 	for {
 		tree, err := api.GetRun(ctx, runID)
 		if err != nil {
@@ -1060,9 +1145,25 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 				if ctx.Err() != nil {
 					return "interrupted", nil
 				}
-				fmt.Fprintf(out, "\ndetached from run %s; the %s continues on the server\n", runID, kind)
-				fmt.Fprintf(out, "  reattach  %s\n", runAttachHint(remoteHint, runID))
-				return "detached", nil
+				return detach()
+			case <-interrupts:
+				if done, status, err := interrupt(); done {
+					return status, err
+				}
+			case key := <-keys:
+				switch {
+				case isDetachKey(key):
+					return detach()
+				case key == 0x03:
+					// A terminal without ISIG delivers Ctrl-C as a key.
+					if done, status, err := interrupt(); done {
+						return status, err
+					}
+				}
+			case <-disarm:
+				disarm = nil
+				renderer.Footer = hint
+				renderer.Tick()
 			case <-spin.C:
 				renderer.Tick()
 			case <-poll.C:
@@ -1070,6 +1171,15 @@ func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, re
 			}
 		}
 	}
+}
+
+// attachHint is the footer that tells the user the run no longer needs
+// this terminal and which keys act on it.
+func attachHint(mode attachMode, style *clirender.Style) string {
+	if mode == attachSessionEnds {
+		return style.Dim("d detaches, Ctrl-C ends the session")
+	}
+	return style.Dim("the run continues on the server: d detaches, Ctrl-C cancels")
 }
 
 // stepLogTails holds the log tail shown under each live step. The renderer
@@ -1582,7 +1692,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		fmt.Fprintf(out, "deployment continues on the server; attach with: %s\n", runAttachHint(opts.Remote, opened.Deployment.RunID))
 		return deployOutcomeDetached, nil
 	}
-	status, err := attachRun(ctx, out, api, opened.Deployment.RunID, opts.Remote)
+	status, err := attachRunMode(ctx, out, api, opened.Deployment.RunID, opts.Remote, opts.Attach)
 	if err != nil {
 		return "", err
 	}

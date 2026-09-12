@@ -49,6 +49,10 @@ type Renderer struct {
 	// Size reports the terminal's columns and rows; nil queries Out. A
 	// zero height disables the cap.
 	Size func() (width, height int)
+	// Footer is an extra last row of the live block on a TTY, for key hints
+	// and transient notices; it is styled by the caller and never part of
+	// the finished tree.
+	Footer string
 
 	frame    int
 	previous []string // rows of the block currently on screen
@@ -218,10 +222,16 @@ func (r *Renderer) paint(final bool) {
 		}
 		return
 	}
+	if !final && r.Footer != "" {
+		lines = append(lines, r.Footer)
+	}
 	fitWidth(lines, width)
 	if !final && height > 1 && len(lines) > height-1 {
 		view.fold = true
 		lines = treeLines(r.lastTree, r.Logs, view)
+		if r.Footer != "" {
+			lines = append(lines, r.Footer)
+		}
 		fitWidth(lines, width)
 		lines = cutTop(lines, height-1, r.Style)
 	}
