@@ -391,7 +391,7 @@
 	</Card>
 
 	<Card class="col-span-2 p-5 pb-2.5">
-		<div class="mb-3 flex items-baseline gap-2.5">
+		<div class="mb-3 flex items-center gap-2.5">
 			<h3 class="text-text-primary text-xl font-semibold">Revisions</h3>
 			{#if data.env}
 				<Pill text={data.env.name} />

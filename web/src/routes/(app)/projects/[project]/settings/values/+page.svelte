@@ -184,7 +184,7 @@
 		{/if}
 
 		<Card class="p-5 pb-2.5">
-			<div class="mb-3 flex items-baseline gap-2.5">
+			<div class="mb-3 flex items-center gap-2.5">
 				<h3 class="text-text-primary text-xl font-semibold">Variables</h3>
 				<Pill text={data.env.name} />
 				<span class="text-text-muted text-md">
