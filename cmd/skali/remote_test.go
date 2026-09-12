@@ -406,7 +406,7 @@ func TestRemoteListAndBareRemote(t *testing.T) {
 		return execute(newRemoteListCommand())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "no remotes; run `skali remote add <name> <url>`")
+	require.Contains(t, output, "no remotes; skali remote add <name> <url> adds one")
 
 	seedConfig(t, &cliconfig.Config{
 		CurrentRemote: "b",
@@ -421,8 +421,8 @@ func TestRemoteListAndBareRemote(t *testing.T) {
 		return execute(newRemoteCommand())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "  a  https://a.example.com\n")
-	require.Contains(t, output, "* b  https://b.example.com  [logged in]\n")
+	require.Contains(t, output, "a            https://a.example.com  not logged in\n")
+	require.Contains(t, output, "b (current)  https://b.example.com  logged in\n")
 }
 
 func TestRemoteListHidesLocal(t *testing.T) {
@@ -439,7 +439,7 @@ func TestRemoteListHidesLocal(t *testing.T) {
 		return execute(newRemoteListCommand())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "* b  https://b.example.com  [logged in]\n")
+	require.Contains(t, output, "b (current)  https://b.example.com  logged in\n")
 	require.NotContains(t, output, "local")
 
 	// Only the dev-owned local remote on file still reads as no remotes.
@@ -450,7 +450,7 @@ func TestRemoteListHidesLocal(t *testing.T) {
 		return execute(newRemoteListCommand())
 	})
 	require.NoError(t, err)
-	require.Contains(t, output, "no remotes; run `skali remote add <name> <url>`")
+	require.Contains(t, output, "no remotes; skali remote add <name> <url> adds one")
 }
 
 func TestRemoteUseLocalRefused(t *testing.T) {
@@ -594,4 +594,54 @@ func TestRemoteStatusExpiredSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Contains(t, output, "session: expired or revoked; run `skali remote login`")
+}
+
+func TestRemoteListTable(t *testing.T) {
+	stageRemotes(t, "khz", map[string]*cliconfig.Remote{
+		"khz":   {Master: "https://skali.khz.dev/api", Token: "tok"},
+		"lab":   {Master: "https://lab.example/api"},
+		"local": {Master: "http://127.0.0.1:7070", Token: "tok"},
+	})
+	command := newRemoteListCommand()
+	out := &strings.Builder{}
+	command.SetOut(out)
+	require.NoError(t, execute(command))
+	text := out.String()
+	require.Regexp(t, `^remotes  \S+config\.yaml\n\n`, text)
+	require.Contains(t, text, "NAME           MASTER                     SESSION\n")
+	require.Contains(t, text, "khz (current)  https://skali.khz.dev/api  logged in\n")
+	require.Contains(t, text, "lab            https://lab.example/api    not logged in\n")
+	require.NotContains(t, text, "local", "the dev-owned remote is not offered")
+
+	stageRemotes(t, "", nil)
+	out.Reset()
+	command = newRemoteListCommand()
+	command.SetOut(out)
+	require.NoError(t, execute(command))
+	require.Contains(t, out.String(), "no remotes; skali remote add <name> <url> adds one")
+}
+
+func TestRemoteUseWithoutNameNeedsTerminal(t *testing.T) {
+	stageRemotes(t, "khz", map[string]*cliconfig.Remote{
+		"khz": {Master: "https://skali.khz.dev/api"},
+		"lab": {Master: "https://lab.example/api"},
+	})
+	command := newRemoteUseCommand()
+	command.SetOut(io.Discard)
+	command.SetIn(strings.NewReader(""))
+	err := execute(command)
+	require.ErrorContains(t, err, "name the remote to switch to")
+	require.ErrorContains(t, err, "use <name>")
+
+	command = newRemoteUseCommand()
+	command.SetOut(io.Discard)
+	require.NoError(t, execute(command, "lab"))
+	cfg, err := cliconfig.Load()
+	require.NoError(t, err)
+	require.Equal(t, "lab", cfg.CurrentRemote)
+
+	stageRemotes(t, "", nil)
+	command = newRemoteUseCommand()
+	command.SetOut(io.Discard)
+	require.ErrorContains(t, execute(command), "no remotes")
 }

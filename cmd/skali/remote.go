@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
+	"github.com/Hinkolas/skali/internal/clirender"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -250,43 +253,80 @@ func newRemoteListCommand() *cobra.Command {
 }
 
 func runRemoteList(command *cobra.Command, args []string) error {
-	out := command.OutOrStdout()
 	cfg, err := cliconfig.Load()
 	if err != nil {
 		return err
 	}
-	// The dev-owned local remote is an implementation detail of skali dev;
-	// listing it would invite selecting it.
+	renderRemoteTable(command.OutOrStdout(), cfg)
+	return nil
+}
+
+// remoteNames lists the configured remotes a user may target, sorted. The
+// dev-owned local remote is an implementation detail of skali dev; listing
+// it would invite selecting it.
+func remoteNames(cfg *cliconfig.Config) []string {
 	names := make([]string, 0, len(cfg.Remotes))
 	for name := range cfg.Remotes {
 		if name != localRemoteName {
 			names = append(names, name)
 		}
 	}
-	if len(names) == 0 {
-		fmt.Fprintln(out, "no remotes; run `skali remote add <name> <url>`")
-		return nil
-	}
 	sort.Strings(names)
-	for _, name := range names {
-		marker := " "
-		if name == cfg.CurrentRemote {
-			marker = "*"
-		}
-		loggedIn := ""
-		if cfg.Remotes[name].Token != "" {
-			loggedIn = "  [logged in]"
-		}
-		fmt.Fprintf(out, "%s %s  %s%s\n", marker, name, cfg.Remotes[name].Master, loggedIn)
+	return names
+}
+
+// renderRemoteTable prints the remotes the way the other list commands
+// print their scope: a dim header naming where the list comes from, then
+// one row per remote with the current one marked and the session state
+// colored.
+func renderRemoteTable(out io.Writer, cfg *cliconfig.Config) {
+	style := clirender.StyleFor(out)
+	location := "config"
+	if path, err := cliconfig.Path(); err == nil {
+		home, _ := os.UserHomeDir()
+		location = tildePath(home, path)
 	}
-	return nil
+	fmt.Fprintf(out, "%s  %s\n\n", style.Dim("remotes"), location)
+	names := remoteNames(cfg)
+	if len(names) == 0 {
+		fmt.Fprintln(out, style.Dim("no remotes; skali remote add <name> <url> adds one"))
+		return
+	}
+	const currentSuffix = " (current)"
+	nameWidth, masterWidth := len("NAME"), len("MASTER")
+	for _, name := range names {
+		width := len(name)
+		if name == cfg.CurrentRemote {
+			width += len(currentSuffix)
+		}
+		nameWidth = max(nameWidth, width)
+		masterWidth = max(masterWidth, len(cfg.Remotes[name].Master))
+	}
+	fmt.Fprintf(out, "%-*s  %-*s  %s\n", nameWidth, "NAME", masterWidth, "MASTER", "SESSION")
+	for _, name := range names {
+		remote := cfg.Remotes[name]
+		label := name
+		padding := nameWidth - len(name)
+		if name == cfg.CurrentRemote {
+			label = style.Bold(name) + style.Dim(currentSuffix)
+			padding -= len(currentSuffix)
+		}
+		session := style.Green("logged in")
+		if remote.Token == "" {
+			session = style.Dim("not logged in")
+		}
+		fmt.Fprintf(out, "%s%s  %-*s  %s\n", label, strings.Repeat(" ", max(padding, 0)), masterWidth, remote.Master, session)
+	}
 }
 
 func newRemoteUseCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:               "use <name>",
-		Short:             "Switch the current remote",
-		Args:              cobra.ExactArgs(1),
+		Use:   "use [name]",
+		Short: "Switch the current remote",
+		Long: "Makes the named remote the one workflow commands talk to outside a\n" +
+			"bound checkout. Without a name the configured remotes are offered to\n" +
+			"pick from.",
+		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeRemoteArg,
 		RunE: func(command *cobra.Command, args []string) error {
 			out := command.OutOrStdout()
@@ -294,7 +334,12 @@ func newRemoteUseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name := args[0]
+			var name string
+			if len(args) == 1 {
+				name = args[0]
+			} else if name, err = chooseRemote(command.Context(), out, bufio.NewReader(command.InOrStdin()), cfg, command.CommandPath()); err != nil {
+				return err
+			}
 			if name == localRemoteName {
 				return errors.New("remote \"local\" is managed by skali dev; dev commands target the local platform themselves")
 			}
@@ -309,6 +354,35 @@ func newRemoteUseCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// chooseRemote offers the configured remotes in a terminal, the current one
+// preselected; without a terminal the name has to be given.
+func chooseRemote(ctx context.Context, out io.Writer, in *bufio.Reader, cfg *cliconfig.Config, commandPath string) (string, error) {
+	names := remoteNames(cfg)
+	if len(names) == 0 {
+		return "", errors.New("no remotes; skali remote add <name> <url> adds one")
+	}
+	if !cliprompt.Interactive() {
+		return "", fmt.Errorf("name the remote to switch to: %s <name>; skali remote list shows them", commandPath)
+	}
+	options := make([]cliprompt.Option, 0, len(names))
+	for _, name := range names {
+		description := cfg.Remotes[name].Master
+		if cfg.Remotes[name].Token == "" {
+			description += "  (not logged in)"
+		}
+		options = append(options, cliprompt.Option{Label: name, Description: description, Value: name})
+	}
+	chosen, err := promptSession(out, in).Select(ctx, cliprompt.SelectOptions{
+		Title:        "Switch to which remote?",
+		Options:      options,
+		DefaultValue: cfg.CurrentRemote,
+	})
+	if err != nil {
+		return "", confirmError(err)
+	}
+	return chosen, nil
 }
 
 func newRemoteStatusCommand() *cobra.Command {
