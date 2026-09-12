@@ -44,8 +44,10 @@ func TestInstallScript(t *testing.T) {
 		name, channel, pin, want, failure, raw string
 		releases                               []release
 		private, pretty, badChecksum, noStable bool
+		noCompletions                          bool
 	}{
 		{name: "stable default", want: "v0.2.0"},
+		{name: "completions skipped", want: "v0.2.0", noCompletions: true},
 		{name: "beta includes prereleases", channel: "beta", releases: candidates, want: "v0.3.0-rc.10"},
 		{name: "pretty metadata", channel: "beta", releases: candidates, want: "v0.3.0-rc.10", pretty: true},
 		{name: "stable outranks its prereleases", channel: "beta", releases: append(append([]release{}, candidates...), release{Tag: "v0.3.0"}), want: "v0.3.0"},
@@ -73,13 +75,17 @@ func TestInstallScript(t *testing.T) {
 				"curl":    `exec "$SKALI_TEST_EXECUTABLE" -test.run=^TestInstallCurlHelper$ -- "$@"`,
 				"uname":   `case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac`,
 				"id":      `echo 0`,
-				"install": `cp "$3" "$SKALI_TEST_DEST/${4##*/}"`,
+				"install": `cp "$3" "$SKALI_TEST_DEST/${4##*/}" && chmod 0755 "$SKALI_TEST_DEST/${4##*/}"`,
 				"mkdir":   `exit 0`,
 			}
 			for name, script := range shims {
 				require.NoError(t, os.WriteFile(filepath.Join(toolsDir, name), []byte("#!/bin/sh\n"+script+"\n"), 0755))
 			}
-			assets := map[string]string{"skali_linux_amd64": "fixture CLI"}
+			// The fixture CLI records how the script invokes it after the
+			// install, which is where completions get installed.
+			calls := filepath.Join(root, "calls")
+			fixtureCLI := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SKALI_TEST_CALLS\"\n"
+			assets := map[string]string{"skali_linux_amd64": fixtureCLI}
 			checksums := ""
 			for name, body := range assets {
 				checksums += fmt.Sprintf("%x  %s\n", sha256.Sum256([]byte(body)), name)
@@ -150,12 +156,15 @@ func TestInstallScript(t *testing.T) {
 			cmd := exec.CommandContext(ctx, "sh", "../../install.sh")
 			for _, entry := range os.Environ() {
 				key, _, _ := strings.Cut(entry, "=")
-				if key == "PATH" || key == "GITHUB_TOKEN" || strings.HasPrefix(key, "SKALI_") {
+				if key == "PATH" || key == "HOME" || key == "GITHUB_TOKEN" || strings.HasPrefix(key, "SKALI_") {
 					continue
 				}
 				cmd.Env = append(cmd.Env, entry)
 			}
-			cmd.Env = append(cmd.Env, "PATH="+toolsDir+":"+os.Getenv("PATH"), "SKALI_TEST_EXECUTABLE="+executable, "SKALI_TEST_SERVER="+server.URL, "SKALI_TEST_DEST="+dest, "SKALI_CHANNEL="+tc.channel, "SKALI_VERSION="+tc.pin)
+			cmd.Env = append(cmd.Env, "PATH="+toolsDir+":"+os.Getenv("PATH"), "HOME="+root, "SKALI_TEST_EXECUTABLE="+executable, "SKALI_TEST_SERVER="+server.URL, "SKALI_TEST_DEST="+dest, "SKALI_TEST_CALLS="+calls, "SKALI_CHANNEL="+tc.channel, "SKALI_VERSION="+tc.pin)
+			if tc.noCompletions {
+				cmd.Env = append(cmd.Env, "SKALI_COMPLETIONS=none")
+			}
 			if tc.private {
 				cmd.Env = append(cmd.Env, "GITHUB_TOKEN=synthetic-fixture-token")
 			}
@@ -171,10 +180,17 @@ func TestInstallScript(t *testing.T) {
 			require.Contains(t, string(output), "("+tc.want+")")
 			got, err := os.ReadFile(filepath.Join(dest, "skali"))
 			require.NoError(t, err)
-			require.Equal(t, "fixture CLI", string(got))
+			require.Equal(t, fixtureCLI, string(got))
 			entries, err := os.ReadDir(dest)
 			require.NoError(t, err)
 			require.Len(t, entries, 1, "the CLI is the only binary installed; skali cluster fetches skali-hostd itself")
+			recorded, err := os.ReadFile(calls)
+			if tc.noCompletions {
+				require.ErrorIs(t, err, os.ErrNotExist, "SKALI_COMPLETIONS=none skips the completion install")
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "completion install\n", string(recorded), "the installed CLI installs completions for the login shell")
+			}
 			if tc.pin != "" && tc.pin != "latest" {
 				mu.Lock()
 				defer mu.Unlock()

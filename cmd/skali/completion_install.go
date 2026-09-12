@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
+	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/spf13/cobra"
 )
 
@@ -167,6 +170,40 @@ func installCompletion(out io.Writer, root *cobra.Command, shell string, install
 	}
 	fmt.Fprintln(out, "restart your shell to load them")
 	return nil
+}
+
+// refreshCompletions rewrites every installed completion script from the
+// freshly installed binary, so the scripts follow the CLI. Nothing is
+// installed anew, and a failure is a warning for the caller, never a
+// failed upgrade.
+func refreshCompletions(ctx context.Context, tasks *clirender.Tasks, executable, home string) string {
+	if home == "" {
+		return ""
+	}
+	installer := newCompletionInstaller(home)
+	type target struct{ shell, path string }
+	var targets []target
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		for _, path := range installer.installed(shell) {
+			targets = append(targets, target{shell, path})
+		}
+	}
+	if len(targets) == 0 {
+		return ""
+	}
+	task := tasks.Start("Refresh shell completions")
+	for _, target := range targets {
+		script, err := exec.CommandContext(ctx, executable, "completion", target.shell).Output()
+		if err == nil {
+			err = writeCompletionFile(target.path, script)
+		}
+		if err != nil {
+			task.Fail()
+			return fmt.Sprintf("refresh %s: %v; run skali completion install", tildePath(home, target.path), err)
+		}
+	}
+	task.Done("")
+	return ""
 }
 
 func writeCompletionFile(path string, script []byte) error {

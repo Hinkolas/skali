@@ -121,7 +121,9 @@ skali upgrade --version v0.1.0-alpha.5
 `--version` names an exact published release and overrides the channel; it is
 the way to move back to an earlier release. Every download is verified against
 the release's `checksums.txt` before the binary is replaced, and the new binary
-must report the target version or the previous one is restored.
+must report the target version or the previous one is restored. Shell
+completion scripts that `install.sh` or `skali completion install` put in place
+are regenerated from the new binary as the last step.
 
 Neither `install.sh` nor `skali upgrade` installs `skali-hostd`. The host
 daemon is fetched by `skali cluster install`, `join`, and `repair` on the node

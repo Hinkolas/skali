@@ -11,6 +11,10 @@ manifest:
 - `skali compile` prints the compiled project definition, showing
   defaults and normalized units.
 
+`skali completion install` puts shell completions in place for the login
+shell (`install.sh` already does this); values such as environments, remotes,
+run ids, and manifest commands then complete on tab.
+
 ## Local development
 
 - `skali dev` is the paved path: it ensures the disposable local platform

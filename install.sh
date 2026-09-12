@@ -12,6 +12,8 @@
 #   SKALI_CHANNEL   stable (default), or beta to include alpha/beta/rc releases
 #   SKALI_VERSION   optional exact release tag; overrides channel selection
 #   GITHUB_TOKEN    optional; required while the repository is private
+#   SKALI_SHELL     shell to install completions for (default: $SHELL)
+#   SKALI_COMPLETIONS  none to skip installing shell completions
 #   SKALI_BASE_URL  override the download base URL (testing only)
 
 set -eu
@@ -200,6 +202,20 @@ verify() {
 }
 verify "$asset" "$tmp/$asset"
 
+# Shell completions land in the user's own directories, so this runs as the
+# invoking user even where the binary needed sudo, using the verified
+# download (the same bytes just installed). It never fails the install: a
+# shell the CLI cannot place a script for just gets a note.
+completions() {
+  if [ "${SKALI_COMPLETIONS:-}" = "none" ]; then
+    return 0
+  fi
+  if chmod 0755 "$tmp/$asset" && "$tmp/$asset" completion install; then
+    return 0
+  fi
+  log "note: shell completions were not installed; run skali completion install"
+}
+
 if [ "$os" = "darwin" ]; then
   # Rootless on macOS: `skali cluster` manages its Lima VM from the user
   # session, so the CLI lives on the user PATH.
@@ -207,6 +223,7 @@ if [ "$os" = "darwin" ]; then
   mkdir -p "$dest"
   install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
   log "installed ${dest}/${BINARY}"
+  completions
   case ":${PATH}:" in
     *":${dest}:"*) ;;
     *) log "note: ${dest} is not on your PATH; add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
@@ -224,5 +241,6 @@ else
     sudo install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
   fi
   log "installed ${dest}/${BINARY}"
+  completions
   log "next: run sudo skali cluster to set up Skali on this host"
 fi
