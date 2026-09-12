@@ -148,7 +148,7 @@
 		description="reference values with $&lbrace;VAR&rbrace; in skali.yaml; they become editable here"
 	/>
 {:else}
-	<div class="flex max-w-3xl flex-col gap-3.5 pb-6">
+	<div class="flex flex-col gap-3.5 pb-6">
 		{#if errorMessage}
 			<div
 				class="border-status-danger/40 bg-status-danger/10 text-status-danger rounded-[11px] border px-4 py-3 text-base"

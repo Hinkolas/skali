@@ -60,7 +60,7 @@
 		}
 	}
 
-	const publicReads = $derived(service.config.visibility === 'public');
+	const publicReads = $derived(service.config.visibility === 'public-read');
 </script>
 
 <Card class="flex flex-col p-5">

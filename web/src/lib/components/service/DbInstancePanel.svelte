@@ -24,9 +24,12 @@
 	const engine = $derived(
 		connection ? `${config.engine} ${connection.major}` : `${config.engine} ${config.version}`
 	);
-	const isolation = $derived(
-		config.isolation === 'shared' ? 'shared · platform pool' : 'dedicated · own cluster'
-	);
+	const ISOLATION: Record<string, string> = {
+		shared: 'shared · platform pool',
+		project: 'project · one cluster per project',
+		dedicated: 'dedicated · own cluster'
+	};
+	const isolation = $derived(ISOLATION[config.isolation] ?? config.isolation);
 	const storage = $derived(config.storageBytes ? formatBytes(config.storageBytes) : 'default');
 	const extensions = $derived(config.extensions?.join(', ') || 'none');
 	const recovery = $derived(

@@ -45,11 +45,11 @@
 	{/snippet}
 </PageHeader>
 
-<div class="flex max-w-3xl flex-col gap-3.5 pb-6">
-	<Card>
+<div class="grid grid-cols-2 gap-3.5 pb-6">
+	<Card class="flex overflow-hidden">
 		<a
 			href={resolve('/(app)/system/nodes')}
-			class="flex items-center gap-3.5 px-5 py-4 transition-colors hover:bg-white/2"
+			class="flex flex-1 items-center gap-3.5 px-5 py-4 transition-colors hover:bg-white/2"
 		>
 			<div
 				class="bg-accent/10 text-accent-nav grid size-9 flex-none place-items-center rounded-[11px]"
@@ -64,10 +64,10 @@
 			<ChevronRight size={16} class="text-text-faint flex-none" />
 		</a>
 	</Card>
-	<Card>
+	<Card class="flex overflow-hidden">
 		<a
 			href={resolve('/(app)/system/updates')}
-			class="flex items-center gap-3.5 px-5 py-4 transition-colors hover:bg-white/2"
+			class="flex flex-1 items-center gap-3.5 px-5 py-4 transition-colors hover:bg-white/2"
 		>
 			<div
 				class="bg-accent/10 text-accent-nav grid size-9 flex-none place-items-center rounded-[11px]"

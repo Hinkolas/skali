@@ -18,7 +18,9 @@
 	const config = $derived(service.config);
 
 	const visibility = $derived(
-		config.visibility === 'public' ? 'public · anonymous reads' : 'private · keypair required'
+		config.visibility === 'public-read'
+			? 'public-read · anonymous reads'
+			: 'private · keypair required'
 	);
 	const quota = $derived(config.storageQuotaBytes ? formatBytes(config.storageQuotaBytes) : 'none');
 	const objects = $derived(

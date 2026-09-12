@@ -173,7 +173,7 @@
 
 <SettingsNav project={data.project} />
 
-<div class="flex max-w-3xl flex-col gap-3.5 pb-6">
+<div class="grid grid-cols-2 gap-3.5 pb-6">
 	<Card class="p-5">
 		<h3 class="text-text-primary mb-3.5 text-xl font-semibold">General</h3>
 		<div class="flex flex-col gap-3.5">
@@ -226,23 +226,28 @@
 				{@const envAdmin = roleAtLeast(environment.access, 'admin')}
 				{@const envAdminTitle = requiredTitle('admin', 'environment', environment.name)}
 				<div class="border-border-subtle flex items-center gap-3 border-b py-2 last:border-0">
-					{#if locked}
-						<Lock size={13} class="text-text-ghost flex-none" />
-					{/if}
-					<span class="font-mono text-text-primary text-md">{environment.name}</span>
-					{#if environment.id === data.env?.id}
-						<Pill text="current" tone="success" />
-					{/if}
-					{#each environmentPills(environment) as pill (pill.text)}
-						<span title={pill.title}><Pill text={pill.text} tone={pill.tone} /></span>
-					{/each}
-					<div class="ml-auto flex items-center gap-3">
-						<span class="font-mono text-text-faint text-xs" title="your effective role here">
+					<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+						{#if locked}
+							<Lock size={13} class="text-text-ghost flex-none" />
+						{/if}
+						<span class="font-mono text-text-primary text-md">{environment.name}</span>
+						{#if environment.id === data.env?.id}
+							<Pill text="current" tone="success" />
+						{/if}
+						{#each environmentPills(environment) as pill (pill.text)}
+							<span title={pill.title}><Pill text={pill.text} tone={pill.tone} /></span>
+						{/each}
+					</div>
+					<div class="ml-auto flex flex-none items-center gap-3">
+						<span
+							class="font-mono text-text-faint text-xs whitespace-nowrap"
+							title="your effective role here"
+						>
 							{environment.access}
 						</span>
 						{#if environment.created_at}
 							<span
-								class="font-mono text-text-faint text-xs"
+								class="font-mono text-text-faint text-xs whitespace-nowrap"
 								title="created {formatDateTime(environment.created_at)}"
 							>
 								{relativeTime(environment.created_at)}
@@ -293,7 +298,7 @@
 		</div>
 	</Card>
 
-	<Card class="p-5">
+	<Card class="col-span-2 p-5">
 		<div class="mb-3.5 flex items-baseline gap-2.5">
 			<h3 class="text-text-primary text-xl font-semibold">Revisions</h3>
 			{#if data.env}
@@ -352,7 +357,7 @@
 		</div>
 	</Card>
 
-	<Card class="border-status-danger/30 p-5">
+	<Card class="border-status-danger/30 col-span-2 p-5">
 		<div class="flex items-center">
 			<div>
 				<h3 class="text-text-primary text-xl font-semibold">Danger zone</h3>
