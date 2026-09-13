@@ -41,6 +41,9 @@ func newValidateCommand() *cobra.Command {
 				len(result.Definition.RequiredVariables),
 				result.Hash,
 			)
+			if note := manifest.ReviewNote(document.Project.Skali, versionpkg.Version); note != "" {
+				fmt.Fprintln(command.OutOrStdout(), "  "+note)
+			}
 			if envFile != "" {
 				resolved, path, skipped, err := resolveValues(result, envFile)
 				if err != nil {

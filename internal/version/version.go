@@ -32,7 +32,13 @@ const (
 // (v0.1.0-3-gabc1234, -dirty) never match and keep resolving to the
 // working tree. task release:tag enforces the same shape before a tag
 // exists.
-var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$`)
+// ReleaseShape is the body of a release version without the leading v:
+// X.Y.Z with an optional dotted alpha, beta, or rc suffix. releasePattern
+// anchors it behind a mandatory v; the manifest schema anchors it behind
+// an optional one for the skali watermark field.
+const ReleaseShape = `[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?`
+
+var releasePattern = regexp.MustCompile(`^v` + ReleaseShape + `$`)
 
 // IsRelease reports whether v names a tagged release.
 func IsRelease(v string) bool {

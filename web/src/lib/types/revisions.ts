@@ -5,7 +5,7 @@ export interface RevisionSummary {
 	project_id: string;
 	environment_id: string;
 	definition_version_id: string;
-	schema_version: string;
+	schema: number;
 	checksum: string;
 	definition_hash: string;
 	values_hash: string;

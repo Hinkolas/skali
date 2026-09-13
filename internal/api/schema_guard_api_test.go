@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -9,13 +10,54 @@ import (
 )
 
 // corruptRevisionSchema rewrites a stored revision as if an incompatible
-// build had written it: foreign schema_version column and document stamp.
+// build had written it: foreign schema column and document stamp.
 func (a *testAPI) corruptRevisionSchema(t *testing.T, revisionID string) {
 	t.Helper()
 	_, err := a.st.Pool.Exec(context.Background(),
-		`UPDATE revisions SET schema_version = '99',
-		 document = jsonb_set(document, '{schemaVersion}', '"99"')
+		`UPDATE revisions SET schema = 99,
+		 document = jsonb_set(document, '{schema}', '99')
 		 WHERE id = $1`, revisionID)
+	require.NoError(t, err)
+}
+
+// legacyEnvelope rewrites a stored definition and revision the way releases
+// up to v0.1.0-rc.2 wrote them: the manifest version "1" in place of the
+// schema integer, same shape otherwise.
+func (a *testAPI) legacyEnvelope(t *testing.T, revisionID string) {
+	t.Helper()
+	ctx := context.Background()
+	var document, definition []byte
+	var definitionVersionID string
+	require.NoError(t, a.st.Pool.QueryRow(ctx,
+		`SELECT document, definition_version_id FROM revisions WHERE id = $1`, revisionID).Scan(&document, &definitionVersionID))
+	require.NoError(t, a.st.Pool.QueryRow(ctx,
+		`SELECT definition FROM definition_versions WHERE id = $1`, definitionVersionID).Scan(&definition))
+
+	toLegacy := func(data []byte, schemaKey, legacyKey string) []byte {
+		var object map[string]any
+		require.NoError(t, json.Unmarshal(data, &object))
+		require.Contains(t, object, schemaKey)
+		delete(object, schemaKey)
+		object[legacyKey] = "1"
+		out, err := json.Marshal(object)
+		require.NoError(t, err)
+		return out
+	}
+	var revisionDocument map[string]any
+	require.NoError(t, json.Unmarshal(toLegacy(document, "schema", "schemaVersion"), &revisionDocument))
+	nested, err := json.Marshal(revisionDocument["definition"])
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(toLegacy(nested, "schema", "version"), new(map[string]any)))
+	var legacyDefinition map[string]any
+	require.NoError(t, json.Unmarshal(toLegacy(nested, "schema", "version"), &legacyDefinition))
+	revisionDocument["definition"] = legacyDefinition
+	rewritten, err := json.Marshal(revisionDocument)
+	require.NoError(t, err)
+
+	_, err = a.st.Pool.Exec(ctx, `UPDATE revisions SET document = $2 WHERE id = $1`, revisionID, string(rewritten))
+	require.NoError(t, err)
+	_, err = a.st.Pool.Exec(ctx, `UPDATE definition_versions SET definition = $2 WHERE id = $1`,
+		definitionVersionID, string(toLegacy(definition, "schema", "version")))
 	require.NoError(t, err)
 }
 
@@ -55,4 +97,27 @@ func TestStaleSchemaFailsLoudly(t *testing.T) {
 	status, body = a.do("GET", "/v1/environments/"+envID+"/status", token, nil)
 	require.Equal(t, http.StatusConflict, status, "%v", body)
 	require.Equal(t, "unsupported_schema", errCode(body))
+}
+
+// Documents written before the schema split keep decoding after the
+// platform upgrade: reads, status, and the draft all answer 200.
+func TestLegacyDocumentsStillDecode(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("legacy@example.com", "hunter2hunter2")
+	token := a.login("legacy@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+
+	definitionVersion := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	candidate := a.stageValues(t, token, envID, definitionVersion, "legacy-value")
+	revisionID := a.deployAndActivate(t, token, envID, definitionVersion, candidate)
+	a.legacyEnvelope(t, revisionID)
+
+	status, body := a.do("GET", "/v1/revisions/"+revisionID, token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	status, body = a.do("GET", "/v1/environments/"+envID+"/status", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/draft", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	status, body = a.do("GET", "/v1/projects", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
 }

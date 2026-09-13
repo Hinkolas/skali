@@ -12,7 +12,7 @@ import (
 
 func decodeService(t *testing.T) module.Service {
 	t.Helper()
-	document, err := manifest.Parse([]byte(`version: "1"
+	document, err := manifest.Parse([]byte(`skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

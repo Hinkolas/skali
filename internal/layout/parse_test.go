@@ -56,8 +56,8 @@ func TestStrictUnknownFieldIncludesSourceLine(t *testing.T) {
 	t.Parallel()
 	_, err := ParseFile(filepath.Join("testdata", "unknown-field.yml"))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "line 6")
-	require.Contains(t, err.Error(), "field capabilites not found")
+	require.Contains(t, err.Error(), ":6:")
+	require.Contains(t, err.Error(), "capabilites: unknown field")
 }
 
 func TestValidateRejects(t *testing.T) {

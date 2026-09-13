@@ -2,10 +2,12 @@
 
 Status: design agreed 2026-09-13; slice 1 (skew hint and server-side gate),
 slice 2 (self-dispatch), and slice 3 (exact match everywhere but health)
-implemented 2026-09-13, the rest not yet. The same day, cluster-served CLI
-downloads and air-gapped operation were taken out of scope (decision 2),
-and the bootstrap protocol number was dropped in favor of health as the
-single cross-version route (decision 3). This file is the plan of record for how the CLI,
+implemented 2026-09-13, slice 4 (manifest watermark, change ledger, and
+stored-schema split) implemented 2026-09-14, the rest not yet. On
+2026-09-13, cluster-served CLI downloads and air-gapped operation were
+taken out of scope (decision 2), and the bootstrap protocol number was
+dropped in favor of health as the single cross-version route (decision
+3). This file is the plan of record for how the CLI,
 the cluster, and the manifest stay compatible across clusters that update
 on their own schedule. The build order at the end lists the slices; tick
 them off here as they land.
@@ -37,23 +39,30 @@ where a human has to act is explained in one sentence with one fix.
 
 ## What exists today
 
-Facts checked against the repository on 2026-09-13.
+Facts checked against the repository on 2026-09-13, before slice 1 landed.
+Where a later slice changed a fact, the change is noted in place.
 
-- The manifest is compiled in the CLI, not on the server. The deploy flow
-  parses `skali.yaml`, runs `compiler.Compile`, and sends the compiled
-  definition. The server stores that definition and refuses to decode any
-  stored document whose version is not the one it was built with
-  (`unsupported_schema`, "redeploy the environment").
-- One version knob covers three documents. `manifest.CurrentVersion` is the
-  string `"1"`; manifests, compiled definitions, and revision documents all
-  carry it.
+- The manifest is compiled on both sides. The CLI parses `skali.yaml` and
+  runs `compiler.Compile` for validate, plan, and the deploy preview; the
+  deploy flow then submits the manifest source, and the server compiles it
+  again with the same compiler and stores its own result. Under the exact
+  match rule (decisions 1 to 3) both sides run the same release, so the
+  two compilations agree. The server refused to decode any stored document
+  whose version was not the one it was built with (`unsupported_schema`,
+  "redeploy the environment"); since slice 4 it decodes the previous
+  envelope forever.
+- One version knob covered three documents. `manifest.CurrentVersion` was
+  the string `"1"`; manifests, compiled definitions, and revision documents
+  all carried it. Slice 4 split it: the manifest carries the `skali`
+  watermark, stored documents a schema integer.
 - The daemon already reports its version. Every response carries
   `Skali-Version` and the installation identity in `Skali-Instance`. The
   client records both. Only `skali remote status` shows the version, and
   nothing acts on it.
 - Unknown manifest fields are fatal. `yamldoc` decodes with known fields
-  enforced, so a manifest from a newer release fails on an older CLI with
-  "field not found".
+  enforced, so a manifest from a newer release failed on an older CLI with
+  "field not found"; since slice 4 the error names the field's path and
+  the ledger explains it.
 - A per-release binary cache already exists for hostd under
   `~/.cache/skali/hostd/<release>/`, fetched and checksum-verified from the
   release feed. `skali upgrade` already replaces the running binary and
@@ -302,10 +311,11 @@ existing.
 
 ## Decision 4: manifest compatibility, a watermark and a change ledger
 
-The manifest version field becomes a watermark: the skali release the
-author last reviewed the manifest against. A ledger of schema changes in
-the compiler decides what a given manifest is affected by. Stored
-definitions and revisions get their own schema integer.
+The manifest version field is a watermark: the skali release the author
+last reviewed the manifest against, written as `skali: v0.1.0-rc.3`. A
+ledger of grammar changes in the compiler decides what a given manifest is
+affected by. Stored definitions and revisions carry their own schema
+integer, owned by the server. Built 2026-09-14.
 
 Tying the field to the skali version is right for the semantics and wrong
 as an equality gate. As a gate, every release outdates every manifest, the
@@ -315,16 +325,29 @@ two things instead: a record of what changed and when, and a way to know
 whether the author has already seen a given change. The watermark is that
 acknowledgement token.
 
+### The watermark
+
+- The key is `skali`, chosen 2026-09-14; it reads as "a skali v0.1.0-rc.3
+  manifest" at the top of the file. The value is a release tag; the
+  leading `v` is optional when writing and canonical when comparing.
+- It is required, validated as a release, and compared against the ledger.
+  It never enters the compiled definition, so moving it changes no
+  definition hash and rolls nothing.
+- The previous field, `version: "1"`, is the ledger's first removed entry.
+  A manifest still carrying it fails in one line that names the
+  replacement and `skali manifest upgrade`.
+
 ### The ledger
 
-Each schema change is a registered entry in the compiler: the release it
-landed in, its kind, the manifest path it touches, and a message with a
-migration hint. The rules fall out by kind:
+Each grammar change is a registered entry in `internal/manifest/ledger.go`:
+the release it landed in, its kind, the manifest path it touches (`*`
+standing for one collection key), and a message with a migration hint.
+The rules fall out by kind:
 
 | Situation                                  | Behavior                                                                                      | Severity                |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------- | ----------------------- |
 | Field added, manifest does not use it      | Nothing. There is nothing the author needs to know.                                           | silent                  |
-| Field removed, manifest uses it            | Error carrying the ledger's message and migration hint, replacing the generic unknown-field.  | error                   |
+| Field removed, manifest uses it            | Error carrying the ledger's message and migration hint, replacing the generic unknown field.  | error                   |
 | Meaning changed, manifest uses it          | Error unless the watermark is at or past the change's release. Bumping it is the acknowledgement. | error until acknowledged |
 | Watermark behind, nothing used changed     | `skali validate` mentions the older review point and that nothing used changed.               | informational           |
 | Manifest newer than the CLI                | Watermark above the CLI version plus an unknown field: "unknown to this release, the manifest targets a newer one". | error |
@@ -334,28 +357,60 @@ cluster's own version, this covers several remotes at several versions
 with no extra machinery. The same manifest against an older cluster
 produces the last row.
 
+How the rules are applied: the parser reports every unknown field with its
+dotted path and position (a reflective walk next to the strict decode, so
+"field not found in type manifest.Application" became
+`applications.api.ressources: unknown field`), and the manifest package
+rewrites those diagnostics through the ledger's removed entries or the
+newer-watermark rule. Validation applies the changed entries against the
+set of paths the manifest wrote. The server compiles the same way, so the
+API's `invalid_manifest` diagnostics carry the same text.
+
+The ledger opens with one entry, the `version` removal in v0.1.0-rc.3.
+The grammar changed exactly once between tags before that (the blue-green
+rollout default in v0.1.0-alpha.6), and that change is not seeded: no
+manifest can carry a watermark older than the release that introduced the
+field, so the entry could never fire. Changes older than the first entry
+are history, not ledger.
+
 ### Details
 
-- Rename the field. The current value `"1"` cannot be told apart from
-  1.0.0. Pre-1.0, rework beats compatibility, so the field is renamed and
-  takes a release version. The exact name is an open question.
+- `skali manifest upgrade [--to <release>]` moves the watermark to this
+  CLI's release (under dispatch, the cluster's) and replaces a legacy
+  `version` line on the way; a development build needs `--to`. Edits are
+  line-based, so comments and formatting survive. The manifest is compiled
+  afterwards, so a change the new watermark acknowledges but the manifest
+  has not absorbed is reported with its hint. The `version` rewrite is the
+  only mechanical rename today and lives in the command; ledger entries
+  gain rewrite hooks when a second one exists.
 - No deprecation system before 1.0. The ledger's removed kind covers it.
   After 1.0, deprecated is one more ledger kind that warns instead of
   erroring.
-- `skali manifest upgrade` rewrites the watermark and applies mechanical
-  renames from the ledger. Cheap once the ledger exists.
-- Stored schema split. After a platform upgrade the new server must decode
-  definitions compiled by the previous CLI version. Stored definitions and
-  revisions stop sharing the manifest knob and carry a small integer, with
-  old decoders kept or a migration run in the upgrade job. Today's 409 with
-  "redeploy the environment" is acceptable for one user and wrong for a
-  fleet with clusters months apart.
+- Stored schema split. Compiled definitions carry `schema: 1`
+  (`compiler.DefinitionSchema`) and revision documents `schema: 1`
+  (`revision.Schema`), integers that move only when the stored shape
+  changes incompatibly. Both decoders also read the envelope written up to
+  v0.1.0-rc.2 (`version: "1"` and `schemaVersion: "1"` on the same shape)
+  forever, and migration 00002 turns the `schema_version` text columns
+  into integer `schema` columns, running in the migrate initContainer on
+  the next rollout. A platform upgrade therefore keeps every stored
+  document readable; `unsupported_schema` remains for a document from a
+  generation the build does not know.
+- One-time consequence of the split: the compiled envelope changed, so the
+  first plan of every environment after the upgrade shows the definition
+  as changed and creates a new revision. Rendered objects are identical,
+  nothing restarts, and a `releaseCommand` runs once more because the Job
+  name carries the revision checksum.
+- Release guard. The ledger names releases before they are tagged, so
+  `skali-schema --schema release` (run by `task release:tag` and the
+  release workflow) refuses to cut a release older than the newest ledger
+  entry.
 - Hold the manifest grammar stable through 1.0. The ledger handles the
   small changes. A wholesale restructure would be a new grammar, not a
   ledger entry, and should not happen before 1.0.
-- The `skali` skill and `schemas/skali.schema.json` must keep tracking the
-  compiler, as they do today; the ledger becomes one more thing the
-  lockstep test covers.
+- The `skali` skill and `schemas/skali.schema.json` keep tracking the
+  compiler, as they do today; the schema's `skali` property carries the
+  release pattern, and the skill's fences carry the current watermark.
 
 ## Decision 5: dev runs at the target's version, one cluster per version
 
@@ -499,10 +554,11 @@ Each slice is useful on its own and none depends on a later one.
       hand off to the cluster's release after their probe, the skew hint
       names the release page, and the console updates page links the
       release the cluster runs.
-- [ ] Manifest watermark and change ledger: field rename, ledger entries for
-      every change since the last release, validate messaging,
-      `skali manifest upgrade`, and the stored-schema split with old
-      decoders or an upgrade-job migration.
+- [x] Manifest watermark and change ledger: the `skali` watermark replaces
+      `version`, the ledger with its first entry, unknown fields with
+      paths, validate's review note, `skali manifest upgrade`, the
+      stored-schema split with legacy decoders and migration 00002, and
+      the release guard.
 - [ ] Dev per version: cluster names carrying the version, one-running
       enforcement, prune with confirmation, removal of `skali dev upgrade`.
 - [ ] Skill follows dispatch: `skali skill read <topic>` with the neutral
@@ -514,8 +570,6 @@ Each slice is useful on its own and none depends on a later one.
 
 ## Open questions
 
-- Name of the watermark field. Something like `skali: 0.4.0` reads
-  naturally, but the key has not been chosen.
 - Dev data carry-over. Whether a backup-and-restore path into a
   new-version dev cluster is worth offering, or whether the disposable
   contract stands on its own.

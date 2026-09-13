@@ -1,11 +1,11 @@
 {
-  "schemaVersion": "1",
+  "schema": 1,
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "20cadebbe828829114ee96815b067b4706828d1e966e8eaa84dba7817ab328df",
+  "definitionHash": "36e121c52778929cd7b756fb7c6e752313a8195d499baff5446b6a755cc799af",
   "definition": {
-    "version": "1",
+    "schema": 1,
     "name": "file-sharing",
     "description": "Reference manifest exercising most of the schema (no application source ships with it)",
     "applications": {
@@ -315,5 +315,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "bd412152ff4b97e82afcc98ec7cd681d995964c879a434157429e7c41de81e6a"
+  "checksum": "9901e88f4294e702abedc4f897f75d4daa3591eca2cd48d98aea9f98c5fbfc24"
 }

@@ -10,7 +10,7 @@ func TestValidatePlatforms(t *testing.T) {
 	t.Parallel()
 
 	valid := parseForValidation(t, `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -31,7 +31,7 @@ applications:
 		{
 			name: "unknown platform",
 			source: `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -43,7 +43,7 @@ applications:
 		{
 			name: "duplicate platform",
 			source: `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -55,7 +55,7 @@ applications:
 		{
 			name: "empty platform entry",
 			source: `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

@@ -46,7 +46,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().BoolVar(&verboseTranscript, "verbose", false,
 		"show every recorded detail under live steps (TLS issuance fields, health snapshots) instead of the compact status rows")
 
-	root.AddCommand(newRemoteCommand(), newValidateCommand(), newCompileCommand(),
+	root.AddCommand(newRemoteCommand(), newValidateCommand(), newManifestCommand(), newCompileCommand(),
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
 		newDevCommand(), newRunCommand(), newLogsCommand(), newExecCommand(),
 		newValuesCommand(), newBackupCommand(), newEnvCommand(), newAccessCommand(),

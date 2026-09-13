@@ -17,7 +17,7 @@ import (
 
 // certManifest declares one automatic-TLS route; on a certificate-capable
 // installation its issuance gates activation.
-const certManifest = `version: "1"
+const certManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

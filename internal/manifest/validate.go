@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
+	"github.com/Hinkolas/skali/internal/version"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
@@ -18,8 +19,14 @@ func Validate(document *Document) yamldoc.Diagnostics {
 		diagnostics = append(diagnostics, document.Diagnostic(path, fmt.Sprintf(format, args...)))
 	}
 
-	if project.Version != CurrentVersion {
-		add("version", "unsupported manifest version %q; expected %q", project.Version, CurrentVersion)
+	watermark, ok := Watermark(project.Skali)
+	switch {
+	case strings.TrimSpace(project.Skali) == "":
+		add("skali", "is required: the skali release this manifest was last reviewed against, for example skali: %s", ReferenceRelease())
+	case !ok:
+		add("skali", "%q is not a skali release; expected a tag like %s", project.Skali, ReferenceRelease())
+	default:
+		validateLedger(&diagnostics, document, Ledger, watermark)
 	}
 	if err := naming.CheckKey(project.Name); err != nil {
 		add("name", "%s", err)
@@ -173,4 +180,26 @@ func volumeExists(project Project, reference string) bool {
 		}
 	}
 	return false
+}
+
+// validateLedger applies the changed entries: a manifest that writes a path
+// whose meaning moved after its watermark fails until the watermark moves
+// past the change (docs/versioning.md, decision 4). Removed entries are
+// handled while parsing, where the unknown field surfaces; added entries
+// are silent.
+func validateLedger(diagnostics *yamldoc.Diagnostics, document *Document, ledger []Change, watermark string) {
+	paths := document.Paths()
+	for _, change := range ledger {
+		if change.Kind != ChangeChanged || !version.Older(watermark, change.Release) {
+			continue
+		}
+		for _, path := range paths {
+			if change.Matches(path) {
+				*diagnostics = append(*diagnostics, document.Diagnostic(path, fmt.Sprintf(
+					"%s (changed in %s; this manifest was reviewed against %s); %s, then set skali: %s or newer to acknowledge",
+					change.Message, change.Release, watermark, change.Hint, change.Release)))
+				break
+			}
+		}
+	}
 }

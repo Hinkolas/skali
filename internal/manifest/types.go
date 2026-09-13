@@ -10,15 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// CurrentVersion is the single version knob for the whole authored and
-// stored contract: skali.yaml manifests, compiled definition documents, and
-// revision documents (revision.SchemaVersion aliases it) all carry it, and
-// reads accept exactly this value. Validate enforces it here, schema.go
-// injects it into the runtime JSON Schema, and revision.Decode plus
-// compiler.DecodeDefinition enforce it on stored documents. Bumping it must
-// update the static const in schemas/skali.schema.json in lockstep.
-const CurrentVersion = "1"
-
 // Platform identifiers accepted in applications.<name>.platforms. The list is
 // the single source of truth for every platform-validating surface: manifest
 // validation, the generated JSON Schema, and the installer's platform
@@ -91,7 +82,10 @@ func (s Selection) MarshalJSON() ([]byte, error) {
 }
 
 type Project struct {
-	Version      string                 `yaml:"version" json:"version" jsonschema:"Manifest schema version. Currently 1."`
+	// Skali is the watermark: the release the author last reviewed the
+	// manifest against (watermark.go). It is validated as a release tag,
+	// compared against the change ledger, and never compiled.
+	Skali        string                 `yaml:"skali" json:"skali" jsonschema:"The skali release this manifest was last reviewed against, for example v0.1.0-rc.3."`
 	Name         string                 `yaml:"name" json:"name" jsonschema:"Stable project name."`
 	Description  string                 `yaml:"description,omitempty" json:"description,omitempty" jsonschema:"Human-readable project description."`
 	Applications map[string]Application `yaml:"applications,omitempty" json:"applications,omitempty" jsonschema:"Container applications keyed by stable service name."`

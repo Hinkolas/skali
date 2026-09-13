@@ -18,7 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
-const testManifest = `version: "1"
+const testManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -32,7 +32,7 @@ applications:
       SESSION_SECRET: "${SESSION_SECRET}"
 `
 
-const changedManifest = `version: "1"
+const changedManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -431,7 +431,7 @@ func TestOrphanedStoredValueDoesNotBlockDeploy(t *testing.T) {
 
 	// The new manifest drops the ${SESSION_SECRET} reference; the stored
 	// value remains current in the store.
-	withoutSecret := `version: "1"
+	withoutSecret := `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -475,7 +475,7 @@ func TestPruneValuesRemovesOrphanedAtPromotion(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.deploy.Promote(ctx, first))
 
-	withoutSecret := `version: "1"
+	withoutSecret := `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -705,7 +705,7 @@ func TestPlanPreviewVolumeSizesUnenforced(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	withVolume := f.submit(t, `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   files:
@@ -734,7 +734,7 @@ applications:
 
 	// A volumeless definition has nothing to warn about.
 	volumeless := f.submit(t, `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   files:

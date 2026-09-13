@@ -7,7 +7,12 @@ Two commands work without any cluster and are useful while editing a
 manifest:
 
 - `skali validate` parses and validates the manifest, reporting errors
-  with file, line, and column.
+  with file, line, column, and path. When the `skali` watermark and the
+  CLI are different releases it says so in one informational line.
+- `skali manifest upgrade` moves the `skali` watermark to the CLI's
+  release (or `--to <release>`), replacing a legacy `version` field on the
+  way, then compiles the manifest so any change the new watermark
+  acknowledges is reported with its migration hint.
 - `skali compile` prints the compiled project definition, showing
   defaults and normalized units.
 

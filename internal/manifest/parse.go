@@ -1,10 +1,14 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/Hinkolas/skali/internal/version"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
@@ -32,13 +36,42 @@ func Parse(data []byte, path string) (*Document, error) {
 	var project Project
 	core, err := yamldoc.Parse(data, path, "manifest", &project)
 	if err != nil {
-		return nil, err
+		return nil, explainUnknownFields(data, err)
 	}
 	return &Document{
 		Document:    core,
 		Project:     project,
 		ProjectRoot: filepath.Dir(core.Path),
 	}, nil
+}
+
+// explainUnknownFields turns the parser's unknown-field diagnostics into
+// what the author can act on: a field the ledger removed names its
+// replacement, and a field this release has never seen is told apart from
+// a typo when the watermark says the manifest targets a newer release.
+func explainUnknownFields(data []byte, err error) error {
+	var diagnostics yamldoc.Diagnostics
+	if !errors.As(err, &diagnostics) {
+		return err
+	}
+	var head struct {
+		Skali string `yaml:"skali"`
+	}
+	_ = yaml.Unmarshal(data, &head)
+	watermark, ok := Watermark(head.Skali)
+	newer := ok && version.IsRelease(version.Version) && version.Older(version.Version, watermark)
+	for i, diagnostic := range diagnostics {
+		if diagnostic.Message != yamldoc.UnknownFieldMessage {
+			continue
+		}
+		if change, found := Removed(diagnostic.Path); found {
+			diagnostics[i].Message = fmt.Sprintf("removed in %s: %s; %s", change.Release, change.Message, change.Hint)
+		} else if newer {
+			diagnostics[i].Message = fmt.Sprintf("unknown field; the manifest was reviewed against %s, newer than this CLI (%s)",
+				watermark, version.Version)
+		}
+	}
+	return diagnostics
 }
 
 func Discover(explicit, start string) (string, error) {

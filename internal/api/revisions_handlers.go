@@ -26,7 +26,7 @@ type revisionSummaryPayload struct {
 	ProjectID           string    `json:"project_id"`
 	EnvironmentID       string    `json:"environment_id"`
 	DefinitionVersionID string    `json:"definition_version_id"`
-	SchemaVersion       string    `json:"schema_version"`
+	Schema              int       `json:"schema"`
 	Checksum            string    `json:"checksum"`
 	DefinitionHash      string    `json:"definition_hash"`
 	ValuesHash          string    `json:"values_hash"`
@@ -40,7 +40,7 @@ func newRevisionSummaryPayload(r *store.ListRevisionsRow) revisionSummaryPayload
 		ProjectID:           r.ProjectID.String(),
 		EnvironmentID:       r.EnvironmentID.String(),
 		DefinitionVersionID: r.DefinitionVersionID.String(),
-		SchemaVersion:       r.SchemaVersion,
+		Schema:              int(r.Schema),
 		Checksum:            r.Checksum,
 		DefinitionHash:      r.DefinitionHash,
 		ValuesHash:          r.ValuesHash,

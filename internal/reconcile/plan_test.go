@@ -161,7 +161,7 @@ func TestPlanPruneNeverTouchesStatefulKinds(t *testing.T) {
 
 func TestPlanBatchesOrdersDatabasesBeforeDependents(t *testing.T) {
 	t.Parallel()
-	document, err := manifest.Parse([]byte(`version: "1"
+	document, err := manifest.Parse([]byte(`skali: v0.1.0-rc.3
 name: demo
 applications:
   api:
@@ -190,7 +190,7 @@ databases:
 
 func TestPlanBatchesOrdersBucketsBeforeDependents(t *testing.T) {
 	t.Parallel()
-	document, err := manifest.Parse([]byte(`version: "1"
+	document, err := manifest.Parse([]byte(`skali: v0.1.0-rc.3
 name: demo
 applications:
   api:

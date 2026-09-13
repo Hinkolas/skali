@@ -166,7 +166,7 @@ ignore both blocks entirely.
 ## A complete production-shaped manifest
 
 ```yaml manifest
-version: "1"
+skali: v0.1.0-rc.3
 name: team-wiki
 description: Wiki with file attachments in a bucket and Postgres storage
 

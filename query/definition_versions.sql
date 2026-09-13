@@ -3,7 +3,7 @@
 
 -- name: InsertDefinitionVersion :execrows
 INSERT INTO definition_versions
-    (id, project_id, schema_version, definition_hash, definition, source, format, compiler_version)
+    (id, project_id, schema, definition_hash, definition, source, format, compiler_version)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (project_id, definition_hash) DO NOTHING;
 

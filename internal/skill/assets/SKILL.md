@@ -59,7 +59,7 @@ manifest fields: parsing is strict and this reference is complete.
 ## A minimal manifest
 
 ```yaml manifest
-version: "1"
+skali: v0.1.0-rc.3
 name: hello-world
 
 applications:

@@ -18,15 +18,18 @@ import (
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/layout"
-	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 )
 
-// SchemaVersion follows the single version knob in manifest.CurrentVersion:
-// stored revision documents carry it, and Decode accepts exactly that value.
-const SchemaVersion = manifest.CurrentVersion
+// Schema is the generation of the revision document this build writes and
+// reads. It moves only when the revision shape changes incompatibly. Decode
+// also reads the legacy envelope written up to v0.1.0-rc.2, which carried
+// the manifest version "1" as schemaVersion on the same shape.
+const Schema = 1
+
+const legacySchemaVersion = "1"
 
 // Artifact kinds. Imported upstream content is a reconstructable cache;
 // locally or cloud-built artifacts may be the only deployable copy.
@@ -37,7 +40,7 @@ const (
 )
 
 type Revision struct {
-	SchemaVersion   string                     `json:"schemaVersion"`
+	Schema          int                        `json:"schema"`
 	Project         string                     `json:"project"`
 	Environment     string                     `json:"environment"`
 	CompilerVersion string                     `json:"compilerVersion"`
@@ -134,7 +137,7 @@ func Build(input Input) (*Revision, error) {
 	}
 
 	revision := &Revision{
-		SchemaVersion:   SchemaVersion,
+		Schema:          Schema,
 		Project:         definition.Name,
 		Environment:     input.Environment,
 		CompilerVersion: input.CompilerVersion,
@@ -149,36 +152,42 @@ func Build(input Input) (*Revision, error) {
 	return revision, nil
 }
 
-// SchemaError reports a stored revision document written under a different
-// schema version than this build supports. Callers may surface the message
+// SchemaError reports a stored revision document written under a schema
+// generation this build does not decode. Callers may surface the message
 // verbatim.
 type SchemaError struct {
-	Got  string
-	Want string
+	Got  int
+	Want int
 }
 
 func (e *SchemaError) Error() string {
-	return fmt.Sprintf("revision schema %q is not supported by this build (expected %q); redeploy the environment", e.Got, e.Want)
+	return fmt.Sprintf("revision schema %d is not supported by this build (expected %d); redeploy the environment", e.Got, e.Want)
 }
 
-// Decode unmarshals a stored revision document, accepting exactly the
-// current SchemaVersion. The version is peeked before the full unmarshal
-// because a document from another schema generation may not even fit the
-// current struct shapes; the version mismatch is the error worth reporting.
+// Decode unmarshals a stored revision document of the current Schema or of
+// the legacy envelope. The schema is peeked before the full unmarshal
+// because a document from another generation may not even fit the current
+// struct shapes; the schema mismatch is the error worth reporting.
 func Decode(document []byte) (*Revision, error) {
 	var peek struct {
+		Schema        int    `json:"schema"`
 		SchemaVersion string `json:"schemaVersion"`
 	}
 	if err := json.Unmarshal(document, &peek); err != nil {
 		return nil, fmt.Errorf("decode revision document: %w", err)
 	}
-	if peek.SchemaVersion != SchemaVersion {
-		return nil, &SchemaError{Got: peek.SchemaVersion, Want: SchemaVersion}
+	schema := peek.Schema
+	if schema == 0 && peek.SchemaVersion == legacySchemaVersion {
+		schema = Schema
+	}
+	if schema != Schema {
+		return nil, &SchemaError{Got: schema, Want: Schema}
 	}
 	var decoded Revision
 	if err := json.Unmarshal(document, &decoded); err != nil {
 		return nil, fmt.Errorf("decode revision document: %w", err)
 	}
+	decoded.Schema = Schema
 	return &decoded, nil
 }
 

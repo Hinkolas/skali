@@ -3,7 +3,7 @@
 
 -- name: InsertRevision :execrows
 INSERT INTO revisions
-    (id, project_id, environment_id, definition_version_id, schema_version,
+    (id, project_id, environment_id, definition_version_id, schema,
      checksum, definition_hash, values_hash, compiler_version, document)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (environment_id, checksum) DO NOTHING;
@@ -15,7 +15,7 @@ SELECT * FROM revisions WHERE id = $1;
 SELECT * FROM revisions WHERE environment_id = $1 AND checksum = $2;
 
 -- name: ListRevisions :many
-SELECT id, project_id, environment_id, definition_version_id, schema_version,
+SELECT id, project_id, environment_id, definition_version_id, schema,
        checksum, definition_hash, values_hash, compiler_version, created_at
 FROM revisions
 WHERE environment_id = $1

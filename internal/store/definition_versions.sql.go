@@ -23,7 +23,7 @@ func (q *Queries) CountDefinitionVersions(ctx context.Context, projectID uuid.UU
 }
 
 const getDefinitionVersionByHash = `-- name: GetDefinitionVersionByHash :one
-SELECT id, project_id, schema_version, definition_hash, definition, source, format, compiler_version, created_at FROM definition_versions WHERE project_id = $1 AND definition_hash = $2
+SELECT id, project_id, schema, definition_hash, definition, source, format, compiler_version, created_at FROM definition_versions WHERE project_id = $1 AND definition_hash = $2
 `
 
 type GetDefinitionVersionByHashParams struct {
@@ -37,7 +37,7 @@ func (q *Queries) GetDefinitionVersionByHash(ctx context.Context, arg GetDefinit
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
-		&i.SchemaVersion,
+		&i.Schema,
 		&i.DefinitionHash,
 		&i.Definition,
 		&i.Source,
@@ -49,7 +49,7 @@ func (q *Queries) GetDefinitionVersionByHash(ctx context.Context, arg GetDefinit
 }
 
 const getDefinitionVersionByID = `-- name: GetDefinitionVersionByID :one
-SELECT id, project_id, schema_version, definition_hash, definition, source, format, compiler_version, created_at FROM definition_versions WHERE id = $1
+SELECT id, project_id, schema, definition_hash, definition, source, format, compiler_version, created_at FROM definition_versions WHERE id = $1
 `
 
 func (q *Queries) GetDefinitionVersionByID(ctx context.Context, id uuid.UUID) (DefinitionVersion, error) {
@@ -58,7 +58,7 @@ func (q *Queries) GetDefinitionVersionByID(ctx context.Context, id uuid.UUID) (D
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
-		&i.SchemaVersion,
+		&i.Schema,
 		&i.DefinitionHash,
 		&i.Definition,
 		&i.Source,
@@ -72,7 +72,7 @@ func (q *Queries) GetDefinitionVersionByID(ctx context.Context, id uuid.UUID) (D
 const insertDefinitionVersion = `-- name: InsertDefinitionVersion :execrows
 
 INSERT INTO definition_versions
-    (id, project_id, schema_version, definition_hash, definition, source, format, compiler_version)
+    (id, project_id, schema, definition_hash, definition, source, format, compiler_version)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (project_id, definition_hash) DO NOTHING
 `
@@ -80,7 +80,7 @@ ON CONFLICT (project_id, definition_hash) DO NOTHING
 type InsertDefinitionVersionParams struct {
 	ID              uuid.UUID
 	ProjectID       uuid.UUID
-	SchemaVersion   string
+	Schema          int32
 	DefinitionHash  string
 	Definition      []byte
 	Source          []byte
@@ -94,7 +94,7 @@ func (q *Queries) InsertDefinitionVersion(ctx context.Context, arg InsertDefinit
 	result, err := q.db.Exec(ctx, insertDefinitionVersion,
 		arg.ID,
 		arg.ProjectID,
-		arg.SchemaVersion,
+		arg.Schema,
 		arg.DefinitionHash,
 		arg.Definition,
 		arg.Source,

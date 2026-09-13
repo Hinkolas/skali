@@ -41,7 +41,7 @@ func Compile(document *manifest.Document) (*Result, error) {
 	}
 	source := document.Project
 	definition := ProjectDefinition{
-		Version:      source.Version,
+		Schema:       DefinitionSchema,
 		Name:         source.Name,
 		Description:  source.Description,
 		Applications: make(map[string]Application, len(source.Applications)),

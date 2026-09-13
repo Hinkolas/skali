@@ -52,7 +52,7 @@ func TestNoDispatchCommandsExist(t *testing.T) {
 		}
 		require.True(t, names[name], "noDispatchCommands names %q, which is not a command", name)
 	}
-	for _, name := range []string{"deploy", "plan", "validate", "run", "logs", "exec", "values", "backup", "env", "access", "rollback"} {
+	for _, name := range []string{"deploy", "plan", "validate", "manifest", "run", "logs", "exec", "values", "backup", "env", "access", "rollback"} {
 		require.False(t, noDispatchCommands[name], "%s must dispatch", name)
 	}
 }

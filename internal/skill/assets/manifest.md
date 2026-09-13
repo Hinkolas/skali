@@ -10,17 +10,24 @@ values they require. The same definition deploys unchanged to a local
 - The file is `skali.yaml` or `skali.yml` at the project root. The CLI
   walks up from the working directory to find it; both names in the same
   directory is an error. `--manifest PATH` overrides discovery.
-- Parsing is strict: unknown fields are rejected with file, line, and
-  column. Never invent fields; check this reference or run
+- Parsing is strict: unknown fields are rejected with file, line, column,
+  and the field's path. A field a release removed names its replacement
+  and the fix. Never invent fields; check this reference or run
   `skali validate` when unsure.
+- `skali` is the watermark: the release the manifest was last reviewed
+  against, written as the tag (`v0.1.0-rc.3`). It is not a compatibility
+  gate. A manifest is judged by the fields it uses; the watermark only
+  decides whether a change of meaning still needs acknowledging, and
+  `skali manifest upgrade` moves it to the current release. Moving it
+  never changes what gets deployed.
 - Editors get completion and inline validation from the published schema
   by putting this on the first line:
-  `# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-alpha.1/schemas/skali.schema.json`
+  `# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-rc.3/schemas/skali.schema.json`
 
 Top level:
 
 ```yaml
-version: "1"        # required, always the string "1"
+skali: v0.1.0-rc.3  # required, the skali release this manifest was last reviewed against
 name: my-project    # required, matches ^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$
 description: ...    # optional free text
 applications: {}
@@ -440,7 +447,7 @@ Two applications sharing a database; the worker has no route and holds
 the Stripe key:
 
 ```yaml manifest
-version: "1"
+skali: v0.1.0-rc.3
 name: orders
 description: Order API with a background billing worker
 

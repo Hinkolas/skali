@@ -4105,7 +4105,7 @@ components:
     RevisionSummary:
       type: object
       required: [id, project_id, environment_id, definition_version_id,
-                 schema_version, checksum, definition_hash, values_hash,
+                 schema, checksum, definition_hash, values_hash,
                  compiler_version, created_at]
       properties:
         id:
@@ -4120,8 +4120,12 @@ components:
         definition_version_id:
           type: string
           format: uuid
-        schema_version:
-          type: string
+        schema:
+          type: integer
+          description: >-
+            Generation of the stored revision document, owned by the server
+            and independent of the manifest watermark. Documents from a
+            generation this build does not decode answer `unsupported_schema`.
         checksum:
           type: string
         definition_hash:

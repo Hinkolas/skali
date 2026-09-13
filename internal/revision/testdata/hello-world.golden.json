@@ -1,11 +1,11 @@
 {
-  "schemaVersion": "1",
+  "schema": 1,
   "project": "hello-world",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "0d9ef185d09d8a7547750a832e66b0be75e27bf219a87b33504de21d93884e40",
+  "definitionHash": "3d45125a3c0c3b49d231400c8d3763ebd3eba67554f2d4cf793c4a1c9f70ddca",
   "definition": {
-    "version": "1",
+    "schema": 1,
     "name": "hello-world",
     "description": "Minimal build-sourced HTTP application (the local-build flagship)",
     "applications": {
@@ -104,5 +104,5 @@
     "application",
     "edge"
   ],
-  "checksum": "8944f3d065768a2df518b2b0e2efc504b0d35a87e93d303c195212572545aa76"
+  "checksum": "8d07ed2e70a020c12bc993f5ed75c6d2afdd767fff357b04a6aed2b02bfe2e5b"
 }

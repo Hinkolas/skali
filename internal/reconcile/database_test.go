@@ -12,7 +12,7 @@ import (
 	"github.com/Hinkolas/skali/internal/module"
 )
 
-const databaseManifest = `version: "1"
+const databaseManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

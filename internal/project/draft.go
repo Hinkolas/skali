@@ -204,7 +204,7 @@ func upsertDefinitionVersion(ctx context.Context, q *store.Queries, projectID uu
 	if _, err := q.InsertDefinitionVersion(ctx, store.InsertDefinitionVersionParams{
 		ID:              id,
 		ProjectID:       projectID,
-		SchemaVersion:   result.Definition.Version,
+		Schema:          int32(result.Definition.Schema),
 		DefinitionHash:  result.Hash,
 		Definition:      canonical,
 		Source:          source,
