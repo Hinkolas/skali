@@ -28,8 +28,8 @@ import (
 // a cluster is always that cluster's exact release. Every skali binary is
 // the dispatcher: it looks up the version the target remote last answered
 // with, and when that differs from its own it runs the cached binary of
-// that release as a child, fetching it first from the cluster itself or
-// the release feed. Home, the binary in PATH, is promoted to the newest
+// that release as a child, fetching it from the release feed first when
+// needed. Home, the binary in PATH, is promoted to the newest
 // version in use, so dispatch normally goes downward.
 
 const (
@@ -199,7 +199,7 @@ func (d *dispatcher) run() (bool, int) {
 		return false, 0
 	}
 	dispatchTried = true
-	fetch, err := d.ensureCLI(ctx, cfg, target, want)
+	fetch, err := d.ensureCLI(ctx, target.Name, want)
 	if err != nil {
 		if ctx.Err() != nil {
 			return true, 130
@@ -250,7 +250,7 @@ func (d *dispatcher) runLoop(ctx context.Context, remoteName, want, path string)
 		if status.Code != exitVersionMoved || redispatched {
 			return true, d.finish(status)
 		}
-		cfg, target, moved, ok := d.recordMoved(remoteName, want)
+		cfg, moved, ok := d.recordMoved(remoteName, want)
 		if !ok {
 			// 213 was the command's own status (skali exec passes the
 			// remote process's code through); nothing moved.
@@ -262,7 +262,7 @@ func (d *dispatcher) runLoop(ctx context.Context, remoteName, want, path string)
 				remoteName, moved)))
 			return false, 0
 		}
-		fetch, err := d.ensureCLI(ctx, cfg, target, moved)
+		fetch, err := d.ensureCLI(ctx, remoteName, moved)
 		if err != nil {
 			if ctx.Err() != nil {
 				return true, 130
@@ -284,16 +284,16 @@ func (d *dispatcher) runLoop(ctx context.Context, remoteName, want, path string)
 
 // recordMoved reloads the config the child wrote and reports the release
 // the remote's record now names when it is another one than the child ran.
-func (d *dispatcher) recordMoved(remoteName, ran string) (*cliconfig.Config, *remoteTarget, string, bool) {
+func (d *dispatcher) recordMoved(remoteName, ran string) (*cliconfig.Config, string, bool) {
 	cfg, err := cliconfig.Load()
 	if err != nil {
-		return nil, nil, "", false
+		return nil, "", false
 	}
 	remote := cfg.Remotes[remoteName]
 	if remote == nil || !versionpkg.IsRelease(remote.Version) || remote.Version == ran {
-		return nil, nil, "", false
+		return nil, "", false
 	}
-	return cfg, &remoteTarget{Name: remoteName, Remote: remote}, remote.Version, true
+	return cfg, remote.Version, true
 }
 
 // finish turns a child's ending into this process's: a signal death is

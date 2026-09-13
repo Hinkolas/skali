@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -90,12 +92,11 @@ func TestExitCodeFor(t *testing.T) {
 // dispatchFixture is a dispatcher wired to temp config and cache
 // directories, a captured stderr, and a scripted spawn.
 type dispatchFixture struct {
-	d       *dispatcher
-	stderr  *bytes.Buffer
-	cache   string
-	spawns  []spawnCall
-	script  []func(call spawnCall) (childStatus, error)
-	cluster *fakeCluster
+	d      *dispatcher
+	stderr *bytes.Buffer
+	cache  string
+	spawns []spawnCall
+	script []func(call spawnCall) (childStatus, error)
 }
 
 type spawnCall struct {
@@ -148,6 +149,26 @@ func (f *dispatchFixture) seedCache(t *testing.T, release string) string {
 	return path
 }
 
+// serveFeed points the dispatcher at a release feed publishing one
+// release: the fake CLI of that version with its checksum.
+func (f *dispatchFixture) serveFeed(t *testing.T, version string) *fakeUpgradeServer {
+	t.Helper()
+	feed := newFakeUpgradeServer(t, version, releaseAssets(fakeCLI(version)))
+	f.d.releaseBase, f.d.feedClient = feed.URL, feed.Client()
+	return feed
+}
+
+// fakeDaemon plays a skalid of one version for the dispatcher's health
+// probe: every response carries the version and identity headers.
+func fakeDaemon(t *testing.T, version string) *httptest.Server {
+	t.Helper()
+	return fakeMaster(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(client.VersionHeader, version)
+		w.Header().Set(client.InstanceHeader, "inst-1")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+}
+
 func (f *dispatchFixture) seedRemote(t *testing.T, name, master, version string) {
 	t.Helper()
 	cfg := &cliconfig.Config{CurrentRemote: name, Remotes: map[string]*cliconfig.Remote{
@@ -183,8 +204,8 @@ func TestDispatchSkipsWhenRecordMatchesHome(t *testing.T) {
 
 func TestDispatchProbesEmptyRecord(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
-	cluster := newFakeCluster(t, "v0.4.0", fakeCLI("v0.4.0"))
-	f.seedRemote(t, "khz", cluster.URL, "")
+	f.serveFeed(t, "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "")
 
 	handled, code := f.d.run()
 	require.True(t, handled)
@@ -207,8 +228,8 @@ func TestDispatchUnreachableEmptyRecordRunsHome(t *testing.T) {
 
 func TestDispatchRedispatchOnce(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
-	cluster := newFakeCluster(t, "v0.3.2", fakeCLI("v0.3.2"))
-	f.seedRemote(t, "khz", cluster.URL, "v0.4.0")
+	f.serveFeed(t, "v0.3.2")
+	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
 	first := f.seedCache(t, "v0.4.0")
 	// The first child finds the daemon moved: it records the new version
 	// (as remoteClient does) and exits with the reserved status.
@@ -233,8 +254,8 @@ func TestDispatchRedispatchOnce(t *testing.T) {
 
 func TestDispatchSecondMoveIsNotRerun(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
-	cluster := newFakeCluster(t, "v0.3.2", fakeCLI("v0.3.2"))
-	f.seedRemote(t, "khz", cluster.URL, "v0.4.0")
+	f.serveFeed(t, "v0.3.2")
+	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
 	f.seedCache(t, "v0.4.0")
 	move := func(to string) func(spawnCall) (childStatus, error) {
 		return func(spawnCall) (childStatus, error) {
@@ -331,8 +352,8 @@ func TestDispatchPromotesHomeToNewerRelease(t *testing.T) {
 	f := newDispatchFixture(t, "v0.3.2", "env", "list")
 	dir := t.TempDir()
 	f.d.executable = writeExecutable(t, dir, "skali", fakeCLI("v0.3.2"))
-	cluster := newFakeCluster(t, "v0.4.0", fakeCLI("v0.4.0"))
-	f.seedRemote(t, "khz", cluster.URL, "v0.4.0")
+	f.serveFeed(t, "v0.4.0")
+	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
 
 	handled, code := f.d.run()
 	require.True(t, handled)
@@ -395,11 +416,11 @@ func TestDispatchPromotesTwiceAcrossARerun(t *testing.T) {
 	// version on disk, not the one still running.
 	f := newDispatchFixture(t, "v0.3.2", "env", "list")
 	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
-	cluster := newFakeCluster(t, "v0.4.0", fakeCLI("v0.4.0"))
-	f.seedRemote(t, "khz", cluster.URL, "v0.4.0")
+	f.serveFeed(t, "v0.4.0")
+	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
 	f.script = []func(spawnCall) (childStatus, error){
 		func(spawnCall) (childStatus, error) {
-			cluster.set(func(c *fakeCluster) { c.version, c.binary = "v0.5.0", fakeCLI("v0.5.0") })
+			f.serveFeed(t, "v0.5.0")
 			cfg := loadConfig(t)
 			cfg.Remotes["khz"].Version = "v0.5.0"
 			seedConfig(t, cfg)

@@ -200,8 +200,6 @@ var notFoundAllowed = map[string]bool{
 	"GET /v1/environments/{id}/buckets/{key}/connection":   true,
 	"GET /v1/system/backup-target":                         true,
 	"GET /v1/auth/device/codes/{user_code}":                true,
-	// The fixture daemon ships no CLI binaries (cli_not_served).
-	"GET /v1/system/cli/{platform}": true,
 }
 
 // destructiveRoutes would change the fixture when let through; their allowed

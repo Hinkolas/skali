@@ -1,12 +1,12 @@
 # Versioning
 
 Status: design agreed 2026-09-13; slice 1 (skew hint and server-side gate)
-and slice 2 (self-dispatch and cluster-served CLI downloads) implemented
-2026-09-13, the rest not yet. This file is the plan of record for
-how the CLI, the cluster, and the manifest stay compatible across clusters
-that update on their own schedule, including clusters that never see the
-public release feed. The build order at the end lists the slices; tick them
-off here as they land.
+and slice 2 (self-dispatch) implemented 2026-09-13, the rest not yet. The
+same day, cluster-served CLI downloads and air-gapped operation were taken
+out of scope (decision 2). This file is the plan of record for how the CLI,
+the cluster, and the manifest stay compatible across clusters that update
+on their own schedule. The build order at the end lists the slices; tick
+them off here as they land.
 
 ## Why
 
@@ -26,8 +26,9 @@ That produces three failures in practice:
 - A manifest written several releases ago meets a CLI where fields were
   added, removed, or changed meaning. Today an unknown field is a hard parse
   error with a generic message.
-- One user targets a public cluster on the latest release and an
-  air-gapped cluster months behind it. One CLI version cannot serve both.
+- One user targets a cluster on the latest release and another that only
+  updates on request and is months behind. One CLI version cannot serve
+  both.
 
 Goal: none of these are the user's problem to manage, and the rare case
 where a human has to act is explained in one sentence with one fix.
@@ -196,53 +197,52 @@ the command runs at home and the gate answers).
 
 ## Decision 2: where binaries come from
 
-A cluster serves its own CLI to authenticated members and is the primary
-source for cluster versions. The public release feed installs and upgrades
-the home binary and acts as the fallback source.
+The public release feed is the only source of binaries. A cluster names
+the version it runs, through the `Skali-Version` header it already sends,
+and the CLI fetches that release from the feed. The cluster never hands
+out binaries.
 
-The cluster is the only source guaranteed to have the exact matching
-version. It works air-gapped, and it does not depend on GitHub retaining
-old releases. The skalid image therefore ships the CLI for every supported
-platform, roughly 60 MB across four platform builds, which is acceptable on
-a control-plane image.
+An earlier version of this design had every skalid image ship the CLI for
+all platforms and serve it to authenticated members, so that air-gapped
+clusters and deleted releases would still work. It was built as part of
+slice 2 and removed the same day (git history holds it): there is no
+air-gapped use case today, published releases do not disappear, and the
+price was real. Four CLI builds per image added about 55 MB compressed and
+180 MB unpacked to every node, the daemon hashed them at boot, and the
+download needed its own authenticated route group outside the version gate
+and the request timeout, an error code, an operator switch, and a
+cluster-times-feed matrix of failure messages in the dispatcher. The feed
+alone has one failure matrix: the release is missing, the checksum does
+not match, the feed is unreachable, or the cache is not writable, each a
+single warning line followed by the command running at home.
 
-- Members only. `GET /v1/system/cli` lists the platforms with their sha256
-  and `GET /v1/system/cli/<goos>_<goarch>` streams one binary; both require
-  a valid session and sit outside the CLI version gate and the request
-  timeout. There is no anonymous download. The version is already visible
-  pre-auth through the health headers, and nothing more is exposed. The
-  release image copies every CLI build to `/usr/local/share/skali/cli`; the
-  working-tree image ships none and answers `cli_not_served`.
-- Offline trust. Each release publishes a signed checksums file and every
-  CLI embeds the public key. A binary served by a cluster is verified
-  against that signature before it is written anywhere. The cluster is a
-  mirror, not a trust anchor. The same verification upgrades the existing
-  hostd fetch. Until the signature lands (build order, last slice) the CLI
-  verifies cluster-served bytes against the sha256 the cluster's listing
-  names plus a `--version` run of the binary, and feed-served bytes against
-  the release's `checksums.txt`.
-- Operator switch. Serving the CLI is the daemon setting `SKALI_SERVE_CLI`
-  (default true, the same shape as `SKALI_UPDATE_SCAN`; a console toggle
-  was considered and rejected as more surface than the switch needs). An
-  operator who distributes binaries another way turns it off; the daemon
-  answers `cli_not_served` naming the version, the CLI falls back to the
-  release feed, and when that has no such release it says so and names
-  `skali upgrade --version`.
-- The feed keeps two jobs: installing and upgrading home, and standing in
-  as a source when a cluster does not serve downloads. The existing feed
-  URL override covers enterprise mirrors.
+- Trust. Downloads are verified against the release's `checksums.txt`
+  before anything is written, the same check `skali upgrade` and the hostd
+  fetch perform. The feed is reached over HTTPS from a pinned base URL.
+  Signed checksums (build order, last item) would harden this further and
+  are optional now that no third party serves bytes.
+- Mirrors. Forks and enterprise mirrors point `SKALI_RELEASE_BASE` and
+  `SKALI_UPDATE_FEED_URL` at their own feed, which `skali upgrade` and the
+  console's update scan already honor. Dispatch reads the same override.
+- One rule for the release pipeline follows: never delete the assets of a
+  published release. A cluster pinned to it would strand its users on a
+  warning until the cluster upgrades. Marking a bad release as a
+  prerelease or noting it in the release notes is fine; removing its
+  assets is not.
+- What a cluster contributes is exactly its version. `remote add` and
+  `remote login` record it from the probe, every response refreshes it,
+  and a refusal for the wrong release carries the new one.
 
 ## Decision 3: the bootstrap surface is versioned, not frozen
 
 After decision 1, exactly one old-to-new contract remains: a home binary
 talking to a newer cluster before it has fetched that cluster's CLI. That
-surface is health, device login, and the authenticated download. Nothing
-else crosses versions.
+surface is health and device login. Nothing else crosses versions.
 
 The server advertises its current bootstrap version and the minimum it
 still accepts. The client sends its own. Additive changes never bump the
 number. Old bootstrap versions stay supported for a long window, which is
-cheap for three endpoints, and dropping one is a deliberate release-note
+cheap for two endpoints, and dropping one is a deliberate release-note
 decision rather than an accident.
 
 ### The outdated path
@@ -255,15 +255,15 @@ fixes in order of how little they ask of the user:
 1. Upgrade home from the release feed or configured mirror, then
    re-dispatch and run the original command. One prompt in a terminal, a
    plain error in scripts.
-2. Point at the cluster's updates page, which offers the CLI download to a
-   logged-in member through the web login. Works air-gapped.
+2. Point at the cluster's updates page, which names the release the
+   cluster runs and links its download on the feed, for the human who
+   wants to see what is going on before letting a binary replace itself.
 3. Name the exact version and leave installation to the operator's own
    distribution.
 
 Step 3 is reached only by a client old enough to fall below a deliberately
-dropped floor, on a machine that cannot reach a feed, whose user does not
-open the console. That is as narrow as a manual fallback can be while
-still existing.
+dropped floor, on a machine that cannot reach the feed. That is as narrow
+as a manual fallback can be while still existing.
 
 ## Decision 4: manifest compatibility, a watermark and a change ledger
 
@@ -296,8 +296,8 @@ migration hint. The rules fall out by kind:
 
 Because dispatch means the CLI reading a manifest is always the target
 cluster's own version, this covers several remotes at several versions
-with no extra machinery. The same manifest against an older air-gapped
-cluster produces the last row.
+with no extra machinery. The same manifest against an older cluster
+produces the last row.
 
 ### Details
 
@@ -427,9 +427,10 @@ which is more machinery than the content deserves.
   eventually and then break badly. Making home the newest version removes
   most cross-version reads, and versioning the rest with a floor gives a
   planned way out.
-- Unauthenticated CLI downloads from the cluster. Rejected in favor of
-  member-only downloads plus the console page for humans. The bootstrap
-  protocol makes authenticated downloads possible for any client version.
+- The cluster as a binary source, authenticated or not. Built and removed
+  in one day (decision 2): no air-gapped use case, releases do not
+  disappear, and the image size, boot work, extra route group, and second
+  failure matrix were not worth insuring against either.
 - The manifest version as an equality gate against the skali version.
   Produces churn and blind bumps and does not answer the real question,
   which is whether this manifest uses anything that changed.
@@ -451,13 +452,12 @@ Each slice is useful on its own and none depends on a later one.
 - [x] Act on the version header the CLI already receives: a one-line hint
       on every command when skew is detected, and the server-side mismatch
       error code naming the required version.
-- [x] Self-dispatch: per-remote version records, the per-release cache,
-      refcount pruning, home promotion to the newest version, the
-      re-dispatch on a changed server version, cluster-served authenticated
-      downloads, and the operator switch.
+- [x] Self-dispatch: per-remote version records, the per-release cache
+      fed from the release feed, refcount pruning, home promotion to the
+      newest version, and the re-dispatch on a changed server version.
 - [ ] Bootstrap protocol version: advertised current and minimum,
       client-sent version, and the three-step outdated path including the
-      console download page.
+      console updates page linking the cluster's release.
 - [ ] Manifest watermark and change ledger: field rename, ledger entries for
       every change since the last release, validate messaging,
       `skali manifest upgrade`, and the stored-schema split with old
@@ -467,8 +467,9 @@ Each slice is useful on its own and none depends on a later one.
 - [ ] Skill follows dispatch: `skali skill read <topic>` with the neutral
       versus version-bound split, the slimmed `SKILL.md` shell, reinstall on
       home change, and the ledger-fed `--since` flag.
-- [ ] Signed checksums: a signature per release and an embedded public key,
-      applied to both the CLI dispatch fetch and the existing hostd fetch.
+- [ ] Signed checksums, optional hardening: a signature per release and an
+      embedded public key, applied to both the CLI dispatch fetch and the
+      existing hostd fetch.
 
 ## Open questions
 
@@ -476,16 +477,9 @@ Each slice is useful on its own and none depends on a later one.
   naturally, but the key has not been chosen.
 - Bootstrap support window. How long an old bootstrap version stays
   accepted, and whether the pre-1.0 window is shorter.
-- Image size budget. Whether shipping all CLI platforms in every skalid
-  image is acceptable long term, or whether a per-arch split or a separate
-  assets image is preferable. Measured on the first snapshot with the CLIs
-  staged (2026-09-13): the four stripped builds are 35 to 57 MB each,
-  about 180 MB unpacked on a node and about 55 MB compressed, taking the
-  image pull from roughly 25 MB to 80 MB. (Docker Desktop's size column
-  under the containerd store adds unpacked and compressed bytes for the
-  native platform, so the arm64 image only looks four times larger.)
 - Dev data carry-over. Whether a backup-and-restore path into a
   new-version dev cluster is worth offering, or whether the disposable
   contract stands on its own.
-- Signing tooling. Which signing scheme the release pipeline adopts, and
-  how key rotation is handled given the key is embedded in the CLI.
+- Signing tooling. Whether signed checksums are adopted at all now that
+  the feed is the only source, and if so which scheme and how key rotation
+  is handled given the key is embedded in the CLI.

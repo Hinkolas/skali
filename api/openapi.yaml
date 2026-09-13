@@ -63,11 +63,9 @@ info:
     names the required version (also readable from `Skali-Version` on the
     refusal). Requests without the header (browsers, third-party clients)
     and development builds on either side (`v0.0.0-dev`, git-describe
-    versions) are never compared. Health, login, 2FA verification, device
-    authorization, and the CLI download (`/v1/system/cli`) stay reachable
-    from any CLI version so a stale CLI can still bootstrap: the CLI
-    fetches the release matching the cluster from there and dispatches
-    to it.
+    versions) are never compared. Health, login, 2FA verification, and
+    device authorization stay reachable from any CLI version so a stale
+    CLI can still bootstrap.
   version: 0.1.0
   license:
     name: Apache 2.0
@@ -2112,63 +2110,6 @@ paths:
               schema: { $ref: "#/components/schemas/SystemMeta" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
-  /v1/system/cli:
-    get:
-      operationId: getSystemCLI
-      summary: List the skali CLI builds this cluster serves
-      description: |
-        Any authenticated user. The skali release this daemon runs, and the
-        platforms it can hand out with the sha256 each download is verified
-        against. Reachable from a CLI of any version: it is how a CLI
-        fetches the release matching the cluster. `enabled` is false with a
-        `reason` (`disabled`: the operator turned serving off;
-        `not_shipped`: the image carries no binaries) when nothing is
-        served.
-      tags: [status]
-      responses:
-        "200":
-          description: The served builds.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CLIListing" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-
-  /v1/system/cli/{platform}:
-    get:
-      operationId: downloadSystemCLI
-      summary: Download one skali CLI build
-      description: |
-        Any authenticated user. Streams the skali binary for `platform`
-        (`<goos>_<goarch>`, as listed by `GET /v1/system/cli`). The
-        `Skali-CLI-SHA256` header repeats the digest from the listing.
-        Reachable from a CLI of any version and outside the request
-        timeout.
-      tags: [status]
-      parameters:
-        - name: platform
-          in: path
-          required: true
-          schema: { type: string, pattern: "^[a-z0-9]+_[a-z0-9]+$" }
-      responses:
-        "200":
-          description: The binary.
-          headers:
-            Skali-CLI-SHA256:
-              schema: { type: string }
-              description: Hex sha256 of the body.
-          content:
-            application/octet-stream:
-              schema: { type: string, format: binary }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "404":
-          description: |
-            `not_found` for a platform this cluster has no build for;
-            `cli_not_served` when serving is off or the image ships no
-            binaries, with the required version in the message.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
   /v1/system/backup-target:
     get:
       operationId: getBackupTarget
@@ -3826,7 +3767,6 @@ components:
             - registry_disabled
             - registry_unavailable
             - cli_version_mismatch
-            - cli_not_served
             - internal
         message:
           type: string
@@ -4420,38 +4360,6 @@ components:
           format: uuid
         update_available:
           $ref: "#/components/schemas/Release"
-
-    CLIListing:
-      type: object
-      description: |
-        The skali CLI builds a cluster serves to its members: the release it
-        runs and one entry per platform with the digest a download is
-        verified against. enabled is false, with a reason, when the operator
-        turned serving off (disabled) or the image ships no binaries
-        (not_shipped); platforms is then empty.
-      required: [version, enabled, platforms]
-      properties:
-        version:
-          type: string
-        enabled:
-          type: boolean
-        reason:
-          type: string
-          enum: [disabled, not_shipped]
-        platforms:
-          type: array
-          items:
-            type: object
-            required: [platform, sha256, size]
-            properties:
-              platform:
-                type: string
-                description: "<goos>_<goarch>, the download path segment."
-              sha256:
-                type: string
-              size:
-                type: integer
-                format: int64
 
     Release:
       type: object

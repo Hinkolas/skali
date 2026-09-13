@@ -175,7 +175,6 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 		Version:      version,
 		InstanceName: "Test Instance",
 		InstanceID:   testInstanceID,
-		ServeCLI:     true,
 		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
 			return map[string][]byte{
 				"username":   []byte("u_" + name),
@@ -799,5 +798,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 94, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 92, routes, "route count changed; update the OpenAPI spec and this number")
 }

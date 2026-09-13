@@ -32,7 +32,6 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/backup"
 	"github.com/Hinkolas/skali/internal/buildstore"
-	"github.com/Hinkolas/skali/internal/cliassets"
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
@@ -342,21 +341,6 @@ func runServe() error {
 		updatesSvc.Cluster = &updates.Cluster{Client: kubeClient.Clientset}
 	}
 
-	// The CLI this image ships, served to members so their skali follows
-	// the cluster's version. A working-tree image ships none and says so.
-	var cliStore *cliassets.Store
-	if cfg.ServeCLI {
-		cliStore, err = cliassets.Load(cfg.CLIDir)
-		switch {
-		case errors.Is(err, cliassets.ErrNotShipped):
-			slog.InfoContext(ctx, "no skali CLI binaries shipped; /v1/system/cli answers cli_not_served", "dir", cfg.CLIDir)
-		case err != nil:
-			return fmt.Errorf("load skali CLI binaries from %s: %w", cfg.CLIDir, err)
-		default:
-			slog.InfoContext(ctx, "serving the skali CLI to members", "dir", cfg.CLIDir, "platforms", len(cliStore.Assets()))
-		}
-	}
-
 	runtimeLogs := &runtimelogs.Streamer{Observed: observed, Store: st}
 	// Reads work in API-only mode; only the sampler needs a cluster.
 	metricsSvc := &metrics.Service{Store: st}
@@ -417,8 +401,6 @@ func runServe() error {
 			Backups:            backupCtl,
 			Metrics:            metricsSvc,
 			Updates:            updatesSvc,
-			CLI:                cliStore,
-			ServeCLI:           cfg.ServeCLI,
 		}))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

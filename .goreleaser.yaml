@@ -10,11 +10,6 @@ before:
   hooks:
     - scripts/build-web.sh
     - go run ./cmd/skali-schema --schema release --version v{{ .Version }} --output .cache/skali-release/{{ .Version }}/release.json
-    # The skalid image ships every CLI build (docs/versioning.md, decision
-    # 2); the skali build's post hook stages them here under their asset
-    # names, and a stale staging dir must not leak platforms of an earlier run.
-    - rm -rf .cache/skali-release/cli
-    - mkdir -p .cache/skali-release/cli
 
 builds:
   - id: skali
@@ -30,9 +25,6 @@ builds:
       # matching the git-describe convention of Taskfile dev builds and the
       # image tag below.
       - -s -w -X github.com/Hinkolas/skali/internal/version.Version=v{{ .Version }}
-    hooks:
-      post:
-        - cp "{{ .Path }}" ".cache/skali-release/cli/skali_{{ .Os }}_{{ .Arch }}"
 
   - id: skalid
     main: ./cmd/skalid
@@ -80,8 +72,6 @@ dockers:
     goarch: amd64
     use: buildx
     dockerfile: build/skalid.release.Dockerfile
-    extra_files:
-      - .cache/skali-release/cli
     image_templates:
       - ghcr.io/hinkolas/skalid:v{{ .Version }}-amd64
     build_flag_templates:
@@ -92,8 +82,6 @@ dockers:
     goarch: arm64
     use: buildx
     dockerfile: build/skalid.release.Dockerfile
-    extra_files:
-      - .cache/skali-release/cli
     image_templates:
       - ghcr.io/hinkolas/skalid:v{{ .Version }}-arm64
     build_flag_templates:
