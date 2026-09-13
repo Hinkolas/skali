@@ -136,6 +136,33 @@ func TestProjectListSummary(t *testing.T) {
 	require.Equal(t, float64(0), counts["buckets"])
 }
 
+func TestProjectListMembership(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("nick@example.com", "hunter2hunter2")
+	a.createAdmin("root@example.com", "hunter2hunter2")
+	token := a.login("nick@example.com", "hunter2hunter2")
+	admin := a.login("root@example.com", "hunter2hunter2")
+
+	status, _ := a.do("POST", "/v1/projects", token, map[string]any{"name": "demo"})
+	require.Equal(t, http.StatusCreated, status)
+
+	// The creator holds the admin membership.
+	status, body := a.do("GET", "/v1/projects", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	access := body["projects"].([]any)[0].(map[string]any)["access"].(map[string]any)
+	require.Equal(t, "admin", access["role"])
+	require.Equal(t, true, access["member"])
+
+	// The instance admin sees the project through the instance role alone.
+	status, body = a.do("GET", "/v1/projects", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	projects := body["projects"].([]any)
+	require.Len(t, projects, 1)
+	access = projects[0].(map[string]any)["access"].(map[string]any)
+	require.Equal(t, "admin", access["role"])
+	require.Equal(t, false, access["member"])
+}
+
 func TestDraftSubmitAndConflicts(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")

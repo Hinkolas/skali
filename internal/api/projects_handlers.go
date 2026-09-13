@@ -56,15 +56,22 @@ type projectPayload struct {
 	Summary     *projectSummaryPayload `json:"summary,omitempty"`
 }
 
-// projectAccessPayload is the caller's standing: the project role and the
-// effective role per environment (locked ones report none).
+// projectAccessPayload is the caller's standing: the project role, whether
+// it rests on a membership row (an instance admin sees every project
+// without one), and the effective role per environment (locked ones report
+// none).
 type projectAccessPayload struct {
 	Role         string            `json:"role"`
+	Member       bool              `json:"member"`
 	Environments map[string]string `json:"environments"`
 }
 
 func newProjectAccessPayload(grant *authz.Grant) projectAccessPayload {
-	return projectAccessPayload{Role: grant.ProjectRole.String(), Environments: grant.Roles()}
+	return projectAccessPayload{
+		Role:         grant.ProjectRole.String(),
+		Member:       grant.Member,
+		Environments: grant.Roles(),
+	}
 }
 
 type projectSummaryPayload struct {
