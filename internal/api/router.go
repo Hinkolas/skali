@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/backup"
 	"github.com/Hinkolas/skali/internal/buildstore"
+	"github.com/Hinkolas/skali/internal/cliassets"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
@@ -107,6 +108,11 @@ type Deps struct {
 	// Updates owns platform update status, scans, and settings; nil hides
 	// the routes and the meta indicator.
 	Updates *updates.Service
+	// CLI holds the skali binaries this image ships for /v1/system/cli; nil
+	// means none are shipped. ServeCLI is the operator switch: false answers
+	// cli_not_served even when binaries are present.
+	CLI      *cliassets.Store
+	ServeCLI bool
 }
 
 // StripAPIPrefix serves the router both at the root and under /api: the
@@ -212,6 +218,19 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				xh := newExecHandlers(d.Exec, d.Auth)
 				ac.route(r, "GET", "/environments/{id}/exec", classEnvMaintain, xh.open)
 			}
+		})
+
+		// The cluster's own CLI: authenticated, but deliberately outside the
+		// version gate (a CLI of the wrong release calls this to fetch the
+		// right one) and outside the request timeout (a binary on a slow
+		// link outlives it). Registered unconditionally; the handler
+		// answers cli_not_served itself so the route set stays stable.
+		r.Group(func(r chi.Router) {
+			r.Use(RequireAuth(d.Auth))
+
+			clh := &cliHandlers{version: d.Version, store: d.CLI, enabled: d.ServeCLI}
+			ac.route(r, "GET", "/system/cli", classSelf, clh.list)
+			ac.route(r, "GET", "/system/cli/{platform}", classSelf, clh.download)
 		})
 
 		// Everything else runs under the request timeout.

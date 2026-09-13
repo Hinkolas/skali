@@ -23,11 +23,15 @@ const LocalRemoteName = "local"
 // Remote is one master a user can talk to. Instance pins the installation
 // identity the master answered with when the remote was added (trust on
 // first use), so a later reinstall of the cluster is detected instead of
-// surfacing as a confusing expired session; empty until observed.
+// surfacing as a confusing expired session; empty until observed. Version
+// is the daemon build the master last answered with: dispatch runs the
+// skali release matching it (docs/versioning.md, decision 1). Both are
+// additive fields older binaries ignore.
 type Remote struct {
 	Master   string `yaml:"master"`
 	Token    string `yaml:"token,omitempty"`
 	Instance string `yaml:"instance,omitempty"`
+	Version  string `yaml:"version,omitempty"`
 }
 
 // Config is the on-disk shape of ~/.config/skali/config.yaml.

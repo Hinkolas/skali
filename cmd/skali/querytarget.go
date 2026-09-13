@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/Hinkolas/skali/internal/checkout"
 	"github.com/Hinkolas/skali/internal/cliconfig"
@@ -52,32 +51,11 @@ func resolveQueryRemote(start, override string) (string, *checkout.Target, *clie
 	if err != nil {
 		return "", nil, nil, err
 	}
-	if override != "" {
-		remote, err := remoteByName(cfg, override)
-		if err != nil {
-			return "", nil, nil, err
-		}
-		return override, nil, remoteClient(cfg, remote), nil
-	}
-	var binding *checkout.Target
-	if path, err := manifest.Discover("", start); err == nil {
-		if binding, err = checkout.Load(filepath.Dir(path)); err != nil {
-			return "", nil, nil, err
-		}
-	}
-	var remoteName string
-	var remote *cliconfig.Remote
-	if binding != nil {
-		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
-		if !ok {
-			return "", nil, nil, fmt.Errorf("no remote for %s on this machine; run skali remote add <name> %s",
-				binding.Master, binding.Master)
-		}
-		remoteName, remote = name, found
-	} else if remoteName, remote, err = cfg.Current(); err != nil {
+	target, err := resolveRemoteTarget(cfg, "", start, override)
+	if err != nil {
 		return "", nil, nil, err
 	}
-	return remoteName, binding, remoteClient(cfg, remote), nil
+	return target.Name, target.Binding, remoteClient(cfg, target.Remote), nil
 }
 
 // resolveQueryProject resolves the remote and project that project-wide

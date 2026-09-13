@@ -41,6 +41,9 @@ const (
 	// codeCLIVersionMismatch: a released daemon refused a released CLI of
 	// another version; the message names the required version.
 	codeCLIVersionMismatch = "cli_version_mismatch"
+	// codeCLINotServed: the cluster does not hand out its CLI (serving is
+	// off, or the image ships no binaries); the message names the version.
+	codeCLINotServed = "cli_not_served"
 
 	// Deployment coordination.
 	codeDeploymentInFlight      = "deployment_in_flight"

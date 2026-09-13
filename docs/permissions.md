@@ -308,7 +308,7 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | exec (S on promote-only environments), resolved application environment (S), credential reveal (S) | E:maintain |
 | bypass protection (S) | E:admin |
 | user management writes, nodes, system observation, backup target (S for writes) | IA |
-| user directory (trimmed for non-admins), own account, sessions, 2FA, `/system/meta`, `/auth/session` | any authenticated user |
+| user directory (trimmed for non-admins), own account, sessions, 2FA, `/system/meta`, `/system/cli` (the cluster's own CLI), `/auth/session` | any authenticated user |
 
 ## Route classification
 
@@ -329,7 +329,10 @@ them).
 
 Authenticated, self: `POST /auth/logout`, `POST /auth/reauth`,
 `GET /auth/session`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}`,
-`POST /auth/2fa/confirm`, `GET /system/meta`,
+`POST /auth/2fa/confirm`, `GET /system/meta`, `GET /system/cli`,
+`GET /system/cli/{platform}` (the skali release the cluster runs, served to
+members so a CLI of any version can fetch the matching one; these two also
+sit outside the CLI version gate),
 `POST /auth/device/requests/reauth` (bound to the calling session, so it
 runs outside the gate it exists to satisfy),
 `GET /auth/device/codes/{user_code}`,

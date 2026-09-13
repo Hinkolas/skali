@@ -1,7 +1,8 @@
 # Versioning
 
 Status: design agreed 2026-09-13; slice 1 (skew hint and server-side gate)
-implemented 2026-09-13, the rest not yet. This file is the plan of record for
+and slice 2 (self-dispatch and cluster-served CLI downloads) implemented
+2026-09-13, the rest not yet. This file is the plan of record for
 how the CLI, the cluster, and the manifest stay compatible across clusters
 that update on their own schedule, including clusters that never see the
 public release feed. The build order at the end lists the slices; tick them
@@ -97,20 +98,36 @@ There is no separate launcher artifact. The dispatcher is part of every
 skali binary, the way the Go command re-execs the toolchain a module
 requires. On startup:
 
-1. Resolve the target remote: the checkout binding in `.skali/target.yaml`,
-   else the current remote, else none.
-2. Look up the version that remote last answered with, from a small
-   per-remote record the CLI keeps.
-3. If that version is this binary, run the command. Otherwise exec the
-   cached binary for that version, with an environment marker so the child
-   never dispatches again.
-4. If the child observes a different `Skali-Version` than expected (the
-   cluster updated since last contact), it exits with a reserved code. The
-   parent fetches the new version and re-dispatches once.
+1. Resolve the target remote: the one-shot `--remote` flag, else the
+   checkout binding in `.skali/target.yaml` (found from `--manifest` or by
+   discovering `skali.yml` upward), else the current remote, else none.
+2. Look up the version that remote last answered with, from the `version`
+   field of its config record. Every API client records it on every
+   response; `remote add` and `remote login` fill it from their probe; an
+   empty record costs one health round trip.
+3. If that version is this binary, run the command. Otherwise run the
+   cached binary for that version as a child with the same stdio, working
+   directory, and process group, with `SKALI_DISPATCHED=1` in its
+   environment so it never dispatches again. The parent waits, ignores the
+   terminal's interrupt (the child in the same group handles it), forwards
+   signals aimed at its own pid, and ends the way the child ended.
+4. If the child was refused as the wrong release (the cluster updated since
+   last contact), its config write already carries the new version and it
+   exits with the reserved status 213, printing nothing of its own. The
+   parent re-reads the record, fetches that version, and runs the command
+   once more; when it cannot, it says why and runs home. A 213 with an
+   unchanged record is the command's own status (`skali exec` passes a
+   remote process's code through) and is returned as is. The same single
+   rerun happens when home itself matched the record and was refused: the
+   refusal recorded the new version, and the dispatcher runs the command
+   again with it.
 
 Steady state costs no extra round trip. Commands with no remote, such as
 bootstrapping a new cluster or local dev without a target, run in the home
-binary.
+binary. So do the commands that manage remotes or the binary itself:
+`version`, `upgrade`, `completion`, `remote`, `cluster`, `skill`, and, until
+decision 5 lands, `dev`. `SKALI_NO_DISPATCH=1` turns dispatch off, and
+`--verbose` prints why a command did not dispatch.
 
 ### Home is the newest version in use
 
@@ -120,7 +137,9 @@ It is what adds remotes, logs in, and runs the upgrade.
 
 When the CLI fetches a cluster version newer than itself, it does not only
 cache it. It verifies it, replaces itself with it using the existing
-restore-on-failure upgrade path, prints one line saying so, and execs it.
+restore-on-failure upgrade path (`installCLI`, shared with `skali upgrade`),
+prints one line saying so (`upgraded skali v0.3.2 -> v0.4.0 (remote khz
+runs skalid v0.4.0)`), and runs the cached copy for the command at hand.
 From then on dispatch only goes downward, from a newer binary to an older
 one. That direction is free: newer code was written knowing every earlier
 format. The one remaining local cross-version read, an older cluster
@@ -134,16 +153,22 @@ normal path.
 
 Self-replacement from a command that is not `skali upgrade` is a state
 change the user did not ask for by name. It is printed, once, in one line,
-and never done silently.
+and never done silently. Development builds (`v0.0.0-dev`, git-describe)
+never dispatch and are never promoted, silently: the maintainer's working
+tree talks to any cluster.
 
 ### Cache and pruning
 
 - Cached binaries live under the user's cache directory, one folder per
-  release, the same layout the hostd cache uses.
-- A version stays while any remote references it or the user pinned it by
-  hand with `skali upgrade --version`. When the last referencing remote
-  moves on, the binary is removed.
-- `skali version` lists the home version and each remote's version, so the
+  release, the same layout the hostd cache uses:
+  `$XDG_CACHE_HOME/skali/cli/<release>/skali` with its digest next to it.
+- A version stays while any remote's record references it or it is the
+  home version. When the last reference moves on (a fetch stored another
+  release, a remote was removed, home was upgraded), the entry is removed,
+  except entries younger than ten minutes, which another skali may still
+  be about to run.
+- `skali version` keeps its first line and then lists each remote's
+  recorded version with `this binary`, `cached`, or `not cached`, so the
   state is never hidden.
 - Adding a remote older than home costs nothing: dispatch goes downward and
   no fetch touches home.
@@ -162,9 +187,12 @@ Development builds are exempt, not guarded: a CLI or daemon reporting
 The maintainer's working tree talks to any cluster, and a working-tree
 daemon accepts any CLI. Dispatch skips such builds with a warning.
 
-Until dispatch lands, the CLI prints one stderr line after any command that
-observed a released daemon of another version, naming the exact
+The CLI still prints one stderr line after any command that observed a
+released daemon of another version, naming the exact
 `skali upgrade --version` (or `skali dev upgrade`) that closes the gap.
+Dispatch normally closes it first; the hint remains for development builds,
+`SKALI_NO_DISPATCH=1`, and a fetch that failed (a warning names why, then
+the command runs at home and the gate answers).
 
 ## Decision 2: where binaries come from
 
@@ -178,17 +206,28 @@ old releases. The skalid image therefore ships the CLI for every supported
 platform, roughly 60 MB across four platform builds, which is acceptable on
 a control-plane image.
 
-- Members only. The download endpoint requires a valid session. There is no
-  anonymous download. The version is already visible pre-auth through the
-  health headers, and nothing more is exposed.
+- Members only. `GET /v1/system/cli` lists the platforms with their sha256
+  and `GET /v1/system/cli/<goos>_<goarch>` streams one binary; both require
+  a valid session and sit outside the CLI version gate and the request
+  timeout. There is no anonymous download. The version is already visible
+  pre-auth through the health headers, and nothing more is exposed. The
+  release image copies every CLI build to `/usr/local/share/skali/cli`; the
+  working-tree image ships none and answers `cli_not_served`.
 - Offline trust. Each release publishes a signed checksums file and every
   CLI embeds the public key. A binary served by a cluster is verified
   against that signature before it is written anywhere. The cluster is a
   mirror, not a trust anchor. The same verification upgrades the existing
-  hostd fetch.
-- Operator switch. Serving the CLI is a cluster setting. An operator who
-  distributes binaries another way can turn it off, and the CLI's error
-  then names the version and points at the console.
+  hostd fetch. Until the signature lands (build order, last slice) the CLI
+  verifies cluster-served bytes against the sha256 the cluster's listing
+  names plus a `--version` run of the binary, and feed-served bytes against
+  the release's `checksums.txt`.
+- Operator switch. Serving the CLI is the daemon setting `SKALI_SERVE_CLI`
+  (default true, the same shape as `SKALI_UPDATE_SCAN`; a console toggle
+  was considered and rejected as more surface than the switch needs). An
+  operator who distributes binaries another way turns it off; the daemon
+  answers `cli_not_served` naming the version, the CLI falls back to the
+  release feed, and when that has no such release it says so and names
+  `skali upgrade --version`.
 - The feed keeps two jobs: installing and upgrading home, and standing in
   as a source when a cluster does not serve downloads. The existing feed
   URL override covers enterprise mirrors.
@@ -412,7 +451,7 @@ Each slice is useful on its own and none depends on a later one.
 - [x] Act on the version header the CLI already receives: a one-line hint
       on every command when skew is detected, and the server-side mismatch
       error code naming the required version.
-- [ ] Self-dispatch: per-remote version records, the per-release cache,
+- [x] Self-dispatch: per-remote version records, the per-release cache,
       refcount pruning, home promotion to the newest version, the
       re-dispatch on a changed server version, cluster-served authenticated
       downloads, and the operator switch.
@@ -439,7 +478,12 @@ Each slice is useful on its own and none depends on a later one.
   accepted, and whether the pre-1.0 window is shorter.
 - Image size budget. Whether shipping all CLI platforms in every skalid
   image is acceptable long term, or whether a per-arch split or a separate
-  assets image is preferable.
+  assets image is preferable. Measured on the first snapshot with the CLIs
+  staged (2026-09-13): the four stripped builds are 35 to 57 MB each,
+  about 180 MB unpacked on a node and about 55 MB compressed, taking the
+  image pull from roughly 25 MB to 80 MB. (Docker Desktop's size column
+  under the containerd store adds unpacked and compressed bytes for the
+  native platform, so the arm64 image only looks four times larger.)
 - Dev data carry-over. Whether a backup-and-restore path into a
   new-version dev cluster is worth offering, or whether the disposable
   contract stands on its own.

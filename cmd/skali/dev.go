@@ -926,6 +926,9 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 			if observed := probe.ObservedInstance(); observed != "" {
 				existing.Instance = observed
 			}
+			if version := probe.ObservedVersion(); version != "" {
+				existing.Version = version
+			}
 			return cliconfig.Save(cfg)
 		}
 	}
@@ -944,6 +947,7 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 		Master:   localdev.MasterURL(),
 		Token:    result.Session.Token,
 		Instance: api.ObservedInstance(),
+		Version:  api.ObservedVersion(),
 	}
 	return cliconfig.Save(cfg)
 }

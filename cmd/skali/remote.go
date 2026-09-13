@@ -17,6 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/installer"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -76,16 +77,17 @@ func newRemoteAddCommand() *cobra.Command {
 			// Probe before prompting so a typo'd URL never asks for a
 			// password. /healthz is unauthenticated on every skali master;
 			// the first candidate that answers like one wins.
-			master := ""
+			master, version := "", ""
 			var probeErr error
 			for _, candidate := range candidates {
-				if err := client.New(candidate, "", caller()).Health(command.Context()); err != nil {
+				probe := client.New(candidate, "", caller())
+				if err := probe.Health(command.Context()); err != nil {
 					if probeErr == nil {
 						probeErr = fmt.Errorf("master %s is not reachable: %w", candidate, err)
 					}
 					continue
 				}
-				master = candidate
+				master, version = candidate, probe.ObservedVersion()
 				break
 			}
 			if master == "" {
@@ -98,7 +100,9 @@ func newRemoteAddCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("remote %q not added: %w", remoteName, err)
 			}
-			cfg.Remotes[remoteName] = &cliconfig.Remote{Master: master, Token: sess.Token, Instance: instance}
+			// The daemon version rides the probe's headers; recording it
+			// here lets the first command dispatch without another probe.
+			cfg.Remotes[remoteName] = &cliconfig.Remote{Master: master, Token: sess.Token, Instance: instance, Version: version}
 			cfg.CurrentRemote = remoteName
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
@@ -157,6 +161,9 @@ func newRemoteLoginCommand() *cobra.Command {
 			if target.Instance != "" {
 				probe := client.New(target.Master, "", caller())
 				_ = probe.Health(command.Context())
+				if version := probe.ObservedVersion(); version != "" {
+					target.Version = version
+				}
 				observed := probe.ObservedInstance()
 				if observed != "" && observed != target.Instance {
 					trusted, err := prompts.Confirm(command.Context(), cliprompt.ConfirmOptions{
@@ -516,6 +523,9 @@ func newRemoteRemoveCommand() *cobra.Command {
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
 			}
+			// The remote's release may have been the last reference to a
+			// cached skali.
+			pruneCLICache(cfg, versionpkg.Version, installer.DefaultCacheDir())
 			fmt.Fprintf(out, "removed remote %q\n", name)
 			if cleared && len(cfg.Remotes) > 0 {
 				fmt.Fprintln(out, "no remote selected; run `skali remote use <name>`")

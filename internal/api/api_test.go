@@ -78,6 +78,13 @@ func newTestAPI(t *testing.T) *testAPI {
 // gate inert for every test that does not target it.
 func newTestAPIVersion(t *testing.T, version string) *testAPI {
 	t.Helper()
+	return newTestAPIWith(t, version, nil)
+}
+
+// newTestAPIWith additionally lets a test adjust the wiring (the shipped
+// CLI store, the serving switch) before the router is built.
+func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
+	t.Helper()
 	pool := testdb.New(t)
 	st := store.NewStore(pool)
 	svc, err := auth.New(st, auth.Config{Secret: strings.Repeat("s", 32)})
@@ -141,7 +148,7 @@ func newTestAPIVersion(t *testing.T, version string) *testAPI {
 
 	// StripAPIPrefix wraps here exactly as in cmd/skalid, so every test
 	// doubles as proof that root paths pass through the /api wrapper.
-	router, ac := newRouter(Deps{
+	deps := Deps{
 		Auth:               svc,
 		Store:              st,
 		DB:                 pool,
@@ -168,6 +175,7 @@ func newTestAPIVersion(t *testing.T, version string) *testAPI {
 		Version:      version,
 		InstanceName: "Test Instance",
 		InstanceID:   testInstanceID,
+		ServeCLI:     true,
 		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
 			return map[string][]byte{
 				"username":   []byte("u_" + name),
@@ -176,7 +184,11 @@ func newTestAPIVersion(t *testing.T, version string) *testAPI {
 				"secret_key": []byte("sk-" + name),
 			}, nil
 		},
-	})
+	}
+	if adjust != nil {
+		adjust(&deps)
+	}
+	router, ac := newRouter(deps)
 	srv := httptest.NewServer(StripAPIPrefix(router))
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc,
@@ -787,5 +799,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 92, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 94, routes, "route count changed; update the OpenAPI spec and this number")
 }

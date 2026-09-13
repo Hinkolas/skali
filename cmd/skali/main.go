@@ -12,13 +12,16 @@ package main
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/installer"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -53,26 +56,81 @@ func newRootCommand() *cobra.Command {
 }
 
 // newVersionCommand prints the CLI version; the same text as --version,
-// reachable as the verb people try first when filing a report.
+// reachable as the verb people try first when filing a report. Below it,
+// one line per remote names the skalid version last observed there and
+// whether the matching skali is cached, so the dispatch state is never
+// hidden (the first line stays exactly what scripts parse).
 func newVersionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the CLI version",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(command.OutOrStdout(), "%s version %s\n", command.Root().Name(), versionpkg.Version)
-			return err
+			out := command.OutOrStdout()
+			if _, err := fmt.Fprintf(out, "%s version %s\n", command.Root().Name(), versionpkg.Version); err != nil {
+				return err
+			}
+			cfg, err := cliconfig.Load()
+			if err != nil {
+				return nil
+			}
+			for _, line := range remoteVersionLines(cfg, versionpkg.Version, installer.DefaultCacheDir()) {
+				fmt.Fprintln(out, line)
+			}
+			return nil
 		},
 	}
 }
 
+// remoteVersionLines renders the per-remote dispatch state: recorded
+// remotes only, the hidden local remote excluded, sorted by name.
+func remoteVersionLines(cfg *cliconfig.Config, home, cacheDir string) []string {
+	var lines []string
+	for _, name := range slices.Sorted(maps.Keys(cfg.Remotes)) {
+		remote := cfg.Remotes[name]
+		if name == localRemoteName || remote.Version == "" {
+			continue
+		}
+		state := "not cached"
+		switch {
+		case remote.Version == home:
+			state = "this binary"
+		case !versionpkg.IsRelease(remote.Version):
+			state = "development build, not dispatched"
+		default:
+			if _, err := os.Stat(installer.CLICachePath(cacheDir, remote.Version) + ".sha256"); err == nil {
+				state = "cached"
+			}
+		}
+		lines = append(lines, fmt.Sprintf("remote %s  skalid %s (%s)", name, remote.Version, state))
+	}
+	return lines
+}
+
 func main() {
+	// Another release may own this command: see dispatch.go.
+	if handled, code := dispatch(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	err := newRootCommand().Execute()
 	// A remote exec command's own exit status is a result, not an error:
 	// pass it through silently, the process already wrote its stderr
 	// through the session.
 	if exit, ok := errors.AsType[*client.ExecExitError](err); ok {
 		os.Exit(exit.Code)
+	}
+	// A cluster that moved since its record was written refuses home once;
+	// the refusal recorded the new version, so dispatch can run the command
+	// again with the right release (see dispatch.go).
+	if handled, code := rerunAfterMismatch(err, os.Getenv, os.Stderr, dispatchTried, func() (bool, int) { return dispatch(os.Args[1:]) }); handled {
+		os.Exit(code)
+	}
+	// A dispatched child refused as the wrong release says nothing: its
+	// parent reruns the command with the right release, or prints the
+	// failure itself.
+	code := exitCodeFor(err)
+	if code == exitVersionMoved {
+		os.Exit(code)
 	}
 	style := clirender.StyleFor(os.Stderr)
 	if err != nil {
@@ -83,13 +141,13 @@ func main() {
 	}
 	// Version skew against the daemon is named once per invocation, on
 	// success and on failure alike (the daemon's own refusal included), and
-	// only on stderr: stdout stays clean for `$(skali remote token)`.
+	// only on stderr: stdout stays clean for `$(skali remote token)`. Under
+	// dispatch the skew is normally gone before this runs; it remains for
+	// development builds, SKALI_NO_DISPATCH, and a fetch that failed.
 	if hint := pendingSkewHint(); hint != "" {
 		fmt.Fprintln(os.Stderr, style.Yellow(hint))
 	}
-	if err != nil {
-		os.Exit(1)
-	}
+	os.Exit(code)
 }
 
 // instanceMismatchHint tells the user how to resolve a changed installation
@@ -137,8 +195,12 @@ func currentClient() (*cliconfig.Config, string, *client.Client, error) {
 // remoteClient builds the API client for a stored remote with install-identity
 // verification armed: a changed identity fails requests with
 // *client.InstanceMismatchError, and the first identity an unpinned remote
-// observes is adopted into the config (trust on first use). The save is best
-// effort; a failed adoption simply repeats on the next command.
+// observes is adopted into the config (trust on first use). The daemon
+// version each response carries is recorded the same way: it feeds the skew
+// hint for this invocation and, when it changed, the remote's version record
+// that dispatch reads next time (the daemon's own refusal included, which is
+// how a dispatched child leaves the moved version behind for its parent).
+// Saves are best effort; a failed one simply repeats on the next command.
 func remoteClient(cfg *cliconfig.Config, remote *cliconfig.Remote) *client.Client {
 	c := client.New(remote.Master, remote.Token, caller())
 	c.PinInstance(remote.Instance, func(observed string) {
@@ -146,6 +208,12 @@ func remoteClient(cfg *cliconfig.Config, remote *cliconfig.Remote) *client.Clien
 		_ = cliconfig.Save(cfg)
 	})
 	name, _, _ := lookupRemoteByMaster(cfg, remote.Master)
-	observeSkew(c, name)
+	c.OnVersion(func(observed string) {
+		skew.record(name, observed)
+		if remote.Version != observed {
+			remote.Version = observed
+			_ = cliconfig.Save(cfg)
+		}
+	})
 	return c
 }

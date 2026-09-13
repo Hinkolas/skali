@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Hinkolas/skali/internal/client"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 // skewRecorder holds the daemon version a remote-backed client observed in
-// this invocation; main prints one hint from it after the command. Only
+// this invocation; main prints one hint from it after the command, and a
+// dispatched child reads it to tell its parent the daemon moved. Only
 // clients built by remoteClient feed it, so bare probes (remote add, the
 // login identity check, the local dev login) stay quiet.
 type skewRecorder struct {
@@ -38,11 +38,6 @@ func (s *skewRecorder) reset() {
 	s.remote, s.server = "", ""
 }
 
-// observeSkew wires a remote-backed client into the recorder.
-func observeSkew(c *client.Client, name string) {
-	c.OnVersion(func(observed string) { skew.record(name, observed) })
-}
-
 // pendingSkewHint is the line main prints after a command: the skew between
 // this CLI and the daemon it talked to, if any.
 func pendingSkewHint() string {
@@ -55,11 +50,12 @@ func pendingSkewHint() string {
 
 // skewHint names a release skew between this CLI and a remote's daemon in
 // one line ending in the fix; empty when either side is not a release or
-// they match. Dispatch (docs/versioning.md, decision 1) will make the fix
-// automatic; until then skali upgrade --version moves the CLI in either
-// direction. The local platform is skali dev's: behind the CLI it moves
-// with skali dev upgrade, ahead of it the CLI follows or the platform is
-// recreated.
+// they match. Dispatch (docs/versioning.md, decision 1) normally closes the
+// gap before a command runs; the hint remains for development builds,
+// SKALI_NO_DISPATCH, and a fetch that failed, where skali upgrade --version
+// moves the CLI in either direction. The local platform is skali dev's:
+// behind the CLI it moves with skali dev upgrade, ahead of it the CLI
+// follows or the platform is recreated.
 func skewHint(remote, cli, server string) string {
 	if !versionpkg.ReleasesDiffer(cli, server) {
 		return ""

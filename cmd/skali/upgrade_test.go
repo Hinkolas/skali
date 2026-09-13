@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -398,4 +399,29 @@ func TestRunUpgradeRefreshesInstalledCompletions(t *testing.T) {
 	entries, err := os.ReadDir(fresh)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+}
+
+// TestRunUpgradePrunesUnreferencedCache: the installed release becomes the
+// home reference, and a cached dispatch entry no remote names goes away.
+func TestRunUpgradePrunesUnreferencedCache(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cli := fakeCLI("v0.2.0")
+	server := newFakeUpgradeServer(t, "v0.2.0", releaseAssets(cli))
+	executable := writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.1.0"))
+	cacheDir := t.TempDir()
+	stale := installer.CLICachePath(cacheDir, "v0.1.5")
+	kept := installer.CLICachePath(cacheDir, "v0.2.0")
+	for _, path := range []string{stale, kept} {
+		require.NoError(t, installer.StoreBinary(path, cli, "00"))
+		old := time.Now().Add(-time.Hour)
+		require.NoError(t, os.Chtimes(filepath.Dir(path), old, old))
+	}
+
+	opts := server.options("v0.1.0", updates.ChannelStable, executable)
+	opts.CacheDir = cacheDir
+	require.NoError(t, runUpgrade(context.Background(), &bytes.Buffer{}, opts))
+	_, err := os.Stat(stale)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(kept)
+	require.NoError(t, err)
 }

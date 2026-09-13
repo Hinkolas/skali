@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/installer/host"
@@ -78,6 +79,10 @@ type upgradeOptions struct {
 	// Home locates installed completion scripts to refresh; empty skips
 	// the refresh.
 	Home string
+	// CacheDir is the CLI cache root whose dispatch entries are pruned
+	// after the install (the new home version is a reference); empty
+	// skips the prune.
+	CacheDir string
 }
 
 // upgradeOutcome is the judgement of one upgrade request: a target to
@@ -96,12 +101,9 @@ func upgradeOptionsFromEnvironment(requested, channelFlag string) (upgradeOption
 	if err != nil {
 		return upgradeOptions{}, err
 	}
-	executable, err := os.Executable()
+	executable, err := locateExecutable()
 	if err != nil {
-		return upgradeOptions{}, fmt.Errorf("locate the running skali binary: %w", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
-		executable = resolved
+		return upgradeOptions{}, err
 	}
 	home, _ := os.UserHomeDir()
 	return upgradeOptions{
@@ -120,7 +122,21 @@ func upgradeOptionsFromEnvironment(requested, channelFlag string) (upgradeOption
 		GOOS:        runtime.GOOS,
 		GOARCH:      runtime.GOARCH,
 		Home:        home,
+		CacheDir:    installer.DefaultCacheDir(),
 	}, nil
+}
+
+// locateExecutable resolves the running binary with symlinks followed, so
+// a replacement lands where the bytes live rather than on a link to them.
+func locateExecutable() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate the running skali binary: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	return executable, nil
 }
 
 // resolveUpgradeChannel applies the default rule: an explicit flag wins;
@@ -225,24 +241,8 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	fmt.Fprintf(out, "  target   %s%s\n\n", target, label)
 
 	tasks := clirender.NewTasks(out)
-	task := tasks.Start("Fetch checksums for " + target)
-	sums, err := installer.ReleaseChecksums(ctx, opts.Client, opts.ReleaseBase, target)
-	if err != nil {
-		task.Fail()
-		if errors.Is(err, installer.ErrAssetMissing) {
-			return fmt.Errorf("release %s was not found", target)
-		}
-		return err
-	}
-	task.Done("")
-
-	cliAsset := installer.CLIAsset(opts.GOOS, opts.GOARCH)
-	task = tasks.Start("Download " + cliAsset)
-	if sums[cliAsset] == "" {
-		task.Fail()
-		return fmt.Errorf("release %s publishes no %s", target, cliAsset)
-	}
-	binary, err := installer.DownloadAsset(ctx, opts.Client, opts.ReleaseBase, target, cliAsset, sums[cliAsset])
+	task := tasks.Start("Download " + installer.CLIAsset(opts.GOOS, opts.GOARCH) + " " + target)
+	binary, _, err := installer.FetchCLI(ctx, opts.Client, opts.ReleaseBase, target, opts.GOOS, opts.GOARCH)
 	if err != nil {
 		task.Fail()
 		return err
@@ -250,29 +250,18 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	task.Done("checksum verified")
 
 	task = tasks.Start("Install " + opts.Executable)
-	previous, err := os.ReadFile(opts.Executable)
-	if err != nil {
+	if err := installCLI(ctx, opts.Executable, binary, target); err != nil {
 		task.Fail()
-		return fmt.Errorf("read the current binary: %w", err)
+		return err
 	}
-	if err := (host.Local{}).ReplaceFile(ctx, opts.Executable, "", binary, 0o755); err != nil {
-		task.Fail()
-		return fmt.Errorf("install %s: %w", opts.Executable, err)
-	}
-	task.Done("")
-
-	task = tasks.Start("Verify skali --version reports " + target)
-	if err := verifyInstalledCLI(ctx, opts.Executable, target); err != nil {
-		task.Fail()
-		if restoreErr := (host.Local{}).ReplaceFile(ctx, opts.Executable, "", previous, 0o755); restoreErr != nil {
-			return fmt.Errorf("%w; restoring the previous binary failed too: %v", err, restoreErr)
-		}
-		return fmt.Errorf("%w; the previous binary was restored", err)
-	}
-	task.Done("")
+	task.Done("verified")
 
 	if warning := refreshCompletions(ctx, tasks, opts.Executable, opts.Home); warning != "" {
 		fmt.Fprintln(out, style.Yellow("warning: "+warning))
+	}
+	if opts.CacheDir != "" {
+		cfg, _ := cliconfig.Load()
+		pruneCLICache(cfg, target, opts.CacheDir)
 	}
 
 	verb := "upgraded"
@@ -280,6 +269,27 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 		verb = "downgraded"
 	}
 	fmt.Fprintf(out, "\n%s%s skali %s -> %s\n", style.Check(), verb, opts.Current, target)
+	return nil
+}
+
+// installCLI replaces executable with binary and proves the result answers
+// for want; when it does not, the previous bytes are put back. Both paths
+// that replace the CLI (skali upgrade and dispatch's home promotion) go
+// through it.
+func installCLI(ctx context.Context, executable string, binary []byte, want string) error {
+	previous, err := os.ReadFile(executable)
+	if err != nil {
+		return fmt.Errorf("read the current binary: %w", err)
+	}
+	if err := (host.Local{}).ReplaceFile(ctx, executable, "", binary, 0o755); err != nil {
+		return fmt.Errorf("install %s: %w", executable, err)
+	}
+	if err := verifyInstalledCLI(ctx, executable, want); err != nil {
+		if restoreErr := (host.Local{}).ReplaceFile(ctx, executable, "", previous, 0o755); restoreErr != nil {
+			return fmt.Errorf("%w; restoring the previous binary failed too: %v", err, restoreErr)
+		}
+		return fmt.Errorf("%w; the previous binary was restored", err)
+	}
 	return nil
 }
 

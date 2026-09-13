@@ -6,6 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/cliconfig"
+	"github.com/Hinkolas/skali/internal/installer"
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 // TestCommandVerbConsistency keeps the noun-verb surface uniform: the
@@ -53,4 +57,39 @@ func TestCommandVerbConsistency(t *testing.T) {
 		}
 	}
 	walk(newRootCommand())
+}
+
+func TestRemoteVersionLines(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	cached := installer.CLICachePath(cacheDir, "v0.4.0")
+	require.NoError(t, installer.StoreBinary(cached, []byte("x"), "00"))
+	cfg := &cliconfig.Config{Remotes: map[string]*cliconfig.Remote{
+		"khz":   {Master: "https://khz.example/api", Version: "v0.4.0"},
+		"lab":   {Master: "https://lab.example/api", Version: "v0.3.2"},
+		"home":  {Master: "https://home.example/api", Version: "v0.5.0"},
+		"tree":  {Master: "https://tree.example/api", Version: "v0.0.0-dev"},
+		"fresh": {Master: "https://fresh.example/api"},
+		"local": {Master: "http://skali.localhost:7070", Version: "v0.4.0"},
+	}}
+	require.Equal(t, []string{
+		"remote home  skalid v0.5.0 (this binary)",
+		"remote khz  skalid v0.4.0 (cached)",
+		"remote lab  skalid v0.3.2 (not cached)",
+		"remote tree  skalid v0.0.0-dev (development build, not dispatched)",
+	}, remoteVersionLines(cfg, "v0.5.0", cacheDir))
+	require.Empty(t, remoteVersionLines(&cliconfig.Config{}, "v0.5.0", cacheDir))
+}
+
+func TestVersionCommandFirstLineIsStable(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedConfig(t, &cliconfig.Config{CurrentRemote: "khz", Remotes: map[string]*cliconfig.Remote{
+		"khz": {Master: "https://khz.example/api", Version: "v0.4.0"},
+	}})
+	out, err := runCapturingStdout(t, func() error { return execute(newRootCommand(), "version") })
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Equal(t, "skali version "+versionpkg.Version, lines[0])
+	require.Len(t, lines, 2)
+	require.Contains(t, lines[1], "remote khz  skalid v0.4.0")
 }

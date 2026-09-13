@@ -91,6 +91,16 @@ type API struct {
 	// releases API shape; tests and mirrors point it elsewhere.
 	UpdateFeedURL string `env:"SKALI_UPDATE_FEED_URL,default=https://api.github.com/repos/Hinkolas/skali/releases"`
 
+	// ServeCLI lets authenticated members download the skali release this
+	// daemon ships (/v1/system/cli), which is how the CLI follows the
+	// cluster's version; false is for operators who distribute the CLI
+	// themselves, and the CLI then falls back to the release feed.
+	ServeCLI bool `env:"SKALI_SERVE_CLI,default=true"`
+	// CLIDir holds the shipped binaries as skali_<goos>_<goarch>. The
+	// release image fills it; a working-tree image ships none, and the
+	// daemon then answers cli_not_served.
+	CLIDir string `env:"SKALI_CLI_DIR,default=/usr/local/share/skali/cli"`
+
 	// ReconcileResync re-fires informer updates for every cached object as the
 	// correctness backstop against missed watch edits.
 	ReconcileResync time.Duration `env:"RECONCILE_RESYNC_INTERVAL,default=5m"`

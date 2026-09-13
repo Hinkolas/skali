@@ -122,15 +122,33 @@ func DownloadAsset(ctx context.Context, client *http.Client, base, release, asse
 	return body, nil
 }
 
-// DefaultHostdCacheDir is where FetchHostd keeps verified downloads:
-// $XDG_CACHE_HOME/skali/hostd, defaulting to ~/.cache/skali/hostd (the same
-// XDG convention the CLI config uses; under sudo this is root's cache).
-func DefaultHostdCacheDir() string {
+// DefaultCacheDir is the CLI's cache root: $XDG_CACHE_HOME/skali, defaulting
+// to ~/.cache/skali (the same XDG convention the CLI config uses; under sudo
+// this is root's cache). Verified release binaries live below it, one folder
+// per release: hostd/<release>/ for the host daemon and cli/<release>/ for
+// the skali binaries dispatch runs (docs/versioning.md, decision 1).
+func DefaultCacheDir() string {
 	base := os.Getenv("XDG_CACHE_HOME")
 	if base == "" {
 		base = filepath.Join(os.Getenv("HOME"), ".cache")
 	}
-	return filepath.Join(base, "skali", "hostd")
+	return filepath.Join(base, "skali")
+}
+
+// DefaultHostdCacheDir is where FetchHostd keeps verified downloads.
+func DefaultHostdCacheDir() string {
+	return filepath.Join(DefaultCacheDir(), "hostd")
+}
+
+// CLICacheDir is where dispatch keeps verified skali binaries below the
+// cache root, and CLICachePath names one release's binary in it; its digest
+// sits next to it as skali.sha256.
+func CLICacheDir(cacheDir string) string {
+	return filepath.Join(cacheDir, "cli")
+}
+
+func CLICachePath(cacheDir, release string) string {
+	return filepath.Join(CLICacheDir(cacheDir), release, "skali")
 }
 
 // CachedHostd returns a hostd FetchHostd stored earlier for this release and
@@ -138,7 +156,14 @@ func DefaultHostdCacheDir() string {
 // damaged cache entry is refetched rather than installed. ok is false when
 // there is no usable entry.
 func CachedHostd(cacheDir, release, arch string) (data []byte, ok bool) {
-	path := filepath.Join(cacheDir, release, HostdAsset(arch))
+	return CachedBinary(filepath.Join(cacheDir, release, HostdAsset(arch)))
+}
+
+// CachedBinary returns a binary StoreBinary wrote at path, re-verified
+// against the digest recorded next to it; ok is false when there is no
+// usable entry, so a damaged or half-written one is refetched rather than
+// run.
+func CachedBinary(path string) (data []byte, ok bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false
@@ -152,6 +177,42 @@ func CachedHostd(cacheDir, release, arch string) (data []byte, ok bool) {
 		return nil, false
 	}
 	return data, true
+}
+
+// StoreBinary records a verified binary at path with its hex sha256 next to
+// it, both written atomically so a reader never sees a partial entry. The
+// digest is written last: an entry without one is not a cache hit.
+func StoreBinary(path string, data []byte, sha256Hex string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(path, data, 0o755); err != nil {
+		return err
+	}
+	return writeFileAtomic(path+".sha256", []byte(sha256Hex+"\n"), 0o644)
+}
+
+// FetchCLI downloads a release's skali CLI for one platform, verified
+// against the release's checksums.txt, and returns it with that checksum.
+// It caches nothing: skali upgrade installs the bytes and dispatch stores
+// them through StoreBinary.
+func FetchCLI(ctx context.Context, client *http.Client, base, release, goos, goarch string) ([]byte, string, error) {
+	asset := CLIAsset(goos, goarch)
+	sums, err := ReleaseChecksums(ctx, client, base, release)
+	if err != nil {
+		if errors.Is(err, ErrAssetMissing) {
+			return nil, "", missingAsset{fmt.Sprintf("release %s was not found", release)}
+		}
+		return nil, "", err
+	}
+	if sums[asset] == "" {
+		return nil, "", missingAsset{fmt.Sprintf("release %s publishes no %s", release, asset)}
+	}
+	data, err := DownloadAsset(ctx, client, base, release, asset, sums[asset])
+	if err != nil {
+		return nil, "", err
+	}
+	return data, sums[asset], nil
 }
 
 // FetchHostd downloads a release's skali-hostd for one architecture,
@@ -175,13 +236,7 @@ func FetchHostd(ctx context.Context, client *http.Client, base, release, arch, c
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(cacheDir, release)
-	if err := os.MkdirAll(dir, 0o755); err == nil {
-		path := filepath.Join(dir, asset)
-		if writeFileAtomic(path, data, 0o755) == nil {
-			_ = writeFileAtomic(path+".sha256", []byte(sums[asset]+"\n"), 0o644)
-		}
-	}
+	_ = StoreBinary(filepath.Join(cacheDir, release, asset), data, sums[asset])
 	return data, nil
 }
 
@@ -216,6 +271,13 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 // exist, or it publishes no asset by that name. Callers match it with
 // errors.Is to phrase the failure for their user.
 var ErrAssetMissing = errors.New("release asset is missing")
+
+// missingAsset is a phrased ErrAssetMissing: errors.Is matches the
+// sentinel, the text reads as the user's sentence.
+type missingAsset struct{ message string }
+
+func (e missingAsset) Error() string        { return e.message }
+func (e missingAsset) Is(target error) bool { return target == ErrAssetMissing }
 
 func fetchReleaseAsset(ctx context.Context, client *http.Client, base, release, asset string, limit int64) ([]byte, error) {
 	if client == nil {
