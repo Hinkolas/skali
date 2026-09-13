@@ -43,7 +43,7 @@ func TestManagedCLIUsesAggregateAction(t *testing.T) {
 			}))
 			defer server.Close()
 			var out bytes.Buffer
-			err := runManagedUpdate(context.Background(), &out, bufio.NewReader(strings.NewReader("")), client.New(server.URL, "token", "test"), "", true, false)
+			err := runManagedUpdate(context.Background(), &out, bufio.NewReader(strings.NewReader("")), client.New(server.URL, "token", client.Caller{UserAgent: "test"}), "", true, false)
 			require.NoError(t, err)
 			if action == "update" {
 				require.Contains(t, paths, "POST /v1/system/updates/scan")
@@ -69,7 +69,7 @@ func TestManagedCLIPropagatesErrorsWithoutRecoveryFallback(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"code":"unavailable","message":"no"}}`))
 		}))
 		var out bytes.Buffer
-		err := runManagedUpdate(context.Background(), &out, bufio.NewReader(strings.NewReader("")), client.New(server.URL, "token", "test"), "", true, false)
+		err := runManagedUpdate(context.Background(), &out, bufio.NewReader(strings.NewReader("")), client.New(server.URL, "token", client.Caller{UserAgent: "test"}), "", true, false)
 		require.Error(t, err)
 		require.Empty(t, out.String())
 		server.Close()
@@ -91,6 +91,6 @@ func TestManagedCLIPrioritizesAcceptedTarget(t *testing.T) {
 	}))
 	defer server.Close()
 	var out bytes.Buffer
-	err := runManagedUpdate(context.Background(), &out, bufio.NewReader(strings.NewReader("")), client.New(server.URL, "token", "test"), "v0.1.0-alpha.5", true, false)
+	err := runManagedUpdate(context.Background(), &out, bufio.NewReader(strings.NewReader("")), client.New(server.URL, "token", client.Caller{UserAgent: "test"}), "v0.1.0-alpha.5", true, false)
 	require.ErrorContains(t, err, "finish the running update")
 }

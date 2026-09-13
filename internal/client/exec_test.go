@@ -38,6 +38,8 @@ func sendControl(t *testing.T, conn *websocket.Conn, control execproto.Control) 
 func TestExecRunDemuxAndExit(t *testing.T) {
 	srv := execTestServer(t, func(t *testing.T, r *http.Request, conn *websocket.Conn) {
 		require.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
+		require.Equal(t, "test-agent", r.Header.Get("User-Agent"))
+		require.Equal(t, "v1.2.3", r.Header.Get(ClientVersionHeader), "the handshake carries the CLI version")
 		require.Equal(t, "web", r.URL.Query().Get("service"))
 		require.Equal(t, []string{"echo", "hi"}, r.URL.Query()["cmd"])
 		require.NoError(t, conn.WriteMessage(websocket.BinaryMessage,
@@ -47,7 +49,7 @@ func TestExecRunDemuxAndExit(t *testing.T) {
 		sendControl(t, conn, execproto.Control{Type: execproto.ControlExit})
 	})
 
-	c := New(srv.URL, "tok", "test-agent")
+	c := New(srv.URL, "tok", Caller{UserAgent: "test-agent", Version: "v1.2.3"})
 	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web", Command: []string{"echo", "hi"}})
 	require.NoError(t, err)
 	defer session.Close()
@@ -63,7 +65,7 @@ func TestExecRunExitCode(t *testing.T) {
 		sendControl(t, conn, execproto.Control{Type: execproto.ControlExit, Code: 5})
 	})
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok", Caller{})
 	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
 	require.NoError(t, err)
 	defer session.Close()
@@ -81,7 +83,7 @@ func TestExecRunInfrastructureError(t *testing.T) {
 		})
 	})
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok", Caller{})
 	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
 	require.NoError(t, err)
 	defer session.Close()
@@ -116,7 +118,7 @@ func TestExecRunStdinEOF(t *testing.T) {
 		sendControl(t, conn, execproto.Control{Type: execproto.ControlExit})
 	})
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok", Caller{})
 	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web", Command: []string{"cat"}})
 	require.NoError(t, err)
 	defer session.Close()
@@ -140,7 +142,7 @@ func TestExecRunResize(t *testing.T) {
 		sendControl(t, conn, execproto.Control{Type: execproto.ControlExit})
 	})
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok", Caller{})
 	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web", TTY: true})
 	require.NoError(t, err)
 	defer session.Close()
@@ -163,12 +165,32 @@ func TestExecBadHandshakeDecodesEnvelope(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok", Caller{})
 	_, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
 	var apiErr *APIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, "reauth_required", apiErr.Code)
 	require.Equal(t, http.StatusForbidden, apiErr.Status)
+}
+
+// The daemon's version gate answers the handshake with a 409 envelope: the
+// error decodes like any other, and the required version is observed.
+func TestExecVersionMismatchHandshake(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(VersionHeader, "v9.9.9")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"cli_version_mismatch","message":"this cluster runs skalid v9.9.9 and requires skali v9.9.9 (this CLI is v1.2.3)"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL, "tok", Caller{Version: "v1.2.3"})
+	_, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, CodeCLIVersionMismatch, apiErr.Code)
+	require.Equal(t, http.StatusConflict, apiErr.Status)
+	require.Equal(t, "v9.9.9", c.ObservedVersion())
 }
 
 func TestExecInstancePinOnHandshake(t *testing.T) {
@@ -184,7 +206,7 @@ func TestExecInstancePinOnHandshake(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok", Caller{})
 	c.PinInstance("instance-a", nil)
 	_, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
 	var mismatch *InstanceMismatchError
@@ -198,7 +220,7 @@ func TestExecRunContextCancel(t *testing.T) {
 		_, _, _ = conn.ReadMessage()
 	})
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok", Caller{})
 	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
 	require.NoError(t, err)
 	defer session.Close()

@@ -126,7 +126,7 @@ func runDeviceFlow(ctx context.Context, out io.Writer, master string, start devi
 // deviceLogin logs in through the browser and returns the session plus
 // the installation identity the master answered with, like loginSession.
 func deviceLogin(ctx context.Context, out io.Writer, master string) (*client.SessionCreated, string, error) {
-	c := client.New(master, "", userAgent())
+	c := client.New(master, "", caller())
 	label := deviceLabel()
 	res, err := runDeviceFlow(ctx, out, master,
 		func(ctx context.Context) (*client.DeviceRequest, error) { return c.StartDeviceLogin(ctx, label) },

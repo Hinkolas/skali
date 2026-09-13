@@ -93,7 +93,7 @@ func (f *fakeRuns) seed(list []client.Run, byID map[string]client.Run) {
 }
 
 func (f *fakeRuns) client() *client.Client {
-	return client.New(f.srv.URL, "token", "test")
+	return client.New(f.srv.URL, "token", client.Caller{UserAgent: "test"})
 }
 
 func TestFindRunningRun(t *testing.T) {

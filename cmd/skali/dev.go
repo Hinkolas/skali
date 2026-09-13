@@ -812,10 +812,12 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 			return nil, err
 		}
 	}
-	// A released CLI ahead of the platform names the gap once per session;
-	// nothing here changes versions (that stays skali dev upgrade's job).
-	if hint := upgradeHint(state.SkalidImage); hint != "" {
-		fmt.Fprintln(out, clirender.StyleFor(out).Yellow(hint))
+	// A released platform of another version would refuse this released
+	// CLI on its first authenticated request; name the gap and the fix
+	// here instead. Nothing changes versions (that stays skali dev
+	// upgrade's job).
+	if err := devSkewError(state.SkalidImage); err != nil {
+		return nil, err
 	}
 	if err := loginLocalRemote(ctx, state); err != nil {
 		return nil, err
@@ -919,7 +921,7 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 	// login instead of a mismatch prompt.
 	existing := cfg.Remotes[localRemoteName]
 	if existing != nil && existing.Token != "" {
-		probe := client.New(localdev.MasterURL(), existing.Token, userAgent())
+		probe := client.New(localdev.MasterURL(), existing.Token, caller())
 		if _, err := probe.CurrentSession(ctx); err == nil {
 			if observed := probe.ObservedInstance(); observed != "" {
 				existing.Instance = observed
@@ -927,7 +929,7 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 			return cliconfig.Save(cfg)
 		}
 	}
-	api := client.New(localdev.MasterURL(), "", userAgent())
+	api := client.New(localdev.MasterURL(), "", caller())
 	result, err := api.Login(ctx, state.AdminEmail, state.AdminPassword)
 	if err != nil {
 		return fmt.Errorf("log in to the local platform: %w", err)

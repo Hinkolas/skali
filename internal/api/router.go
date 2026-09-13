@@ -84,7 +84,9 @@ type Deps struct {
 	// credential reveal; nil (API-only mode) disables reveal.
 	SecretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	// Version is the daemon build version reported on /v1/system/meta and
-	// stamped onto every response as the Skali-Version header.
+	// stamped onto every response as the Skali-Version header. When it is a
+	// tagged release, authenticated routes refuse a released CLI of any
+	// other version (requireClientVersion).
 	Version string
 	// InstanceName is the operator-chosen installation name reported on
 	// /v1/system/meta; empty leaves naming to the client.
@@ -193,6 +195,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 		// Streaming: authenticated but deliberately outside the request
 		// timeout, which would cut every SSE connection at 30 seconds.
 		r.Group(func(r chi.Router) {
+			r.Use(requireClientVersion(d.Version))
 			r.Use(RequireAuth(d.Auth))
 
 			ac.route(r, "GET", "/steps/{id}/logs/stream", classStepRead, jh.streamLogs)
@@ -223,8 +226,11 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 			ac.route(r, "POST", "/auth/device/requests", classPublic, h.startDeviceLogin)
 			ac.route(r, "POST", "/auth/device/token", classPublic, h.pollDevice)
 
-			// Bearer-protected. RequireAuth stays on this group only.
+			// Bearer-protected. RequireAuth stays on this group only, and
+			// the CLI version gate sits with it: health, login, and device
+			// authorization above stay reachable from any CLI version.
 			r.Group(func(r chi.Router) {
+				r.Use(requireClientVersion(d.Version))
 				r.Use(RequireAuth(d.Auth))
 
 				// Never behind the reauth gate: logout and session revocation are

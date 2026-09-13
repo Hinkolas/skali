@@ -131,19 +131,3 @@ func materializeSkalidImage(ctx context.Context, out io.Writer, target, repoRoot
 	task.Done("")
 	return nil
 }
-
-// upgradeHint names a local platform trailing a released CLI; empty
-// otherwise. Dev builds, working-tree platforms, and custom images have no
-// comparable versions, and a platform ahead of the CLI is the CLI's
-// problem, not the platform's.
-func upgradeHint(recorded string) string {
-	if !versionpkg.IsRelease(versionpkg.Version) {
-		return ""
-	}
-	current, ok := versionpkg.PublishedSkalidVersion(recorded)
-	if !ok || !versionpkg.Older(current, versionpkg.Version) {
-		return ""
-	}
-	return fmt.Sprintf("the local platform runs skalid %s and this CLI is %s; skali dev upgrade moves it",
-		current, versionpkg.Version)
-}

@@ -79,7 +79,7 @@ func newRemoteAddCommand() *cobra.Command {
 			master := ""
 			var probeErr error
 			for _, candidate := range candidates {
-				if err := client.New(candidate, "", userAgent()).Health(command.Context()); err != nil {
+				if err := client.New(candidate, "", caller()).Health(command.Context()); err != nil {
 					if probeErr == nil {
 						probeErr = fmt.Errorf("master %s is not reachable: %w", candidate, err)
 					}
@@ -155,7 +155,7 @@ func newRemoteLoginCommand() *cobra.Command {
 			// unreachable master skips the probe; the login surfaces it.
 			prompts := cliprompt.New(command.InOrStdin(), command.ErrOrStderr())
 			if target.Instance != "" {
-				probe := client.New(target.Master, "", userAgent())
+				probe := client.New(target.Master, "", caller())
 				_ = probe.Health(command.Context())
 				observed := probe.ObservedInstance()
 				if observed != "" && observed != target.Instance {
@@ -617,7 +617,7 @@ func loginSession(ctx context.Context, prompts *cliprompt.Session, master, email
 		return nil, "", fmt.Errorf("read password: %w", err)
 	}
 
-	c := client.New(master, "", userAgent())
+	c := client.New(master, "", caller())
 	res, err := c.Login(ctx, email, password)
 	if err != nil {
 		return nil, "", err

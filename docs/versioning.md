@@ -1,10 +1,11 @@
 # Versioning
 
-Status: design agreed 2026-09-13, nothing implemented yet. This file is the
-plan of record for how the CLI, the cluster, and the manifest stay
-compatible across clusters that update on their own schedule, including
-clusters that never see the public release feed. The build order at the end
-lists the slices; tick them off here as they land.
+Status: design agreed 2026-09-13; slice 1 (skew hint and server-side gate)
+implemented 2026-09-13, the rest not yet. This file is the plan of record for
+how the CLI, the cluster, and the manifest stay compatible across clusters
+that update on their own schedule, including clusters that never see the
+public release feed. The build order at the end lists the slices; tick them
+off here as they land.
 
 ## Why
 
@@ -149,10 +150,21 @@ and never done silently.
 
 ### Server-side guard
 
-The server still rejects a mismatched CLI with a specific error code that
-names the required version. This is the safety net for development builds,
-which report `v0.0.0-dev` and skip dispatch with a warning, and for anyone
-who disables dispatch deliberately.
+The server rejects a released CLI whose version differs from its own with
+the error code `cli_version_mismatch`, naming the required version. The CLI
+sends its version in the `Skali-Client-Version` request header, the gate
+sits ahead of authentication on every authenticated route, and the
+bootstrap routes (health, login, device authorization) stay open. This is
+the safety net for anyone who disables dispatch deliberately.
+
+Development builds are exempt, not guarded: a CLI or daemon reporting
+`v0.0.0-dev` or a git-describe version is never compared, on either side.
+The maintainer's working tree talks to any cluster, and a working-tree
+daemon accepts any CLI. Dispatch skips such builds with a warning.
+
+Until dispatch lands, the CLI prints one stderr line after any command that
+observed a released daemon of another version, naming the exact
+`skali upgrade --version` (or `skali dev upgrade`) that closes the gap.
 
 ## Decision 2: where binaries come from
 
@@ -397,7 +409,7 @@ which is more machinery than the content deserves.
 
 Each slice is useful on its own and none depends on a later one.
 
-- [ ] Act on the version header the CLI already receives: a one-line hint
+- [x] Act on the version header the CLI already receives: a one-line hint
       on every command when skew is detected, and the server-side mismatch
       error code naming the required version.
 - [ ] Self-dispatch: per-remote version records, the per-release cache,

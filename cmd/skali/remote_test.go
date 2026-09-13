@@ -548,8 +548,13 @@ func TestRemoteRemoveCurrentClearsCurrent(t *testing.T) {
 
 func TestRemoteStatus(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Cleanup(skew.reset)
+	withCLIVersion(t, "v1.0.0")
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ok"}`)) })
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Skali-Version", "v9.9.9")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 	mux.HandleFunc("/v1/auth/session", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"user":{"email":"dana@example.com","name":"Dana"},` +
 			`"session":{"id":"s1","expires_at":"2026-07-29T14:02:00Z"}}`))
@@ -569,8 +574,12 @@ func TestRemoteStatus(t *testing.T) {
 	require.Contains(t, output, "remote:  myremote\n")
 	require.Contains(t, output, "master:  "+srv.URL+"\n")
 	require.Contains(t, output, "health:  ok\n")
+	require.Contains(t, output, "server:  skalid v9.9.9 (this CLI is v1.0.0)\n")
 	require.Contains(t, output, "user:    dana@example.com (Dana)\n")
 	require.Contains(t, output, "session: valid, expires 2026-07-")
+	// The hint belongs to main's stderr, never to the command's stdout.
+	require.NotContains(t, output, "hint:")
+	require.Contains(t, pendingSkewHint(), "remote myremote runs skalid v9.9.9")
 }
 
 func TestRemoteStatusExpiredSession(t *testing.T) {

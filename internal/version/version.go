@@ -45,6 +45,16 @@ func IsPrerelease(v string) bool {
 	return IsRelease(v) && strings.Contains(v, "-")
 }
 
+// ReleasesDiffer reports whether a and b are two different tagged releases.
+// False when either is not a release (v0.0.0-dev, git-describe builds, the
+// test harness), so callers never gate on versions they cannot judge. This
+// is the one rule behind the CLI/daemon exact-match contract: a released
+// CLI must match a released daemon, and every development build is exempt
+// on either side.
+func ReleasesDiffer(a, b string) bool {
+	return IsRelease(a) && IsRelease(b) && a != b
+}
+
 // PublishedSkalidImage is the control-plane image a release publishes.
 func PublishedSkalidImage(v string) string { return PublishedSkalidRepo + v }
 

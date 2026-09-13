@@ -67,18 +67,27 @@ func newVersionCommand() *cobra.Command {
 }
 
 func main() {
-	if err := newRootCommand().Execute(); err != nil {
-		// A remote exec command's own exit status is a result, not an
-		// error: pass it through silently, the process already wrote its
-		// stderr through the session.
-		if exit, ok := errors.AsType[*client.ExecExitError](err); ok {
-			os.Exit(exit.Code)
-		}
-		style := clirender.StyleFor(os.Stderr)
+	err := newRootCommand().Execute()
+	// A remote exec command's own exit status is a result, not an error:
+	// pass it through silently, the process already wrote its stderr
+	// through the session.
+	if exit, ok := errors.AsType[*client.ExecExitError](err); ok {
+		os.Exit(exit.Code)
+	}
+	style := clirender.StyleFor(os.Stderr)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, style.BoldRed("error:"), err)
 		if mismatch, ok := errors.AsType[*client.InstanceMismatchError](err); ok {
 			fmt.Fprintln(os.Stderr, instanceMismatchHint(mismatch.Master))
 		}
+	}
+	// Version skew against the daemon is named once per invocation, on
+	// success and on failure alike (the daemon's own refusal included), and
+	// only on stderr: stdout stays clean for `$(skali remote token)`.
+	if hint := pendingSkewHint(); hint != "" {
+		fmt.Fprintln(os.Stderr, style.Yellow(hint))
+	}
+	if err != nil {
 		os.Exit(1)
 	}
 }
@@ -98,13 +107,18 @@ func instanceMismatchHint(master string) string {
 	return "to trust the new installation run `skali remote login`, or drop the remote with `skali remote remove`"
 }
 
-// userAgent identifies this device in session lists ("skali/<version> (host)").
-func userAgent() string {
+// caller identifies this CLI to the daemon: the session-list label
+// ("skali/<version> (host)") and the build version the daemon's exact-match
+// gate compares.
+func caller() client.Caller {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		host = "unknown-host"
 	}
-	return fmt.Sprintf("skali/%s (%s)", versionpkg.Version, host)
+	return client.Caller{
+		UserAgent: fmt.Sprintf("skali/%s (%s)", versionpkg.Version, host),
+		Version:   versionpkg.Version,
+	}
 }
 
 // currentClient builds a client for the current remote; token may be empty.
@@ -126,10 +140,12 @@ func currentClient() (*cliconfig.Config, string, *client.Client, error) {
 // observes is adopted into the config (trust on first use). The save is best
 // effort; a failed adoption simply repeats on the next command.
 func remoteClient(cfg *cliconfig.Config, remote *cliconfig.Remote) *client.Client {
-	c := client.New(remote.Master, remote.Token, userAgent())
+	c := client.New(remote.Master, remote.Token, caller())
 	c.PinInstance(remote.Instance, func(observed string) {
 		remote.Instance = observed
 		_ = cliconfig.Save(cfg)
 	})
+	name, _, _ := lookupRemoteByMaster(cfg, remote.Master)
+	observeSkew(c, name)
 	return c
 }

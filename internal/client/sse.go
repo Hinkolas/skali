@@ -26,12 +26,7 @@ func (c *Client) Stream(ctx context.Context, path string, lastEventID string) (<
 		return nil, fmt.Errorf("client: %w", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	if c.userAgent != "" {
-		req.Header.Set("User-Agent", c.userAgent)
-	}
+	c.stamp(req.Header)
 	if lastEventID != "" {
 		req.Header.Set("Last-Event-ID", lastEventID)
 	}

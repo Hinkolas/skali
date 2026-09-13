@@ -55,10 +55,17 @@ info:
     job. It also appears as `instance_id` on `/v1/system/meta`.
 
     Every response also carries the `Skali-Version` header: the daemon
-    build version, available pre-auth and on errors so clients can
-    diagnose version skew without a session. Diagnostics only:
-    compatibility decisions belong to explicit signals (error codes, the
-    capabilities list), never to comparing version strings.
+    build version, available pre-auth and on errors. The API is a private
+    wire between one skali release and its skalid: the CLI sends its own
+    build version in the `Skali-Client-Version` request header, and a
+    released daemon refuses a released CLI of any other version on every
+    authenticated route with `409 cli_version_mismatch`, whose message
+    names the required version (also readable from `Skali-Version` on the
+    refusal). Requests without the header (browsers, third-party clients)
+    and development builds on either side (`v0.0.0-dev`, git-describe
+    versions) are never compared. Health, login, 2FA verification, and
+    device authorization stay reachable from any CLI version so a stale
+    CLI can still bootstrap.
   version: 0.1.0
   license:
     name: Apache 2.0
@@ -3759,6 +3766,7 @@ components:
             - no_ready_pod
             - registry_disabled
             - registry_unavailable
+            - cli_version_mismatch
             - internal
         message:
           type: string

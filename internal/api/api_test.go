@@ -70,6 +70,14 @@ const testInstanceID = "11111111-2222-4333-8444-555555555555"
 
 func newTestAPI(t *testing.T) *testAPI {
 	t.Helper()
+	return newTestAPIVersion(t, "test")
+}
+
+// newTestAPIVersion builds the test daemon reporting the given build
+// version. The default "test" is not a release, which keeps the CLI version
+// gate inert for every test that does not target it.
+func newTestAPIVersion(t *testing.T, version string) *testAPI {
+	t.Helper()
 	pool := testdb.New(t)
 	st := store.NewStore(pool)
 	svc, err := auth.New(st, auth.Config{Secret: strings.Repeat("s", 32)})
@@ -157,7 +165,7 @@ func newTestAPI(t *testing.T) *testAPI {
 			DB: dbstore.New(st), Deploy: deploySvc, Targets: backupTargets,
 		}, backup.Config{}),
 		Metrics:      &metrics.Service{Store: st},
-		Version:      "test",
+		Version:      version,
 		InstanceName: "Test Instance",
 		InstanceID:   testInstanceID,
 		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
@@ -638,6 +646,56 @@ func TestHealthzAndOpenAPI(t *testing.T) {
 	raw, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 	require.True(t, bytes.HasPrefix(raw, []byte("openapi: 3.1")), "spec should be OpenAPI 3.1")
+}
+
+// A released daemon gates exactly the authenticated routes: both groups (the
+// streaming one and the timed one) refuse a released CLI of another version
+// before authentication, while health, the spec, login, and device
+// authorization stay reachable so a stale CLI can still bootstrap.
+func TestClientVersionGateCoversAuthenticatedRoutesOnly(t *testing.T) {
+	a := newTestAPIVersion(t, "v0.4.0")
+	token := a.adminToken()
+
+	request := func(method, path, clientVersion, bearer string) int {
+		t.Helper()
+		req, err := http.NewRequest(method, a.srv.URL+path, strings.NewReader("{}"))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		if clientVersion != "" {
+			req.Header.Set(ClientVersionHeader, clientVersion)
+		}
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		res, err := a.srv.Client().Do(req)
+		require.NoError(t, err)
+		defer res.Body.Close()
+		if res.StatusCode == http.StatusConflict {
+			var body errorBody
+			require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
+			require.Equal(t, codeCLIVersionMismatch, body.Error.Code, "%s %s", method, path)
+			require.Equal(t, "v0.4.0", res.Header.Get(VersionHeader), "the required version rides on the refusal")
+		}
+		return res.StatusCode
+	}
+
+	// Bootstrap surface: never 409, whatever the CLI version.
+	require.Equal(t, http.StatusOK, request("GET", "/healthz", "v0.3.2", ""))
+	require.Equal(t, http.StatusOK, request("GET", "/openapi.yaml", "v0.3.2", ""))
+	require.Equal(t, http.StatusBadRequest, request("POST", "/v1/auth/login", "v0.3.2", ""), "login answers for itself, not the gate")
+	require.NotEqual(t, http.StatusConflict, request("POST", "/v1/auth/device/requests", "v0.3.2", ""))
+
+	// Authenticated routes in both groups, refused ahead of the session
+	// check (a mismatched CLI with an expired token learns the real reason).
+	require.Equal(t, http.StatusConflict, request("GET", "/v1/auth/session", "v0.3.2", token))
+	require.Equal(t, http.StatusConflict, request("GET", "/v1/auth/session", "v0.3.2", ""))
+	require.Equal(t, http.StatusConflict, request("GET", "/v1/environments/x/status/stream", "v0.3.2", token))
+	require.Equal(t, http.StatusConflict, request("GET", "/api/v1/auth/session", "v0.3.2", token), "the /api alias gates identically")
+
+	// Matching, absent, and development versions pass.
+	require.Equal(t, http.StatusOK, request("GET", "/v1/auth/session", "v0.4.0", token))
+	require.Equal(t, http.StatusOK, request("GET", "/v1/auth/session", "", token))
+	require.Equal(t, http.StatusOK, request("GET", "/v1/auth/session", "v0.0.0-dev", token))
 }
 
 // TestAPIPrefixStrip proves the /api alias the production edge routes to:
