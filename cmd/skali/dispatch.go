@@ -118,6 +118,24 @@ func dispatch(args []string) (handled bool, code int) {
 // when the dispatcher should look at the remote. Cheapest checks first;
 // nothing here touches the config or the network.
 func dispatchGate(inv invocation, env func(string) string, home, executable, cacheDir string) string {
+	if reason := handoffGate(env, home, executable, cacheDir); reason != "" {
+		return reason
+	}
+	switch {
+	case inv.help || inv.version:
+		return "help"
+	case inv.command == "":
+		return "no command"
+	case noDispatchCommands[inv.command]:
+		return inv.command + " always runs at home"
+	}
+	return ""
+}
+
+// handoffGate is the part of the gate that holds for any command line: the
+// process and binary conditions under which this binary never runs
+// another release.
+func handoffGate(env func(string) string, home, executable, cacheDir string) string {
 	switch {
 	case env(envDispatched) != "":
 		return "already dispatched"
@@ -127,12 +145,6 @@ func dispatchGate(inv invocation, env func(string) string, home, executable, cac
 		return "development build " + home
 	case insideDir(executable, cacheDir):
 		return "running from the cache"
-	case inv.help || inv.version:
-		return "help"
-	case inv.command == "":
-		return "no command"
-	case noDispatchCommands[inv.command]:
-		return inv.command + " always runs at home"
 	}
 	return ""
 }
@@ -191,7 +203,10 @@ func (d *dispatcher) run() (bool, int) {
 
 	record := target.Remote.Version
 	if record == "" {
-		record = d.probeVersion(ctx, cfg, target)
+		if record = d.probeVersion(ctx, target.Remote.Master); record != "" {
+			target.Remote.Version = record
+			_ = cliconfig.Save(cfg)
+		}
 	}
 	want, ok := dispatchTarget(d.homeVersion, record)
 	if !ok {
@@ -217,20 +232,96 @@ func (d *dispatcher) run() (bool, int) {
 	return d.runLoop(ctx, target.Name, fetch.version, fetch.path)
 }
 
-// probeVersion fills an empty record with one health round trip: the
-// daemon's version rides the response headers pre-auth. Unreachable means
-// no record and no dispatch; the command itself reports the outage.
-func (d *dispatcher) probeVersion(ctx context.Context, cfg *cliconfig.Config, target *remoteTarget) string {
+// probeVersion learns a daemon's version with one health round trip: it
+// rides the response headers pre-auth, on the one route every release
+// answers to every release (docs/versioning.md, decision 3). Unreachable
+// means no version and no dispatch; the command itself reports the outage.
+func (d *dispatcher) probeVersion(ctx context.Context, master string) string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	probe := client.New(target.Remote.Master, "", caller())
+	probe := client.New(master, "", caller())
 	_ = probe.Health(ctx)
-	observed := probe.ObservedVersion()
-	if observed != "" {
-		target.Remote.Version = observed
-		_ = cliconfig.Save(cfg)
+	return probe.ObservedVersion()
+}
+
+// handoff runs the current command line in the release a command's own
+// probe named. remote add, remote login and remote status learn their
+// target inside the command (the front gate cannot: the remote may not
+// exist yet), so they call this once the daemon has answered and before
+// any output or prompt; the child starts over and does the work at the
+// cluster's release. An empty version costs one health probe.
+func (d *dispatcher) handoff(ctx context.Context, remoteName, master, version string) (handled bool, code int) {
+	inv := preparseArgs(d.args, d.root)
+	if reason := handoffGate(d.env, d.homeVersion, d.executable, d.cacheDir); reason != "" {
+		if d.env(envDispatched) == "" {
+			// The front gate already named this reason for a child.
+			d.note(inv, "skipped (%s)", reason)
+		}
+		return false, 0
 	}
-	return observed
+	if version == "" {
+		version = d.probeVersion(ctx, master)
+	}
+	want, ok := dispatchTarget(d.homeVersion, version)
+	if !ok {
+		d.note(inv, "remote %s runs skalid %q, this skali is %s", remoteName, version, d.homeVersion)
+		return false, 0
+	}
+	dispatchTried = true
+	fetch, err := d.ensureCLI(ctx, remoteName, want)
+	if err != nil {
+		if ctx.Err() != nil {
+			return true, 130
+		}
+		d.warn(err)
+		return false, 0
+	}
+	if versionpkg.Older(d.installed, fetch.version) {
+		d.promoteHome(ctx, fetch.binary, fetch.version, remoteName)
+	}
+	if fetch.fetched {
+		if cfg, err := cliconfig.Load(); err == nil {
+			pruneCLICache(cfg, d.installed, d.cacheDir)
+		}
+	}
+	d.note(inv, "running skali %s for remote %s", fetch.version, remoteName)
+	handled, code = d.runLoop(ctx, remoteName, fetch.version, fetch.path)
+	if handled && code == exitVersionMoved {
+		// The cluster changed release between the probe and the command,
+		// and the child said nothing (a remote being added has no record
+		// for the rerun to read). None of the commands that hand off pass
+		// a remote process's status through, so 213 is never their own.
+		fmt.Fprintln(d.stderr, d.style().BoldRed("error:"), fmt.Sprintf("remote %s changed its release while the command ran; run it again", remoteName))
+		return true, 1
+	}
+	return handled, code
+}
+
+// dispatchedExit is the error a command returns when handoff ran it in
+// another release: main exits with the child's code and prints nothing.
+type dispatchedExit struct{ code int }
+
+func (e *dispatchedExit) Error() string {
+	return fmt.Sprintf("command ran in another skali release (exit %d)", e.code)
+}
+
+// dispatchTo is what remote add, remote login and remote status call once
+// their probe has named the cluster's release; nil means the command goes
+// on in this process. A variable so command tests can observe the call,
+// assigned in init because its body reaches the command tree that calls it.
+var dispatchTo func(ctx context.Context, remoteName, master, version string) error
+
+func init() { dispatchTo = runHandoff }
+
+func runHandoff(ctx context.Context, remoteName, master, version string) error {
+	d, err := newDispatcher(os.Args[1:])
+	if err != nil {
+		return nil
+	}
+	if handled, code := d.handoff(ctx, remoteName, master, version); handled {
+		return &dispatchedExit{code: code}
+	}
+	return nil
 }
 
 // runLoop runs the command in the cached binary and, once, again in the

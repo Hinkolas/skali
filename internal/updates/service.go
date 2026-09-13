@@ -68,6 +68,10 @@ type Installed struct {
 	// PlatformVersion is the release the cluster state records; empty when
 	// unmanaged or initialized by a dev build.
 	PlatformVersion string `json:"platform_version,omitempty"`
+	// URL is the release page of Version on the release site, where the
+	// matching CLI can be read about and downloaded; empty for a
+	// development build, which has no release.
+	URL string `json:"url,omitempty"`
 }
 
 // Service owns the update lifecycle: scan, settings, apply, and the daily
@@ -79,6 +83,8 @@ type Service struct {
 	Cluster *Cluster
 	// Version is the running daemon's version, one component of convergence.
 	Version string
+	// ReleaseBase is the site hosting release pages; empty means GitHub.
+	ReleaseBase string
 	// ScanInterval is how often the loop scans; zero means daily.
 	ScanInterval time.Duration
 	Logger       *slog.Logger
@@ -119,6 +125,13 @@ func (s *Service) status(ctx context.Context, row store.UpdateSetting) (*Status,
 		Installed: Installed{Version: s.Version},
 		Settings:  settingsFromRow(row),
 		Nodes:     []NodeState{},
+	}
+	if version.IsRelease(s.Version) {
+		base := s.ReleaseBase
+		if base == "" {
+			base = version.DefaultReleaseBase
+		}
+		status.Installed.URL = version.ReleasePageURL(base, s.Version)
 	}
 	// Only a released daemon can be behind a release: a working-tree build
 	// has no place in the version order, so it shows what the feed found

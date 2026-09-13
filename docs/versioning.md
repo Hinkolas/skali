@@ -1,9 +1,11 @@
 # Versioning
 
-Status: design agreed 2026-09-13; slice 1 (skew hint and server-side gate)
-and slice 2 (self-dispatch) implemented 2026-09-13, the rest not yet. The
-same day, cluster-served CLI downloads and air-gapped operation were taken
-out of scope (decision 2). This file is the plan of record for how the CLI,
+Status: design agreed 2026-09-13; slice 1 (skew hint and server-side gate),
+slice 2 (self-dispatch), and slice 3 (exact match everywhere but health)
+implemented 2026-09-13, the rest not yet. The same day, cluster-served CLI
+downloads and air-gapped operation were taken out of scope (decision 2),
+and the bootstrap protocol number was dropped in favor of health as the
+single cross-version route (decision 3). This file is the plan of record for how the CLI,
 the cluster, and the manifest stay compatible across clusters that update
 on their own schedule. The build order at the end lists the slices; tick
 them off here as they land.
@@ -127,8 +129,13 @@ Steady state costs no extra round trip. Commands with no remote, such as
 bootstrapping a new cluster or local dev without a target, run in the home
 binary. So do the commands that manage remotes or the binary itself:
 `version`, `upgrade`, `completion`, `remote`, `cluster`, `skill`, and, until
-decision 5 lands, `dev`. `SKALI_NO_DISPATCH=1` turns dispatch off, and
-`--verbose` prints why a command did not dispatch.
+decision 5 lands, `dev`. Config-writing commands in particular stay home,
+because an older writer would drop fields it does not know. The three
+remote subcommands that talk to a daemon are the exception in the other
+direction: `remote add`, `remote login`, and `remote status` probe health
+first and then hand the rest of their work to the release the daemon
+named, so a login never crosses versions (decision 3). `SKALI_NO_DISPATCH=1`
+turns dispatch off, and `--verbose` prints why a command did not dispatch.
 
 ### Home is the newest version in use
 
@@ -178,10 +185,11 @@ tree talks to any cluster.
 
 The server rejects a released CLI whose version differs from its own with
 the error code `cli_version_mismatch`, naming the required version. The CLI
-sends its version in the `Skali-Client-Version` request header, the gate
-sits ahead of authentication on every authenticated route, and the
-bootstrap routes (health, login, device authorization) stay open. This is
-the safety net for anyone who disables dispatch deliberately.
+sends its version in the `Skali-Client-Version` request header, and the
+gate sits ahead of authentication on every route under `/v1`, login and
+device authorization included; only health stays open (decision 3).
+Requests without the header, which is every browser, are never compared.
+This is the safety net for anyone who disables dispatch deliberately.
 
 Development builds are exempt, not guarded: a CLI or daemon reporting
 `v0.0.0-dev` or a git-describe version is never compared, on either side.
@@ -233,37 +241,64 @@ single warning line followed by the command running at home.
   `remote login` record it from the probe, every response refreshes it,
   and a refusal for the wrong release carries the new one.
 
-## Decision 3: the bootstrap surface is versioned, not frozen
+## Decision 3: the bootstrap surface is health, nothing else crosses versions
 
-After decision 1, exactly one old-to-new contract remains: a home binary
-talking to a newer cluster before it has fetched that cluster's CLI. That
-surface is health and device login. Nothing else crosses versions.
+After decision 1, what remains cross-version is whatever a home binary
+needs from a cluster before it runs that cluster's release. That is one
+route: `GET /healthz`, whose `Skali-Version` header names the release to
+fetch (and whose `Skali-Instance` header names the installation). Every
+other route, the public login and device authorization routes included,
+demands the exact release, and the commands that used to log in from home
+no longer do: `remote add`, `remote login`, and `remote status` probe
+health first and then hand the rest of the command to the release the
+daemon named, fetching it from the feed when the cache lacks it. A login
+therefore runs in the cluster's own release in both directions, an old home
+against a newer cluster and the newest home against an older one.
 
-The server advertises its current bootstrap version and the minimum it
-still accepts. The client sends its own. Additive changes never bump the
-number. Old bootstrap versions stay supported for a long window, which is
-cheap for two endpoints, and dropping one is a deliberate release-note
-decision rather than an accident.
+Two contracts are frozen by this, and both only ever change additively:
+
+- The health response: body `{"status": "ok"}`, the two headers. Fields
+  and headers may be added; nothing is removed or renamed. It is one route
+  and one header, small enough to hold forever, where a wider surface
+  could not be.
+- The release feed layout: `checksums.txt` and `skali_<goos>_<goarch>`
+  under the release's download path. An older home fetches a newer release
+  with the code it has, so new asset names may be added next to these but
+  these stay. This sits with the rule from decision 2 that assets of a
+  published release are never deleted.
+
+An earlier version of this decision versioned a wider bootstrap surface
+(health and device login) with an advertised current and minimum protocol
+number and a client-sent version, and had the CLI walk a prompt-driven
+outdated path when it fell below the minimum. It was dropped before being
+built: the number only protected the case where the feed is unreachable
+and the login protocol changed incompatibly at the same time, the daemon's
+existing refusal plus the hint already name the fix in that case, and a
+number cannot cover the newest home logging in to an older cluster without
+keeping old encoders around, which the hand-off covers by construction.
 
 ### The outdated path
 
-Health is the carrier of the signal, so its shape is the one thing that
-must not change. A client below the minimum can always read it and say
-plainly that this CLI is older than the cluster accepts. Then it tries
-fixes in order of how little they ask of the user:
+What happens when a home binary meets a cluster of another release, in
+order of how little it asks of the user:
 
-1. Upgrade home from the release feed or configured mirror, then
-   re-dispatch and run the original command. One prompt in a terminal, a
-   plain error in scripts.
-2. Point at the cluster's updates page, which names the release the
-   cluster runs and links its download on the feed, for the human who
-   wants to see what is going on before letting a binary replace itself.
-3. Name the exact version and leave installation to the operator's own
-   distribution.
+1. Dispatch fetches the release from the feed or configured mirror, caches
+   it, promotes home when the release is newer (one printed line, decision
+   1), and runs the command in it. No prompt, no flag.
+2. When the fetch fails (release missing on the feed, checksum mismatch,
+   feed unreachable, cache not writable), one warning names why and the
+   command runs at home. The daemon refuses it with `cli_version_mismatch`,
+   and the hint after the command names `skali upgrade --version <v>` and
+   the release page on the feed, where the binary can be downloaded by
+   hand.
+3. The cluster's updates page in the console links the release the
+   cluster runs on the feed and says how the CLI follows it, for the
+   admin who wants to see what is going on.
 
-Step 3 is reached only by a client old enough to fall below a deliberately
-dropped floor, on a machine that cannot reach the feed. That is as narrow
-as a manual fallback can be while still existing.
+Step 2 is reached only when the feed cannot be reached or a release was
+removed against the rule, and even then the exact version and its page are
+on the screen. That is as narrow as a manual fallback can be while still
+existing.
 
 ## Decision 4: manifest compatibility, a watermark and a change ledger
 
@@ -423,10 +458,14 @@ which is more machinery than the content deserves.
 - A separate launcher binary. One more artifact with its own release
   cadence and its own compatibility story. Self-dispatch in every binary
   gives the same behavior without it.
-- A frozen dispatch and bootstrap surface. Frozen contracts break
-  eventually and then break badly. Making home the newest version removes
-  most cross-version reads, and versioning the rest with a floor gives a
-  planned way out.
+- A frozen surface wider than health. Frozen contracts break eventually
+  and then break badly. Making home the newest version and handing logins
+  to the cluster's release leaves exactly one route and one header to
+  freeze, which is small enough to hold.
+- A bootstrap protocol number with an advertised minimum. Insurance for
+  the intersection of an unreachable feed and an incompatible login
+  change, blind to the newest home logging in to an older cluster, and a
+  second version concept next to the release itself (decision 3).
 - The cluster as a binary source, authenticated or not. Built and removed
   in one day (decision 2): no air-gapped use case, releases do not
   disappear, and the image size, boot work, extra route group, and second
@@ -455,9 +494,11 @@ Each slice is useful on its own and none depends on a later one.
 - [x] Self-dispatch: per-remote version records, the per-release cache
       fed from the release feed, refcount pruning, home promotion to the
       newest version, and the re-dispatch on a changed server version.
-- [ ] Bootstrap protocol version: advertised current and minimum,
-      client-sent version, and the three-step outdated path including the
-      console updates page linking the cluster's release.
+- [x] Exact match everywhere but health: the login and device routes join
+      the version gate, `remote add`, `remote login`, and `remote status`
+      hand off to the cluster's release after their probe, the skew hint
+      names the release page, and the console updates page links the
+      release the cluster runs.
 - [ ] Manifest watermark and change ledger: field rename, ledger entries for
       every change since the last release, validate messaging,
       `skali manifest upgrade`, and the stored-schema split with old
@@ -475,8 +516,6 @@ Each slice is useful on its own and none depends on a later one.
 
 - Name of the watermark field. Something like `skali: 0.4.0` reads
   naturally, but the key has not been chosen.
-- Bootstrap support window. How long an old bootstrap version stays
-  accepted, and whether the pre-1.0 window is shorter.
 - Dev data carry-over. Whether a backup-and-restore path into a
   new-version dev cluster is worth offering, or whether the disposable
   contract stands on its own.

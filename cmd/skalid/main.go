@@ -333,7 +333,7 @@ func runServe() error {
 	// Platform updates: the scan runs wherever a feed is configured; the
 	// cluster bridge exists only with a cluster, and reports unmanaged on
 	// the dev platform and legacy installs, where the CLI still upgrades.
-	updatesSvc := &updates.Service{Store: st, Version: versionpkg.Version}
+	updatesSvc := &updates.Service{Store: st, Version: versionpkg.Version, ReleaseBase: cfg.ReleaseBase}
 	if cfg.UpdateScan && cfg.UpdateFeedURL != "" {
 		updatesSvc.Feed = &updates.GitHubFeed{URL: cfg.UpdateFeedURL}
 	}

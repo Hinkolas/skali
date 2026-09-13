@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/cliconfig"
+	"github.com/Hinkolas/skali/internal/client"
 )
 
 // runCapturingStdout executes fn with os.Stdout redirected into the
@@ -550,6 +553,9 @@ func TestRemoteStatus(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Cleanup(skew.reset)
 	withCLIVersion(t, "v1.0.0")
+	// Home is a release and the record is empty: the status command would
+	// hand itself to v9.9.9; this test exercises the in-process report.
+	t.Setenv(envNoDispatch, "1")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Skali-Version", "v9.9.9")
@@ -653,4 +659,106 @@ func TestRemoteUseWithoutNameNeedsTerminal(t *testing.T) {
 	command = newRemoteUseCommand()
 	command.SetOut(io.Discard)
 	require.ErrorContains(t, execute(command), "no remotes")
+}
+
+// handoffCall records one dispatchTo call made by a remote command.
+type handoffCall struct{ remote, master, version string }
+
+// stubHandoff replaces dispatchTo for one test with a recorder answering
+// result, so command tests see what the command hands off without a child
+// process or a feed.
+func stubHandoff(t *testing.T, result error) *[]handoffCall {
+	t.Helper()
+	original := dispatchTo
+	calls := &[]handoffCall{}
+	dispatchTo = func(_ context.Context, remote, master, version string) error {
+		*calls = append(*calls, handoffCall{remote: remote, master: master, version: version})
+		return result
+	}
+	t.Cleanup(func() { dispatchTo = original })
+	return calls
+}
+
+func TestRemoteAddHandsOffAfterProbe(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := fakeDaemon(t, "v0.4.0")
+	calls := stubHandoff(t, &dispatchedExit{code: 3})
+
+	err := execute(newRemoteAddCommand(), "myremote", srv.URL, "--email", "dana@example.com")
+	exit, ok := errors.AsType[*dispatchedExit](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, 3, exit.code, "the child's status passes through untouched")
+	require.Equal(t, []handoffCall{{remote: "myremote", master: srv.URL, version: "v0.4.0"}}, *calls)
+	require.Empty(t, loadConfig(t).Remotes, "the child stores the remote, the parent nothing")
+}
+
+func TestRemoteLoginHandsOffBeforeTrustPrompt(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := fakeDaemon(t, "v0.4.0") // answers as inst-1
+	seedConfig(t, &cliconfig.Config{CurrentRemote: "myremote", Remotes: map[string]*cliconfig.Remote{
+		"myremote": {Master: srv.URL, Token: "old", Instance: "inst-0"},
+	}})
+	calls := stubHandoff(t, &dispatchedExit{code: 0})
+
+	// No stdin: a trust prompt in this process would fail the command.
+	err := execute(newRemoteLoginCommand())
+	_, ok := errors.AsType[*dispatchedExit](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, []handoffCall{{remote: "myremote", master: srv.URL, version: "v0.4.0"}}, *calls)
+	require.Equal(t, "inst-0", loadConfig(t).Remotes["myremote"].Instance, "the trust decision belongs to the child")
+}
+
+func TestRemoteLoginProbesUnpinnedRemote(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := fakeDaemon(t, "v0.4.0")
+	seedConfig(t, &cliconfig.Config{CurrentRemote: "myremote", Remotes: map[string]*cliconfig.Remote{
+		"myremote": {Master: srv.URL},
+	}})
+	calls := stubHandoff(t, &dispatchedExit{code: 0})
+
+	err := execute(newRemoteLoginCommand(), "myremote")
+	_, ok := errors.AsType[*dispatchedExit](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, []handoffCall{{remote: "myremote", master: srv.URL, version: "v0.4.0"}}, *calls)
+}
+
+func TestRemoteStatusHandsOffWithRecord(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	master := deadURL(t)
+	seedConfig(t, &cliconfig.Config{CurrentRemote: "myremote", Remotes: map[string]*cliconfig.Remote{
+		"myremote": {Master: master, Token: "tok", Version: "v0.4.0"},
+	}})
+	calls := stubHandoff(t, &dispatchedExit{code: 0})
+
+	output, err := runCapturingStdout(t, func() error { return execute(newRemoteStatusCommand()) })
+	_, ok := errors.AsType[*dispatchedExit](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, []handoffCall{{remote: "myremote", master: master, version: "v0.4.0"}}, *calls)
+	require.Empty(t, output, "nothing is printed before the hand-off")
+}
+
+func TestRemoteAddNamesTheSkewWhenDispatchIsOff(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Cleanup(skew.reset)
+	withCLIVersion(t, "v0.5.0")
+	t.Setenv(envNoDispatch, "1")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(client.VersionHeader, "v0.4.0")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(client.VersionHeader, "v0.4.0")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"cli_version_mismatch","message":"this cluster runs skalid v0.4.0 and requires skali v0.4.0 (this CLI is v0.5.0)"}}`))
+	})
+	srv := fakeMaster(t, mux)
+
+	err := withStdin(t, "password\n", func() error {
+		return execute(newRemoteAddCommand(), "lab2", srv.URL, "--email", "dana@example.com")
+	})
+	require.ErrorContains(t, err, `remote "lab2" not added: this cluster runs skalid v0.4.0`)
+	require.Equal(t, "hint: remote lab2 runs skalid v0.4.0 and this CLI is v0.5.0; run skali upgrade --version v0.4.0 to match it, "+
+		"or download it from https://github.com/Hinkolas/skali/releases/tag/v0.4.0", pendingSkewHint())
+	require.Empty(t, loadConfig(t).Remotes)
 }

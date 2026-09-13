@@ -659,11 +659,12 @@ func TestHealthzAndOpenAPI(t *testing.T) {
 	require.True(t, bytes.HasPrefix(raw, []byte("openapi: 3.1")), "spec should be OpenAPI 3.1")
 }
 
-// A released daemon gates exactly the authenticated routes: both groups (the
-// streaming one and the timed one) refuse a released CLI of another version
-// before authentication, while health, the spec, login, and device
-// authorization stay reachable so a stale CLI can still bootstrap.
-func TestClientVersionGateCoversAuthenticatedRoutesOnly(t *testing.T) {
+// A released daemon gates every /v1 route, the public login and device
+// routes included: a stale CLI dispatches to the cluster's release before it
+// logs in, so only health (and the spec) must stay reachable from any CLI
+// version. Both authenticated groups (streaming and timed) refuse ahead of
+// authentication; requests without the header (browsers) are never gated.
+func TestClientVersionGateSparesOnlyHealth(t *testing.T) {
 	a := newTestAPIVersion(t, "v0.4.0")
 	token := a.adminToken()
 
@@ -690,11 +691,20 @@ func TestClientVersionGateCoversAuthenticatedRoutesOnly(t *testing.T) {
 		return res.StatusCode
 	}
 
-	// Bootstrap surface: never 409, whatever the CLI version.
+	// The bootstrap surface is health alone: never 409, whatever the CLI
+	// version. The spec sits next to it at the root.
 	require.Equal(t, http.StatusOK, request("GET", "/healthz", "v0.3.2", ""))
 	require.Equal(t, http.StatusOK, request("GET", "/openapi.yaml", "v0.3.2", ""))
-	require.Equal(t, http.StatusBadRequest, request("POST", "/v1/auth/login", "v0.3.2", ""), "login answers for itself, not the gate")
-	require.NotEqual(t, http.StatusConflict, request("POST", "/v1/auth/device/requests", "v0.3.2", ""))
+
+	// The public login and device routes are gated like everything else
+	// under /v1, and answer for themselves without the header (browsers)
+	// or with the matching version.
+	for _, path := range []string{"/v1/auth/login", "/v1/auth/2fa/verify", "/v1/auth/device/requests", "/v1/auth/device/token"} {
+		require.Equal(t, http.StatusConflict, request("POST", path, "v0.3.2", ""), path)
+		require.NotEqual(t, http.StatusConflict, request("POST", path, "", ""), path)
+		require.NotEqual(t, http.StatusConflict, request("POST", path, "v0.4.0", ""), path)
+	}
+	require.Equal(t, http.StatusBadRequest, request("POST", "/v1/auth/login", "v0.4.0", ""), "login answers for itself once the gate passes")
 
 	// Authenticated routes in both groups, refused ahead of the session
 	// check (a mismatched CLI with an expired token learns the real reason).

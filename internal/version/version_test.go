@@ -73,3 +73,10 @@ func TestReleaseShapes(t *testing.T) {
 	require.Equal(t, "https://github.com/Hinkolas/skali/releases/download/v0.1.0/checksums.txt",
 		ReleaseAssetURL(DefaultReleaseBase, "v0.1.0", "checksums.txt"))
 }
+
+func TestReleasePageURL(t *testing.T) {
+	require.Equal(t, "https://github.com/Hinkolas/skali/releases/tag/v0.4.0",
+		ReleasePageURL(DefaultReleaseBase, "v0.4.0"))
+	require.Equal(t, "https://mirror.example/Hinkolas/skali/releases/tag/v0.4.0",
+		ReleasePageURL("https://mirror.example/", "v0.4.0"))
+}

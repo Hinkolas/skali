@@ -113,11 +113,11 @@ func main() {
 		os.Exit(code)
 	}
 	err := newRootCommand().Execute()
-	// A remote exec command's own exit status is a result, not an error:
-	// pass it through silently, the process already wrote its stderr
-	// through the session.
-	if exit, ok := errors.AsType[*client.ExecExitError](err); ok {
-		os.Exit(exit.Code)
+	// A remote exec command's own exit status, or the status of a command
+	// that handed itself to another release, is a result, not an error:
+	// pass it through silently, the process already wrote its stderr.
+	if code, ok := passthroughExit(err); ok {
+		os.Exit(code)
 	}
 	// A cluster that moved since its record was written refuses home once;
 	// the refusal recorded the new version, so dispatch can run the command
@@ -148,6 +148,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, style.Yellow(hint))
 	}
 	os.Exit(code)
+}
+
+// passthroughExit reports the exit status an error carries as a result
+// rather than a failure of this process: a remote exec command's own status
+// (its stderr already flowed through the session) or the status of the
+// child a command handed itself to (dispatchedExit).
+func passthroughExit(err error) (int, bool) {
+	if exit, ok := errors.AsType[*client.ExecExitError](err); ok {
+		return exit.Code, true
+	}
+	if exit, ok := errors.AsType[*dispatchedExit](err); ok {
+		return exit.code, true
+	}
+	return 0, false
 }
 
 // instanceMismatchHint tells the user how to resolve a changed installation

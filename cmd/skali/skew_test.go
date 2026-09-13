@@ -12,12 +12,12 @@ import (
 
 func TestSkewHintRemote(t *testing.T) {
 	require.Equal(t,
-		"hint: remote khz runs skalid v0.4.0 and this CLI is v0.3.2; run skali upgrade --version v0.4.0 to match it",
+		"hint: remote khz runs skalid v0.4.0 and this CLI is v0.3.2; run skali upgrade --version v0.4.0 to match it, or download it from https://github.com/Hinkolas/skali/releases/tag/v0.4.0",
 		skewHint("khz", "v0.3.2", "v0.4.0"))
 	// The fix is the same command in both directions: upgrade pins any
 	// exact release, downgrades included.
 	require.Equal(t,
-		"hint: remote khz runs skalid v0.3.0 and this CLI is v0.4.0; run skali upgrade --version v0.3.0 to match it",
+		"hint: remote khz runs skalid v0.3.0 and this CLI is v0.4.0; run skali upgrade --version v0.3.0 to match it, or download it from https://github.com/Hinkolas/skali/releases/tag/v0.3.0",
 		skewHint("khz", "v0.4.0", "v0.3.0"))
 	// A prerelease of the same number is another release.
 	require.Contains(t, skewHint("khz", "v0.4.0-rc.1", "v0.4.0"), "--version v0.4.0 ")
@@ -110,7 +110,7 @@ func TestRemoteClientRecordsSkew(t *testing.T) {
 	require.Equal(t, "myremote", remote)
 	require.Equal(t, "v9.9.9", server)
 	require.Equal(t,
-		"hint: remote myremote runs skalid v9.9.9 and this CLI is v1.0.0; run skali upgrade --version v9.9.9 to match it",
+		"hint: remote myremote runs skalid v9.9.9 and this CLI is v1.0.0; run skali upgrade --version v9.9.9 to match it, or download it from https://github.com/Hinkolas/skali/releases/tag/v9.9.9",
 		pendingSkewHint())
 
 	// A development CLI observes the same version and says nothing.

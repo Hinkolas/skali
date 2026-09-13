@@ -49,7 +49,8 @@ func newRemoteAddCommand() *cobra.Command {
 			"tries https then http and targets the cluster's /api path\n" +
 			"(skali.example.com becomes https://skali.example.com/api); an explicit URL\n" +
 			"is used verbatim. On success the new remote becomes the current one; on\n" +
-			"failure nothing is stored.\n\n" +
+			"failure nothing is stored. The login runs in the cluster's own skali\n" +
+			"release, fetched from the release feed on first contact.\n\n" +
 			"In a terminal the login opens the web console in your browser and waits\n" +
 			"for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and\n" +
 			"non-interactive runs ask for email and password on the terminal instead.",
@@ -96,6 +97,14 @@ func newRemoteAddCommand() *cobra.Command {
 				}
 				return probeErr
 			}
+			// The login speaks the cluster's own release: hand the rest of
+			// the command to it before anything is asked or printed. When
+			// the command stays here, a differing release will be refused,
+			// so the probe's version feeds the hint main prints afterwards.
+			if err := dispatchTo(command.Context(), remoteName, master, version); err != nil {
+				return err
+			}
+			skew.record(remoteName, version)
 			sess, instance, err := loginRemote(command.Context(), cliprompt.New(command.InOrStdin(), command.ErrOrStderr()), command.ErrOrStderr(), master, email, noBrowser)
 			if err != nil {
 				return fmt.Errorf("remote %q not added: %w", remoteName, err)
@@ -153,17 +162,23 @@ func newRemoteLoginCommand() *cobra.Command {
 					return err
 				}
 			}
-			// The trust decision comes before the credentials: an unpinned
-			// probe fetches the identity the master answers with today, and
-			// a change (the cluster was reinstalled) must be confirmed. An
-			// unreachable master skips the probe; the login surfaces it.
+			// An unpinned probe first: it names the release the master runs
+			// today, and the rest of the command (the trust decision and
+			// the login) happens in that release. An unreachable master
+			// skips the probe; the login surfaces it.
+			probe := client.New(target.Master, "", caller())
+			_ = probe.Health(command.Context())
+			if version := probe.ObservedVersion(); version != "" {
+				target.Version = version
+				if err := dispatchTo(command.Context(), name, target.Master, version); err != nil {
+					return err
+				}
+				skew.record(name, version)
+			}
+			// The trust decision comes before the credentials: a changed
+			// identity (the cluster was reinstalled) must be confirmed.
 			prompts := cliprompt.New(command.InOrStdin(), command.ErrOrStderr())
 			if target.Instance != "" {
-				probe := client.New(target.Master, "", caller())
-				_ = probe.Health(command.Context())
-				if version := probe.ObservedVersion(); version != "" {
-					target.Version = version
-				}
 				observed := probe.ObservedInstance()
 				if observed != "" && observed != target.Instance {
 					trusted, err := prompts.Confirm(command.Context(), cliprompt.ConfirmOptions{
@@ -404,6 +419,12 @@ func newRemoteStatusCommand() *cobra.Command {
 				return err
 			}
 			remote := cfg.Remotes[name]
+			// The session lookup is a versioned request: run the whole
+			// report in the release the record names (an empty record is
+			// probed) before printing anything.
+			if err := dispatchTo(command.Context(), name, remote.Master, remote.Version); err != nil {
+				return err
+			}
 			fmt.Fprintf(out, "remote:  %s\nmaster:  %s\n", name, remote.Master)
 
 			if err := c.Health(command.Context()); err != nil {

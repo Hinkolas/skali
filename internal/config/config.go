@@ -90,6 +90,10 @@ type API struct {
 	// UpdateFeedURL is the releases listing the scan reads, in the GitHub
 	// releases API shape; tests and mirrors point it elsewhere.
 	UpdateFeedURL string `env:"SKALI_UPDATE_FEED_URL,default=https://api.github.com/repos/Hinkolas/skali/releases"`
+	// ReleaseBase is the site hosting release pages and assets; the console
+	// links the running release there, and the CLI reads the same variable
+	// for its downloads. Mirrors point it elsewhere.
+	ReleaseBase string `env:"SKALI_RELEASE_BASE,default=https://github.com"`
 
 	// ReconcileResync re-fires informer updates for every cached object as the
 	// correctness backstop against missed watch edits.

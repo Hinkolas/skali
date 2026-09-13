@@ -22,6 +22,10 @@ type invocation struct {
 // noDispatchCommands always run in the invoked binary: they manage remotes
 // and the binary itself, work without any remote, or (dev, until each
 // platform version has its own cluster) are pinned to home on purpose.
+// Config-writing commands in particular must stay home: an older writer
+// would drop config fields it does not know. The remote subcommands that
+// talk to a daemon (add, login, status) hand themselves to its release
+// once their own probe has named it (dispatchTo).
 var noDispatchCommands = map[string]bool{
 	"version":    true,
 	"upgrade":    true,

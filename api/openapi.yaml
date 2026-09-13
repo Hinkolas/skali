@@ -59,13 +59,15 @@ info:
     wire between one skali release and its skalid: the CLI sends its own
     build version in the `Skali-Client-Version` request header, and a
     released daemon refuses a released CLI of any other version on every
-    authenticated route with `409 cli_version_mismatch`, whose message
-    names the required version (also readable from `Skali-Version` on the
-    refusal). Requests without the header (browsers, third-party clients)
-    and development builds on either side (`v0.0.0-dev`, git-describe
-    versions) are never compared. Health, login, 2FA verification, and
-    device authorization stay reachable from any CLI version so a stale
-    CLI can still bootstrap.
+    `/v1` route, login and device authorization included, with
+    `409 cli_version_mismatch`, whose message names the required version
+    (also readable from `Skali-Version` on the refusal). Requests without
+    the header (browsers, third-party clients) and development builds on
+    either side (`v0.0.0-dev`, git-describe versions) are never compared.
+    Only `/healthz` is reachable from any CLI version: a stale CLI reads
+    the cluster's version there, fetches that release, and dispatches to
+    it before it logs in, so the health response and its two headers only
+    ever change additively.
   version: 0.1.0
   license:
     name: Apache 2.0
@@ -81,6 +83,45 @@ security:
   - cookieAuth: []
 
 paths:
+  /healthz:
+    get:
+      operationId: health
+      summary: Liveness and the cluster's version
+      description: |
+        The one route every skali release can read from every skalid
+        release: the body reports liveness and the `Skali-Version` and
+        `Skali-Instance` response headers name the release and the
+        installation. A CLI of another version reads the version here,
+        fetches that release from the feed, and dispatches to it before
+        touching anything under `/v1`. The shape only ever changes
+        additively; nothing here is removed or renamed.
+      security: []
+      tags: [status]
+      responses:
+        "200":
+          description: The daemon answers and reaches its database.
+          headers:
+            Skali-Version:
+              description: The daemon build version, a release tag or a development version.
+              schema: { type: string }
+            Skali-Instance:
+              description: The installation identity minted with the database.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+        "503":
+          description: The database is unreachable (`internal`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/auth/login:
     post:
       operationId: login
@@ -4434,6 +4475,10 @@ components:
             platform_version:
               type: string
               description: The release the cluster state records; absent when unmanaged or initialized by a dev build.
+            url:
+              type: string
+              format: uri
+              description: The running release's page on the release site, where the matching CLI is published; absent for a development build.
         channel:
           type: string
           enum: [stable, beta]

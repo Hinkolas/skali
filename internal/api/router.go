@@ -85,8 +85,8 @@ type Deps struct {
 	SecretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	// Version is the daemon build version reported on /v1/system/meta and
 	// stamped onto every response as the Skali-Version header. When it is a
-	// tagged release, authenticated routes refuse a released CLI of any
-	// other version (requireClientVersion).
+	// tagged release, every /v1 route refuses a released CLI of any other
+	// version (requireClientVersion); only /healthz is exempt.
 	Version string
 	// InstanceName is the operator-chosen installation name reported on
 	// /v1/system/meta; empty leaves naming to the client.
@@ -218,17 +218,24 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(30 * time.Second))
 
-			// Public: everything a client can reach without a session.
-			ac.route(r, "POST", "/auth/login", classPublic, h.login)
-			ac.route(r, "POST", "/auth/2fa/verify", classPublic, h.verifyTwoFactor)
-			// Browser device authorization, CLI side: open a login request
-			// and poll it. The poll answer carries the CLI bearer token.
-			ac.route(r, "POST", "/auth/device/requests", classPublic, h.startDeviceLogin)
-			ac.route(r, "POST", "/auth/device/token", classPublic, h.pollDevice)
+			// Public: everything a client can reach without a session. The
+			// CLI version gate still applies: a stale CLI dispatches to the
+			// cluster's release before it logs in (docs/versioning.md,
+			// decision 3), so only /healthz at the root stays reachable from
+			// any CLI version. Browsers send no client version and pass.
+			r.Group(func(r chi.Router) {
+				r.Use(requireClientVersion(d.Version))
 
-			// Bearer-protected. RequireAuth stays on this group only, and
-			// the CLI version gate sits with it: health, login, and device
-			// authorization above stay reachable from any CLI version.
+				ac.route(r, "POST", "/auth/login", classPublic, h.login)
+				ac.route(r, "POST", "/auth/2fa/verify", classPublic, h.verifyTwoFactor)
+				// Browser device authorization, CLI side: open a login
+				// request and poll it. The poll answer carries the CLI
+				// bearer token.
+				ac.route(r, "POST", "/auth/device/requests", classPublic, h.startDeviceLogin)
+				ac.route(r, "POST", "/auth/device/token", classPublic, h.pollDevice)
+			})
+
+			// Bearer-protected. RequireAuth stays on this group only.
 			r.Group(func(r chi.Router) {
 				r.Use(requireClientVersion(d.Version))
 				r.Use(RequireAuth(d.Auth))

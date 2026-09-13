@@ -9,9 +9,11 @@ import (
 
 // skewRecorder holds the daemon version a remote-backed client observed in
 // this invocation; main prints one hint from it after the command, and a
-// dispatched child reads it to tell its parent the daemon moved. Only
-// clients built by remoteClient feed it, so bare probes (remote add, the
-// login identity check, the local dev login) stay quiet.
+// dispatched child reads it to tell its parent the daemon moved. Clients
+// built by remoteClient feed it on every response; remote add and remote
+// login feed it from their probe once the hand-off to the cluster's
+// release declined (the login is then refused for the wrong release, and
+// the hint names the fix). The local dev login stays quiet.
 type skewRecorder struct {
 	mu     sync.Mutex
 	remote string // remote name, "" when the master matches no stored remote
@@ -72,8 +74,8 @@ func skewHint(remote, cli, server string) string {
 	if remote != "" {
 		subject = "remote " + remote
 	}
-	return fmt.Sprintf("hint: %s runs skalid %s and this CLI is %s; run skali upgrade --version %s to match it",
-		subject, server, cli, server)
+	return fmt.Sprintf("hint: %s runs skalid %s and this CLI is %s; run skali upgrade --version %s to match it, or download it from %s",
+		subject, server, cli, server, versionpkg.ReleasePageURL(releaseBase(), server))
 }
 
 // devSkewError refuses to drive a released local platform from a released

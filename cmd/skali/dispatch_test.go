@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -438,4 +439,116 @@ func TestDispatchPromotesTwiceAcrossARerun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fakeCLI("v0.5.0"), installed)
 	require.Equal(t, installer.CLICachePath(f.cache, "v0.5.0"), f.spawns[1].path)
+}
+
+func TestHandoffFetchesPromotesAndRuns(t *testing.T) {
+	f := newDispatchFixture(t, "v0.3.2", "remote", "add", "khz", "https://khz.example/api")
+	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
+	f.serveFeed(t, "v0.4.0")
+
+	handled, code := f.d.handoff(context.Background(), "khz", deadURL(t), "v0.4.0")
+	require.True(t, handled)
+	require.Equal(t, 0, code)
+	require.Len(t, f.spawns, 1)
+	require.Equal(t, installer.CLICachePath(f.cache, "v0.4.0"), f.spawns[0].path)
+	require.Equal(t, []string{"remote", "add", "khz", "https://khz.example/api"}, f.spawns[0].args, "the child starts the command over")
+	installed, err := os.ReadFile(f.d.executable)
+	require.NoError(t, err)
+	require.Equal(t, fakeCLI("v0.4.0"), installed, "home was promoted")
+	require.Contains(t, f.stderr.String(), "fetching skali v0.4.0 for remote khz")
+	require.Contains(t, f.stderr.String(), "upgraded skali v0.3.2 -> v0.4.0 (remote khz runs skalid v0.4.0)")
+}
+
+func TestHandoffRunsCachedOlderRelease(t *testing.T) {
+	f := newDispatchFixture(t, "v0.5.0", "remote", "login", "khz")
+	path := f.seedCache(t, "v0.4.0")
+
+	handled, code := f.d.handoff(context.Background(), "khz", deadURL(t), "v0.4.0")
+	require.True(t, handled)
+	require.Equal(t, 0, code)
+	require.Len(t, f.spawns, 1)
+	require.Equal(t, path, f.spawns[0].path)
+	require.Empty(t, f.stderr.String(), "downward dispatch from the cache prints nothing")
+}
+
+func TestHandoffSkips(t *testing.T) {
+	ctx := context.Background()
+
+	f := newDispatchFixture(t, "v0.4.0", "--verbose", "remote", "status")
+	handled, _ := f.d.handoff(ctx, "khz", deadURL(t), "v0.4.0")
+	require.False(t, handled, "same release")
+	require.Empty(t, f.spawns)
+	require.Contains(t, f.stderr.String(), `dispatch: remote khz runs skalid "v0.4.0", this skali is v0.4.0`)
+
+	f = newDispatchFixture(t, "v0.0.0-dev", "--verbose", "remote", "status")
+	handled, _ = f.d.handoff(ctx, "khz", deadURL(t), "v0.4.0")
+	require.False(t, handled, "development home")
+	require.Contains(t, f.stderr.String(), "dispatch: skipped (development build v0.0.0-dev)")
+
+	f = newDispatchFixture(t, "v0.5.0", "--verbose", "remote", "status")
+	f.d.env = envMap(map[string]string{envDispatched: "1"})
+	handled, _ = f.d.handoff(ctx, "khz", deadURL(t), "v0.4.0")
+	require.False(t, handled, "a child never hands off again")
+	require.Empty(t, f.stderr.String(), "the front gate already named the reason for a child")
+
+	f = newDispatchFixture(t, "v0.5.0", "--verbose", "remote", "status")
+	f.d.env = envMap(map[string]string{envNoDispatch: "1"})
+	handled, _ = f.d.handoff(ctx, "khz", deadURL(t), "v0.4.0")
+	require.False(t, handled, "the off switch holds")
+	require.Contains(t, f.stderr.String(), "dispatch: skipped (SKALI_NO_DISPATCH is set)")
+}
+
+func TestHandoffProbesEmptyVersion(t *testing.T) {
+	f := newDispatchFixture(t, "v0.5.0", "remote", "status")
+	daemon := fakeDaemon(t, "v0.4.0")
+	path := f.seedCache(t, "v0.4.0")
+
+	handled, code := f.d.handoff(context.Background(), "khz", daemon.URL, "")
+	require.True(t, handled)
+	require.Equal(t, 0, code)
+	require.Len(t, f.spawns, 1)
+	require.Equal(t, path, f.spawns[0].path)
+
+	f = newDispatchFixture(t, "v0.5.0", "remote", "status")
+	handled, _ = f.d.handoff(context.Background(), "khz", deadURL(t), "")
+	require.False(t, handled, "an unreachable daemon leaves the command in process to report it")
+	require.Empty(t, f.spawns)
+	require.Empty(t, f.stderr.String())
+}
+
+func TestHandoffFetchFailureRunsInProcess(t *testing.T) {
+	f := newDispatchFixture(t, "v0.3.2", "remote", "add", "khz", "khz.example") // the fixture's feed is a dead URL
+
+	handled, _ := f.d.handoff(context.Background(), "khz", deadURL(t), "v0.4.0")
+	require.False(t, handled)
+	require.Empty(t, f.spawns)
+	require.Contains(t, f.stderr.String(), "warning: could not fetch skali v0.4.0 from the release feed: ")
+	require.Contains(t, f.stderr.String(), "; running skali v0.3.2")
+}
+
+func TestHandoffLeftover213IsAnError(t *testing.T) {
+	f := newDispatchFixture(t, "v0.5.0", "remote", "add", "khz", "khz.example")
+	f.seedCache(t, "v0.4.0")
+	f.script = []func(spawnCall) (childStatus, error){
+		func(spawnCall) (childStatus, error) { return childStatus{Code: exitVersionMoved}, nil },
+	}
+
+	handled, code := f.d.handoff(context.Background(), "khz", deadURL(t), "v0.4.0")
+	require.True(t, handled)
+	require.Equal(t, 1, code, "a remote being added has no record to rerun from")
+	require.Len(t, f.spawns, 1)
+	require.Contains(t, f.stderr.String(), "error: remote khz changed its release while the command ran; run it again")
+}
+
+func TestPassthroughExit(t *testing.T) {
+	_, ok := passthroughExit(nil)
+	require.False(t, ok)
+	_, ok = passthroughExit(errors.New("boom"))
+	require.False(t, ok)
+	code, ok := passthroughExit(&client.ExecExitError{Code: 7})
+	require.True(t, ok)
+	require.Equal(t, 7, code)
+	code, ok = passthroughExit(fmt.Errorf("wrapped: %w", &dispatchedExit{code: 3}))
+	require.True(t, ok)
+	require.Equal(t, 3, code)
 }

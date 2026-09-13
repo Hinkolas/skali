@@ -76,6 +76,12 @@ func ReleaseAssetURL(base, v, asset string) string {
 	return strings.TrimSuffix(base, "/") + "/" + ReleaseRepo + "/releases/download/" + v + "/" + asset
 }
 
+// ReleasePageURL is the human release page of one release (notes and the
+// asset list), on the same host the assets download from.
+func ReleasePageURL(base, v string) string {
+	return strings.TrimSuffix(base, "/") + "/" + ReleaseRepo + "/releases/tag/" + v
+}
+
 // DefaultReleaseBase is the GitHub host release assets download from.
 const DefaultReleaseBase = "https://github.com"
 

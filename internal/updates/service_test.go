@@ -188,6 +188,7 @@ func TestServiceAppliesThroughClusterState(t *testing.T) {
 	require.True(t, status.Manageable, status.Reason)
 	require.Len(t, status.Nodes, 1)
 	require.Equal(t, "v0.1.0", status.Installed.PlatformVersion)
+	require.Equal(t, "https://github.com/Hinkolas/skali/releases/tag/v0.1.0", status.Installed.URL, "the release page rides with the installed version")
 	require.Nil(t, status.Operation)
 
 	// In-flight work blocks the roll.

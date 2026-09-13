@@ -677,7 +677,12 @@
 			</Button>
 		</div>
 		<div class="mt-3">
-			<KeyValueRow k="Platform" v={status.installed.version} labelWidth="w-34" />
+			<KeyValueRow
+				k="Platform"
+				v={status.installed.version}
+				href={status.installed.url}
+				labelWidth="w-34"
+			/>
 			<KeyValueRow k="Host agents" v={agentVersions} labelWidth="w-34" />
 			<KeyValueRow k="Coordinators" v={coordinatorVersions} labelWidth="w-34" />
 			<KeyValueRow k="Kubernetes" v={k3sVersions} labelWidth="w-34" />
@@ -691,5 +696,14 @@
 				labelWidth="w-34"
 			/>
 		</div>
+		{#if status.installed.url}
+			<p class="text-text-muted mt-3 text-sm">
+				Every skali CLI that talks to this cluster fetches release
+				<span class="font-mono">{status.installed.version}</span>
+				on first contact. To install it by hand, run
+				<span class="font-mono">skali upgrade --version {status.installed.version}</span>
+				or download it from the release page.
+			</p>
+		{/if}
 	</Card>
 </div>
