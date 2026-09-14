@@ -33,3 +33,11 @@ func TestReleaseMetadataRefusesLedgerAhead(t *testing.T) {
 	_, err = releaseMetadata("v0.2.0")
 	require.NoError(t, err)
 }
+
+// A snapshot rehearsal has no tag: goreleaser derives a pseudo-version from
+// the commit, and the ledger has no planned release to be measured against.
+func TestReleaseMetadataAcceptsSnapshotVersions(t *testing.T) {
+	data, err := releaseMetadata("v0.0.1-next-780a4e6")
+	require.NoError(t, err)
+	require.Contains(t, string(data), "v0.0.1-next-780a4e6")
+}
