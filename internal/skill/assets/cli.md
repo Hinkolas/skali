@@ -31,6 +31,12 @@ run ids, and manifest commands then complete on tab.
   `d` detaches (host dev processes still stop).
 - `skali dev --preview` deploys everything in the cluster, exactly like a
   remote deploy would, ignoring dev blocks.
+- The local platform runs the same skali release as the project's target
+  cluster (the checkout binding, else the current remote, else the
+  installed skali), one local cluster per release; starting one stops the
+  other, and `skali dev prune` deletes the clusters no release in use
+  needs, after confirmation. `skali dev --remote <name>` runs the
+  release of another remote.
 - `skali dev run <name>` runs a named command from the manifest
   (`applications.<app>.commands`) on this machine with the application's
   resolved environment; `skali dev run <app> -- <command>...` runs a raw

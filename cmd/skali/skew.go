@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/Hinkolas/skali/internal/localdev"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -55,20 +56,17 @@ func pendingSkewHint() string {
 // they match. Dispatch (docs/versioning.md, decision 1) normally closes the
 // gap before a command runs; the hint remains for development builds,
 // SKALI_NO_DISPATCH, and a fetch that failed, where skali upgrade --version
-// moves the CLI in either direction. The local platform is skali dev's:
-// behind the CLI it moves with skali dev upgrade, ahead of it the CLI
-// follows or the platform is recreated.
+// moves the CLI in either direction. The local platform is skali dev's and
+// each release has its own (decision 5): a local daemon of another release
+// answering means another release's platform is the running one, and
+// skali dev switches to this CLI's.
 func skewHint(remote, cli, server string) string {
 	if !versionpkg.ReleasesDiffer(cli, server) {
 		return ""
 	}
 	if remote == localRemoteName {
-		if versionpkg.Older(server, cli) {
-			return fmt.Sprintf("hint: the local platform runs skalid %s and this CLI is %s; run skali dev upgrade to move it",
-				server, cli)
-		}
-		return fmt.Sprintf("hint: the local platform runs skalid %s and this CLI is %s; run skali upgrade --version %s to match it, "+
-			"or skali dev reset to recreate it at this CLI's version", server, cli, server)
+		return fmt.Sprintf("hint: the local platform answering runs skalid %s and this CLI is %s; "+
+			"each release has its own local platform, run skali dev to switch to this CLI's", server, cli)
 	}
 	subject := "the remote"
 	if remote != "" {
@@ -80,15 +78,15 @@ func skewHint(remote, cli, server string) string {
 
 // devSkewError refuses to drive a released local platform from a released
 // CLI of another version, before any request the daemon would refuse with
-// cli_version_mismatch. Development builds and working-tree or custom
+// cli_version_mismatch. Each release's platform runs its own image, so this
+// only fires on a record that lies (an image swapped underneath it); the
+// cure is a fresh platform. Development builds and working-tree or custom
 // images have no comparable version and pass.
 func devSkewError(image string) error {
 	platform, ok := versionpkg.PublishedSkalidVersion(image)
-	if !ok {
+	if !ok || !versionpkg.ReleasesDiffer(versionpkg.Version, platform) {
 		return nil
 	}
-	if hint := skewHint(localRemoteName, versionpkg.Version, platform); hint != "" {
-		return fmt.Errorf("%s", hint[len("hint: "):])
-	}
-	return nil
+	return fmt.Errorf("the local platform %s runs skalid %s and this CLI is %s; run skali dev reset to recreate it at this CLI's release",
+		localdev.ClusterName(), platform, versionpkg.Version)
 }

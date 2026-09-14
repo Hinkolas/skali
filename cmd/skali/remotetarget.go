@@ -21,6 +21,14 @@ type remoteTarget struct {
 	Binding *checkout.Target
 }
 
+// unboundCheckoutError is a checkout binding whose master no remote on
+// this machine names; the dispatcher runs home on it, dev says so.
+type unboundCheckoutError struct{ Master string }
+
+func (e *unboundCheckoutError) Error() string {
+	return fmt.Sprintf("no remote for %s on this machine; run skali remote add <name> %s", e.Master, e.Master)
+}
+
 // resolveRemoteTarget applies the ladder. manifestPath is an explicit
 // --manifest (empty discovers skali.yml upward from start); the override
 // is also the only way to reach the dev-owned local remote, which is never
@@ -42,8 +50,7 @@ func resolveRemoteTarget(cfg *cliconfig.Config, manifestPath, start, override st
 	if binding != nil {
 		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
 		if !ok {
-			return nil, fmt.Errorf("no remote for %s on this machine; run skali remote add <name> %s",
-				binding.Master, binding.Master)
+			return nil, &unboundCheckoutError{Master: binding.Master}
 		}
 		return &remoteTarget{Name: name, Remote: found, Binding: binding}, nil
 	}

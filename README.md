@@ -103,8 +103,10 @@ deploys it, and follows its logs. The example is then served at
 `http://hello-world.localhost:8080`. Ctrl-C pauses the project (data is kept),
 `skali dev` brings it back, `skali dev -d` keeps it running in the
 background. `skali dev list`, `skali dev status`, `skali dev exec`, and
-`skali dev reset` do what they say; reset is the only destructive one and
-asks first.
+`skali dev reset` do what they say. The platform runs the same skali release
+as the project's target cluster, one local cluster per release, and
+`skali dev prune` removes the clusters no release in use needs; reset and
+prune are the destructive ones and ask first.
 
 Add a `dev:` block to an application and bare `skali dev` runs that app as a
 process on your machine with hot reload, behind the cluster's routes and with

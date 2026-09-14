@@ -16,6 +16,26 @@ import (
 // and not yet recorded or started.
 const pruneGrace = 10 * time.Minute
 
+// referencedReleases is the set of releases something on this machine
+// uses: home and every remote's recorded version. The dev-owned local
+// remote counts for the CLI cache (the binary driving the running local
+// platform must stay cached) and not for local platforms themselves (its
+// version only mirrors whichever platform last logged in).
+func referencedReleases(cfg *cliconfig.Config, home string, includeLocal bool) map[string]bool {
+	keep := map[string]bool{}
+	if home != "" {
+		keep[home] = true
+	}
+	if cfg != nil {
+		for name, remote := range cfg.Remotes {
+			if remote.Version != "" && (includeLocal || name != localRemoteName) {
+				keep[remote.Version] = true
+			}
+		}
+	}
+	return keep
+}
+
 // pruneCLICache removes cached releases nothing references: not this
 // binary's version and not the recorded version of any remote. It runs
 // after a fetch stored a new entry, after a promotion, and when a remote
@@ -24,14 +44,7 @@ const pruneGrace = 10 * time.Minute
 // mistaken for a valid one; unlinking a binary a running child still
 // executes is safe. Best effort throughout.
 func pruneCLICache(cfg *cliconfig.Config, home, cacheDir string) {
-	keep := map[string]bool{home: true}
-	if cfg != nil {
-		for _, remote := range cfg.Remotes {
-			if remote.Version != "" {
-				keep[remote.Version] = true
-			}
-		}
-	}
+	keep := referencedReleases(cfg, home, true)
 	dir := installer.CLICacheDir(cacheDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {

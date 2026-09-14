@@ -128,6 +128,8 @@ func dispatchGate(inv invocation, env func(string) string, home, executable, cac
 		return "no command"
 	case noDispatchCommands[inv.command]:
 		return inv.command + " always runs at home"
+	case noDispatchPaths[inv.path]:
+		return inv.path + " always runs at home"
 	}
 	return ""
 }
@@ -474,10 +476,15 @@ func exitCodeFor(err error) int {
 	return 1
 }
 
+// refusedAsWrongRelease recognizes the daemon's version refusal, by its
+// error code or by the skew the response recorded. The local platform is
+// excluded the way rerunAfterMismatch excludes it: skali dev owns it and
+// switches it itself, and a dispatched dev that failed for any other reason
+// must not turn into exit 213.
 func refusedAsWrongRelease(err error) bool {
 	if api, ok := errors.AsType[*client.APIError](err); ok && api.Code == client.CodeCLIVersionMismatch {
 		return true
 	}
-	_, server := skew.snapshot()
-	return versionpkg.ReleasesDiffer(versionpkg.Version, server)
+	remote, server := skew.snapshot()
+	return remote != localRemoteName && versionpkg.ReleasesDiffer(versionpkg.Version, server)
 }

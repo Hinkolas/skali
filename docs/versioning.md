@@ -3,7 +3,8 @@
 Status: design agreed 2026-09-13; slice 1 (skew hint and server-side gate),
 slice 2 (self-dispatch), and slice 3 (exact match everywhere but health)
 implemented 2026-09-13, slice 4 (manifest watermark, change ledger, and
-stored-schema split) implemented 2026-09-14, the rest not yet. On
+stored-schema split) and slice 5 (dev per version) implemented 2026-09-14,
+the rest not yet. On
 2026-09-13, cluster-served CLI downloads and air-gapped operation were
 taken out of scope (decision 2), and the bootstrap protocol number was
 dropped in favor of health as the single cross-version route (decision
@@ -67,9 +68,11 @@ Where a later slice changed a fact, the change is noted in place.
   `~/.cache/skali/hostd/<release>/`, fetched and checksum-verified from the
   release feed. `skali upgrade` already replaces the running binary and
   restores it when verification fails.
-- Local dev is one shared k3d cluster named `skali-dev`. Its skalid image is
-  derived from the CLI's own release version, downgrades are refused, and a
-  k3s pin change requires `skali dev reset`.
+- Local dev was one shared k3d cluster named `skali-dev`. Its skalid image
+  was derived from the CLI's own release version, downgrades were refused,
+  and a k3s pin change required `skali dev reset`. Since slice 5 each
+  release has its own cluster and `skali dev` dispatches like every other
+  workflow command.
 - Releases are GitHub releases with stable and beta channels, and
   `SKALI_UPDATE_FEED_URL` overrides the feed for a mirror.
 
@@ -137,8 +140,8 @@ requires. On startup:
 Steady state costs no extra round trip. Commands with no remote, such as
 bootstrapping a new cluster or local dev without a target, run in the home
 binary. So do the commands that manage remotes or the binary itself:
-`version`, `upgrade`, `completion`, `remote`, `cluster`, `skill`, and, until
-decision 5 lands, `dev`. Config-writing commands in particular stay home,
+`version`, `upgrade`, `completion`, `remote`, `cluster`, `skill`, and
+`dev prune` (decision 5). Config-writing commands in particular stay home,
 because an older writer would drop fields it does not know. The three
 remote subcommands that talk to a daemon are the exception in the other
 direction: `remote add`, `remote login`, and `remote status` probe health
@@ -415,44 +418,78 @@ are history, not ledger.
 ## Decision 5: dev runs at the target's version, one cluster per version
 
 Local dev is an exact replica of the target cluster's platform. The
-dispatched binary picks the version, each platform version gets its own
-local k3d cluster, and only one runs at a time.
+dispatched binary picks the version, each platform release gets its own
+local k3d cluster, and only one runs at a time. Built in slice 5
+(2026-09-14); the details below are what shipped.
 
-Dispatch already does most of the work. If `skali dev` runs under the
-binary dispatched for the project's target, it pins that version's skalid
-image and that version's k3s with no dev-specific version logic at all.
+Dispatch does most of the work. `dev` left the never-dispatch list, so
+`skali dev` runs under the binary for the project's target and pins that
+release's skalid image and that release's k3s with no dev-specific version
+logic: a released binary always runs the published image of its own
+release (never a working-tree build, even inside the repository), and a
+development build builds the working tree. Only `dev prune` stays home: it
+reasons about every local platform on the machine, and home is the newest
+release in use and the only one that knows every record layout.
 
 ### Which version
 
-Resolution order is the checkout binding, then the current remote, then
-home. The binding wins because a machine with projects bound to two
-clusters should run each project's dev at its own cluster's version. The
-current remote covers a new project before its first deploy. Home covers
-pure local development with no remote, which stays fully supported. Dev
-prints which version it chose and why on every start, and takes an
-explicit override flag.
+Resolution order is the `--remote` override, the checkout binding, the
+current remote, then home; the dispatcher's own ladder. The binding wins
+because a machine with projects bound to two clusters should run each
+project's dev at its own cluster's version. The current remote covers a new
+project before its first deploy. Home covers pure local development with no
+remote, which stays fully supported. `--remote <name>` runs the release
+that remote's cluster runs (`local` is refused: it names the platform dev
+runs, not a release). Dev prints one line on every start saying which
+release it runs, in which cluster, and which rung chose it, for example
+`local platform runs skalid v0.1.0-rc.3 (cluster skali-dev-v0-1-0-rc-3):
+the release khz runs, from .skali/target.yaml`; a rung that names another
+release means dispatch did not run and the line says so. An empty version
+record on the resolved remote costs the dispatcher's five-second health
+probe before dev runs home.
 
 ### Which cluster
 
-- Name the cluster by version. A version has its own skalid, its own k3s,
-  and its own state. No cross-version migration path exists because none is
-  needed. Downgrades stop being a special case.
-- Switching is stop and start. Running dev under another version stops the
-  running dev cluster and starts this one. The fixed API port and the
-  deterministic app ports mean two cannot run at once, and enforcing that
-  is simpler than avoiding collisions.
-- Prune by refcount, with confirmation. A dev cluster whose version no
-  remote and no home binary uses is a prune candidate. It holds data, so
-  `skali dev prune` asks before deleting.
-- `skali dev upgrade` is removed. A new version is a new cluster.
+- Name the cluster by release. `v0.1.0-rc.3` runs in `skali-dev-v0-1-0-rc-3`
+  (dots become dashes: a k3d cluster name is an RFC 1123 hostname and
+  doubles as the node's hostname), the working tree in
+  `skali-dev-working-tree`. Each cluster has its own record directory
+  under `$XDG_STATE_HOME/skali/dev/<cluster>/` (record, kubeconfig,
+  registries config). A release has its own skalid, its own k3s, and its
+  own state; no cross-version migration path exists because none is
+  needed, and downgrades stop being a special case.
+- Switching is stop and start. Every platform binds the same host ports,
+  so starting one stops whichever recorded platform is running, with a
+  progress line naming it; foreign clusters are never touched.
+  `skali dev stop` stops the running platform, whichever release it is.
+  The dev verbs that skip the platform boot (`logs`, `list`, `status`,
+  `exec`, `run`, `values`, `down`) refuse when this release's platform is
+  not the running one and name the one that is.
+- Prune by refcount, with confirmation. A platform whose release no remote
+  on this machine records and that is not home's release is a prune
+  candidate; the working tree's platform is one under a released home, and
+  the legacy shared `skali-dev` of releases before v0.1.0-rc.3 always is.
+  The local remote's recorded version is not a reference (it only mirrors
+  whichever platform last logged in), and cached CLI binaries are not
+  either. Platforms hold data, so `skali dev prune` lists the candidates
+  and asks before deleting.
+- `skali dev upgrade` is removed. A new release is a new cluster.
 
-Tradeoffs to state in the release notes: today an upgrade carries dev
+Releases before v0.1.0-rc.3 still use the single `skali-dev` cluster and
+its top-level record when dispatch runs one of them for `dev`; this code
+leaves that layout alone and only lists, stops, and prunes it. Such a
+release does not know to stop a per-release cluster, so its start fails on
+the port maps until `skali dev stop` from the newer binary; no shim in the
+dispatcher covers this (rework over compatibility).
+
+Tradeoffs to state in the release notes: an upgrade used to carry dev
 databases forward, and under this model dev data belongs to a platform
-version. That is the correct semantics for a replica, and dev data is
+release. That is the correct semantics for a replica, and dev data is
 disposable by contract, but it is a visible behavior change. Disk is the
-other cost: each cluster carries its own k3s and platform images, likely
-two to three gigabytes. Sharing layers through a local mirror is possible
-later and is not part of the first pass.
+other cost: each cluster carries its own k3s and platform images and its
+own volumes, measured at about five gigabytes for a cluster with project
+data. Sharing layers through a local mirror is possible later and is not
+part of the first pass.
 
 ## Decision 6: the skill follows dispatch
 
@@ -559,8 +596,10 @@ Each slice is useful on its own and none depends on a later one.
       paths, validate's review note, `skali manifest upgrade`, the
       stored-schema split with legacy decoders and migration 00002, and
       the release guard.
-- [ ] Dev per version: cluster names carrying the version, one-running
-      enforcement, prune with confirmation, removal of `skali dev upgrade`.
+- [x] Dev per version: `dev` dispatches, cluster names carrying the
+      release, per-cluster records, one-running enforcement, `skali dev
+      prune` with confirmation, the reason line, removal of `skali dev
+      upgrade`.
 - [ ] Skill follows dispatch: `skali skill read <topic>` with the neutral
       versus version-bound split, the slimmed `SKILL.md` shell, reinstall on
       home change, and the ledger-fed `--since` flag.

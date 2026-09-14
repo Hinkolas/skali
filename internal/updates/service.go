@@ -143,7 +143,7 @@ func (s *Service) status(ctx context.Context, row store.UpdateSetting) (*Status,
 	switch {
 	case errors.Is(err, ErrNotManaged):
 		status.Reason = "updates from the console need a coordinator-managed cluster; " +
-			"run skali cluster upgrade on each host, or skali dev upgrade locally"
+			"run skali cluster upgrade on each host (the local platform follows the skali release that runs it)"
 	case err != nil:
 		status.Reason = "cluster state unavailable: " + err.Error()
 	default:

@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/manifest"
-	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 const upgradeFixtureBody = `name: demo
@@ -28,15 +27,8 @@ func writeManifestFixture(t *testing.T, head string) string {
 	return path
 }
 
-func withReleaseVersion(t *testing.T, v string) {
-	t.Helper()
-	previous := versionpkg.Version
-	versionpkg.Version = v
-	t.Cleanup(func() { versionpkg.Version = previous })
-}
-
 func TestManifestUpgradeRenamesVersion(t *testing.T) {
-	withReleaseVersion(t, "v0.1.0-rc.3")
+	withCLIVersion(t, "v0.1.0-rc.3")
 	path := writeManifestFixture(t, "# yaml-language-server: $schema=../schemas/skali.schema.json\n\nversion: \"1\"  # keep me\n")
 	out, err := runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "manifest", "upgrade", "--manifest", path)
@@ -52,7 +44,7 @@ func TestManifestUpgradeRenamesVersion(t *testing.T) {
 }
 
 func TestManifestUpgradeBumpsWatermark(t *testing.T) {
-	withReleaseVersion(t, "v0.1.0-rc.4")
+	withCLIVersion(t, "v0.1.0-rc.4")
 	path := writeManifestFixture(t, "skali: v0.1.0-rc.3\n")
 	out, err := runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "manifest", "upgrade", "--manifest", path)
@@ -65,7 +57,7 @@ func TestManifestUpgradeBumpsWatermark(t *testing.T) {
 }
 
 func TestManifestUpgradeAddsMissingWatermark(t *testing.T) {
-	withReleaseVersion(t, "v0.0.0-dev")
+	withCLIVersion(t, "v0.0.0-dev")
 	path := writeManifestFixture(t, "# a comment\n")
 	out, err := runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "manifest", "upgrade", "--manifest", path, "--to", "0.2.0")
@@ -78,7 +70,7 @@ func TestManifestUpgradeAddsMissingWatermark(t *testing.T) {
 }
 
 func TestManifestUpgradeAlreadyCurrent(t *testing.T) {
-	withReleaseVersion(t, "v0.1.0-rc.3")
+	withCLIVersion(t, "v0.1.0-rc.3")
 	path := writeManifestFixture(t, "skali: v0.1.0-rc.3\n")
 	out, err := runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "manifest", "upgrade", "--manifest", path)
@@ -95,7 +87,7 @@ func TestManifestUpgradeAlreadyCurrent(t *testing.T) {
 }
 
 func TestManifestUpgradeDevBuildNeedsTo(t *testing.T) {
-	withReleaseVersion(t, "v0.0.0-dev")
+	withCLIVersion(t, "v0.0.0-dev")
 	path := writeManifestFixture(t, "skali: v0.1.0-rc.3\n")
 	err := execute(newRootCommand(), "manifest", "upgrade", "--manifest", path)
 	require.ErrorContains(t, err, "development build")
@@ -107,7 +99,7 @@ func TestManifestUpgradeDevBuildNeedsTo(t *testing.T) {
 // A watermark moved past a changed entry the manifest has not absorbed is
 // still reported: the upgrade rewrites the file, then compiles it.
 func TestManifestUpgradeReportsWhatStillFails(t *testing.T) {
-	withReleaseVersion(t, "v0.1.0-rc.3")
+	withCLIVersion(t, "v0.1.0-rc.3")
 	path := writeManifestFixture(t, "version: \"1\"\n")
 	directory := filepath.Dir(path)
 	require.NoError(t, os.WriteFile(path, []byte("version: \"1\"\nname: demo\napplications:\n  web:\n    image: example.invalid/web:1\n    bogus: true\n"), 0o600))
@@ -122,7 +114,7 @@ func TestManifestUpgradeReportsWhatStillFails(t *testing.T) {
 }
 
 func TestValidatePrintsReviewNote(t *testing.T) {
-	withReleaseVersion(t, "v0.1.0-rc.4")
+	withCLIVersion(t, "v0.1.0-rc.4")
 	path := writeManifestFixture(t, "skali: v0.1.0-rc.3\n")
 	out, err := runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "validate", "--manifest", path)
@@ -131,7 +123,7 @@ func TestValidatePrintsReviewNote(t *testing.T) {
 	require.Contains(t, out, "valid "+path+"\n")
 	require.Contains(t, out, "\n  reviewed against v0.1.0-rc.3; this CLI is v0.1.0-rc.4 and nothing this manifest uses changed since\n")
 
-	withReleaseVersion(t, "v0.1.0-rc.3")
+	withCLIVersion(t, "v0.1.0-rc.3")
 	out, err = runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "validate", "--manifest", path)
 	})

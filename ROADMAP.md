@@ -172,9 +172,10 @@ Ordered loosely by how often I have wanted them.
       releases, stable or beta channel), the System / Software update page
       with per-node progress, automatic updates, and the coordinator moving
       every node's hostd and k3s plus the bundle in one operation.
-      `skali cluster upgrade` remains the path for legacy installs and
-      `skali dev upgrade` for the local platform. Not yet rehearsed on a
-      real cluster from a released binary.
+      `skali cluster upgrade` remains the path for legacy installs; the
+      local platform follows the skali release that runs it, one cluster
+      per release. Not yet rehearsed on a real cluster from a released
+      binary.
 - [ ] Version pin bumps as a routine (k3s, CNPG, SeaweedFS, Traefik,
       cert-manager, Longhorn) with the cluster e2e as the gate.
 - [ ] Node lifecycle: drain, replace, retire a node without hand surgery;

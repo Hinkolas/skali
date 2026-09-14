@@ -25,15 +25,15 @@ func TestSkewHintRemote(t *testing.T) {
 	require.Contains(t, skewHint("", "v0.3.2", "v0.4.0"), "hint: the remote runs skalid v0.4.0")
 }
 
+// The local platform has one cure in both directions: each release has its
+// own, and skali dev switches to this CLI's.
 func TestSkewHintLocalRemote(t *testing.T) {
-	behind := skewHint(localRemoteName, "v0.4.0", "v0.3.0")
-	require.Contains(t, behind, "the local platform runs skalid v0.3.0 and this CLI is v0.4.0")
-	require.Contains(t, behind, "skali dev upgrade")
-	require.NotContains(t, behind, "--version")
-
-	ahead := skewHint(localRemoteName, "v0.3.2", "v0.4.0")
-	require.Contains(t, ahead, "skali upgrade --version v0.4.0")
-	require.Contains(t, ahead, "skali dev reset")
+	for _, c := range []struct{ cli, server string }{{"v0.4.0", "v0.3.0"}, {"v0.3.2", "v0.4.0"}} {
+		hint := skewHint(localRemoteName, c.cli, c.server)
+		require.Contains(t, hint, "the local platform answering runs skalid "+c.server+" and this CLI is "+c.cli)
+		require.Contains(t, hint, "run skali dev to switch")
+		require.NotContains(t, hint, "--version")
+	}
 }
 
 // Nothing is said unless both sides are releases that differ: the daemon
@@ -60,17 +60,16 @@ func TestDevSkewError(t *testing.T) {
 
 	err := devSkewError("ghcr.io/hinkolas/skalid:v0.1.0")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "runs skalid v0.1.0 and this CLI is v0.2.0")
-	require.Contains(t, err.Error(), "skali dev upgrade")
+	require.Contains(t, err.Error(), "the local platform skali-dev-v0-2-0 runs skalid v0.1.0 and this CLI is v0.2.0")
+	require.Contains(t, err.Error(), "skali dev reset")
 	require.NotContains(t, err.Error(), "hint:")
 
 	err = devSkewError("ghcr.io/hinkolas/skalid:v0.3.0")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "skali upgrade --version v0.3.0")
 	require.Contains(t, err.Error(), "skali dev reset")
 
-	// A prerelease of the CLI's version is another release, behind it.
-	require.ErrorContains(t, devSkewError("ghcr.io/hinkolas/skalid:v0.2.0-rc.1"), "skali dev upgrade")
+	// A prerelease of the CLI's version is another release.
+	require.ErrorContains(t, devSkewError("ghcr.io/hinkolas/skalid:v0.2.0-rc.1"), "skali dev reset")
 
 	require.NoError(t, devSkewError("ghcr.io/hinkolas/skalid:v0.2.0"))
 	// Non-published platforms have no comparable version.

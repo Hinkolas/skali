@@ -25,18 +25,19 @@ import (
 
 // The end-to-end suite drives the built skali binary through the real
 // paved path against a throwaway local installation (its own cluster name,
-// ports, and state directories), so a developer's actual skali-dev
+// ports, and state directories), so a developer's actual local
 // platform is never touched. Gated: it creates and destroys a k3d cluster
 // and takes minutes.
 //
 //	TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run TestDev ./cmd/skali/...
 
 const (
-	e2eCluster      = "skali-dev-e2e"
-	e2eHTTPPort     = 8082
-	e2eRegistryPort = 5512
+	e2eCluster       = "skali-dev-e2e"
+	e2eSecondCluster = "skali-dev-e2e-b"
+	e2eHTTPPort      = 8082
+	e2eRegistryPort  = 5512
 	// e2eLoopbackBase shifts the loopback service range away from a real
-	// skali-dev installation's identity mapping (30501..30510).
+	// local platform's identity mapping (30501..30510).
 	e2eLoopbackBase = 45001
 )
 
@@ -69,9 +70,9 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "build skali: %s", out)
 
-	// The scratch project lives outside the repository, so the CLI's
-	// working-tree image fallback cannot trigger; build the control-plane
-	// image here and pass it explicitly on the first run.
+	// The scratch project lives outside the repository, so the development
+	// build's working-tree image path cannot trigger; build the
+	// control-plane image here and pass it explicitly on the first run.
 	image := exec.Command("docker", "build", "-t", "skalid:dev",
 		"-f", filepath.Join(repoRoot, "build", "skalid.Dockerfile"), repoRoot)
 	out, err = image.CombinedOutput()
@@ -108,8 +109,40 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 			return
 		}
 		_ = exec.Command("k3d", "cluster", "delete", e2eCluster).Run()
+		_ = exec.Command("k3d", "cluster", "delete", e2eSecondCluster).Run()
 	})
 	return harness
+}
+
+// secondPlatformEnv is the same installation seen as another release's
+// platform: another cluster name, the same ports and the same state home,
+// the way two releases' platforms share a machine.
+func (h *e2eHarness) secondPlatformEnv() []string {
+	env := make([]string, 0, len(h.env))
+	for _, entry := range h.env {
+		if !strings.HasPrefix(entry, "SKALI_DEV_CLUSTER=") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, "SKALI_DEV_CLUSTER="+e2eSecondCluster)
+}
+
+// runWithEnv is run with an explicit environment.
+func (h *e2eHarness) runWithEnv(env []string, wantErr bool, stdin string, args ...string) string {
+	h.t.Helper()
+	command := exec.Command(h.binary, args...)
+	command.Dir = h.projectDir
+	command.Env = env
+	if stdin != "" {
+		command.Stdin = strings.NewReader(stdin)
+	}
+	out, err := command.CombinedOutput()
+	if wantErr {
+		require.Error(h.t, err, "expected failure: %s", out)
+	} else {
+		require.NoError(h.t, err, "%s", out)
+	}
+	return string(out)
 }
 
 // run executes the CLI in the project directory and returns its combined
@@ -244,7 +277,7 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "ready")
 		// The restart stamp reached the cluster: the pod template carries
 		// the annotation, so the workload rolled to fresh pods.
-		kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+		kubeconfig := h.kubeconfig()
 		workloads, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
 			"get", "deployment", "-A", "-l", "skali.dev/managed=true", "-o", "yaml").CombinedOutput()
 		require.NoError(t, err, string(workloads))
@@ -396,9 +429,7 @@ func TestDevEndToEnd(t *testing.T) {
 		}, 2*time.Minute, 2*time.Second, "the route must stop serving after down")
 
 		// The namespace with its data survives, and ls reports the state.
-		kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
-		require.NoError(t, exec.Command("kubectl", "--kubeconfig", kubeconfig,
-			"get", "namespace", "skali-hello-world-local").Run())
+		require.NotEmpty(t, h.projectNamespaces(t), "down must keep the namespace")
 		out = h.run(false, "", "dev", "ls")
 		require.Contains(t, out, "hello-world")
 		require.Contains(t, out, "down")
@@ -424,7 +455,7 @@ func TestDevEndToEnd(t *testing.T) {
 
 		// Kill the control plane while the rollout is in flight; the
 		// restarted skalid must resume toward the same revision.
-		kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+		kubeconfig := h.kubeconfig()
 		require.NoError(t, exec.Command("kubectl", "--kubeconfig", kubeconfig,
 			"delete", "pod", "-n", "skali-system",
 			"-l", "app.kubernetes.io/name=skalid", "--wait=false").Run())
@@ -476,6 +507,65 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "Bootstrap database")
 	})
 
+	t.Run("SwitchStopsTheOtherPlatform", func(t *testing.T) {
+		// A second platform on the same ports (another release's, in real
+		// life) stops the running one instead of failing on the port maps,
+		// and switching back stops it in turn with its state retained. Its
+		// first start names the image like the harness's first run did.
+		out := h.runWithEnv(h.secondPlatformEnv(), false, "", "dev", "start", "--skalid-image", "skalid:dev")
+		require.Contains(t, out, "Stop cluster "+e2eCluster)
+		require.Contains(t, out, "one local platform runs at a time")
+		require.Contains(t, out, "Create k3d cluster "+e2eSecondCluster)
+
+		out = h.run(false, "", "dev", "status")
+		require.Contains(t, out, "platform   stopped (cluster "+e2eCluster)
+		require.Contains(t, out, "other      "+e2eSecondCluster+" (working tree, running)")
+		// The verbs that skip the platform boot name the running one.
+		out = h.run(true, "", "dev", "list")
+		require.Contains(t, out, "is not running ("+e2eSecondCluster+" is); run skali dev")
+
+		out = h.run(false, "", "dev", "start")
+		require.Contains(t, out, "Stop cluster "+e2eSecondCluster)
+		require.Contains(t, out, "state retained")
+		require.Contains(t, out, "unchanged since last converge")
+		h.waitRoute("hello again from skali", 3*time.Minute)
+
+		// dev stop stops whichever platform runs and names it.
+		out = h.runWithEnv(h.secondPlatformEnv(), false, "", "dev", "stop")
+		require.Contains(t, out, "stopped local platform "+e2eCluster+" (working tree); state is retained")
+		out = h.run(false, "", "dev", "stop")
+		require.Contains(t, out, "no local platform is running")
+		out = h.run(false, "", "dev", "start")
+		require.Contains(t, out, "state retained")
+		h.waitRoute("hello again from skali", 3*time.Minute)
+	})
+
+	t.Run("PruneRemovesStaleRecord", func(t *testing.T) {
+		// A released platform nothing references any more: the record is
+		// listed and removed on confirmation; the two working-tree
+		// platforms of this development build stay.
+		stale := filepath.Join(h.stateDir(), "skali", "dev", "skali-dev-v0-9-9")
+		require.NoError(t, os.MkdirAll(stale, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(stale, "state.json"),
+			[]byte(`{"cluster":"skali-dev-v0-9-9","version":"v0.9.9","skalid_image":"ghcr.io/hinkolas/skalid:v0.9.9"}`), 0o600))
+
+		out := h.run(true, "\n", "dev", "prune")
+		require.Contains(t, out, "skali-dev-v0-9-9")
+		require.Contains(t, out, "[y/N]")
+		_, err := os.Stat(filepath.Join(stale, "state.json"))
+		require.NoError(t, err, "declining must keep the record")
+
+		out = h.run(false, "y\n", "dev", "prune")
+		require.Contains(t, out, "Remove record skali-dev-v0-9-9")
+		require.NotContains(t, out, "Delete cluster", "a record without a cluster is only a record")
+		_, err = os.Stat(stale)
+		require.ErrorIs(t, err, os.ErrNotExist)
+		out = h.run(false, "", "dev", "prune")
+		require.Contains(t, out, "nothing to prune")
+		require.Contains(t, out, e2eCluster)
+		require.Contains(t, out, e2eSecondCluster)
+	})
+
 	t.Run("DockerRestartMovesNodeIPAndDevRecovers", func(t *testing.T) {
 		network := "k3d-" + e2eCluster
 		inspectIP := func(field string) string {
@@ -519,10 +609,8 @@ func TestDevEndToEnd(t *testing.T) {
 		out := h.run(false, "y\n", "dev", "down", "--purge")
 		require.Contains(t, out, "is purged from the local platform")
 
-		kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
-		require.Error(t, exec.Command("kubectl", "--kubeconfig", kubeconfig,
-			"get", "namespace", "skali-hello-world-local").Run(),
-			"the purge must delete the namespace")
+		require.Eventually(t, func() bool { return h.projectNamespaces(t) == "" },
+			2*time.Minute, 2*time.Second, "the purge must delete the namespace")
 		out = h.run(false, "", "dev", "ls")
 		require.NotContains(t, out, "local", "the purged environment must not be listed")
 	})
@@ -535,10 +623,29 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "Delete cluster "+e2eCluster)
 		require.Contains(t, out, "Remove local installation record")
 
+		// By exact name: the second platform of the switch subtest shares
+		// the prefix and is still recorded.
 		clusters, err := exec.Command("k3d", "cluster", "list", "-o", "json").Output()
 		require.NoError(t, err)
-		require.NotContains(t, string(clusters), e2eCluster)
+		require.NotContains(t, string(clusters), `"name":"`+e2eCluster+`"`)
 	})
+}
+
+// kubeconfig is the scoped platform's kubeconfig: each platform keeps its
+// record directory under the state home.
+func (h *e2eHarness) kubeconfig() string {
+	return filepath.Join(h.stateDir(), "skali", "dev", e2eCluster, "kubeconfig")
+}
+
+// projectNamespaces lists the namespaces of the scratch project's local
+// environment; namespaces are named by environment id, the labels are
+// the stable handle.
+func (h *e2eHarness) projectNamespaces(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("kubectl", "--kubeconfig", h.kubeconfig(), "get", "namespace",
+		"-l", "skali.dev/project=hello-world,skali.dev/environment-name=local", "-o", "name").Output()
+	require.NoError(t, err, "%s", out)
+	return strings.TrimSpace(string(out))
 }
 
 func (h *e2eHarness) stateDir() string {
@@ -590,7 +697,7 @@ func TestDevGuestbookDatabase(t *testing.T) {
 	// dev substrate), so the next dev is a fast re-apply, not a cold start.
 	out = h.run(false, "", "dev", "down")
 	require.Contains(t, out, "is down; its data is retained")
-	kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+	kubeconfig := h.kubeconfig()
 	platformRunning := func() bool {
 		pods, err := exec.Command("kubectl", "--kubeconfig", kubeconfig,
 			"get", "pods", "-n", "skali-platform", "--no-headers").CombinedOutput()
@@ -980,7 +1087,7 @@ func TestDevAccess(t *testing.T) {
 	// A member exists only through the operator command inside the cluster;
 	// the CLI then logs in as them under a second remote name (the reserved
 	// "local" remote is the admin's).
-	kubeconfig := filepath.Join(h.stateDir(), "skali", "kubeconfig")
+	kubeconfig := h.kubeconfig()
 	created, err := exec.Command("kubectl", "--kubeconfig", kubeconfig, "exec", "-n", "skali-system",
 		"deploy/skalid", "--", "sh", "-c",
 		fmt.Sprintf("printf '%%s' '%s' | skalid user create --email %s --role member --password-stdin",
@@ -998,7 +1105,7 @@ func TestDevAccess(t *testing.T) {
 		[]byte("APP_DOMAIN=staging."+h.host+"\n"), 0o644))
 
 	t.Run("grant", func(t *testing.T) {
-		out := h.run(false, "", "env", "create", "staging", "--remote", "local")
+		out := h.run(false, "", "env", "create", "staging", "--remote", "local", "--yes")
 		require.Contains(t, out, "created environment staging in project hello-world")
 		out = h.run(false, "", "deploy", "--remote", "local", "--environment", "staging", "--env-file", ".env.staging", "--yes")
 		require.Contains(t, out, "ready")
@@ -1006,7 +1113,7 @@ func TestDevAccess(t *testing.T) {
 		require.Contains(t, out, memberEmail+"  read on project hello-world")
 		out = h.run(false, "", "access", "set", memberEmail, "deploy", "--environment", "staging", "--remote", "local")
 		require.Contains(t, out, memberEmail+"  deploy on environment staging")
-		out = h.run(false, "", "env", "set", "--environment", "local", "--max-role", "read", "--remote", "local")
+		out = h.run(false, "", "env", "set", "--environment", "local", "--max-role", "read", "--remote", "local", "--yes")
 		require.Contains(t, out, "max role       read")
 		out = h.run(false, "", "access", "ls", "--remote", "local")
 		require.Regexp(t, `(?m)^MEMBER +PROJECT +local +staging$`, out)
@@ -1057,7 +1164,7 @@ func TestDevAccess(t *testing.T) {
 
 	t.Run("maintainer creates and administers", func(t *testing.T) {
 		h.run(false, "", "access", "set", memberEmail, "maintain", "--remote", "local")
-		out := h.run(false, "", "env", "create", "feature", "--remote", "member")
+		out := h.run(false, "", "env", "create", "feature", "--remote", "member", "--yes")
 		require.Contains(t, out, "created environment feature in project hello-world")
 		// Environments list by name: feature, local (locked), staging.
 		out = h.run(false, "", "access", "ls", "--remote", "member")
@@ -1065,12 +1172,12 @@ func TestDevAccess(t *testing.T) {
 		// Sudo-gated writes on a non-local remote confirm the password on
 		// stdin when the login has aged; a fresh login passes straight
 		// through, so the answer is supplied either way.
-		out = h.run(false, memberPassword+"\n", "env", "set", "--environment", "feature", "--max-role", "read", "--remote", "member")
+		out = h.run(false, memberPassword+"\n", "env", "set", "--environment", "feature", "--max-role", "read", "--remote", "member", "--yes")
 		require.Contains(t, out, "max role       read")
 		out = h.run(false, memberPassword+"\n", "env", "rm", "feature", "--yes", "--remote", "member")
 		require.Contains(t, out, "purge started")
 		// Production-like environments stay out of reach: no cell, read ceiling.
-		out = h.run(true, "", "env", "set", "--environment", "staging", "--max-role", "read", "--remote", "member")
+		out = h.run(true, "", "env", "set", "--environment", "staging", "--max-role", "read", "--remote", "member", "--yes")
 		require.Contains(t, out, "admin on environment staging required")
 	})
 
@@ -1079,7 +1186,7 @@ func TestDevAccess(t *testing.T) {
 	// command names its remote.
 	t.Run("protection", func(t *testing.T) {
 		out := h.run(false, "", "env", "set", "--environment", "staging", "--deploy-policy", "promote-only",
-			"--promote-from", "local", "--remote", "local")
+			"--promote-from", "local", "--remote", "local", "--yes")
 		require.Contains(t, out, "deploy policy  promote-only (from local)")
 		out = h.run(false, "", "env", "ls", "--remote", "local")
 		require.Regexp(t, `(?m)^staging +admin +normal +promote-only \(from local\) `, out)
@@ -1131,7 +1238,7 @@ func TestDevAccess(t *testing.T) {
 		}
 		// local and staging, both normal.
 		require.Equal(t, []string{"skali-normal", "skali-normal"}, managedClasses())
-		out := h.run(false, "", "env", "set", "--environment", "staging", "--priority", "high", "--remote", "local")
+		out := h.run(false, "", "env", "set", "--environment", "staging", "--priority", "high", "--remote", "local", "--yes")
 		require.Contains(t, out, "priority       high")
 		require.Contains(t, out, "application pods roll onto priority class skali-high")
 		// The kernel re-renders staging right away; its Deployment moves to

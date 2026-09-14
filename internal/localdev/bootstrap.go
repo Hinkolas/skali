@@ -80,14 +80,15 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		state.SkalidImage = opts.SkalidImage
 	}
 	if state.SkalidImage == "" {
-		return nil, errors.New("no skalid image selected: pass --skalid-image " +
-			"(working from the skali repository, task dev:image builds one)")
+		return nil, errors.New("no skalid image selected: the build or pull above failed; " +
+			"fix that or pass --skalid-image")
 	}
 
-	status, err := Status(ctx)
+	statuses, err := Statuses(ctx)
 	if err != nil {
 		return nil, err
 	}
+	status := StatusOf(statuses, ClusterName())
 	// A cluster without an installation record is not ours to adopt or
 	// destroy (an older or foreign installation); the user decides.
 	if freshInstall && status != ClusterAbsent {
@@ -95,24 +96,27 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 			"remove it with `k3d cluster delete %s`, or pick another name via SKALI_DEV_CLUSTER",
 			ClusterName(), ClusterName())
 	}
-	// A cluster from before the single-container layout cannot be reshaped
-	// in place (its load balancer resolves the node by the old name); the
-	// platform is disposable by design, so recreation is the migration.
-	if status != ClusterAbsent && legacyLayout(ctx) {
-		return nil, fmt.Errorf("the %s cluster predates the single-container layout: "+
-			"recreate it with `skali dev reset`, then run `skali dev` again", ClusterName())
+	// One local platform runs at a time: every platform binds the same
+	// host ports, so switching releases stops the other one, state
+	// retained. Only recorded platforms are ours to stop.
+	records, err := Records()
+	if err != nil {
+		return nil, err
 	}
-	// Loopback service ports (postgres, S3) are create-time k3d options: a
-	// cluster from before them cannot be reshaped in place either.
-	if status != ClusterAbsent {
-		hasPorts, err := HasLoopbackPortMaps(ctx)
-		if err != nil {
+	for _, other := range clustersToStop(records, statuses, ClusterName()) {
+		progress.Start("Stop cluster " + other)
+		if err := StopFor(ctx, other); err != nil {
 			return nil, err
 		}
-		if !hasPorts {
-			return nil, fmt.Errorf("the %s cluster predates the loopback service port maps: "+
-				"recreate it with `skali dev reset`, then run `skali dev` again", ClusterName())
-		}
+		progress.Done("one local platform runs at a time")
+	}
+	// The k3s pin is a create-time property of the node container. A
+	// release ships its pin in a new cluster; only the working tree can see
+	// the pin move under an existing cluster, and recreation is the pickup.
+	if status != ClusterAbsent && state.K3sImage != K3sImage {
+		progress.Start("Check k3s pin")
+		progress.Skip(fmt.Sprintf("moved to %s; this cluster runs %s, skali dev reset recreates it",
+			K3sImage, state.K3sImage))
 	}
 
 	// Public platform images pre-pull on the host in parallel with the
@@ -299,6 +303,18 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	}
 	progress.Done(MasterURL())
 	return finish()
+}
+
+// clustersToStop names the recorded platforms other than self that are
+// running; at most one can be, since they all bind the same host ports.
+func clustersToStop(records []Record, statuses map[string]ClusterStatus, self string) []string {
+	var stop []string
+	for _, record := range records {
+		if record.Name != self && StatusOf(statuses, record.Name) == ClusterRunning {
+			stop = append(stop, record.Name)
+		}
+	}
+	return stop
 }
 
 // bundleProfile derives the bundle profile of this installation.

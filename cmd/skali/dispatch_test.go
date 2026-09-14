@@ -41,6 +41,10 @@ func TestDispatchGate(t *testing.T) {
 		require.Contains(t, dispatchGate(invocation{command: name}, none, "v0.4.0", outside, cacheDir), "always runs at home", name)
 	}
 	require.Empty(t, dispatchGate(deploy, none, "v0.4.0", outside, cacheDir))
+	// dev follows the project's target like a workflow command; only prune,
+	// which reasons about every local platform, stays with the newest binary.
+	require.Empty(t, dispatchGate(invocation{command: "dev", path: "dev start"}, none, "v0.4.0", outside, cacheDir))
+	require.Equal(t, "dev prune always runs at home", dispatchGate(invocation{command: "dev", path: "dev prune"}, none, "v0.4.0", outside, cacheDir))
 
 	// A binary run straight from the cache never dispatches, also when the
 	// cache directory is reached through a symlink.
@@ -551,4 +555,17 @@ func TestPassthroughExit(t *testing.T) {
 	code, ok = passthroughExit(fmt.Errorf("wrapped: %w", &dispatchedExit{code: 3}))
 	require.True(t, ok)
 	require.Equal(t, 3, code)
+}
+
+// A version skew recorded from the local platform never turns a dispatched
+// child's failure into exit 213: skali dev owns that platform and switches
+// it itself; only a remote's refusal asks the parent to rerun.
+func TestRefusedAsWrongReleaseIgnoresLocal(t *testing.T) {
+	t.Cleanup(skew.reset)
+	withCLIVersion(t, "v1.0.0")
+	skew.record(localRemoteName, "v9.9.9")
+	require.False(t, refusedAsWrongRelease(errors.New("boom")))
+	skew.record("khz", "v9.9.9")
+	require.True(t, refusedAsWrongRelease(errors.New("boom")))
+	require.True(t, refusedAsWrongRelease(&client.APIError{Code: client.CodeCLIVersionMismatch}))
 }
