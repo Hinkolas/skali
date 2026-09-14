@@ -3,8 +3,9 @@
 Status: design agreed 2026-09-13; slice 1 (skew hint and server-side gate),
 slice 2 (self-dispatch), and slice 3 (exact match everywhere but health)
 implemented 2026-09-13, slice 4 (manifest watermark, change ledger, and
-stored-schema split) and slice 5 (dev per version) implemented 2026-09-14,
-the rest not yet. On
+stored-schema split), slice 5 (dev per version), and slice 6 (the skill
+follows dispatch) implemented 2026-09-14, only the optional signed
+checksums not yet. On
 2026-09-13, cluster-served CLI downloads and air-gapped operation were
 taken out of scope (decision 2), and the bootstrap protocol number was
 dropped in favor of health as the single cross-version route (decision
@@ -140,8 +141,9 @@ requires. On startup:
 Steady state costs no extra round trip. Commands with no remote, such as
 bootstrapping a new cluster or local dev without a target, run in the home
 binary. So do the commands that manage remotes or the binary itself:
-`version`, `upgrade`, `completion`, `remote`, `cluster`, `skill`, and
-`dev prune` (decision 5). Config-writing commands in particular stay home,
+`version`, `upgrade`, `completion`, `remote`, `cluster`, `dev prune`
+(decision 5), and `skill install` (decision 6). Config-writing commands in
+particular stay home,
 because an older writer would drop fields it does not know. The three
 remote subcommands that talk to a daemon are the exception in the other
 direction: `remote add`, `remote login`, and `remote status` probe health
@@ -413,7 +415,8 @@ are history, not ledger.
   ledger entry, and should not happen before 1.0.
 - The `skali` skill and `schemas/skali.schema.json` keep tracking the
   compiler, as they do today; the schema's `skali` property carries the
-  release pattern, and the skill's fences carry the current watermark.
+  release pattern, and the fences of the skill's served references carry
+  the current watermark (decision 6).
 
 ## Decision 5: dev runs at the target's version, one cluster per version
 
@@ -493,16 +496,17 @@ part of the first pass.
 
 ## Decision 6: the skill follows dispatch
 
-The installed skill is a version-neutral shell plus the architecture guide.
-Version-bound references (manifest fields, CLI commands) are served by the
-CLI through `skali skill read <topic>`, run from the project directory. That
-command dispatches like every other one, so the binary that answers prints
-its own embedded reference, and the version is right by construction.
+Implemented 2026-09-14. The installed skill is a version-neutral shell plus
+the architecture guide. Version-bound references (manifest fields, CLI
+commands) are served by the CLI through `skali skill read <topic>`, run
+from the project directory. That command dispatches like every other one,
+so the binary that answers prints its own embedded reference, and the
+version is right by construction.
 
-Today the skill is four embedded files, `SKILL.md` plus `architecture.md`,
-`manifest.md`, and `cli.md`, written to the agent's skills directory with a
-managed marker, and a test compiles every manifest fence against the
-current compiler.
+Before this, the skill was four embedded files, `SKILL.md` plus
+`architecture.md`, `manifest.md`, and `cli.md`, all written to the agent's
+skills directory with a managed marker, so an installed skill described
+whichever release installed it.
 
 Why not per-version folders on disk: the agent would have to run a version
 command and then pick the matching folder, which it can skip or misread;
@@ -512,32 +516,61 @@ agents' skill loading produces; and either the newest binary embeds every
 older reference or the home binary collects them from cached binaries,
 which is more machinery than the content deserves.
 
+### The two sets
+
+`internal/skill/assets/skill/` is what `skali skill install` writes:
+`SKILL.md` and `architecture.md`. A test asserts that neither carries a
+complete manifest fence or a release tag, so the shell stays stable across
+home promotions. `internal/skill/assets/reference/` holds `manifest.md`
+and `cli.md`, served by `skali skill read manifest` and `skali skill read
+cli`; their fences carry the current watermark and compile in the lockstep
+test, and the complete examples (minimal, two applications, production
+shaped) all live in the manifest reference now.
+
 ### The shell
 
 `SKILL.md` says three things and rarely changes:
 
 - What skali is and the invariants that do not move between releases:
   scratch filesystem, credentials as typed outputs, exactly one of `image`
-  or `build`, and the like.
+  or `build`, every `${NAME}` value is secret, strict parsing with no
+  aliases, removing a database or bucket destroys its data.
 - How to get the references: run `skali skill read manifest` or
-  `skali skill read cli` from the project directory. Do not guess fields.
+  `skali skill read cli` from the project directory, where the command
+  follows the project's target and answers with that cluster's release.
+  Do not guess fields.
 - `skali validate` is the authority. Run it before finishing. Under
   dispatch it runs at the target's version, and with the ledger from
   decision 4 its errors name what changed and how to fix it. Even if an
   agent reads the wrong reference, the cost is one validate round trip
-  with a precise message, not a broken deploy.
+  with a precise message, not a broken deploy. When validate reports a
+  watermark older than the CLI, `skali skill read manifest --since <that
+  release>` lists what changed.
 
 ### Details
 
-- Embedded content is organized as neutral versus version-bound, so the
-  shell stays stable across home promotions. Only the version-bound files
-  need to compile in the lockstep test.
-- Auto-reinstall on home change. When `skali upgrade` runs or home is
-  promoted to a newer version, the skill is reinstalled for every agent
-  where the managed marker is already present.
-- `skali skill read manifest --since <version>` renders what changed from
-  the ledger for a manifest with an old watermark, the same data
-  `skali manifest upgrade` consumes.
+- `skill read` dispatches (binding, else current remote, else home);
+  `skill install` is pinned home through `noDispatchPaths`, since the
+  shell it writes is the newest one and home is the newest binary. Bare
+  `skali skill read` lists the topics under a header naming the release
+  that answered.
+- Releases before v0.1.0-rc.3 have `skali skill` with only `install`, and
+  cobra answers `skill read manifest` there by printing the group's help
+  with exit 0, which an agent would take for a reference. The dispatcher
+  keeps a small table of command paths and the release each shipped in
+  (`introducedIn`); when the target's release predates the path, home
+  answers and one stderr line says so.
+- Reinstall on home change. `skali upgrade` and dispatch's home promotion
+  both run the freshly installed binary's `skill install --agent ...` for
+  every agent whose skill directory carries the managed marker, next to
+  the existing completion refresh. Nothing is installed anew; a failure is
+  a warning. The new binary writes the content so it is its own, not the
+  old binary's embedded copy.
+- `skali skill read manifest --since <release>` prints the ledger entries
+  after that release, oldest first, each with its release, kind, path,
+  message, and migration hint: the same data `skali manifest upgrade`
+  consumes. At or past the current release it says there is nothing.
+  `--since` is refused for any other topic.
 - If a target agent can only read files, the fallback is per-version
   folders on disk with the home version's references written as the
   default and labeled with their version. Not built until needed.
@@ -600,9 +633,10 @@ Each slice is useful on its own and none depends on a later one.
       release, per-cluster records, one-running enforcement, `skali dev
       prune` with confirmation, the reason line, removal of `skali dev
       upgrade`.
-- [ ] Skill follows dispatch: `skali skill read <topic>` with the neutral
+- [x] Skill follows dispatch: `skali skill read <topic>` with the neutral
       versus version-bound split, the slimmed `SKILL.md` shell, reinstall on
-      home change, and the ledger-fed `--since` flag.
+      home change, the ledger-fed `--since` flag, and the home answer for
+      remotes older than the command.
 - [ ] Signed checksums, optional hardening: a signature per release and an
       embedded public key, applied to both the CLI dispatch fetch and the
       existing hostd fetch.

@@ -45,6 +45,11 @@ func TestDispatchGate(t *testing.T) {
 	// which reasons about every local platform, stays with the newest binary.
 	require.Empty(t, dispatchGate(invocation{command: "dev", path: "dev start"}, none, "v0.4.0", outside, cacheDir))
 	require.Equal(t, "dev prune always runs at home", dispatchGate(invocation{command: "dev", path: "dev prune"}, none, "v0.4.0", outside, cacheDir))
+	// skill read serves the reference of the cluster that will compile the
+	// manifest; install writes the neutral shell and stays with the newest
+	// binary.
+	require.Empty(t, dispatchGate(invocation{command: "skill", path: "skill read"}, none, "v0.4.0", outside, cacheDir))
+	require.Equal(t, "skill install always runs at home", dispatchGate(invocation{command: "skill", path: "skill install"}, none, "v0.4.0", outside, cacheDir))
 
 	// A binary run straight from the cache never dispatches, also when the
 	// cache directory is reached through a symlink.

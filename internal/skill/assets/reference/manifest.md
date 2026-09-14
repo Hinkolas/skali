@@ -1,5 +1,10 @@
 # The skali.yaml manifest
 
+This is the reference for the skali release that printed it (`skali
+version`), served by `skali skill read manifest` from the project
+directory, where the command answers at the release of the project's
+target cluster.
+
 skali compiles one manifest at the project root into everything an
 environment runs: applications, databases, buckets, backups, and the
 values they require. The same definition deploys unchanged to a local
@@ -302,7 +307,7 @@ killed.
 
 Volumes are the escape hatch, not the paved path: an application with
 volumes is forced to `recreate` rollouts and a single replica. Prefer
-databases and buckets; see `architecture.md`.
+databases and buckets; see the architecture guide in the installed skill.
 
 ### Commands and local dev
 
@@ -441,10 +446,45 @@ confirmation. Changing a live bucket's `visibility` or `versioning` is
 also treated as a destructive replacement; quota-only changes update in
 place.
 
-## Complete example
+## Examples
 
-Two applications sharing a database; the worker has no route and holds
-the Stripe key:
+### A minimal manifest
+
+```yaml manifest
+skali: v0.1.0-rc.3
+name: hello-world
+
+applications:
+  web:
+    build:
+      context: .
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        port: http
+    health:
+      readiness:
+        http:
+          port: http
+          path: /healthz
+      liveness:
+        http:
+          port: http
+          path: /healthz
+    scaling:
+      replicas:
+        min: 2
+```
+
+`${APP_DOMAIN}` is a per-environment value supplied at deploy time, so
+the manifest carries no environment-specific data.
+
+### Two applications sharing a database
+
+The worker has no route and holds the Stripe key:
 
 ```yaml manifest
 skali: v0.1.0-rc.3
@@ -491,6 +531,103 @@ databases:
     version: 18
     storage:
       size: 10GB
+```
+
+### A production-shaped manifest
+
+Autoscaling, spread across nodes, a release command for migrations, a
+bucket for attachments, and an inactive backup policy:
+
+```yaml manifest
+skali: v0.1.0-rc.3
+name: team-wiki
+description: Wiki with file attachments in a bucket and Postgres storage
+
+applications:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SESSION_SECRET: "${SESSION_SECRET}"
+      DATABASE_URL: "{{databases.data.url}}"
+      S3_ENDPOINT: "{{buckets.attachments.endpoint}}"
+      S3_BUCKET: "{{buckets.attachments.name}}"
+      S3_REGION: "{{buckets.attachments.region}}"
+      S3_ACCESS_KEY: "{{buckets.attachments.access_key}}"
+      S3_SECRET_KEY: "{{buckets.attachments.secret_key}}"
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        port: http
+        tls: automatic
+    health:
+      startup:
+        http:
+          port: http
+          path: /healthz
+      readiness:
+        http:
+          port: http
+          path: /health/ready
+      liveness:
+        http:
+          port: http
+          path: /healthz
+    resources:
+      requests:
+        cpu: 0.2
+        memory: 256MB
+        temporaryStorage: 256MB
+      limits:
+        cpu: 1
+        memory: 1GB
+        temporaryStorage: 1GB
+    scaling:
+      replicas:
+        min: 2
+        max: 5
+      autoscaling:
+        cpu:
+          targetUtilization: 70
+    placement:
+      spread:
+        across: nodes
+        minimum: 2
+        enforcement: preferred
+    deployment:
+      releaseCommand:
+        command: ["/app/wiki", "migrate", "up"]
+        timeout: 5m
+    shutdown:
+      gracePeriod: 30s
+
+databases:
+  data:
+    engine: postgres
+    version: 17
+    isolation: project
+    storage:
+      size: 20GB
+    extensions: [citext]
+
+buckets:
+  attachments:
+    visibility: private
+    quotas:
+      storage: 50GB
+
+# Inactive declaration: scheduling and retention are not enforced.
+backups:
+  daily:
+    schedule: "0 3 * * *"
+    retention: 7d
+    include:
+      databases: all
+      buckets: all
 ```
 
 Backup policies are accepted but inactive: skali does not run scheduled backups or enforce retention. Create backups manually with `skali backup create`; inspect `skali backup --help` for restore and deletion commands.

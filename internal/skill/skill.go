@@ -1,7 +1,12 @@
 // Package skill embeds the skali skill for coding agents (the SKILL.md
-// format shared by Claude Code and Codex) and installs it into user-level
-// agent skill directories. The installed directory is installer-owned:
-// install replaces it wholesale, so local edits do not survive a reinstall.
+// format shared by Claude Code and Codex). The content comes in two sets
+// (docs/versioning.md, decision 6): the installed set, a version-neutral
+// SKILL.md shell plus the architecture guide, written into user-level
+// agent skill directories; and the references, version-bound documents
+// (the manifest grammar, the CLI surface) served by skali skill read,
+// which dispatches to the release of the project's target cluster. The
+// installed directory is installer-owned: install replaces it wholesale,
+// so local edits do not survive a reinstall.
 package skill
 
 import (
@@ -19,16 +24,58 @@ var assets embed.FS
 
 // managedMarker identifies a skill directory written by this installer.
 // SKILL.md carries it; an existing SKILL.md without it is treated as
-// user-owned and never replaced.
+// user-owned and never replaced. The string is stable across releases so
+// installs from older ones are recognized.
 const managedMarker = `Managed by "skali skill install"`
 
-// FS returns the skill content with SKILL.md at the root.
+// FS returns the installed set with SKILL.md at the root.
 func FS() fs.FS {
-	sub, err := fs.Sub(assets, "assets")
+	sub, err := fs.Sub(assets, "assets/skill")
 	if err != nil {
 		panic(err)
 	}
 	return sub
+}
+
+// Topic is one reference skali skill read serves.
+type Topic struct {
+	// Name is the argument to skali skill read.
+	Name string
+	// Summary is the one-line description in the topic list.
+	Summary string
+}
+
+// Topics lists the references in display order.
+func Topics() []Topic {
+	return []Topic{
+		{Name: "manifest", Summary: "every skali.yaml field, default, unit, and validation rule"},
+		{Name: "cli", Summary: "the skali commands an agent uses from the terminal"},
+	}
+}
+
+// Reference returns the embedded reference for a topic; ok is false for
+// a name Topics does not list.
+func Reference(name string) (content []byte, ok bool) {
+	for _, topic := range Topics() {
+		if topic.Name == name {
+			data, err := assets.ReadFile("assets/reference/" + name + ".md")
+			if err != nil {
+				panic(err)
+			}
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+// TopicNames lists the topic names in display order.
+func TopicNames() []string {
+	topics := Topics()
+	names := make([]string, 0, len(topics))
+	for _, topic := range topics {
+		names = append(names, topic.Name)
+	}
+	return names
 }
 
 // Agent is a coding agent the skill can be installed for.
@@ -76,8 +123,15 @@ func AgentByName(name string) (Agent, error) {
 	return Agent{}, fmt.Errorf("unknown agent %q (valid: %s)", name, strings.Join(names, ", "))
 }
 
+// Installed reports whether the agent's skill directory under home holds
+// a SKILL.md written by this installer. Upgrades refresh exactly those.
+func Installed(home string, agent Agent) bool {
+	existing, err := os.ReadFile(filepath.Join(agent.Dir(home), "SKILL.md"))
+	return err == nil && strings.Contains(string(existing), managedMarker)
+}
+
 // Install replaces the agent's skali skill directory under home with the
-// embedded content and returns the written paths, sorted. The directory is
+// installed set and returns the written paths, sorted. The directory is
 // installer-owned, so files from older releases are pruned; a SKILL.md
 // that was not written by this installer is refused rather than replaced.
 // CLAUDE_CONFIG_DIR-style overrides are not honored yet.

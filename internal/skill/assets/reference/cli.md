@@ -15,6 +15,11 @@ manifest:
   acknowledges is reported with its migration hint.
 - `skali compile` prints the compiled project definition, showing
   defaults and normalized units.
+- `skali skill read manifest` and `skali skill read cli` print these
+  references for the release the project's target cluster runs (bare
+  `skali skill read` lists the topics). `skali skill read manifest --since
+  <release>` lists the manifest grammar changes since that release, for a
+  manifest whose watermark is older than the CLI.
 
 `skali completion install` puts shell completions in place for the login
 shell (`install.sh` already does this); values such as environments, remotes,

@@ -261,7 +261,9 @@ volume ([`guestbook`](examples/guestbook)), and the local hot-reload loop
 ([`dev-loop`](examples/dev-loop)).
 
 If you write manifests with a coding agent, `skali skill install` gives it
-the complete manifest reference and the platform's rules.
+the platform's rules, and the skill reads the manifest and CLI references
+through `skali skill read`, which answers at the release of the project's
+target cluster.
 
 ## Documentation
 

@@ -31,6 +31,8 @@ func TestPreparseArgs(t *testing.T) {
 		{"dev dispatches", []string{"dev", "start", "--force"}, invocation{command: "dev", path: "dev start"}},
 		{"dev prune", []string{"dev", "prune", "--yes"}, invocation{command: "dev", path: "dev prune"}},
 		{"dev remote override", []string{"dev", "--remote", "khz"}, invocation{command: "dev", path: "dev", remote: "khz"}},
+		{"skill read with since", []string{"skill", "read", "manifest", "--since", "v0.1.0-rc.2"}, invocation{command: "skill", path: "skill read"}},
+		{"skill install", []string{"skill", "install", "--agent", "claude"}, invocation{command: "skill", path: "skill install"}},
 		{"unknown command", []string{"frobnicate"}, invocation{}},
 		{"bare", nil, invocation{}},
 	}
@@ -56,12 +58,31 @@ func TestNoDispatchCommandsExist(t *testing.T) {
 		}
 		require.True(t, names[name], "noDispatchCommands names %q, which is not a command", name)
 	}
-	for _, name := range []string{"deploy", "plan", "validate", "manifest", "run", "logs", "exec", "values", "backup", "env", "access", "rollback", "dev"} {
+	for _, name := range []string{"deploy", "plan", "validate", "manifest", "run", "logs", "exec", "values", "backup", "env", "access", "rollback", "dev", "skill"} {
 		require.False(t, noDispatchCommands[name], "%s must dispatch", name)
 	}
+	paths := map[string]bool{}
 	for path := range noDispatchPaths {
+		paths[path] = true
+	}
+	for path := range introducedIn {
+		paths[path] = true
+	}
+	for path := range paths {
 		found, _, err := newRootCommand().Find(strings.Fields(path))
 		require.NoError(t, err, path)
-		require.Equal(t, path, strings.TrimPrefix(found.CommandPath(), "skali "), "noDispatchPaths names %q, which is not a command path", path)
+		require.Equal(t, path, strings.TrimPrefix(found.CommandPath(), "skali "), "%q is not a command path", path)
 	}
+}
+
+// A command path an older release lacks is answered at home rather than
+// by that release's group help.
+func TestLacksCommand(t *testing.T) {
+	t.Parallel()
+	require.True(t, lacksCommand("skill read", "v0.1.0-rc.2"))
+	require.True(t, lacksCommand("skill read", "v0.1.0-alpha.8"))
+	require.False(t, lacksCommand("skill read", "v0.1.0-rc.3"))
+	require.False(t, lacksCommand("skill read", "v0.2.0"))
+	require.False(t, lacksCommand("deploy", "v0.1.0-alpha.1"))
+	require.False(t, lacksCommand("skill install", "v0.1.0-alpha.1"))
 }

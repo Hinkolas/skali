@@ -215,6 +215,11 @@ func (d *dispatcher) run() (bool, int) {
 		d.note(inv, "remote %s runs skalid %q, this skali is %s", target.Name, record, d.homeVersion)
 		return false, 0
 	}
+	if lacksCommand(inv.path, want) {
+		fmt.Fprintf(d.stderr, "remote %s runs skalid %s, which has no %s; this skali (%s) answers instead\n",
+			target.Name, want, inv.path, d.homeVersion)
+		return false, 0
+	}
 	dispatchTried = true
 	fetch, err := d.ensureCLI(ctx, target.Name, want)
 	if err != nil {
@@ -422,6 +427,7 @@ func (d *dispatcher) promoteHome(ctx context.Context, binary []byte, target, rem
 		return false
 	}
 	refreshCompletions(ctx, clirender.NewTasks(io.Discard), d.executable, d.home)
+	refreshSkill(ctx, clirender.NewTasks(io.Discard), d.executable, d.home)
 	fmt.Fprintf(d.stderr, "upgraded skali %s -> %s (remote %s runs skalid %s)\n", d.installed, target, remoteName, target)
 	d.installed = target
 	return true

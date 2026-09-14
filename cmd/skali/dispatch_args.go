@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 // invocation is what the dispatcher needs to know about a command line
@@ -27,7 +29,9 @@ type invocation struct {
 // (add, login, status) hand themselves to its release once their own probe
 // has named it (dispatchTo). dev dispatches like a workflow command: the
 // local platform runs at the release of the project's target cluster, each
-// release in its own cluster (docs/versioning.md, decision 5).
+// release in its own cluster (docs/versioning.md, decision 5). skill read
+// dispatches too, so the reference an agent reads is the one for the
+// cluster that will compile the manifest (decision 6).
 var noDispatchCommands = map[string]bool{
 	"version":    true,
 	"upgrade":    true,
@@ -35,14 +39,31 @@ var noDispatchCommands = map[string]bool{
 	"help":       true,
 	"remote":     true,
 	"cluster":    true,
-	"skill":      true,
 }
 
 // noDispatchPaths pins single subcommands of dispatching groups to home.
 // dev prune reasons about every local platform on the machine; home is the
 // newest release in use and the only one that knows every record layout.
+// skill install writes the version-neutral shell, and the newest one is
+// home's.
 var noDispatchPaths = map[string]bool{
-	"dev prune": true,
+	"dev prune":     true,
+	"skill install": true,
+}
+
+// introducedIn names the release a dispatched command path first shipped
+// in. An older cluster's binary would answer such a path with its group's
+// help and exit 0, which an agent reading a reference must never mistake
+// for one; home answers instead and says so.
+var introducedIn = map[string]string{
+	"skill read": "v0.1.0-rc.3",
+}
+
+// lacksCommand reports whether the release a command would dispatch to
+// predates the command.
+func lacksCommand(path, release string) bool {
+	since, ok := introducedIn[path]
+	return ok && versionpkg.Older(release, since)
 }
 
 // preparseArgs reads the command line the way the dispatcher needs it,

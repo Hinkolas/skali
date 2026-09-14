@@ -259,6 +259,9 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	if warning := refreshCompletions(ctx, tasks, opts.Executable, opts.Home); warning != "" {
 		fmt.Fprintln(out, style.Yellow("warning: "+warning))
 	}
+	if warning := refreshSkill(ctx, tasks, opts.Executable, opts.Home); warning != "" {
+		fmt.Fprintln(out, style.Yellow("warning: "+warning))
+	}
 	if opts.CacheDir != "" {
 		cfg, _ := cliconfig.Load()
 		pruneCLICache(cfg, target, opts.CacheDir)
