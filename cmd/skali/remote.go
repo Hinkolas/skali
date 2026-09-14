@@ -33,7 +33,7 @@ func newRemoteCommand() *cobra.Command {
 	}
 	command.AddCommand(newRemoteAddCommand(), newRemoteLoginCommand(), newRemoteLogoutCommand(),
 		newRemoteListCommand(), newRemoteUseCommand(), newRemoteStatusCommand(),
-		newRemoteTokenCommand(), newRemoteRemoveCommand())
+		newRemoteTokenCommand(), newRemoteRemoveCommand(), newRemoteRevokeCommand())
 	return command
 }
 
@@ -157,7 +157,15 @@ func newRemoteLoginCommand() *cobra.Command {
 					return fmt.Errorf("remote %q does not exist; run `skali remote add %s <url>`", name, name)
 				}
 			} else {
-				name, target, err = cfg.Current()
+				if invocationContext != nil && invocationContext.Remote != "" {
+					name = invocationContext.Remote
+					target, err = remoteByName(cfg, name)
+					if err == nil && target.Master != invocationContext.Master {
+						err = errors.New("remote changed during invocation; run again")
+					}
+				} else {
+					name, target, err = cfg.Current()
+				}
 				if err != nil {
 					return err
 				}
@@ -167,7 +175,9 @@ func newRemoteLoginCommand() *cobra.Command {
 			// the login) happens in that release. An unreachable master
 			// skips the probe; the login surfaces it.
 			probe := client.New(target.Master, "", caller())
-			_ = probe.Health(command.Context())
+			if err := probe.Health(command.Context()); err != nil {
+				return err
+			}
 			if version := probe.ObservedVersion(); version != "" {
 				target.Version = version
 				if err := dispatchTo(command.Context(), name, target.Master, version); err != nil {
@@ -250,8 +260,7 @@ func newRemoteLogoutCommand() *cobra.Command {
 			}
 			// Best effort server-side; the local token is cleared regardless,
 			// so an unreachable master can't keep you "logged in".
-			c := remoteClient(cfg, target)
-			if err := c.Logout(command.Context()); err != nil {
+			if err := revokeRemoteSession(command.Context(), cfg, name, target); err != nil {
 				fmt.Fprintf(command.ErrOrStderr(), "warning: server-side revoke failed: %v\n", err)
 			}
 			target.Token = ""
@@ -422,8 +431,10 @@ func newRemoteStatusCommand() *cobra.Command {
 			// The session lookup is a versioned request: run the whole
 			// report in the release the record names (an empty record is
 			// probed) before printing anything.
-			if err := dispatchTo(command.Context(), name, remote.Master, remote.Version); err != nil {
-				return err
+			if invocationContext == nil || invocationContext.Remote == "" {
+				if err := dispatchTo(command.Context(), name, remote.Master, ""); err != nil {
+					return err
+				}
 			}
 			fmt.Fprintf(out, "remote:  %s\nmaster:  %s\n", name, remote.Master)
 
@@ -531,8 +542,7 @@ func newRemoteRemoveCommand() *cobra.Command {
 				// Best effort, like logout: removal must not strand a live
 				// session server-side, but an unreachable master cannot
 				// block the removal either.
-				c := remoteClient(cfg, target)
-				if err := c.Logout(command.Context()); err != nil {
+				if err := revokeRemoteSession(command.Context(), cfg, name, target); err != nil {
 					fmt.Fprintf(command.ErrOrStderr(), "warning: server-side revoke failed: %v\n", err)
 				}
 			}

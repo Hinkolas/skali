@@ -74,6 +74,8 @@ func explainUnknownFields(data []byte, err error) error {
 	return diagnostics
 }
 
+var ErrNotFound = errors.New("no skali.yml or skali.yaml found")
+
 func Discover(explicit, start string) (string, error) {
 	if explicit != "" {
 		absolute, err := filepath.Abs(explicit)
@@ -113,7 +115,7 @@ func Discover(explicit, start string) (string, error) {
 		}
 		directory = parent
 	}
-	return "", fmt.Errorf("no skali.yml or skali.yaml found from %s", start)
+	return "", fmt.Errorf("%w from %s", ErrNotFound, start)
 }
 
 func regularFile(path string) bool {

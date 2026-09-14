@@ -63,7 +63,7 @@ func TestManifestUpgradeAddsMissingWatermark(t *testing.T) {
 		return execute(newRootCommand(), "manifest", "upgrade", "--manifest", path, "--to", "0.2.0")
 	})
 	require.NoError(t, err)
-	require.Equal(t, "upgraded "+path+": added skali: v0.2.0\n", out)
+	require.Equal(t, "upgraded "+path+": added skali: v0.2.0\nreviewed with working-tree compiler v0.0.0-dev\n", out)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "# a comment\nskali: v0.2.0\n"+upgradeFixtureBody, string(data))
@@ -82,8 +82,8 @@ func TestManifestUpgradeAlreadyCurrent(t *testing.T) {
 	out, err = runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "manifest", "upgrade", "--manifest", newer)
 	})
-	require.NoError(t, err)
-	require.Equal(t, newer+" is reviewed against v0.2.0, newer than v0.1.0-rc.3; nothing to do\n", out)
+	require.ErrorContains(t, err, "newer than this compiler")
+	require.Empty(t, out)
 }
 
 func TestManifestUpgradeDevBuildNeedsTo(t *testing.T) {
@@ -94,6 +94,30 @@ func TestManifestUpgradeDevBuildNeedsTo(t *testing.T) {
 	require.ErrorContains(t, err, "--to")
 	err = execute(newRootCommand(), "manifest", "upgrade", "--manifest", path, "--to", "latest")
 	require.ErrorContains(t, err, `--to "latest" is not a skali release`)
+}
+
+func TestReleasedCompilerCannotCertifyAnotherRelease(t *testing.T) {
+	withCLIVersion(t, "v0.4.0")
+	path := writeManifestFixture(t, "skali: v0.3.0\n")
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	err = execute(newRootCommand(), "manifest", "upgrade", "--manifest", path, "--to", "v0.5.0")
+	require.Error(t, err)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}
+
+func TestManifestUpgradePreservesLineEndingsAndRejectsUnsafeShapes(t *testing.T) {
+	text := []byte("# header\r\nskali: v0.3.0  # review\r\nname: app\r\n")
+	rewritten, _, err := upgradeManifest(text, "v0.4.0")
+	require.NoError(t, err)
+	require.Equal(t, "# header\r\nskali: v0.4.0  # review\r\nname: app\r\n", string(rewritten))
+	for _, source := range []string{"{skali: v0.3.0, name: app}", "skali: >\n  v0.3.0\nname: app\n", "skali: &release v0.3.0\nname: app\n"} {
+		rewritten, _, err = upgradeManifest([]byte(source), "v0.4.0")
+		require.Error(t, err)
+		require.Nil(t, rewritten)
+	}
 }
 
 // A watermark moved past a changed entry the manifest has not absorbed is
@@ -107,10 +131,10 @@ func TestManifestUpgradeReportsWhatStillFails(t *testing.T) {
 		return execute(newRootCommand(), "manifest", "upgrade", "--manifest", path)
 	})
 	require.ErrorContains(t, err, "applications.web.bogus: unknown field")
-	require.Equal(t, "upgraded "+path+": version \"1\" -> skali: v0.1.0-rc.3\n", out)
+	require.Empty(t, out)
 	data, err := os.ReadFile(filepath.Join(directory, "skali.yml"))
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(string(data), "skali: v0.1.0-rc.3\n"))
+	require.True(t, strings.HasPrefix(string(data), "version: \"1\"\n"))
 }
 
 func TestValidatePrintsReviewNote(t *testing.T) {

@@ -24,10 +24,10 @@ func newSkillCommand() *cobra.Command {
 		Use:   "skill",
 		Short: "Manage the skali skill for coding agents",
 		Long: "The skill has two parts (docs/versioning.md, decision 6). skill install " +
-			"writes the version-neutral shell and the architecture guide into the " +
+			"writes a small operational guide into the " +
 			"agent's skill directory once; skali upgrade refreshes it. skill read " +
 			"prints the version-bound references (the manifest grammar, the CLI " +
-			"surface) and dispatches like every workflow command, so run from a " +
+			"surface and platform architecture) and dispatches like every workflow command, so run from a " +
 			"project directory it answers at the release of the project's target " +
 			"cluster.",
 	}
@@ -41,9 +41,9 @@ func newSkillInstallCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "install",
 		Short: "Install the skali skill for coding agents",
-		Long: "Installs the skali skill shell (SKILL.md plus the application architecture " +
-			"guide) into the user-level skill directories of the selected coding " +
-			"agents. The shell tells the agent to read the manifest and CLI references " +
+		Long: "Installs the skali operational skill shell (SKILL.md) " +
+			"into the user-level skill directories of the selected coding " +
+			"agents. The shell tells the agent to read the manifest, architecture and CLI references " +
 			"through skali skill read, which answers at the release of the project's " +
 			"target cluster. The installed directory is owned by this command and is " +
 			"refreshed by skali upgrade.",
@@ -80,7 +80,7 @@ func newSkillReadCommand() *cobra.Command {
 		Use:   "read [topic]",
 		Short: "Print a skali reference at the target's release",
 		Long: "Prints one of the references coding agents read instead of guessing: " +
-			"manifest (every skali.yaml field, default, unit, and validation rule) or " +
+			"manifest (grammar), architecture (platform behavior), or " +
 			"cli (the commands used from the terminal). Without a topic the topics are " +
 			"listed. Run from the project directory the command dispatches to the " +
 			"release of the project's target cluster, so the reference matches the " +
@@ -91,6 +91,8 @@ func newSkillReadCommand() *cobra.Command {
 		ValidArgsFunction: completeTopics,
 		RunE: func(command *cobra.Command, args []string) error {
 			out := command.OutOrStdout()
+			fmt.Fprintln(out, versionDescription())
+			fmt.Fprintln(out)
 			if len(args) == 0 {
 				if since != "" {
 					return errors.New("--since applies to the manifest topic; run skali skill read manifest --since <release>")
@@ -118,6 +120,7 @@ func newSkillReadCommand() *cobra.Command {
 			return nil
 		},
 	}
+	addVersionFlags(command, true)
 	command.Flags().StringVar(&since, "since", "", "print the manifest changes since this release instead of the reference")
 	return command
 }

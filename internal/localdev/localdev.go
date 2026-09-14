@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Hinkolas/skali/internal/bundle"
+	"github.com/Hinkolas/skali/internal/filelock"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/version"
 )
@@ -47,31 +48,9 @@ func PlatformVersion() string {
 	return ""
 }
 
-const (
-	clusterPrefix      = "skali-dev-"
-	workingTreeCluster = clusterPrefix + "working-tree"
-	// legacyClusterName is the single shared cluster of releases before
-	// v0.1.0-rc.3. Dispatch still runs those releases for skali dev, and
-	// they keep using it; this code only lists, stops, and prunes it.
-	legacyClusterName = "skali-dev"
-)
-
-// ClusterName names this binary's local platform. Each platform release has
-// its own cluster (docs/versioning.md, decision 5), so the name carries the
-// release; the working tree has one fixed cluster.
-func ClusterName() string {
-	return utils.EnvOr("SKALI_DEV_CLUSTER", ClusterNameFor(PlatformVersion()))
-}
-
-// ClusterNameFor derives the cluster name of a platform release; empty is
-// the working tree. Dots become dashes: a k3d cluster name is an RFC 1123
-// hostname and doubles as the node's hostname, which stays one DNS label.
-func ClusterNameFor(release string) string {
-	if release == "" {
-		return workingTreeCluster
-	}
-	return clusterPrefix + strings.ReplaceAll(release, ".", "-")
-}
+// The development installation has one durable identity, independent of the
+// selected release. Test overrides must use an isolated state directory too.
+func ClusterName() string { return utils.EnvOr("SKALI_DEV_CLUSTER", "skali-dev") }
 
 // HTTPPort() publishes the traefik edge; the local platform is HTTP-only
 // by decision (TLS issuance is a production concern). RegistryPort()
@@ -232,8 +211,8 @@ func readState(path string) (*State, error) {
 	return &state, nil
 }
 
-// Record is the durable identity of one local platform: enough to list,
-// stop, and prune it without touching its secrets.
+// Record identifies a recorded platform without exposing its credentials.
+// Obsolete records are used only to produce explicit cleanup instructions.
 type Record struct {
 	Name        string
 	Version     string // the platform release; empty for the working tree
@@ -284,7 +263,7 @@ func Records() ([]Record, error) {
 	if legacy != nil {
 		name := legacy.Cluster
 		if name == "" {
-			name = legacyClusterName
+			name = "skali-dev"
 		}
 		release, _ := version.PublishedSkalidVersion(legacy.SkalidImage)
 		records = append(records, Record{
@@ -300,30 +279,74 @@ func Records() ([]Record, error) {
 	return records, nil
 }
 
-// RemoveRecord deletes the named cluster's record directory (record,
-// kubeconfig, registries config).
-func RemoveRecord(name string) error {
-	dir, err := ClusterDir(name)
+// Lock serializes lifecycle operations. It lives outside the record directory
+// so reset cannot unlink an inode another process is waiting to lock.
+type lifecycleLockKey struct{}
+
+// LockContext keeps a lifecycle operation and its login/cleanup in one lock.
+func LockContext(ctx context.Context) (context.Context, func(), error) {
+	unlock, err := Lock(ctx)
+	return context.WithValue(ctx, lifecycleLockKey{}, true), unlock, err
+}
+
+func Lock(ctx context.Context) (func(), error) {
+	if held, _ := ctx.Value(lifecycleLockKey{}).(bool); held {
+		return func() {}, nil
+	}
+	dir, err := StateDir()
+	if err != nil {
+		return nil, err
+	}
+	return filelock.Acquire(ctx, filepath.Join(dir, "dev", "."+ClusterName()+".lock"))
+}
+
+// ObsoletePlatforms reports exact cleanup commands for records created by the
+// abandoned per-release model. It never adopts, stops, or removes them.
+func ObsoletePlatforms() error {
+	records, err := Records()
 	if err != nil {
 		return err
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("localdev: remove record: %w", err)
+	var hints []string
+	for _, record := range records {
+		if record.Name == ClusterName() && !record.Legacy {
+			continue
+		}
+		// Isolated test names are not another release of the user's platform.
+		if !record.Legacy && !strings.HasPrefix(record.Name, "skali-dev-v") && record.Name != "skali-dev-working-tree" {
+			continue
+		}
+		dir, _ := ClusterDir(record.Name)
+		if record.Legacy {
+			root, _ := StateDir()
+			hints = append(hints, fmt.Sprintf("k3d cluster delete %s; then remove %s, %s, and %s", record.Name, filepath.Join(root, legacyStateFile), filepath.Join(root, legacyKubeconfigFile), filepath.Join(root, legacyRegistriesFile)))
+			continue
+		}
+		hints = append(hints, fmt.Sprintf("k3d cluster delete %s; then remove %s", record.Name, dir))
+	}
+	if len(hints) > 0 {
+		return fmt.Errorf("old local platform records need explicit cleanup (deletes their local data):\n  %s", strings.Join(hints, "\n  "))
 	}
 	return nil
 }
 
-// RemoveLegacyRecord deletes exactly the three files of the legacy record
-// and nothing else: the per-cluster records share the parent directory.
-func RemoveLegacyRecord() error {
-	dir, err := StateDir()
-	if err != nil {
-		return err
+// CheckVersion refuses all implicit release and substrate transitions.
+func CheckVersion(state *State) error {
+	if state == nil {
+		return nil
 	}
-	for _, file := range []string{legacyStateFile, legacyKubeconfigFile, legacyRegistriesFile} {
-		if err := os.Remove(filepath.Join(dir, file)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("localdev: remove legacy record: %w", err)
+	if state.Version != PlatformVersion() || state.K3sImage != K3sImage {
+		installed, wanted := state.Version, PlatformVersion()
+		if installed == "" {
+			installed = "working tree"
 		}
+		if wanted == "" {
+			wanted = "working tree"
+		}
+		return fmt.Errorf("local dev platform runs %s (%s); selected CLI requires %s (%s); run skali dev reset to delete the local platform and its data, then skali dev to recreate it", installed, state.K3sImage, wanted, K3sImage)
+	}
+	if state.Version != "" && state.SkalidImage != version.PublishedSkalidImage(state.Version) {
+		return fmt.Errorf("local platform image and recorded release disagree; run skali dev reset")
 	}
 	return nil
 }
@@ -340,15 +363,37 @@ func SaveState(state *State) error {
 	if err != nil {
 		return fmt.Errorf("localdev: encode state: %w", err)
 	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		return fmt.Errorf("localdev: write state: %w", err)
+	f, err := os.CreateTemp(filepath.Dir(path), ".state-*")
+	if err != nil {
+		return err
 	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err = f.Write(raw); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // RemoveState deletes this platform's record directory (record,
 // kubeconfig, registries config).
-func RemoveState() error { return RemoveRecord(ClusterName()) }
+func RemoveState() error {
+	dir, err := ClusterDir(ClusterName())
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(dir)
+}
 
 // NewState generates the secrets of a fresh installation.
 func NewState(skalidImage string) (*State, error) {
@@ -571,8 +616,8 @@ func Start(ctx context.Context) error {
 }
 
 // k3dRetryingBusyPorts runs a k3d command that binds the platform's host
-// ports. Ensure stops the other local platform first and k3d cluster stop
-// waits for its container to exit, but Docker Desktop's port proxy can
+// ports. A recently stopped cluster may have exited while Docker Desktop's
+// port proxy still holds the bindings; it can
 // release 127.0.0.1 bindings a moment later; a port still busy gets a
 // short, bounded retry instead of a failure.
 func k3dRetryingBusyPorts(ctx context.Context, args ...string) ([]byte, error) {

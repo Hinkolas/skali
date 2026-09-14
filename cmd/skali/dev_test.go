@@ -47,6 +47,12 @@ type fakeRuns struct {
 	srv            *httptest.Server
 }
 
+func (f *fakeRuns) cancelled() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.cancels...)
+}
+
 func newFakeRuns(t *testing.T) *fakeRuns {
 	t.Helper()
 	f := &fakeRuns{byID: map[string]client.Run{}}
@@ -131,7 +137,7 @@ func TestDevResolveInFlight(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, devInFlightProceed, action)
 		require.Empty(t, out)
-		require.Empty(t, f.cancels)
+		require.Empty(t, f.cancelled())
 	})
 
 	t.Run("ForceCancelsRunningRun", func(t *testing.T) {
@@ -141,7 +147,7 @@ func TestDevResolveInFlight(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, devInFlightProceed, action)
 		require.Contains(t, out, "cancelling in-flight deployment run r1 (--force)")
-		require.Equal(t, []string{"r1"}, f.cancels)
+		require.Equal(t, []string{"r1"}, f.cancelled())
 	})
 
 	t.Run("ForceToleratesFinishedRun", func(t *testing.T) {
@@ -161,7 +167,7 @@ func TestDevResolveInFlight(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, devInFlightProceed, action)
 		require.Contains(t, out, "a teardown is in flight; waiting for run r1 to finish")
-		require.Empty(t, f.cancels)
+		require.Empty(t, f.cancelled())
 	})
 
 	t.Run("AttachesToDeploymentRun", func(t *testing.T) {
@@ -173,7 +179,7 @@ func TestDevResolveInFlight(t *testing.T) {
 		require.Equal(t, devInFlightAttached, action)
 		require.Contains(t, out, "a deployment is already in flight; attaching to run r1")
 		require.Contains(t, out, "ready")
-		require.Empty(t, f.cancels)
+		require.Empty(t, f.cancelled())
 	})
 
 	t.Run("FailedRunSurfaces", func(t *testing.T) {

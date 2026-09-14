@@ -41,6 +41,21 @@ func (silentProgress) Note(string)  {}
 // bundle stages in order, and the bootstrap operator user. It returns the
 // installation state for login.
 func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
+	unlock, err := Lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := ObsoletePlatforms(); err != nil {
+		return nil, err
+	}
+	existing, err := LoadState()
+	if err != nil && !errors.Is(err, ErrNotInstalled) {
+		return nil, err
+	}
+	if err := CheckVersion(existing); err != nil {
+		return nil, err
+	}
 	progress := opts.Progress
 	if progress == nil {
 		progress = silentProgress{}
@@ -95,28 +110,6 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		return nil, fmt.Errorf("a %s cluster already exists but no local installation record does: "+
 			"remove it with `k3d cluster delete %s`, or pick another name via SKALI_DEV_CLUSTER",
 			ClusterName(), ClusterName())
-	}
-	// One local platform runs at a time: every platform binds the same
-	// host ports, so switching releases stops the other one, state
-	// retained. Only recorded platforms are ours to stop.
-	records, err := Records()
-	if err != nil {
-		return nil, err
-	}
-	for _, other := range clustersToStop(records, statuses, ClusterName()) {
-		progress.Start("Stop cluster " + other)
-		if err := StopFor(ctx, other); err != nil {
-			return nil, err
-		}
-		progress.Done("one local platform runs at a time")
-	}
-	// The k3s pin is a create-time property of the node container. A
-	// release ships its pin in a new cluster; only the working tree can see
-	// the pin move under an existing cluster, and recreation is the pickup.
-	if status != ClusterAbsent && state.K3sImage != K3sImage {
-		progress.Start("Check k3s pin")
-		progress.Skip(fmt.Sprintf("moved to %s; this cluster runs %s, skali dev reset recreates it",
-			K3sImage, state.K3sImage))
 	}
 
 	// Public platform images pre-pull on the host in parallel with the
@@ -303,18 +296,6 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	}
 	progress.Done(MasterURL())
 	return finish()
-}
-
-// clustersToStop names the recorded platforms other than self that are
-// running; at most one can be, since they all bind the same host ports.
-func clustersToStop(records []Record, statuses map[string]ClusterStatus, self string) []string {
-	var stop []string
-	for _, record := range records {
-		if record.Name != self && StatusOf(statuses, record.Name) == ClusterRunning {
-			stop = append(stop, record.Name)
-		}
-	}
-	return stop
 }
 
 // bundleProfile derives the bundle profile of this installation.

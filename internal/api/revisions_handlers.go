@@ -3,6 +3,7 @@ package api
 import (
 	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,12 +36,13 @@ type revisionSummaryPayload struct {
 }
 
 func newRevisionSummaryPayload(r *store.ListRevisionsRow) revisionSummaryPayload {
+	schema, _ := strconv.Atoi(r.SchemaVersion)
 	return revisionSummaryPayload{
 		ID:                  r.ID.String(),
 		ProjectID:           r.ProjectID.String(),
 		EnvironmentID:       r.EnvironmentID.String(),
 		DefinitionVersionID: r.DefinitionVersionID.String(),
-		Schema:              int(r.Schema),
+		Schema:              schema,
 		Checksum:            r.Checksum,
 		DefinitionHash:      r.DefinitionHash,
 		ValuesHash:          r.ValuesHash,

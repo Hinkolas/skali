@@ -61,6 +61,7 @@ func newValidateCommand() *cobra.Command {
 			return nil
 		},
 	}
+	addVersionFlags(command, false)
 	command.Flags().StringVar(&manifestPath, "manifest", "", "manifest path; defaults to skali.yml or skali.yaml")
 	command.Flags().StringVar(&envFile, "env-file", "", "dotenv file validated against the manifest's value requirements")
 	return command
@@ -158,6 +159,7 @@ func newCompileCommand() *cobra.Command {
 			}
 		},
 	}
+	addVersionFlags(command, false)
 	command.Flags().StringVar(&manifestPath, "manifest", "", "manifest path; defaults to skali.yml or skali.yaml")
 	command.Flags().StringVar(&target, "target", "definition", "compile target: definition, revision, or kubernetes")
 	command.Flags().StringVar(&environment, "environment", "local", "environment name recorded in revision output")

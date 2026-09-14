@@ -300,7 +300,7 @@ func TestRunUpgradeChecksumMismatchLeavesFileUntouched(t *testing.T) {
 	require.Equal(t, original, got)
 	entries, readErr := os.ReadDir(dir)
 	require.NoError(t, readErr)
-	require.Len(t, entries, 1, "no temp files left behind")
+	require.Len(t, entries, 2, "only the binary and stable installation lock remain")
 }
 
 func TestRunUpgradeUnwritableDirErrorsBeforeDownload(t *testing.T) {
@@ -424,4 +424,17 @@ func TestRunUpgradePrunesUnreferencedCache(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Stat(kept)
 	require.NoError(t, err)
+}
+
+func TestExplicitUpgradeRechecksDiskBeforeClaimingNoOp(t *testing.T) {
+	server := newFakeUpgradeServer(t, "v0.4.0", releaseAssets(fakeCLI("v0.4.0")))
+	executable := writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.0"))
+	opts := server.options("v0.4.0", updates.ChannelStable, executable)
+	opts.Requested = "v0.4.0"
+	var out bytes.Buffer
+	require.NoError(t, runUpgrade(context.Background(), &out, opts))
+	current, err := installedCLIVersion(context.Background(), executable)
+	require.NoError(t, err)
+	require.Equal(t, "v0.4.0", current)
+	require.Contains(t, out.String(), "current  v0.3.0")
 }

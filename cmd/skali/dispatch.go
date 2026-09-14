@@ -19,6 +19,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/filelock"
 	"github.com/Hinkolas/skali/internal/installer"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
@@ -69,6 +70,7 @@ type dispatcher struct {
 	stderr      io.Writer
 	root        func() *cobra.Command
 	spawn       func(ctx context.Context, path string, args, env []string) (childStatus, error)
+	selected    *versionContext
 	now         func() time.Time
 }
 
@@ -84,7 +86,7 @@ func newDispatcher(args []string) (*dispatcher, error) {
 	home, _ := os.UserHomeDir()
 	return &dispatcher{
 		args:        args,
-		env:         os.Getenv,
+		env:         dispatchEnvironment,
 		environ:     os.Environ,
 		homeVersion: versionpkg.Version,
 		installed:   versionpkg.Version,
@@ -107,11 +109,30 @@ func newDispatcher(args []string) (*dispatcher, error) {
 // ran in a child (code is the status to exit with); otherwise the caller
 // runs it in this process.
 func dispatch(args []string) (handled bool, code int) {
-	d, err := newDispatcher(args)
+	frozen, err := contextFromEnvironment()
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return true, 1
+	}
+	if frozen != nil {
+		invocationContext = frozen
 		return false, 0
 	}
-	return d.run()
+	d, err := newDispatcher(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return true, 1
+	}
+	// A shell launched by a worker is not itself that worker.
+	d.env = func(key string) string {
+		if key == envDispatched {
+			return ""
+		}
+		return os.Getenv(key)
+	}
+	handled, code = d.run()
+	invocationContext = d.selected
+	return handled, code
 }
 
 // dispatchGate names the reason a command line never dispatches, or ""
@@ -122,14 +143,13 @@ func dispatchGate(inv invocation, env func(string) string, home, executable, cac
 		return reason
 	}
 	switch {
-	case inv.help || inv.version:
+	case inv.version:
 		return "help"
 	case inv.command == "":
 		return "no command"
-	case noDispatchCommands[inv.command]:
+	case homeInvocation(inv):
 		return inv.command + " always runs at home"
-	case noDispatchPaths[inv.path]:
-		return inv.path + " always runs at home"
+
 	}
 	return ""
 }
@@ -145,8 +165,6 @@ func handoffGate(env func(string) string, home, executable, cacheDir string) str
 		return envNoDispatch + " is set"
 	case !versionpkg.IsRelease(home):
 		return "development build " + home
-	case insideDir(executable, cacheDir):
-		return "running from the cache"
 	}
 	return ""
 }
@@ -185,70 +203,122 @@ func (d *dispatcher) style() *clirender.Style {
 	return clirender.StyleFor(d.stderr)
 }
 
+func (d *dispatcher) failure(err error) (bool, int) {
+	fmt.Fprintln(d.stderr, "error:", err)
+	return true, 1
+}
+
 func (d *dispatcher) run() (bool, int) {
 	inv := preparseArgs(d.args, d.root)
 	if reason := dispatchGate(inv, d.env, d.homeVersion, d.executable, d.cacheDir); reason != "" {
 		d.note(inv, "skipped (%s)", reason)
+		d.selected = &versionContext{Release: d.homeVersion, Source: "this CLI", Mode: "home"}
 		return false, 0
 	}
 	cfg, err := cliconfig.Load()
 	if err != nil {
-		return false, 0
+		return d.failure(err)
 	}
 	target, err := resolveRemoteTarget(cfg, inv.manifest, d.cwd, inv.remote)
 	if err != nil {
-		d.note(inv, "skipped (%v)", err)
-		return false, 0
+		// No configured target is a supported local-only workflow; malformed
+		// bindings and explicit selections never fall through to home.
+		if errors.Is(err, errNoRemote) {
+			d.selected = &versionContext{Resolved: true, Release: d.homeVersion, Source: "this CLI", Mode: "home"}
+			if !inv.completion && inv.command != "skill" {
+				fmt.Fprintf(d.stderr, "using skali %s (home; no target)\n", d.homeVersion)
+			}
+			return false, 0
+		}
+		if inv.completion {
+			return true, 0
+		}
+		return d.failure(err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
+	source := "current remote"
+	if target.Binding != nil {
+		source = "checkout binding"
+	}
+	if inv.remote != "" {
+		source = "--remote"
+	}
+	mode := "verified"
 	record := target.Remote.Version
-	if record == "" {
-		if record = d.probeVersion(ctx, target.Remote.Master); record != "" {
-			target.Remote.Version = record
-			_ = cliconfig.Save(cfg)
+	if inv.offline || inv.completion {
+		mode = "offline"
+		if !versionpkg.IsRelease(record) {
+			if inv.completion {
+				return true, 0
+			}
+			return d.failure(fmt.Errorf("remote %s has no recorded release; connect once without --offline", target.Name))
+		}
+	} else {
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		probe := client.New(target.Remote.Master, "", caller())
+		probe.PinInstance(target.Remote.Instance, nil)
+		err := probe.Health(probeCtx)
+		cancel()
+		if err != nil {
+			return d.failure(fmt.Errorf("verify remote %s: %w; local workflows can use --offline with a recorded release", target.Name, err))
+		}
+		record = probe.ObservedVersion()
+		if !versionpkg.IsRelease(record) {
+			return d.failure(fmt.Errorf("remote %s does not advertise a supported release (%q); use a working-tree CLI for a development daemon", target.Name, record))
+		}
+		if err := cliconfig.Observe(target.Name, *target.Remote, probe.ObservedInstance(), record); err != nil {
+			return d.failure(err)
+		}
+		if observed := probe.ObservedInstance(); observed != "" {
+			target.Remote.Instance = observed
 		}
 	}
-	want, ok := dispatchTarget(d.homeVersion, record)
-	if !ok {
-		d.note(inv, "remote %s runs skalid %q, this skali is %s", target.Name, record, d.homeVersion)
-		return false, 0
+	if lacksCommand(inv.path, record) {
+		if inv.completion {
+			return true, 0
+		}
+		return d.failure(fmt.Errorf("remote %s runs unsupported prerelease %s; this versioning contract starts at %s", target.Name, record, minimumDispatchRelease))
 	}
-	if lacksCommand(inv.path, want) {
-		fmt.Fprintf(d.stderr, "remote %s runs skalid %s, which has no %s; this skali (%s) answers instead\n",
-			target.Name, want, inv.path, d.homeVersion)
+	d.selected = &versionContext{Resolved: true, Home: d.executable, Remote: target.Name, Master: target.Remote.Master, Instance: target.Remote.Instance, Release: record, Source: source, Mode: mode, Binding: target.Binding}
+	if !inv.completion && inv.command != "skill" {
+		fmt.Fprintf(d.stderr, "target %s: skali %s (%s, %s)\n", target.Name, record, source, mode)
+	}
+	want, different := dispatchTarget(d.homeVersion, record)
+	if !different {
 		return false, 0
 	}
 	dispatchTried = true
-	fetch, err := d.ensureCLI(ctx, target.Name, want)
-	if err != nil {
-		if ctx.Err() != nil {
-			return true, 130
+	var fetch *cliFetch
+	if inv.offline || inv.completion {
+		path := installer.CLICachePath(d.cacheDir, want)
+		data, ok := installer.CachedBinary(path)
+		if !ok {
+			if inv.completion {
+				return true, 0
+			}
+			return d.failure(fmt.Errorf("skali %s is not cached; connect once without --offline", want))
 		}
-		d.warn(err)
-		return false, 0
+		fetch = &cliFetch{version: want, path: path, binary: data}
+	} else {
+		fetch, err = d.ensureCLI(ctx, target.Name, want)
+		if err != nil {
+			if ctx.Err() != nil {
+				return true, 130
+			}
+			return d.failure(err)
+		}
 	}
-	if versionpkg.Older(d.installed, fetch.version) {
+	if !inv.completion && versionpkg.Older(d.installed, fetch.version) {
 		d.promoteHome(ctx, fetch.binary, fetch.version, target.Name)
 	}
+	handled, code := d.runLoop(ctx, target.Name, fetch.version, fetch.path)
 	if fetch.fetched {
-		pruneCLICache(cfg, d.installed, d.cacheDir)
+		if current, err := cliconfig.Load(); err == nil {
+			pruneCLICache(current, d.installed, d.cacheDir)
+		}
 	}
-	d.note(inv, "running skali %s for remote %s", fetch.version, target.Name)
-	return d.runLoop(ctx, target.Name, fetch.version, fetch.path)
-}
-
-// probeVersion learns a daemon's version with one health round trip: it
-// rides the response headers pre-auth, on the one route every release
-// answers to every release (docs/versioning.md, decision 3). Unreachable
-// means no version and no dispatch; the command itself reports the outage.
-func (d *dispatcher) probeVersion(ctx context.Context, master string) string {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	probe := client.New(master, "", caller())
-	_ = probe.Health(ctx)
-	return probe.ObservedVersion()
+	return handled, code
 }
 
 // handoff runs the current command line in the release a command's own
@@ -266,8 +336,34 @@ func (d *dispatcher) handoff(ctx context.Context, remoteName, master, version st
 		}
 		return false, 0
 	}
+	cfg, err := cliconfig.Load()
+	if err != nil {
+		return d.failure(err)
+	}
+	instance := ""
+	if remote := cfg.Remotes[remoteName]; remote != nil {
+		if remote.Master != master {
+			return d.failure(fmt.Errorf("remote %s changed; run again", remoteName))
+		}
+		instance = remote.Instance
+	}
 	if version == "" {
-		version = d.probeVersion(ctx, master)
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		probe := client.New(master, "", caller())
+		probe.PinInstance(instance, nil)
+		if err := probe.Health(probeCtx); err != nil {
+			return d.failure(err)
+		}
+		version = probe.ObservedVersion()
+	}
+	if !versionpkg.IsRelease(version) {
+		return d.failure(fmt.Errorf("remote %s does not advertise a supported release (%q)", remoteName, version))
+	}
+	d.selected = &versionContext{Resolved: true, Home: d.executable, Remote: remoteName, Master: master, Instance: instance, Release: version, Source: "remote command", Mode: "verified"}
+
+	if versionpkg.IsRelease(version) && lacksCommand(inv.path, version) {
+		return d.failure(fmt.Errorf("unsupported prerelease %s; supported releases start at %s", version, minimumDispatchRelease))
 	}
 	want, ok := dispatchTarget(d.homeVersion, version)
 	if !ok {
@@ -280,8 +376,7 @@ func (d *dispatcher) handoff(ctx context.Context, remoteName, master, version st
 		if ctx.Err() != nil {
 			return true, 130
 		}
-		d.warn(err)
-		return false, 0
+		return d.failure(err)
 	}
 	if versionpkg.Older(d.installed, fetch.version) {
 		d.promoteHome(ctx, fetch.binary, fetch.version, remoteName)
@@ -323,10 +418,13 @@ func init() { dispatchTo = runHandoff }
 func runHandoff(ctx context.Context, remoteName, master, version string) error {
 	d, err := newDispatcher(os.Args[1:])
 	if err != nil {
-		return nil
+		return err
 	}
 	if handled, code := d.handoff(ctx, remoteName, master, version); handled {
 		return &dispatchedExit{code: code}
+	}
+	if d.selected != nil {
+		invocationContext = d.selected
 	}
 	return nil
 }
@@ -334,49 +432,61 @@ func runHandoff(ctx context.Context, remoteName, master, version string) error {
 // runLoop runs the command in the cached binary and, once, again in the
 // release the record moved to while it ran.
 func (d *dispatcher) runLoop(ctx context.Context, remoteName, want, path string) (bool, int) {
-	redispatched := false
-	for {
-		status, err := d.spawn(ctx, path, d.args, childEnv(d.environ()))
+	inv := preparseArgs(d.args, d.root)
+	for attempt := 0; ; attempt++ {
+		// Hold the cache lease until the child exits. Publication and pruning use
+		// this same lock; the worker never acquires it or dispatches recursively.
+		unlock, err := filelock.Shared(ctx, installer.CLILockPath(d.cacheDir, want))
 		if err != nil {
-			fmt.Fprintln(d.stderr, d.style().Yellow(fmt.Sprintf("warning: cached skali %s could not start: %v; running skali %s",
-				want, err, d.homeVersion)))
-			if insideDir(path, d.cacheDir) {
-				_ = os.RemoveAll(filepath.Dir(path))
+			return d.failure(err)
+		}
+		if _, valid := installer.CachedBinary(path); !valid {
+			unlock()
+			if inv.offline || inv.completion {
+				return d.failure(fmt.Errorf("cached skali %s is no longer available", want))
 			}
-			return false, 0
+			fetch, err := d.ensureCLI(ctx, remoteName, want)
+			if err != nil {
+				return d.failure(err)
+			}
+			path = fetch.path
+			unlock, err = filelock.Shared(ctx, installer.CLILockPath(d.cacheDir, want))
+			if err != nil {
+				return d.failure(err)
+			}
 		}
-		if status.Code != exitVersionMoved || redispatched {
+		status, err := d.spawn(ctx, path, d.args, contextEnvironment(d.environ(), d.selected))
+		unlock()
+		if err != nil {
+			return d.failure(fmt.Errorf("cached skali %s could not start: %w", want, err))
+		}
+		if inv.completion {
 			return true, d.finish(status)
 		}
-		cfg, moved, ok := d.recordMoved(remoteName, want)
+		if status.Code == exitVersionMoved && attempt > 0 && readOnlyInvocation(inv) {
+			return d.failure(fmt.Errorf("remote %s changed release again; run the command again", remoteName))
+		}
+		if status.Code != exitVersionMoved || !readOnlyInvocation(inv) {
+			return true, d.finish(status)
+		}
+		_, moved, ok := d.recordMoved(remoteName, want)
 		if !ok {
-			// 213 was the command's own status (skali exec passes the
-			// remote process's code through); nothing moved.
-			return true, d.finish(status)
+			return d.failure(fmt.Errorf("remote %s refused skali %s, but its new release could not be recorded; run the command again", remoteName, want))
 		}
-		redispatched = true
-		if moved == d.homeVersion {
-			fmt.Fprintln(d.stderr, d.style().Yellow(fmt.Sprintf("hint: remote %s now runs skalid %s; rerunning with this skali",
-				remoteName, moved)))
-			return false, 0
+		if inv.offline {
+			return d.failure(fmt.Errorf("selected release changed; run the command again online"))
 		}
 		fetch, err := d.ensureCLI(ctx, remoteName, moved)
 		if err != nil {
-			if ctx.Err() != nil {
-				return true, 130
-			}
-			d.warn(err)
-			return false, 0
+			return d.failure(err)
 		}
-		fmt.Fprintln(d.stderr, d.style().Yellow(fmt.Sprintf("hint: remote %s moved to skalid %s; rerunning with skali %s",
-			remoteName, fetch.version, fetch.version)))
-		if versionpkg.Older(d.installed, fetch.version) {
-			d.promoteHome(ctx, fetch.binary, fetch.version, remoteName)
+		if d.selected != nil {
+			d.selected.Release = moved
 		}
-		if fetch.fetched {
-			pruneCLICache(cfg, d.installed, d.cacheDir)
+		if versionpkg.Older(d.installed, moved) {
+			d.promoteHome(ctx, fetch.binary, moved, remoteName)
 		}
-		want, path = fetch.version, fetch.path
+		want, path = moved, fetch.path
 	}
 }
 
@@ -388,7 +498,7 @@ func (d *dispatcher) recordMoved(remoteName, ran string) (*cliconfig.Config, str
 		return nil, "", false
 	}
 	remote := cfg.Remotes[remoteName]
-	if remote == nil || !versionpkg.IsRelease(remote.Version) || remote.Version == ran {
+	if remote == nil || d.selected != nil && (remote.Master != d.selected.Master || remote.Instance != d.selected.Instance) || !versionpkg.IsRelease(remote.Version) || remote.Version == ran {
 		return nil, "", false
 	}
 	return cfg, remote.Version, true
@@ -410,6 +520,9 @@ func (d *dispatcher) finish(status childStatus) int {
 // execed by the dispatcher itself. Every outcome is one stderr line. The
 // running process keeps its own version; installed tracks the disk.
 func (d *dispatcher) promoteHome(ctx context.Context, binary []byte, target, remoteName string) bool {
+	if insideDir(d.executable, d.cacheDir) {
+		return false
+	}
 	style := d.style()
 	dir := filepath.Dir(d.executable)
 	if err := probeWritableDir(dir); err != nil {
@@ -421,24 +534,35 @@ func (d *dispatcher) promoteHome(ctx context.Context, binary []byte, target, rem
 			target, dir, sudo, target)))
 		return false
 	}
-	if err := installCLI(ctx, d.executable, binary, target); err != nil {
+	unlock, err := filelock.Acquire(ctx, d.executable+".lock")
+	if err != nil {
+		fmt.Fprintln(d.stderr, "warning: cannot lock home CLI:", err)
+		return false
+	}
+	defer unlock()
+	installed, err := installedCLIVersion(ctx, d.executable)
+	if err != nil {
+		fmt.Fprintln(d.stderr, "warning: cannot inspect home CLI:", err)
+		return false
+	}
+	d.installed = installed
+	if !versionpkg.IsRelease(installed) || !versionpkg.Older(installed, target) {
+		return false
+	}
+	if err := installCLIUnlocked(ctx, d.executable, binary, target); err != nil {
 		fmt.Fprintln(d.stderr, style.Yellow(fmt.Sprintf("warning: could not replace %s with skali %s: %v; running the cached copy",
 			d.executable, target, err)))
 		return false
 	}
-	refreshCompletions(ctx, clirender.NewTasks(io.Discard), d.executable, d.home)
-	refreshSkill(ctx, clirender.NewTasks(io.Discard), d.executable, d.home)
+	if warning := refreshCompletions(ctx, clirender.NewTasks(io.Discard), d.executable, d.home); warning != "" {
+		fmt.Fprintln(d.stderr, "warning:", warning)
+	}
+	if warning := refreshSkill(ctx, clirender.NewTasks(io.Discard), d.executable, d.home); warning != "" {
+		fmt.Fprintln(d.stderr, "warning:", warning)
+	}
 	fmt.Fprintf(d.stderr, "upgraded skali %s -> %s (remote %s runs skalid %s)\n", d.installed, target, remoteName, target)
 	d.installed = target
 	return true
-}
-
-// warn prints a fetch failure's one line; silent failures print nothing.
-func (d *dispatcher) warn(err error) {
-	var warning *dispatchWarning
-	if errors.As(err, &warning) {
-		fmt.Fprintln(d.stderr, d.style().Yellow("warning: "+warning.text))
-	}
 }
 
 // rerunAfterMismatch covers the cluster that moved while home matched its
@@ -448,10 +572,12 @@ func (d *dispatcher) warn(err error) {
 // same single rerun a dispatched child gets. Nothing happens in a child
 // (its parent reruns), with dispatch turned off, or for a refusal that did
 // not come from a named release remote, and not when this process already
-// tried to dispatch (home ran because the fetch failed, and a warning said
-// so); the caller then prints the error and the skew hint as usual. run is
-// dispatch, injected for tests.
+// tried to dispatch; the caller prints the error and skew hint. Only
+// explicitly read-only work can reach run, which is injected for tests.
 func rerunAfterMismatch(err error, env func(string) string, stderr io.Writer, tried bool, run func() (bool, int)) (bool, int) {
+	if !readOnlyInvocation(preparseArgs(os.Args[1:], newRootCommand)) {
+		return false, 0
+	}
 	if tried || env(envDispatched) != "" || env(envNoDispatch) != "" {
 		return false, 0
 	}
@@ -476,21 +602,15 @@ func exitCodeFor(err error) int {
 	if err == nil {
 		return 0
 	}
-	if os.Getenv(envDispatched) != "" && refusedAsWrongRelease(err) {
+	if dispatchEnvironment(envDispatched) != "" && readOnlyInvocation(preparseArgs(os.Args[1:], newRootCommand)) && refusedAsWrongRelease(err) {
 		return exitVersionMoved
 	}
 	return 1
 }
 
-// refusedAsWrongRelease recognizes the daemon's version refusal, by its
-// error code or by the skew the response recorded. The local platform is
-// excluded the way rerunAfterMismatch excludes it: skali dev owns it and
-// switches it itself, and a dispatched dev that failed for any other reason
-// must not turn into exit 213.
+// refusedAsWrongRelease recognizes only the daemon's typed version refusal.
+// Observing another release on an unrelated failure never permits replay.
 func refusedAsWrongRelease(err error) bool {
-	if api, ok := errors.AsType[*client.APIError](err); ok && api.Code == client.CodeCLIVersionMismatch {
-		return true
-	}
-	remote, server := skew.snapshot()
-	return remote != localRemoteName && versionpkg.ReleasesDiffer(versionpkg.Version, server)
+	api, ok := errors.AsType[*client.APIError](err)
+	return ok && api.Code == client.CodeCLIVersionMismatch
 }

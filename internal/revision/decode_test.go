@@ -2,6 +2,7 @@ package revision
 
 import (
 	"encoding/json"
+	"github.com/Hinkolas/skali/internal/compiler"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -9,7 +10,7 @@ import (
 
 func TestDecodeRoundTrip(t *testing.T) {
 	t.Parallel()
-	document := Revision{Schema: Schema, Project: "demo", Environment: "production"}
+	document := Revision{Definition: compiler.ProjectDefinition{Schema: compiler.DefinitionSchema}, Schema: Schema, Project: "demo", Environment: "production"}
 	data, err := json.Marshal(document)
 	require.NoError(t, err)
 	decoded, err := Decode(data)

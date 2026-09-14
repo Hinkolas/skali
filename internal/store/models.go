@@ -206,7 +206,7 @@ type DatabaseTenant struct {
 type DefinitionVersion struct {
 	ID              uuid.UUID
 	ProjectID       uuid.UUID
-	Schema          int32
+	SchemaVersion   string
 	DefinitionHash  string
 	Definition      []byte
 	Source          []byte
@@ -420,7 +420,7 @@ type Revision struct {
 	ProjectID           uuid.UUID
 	EnvironmentID       uuid.UUID
 	DefinitionVersionID uuid.UUID
-	Schema              int32
+	SchemaVersion       string
 	Checksum            string
 	DefinitionHash      string
 	ValuesHash          string

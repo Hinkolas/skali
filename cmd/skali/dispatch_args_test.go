@@ -8,7 +8,6 @@ import (
 )
 
 func TestPreparseArgs(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		name string
 		args []string
@@ -20,8 +19,8 @@ func TestPreparseArgs(t *testing.T) {
 		{"short help", []string{"-h"}, invocation{help: true}},
 		{"long help", []string{"deploy", "--help"}, invocation{command: "deploy", path: "deploy", help: true}},
 		{"version flag", []string{"--version"}, invocation{version: true}},
-		{"help command", []string{"help", "deploy"}, invocation{command: "help", help: true}},
-		{"completion request", []string{"__complete", "logs", ""}, invocation{command: "completion"}},
+		{"help command", []string{"help", "deploy"}, invocation{command: "deploy", path: "deploy", help: true}},
+		{"completion request", []string{"__complete", "logs", ""}, invocation{command: "logs", path: "logs", completion: true}},
 		{"double dash stops the scan", []string{"exec", "web", "--", "sh", "-c", "--remote", "x"}, invocation{command: "exec", path: "exec"}},
 		{"manifest", []string{"deploy", "--manifest", "app/skali.yml"}, invocation{command: "deploy", path: "deploy", manifest: "app/skali.yml"}},
 		{"manifest equals", []string{"validate", "--manifest=app/skali.yml"}, invocation{command: "validate", path: "validate", manifest: "app/skali.yml"}},
@@ -29,16 +28,15 @@ func TestPreparseArgs(t *testing.T) {
 		{"persistent remote on a group", []string{"run", "list", "--remote", "khz"}, invocation{command: "run", path: "run list", remote: "khz"}},
 		{"nested command", []string{"cluster", "status"}, invocation{command: "cluster", path: "cluster status"}},
 		{"dev dispatches", []string{"dev", "start", "--force"}, invocation{command: "dev", path: "dev start"}},
-		{"dev prune", []string{"dev", "prune", "--yes"}, invocation{command: "dev", path: "dev prune"}},
+		{"managed upgrade version", []string{"cluster", "upgrade", "--version", "v0.5.0"}, invocation{command: "cluster", path: "cluster upgrade"}},
 		{"dev remote override", []string{"dev", "--remote", "khz"}, invocation{command: "dev", path: "dev", remote: "khz"}},
 		{"skill read with since", []string{"skill", "read", "manifest", "--since", "v0.1.0-rc.2"}, invocation{command: "skill", path: "skill read"}},
 		{"skill install", []string{"skill", "install", "--agent", "claude"}, invocation{command: "skill", path: "skill install"}},
-		{"unknown command", []string{"frobnicate"}, invocation{}},
+		{"unknown command", []string{"frobnicate"}, invocation{command: "frobnicate", path: "frobnicate"}},
 		{"bare", nil, invocation{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 			require.Equal(t, tc.want, preparseArgs(tc.args, newRootCommand))
 		})
 	}
@@ -47,7 +45,6 @@ func TestPreparseArgs(t *testing.T) {
 // TestNoDispatchCommandsExist keeps the never-dispatch list honest: every
 // entry but cobra's own help names a real top-level command.
 func TestNoDispatchCommandsExist(t *testing.T) {
-	t.Parallel()
 	names := map[string]bool{}
 	for _, command := range newRootCommand().Commands() {
 		names[command.Name()] = true
@@ -65,9 +62,7 @@ func TestNoDispatchCommandsExist(t *testing.T) {
 	for path := range noDispatchPaths {
 		paths[path] = true
 	}
-	for path := range introducedIn {
-		paths[path] = true
-	}
+
 	for path := range paths {
 		found, _, err := newRootCommand().Find(strings.Fields(path))
 		require.NoError(t, err, path)
@@ -78,11 +73,10 @@ func TestNoDispatchCommandsExist(t *testing.T) {
 // A command path an older release lacks is answered at home rather than
 // by that release's group help.
 func TestLacksCommand(t *testing.T) {
-	t.Parallel()
 	require.True(t, lacksCommand("skill read", "v0.1.0-rc.2"))
 	require.True(t, lacksCommand("skill read", "v0.1.0-alpha.8"))
 	require.False(t, lacksCommand("skill read", "v0.1.0-rc.3"))
 	require.False(t, lacksCommand("skill read", "v0.2.0"))
-	require.False(t, lacksCommand("deploy", "v0.1.0-alpha.1"))
-	require.False(t, lacksCommand("skill install", "v0.1.0-alpha.1"))
+	require.True(t, lacksCommand("deploy", "v0.1.0-alpha.1"))
+	require.True(t, lacksCommand("skill install", "v0.1.0-alpha.1"))
 }

@@ -108,7 +108,14 @@ func runManagedUpdate(ctx context.Context, out io.Writer, reader *bufio.Reader, 
 	return nil
 }
 
-func waitAPIUpdate(ctx context.Context, out io.Writer, api *client.Client, id string) error {
+func waitAPIUpdate(ctx context.Context, out io.Writer, api *client.Client, id string) (result error) {
+	defer func() {
+		if result != nil {
+			if _, dispatched := passthroughExit(result); !dispatched {
+				result = fmt.Errorf("observation of cluster update %s ended: %w", id, result)
+			}
+		}
+	}()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	last := ""
@@ -120,6 +127,9 @@ func waitAPIUpdate(ctx context.Context, out io.Writer, api *client.Client, id st
 		}
 		status, err := api.UpdateStatus(ctx)
 		if err != nil {
+			if refusedAsWrongRelease(err) {
+				return handoffUpdateObservation(ctx, api, id)
+			}
 			var apiErr *client.APIError
 			var identityErr *client.InstanceMismatchError
 			if errors.As(err, &identityErr) || errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && apiErr.Status != 429 {

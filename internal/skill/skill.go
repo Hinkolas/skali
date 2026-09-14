@@ -10,8 +10,10 @@
 package skill
 
 import (
+	"context"
 	"embed"
 	"fmt"
+	"github.com/Hinkolas/skali/internal/filelock"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -50,6 +52,7 @@ func Topics() []Topic {
 	return []Topic{
 		{Name: "manifest", Summary: "every skali.yaml field, default, unit, and validation rule"},
 		{Name: "cli", Summary: "the skali commands an agent uses from the terminal"},
+		{Name: "architecture", Summary: "application architecture, defaults, and platform lifecycle"},
 	}
 }
 
@@ -137,6 +140,11 @@ func Installed(home string, agent Agent) bool {
 // CLAUDE_CONFIG_DIR-style overrides are not honored yet.
 func Install(home string, agent Agent) ([]string, error) {
 	dir := agent.Dir(home)
+	unlock, err := filelock.Acquire(context.Background(), dir+".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	existing, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
 	switch {
 	case err == nil:
@@ -146,11 +154,8 @@ func Install(home string, agent Agent) ([]string, error) {
 	case !os.IsNotExist(err):
 		return nil, fmt.Errorf("inspect %s: %w", dir, err)
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return nil, fmt.Errorf("clear %s: %w", dir, err)
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("create %s: %w", dir, err)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
 	}
 
 	var written []string
@@ -170,7 +175,7 @@ func Install(home string, agent Agent) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(target, data, 0o644); err != nil {
+		if err := writeAtomic(target, data); err != nil {
 			return err
 		}
 		written = append(written, target)
@@ -179,6 +184,46 @@ func Install(home string, agent Agent) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("write skill to %s: %w", dir, err)
 	}
+	// Publish the new shell before pruning stale references. Readers always
+	// see a complete SKILL.md, and an interrupted install is safe to retry.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	keep := map[string]bool{}
+	for _, path := range written {
+		keep[path] = true
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if !keep[path] {
+			if err := os.RemoveAll(path); err != nil {
+				return nil, err
+			}
+		}
+	}
 	sort.Strings(written)
 	return written, nil
+}
+
+func writeAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".skill-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if err := f.Chmod(0644); err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

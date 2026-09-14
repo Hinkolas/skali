@@ -25,6 +25,8 @@ func Validate(document *Document) yamldoc.Diagnostics {
 		add("skali", "is required: the skali release this manifest was last reviewed against, for example skali: %s", ReferenceRelease())
 	case !ok:
 		add("skali", "%q is not a skali release; expected a tag like %s", project.Skali, ReferenceRelease())
+	case version.IsRelease(version.Version) && version.Older(version.Version, watermark):
+		add("skali", "reviewed against %s, newer than this compiler (%s); select that release or review this release's references and explicitly edit the watermark to acknowledge the older target", watermark, version.Version)
 	default:
 		validateLedger(&diagnostics, document, Ledger, watermark)
 	}
@@ -193,13 +195,44 @@ func validateLedger(diagnostics *yamldoc.Diagnostics, document *Document, ledger
 		if change.Kind != ChangeChanged || !version.Older(watermark, change.Release) {
 			continue
 		}
+		matched := map[string]bool{}
 		for _, path := range paths {
-			if change.Matches(path) {
-				*diagnostics = append(*diagnostics, document.Diagnostic(path, fmt.Sprintf(
-					"%s (changed in %s; this manifest was reviewed against %s); %s, then set skali: %s or newer to acknowledge",
-					change.Message, change.Release, watermark, change.Hint, change.Release)))
-				break
+			if !change.WhenOmitted && change.Matches(path) {
+				matched[path] = true
 			}
 		}
+		if change.WhenOmitted {
+			// Expand wildcards against declared resources, then append any omitted
+			// fixed suffix (including omitted parent objects such as deployment).
+			prefix, suffix := "", change.Path
+			if i := strings.LastIndex(change.Path, "*"); i >= 0 {
+				prefix, suffix = change.Path[:i+1], change.Path[i+1:]
+			}
+			if prefix == "" {
+				if !document.Has(change.Path) {
+					matched[change.Path] = true
+				}
+			} else {
+				pattern := Change{Path: prefix}
+				for _, path := range paths {
+					if pattern.Matches(path) && !document.Has(path+suffix) {
+						matched[path+suffix] = true
+					}
+				}
+			}
+		}
+		for _, path := range utils.SortedKeys(matched) {
+			*diagnostics = append(*diagnostics, document.Diagnostic(path, fmt.Sprintf(
+				"%s (changed in %s; this manifest was reviewed against %s); %s, then explicitly review and edit skali: to acknowledge",
+				change.Message, change.Release, watermark, change.Hint)))
+		}
 	}
+}
+
+// ReviewChanges evaluates meaning/default changes against the original review
+// point before a command can replace that point with a newer watermark.
+func ReviewChanges(document *Document, watermark string) yamldoc.Diagnostics {
+	var diagnostics yamldoc.Diagnostics
+	validateLedger(&diagnostics, document, Ledger, watermark)
+	return diagnostics
 }

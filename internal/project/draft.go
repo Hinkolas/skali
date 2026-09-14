@@ -2,9 +2,9 @@ package project
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -193,7 +193,7 @@ func shortFormat(format string) string {
 // upsertDefinitionVersion inserts the content-addressed compiled definition
 // and returns the canonical row, which may predate this call.
 func upsertDefinitionVersion(ctx context.Context, q *store.Queries, projectID uuid.UUID, result *compiler.Result, source []byte, format string) (*store.DefinitionVersion, error) {
-	canonical, err := json.Marshal(result.Definition)
+	canonical, err := compiler.EncodeStoredDefinition(result.Definition)
 	if err != nil {
 		return nil, fmt.Errorf("project: encode definition: %w", err)
 	}
@@ -204,7 +204,7 @@ func upsertDefinitionVersion(ctx context.Context, q *store.Queries, projectID uu
 	if _, err := q.InsertDefinitionVersion(ctx, store.InsertDefinitionVersionParams{
 		ID:              id,
 		ProjectID:       projectID,
-		Schema:          int32(result.Definition.Schema),
+		SchemaVersion:   strconv.Itoa(result.Definition.Schema),
 		DefinitionHash:  result.Hash,
 		Definition:      canonical,
 		Source:          source,

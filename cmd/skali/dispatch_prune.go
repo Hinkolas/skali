@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Hinkolas/skali/internal/cliconfig"
+	"github.com/Hinkolas/skali/internal/filelock"
 	"github.com/Hinkolas/skali/internal/installer"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
@@ -64,10 +65,16 @@ func pruneCLICache(cfg *cliconfig.Config, home, cacheDir string) {
 		if err != nil || now.Sub(info.ModTime()) < pruneGrace {
 			continue
 		}
+		unlock, err := filelock.Try(installer.CLILockPath(cacheDir, name))
+		if err != nil || unlock == nil {
+			continue
+		}
 		trash := filepath.Join(dir, fmt.Sprintf(".trash-%s-%d", name, os.Getpid()))
 		if err := os.Rename(filepath.Join(dir, name), trash); err != nil {
+			unlock()
 			continue
 		}
 		_ = os.RemoveAll(trash)
+		unlock()
 	}
 }

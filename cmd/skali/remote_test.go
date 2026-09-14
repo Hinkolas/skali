@@ -62,7 +62,7 @@ func execute(cmd *cobra.Command, args ...string) error {
 
 func seedConfig(t *testing.T, cfg *cliconfig.Config) {
 	t.Helper()
-	require.NoError(t, cliconfig.Save(cfg))
+	require.NoError(t, cliconfig.Update(func(latest *cliconfig.Config) error { *latest = *cfg; return nil }))
 }
 
 func loadConfig(t *testing.T) *cliconfig.Config {
@@ -355,6 +355,7 @@ func TestRemoteLoginUnknownName(t *testing.T) {
 func TestRemoteLoginSwitchesCurrentOnSuccess(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ok"}`)) })
 	mux.HandleFunc("/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"session":` + sessionJSON + `}`))
 	})
@@ -733,7 +734,7 @@ func TestRemoteStatusHandsOffWithRecord(t *testing.T) {
 	output, err := runCapturingStdout(t, func() error { return execute(newRemoteStatusCommand()) })
 	_, ok := errors.AsType[*dispatchedExit](err)
 	require.True(t, ok, "%v", err)
-	require.Equal(t, []handoffCall{{remote: "myremote", master: master, version: "v0.4.0"}}, *calls)
+	require.Equal(t, []handoffCall{{remote: "myremote", master: master, version: ""}}, *calls)
 	require.Empty(t, output, "nothing is printed before the hand-off")
 }
 

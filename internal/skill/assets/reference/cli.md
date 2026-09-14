@@ -3,23 +3,29 @@
 The CLI is self describing: run `skali --help` and `skali <command> --help`
 for the current surface.
 
-Two commands work without any cluster and are useful while editing a
-manifest:
+References, validation, compilation and manifest upgrades select `--remote`,
+then the checkout binding, then the current remote. `--manifest PATH` selects
+another checkout. Online commands verify the target release; `--offline`
+uses its recorded release and an available matching CLI without remote discovery
+or CLI downloads. With no target, the invoked CLI answers. Read the provenance
+header and reread references when the target or release changes.
 
-- `skali validate` parses and validates the manifest, reporting errors
-  with file, line, column, and path. When the `skali` watermark and the
-  CLI are different releases it says so in one informational line.
-- `skali manifest upgrade` moves the `skali` watermark to the CLI's
-  release (or `--to <release>`), replacing a legacy `version` field on the
-  way, then compiles the manifest so any change the new watermark
-  acknowledges is reported with its migration hint.
-- `skali compile` prints the compiled project definition, showing
-  defaults and normalized units.
-- `skali skill read manifest` and `skali skill read cli` print these
-  references for the release the project's target cluster runs (bare
-  `skali skill read` lists the topics). `skali skill read manifest --since
-  <release>` lists the manifest grammar changes since that release, for a
-  manifest whose watermark is older than the CLI.
+- `skali validate` parses and validates with file, line, column and path errors.
+  A newer review watermark is rejected by an older released compiler.
+- `skali manifest upgrade` proposes safe mechanical edits and a review-point
+  advance, then validates before writing. Semantic changes requiring review
+  leave the source unchanged. Read the diagnostic, review the behavior and
+  deliberately edit the watermark to acknowledge it. A released CLI can certify
+  only its own release; working-tree builds require explicit `--to`.
+- `skali compile` prints the compiled definition, including defaults and
+  normalized units. Version-selection context goes to stderr.
+- `skali skill read manifest`, `skali skill read cli` and `skali skill read
+  architecture` serve references embedded in the matching CLI. Bare `skali skill
+  read` lists topics; `skali skill read manifest --since <release>` lists changes.
+  Every response identifies the answering release, target, source and mode.
+
+Offline validation does not verify the cluster's currently running release.
+Failed dispatch never permits substituting another release's documentation.
 
 `skali completion install` puts shell completions in place for the login
 shell (`install.sh` already does this); values such as environments, remotes,
@@ -36,12 +42,14 @@ run ids, and manifest commands then complete on tab.
   `d` detaches (host dev processes still stop).
 - `skali dev --preview` deploys everything in the cluster, exactly like a
   remote deploy would, ignoring dev blocks.
-- The local platform runs the same skali release as the project's target
-  cluster (the checkout binding, else the current remote, else the
-  installed skali), one local cluster per release; starting one stops the
-  other, and `skali dev prune` deletes the clusters no release in use
-  needs, after confirmation. `skali dev --remote <name>` runs the
-  release of another remote.
+- One fixed `skali-dev` platform uses the selected target's release. An absent
+  platform is created; a matching platform is reused. A different release or k3s
+  pin fails before changing it. Run `skali dev reset` explicitly to discard its
+  data and create the newly selected release. Working-tree/release transitions
+  also require reset. `skali dev --remote <name>` selects another target.
+- `skali dev stop` retains data; `skali dev start` restarts it. Stop, reset and
+  platform status work without the remote or a CLI download. Status identifies
+  the installed release. There is no `dev upgrade` or `dev prune`.
 - `skali dev run <name>` runs a named command from the manifest
   (`applications.<app>.commands`) on this machine with the application's
   resolved environment; `skali dev run <app> -- <command>...` runs a raw

@@ -54,19 +54,15 @@ func pendingSkewHint() string {
 // skewHint names a release skew between this CLI and a remote's daemon in
 // one line ending in the fix; empty when either side is not a release or
 // they match. Dispatch (docs/versioning.md, decision 1) normally closes the
-// gap before a command runs; the hint remains for development builds,
-// SKALI_NO_DISPATCH, and a fetch that failed, where skali upgrade --version
-// moves the CLI in either direction. The local platform is skali dev's and
-// each release has its own (decision 5): a local daemon of another release
-// answering means another release's platform is the running one, and
-// skali dev switches to this CLI's.
+// gap before a command runs; hints remain for explicit manual/development
+// invocations and release changes during a command. Local changes require reset.
 func skewHint(remote, cli, server string) string {
 	if !versionpkg.ReleasesDiffer(cli, server) {
 		return ""
 	}
 	if remote == localRemoteName {
 		return fmt.Sprintf("hint: the local platform answering runs skalid %s and this CLI is %s; "+
-			"each release has its own local platform, run skali dev to switch to this CLI's", server, cli)
+			"run skali dev reset to recreate the local platform at the selected release", server, cli)
 	}
 	subject := "the remote"
 	if remote != "" {

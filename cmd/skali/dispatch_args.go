@@ -13,57 +13,69 @@ import (
 // --remote and --manifest values that steer remote resolution, and the
 // switches that never dispatch.
 type invocation struct {
-	command  string // top-level command word; "" for bare skali or an unknown command
-	path     string // full command path below the root, for example "dev prune"
-	remote   string
-	manifest string
-	help     bool
-	version  bool
-	verbose  bool
+	command    string // top-level command word; "" for bare skali or an unknown command
+	path       string // full command path below the root, for example "dev start"
+	remote     string
+	manifest   string
+	help       bool
+	version    bool
+	offline    bool
+	completion bool
+	recover    bool
+	imageTar   bool
+	verbose    bool
 }
 
-// noDispatchCommands always run in the invoked binary: they manage remotes
-// and the binary itself, or work without any remote. Config-writing
-// commands in particular must stay home: an older writer would drop config
-// fields it does not know. The remote subcommands that talk to a daemon
-// (add, login, status) hand themselves to its release once their own probe
-// has named it (dispatchTo). dev dispatches like a workflow command: the
-// local platform runs at the release of the project's target cluster, each
-// release in its own cluster (docs/versioning.md, decision 5). skill read
-// dispatches too, so the reference an agent reads is the one for the
-// cluster that will compile the manifest (decision 6).
+// Home policies cover binary installation and remote configuration. API work
+// in remote commands performs an explicit pre-execution handoff after resolving
+// its positional target. Host cluster controls use the policy below.
 var noDispatchCommands = map[string]bool{
 	"version":    true,
 	"upgrade":    true,
 	"completion": true,
 	"help":       true,
-	"remote":     true,
-	"cluster":    true,
 }
 
-// noDispatchPaths pins single subcommands of dispatching groups to home.
-// dev prune reasons about every local platform on the machine; home is the
-// newest release in use and the only one that knows every record layout.
-// skill install writes the version-neutral shell, and the newest one is
-// home's.
+// Local lifecycle and skill installation never depend on a remote.
 var noDispatchPaths = map[string]bool{
-	"dev prune":     true,
+	"dev stop":      true,
+	"dev reset":     true,
+	"dev status":    true,
 	"skill install": true,
 }
 
-// introducedIn names the release a dispatched command path first shipped
-// in. An older cluster's binary would answer such a path with its group's
-// help and exit 0, which an agent reading a reference must never mistake
-// for one; home answers instead and says so.
-var introducedIn = map[string]string{
-	"skill read": "v0.1.0-rc.3",
+// Older prereleases did not implement the worker/context contract.
+func lacksCommand(path, release string) bool {
+	return versionpkg.Older(release, minimumDispatchRelease)
 }
 
-// lacksCommand reports whether the release a command would dispatch to
-// predates the command.
-func lacksCommand(path, release string) bool {
-	since, ok := introducedIn[path]
-	return ok && versionpkg.Older(release, since)
+// homeInvocation distinguishes host control from API workflows. A command's
+// help follows the same policy as its execution.
+func homeInvocation(inv invocation) bool {
+	if inv.command == "remote" {
+		switch inv.path {
+		case "remote", "remote list", "remote use", "remote token":
+			return true
+		case "remote add", "remote login", "remote logout", "remote remove", "remote revoke-session":
+			// Their positional targets are resolved by the command before API work.
+			return !inv.help || inv.path == "remote add"
+		}
+	}
+	if inv.command == "cluster" {
+		return inv.path != "cluster upgrade" || inv.recover || inv.imageTar
+	}
+	return noDispatchCommands[inv.command] || noDispatchPaths[inv.path]
+}
+
+func readOnlyInvocation(inv invocation) bool {
+	if inv.help || inv.completion {
+		return true
+	}
+	switch inv.path {
+	case "validate", "compile", "skill read", "logs", "env list", "run list", "run show", "run logs", "backup list", "backup target show", "access list", "remote status":
+		return true
+	}
+	return false
 }
 
 // preparseArgs reads the command line the way the dispatcher needs it,
@@ -85,6 +97,12 @@ func preparseArgs(args []string, root func() *cobra.Command) invocation {
 			inv.help = true
 		case arg == "--version":
 			inv.version = true
+		case arg == "--offline" || arg == "--offline=true":
+			inv.offline = true
+		case arg == "--recover" || arg == "--recover=true":
+			inv.recover = true
+		case arg == "--image-tar" || strings.HasPrefix(arg, "--image-tar="):
+			inv.imageTar = true
 		case arg == "--verbose":
 			inv.verbose = true
 		case arg == "--remote" || arg == "--manifest":
@@ -109,22 +127,37 @@ func preparseArgs(args []string, root func() *cobra.Command) invocation {
 		switch words[0] {
 		case "help":
 			inv.help = true
-			inv.command = "help"
-			return inv
+			if len(words) == 1 {
+				inv.command = "help"
+				return inv
+			}
+			words = words[1:]
 		case cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
-			inv.command = "completion"
-			return inv
+			inv.completion = true
+			words = words[1:]
 		}
 	}
 	tree := root()
-	found, _, err := tree.Find(words)
+	found, remaining, err := tree.Find(words)
 	if err != nil || found == nil || found == tree {
+		// The target may introduce a command unknown to this launcher. Preserve
+		// the original arguments and let the selected release interpret it.
+		if len(words) > 0 && !strings.HasPrefix(words[0], "-") {
+			inv.command = words[0]
+			inv.path = words[0]
+		}
 		return inv
 	}
 	inv.path = strings.TrimPrefix(found.CommandPath(), tree.Name()+" ")
+	if (inv.path == "remote login" || inv.path == "remote logout" || inv.path == "remote remove") && len(remaining) > 0 && !strings.HasPrefix(remaining[0], "-") {
+		inv.remote = remaining[0]
+	}
 	for found.HasParent() && found.Parent().HasParent() {
 		found = found.Parent()
 	}
 	inv.command = found.Name()
+	if inv.command != "" {
+		inv.version = false
+	}
 	return inv
 }

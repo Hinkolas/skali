@@ -17,7 +17,6 @@ import (
 // to ls and rm, no command is named by the short form, and argument
 // placeholders use one notation. Refs #18.
 func TestCommandVerbConsistency(t *testing.T) {
-	t.Parallel()
 	var walk func(command *cobra.Command)
 	walk = func(command *cobra.Command) {
 		path := command.CommandPath()
@@ -60,7 +59,6 @@ func TestCommandVerbConsistency(t *testing.T) {
 }
 
 func TestRemoteVersionLines(t *testing.T) {
-	t.Parallel()
 	cacheDir := t.TempDir()
 	cached := installer.CLICachePath(cacheDir, "v0.4.0")
 	require.NoError(t, installer.StoreBinary(cached, []byte("x"), "00"))

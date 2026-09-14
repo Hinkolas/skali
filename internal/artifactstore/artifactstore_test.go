@@ -127,11 +127,11 @@ func seedRevision(t *testing.T, st *store.Store, projectID, environmentID uuid.U
 	ctx := context.Background()
 	definitionVersionID, revisionID := uuid.New(), uuid.New()
 	_, err := st.Pool.Exec(ctx, `INSERT INTO definition_versions
-		(id, project_id, schema, definition_hash, definition, source, format, compiler_version)
+		(id, project_id, schema_version, definition_hash, definition, source, format, compiler_version)
 		VALUES ($1, $2, 1, 'hash', '{}', '', 'yaml', 'test')`, definitionVersionID, projectID)
 	require.NoError(t, err)
 	_, err = st.Pool.Exec(ctx, `INSERT INTO revisions
-		(id, project_id, environment_id, definition_version_id, schema,
+		(id, project_id, environment_id, definition_version_id, schema_version,
 		 checksum, definition_hash, values_hash, compiler_version, document)
 		VALUES ($1, $2, $3, $4, 1, 'checksum', 'hash', 'vhash', 'test', '{}')`,
 		revisionID, projectID, environmentID, definitionVersionID)

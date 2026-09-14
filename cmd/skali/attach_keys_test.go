@@ -89,7 +89,7 @@ func TestAttachRunDetachKeyAndDoubleInterrupt(t *testing.T) {
 		require.NoError(t, got.err)
 		require.Equal(t, "detached", got.status)
 		term.waitFor(t, "detached from run r1; the deployment continues on the server")
-		require.Empty(t, f.cancels)
+		require.Empty(t, f.cancelled())
 	})
 
 	t.Run("second interrupt cancels", func(t *testing.T) {
@@ -106,7 +106,7 @@ func TestAttachRunDetachKeyAndDoubleInterrupt(t *testing.T) {
 		term.waitFor(t, "d detaches, Ctrl-C cancels")
 		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGINT))
 		term.waitFor(t, "press Ctrl-C again to cancel the run")
-		require.Empty(t, f.cancels, "one press only arms")
+		require.Empty(t, f.cancelled(), "one press only arms")
 		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGINT))
 		term.waitFor(t, "cancelling the run, waiting for the server")
 		require.Eventually(t, func() bool {

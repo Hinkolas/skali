@@ -32,8 +32,7 @@ func TestInstallWritesSkillForEachAgent(t *testing.T) {
 		require.Equal(t, embedded, installed)
 		require.Equal(t, []string{
 			filepath.Join(agent.Dir(home), "SKILL.md"),
-			filepath.Join(agent.Dir(home), "architecture.md"),
-		}, paths, "the installed set is the shell and the architecture guide only")
+		}, paths, "only the operational shell is installed")
 		require.True(t, skill.Installed(home, agent))
 	}
 

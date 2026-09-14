@@ -33,6 +33,9 @@ type Change struct {
 	Path    string
 	Message string
 	Hint    string
+	// WhenOmitted describes a default-only change: match missing fields,
+	// including omitted parent objects, but not explicit values.
+	WhenOmitted bool
 }
 
 // Ledger records every manifest grammar change since the watermark exists,

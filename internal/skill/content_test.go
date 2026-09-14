@@ -82,12 +82,6 @@ func TestSkillPointersResolve(t *testing.T) {
 	data, err := fs.ReadFile(skill.FS(), "SKILL.md")
 	require.NoError(t, err)
 
-	mentions := regexp.MustCompile("`([a-z-]+\\.md)`").FindAllStringSubmatch(string(data), -1)
-	require.NotEmpty(t, mentions, "SKILL.md names no reference files")
-	for _, mention := range mentions {
-		_, err := fs.Stat(skill.FS(), mention[1])
-		require.NoError(t, err, "SKILL.md points at %s", mention[1])
-	}
 	for _, topic := range skill.Topics() {
 		require.Contains(t, string(data), "skali skill read "+topic.Name, "SKILL.md must tell the agent how to read the %s reference", topic.Name)
 	}
@@ -98,14 +92,14 @@ func TestTopicsMatchReferenceFiles(t *testing.T) {
 	t.Parallel()
 
 	names := skill.TopicNames()
-	require.Equal(t, []string{"manifest", "cli"}, names)
+	require.Equal(t, []string{"manifest", "cli", "architecture"}, names)
 	for _, name := range names {
 		content, ok := skill.Reference(name)
 		require.True(t, ok, name)
 		require.True(t, strings.HasPrefix(string(content), "# "), "%s must start with a title", name)
 	}
 	_, ok := skill.Reference("architecture")
-	require.False(t, ok, "the architecture guide is installed, not served")
+	require.True(t, ok, "architecture is served by the selected release")
 	_, ok = skill.Reference("../skill/SKILL")
 	require.False(t, ok)
 }

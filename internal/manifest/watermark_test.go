@@ -7,7 +7,20 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/version"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 )
+
+func TestDefaultChangeReportsEveryOmittedParent(t *testing.T) {
+	document, err := Parse([]byte("skali: v0.3.0\nname: demo\napplications:\n  first:\n    image: web:1\n  second:\n    image: web:1\n  explicit:\n    image: web:1\n    deployment:\n      rollout:\n        strategy: rolling\n"), "skali.yml")
+	require.NoError(t, err)
+	changes := []Change{{Release: "v0.4.0", Kind: ChangeChanged, Path: "applications.*.deployment.rollout.strategy", WhenOmitted: true, Message: "default changed", Hint: "review rollout"}}
+	var diagnostics yamldoc.Diagnostics
+	validateLedger(&diagnostics, document, changes, "v0.3.0")
+	require.Len(t, diagnostics, 2)
+	require.NotContains(t, diagnostics.Error(), "applications.explicit")
+	require.Contains(t, diagnostics.Error(), "applications.first.deployment.rollout.strategy")
+	require.Contains(t, diagnostics.Error(), "applications.second.deployment.rollout.strategy")
+}
 
 func TestWatermarkCanonicalizes(t *testing.T) {
 	t.Parallel()
@@ -133,7 +146,7 @@ applications:
 	require.Equal(t, "applications.web.build.dockerfile", diagnostics[0].Path)
 	require.Equal(t, 7, diagnostics[0].Line)
 	require.Equal(t, "dockerfile is resolved against the build context (changed in v0.2.0; this manifest was reviewed against v0.1.0); "+
-		"rewrite it relative to context, then set skali: v0.2.0 or newer to acknowledge", diagnostics[0].Message)
+		"rewrite it relative to context, then explicitly review and edit skali: to acknowledge", diagnostics[0].Message)
 
 	diagnostics = nil
 	validateLedger(&diagnostics, document, ledger, "v0.2.0")

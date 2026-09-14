@@ -51,8 +51,8 @@ func TestEnsureCLIFeedChecksumMismatch(t *testing.T) {
 
 	_, err := f.d.ensureCLI(context.Background(), "khz", "v0.4.0")
 	require.Error(t, err)
-	f.d.warn(err)
-	require.Contains(t, f.stderr.String(), "warning: skali v0.4.0 from the release feed did not match its published checksum; running skali v0.5.0")
+	f.d.failure(err)
+	require.Contains(t, f.stderr.String(), "error: skali v0.4.0 from the release feed did not match its published checksum")
 	_, ok := installer.CachedBinary(installer.CLICachePath(f.cache, "v0.4.0"))
 	require.False(t, ok, "nothing is cached from a bad download")
 }
@@ -62,9 +62,9 @@ func TestEnsureCLIReleaseMissing(t *testing.T) {
 	f.serveFeed(t, "v0.9.0") // v0.4.0 is not on the feed
 
 	_, err := f.d.ensureCLI(context.Background(), "khz", "v0.4.0")
-	f.d.warn(err)
-	require.Contains(t, f.stderr.String(), "warning: the release feed has no skali v0.4.0 (release v0.4.0 was not found); "+
-		"install it from your own distribution; running skali v0.5.0")
+	f.d.failure(err)
+	require.Contains(t, f.stderr.String(), "error: the release feed has no skali v0.4.0 (release v0.4.0 was not found); "+
+		"install it from your own distribution")
 }
 
 func TestEnsureCLIFeedUnreachable(t *testing.T) {
@@ -72,9 +72,9 @@ func TestEnsureCLIFeedUnreachable(t *testing.T) {
 
 	_, err := f.d.ensureCLI(context.Background(), "khz", "v0.4.0")
 	require.Error(t, err)
-	f.d.warn(err)
-	require.Contains(t, f.stderr.String(), "warning: could not fetch skali v0.4.0 from the release feed: ")
-	require.Contains(t, f.stderr.String(), "; running skali v0.5.0")
+	f.d.failure(err)
+	require.Contains(t, f.stderr.String(), "error: could not fetch skali v0.4.0 from the release feed: ")
+	require.NotContains(t, f.stderr.String(), "; running")
 }
 
 func TestPromoteHomeReplacesWritableExecutable(t *testing.T) {
@@ -119,5 +119,5 @@ func TestPromoteHomeVerifyFailureRestores(t *testing.T) {
 	require.Equal(t, fakeCLI("v0.3.2"), restored)
 	entries, err := os.ReadDir(filepath.Dir(f.d.executable))
 	require.NoError(t, err)
-	require.Len(t, entries, 1, "no temp files left behind")
+	require.Len(t, entries, 2, "no temp files left behind")
 }

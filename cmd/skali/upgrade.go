@@ -19,6 +19,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/filelock"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/installer/host"
 	"github.com/Hinkolas/skali/internal/updates"
@@ -208,6 +209,21 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 		return fmt.Errorf("cannot write to %s: %w", directory, err)
 	}
 
+	// Serialize the entire installation decision, including a claimed no-op.
+	// Another process may already have replaced the binary this process loaded.
+	unlock, err := filelock.Acquire(ctx, opts.Executable+".lock")
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	installed, inspectErr := installedCLIVersion(ctx, opts.Executable)
+	if inspectErr != nil && opts.Requested == "" {
+		return fmt.Errorf("inspect installed CLI: %w", inspectErr)
+	}
+	if inspectErr == nil {
+		opts.Current = installed
+	}
+
 	var latest *updates.Release
 	if opts.Requested == "" && versionpkg.IsRelease(opts.Current) {
 		var err error
@@ -250,7 +266,7 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	task.Done("checksum verified")
 
 	task = tasks.Start("Install " + opts.Executable)
-	if err := installCLI(ctx, opts.Executable, binary, target); err != nil {
+	if err := installCLIUnlocked(ctx, opts.Executable, binary, target); err != nil {
 		task.Fail()
 		return err
 	}
@@ -280,6 +296,29 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 // that replace the CLI (skali upgrade and dispatch's home promotion) go
 // through it.
 func installCLI(ctx context.Context, executable string, binary []byte, want string) error {
+	unlock, err := filelock.Acquire(ctx, executable+".lock")
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return installCLIUnlocked(ctx, executable, binary, want)
+}
+
+func installedCLIVersion(ctx context.Context, executable string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, executable, "--version").Output()
+	if err != nil {
+		return "", err
+	}
+	words := strings.Fields(string(out))
+	if len(words) == 0 {
+		return "", errors.New("installed CLI did not report a version")
+	}
+	return words[len(words)-1], nil
+}
+
+func installCLIUnlocked(ctx context.Context, executable string, binary []byte, want string) error {
 	previous, err := os.ReadFile(executable)
 	if err != nil {
 		return fmt.Errorf("read the current binary: %w", err)

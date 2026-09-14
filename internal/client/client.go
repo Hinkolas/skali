@@ -168,39 +168,32 @@ func (c *Client) OnVersion(fn func(observed string)) {
 }
 
 // checkInstance records the response's platform headers and enforces the
-// install-identity pin. The version is recorded before the pin check so an
-// identity change or a version refusal still reports the daemon's version.
+// install-identity pin before publishing version observations. A response
+// from a different installation cannot change the selected release.
 func (c *Client) checkInstance(res *http.Response) error {
-	if version := res.Header.Get(VersionHeader); version != "" {
-		c.mu.Lock()
-		changed := version != c.observedVersion
-		c.observedVersion = version
-		notify := c.onVersion
-		c.mu.Unlock()
-		if changed && notify != nil {
-			notify(version)
-		}
-	}
-	observed := res.Header.Get(InstanceHeader)
-	if observed == "" {
-		return nil
-	}
+	observed, release := res.Header.Get(InstanceHeader), res.Header.Get(VersionHeader)
 	c.mu.Lock()
-	c.observed = observed
-	pinned := c.pinned
-	adopt := c.onAdopt
-	if pinned == "" {
+	pinned, adopt, notify := c.pinned, c.onAdopt, c.onVersion
+	if observed != "" {
+		c.observed = observed
+	}
+	if observed != "" && pinned != "" && observed != pinned {
+		c.mu.Unlock()
+		return &InstanceMismatchError{Master: c.base, Pinned: pinned, Observed: observed}
+	}
+	if observed != "" && pinned == "" {
 		c.pinned = observed
 	}
-	c.mu.Unlock()
-	if pinned == "" {
-		if adopt != nil {
-			adopt(observed)
-		}
-		return nil
+	changed := release != "" && release != c.observedVersion
+	if release != "" {
+		c.observedVersion = release
 	}
-	if observed != pinned {
-		return &InstanceMismatchError{Master: c.base, Pinned: pinned, Observed: observed}
+	c.mu.Unlock()
+	if changed && notify != nil {
+		notify(release)
+	}
+	if observed != "" && pinned == "" && adopt != nil {
+		adopt(observed)
 	}
 	return nil
 }

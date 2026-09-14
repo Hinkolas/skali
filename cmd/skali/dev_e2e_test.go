@@ -32,10 +32,9 @@ import (
 //	TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run TestDev ./cmd/skali/...
 
 const (
-	e2eCluster       = "skali-dev-e2e"
-	e2eSecondCluster = "skali-dev-e2e-b"
-	e2eHTTPPort      = 8082
-	e2eRegistryPort  = 5512
+	e2eCluster      = "skali-dev-e2e"
+	e2eHTTPPort     = 8082
+	e2eRegistryPort = 5512
 	// e2eLoopbackBase shifts the loopback service range away from a real
 	// local platform's identity mapping (30501..30510).
 	e2eLoopbackBase = 45001
@@ -109,22 +108,8 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 			return
 		}
 		_ = exec.Command("k3d", "cluster", "delete", e2eCluster).Run()
-		_ = exec.Command("k3d", "cluster", "delete", e2eSecondCluster).Run()
 	})
 	return harness
-}
-
-// secondPlatformEnv is the same installation seen as another release's
-// platform: another cluster name, the same ports and the same state home,
-// the way two releases' platforms share a machine.
-func (h *e2eHarness) secondPlatformEnv() []string {
-	env := make([]string, 0, len(h.env))
-	for _, entry := range h.env {
-		if !strings.HasPrefix(entry, "SKALI_DEV_CLUSTER=") {
-			env = append(env, entry)
-		}
-	}
-	return append(env, "SKALI_DEV_CLUSTER="+e2eSecondCluster)
 }
 
 // runWithEnv is run with an explicit environment.
@@ -507,63 +492,14 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "Bootstrap database")
 	})
 
-	t.Run("SwitchStopsTheOtherPlatform", func(t *testing.T) {
-		// A second platform on the same ports (another release's, in real
-		// life) stops the running one instead of failing on the port maps,
-		// and switching back stops it in turn with its state retained. Its
-		// first start names the image like the harness's first run did.
-		out := h.runWithEnv(h.secondPlatformEnv(), false, "", "dev", "start", "--skalid-image", "skalid:dev")
-		require.Contains(t, out, "Stop cluster "+e2eCluster)
-		require.Contains(t, out, "one local platform runs at a time")
-		require.Contains(t, out, "Create k3d cluster "+e2eSecondCluster)
-
-		out = h.run(false, "", "dev", "status")
-		require.Contains(t, out, "platform   stopped (cluster "+e2eCluster)
-		require.Contains(t, out, "other      "+e2eSecondCluster+" (working tree, running)")
-		// The verbs that skip the platform boot name the running one.
-		out = h.run(true, "", "dev", "list")
-		require.Contains(t, out, "is not running ("+e2eSecondCluster+" is); run skali dev")
-
-		out = h.run(false, "", "dev", "start")
-		require.Contains(t, out, "Stop cluster "+e2eSecondCluster)
-		require.Contains(t, out, "state retained")
-		require.Contains(t, out, "unchanged since last converge")
-		h.waitRoute("hello again from skali", 3*time.Minute)
-
-		// dev stop stops whichever platform runs and names it.
-		out = h.runWithEnv(h.secondPlatformEnv(), false, "", "dev", "stop")
-		require.Contains(t, out, "stopped local platform "+e2eCluster+" (working tree); state is retained")
-		out = h.run(false, "", "dev", "stop")
-		require.Contains(t, out, "no local platform is running")
-		out = h.run(false, "", "dev", "start")
-		require.Contains(t, out, "state retained")
-		h.waitRoute("hello again from skali", 3*time.Minute)
-	})
-
-	t.Run("PruneRemovesStaleRecord", func(t *testing.T) {
-		// A released platform nothing references any more: the record is
-		// listed and removed on confirmation; the two working-tree
-		// platforms of this development build stay.
+	t.Run("ObsoleteRecordsNeedExplicitCleanup", func(t *testing.T) {
 		stale := filepath.Join(h.stateDir(), "skali", "dev", "skali-dev-v0-9-9")
 		require.NoError(t, os.MkdirAll(stale, 0o700))
-		require.NoError(t, os.WriteFile(filepath.Join(stale, "state.json"),
-			[]byte(`{"cluster":"skali-dev-v0-9-9","version":"v0.9.9","skalid_image":"ghcr.io/hinkolas/skalid:v0.9.9"}`), 0o600))
-
-		out := h.run(true, "\n", "dev", "prune")
-		require.Contains(t, out, "skali-dev-v0-9-9")
-		require.Contains(t, out, "[y/N]")
-		_, err := os.Stat(filepath.Join(stale, "state.json"))
-		require.NoError(t, err, "declining must keep the record")
-
-		out = h.run(false, "y\n", "dev", "prune")
-		require.Contains(t, out, "Remove record skali-dev-v0-9-9")
-		require.NotContains(t, out, "Delete cluster", "a record without a cluster is only a record")
-		_, err = os.Stat(stale)
-		require.ErrorIs(t, err, os.ErrNotExist)
-		out = h.run(false, "", "dev", "prune")
-		require.Contains(t, out, "nothing to prune")
-		require.Contains(t, out, e2eCluster)
-		require.Contains(t, out, e2eSecondCluster)
+		require.NoError(t, os.WriteFile(filepath.Join(stale, "state.json"), []byte(`{"cluster":"skali-dev-v0-9-9","version":"v0.9.9"}`), 0o600))
+		out := h.run(true, "", "dev", "start")
+		require.Contains(t, out, "k3d cluster delete skali-dev-v0-9-9")
+		require.FileExists(t, filepath.Join(stale, "state.json"))
+		require.NoError(t, os.RemoveAll(stale)) // only the record this test created
 	})
 
 	t.Run("DockerRestartMovesNodeIPAndDevRecovers", func(t *testing.T) {
@@ -623,8 +559,7 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "Delete cluster "+e2eCluster)
 		require.Contains(t, out, "Remove local installation record")
 
-		// By exact name: the second platform of the switch subtest shares
-		// the prefix and is still recorded.
+		// Reset removes only this test platform.
 		clusters, err := exec.Command("k3d", "cluster", "list", "-o", "json").Output()
 		require.NoError(t, err)
 		require.NotContains(t, string(clusters), `"name":"`+e2eCluster+`"`)

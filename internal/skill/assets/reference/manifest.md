@@ -1,9 +1,6 @@
 # The skali.yaml manifest
 
-This is the reference for the skali release that printed it (`skali
-version`), served by `skali skill read manifest` from the project
-directory, where the command answers at the release of the project's
-target cluster.
+The header above identifies the exact release and target context of this reference.
 
 skali compiles one manifest at the project root into everything an
 environment runs: applications, databases, buckets, backups, and the
@@ -19,12 +16,15 @@ values they require. The same definition deploys unchanged to a local
   and the field's path. A field a release removed names its replacement
   and the fix. Never invent fields; check this reference or run
   `skali validate` when unsure.
-- `skali` is the watermark: the release the manifest was last reviewed
-  against, written as the tag (`v0.1.0-rc.3`). It is not a compatibility
-  gate. A manifest is judged by the fields it uses; the watermark only
-  decides whether a change of meaning still needs acknowledging, and
-  `skali manifest upgrade` moves it to the current release. Moving it
-  never changes what gets deployed.
+- `skali` is the required review watermark (for example `v0.1.0-rc.3`).
+  It records which release's behavior the author reviewed and does not select
+  the compiler. A newer watermark is rejected by an older released compiler;
+  targeting the older release requires deliberate review and an explicit edit.
+  Older watermarks are accepted unless an affected meaning or default changed.
+  `skali manifest upgrade` validates proposed mechanical edits and ordinary
+  review-point advances before writing. Semantic changes requiring author
+  review leave the source unchanged. Watermark-only edits never change the
+  compiled definition or its hash.
 - Editors get completion and inline validation from the published schema
   by putting this on the first line:
   `# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-rc.3/schemas/skali.schema.json`
@@ -307,7 +307,7 @@ killed.
 
 Volumes are the escape hatch, not the paved path: an application with
 volumes is forced to `recreate` rollouts and a single replica. Prefer
-databases and buckets; see the architecture guide in the installed skill.
+databases and buckets; read `skali skill read architecture` for this target.
 
 ### Commands and local dev
 

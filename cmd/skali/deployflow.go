@@ -1034,7 +1034,11 @@ const interruptCancelWindow = 3 * time.Second
 // attachRun follows a server-side run to its end with the deploy-like key
 // bindings; see attachRunMode.
 func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string) (string, error) {
-	return attachRunMode(ctx, out, api, runID, remoteHint, attachCancelsRun)
+	status, err := attachRunMode(ctx, out, api, runID, remoteHint, attachCancelsRun)
+	if err != nil {
+		return status, fmt.Errorf("observation of run %s ended: %w; reconnect with %s", runID, err, runAttachHint(remoteHint, runID))
+	}
+	return status, nil
 }
 
 // attachRunMode renders a run's step tree live until the run ends, the
@@ -1308,39 +1312,19 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 	if err != nil {
 		return nil, err
 	}
-	// An explicit remote is a one-shot override: the checkout binding is
-	// neither consulted nor written for this invocation.
-	var binding *checkout.Target
-	if opts.UseBinding && opts.Remote == "" {
-		if binding, err = checkout.Load(project.Root); err != nil {
-			return nil, err
-		}
+	selected, err := resolveRemoteTarget(cfg, project.Path, project.Root, opts.Remote)
+	if err != nil {
+		return nil, err
+	}
+	remoteName, remote := selected.Name, selected.Remote
+	binding := selected.Binding
+	if !opts.UseBinding {
+		binding = nil
 	}
 	if binding != nil && binding.Project != projectName {
-		return nil, fmt.Errorf("this checkout is linked to project %s but the manifest names %s; "+
-			"fix the manifest name or delete .skali/target.yaml to relink", binding.Project, projectName)
+		return nil, fmt.Errorf("this checkout is linked to project %s but the manifest names %s; fix the manifest name or delete .skali/target.yaml to relink", binding.Project, projectName)
 	}
 
-	var remoteName string
-	var remote *cliconfig.Remote
-	switch {
-	case opts.Remote != "":
-		remoteName = opts.Remote
-		if remote, err = remoteByName(cfg, remoteName); err != nil {
-			return nil, err
-		}
-	case binding != nil:
-		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
-		if !ok {
-			return nil, fmt.Errorf("no remote for %s on this machine; run skali remote add <name> %s",
-				binding.Master, binding.Master)
-		}
-		remoteName, remote = name, found
-	default:
-		if remoteName, remote, err = cfg.Current(); err != nil {
-			return nil, err
-		}
-	}
 	api := remoteClient(cfg, remote)
 
 	if opts.UseBinding {

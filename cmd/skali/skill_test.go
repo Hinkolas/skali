@@ -90,10 +90,10 @@ func TestSkillReadPrintsReferenceVerbatim(t *testing.T) {
 		require.NoError(t, err, topic)
 		want, ok := skill.Reference(topic)
 		require.True(t, ok)
-		require.Equal(t, string(want), out, topic)
+		require.Equal(t, versionDescription()+"\n\n"+string(want), out, topic)
 	}
-	_, err := runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "architecture") })
-	require.ErrorContains(t, err, `unknown topic "architecture" (valid: manifest, cli)`)
+	_, err := runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "unknown") })
+	require.ErrorContains(t, err, `unknown topic "unknown" (valid: manifest, cli, architecture)`)
 }
 
 func TestSkillReadSince(t *testing.T) {
@@ -110,7 +110,7 @@ func TestSkillReadSince(t *testing.T) {
 		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "0.1.0-rc.3")
 	})
 	require.NoError(t, err)
-	require.Equal(t, "no manifest changes since v0.1.0-rc.3; this skali is "+versionpkg.Version+"\n", out)
+	require.Equal(t, versionDescription()+"\n\n"+"no manifest changes since v0.1.0-rc.3; this skali is "+versionpkg.Version+"\n", out)
 
 	_, err = runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "latest")

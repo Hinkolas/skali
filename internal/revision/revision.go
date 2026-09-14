@@ -31,6 +31,25 @@ const Schema = 1
 
 const legacySchemaVersion = "1"
 
+// EncodeStored adds legacy envelope aliases only at the persistence boundary.
+// It never changes the revision checksum or rewrites existing documents.
+func EncodeStored(rev *Revision) ([]byte, error) {
+	type plain Revision
+	definition, err := compiler.EncodeStoredDefinition(rev.Definition)
+	if err != nil {
+		return nil, err
+	}
+	legacy := ""
+	if rev.Schema == 1 {
+		legacy = legacySchemaVersion
+	}
+	return json.Marshal(struct {
+		*plain
+		Definition    json.RawMessage `json:"definition"`
+		SchemaVersion string          `json:"schemaVersion,omitempty"`
+	}{(*plain)(rev), definition, legacy})
+}
+
 // Artifact kinds. Imported upstream content is a reconstructable cache;
 // locally or cloud-built artifacts may be the only deployable copy.
 const (
@@ -188,6 +207,19 @@ func Decode(document []byte) (*Revision, error) {
 		return nil, fmt.Errorf("decode revision document: %w", err)
 	}
 	decoded.Schema = Schema
+	var nested struct {
+		Definition json.RawMessage `json:"definition"`
+	}
+	if err := json.Unmarshal(document, &nested); err != nil {
+		return nil, err
+	}
+	if len(nested.Definition) > 0 {
+		definition, err := compiler.DecodeDefinition(nested.Definition)
+		if err != nil {
+			return nil, err
+		}
+		decoded.Definition = definition
+	}
 	return &decoded, nil
 }
 

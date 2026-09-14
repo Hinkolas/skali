@@ -104,8 +104,8 @@ offline (the page still works for settings and shows nothing to update);
 `/etc/skali/hostd.env` with `SKALI_RELEASE_BASE` points node downloads at a
 mirror. Legacy (version-1) installations show the available release but must
 be upgraded with `skali cluster upgrade`; the local `skali dev` platform
-follows the skali release that runs it, one cluster per release
-(`skali dev prune` removes the ones no longer in use). Release assets are
+uses one fixed cluster matching the selected release. A release change
+requires `skali dev reset` and deletes its local data after confirmation. Release assets are
 verified against `checksums.txt`
 over TLS; there is no signature yet (see the release checklist).
 

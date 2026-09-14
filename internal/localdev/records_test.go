@@ -19,22 +19,13 @@ func withVersion(t *testing.T, v string) {
 	t.Cleanup(func() { version.Version = previous })
 }
 
-func TestClusterNameFor(t *testing.T) {
-	require.Equal(t, "skali-dev-v0-1-0-rc-3", ClusterNameFor("v0.1.0-rc.3"))
-	require.Equal(t, "skali-dev-v1-2-3", ClusterNameFor("v1.2.3"))
-	require.Equal(t, "skali-dev-working-tree", ClusterNameFor(""))
-
-	// k3d caps cluster names at 32 characters (RFC 1123 hostname); the
-	// widest tag the release shape allows in practice stays inside it.
-	require.LessOrEqual(t, len(ClusterNameFor("v100.100.100-alpha.100")), 32)
-
+func TestClusterNameDoesNotChangeWithRelease(t *testing.T) {
 	withVersion(t, "v0.1.0-rc.3")
-	require.Equal(t, "v0.1.0-rc.3", PlatformVersion())
-	require.Equal(t, "skali-dev-v0-1-0-rc-3", ClusterName())
-	withVersion(t, "v0.1.0-rc.2-5-gabc1234")
-	require.Equal(t, "", PlatformVersion())
-	require.Equal(t, "skali-dev-working-tree", ClusterName())
-
+	require.Equal(t, "skali-dev", ClusterName())
+	withVersion(t, "v0.2.0")
+	require.Equal(t, "skali-dev", ClusterName())
+	withVersion(t, "v0.0.0-dev")
+	require.Equal(t, "skali-dev", ClusterName())
 	t.Setenv("SKALI_DEV_CLUSTER", "skali-dev-e2e")
 	require.Equal(t, "skali-dev-e2e", ClusterName())
 }
@@ -45,17 +36,17 @@ func TestStatePathsPerCluster(t *testing.T) {
 	withVersion(t, "v0.1.0-rc.3")
 	path, err := statePath()
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(home, "skali", "dev", "skali-dev-v0-1-0-rc-3", "state.json"), path)
+	require.Equal(t, filepath.Join(home, "skali", "dev", "skali-dev", "state.json"), path)
 	kubeconfig, err := KubeconfigPath()
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(home, "skali", "dev", "skali-dev-v0-1-0-rc-3", "kubeconfig"), kubeconfig)
+	require.Equal(t, filepath.Join(home, "skali", "dev", "skali-dev", "kubeconfig"), kubeconfig)
 
 	_, err = LoadState()
 	require.ErrorIs(t, err, ErrNotInstalled)
 	state, err := NewState("ghcr.io/hinkolas/skalid:v0.1.0-rc.3")
 	require.NoError(t, err)
 	require.Equal(t, "v0.1.0-rc.3", state.Version)
-	require.Equal(t, "skali-dev-v0-1-0-rc-3", state.Cluster)
+	require.Equal(t, "skali-dev", state.Cluster)
 	require.NoError(t, SaveState(state))
 	loaded, err := LoadState()
 	require.NoError(t, err)
@@ -109,18 +100,9 @@ func TestRecords(t *testing.T) {
 		{Name: "skali-dev-working-tree", SkalidImage: "skalid:dev", K3sImage: K3sImage, CreatedAt: created},
 	}, records)
 
-	require.NoError(t, RemoveLegacyRecord())
-	for _, file := range []string{"localdev.json", "kubeconfig", "registries.yaml"} {
-		_, err := os.Stat(filepath.Join(root, file))
-		require.ErrorIs(t, err, os.ErrNotExist, file)
-	}
-	_, err = os.Stat(filepath.Join(root, "dev", "skali-dev-working-tree", "state.json"))
-	require.NoError(t, err, "the per-cluster records survive a legacy removal")
-	require.NoError(t, RemoveRecord("skali-dev-v0-1-0-rc-3"))
-	records, err = Records()
-	require.NoError(t, err)
-	require.Len(t, records, 1)
-	require.Equal(t, "skali-dev-working-tree", records[0].Name)
+	require.ErrorContains(t, ObsoletePlatforms(), "k3d cluster delete skali-dev-v0-1-0-rc-3")
+	require.FileExists(t, filepath.Join(root, "localdev.json"))
+	require.FileExists(t, filepath.Join(root, "dev", "skali-dev-v0-1-0-rc-3", "state.json"))
 }
 
 func TestParseClusterListAndClustersToStop(t *testing.T) {
@@ -134,15 +116,26 @@ func TestParseClusterListAndClustersToStop(t *testing.T) {
 	require.Equal(t, ClusterStopped, StatusOf(statuses, "skali-dev-v0-1-0-rc-3"))
 	require.Equal(t, ClusterAbsent, StatusOf(statuses, "skali-dev-working-tree"))
 
-	records := []Record{
-		{Name: "skali-dev", Legacy: true},
-		{Name: "skali-dev-v0-1-0-rc-3", Version: "v0.1.0-rc.3"},
-		{Name: "skali-dev-working-tree"},
-	}
-	// Only recorded platforms are stopped: skali-test runs but is foreign.
-	require.Equal(t, []string{"skali-dev"}, clustersToStop(records, statuses, "skali-dev-working-tree"))
-	require.Empty(t, clustersToStop(records, statuses, "skali-dev"))
-
 	_, err = parseClusterList([]byte("nonsense"))
 	require.Error(t, err)
+}
+
+func TestVersionMismatchLeavesRecordUnchanged(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	withVersion(t, "v0.4.0")
+	state, err := NewState(version.PublishedSkalidImage("v0.4.0"))
+	require.NoError(t, err)
+	require.NoError(t, SaveState(state))
+	withVersion(t, "v0.5.0-rc.1")
+	require.ErrorContains(t, CheckVersion(state), "skali dev reset")
+	actual, err := LoadState()
+	require.NoError(t, err)
+	require.Equal(t, state.Version, actual.Version)
+	require.True(t, state.CreatedAt.Equal(actual.CreatedAt))
+	withVersion(t, "v0.4.0")
+	require.NoError(t, CheckVersion(state))
+	state.K3sImage = "old"
+	require.ErrorContains(t, CheckVersion(state), "skali dev reset")
+	withVersion(t, "v0.0.0-dev")
+	require.ErrorContains(t, CheckVersion(state), "working tree")
 }

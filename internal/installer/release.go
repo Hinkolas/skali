@@ -151,6 +151,10 @@ func CLICachePath(cacheDir, release string) string {
 	return filepath.Join(CLICacheDir(cacheDir), release, "skali")
 }
 
+func CLILockPath(cacheDir, release string) string {
+	return filepath.Join(CLICacheDir(cacheDir), ".locks", release+".lock")
+}
+
 // CachedHostd returns a hostd FetchHostd stored earlier for this release and
 // architecture, re-verified against the digest recorded next to it so a
 // damaged cache entry is refetched rather than installed. ok is false when

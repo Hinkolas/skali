@@ -34,33 +34,32 @@ func TestDispatchGate(t *testing.T) {
 	require.Contains(t, dispatchGate(deploy, envMap(map[string]string{envNoDispatch: "1"}), "v0.4.0", outside, cacheDir), envNoDispatch)
 	require.Contains(t, dispatchGate(deploy, none, "v0.0.0-dev", outside, cacheDir), "development build")
 	require.Contains(t, dispatchGate(deploy, none, "v0.4.0-3-gabc1234", outside, cacheDir), "development build")
-	require.Equal(t, "help", dispatchGate(invocation{command: "deploy", help: true}, none, "v0.4.0", outside, cacheDir))
+	require.Empty(t, dispatchGate(invocation{command: "deploy", help: true}, none, "v0.4.0", outside, cacheDir))
 	require.Equal(t, "help", dispatchGate(invocation{version: true}, none, "v0.4.0", outside, cacheDir))
 	require.Equal(t, "no command", dispatchGate(invocation{}, none, "v0.4.0", outside, cacheDir))
 	for name := range noDispatchCommands {
 		require.Contains(t, dispatchGate(invocation{command: name}, none, "v0.4.0", outside, cacheDir), "always runs at home", name)
 	}
 	require.Empty(t, dispatchGate(deploy, none, "v0.4.0", outside, cacheDir))
-	// dev follows the project's target like a workflow command; only prune,
-	// which reasons about every local platform, stays with the newest binary.
+	// Dev creation follows the target; local stop/reset/status stay home.
 	require.Empty(t, dispatchGate(invocation{command: "dev", path: "dev start"}, none, "v0.4.0", outside, cacheDir))
-	require.Equal(t, "dev prune always runs at home", dispatchGate(invocation{command: "dev", path: "dev prune"}, none, "v0.4.0", outside, cacheDir))
+	require.Equal(t, "dev always runs at home", dispatchGate(invocation{command: "dev", path: "dev stop"}, none, "v0.4.0", outside, cacheDir))
 	// skill read serves the reference of the cluster that will compile the
 	// manifest; install writes the neutral shell and stays with the newest
 	// binary.
 	require.Empty(t, dispatchGate(invocation{command: "skill", path: "skill read"}, none, "v0.4.0", outside, cacheDir))
-	require.Equal(t, "skill install always runs at home", dispatchGate(invocation{command: "skill", path: "skill install"}, none, "v0.4.0", outside, cacheDir))
+	require.Equal(t, "skill always runs at home", dispatchGate(invocation{command: "skill", path: "skill install"}, none, "v0.4.0", outside, cacheDir))
 
-	// A binary run straight from the cache never dispatches, also when the
-	// cache directory is reached through a symlink.
+	// Direct cache invocations still resolve the target; only a validated
+	// worker context suppresses dispatch. Symlinks do not change the policy.
 	cached := installer.CLICachePath(cacheDir, "v0.3.2")
 	require.NoError(t, os.MkdirAll(filepath.Dir(cached), 0o755))
 	require.NoError(t, os.WriteFile(cached, []byte("x"), 0o755))
-	require.Equal(t, "running from the cache", dispatchGate(deploy, none, "v0.4.0", cached, cacheDir))
+	require.Empty(t, dispatchGate(deploy, none, "v0.4.0", cached, cacheDir))
 	link := filepath.Join(t.TempDir(), "cache-link")
 	require.NoError(t, os.Symlink(cacheDir, link))
-	require.Equal(t, "running from the cache", dispatchGate(deploy, none, "v0.4.0", cached, link))
-	require.Equal(t, "running from the cache", dispatchGate(deploy, none, "v0.4.0", installer.CLICachePath(link, "v0.3.2"), cacheDir))
+	require.Empty(t, dispatchGate(deploy, none, "v0.4.0", cached, link))
+	require.Empty(t, dispatchGate(deploy, none, "v0.4.0", installer.CLICachePath(link, "v0.3.2"), cacheDir))
 }
 
 func TestDispatchTarget(t *testing.T) {
@@ -78,6 +77,12 @@ func TestDispatchTarget(t *testing.T) {
 }
 
 func TestExitCodeFor(t *testing.T) {
+	previous := invocationContext
+	invocationContext = &versionContext{Parent: os.Getppid()}
+	t.Cleanup(func() { invocationContext = previous })
+	oldArgs := os.Args
+	os.Args = []string{"skali", "env", "list"}
+	t.Cleanup(func() { os.Args = oldArgs })
 	t.Cleanup(skew.reset)
 	withCLIVersion(t, "v0.3.2")
 	mismatch := &client.APIError{Status: 409, Code: client.CodeCLIVersionMismatch, Message: "requires skali v0.4.0"}
@@ -94,7 +99,7 @@ func TestExitCodeFor(t *testing.T) {
 
 	// An observed differing release counts too, whatever the error was.
 	skew.record("khz", "v0.4.0")
-	require.Equal(t, exitVersionMoved, exitCodeFor(errors.New("session expired")))
+	require.Equal(t, 1, exitCodeFor(errors.New("session expired")))
 	skew.record("khz", "v0.3.2")
 	require.Equal(t, 1, exitCodeFor(errors.New("session expired")))
 }
@@ -189,7 +194,7 @@ func (f *dispatchFixture) seedRemote(t *testing.T, name, master, version string)
 
 func TestDispatchRunsCachedRelease(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 	path := f.seedCache(t, "v0.4.0")
 
 	handled, code := f.d.run()
@@ -198,18 +203,19 @@ func TestDispatchRunsCachedRelease(t *testing.T) {
 	require.Len(t, f.spawns, 1)
 	require.Equal(t, path, f.spawns[0].path)
 	require.Equal(t, []string{"env", "list"}, f.spawns[0].args)
-	require.Equal(t, []string{"HOME=/nowhere", envDispatched + "=1"}, f.spawns[0].env)
-	require.Empty(t, f.stderr.String(), "a cache hit prints nothing")
+	require.Contains(t, f.spawns[0].env, envDispatched+"=1")
+	require.Contains(t, fmt.Sprint(f.spawns[0].env), `"release":"v0.4.0"`)
+	require.Contains(t, f.stderr.String(), "verified")
 }
 
 func TestDispatchSkipsWhenRecordMatchesHome(t *testing.T) {
 	f := newDispatchFixture(t, "v0.4.0", "--verbose", "env", "list")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 
 	handled, _ := f.d.run()
 	require.False(t, handled)
 	require.Empty(t, f.spawns)
-	require.Contains(t, f.stderr.String(), "dispatch: remote khz runs skalid \"v0.4.0\", this skali is v0.4.0")
+	require.Contains(t, f.stderr.String(), "target khz: skali v0.4.0")
 }
 
 func TestDispatchProbesEmptyRecord(t *testing.T) {
@@ -226,20 +232,20 @@ func TestDispatchProbesEmptyRecord(t *testing.T) {
 	require.Contains(t, f.stderr.String(), "fetching skali v0.4.0 for remote khz\n")
 }
 
-func TestDispatchUnreachableEmptyRecordRunsHome(t *testing.T) {
+func TestDispatchUnreachableEmptyRecordFailsClosed(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
 	f.seedRemote(t, "khz", deadURL(t), "")
 
 	handled, _ := f.d.run()
-	require.False(t, handled)
+	require.True(t, handled)
 	require.Empty(t, f.spawns)
-	require.Empty(t, f.stderr.String())
+	require.Contains(t, f.stderr.String(), "verify remote")
 }
 
 func TestDispatchRedispatchOnce(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
 	f.serveFeed(t, "v0.3.2")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 	first := f.seedCache(t, "v0.4.0")
 	// The first child finds the daemon moved: it records the new version
 	// (as remoteClient does) and exits with the reserved status.
@@ -259,13 +265,13 @@ func TestDispatchRedispatchOnce(t *testing.T) {
 	require.Len(t, f.spawns, 2)
 	require.Equal(t, first, f.spawns[0].path)
 	require.Equal(t, installer.CLICachePath(f.cache, "v0.3.2"), f.spawns[1].path)
-	require.Contains(t, f.stderr.String(), "hint: remote khz moved to skalid v0.3.2; rerunning with skali v0.3.2")
+	require.Contains(t, f.stderr.String(), "fetching skali v0.3.2")
 }
 
 func TestDispatchSecondMoveIsNotRerun(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
 	f.serveFeed(t, "v0.3.2")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 	f.seedCache(t, "v0.4.0")
 	move := func(to string) func(spawnCall) (childStatus, error) {
 		return func(spawnCall) (childStatus, error) {
@@ -279,7 +285,7 @@ func TestDispatchSecondMoveIsNotRerun(t *testing.T) {
 
 	handled, code := f.d.run()
 	require.True(t, handled)
-	require.Equal(t, exitVersionMoved, code, "the second 213 is returned as is")
+	require.Equal(t, 1, code, "the second release change is an actionable error")
 	require.Len(t, f.spawns, 2)
 }
 
@@ -287,7 +293,7 @@ func TestDispatchPassesThrough213WhenNothingMoved(t *testing.T) {
 	// skali exec passes a remote process's exit status through; 213 from
 	// it must not trigger a rerun.
 	f := newDispatchFixture(t, "v0.5.0", "exec", "web", "--", "sh", "-c", "exit 213")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 	f.seedCache(t, "v0.4.0")
 	f.script = []func(spawnCall) (childStatus, error){
 		func(spawnCall) (childStatus, error) { return childStatus{Code: exitVersionMoved}, nil },
@@ -297,13 +303,14 @@ func TestDispatchPassesThrough213WhenNothingMoved(t *testing.T) {
 	require.True(t, handled)
 	require.Equal(t, exitVersionMoved, code)
 	require.Len(t, f.spawns, 1)
-	require.Empty(t, f.stderr.String())
+	require.Contains(t, f.stderr.String(), "verified")
 }
 
-func TestDispatchMoveToHomeRunsInProcess(t *testing.T) {
+func TestDispatchMoveToHomePreservesFrozenContext(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 	f.seedCache(t, "v0.4.0")
+	f.seedCache(t, "v0.5.0")
 	f.script = []func(spawnCall) (childStatus, error){
 		func(spawnCall) (childStatus, error) {
 			cfg := loadConfig(t)
@@ -314,31 +321,31 @@ func TestDispatchMoveToHomeRunsInProcess(t *testing.T) {
 	}
 
 	handled, _ := f.d.run()
-	require.False(t, handled, "home is the right release now; the caller runs the command")
-	require.Len(t, f.spawns, 1)
-	require.Contains(t, f.stderr.String(), "hint: remote khz now runs skalid v0.5.0; rerunning with this skali")
+	require.True(t, handled)
+	require.Len(t, f.spawns, 2)
+	require.Equal(t, installer.CLICachePath(f.cache, "v0.5.0"), f.spawns[1].path)
 }
 
-func TestDispatchStartFailureRunsHome(t *testing.T) {
+func TestDispatchStartFailureFailsClosed(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "env", "list")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 	path := f.seedCache(t, "v0.4.0")
 	f.script = []func(spawnCall) (childStatus, error){
 		func(spawnCall) (childStatus, error) { return childStatus{}, os.ErrNotExist },
 	}
 
 	handled, _ := f.d.run()
-	require.False(t, handled)
-	require.Contains(t, f.stderr.String(), "warning: cached skali v0.4.0 could not start")
+	require.True(t, handled)
+	require.Contains(t, f.stderr.String(), "error: cached skali v0.4.0 could not start")
 	_, err := os.Stat(path)
-	require.ErrorIs(t, err, os.ErrNotExist, "the unusable entry is dropped")
+	require.NoError(t, err, "startup failure does not mutate an acquired cache entry")
 }
 
 func TestDispatchHonorsRemoteOverrideAndBinding(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0", "logs", "--remote", "lab")
 	cfg := &cliconfig.Config{CurrentRemote: "khz", Remotes: map[string]*cliconfig.Remote{
-		"khz": {Master: deadURL(t), Token: "tok", Version: "v0.4.0"},
-		"lab": {Master: deadURL(t), Token: "tok", Version: "v0.3.2"},
+		"khz": {Master: fakeDaemon(t, "v0.4.0").URL, Token: "tok", Version: "v0.4.0"},
+		"lab": {Master: fakeDaemon(t, "v0.3.2").URL, Token: "tok", Version: "v0.3.2"},
 	}}
 	seedConfig(t, cfg)
 	lab := f.seedCache(t, "v0.3.2")
@@ -363,7 +370,7 @@ func TestDispatchPromotesHomeToNewerRelease(t *testing.T) {
 	dir := t.TempDir()
 	f.d.executable = writeExecutable(t, dir, "skali", fakeCLI("v0.3.2"))
 	f.serveFeed(t, "v0.4.0")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 
 	handled, code := f.d.run()
 	require.True(t, handled)
@@ -376,6 +383,9 @@ func TestDispatchPromotesHomeToNewerRelease(t *testing.T) {
 }
 
 func TestRerunAfterMismatch(t *testing.T) {
+	oldArgs := os.Args
+	os.Args = []string{"skali", "env", "list"}
+	t.Cleanup(func() { os.Args = oldArgs })
 	t.Cleanup(skew.reset)
 	withCLIVersion(t, "v0.4.0")
 	mismatch := &client.APIError{Status: 409, Code: client.CodeCLIVersionMismatch, Message: "requires skali v0.5.0"}
@@ -427,7 +437,7 @@ func TestDispatchPromotesTwiceAcrossARerun(t *testing.T) {
 	f := newDispatchFixture(t, "v0.3.2", "env", "list")
 	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
 	f.serveFeed(t, "v0.4.0")
-	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 	f.script = []func(spawnCall) (childStatus, error){
 		func(spawnCall) (childStatus, error) {
 			f.serveFeed(t, "v0.5.0")
@@ -520,19 +530,19 @@ func TestHandoffProbesEmptyVersion(t *testing.T) {
 
 	f = newDispatchFixture(t, "v0.5.0", "remote", "status")
 	handled, _ = f.d.handoff(context.Background(), "khz", deadURL(t), "")
-	require.False(t, handled, "an unreachable daemon leaves the command in process to report it")
+	require.True(t, handled, "an unreachable daemon fails closed")
 	require.Empty(t, f.spawns)
-	require.Empty(t, f.stderr.String())
+	require.Contains(t, f.stderr.String(), "error:")
 }
 
-func TestHandoffFetchFailureRunsInProcess(t *testing.T) {
+func TestHandoffFetchFailureFailsClosed(t *testing.T) {
 	f := newDispatchFixture(t, "v0.3.2", "remote", "add", "khz", "khz.example") // the fixture's feed is a dead URL
 
 	handled, _ := f.d.handoff(context.Background(), "khz", deadURL(t), "v0.4.0")
-	require.False(t, handled)
+	require.True(t, handled)
 	require.Empty(t, f.spawns)
-	require.Contains(t, f.stderr.String(), "warning: could not fetch skali v0.4.0 from the release feed: ")
-	require.Contains(t, f.stderr.String(), "; running skali v0.3.2")
+	require.Contains(t, f.stderr.String(), "error: could not fetch skali v0.4.0 from the release feed: ")
+	require.NotContains(t, f.stderr.String(), "; running")
 }
 
 func TestHandoffLeftover213IsAnError(t *testing.T) {
@@ -571,6 +581,6 @@ func TestRefusedAsWrongReleaseIgnoresLocal(t *testing.T) {
 	skew.record(localRemoteName, "v9.9.9")
 	require.False(t, refusedAsWrongRelease(errors.New("boom")))
 	skew.record("khz", "v9.9.9")
-	require.True(t, refusedAsWrongRelease(errors.New("boom")))
+	require.False(t, refusedAsWrongRelease(errors.New("boom")))
 	require.True(t, refusedAsWrongRelease(&client.APIError{Code: client.CodeCLIVersionMismatch}))
 }

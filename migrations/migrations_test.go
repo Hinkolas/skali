@@ -156,8 +156,8 @@ func TestUnrecognizedBaselineRefused(t *testing.T) {
 	require.ErrorContains(t, err, "unrecognized skali schema baseline")
 }
 
-// Migration 2 turns the text schema_version columns into the integer schema
-// the decoders compare against, carrying rc.2 rows across.
+// Schema constants are independent without changing the physical columns.
+// Old daemons can keep querying while the new release rolls out.
 func TestDocumentSchemaMigrationCarriesRows(t *testing.T) {
 	db := database(t)
 	ctx := context.Background()
@@ -173,12 +173,12 @@ func TestDocumentSchemaMigrationCarriesRows(t *testing.T) {
 
 	results, err := migrations.Up(ctx, db)
 	require.NoError(t, err)
-	require.NotEmpty(t, results)
-	var schema int
-	require.NoError(t, db.QueryRowContext(ctx, "SELECT schema FROM definition_versions WHERE id = $1", definition).Scan(&schema))
-	require.Equal(t, 1, schema)
+	require.Empty(t, results)
+	var schema string
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT schema_version FROM definition_versions WHERE id = $1", definition).Scan(&schema))
+	require.Equal(t, "1", schema)
 	var dataType string
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT data_type FROM information_schema.columns
-    WHERE table_name = 'revisions' AND column_name = 'schema'`).Scan(&dataType))
-	require.Equal(t, "integer", dataType)
+    WHERE table_name = 'revisions' AND column_name = 'schema_version'`).Scan(&dataType))
+	require.Equal(t, "text", dataType)
 }

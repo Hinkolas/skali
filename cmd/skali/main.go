@@ -122,7 +122,7 @@ func main() {
 	// A cluster that moved since its record was written refuses home once;
 	// the refusal recorded the new version, so dispatch can run the command
 	// again with the right release (see dispatch.go).
-	if handled, code := rerunAfterMismatch(err, os.Getenv, os.Stderr, dispatchTried, func() (bool, int) { return dispatch(os.Args[1:]) }); handled {
+	if handled, code := rerunAfterMismatch(err, dispatchEnvironment, os.Stderr, dispatchTried, func() (bool, int) { return dispatch(os.Args[1:]) }); handled {
 		os.Exit(code)
 	}
 	// A dispatched child refused as the wrong release says nothing: its
@@ -199,11 +199,15 @@ func currentClient() (*cliconfig.Config, string, *client.Client, error) {
 	if err != nil {
 		return nil, "", nil, err
 	}
-	name, remote, err := cfg.Current()
+	start, err := os.Getwd()
 	if err != nil {
 		return nil, "", nil, err
 	}
-	return cfg, name, remoteClient(cfg, remote), nil
+	target, err := resolveRemoteTarget(cfg, "", start, "")
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return cfg, target.Name, remoteClient(cfg, target.Remote), nil
 }
 
 // remoteClient builds the API client for a stored remote with install-identity
@@ -216,18 +220,24 @@ func currentClient() (*cliconfig.Config, string, *client.Client, error) {
 // how a dispatched child leaves the moved version behind for its parent).
 // Saves are best effort; a failed one simply repeats on the next command.
 func remoteClient(cfg *cliconfig.Config, remote *cliconfig.Remote) *client.Client {
+	expected := *remote
+	name := ""
+	for candidate, configured := range cfg.Remotes {
+		if configured == remote {
+			name = candidate
+			break
+		}
+	}
+	if name == "" {
+		name, _, _ = lookupRemoteByMaster(cfg, remote.Master)
+	}
 	c := client.New(remote.Master, remote.Token, caller())
 	c.PinInstance(remote.Instance, func(observed string) {
-		remote.Instance = observed
-		_ = cliconfig.Save(cfg)
+		_ = cliconfig.Observe(name, expected, observed, c.ObservedVersion())
 	})
-	name, _, _ := lookupRemoteByMaster(cfg, remote.Master)
 	c.OnVersion(func(observed string) {
 		skew.record(name, observed)
-		if remote.Version != observed {
-			remote.Version = observed
-			_ = cliconfig.Save(cfg)
-		}
+		_ = cliconfig.Observe(name, expected, c.ObservedInstance(), observed)
 	})
 	return c
 }

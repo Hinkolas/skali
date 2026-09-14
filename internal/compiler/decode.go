@@ -10,6 +10,21 @@ import (
 // is DefinitionSchema 1 and they decode forever.
 const legacyDefinitionVersion = "1"
 
+// EncodeStoredDefinition keeps schema-1 rows readable by the daemon still
+// serving during a rolling update. Aliases describe storage, never manifests.
+// Canonical compiler hashes continue to use the ordinary integer-schema form.
+func EncodeStoredDefinition(definition ProjectDefinition) ([]byte, error) {
+	type plain ProjectDefinition
+	legacy := ""
+	if definition.Schema == 1 {
+		legacy = legacyDefinitionVersion
+	}
+	return json.Marshal(struct {
+		plain
+		Version string `json:"version,omitempty"`
+	}{plain(definition), legacy})
+}
+
 // UnsupportedDefinitionError reports a stored definition document written
 // under a schema generation this build does not decode. Callers may
 // surface the message verbatim.

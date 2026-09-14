@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
@@ -20,7 +21,7 @@ import (
 
 func newClusterUpgradeCommand() *cobra.Command {
 	var yes, wait, recover bool
-	var target string
+	var target, remote, observe string
 	command := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Update the whole managed cluster to one Skali release",
@@ -35,17 +36,28 @@ func newClusterUpgradeCommand() *cobra.Command {
 				}
 				return runRecoveryUpdate(command.Context(), out, reader, target, yes, wait)
 			}
-			detected, err := installer.Detect(command.Context(), runner())
-			if err != nil {
-				return err
-			}
-			if imageTarFlag == "" && detected.Record != nil && detected.Record.Reconciled() {
-				_, _, api, err := currentClient()
+			if imageTarFlag == "" {
+				cfg, err := cliconfig.Load()
 				if err != nil {
-					return fmt.Errorf("select and authenticate a Skali remote first: %w", err)
+					return err
 				}
-				return runManagedUpdate(command.Context(), out, reader, api, target, yes, wait)
+				start, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				selected, err := resolveRemoteTarget(cfg, "", start, remote)
+				if err == nil {
+					api := remoteClient(cfg, selected.Remote)
+					if observe != "" {
+						return waitAPIUpdate(command.Context(), out, api, observe)
+					}
+					return runManagedUpdate(command.Context(), out, reader, api, target, yes, wait)
+				}
+				if !errors.Is(err, errNoRemote) || observe != "" {
+					return err
+				}
 			}
+
 			if target != "" || wait {
 				return errors.New("--version and --wait require a managed cluster")
 			}
@@ -56,6 +68,9 @@ func newClusterUpgradeCommand() *cobra.Command {
 	command.Flags().BoolVar(&wait, "wait", false, "wait for the cluster update to complete")
 	command.Flags().BoolVar(&recover, "recover", false, "submit directly from a controller without API activity checks")
 	command.Flags().StringVar(&target, "version", "", "exact target release (default: latest on the configured channel)")
+	command.Flags().StringVar(&remote, "remote", "", "target remote, overriding checkout and current selection")
+	command.Flags().StringVar(&observe, "observe-operation", "", "observe an accepted update without submitting work")
+	_ = command.Flags().MarkHidden("observe-operation")
 	return command
 }
 
@@ -88,6 +103,21 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 	}
 	record := detected.Record
 	if record.Reconciled() && imageTarFlag == "" {
+		args := []string{"cluster", "upgrade"}
+		if yes {
+			args = append(args, "--yes")
+		}
+		d, err := newDispatcher(args)
+		if err != nil {
+			return err
+		}
+		if handled, code := d.run(); handled {
+			return &dispatchedExit{code: code}
+		}
+		previous := invocationContext
+		invocationContext = d.selected
+		defer func() { invocationContext = previous }()
+
 		_, _, api, err := currentClient()
 		if err != nil {
 			return fmt.Errorf("select and authenticate a Skali remote first: %w", err)

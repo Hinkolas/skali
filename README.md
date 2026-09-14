@@ -104,9 +104,10 @@ deploys it, and follows its logs. The example is then served at
 `skali dev` brings it back, `skali dev -d` keeps it running in the
 background. `skali dev list`, `skali dev status`, `skali dev exec`, and
 `skali dev reset` do what they say. The platform runs the same skali release
-as the project's target cluster, one local cluster per release, and
-`skali dev prune` removes the clusters no release in use needs; reset and
-prune are the destructive ones and ask first.
+as the project's target cluster in one fixed `skali-dev` cluster. Switching
+releases requires `skali dev reset`, which asks before deleting local data.
+`skali dev stop` and `skali dev start` retain data. Use `--offline` deliberately
+when working against a recorded target release without remote discovery.
 
 Add a `dev:` block to an application and bare `skali dev` runs that app as a
 process on your machine with hot reload, behind the cluster's routes and with

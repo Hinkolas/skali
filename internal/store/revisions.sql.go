@@ -13,7 +13,7 @@ import (
 )
 
 const getRevisionByChecksum = `-- name: GetRevisionByChecksum :one
-SELECT id, project_id, environment_id, definition_version_id, schema, checksum, definition_hash, values_hash, compiler_version, document, created_at FROM revisions WHERE environment_id = $1 AND checksum = $2
+SELECT id, project_id, environment_id, definition_version_id, schema_version, checksum, definition_hash, values_hash, compiler_version, document, created_at FROM revisions WHERE environment_id = $1 AND checksum = $2
 `
 
 type GetRevisionByChecksumParams struct {
@@ -29,7 +29,7 @@ func (q *Queries) GetRevisionByChecksum(ctx context.Context, arg GetRevisionByCh
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DefinitionVersionID,
-		&i.Schema,
+		&i.SchemaVersion,
 		&i.Checksum,
 		&i.DefinitionHash,
 		&i.ValuesHash,
@@ -41,7 +41,7 @@ func (q *Queries) GetRevisionByChecksum(ctx context.Context, arg GetRevisionByCh
 }
 
 const getRevisionByID = `-- name: GetRevisionByID :one
-SELECT id, project_id, environment_id, definition_version_id, schema, checksum, definition_hash, values_hash, compiler_version, document, created_at FROM revisions WHERE id = $1
+SELECT id, project_id, environment_id, definition_version_id, schema_version, checksum, definition_hash, values_hash, compiler_version, document, created_at FROM revisions WHERE id = $1
 `
 
 func (q *Queries) GetRevisionByID(ctx context.Context, id uuid.UUID) (Revision, error) {
@@ -52,7 +52,7 @@ func (q *Queries) GetRevisionByID(ctx context.Context, id uuid.UUID) (Revision, 
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DefinitionVersionID,
-		&i.Schema,
+		&i.SchemaVersion,
 		&i.Checksum,
 		&i.DefinitionHash,
 		&i.ValuesHash,
@@ -66,7 +66,7 @@ func (q *Queries) GetRevisionByID(ctx context.Context, id uuid.UUID) (Revision, 
 const insertRevision = `-- name: InsertRevision :execrows
 
 INSERT INTO revisions
-    (id, project_id, environment_id, definition_version_id, schema,
+    (id, project_id, environment_id, definition_version_id, schema_version,
      checksum, definition_hash, values_hash, compiler_version, document)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (environment_id, checksum) DO NOTHING
@@ -77,7 +77,7 @@ type InsertRevisionParams struct {
 	ProjectID           uuid.UUID
 	EnvironmentID       uuid.UUID
 	DefinitionVersionID uuid.UUID
-	Schema              int32
+	SchemaVersion       string
 	Checksum            string
 	DefinitionHash      string
 	ValuesHash          string
@@ -93,7 +93,7 @@ func (q *Queries) InsertRevision(ctx context.Context, arg InsertRevisionParams) 
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DefinitionVersionID,
-		arg.Schema,
+		arg.SchemaVersion,
 		arg.Checksum,
 		arg.DefinitionHash,
 		arg.ValuesHash,
@@ -107,7 +107,7 @@ func (q *Queries) InsertRevision(ctx context.Context, arg InsertRevisionParams) 
 }
 
 const listRevisions = `-- name: ListRevisions :many
-SELECT id, project_id, environment_id, definition_version_id, schema,
+SELECT id, project_id, environment_id, definition_version_id, schema_version,
        checksum, definition_hash, values_hash, compiler_version, created_at
 FROM revisions
 WHERE environment_id = $1
@@ -119,7 +119,7 @@ type ListRevisionsRow struct {
 	ProjectID           uuid.UUID
 	EnvironmentID       uuid.UUID
 	DefinitionVersionID uuid.UUID
-	Schema              int32
+	SchemaVersion       string
 	Checksum            string
 	DefinitionHash      string
 	ValuesHash          string
@@ -141,7 +141,7 @@ func (q *Queries) ListRevisions(ctx context.Context, environmentID uuid.UUID) ([
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.DefinitionVersionID,
-			&i.Schema,
+			&i.SchemaVersion,
 			&i.Checksum,
 			&i.DefinitionHash,
 			&i.ValuesHash,

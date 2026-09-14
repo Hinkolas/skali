@@ -25,13 +25,12 @@ func TestSkewHintRemote(t *testing.T) {
 	require.Contains(t, skewHint("", "v0.3.2", "v0.4.0"), "hint: the remote runs skalid v0.4.0")
 }
 
-// The local platform has one cure in both directions: each release has its
-// own, and skali dev switches to this CLI's.
+// Changing the installed local platform release requires explicit reset.
 func TestSkewHintLocalRemote(t *testing.T) {
 	for _, c := range []struct{ cli, server string }{{"v0.4.0", "v0.3.0"}, {"v0.3.2", "v0.4.0"}} {
 		hint := skewHint(localRemoteName, c.cli, c.server)
 		require.Contains(t, hint, "the local platform answering runs skalid "+c.server+" and this CLI is "+c.cli)
-		require.Contains(t, hint, "run skali dev to switch")
+		require.Contains(t, hint, "run skali dev reset")
 		require.NotContains(t, hint, "--version")
 	}
 }
@@ -60,7 +59,7 @@ func TestDevSkewError(t *testing.T) {
 
 	err := devSkewError("ghcr.io/hinkolas/skalid:v0.1.0")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "the local platform skali-dev-v0-2-0 runs skalid v0.1.0 and this CLI is v0.2.0")
+	require.Contains(t, err.Error(), "the local platform skali-dev runs skalid v0.1.0 and this CLI is v0.2.0")
 	require.Contains(t, err.Error(), "skali dev reset")
 	require.NotContains(t, err.Error(), "hint:")
 
