@@ -2,18 +2,23 @@
 
 - Commands verify the selected cluster and run its exact CLI release. Newer
   targets automatically promote the installed CLI, including prereleases.
-  Failed dispatch is an error; a different home release never substitutes.
+  Failed execution/reference dispatch is an error; a different home release
+  never substitutes. Command help stays available without a cluster, preferring
+  cached target help and identifying any fallback to home help.
 - References, validation, compilation and manifest upgrade share `--remote`,
   `--manifest` and explicit `--offline` selection. References identify their
   answering release and verification status.
 - Local development uses one `skali-dev` cluster. Switching platform releases
   requires `skali dev reset`, which deletes local data after confirmation.
-  Stop/start retains data. `dev prune` and `dev upgrade` are unavailable.
+  Stop/start retains data. Confirmed reset also recovers the fixed cluster
+  when its installation record is missing. `dev prune` and `dev upgrade` are unavailable.
   Abandoned per-release records require the cleanup instructions printed by CLI.
 - The installed agent skill is an operational guide. Release-specific manifest,
   CLI and architecture references are embedded in the matching binary.
 - Newer manifest watermarks are rejected by older released compilers. Manifest
   upgrades validate before writing and leave semantic review to the author.
+- Remote listing/removal can repair incomplete configuration entries. Invalid
+  YAML reports its file path and is never rewritten automatically.
 - Configuration, CLI promotion and cache operations are serialized. Managed
   upgrade waiting continues with the accepted operation ID across release changes;
   mutating commands are never automatically replayed.

@@ -45,7 +45,7 @@ var noDispatchPaths = map[string]bool{
 }
 
 // Older prereleases did not implement the worker/context contract.
-func lacksCommand(path, release string) bool {
+func unsupportedDispatchRelease(release string) bool {
 	return versionpkg.Older(release, minimumDispatchRelease)
 }
 

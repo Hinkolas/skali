@@ -345,6 +345,10 @@ func CheckVersion(state *State) error {
 		}
 		return fmt.Errorf("local dev platform runs %s (%s); selected CLI requires %s (%s); run skali dev reset to delete the local platform and its data, then skali dev to recreate it", installed, state.K3sImage, wanted, K3sImage)
 	}
+	_, published := version.PublishedSkalidVersion(state.SkalidImage)
+	if state.Version == "" && published {
+		return fmt.Errorf("working-tree platform record names a released skalid image; run skali dev reset")
+	}
 	if state.Version != "" && state.SkalidImage != version.PublishedSkalidImage(state.Version) {
 		return fmt.Errorf("local platform image and recorded release disagree; run skali dev reset")
 	}

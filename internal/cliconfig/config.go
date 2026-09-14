@@ -64,6 +64,22 @@ func Path() (string, error) {
 
 // Load reads the config; a missing file is an empty config, not an error.
 func Load() (*Config, error) {
+	cfg, err := LoadForRepair()
+	if err != nil {
+		return nil, err
+	}
+	for name, remote := range cfg.Remotes {
+		if remote == nil || remote.Master == "" {
+			path, _ := Path()
+			return nil, fmt.Errorf("cliconfig: %s: remote %q has no master; remove it with skali remote remove %s or edit the file", path, name, name)
+		}
+	}
+	return cfg, nil
+}
+
+// LoadForRepair parses configuration without requiring usable remote entries.
+// Inspection and removal remain available when an entry is incomplete.
+func LoadForRepair() (*Config, error) {
 	path, err := Path()
 	if err != nil {
 		return nil, err
@@ -81,11 +97,6 @@ func Load() (*Config, error) {
 	}
 	if cfg.Remotes == nil {
 		cfg.Remotes = map[string]*Remote{}
-	}
-	for name, remote := range cfg.Remotes {
-		if remote == nil || remote.Master == "" {
-			return nil, fmt.Errorf("cliconfig: remote %q has no master", name)
-		}
 	}
 	// Older CLIs made the local platform the current remote; treat that as
 	// no selection so unbound deploys block instead of silently targeting
@@ -110,6 +121,10 @@ func clone(cfg *Config) *Config {
 // Update applies a narrow mutation to the latest configuration while locked.
 // Unknown fields survive both reading and writing, including inside remotes.
 func Update(fn func(*Config) error) error {
+	return update(Load, fn)
+}
+
+func update(load func() (*Config, error), fn func(*Config) error) error {
 	path, err := Path()
 	if err != nil {
 		return err
@@ -119,7 +134,7 @@ func Update(fn func(*Config) error) error {
 		return err
 	}
 	defer unlock()
-	cfg, err := Load()
+	cfg, err := load()
 	if err != nil {
 		return err
 	}
@@ -127,6 +142,25 @@ func Update(fn func(*Config) error) error {
 		return err
 	}
 	return write(cfg)
+}
+
+// Remove conditionally removes an entry, including an incomplete or null entry.
+// Parse errors still fail without changing the source file.
+func Remove(name string, expected *Remote) error {
+	return update(LoadForRepair, func(cfg *Config) error {
+		current, exists := cfg.Remotes[name]
+		if !exists {
+			return nil
+		}
+		if (current == nil) != (expected == nil) || current != nil && (current.Master != expected.Master || current.Token != expected.Token || expected.Instance != "" && current.Instance != expected.Instance) {
+			return fmt.Errorf("remote %q changed concurrently; run the command again", name)
+		}
+		delete(cfg.Remotes, name)
+		if cfg.CurrentRemote == name {
+			cfg.CurrentRemote = ""
+		}
+		return nil
+	})
 }
 
 // Save merges changes relative to the snapshot Load returned. Conflicting

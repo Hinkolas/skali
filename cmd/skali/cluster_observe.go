@@ -37,7 +37,7 @@ func handoffUpdateObservation(ctx context.Context, api *client.Client, id string
 		return err
 	}
 	release := probe.ObservedVersion()
-	if !versionpkg.IsRelease(release) || lacksCommand("cluster upgrade", release) || release == versionpkg.Version {
+	if !versionpkg.IsRelease(release) || unsupportedDispatchRelease(release) || release == versionpkg.Version {
 		return fmt.Errorf("cannot observe update %s with daemon release %q", id, release)
 	}
 	return runUpdateObserver(ctx, selected, release, id)

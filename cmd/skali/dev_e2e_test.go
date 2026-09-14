@@ -112,24 +112,6 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 	return harness
 }
 
-// runWithEnv is run with an explicit environment.
-func (h *e2eHarness) runWithEnv(env []string, wantErr bool, stdin string, args ...string) string {
-	h.t.Helper()
-	command := exec.Command(h.binary, args...)
-	command.Dir = h.projectDir
-	command.Env = env
-	if stdin != "" {
-		command.Stdin = strings.NewReader(stdin)
-	}
-	out, err := command.CombinedOutput()
-	if wantErr {
-		require.Error(h.t, err, "expected failure: %s", out)
-	} else {
-		require.NoError(h.t, err, "%s", out)
-	}
-	return string(out)
-}
-
 // run executes the CLI in the project directory and returns its combined
 // output; fatal on unexpected exit codes unless wantErr.
 func (h *e2eHarness) run(wantErr bool, stdin string, args ...string) string {

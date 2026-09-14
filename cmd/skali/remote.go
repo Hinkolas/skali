@@ -284,7 +284,7 @@ func newRemoteListCommand() *cobra.Command {
 }
 
 func runRemoteList(command *cobra.Command, args []string) error {
-	cfg, err := cliconfig.Load()
+	cfg, err := cliconfig.LoadForRepair()
 	if err != nil {
 		return err
 	}
@@ -304,6 +304,13 @@ func remoteNames(cfg *cliconfig.Config) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func remoteMasterLabel(remote *cliconfig.Remote) string {
+	if remote == nil || remote.Master == "" {
+		return "(missing master)"
+	}
+	return remote.Master
 }
 
 // renderRemoteTable prints the remotes the way the other list commands
@@ -331,7 +338,7 @@ func renderRemoteTable(out io.Writer, cfg *cliconfig.Config) {
 			width += len(currentSuffix)
 		}
 		nameWidth = max(nameWidth, width)
-		masterWidth = max(masterWidth, len(cfg.Remotes[name].Master))
+		masterWidth = max(masterWidth, len(remoteMasterLabel(cfg.Remotes[name])))
 	}
 	fmt.Fprintf(out, "%-*s  %-*s  %s\n", nameWidth, "NAME", masterWidth, "MASTER", "SESSION")
 	for _, name := range names {
@@ -343,10 +350,12 @@ func renderRemoteTable(out io.Writer, cfg *cliconfig.Config) {
 			padding -= len(currentSuffix)
 		}
 		session := style.Green("logged in")
-		if remote.Token == "" {
+		if remote == nil || remote.Master == "" {
+			session = style.Red("invalid entry")
+		} else if remote.Token == "" {
 			session = style.Dim("not logged in")
 		}
-		fmt.Fprintf(out, "%s%s  %-*s  %s\n", label, strings.Repeat(" ", max(padding, 0)), masterWidth, remote.Master, session)
+		fmt.Fprintf(out, "%s%s  %-*s  %s\n", label, strings.Repeat(" ", max(padding, 0)), masterWidth, remoteMasterLabel(remote), session)
 	}
 }
 
@@ -530,15 +539,15 @@ func newRemoteRemoveCommand() *cobra.Command {
 			if name == localRemoteName {
 				return errors.New("remote \"local\" is managed by skali dev; run `skali dev reset` to remove the local platform")
 			}
-			cfg, err := cliconfig.Load()
+			cfg, err := cliconfig.LoadForRepair()
 			if err != nil {
 				return err
 			}
-			target := cfg.Remotes[name]
-			if target == nil {
+			target, exists := cfg.Remotes[name]
+			if !exists {
 				return fmt.Errorf("remote %q does not exist; run `skali remote list`", name)
 			}
-			if target.Token != "" {
+			if target != nil && target.Master != "" && target.Token != "" {
 				// Best effort, like logout: removal must not strand a live
 				// session server-side, but an unreachable master cannot
 				// block the removal either.
@@ -551,7 +560,7 @@ func newRemoteRemoveCommand() *cobra.Command {
 			if cleared {
 				cfg.CurrentRemote = ""
 			}
-			if err := cliconfig.Save(cfg); err != nil {
+			if err := cliconfig.Remove(name, target); err != nil {
 				return err
 			}
 			// The remote's release may have been the last reference to a

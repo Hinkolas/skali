@@ -384,6 +384,7 @@ func newDevCommand() *cobra.Command {
 	reset := &cobra.Command{
 		Use:   "reset",
 		Short: "Destroy the local dev platform completely",
+		Long:  "Deletes the fixed local cluster and its data, even if its installation record is missing. Requires confirmation or --yes.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			return runDevReset(command, resetYes)
@@ -415,6 +416,14 @@ func runDevStop(command *cobra.Command, args []string) error {
 	status, err := localdev.Status(ctx)
 	if err != nil {
 		return err
+	}
+	if status == localdev.ClusterAbsent {
+		fmt.Fprintln(command.OutOrStdout(), "local platform cluster is absent; retained installation record can be cleared with skali dev reset")
+		return nil
+	}
+	if status == localdev.ClusterStopped {
+		fmt.Fprintln(command.OutOrStdout(), "local platform is already stopped; state is retained")
+		return nil
 	}
 	if status == localdev.ClusterRunning {
 		if err := localdev.Stop(ctx); err != nil {
@@ -867,16 +876,10 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 	if skalidImage != "" && versionpkg.IsRelease(versionpkg.Version) && skalidImage != versionpkg.PublishedSkalidImage(versionpkg.Version) {
 		return nil, fmt.Errorf("--skalid-image must be %s for this released CLI", versionpkg.PublishedSkalidImage(versionpkg.Version))
 	}
-	if platform, ok := versionpkg.PublishedSkalidVersion(skalidImage); ok &&
-		versionpkg.ReleasesDiffer(versionpkg.Version, platform) {
-		return nil, fmt.Errorf("--skalid-image names skalid %s but this skali is %s; the local platform must match the selected release: "+
-			"run skali dev --remote <name> for a remote that runs %s, or skali upgrade --version %s",
-			platform, versionpkg.Version, platform, platform)
+	if platform, ok := versionpkg.PublishedSkalidVersion(skalidImage); ok && !versionpkg.IsRelease(versionpkg.Version) {
+		return nil, fmt.Errorf("--skalid-image names released skalid %s; this working-tree CLI requires a development image; omit --skalid-image to build it, or use skali %s for that release", platform, platform)
 	}
-	if cfg, err := cliconfig.Load(); err == nil {
-		cwd, _ := os.Getwd()
-		fmt.Fprintln(out, devVersionReason(cfg, "", cwd, devRemote))
-	}
+	fmt.Fprintln(out, devVersionReason())
 	if status, err := localdev.Status(ctx); err == nil && status != localdev.ClusterRunning {
 		fmt.Fprintln(out, "Local platform is not running. Creating it now.")
 	}
@@ -1273,6 +1276,12 @@ func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
 		return err
 	}
 	defer unlock()
+	// Cleanup must tolerate incomplete remote entries too. Parse before deleting
+	// anything, and conditionally remove only the local credentials afterwards.
+	cfg, err := cliconfig.LoadForRepair()
+	if err != nil {
+		return err
+	}
 	tasks := clirender.NewTasks(out)
 	status, err := localdev.Status(ctx)
 	if err != nil {
@@ -1280,8 +1289,6 @@ func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
 	}
 	if _, err := localdev.LoadState(); err != nil && !errors.Is(err, localdev.ErrNotInstalled) {
 		return err
-	} else if errors.Is(err, localdev.ErrNotInstalled) && status != localdev.ClusterAbsent {
-		return errors.New("cluster exists without an installation record; refusing to delete it")
 	}
 	if status != localdev.ClusterAbsent {
 		task := tasks.Start("Delete cluster " + localdev.ClusterName() + " and volumes")
@@ -1299,7 +1306,7 @@ func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
 	task.Done("")
 
 	// Drop the stored local remote; its token died with the cluster.
-	return cliconfig.Update(func(cfg *cliconfig.Config) error { delete(cfg.Remotes, localRemoteName); return nil })
+	return cliconfig.Remove(localRemoteName, cfg.Remotes[localRemoteName])
 }
 
 // printDevReady prints the local ready summary: the dashboard, every

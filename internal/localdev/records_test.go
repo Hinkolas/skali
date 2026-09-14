@@ -105,7 +105,7 @@ func TestRecords(t *testing.T) {
 	require.FileExists(t, filepath.Join(root, "dev", "skali-dev-v0-1-0-rc-3", "state.json"))
 }
 
-func TestParseClusterListAndClustersToStop(t *testing.T) {
+func TestParseClusterList(t *testing.T) {
 	t.Parallel()
 	statuses, err := parseClusterList([]byte(`[
 		{"name":"skali-dev","nodes":[{"State":{"Running":true}}]},
@@ -138,4 +138,12 @@ func TestVersionMismatchLeavesRecordUnchanged(t *testing.T) {
 	require.ErrorContains(t, CheckVersion(state), "skali dev reset")
 	withVersion(t, "v0.0.0-dev")
 	require.ErrorContains(t, CheckVersion(state), "working tree")
+}
+
+func TestWorkingTreeRecordCannotHideAReleasedImage(t *testing.T) {
+	withVersion(t, "v0.0.0-dev")
+	state := &State{K3sImage: K3sImage, SkalidImage: "ghcr.io/hinkolas/skalid:v0.1.0-rc.3"}
+	require.ErrorContains(t, CheckVersion(state), "run skali dev reset")
+	state.SkalidImage = "skalid:dev"
+	require.NoError(t, CheckVersion(state))
 }

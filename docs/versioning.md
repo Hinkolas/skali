@@ -39,7 +39,8 @@ the binary that answered a previous reference request.
 The release feed supplies binaries with published checksums. Cached entries
 retain their checksum and are verified before execution. A missing, corrupted,
 unfetchable or unstartable matching CLI is an error. Home never executes as a
-fallback for a different target release, including for documentation.
+fallback for execution or embedded references at a different target release.
+Command help has the explicitly labeled recovery exception described below.
 
 `--offline` is available for `skill read`, `validate`, `compile`, `manifest
 upgrade` and dev workflows. It skips remote discovery and CLI downloads. A
@@ -62,6 +63,9 @@ applies its changes to the latest file, preserving unknown fields and unrelated
 remotes. Conflicting logins fail rather than overwriting one another. Health and
 API observations update a record only while its endpoint, login and installation
 still match; delayed responses cannot resurrect a removed remote.
+`remote list` and `remote remove` also accept incomplete remote entries so the
+configuration can repair itself. Operational commands remain strict. Invalid YAML
+is never rewritten automatically; diagnostics name the file to edit.
 
 Cache publication and pruning share per-release locks with execution. A child
 holds a shared lease until it exits. Pruning skips acquired entries and recent
@@ -77,9 +81,16 @@ release. Remote configuration commands stay home; their API work hands off
 before execution after resolving the positional target. Local removal of a
 remote or token is still possible when server-side revocation is unavailable.
 
-Target-specific workflow help follows dispatch. Dynamic completion uses a
-matching installed/cached CLI without downloading or promoting. Missing target
-context or cache produces no remote suggestions. Local completion sources such
+Command help (`deploy --help` and `help deploy`, for example) never contacts a
+cluster, downloads a CLI or promotes home. It prefers the recorded target
+release's installed/cached CLI and identifies that release as unverified. If
+configuration or the matching CLI is unavailable, it displays explicitly labeled
+home help without claiming target compatibility. `--offline` is accepted with
+help but is unnecessary; it does not enable offline API commands. Embedded
+references remain strict and never substitute another release.
+
+Dynamic completion uses a matching installed/cached CLI without downloading or
+promoting. Missing target context or cache produces no remote suggestions. Local completion sources such
 as remote names remain available without a network request.
 
 An observed version difference alone never causes command replay. A typed
@@ -145,12 +156,16 @@ upgrades, deletes or creates another version's cluster.
 The fixed ports, host process interception, project environments and stop/start
 data retention remain. Create/start/login/stop/reset are serialized. Reset
 requires explicit data-loss confirmation or `--yes`; a failed cluster deletion
-retains its installation record and credentials for retry. Status reports the
-installed release without contacting a remote or fetching a CLI. API-dependent
+retains its installation record and credentials for retry. An explicitly
+confirmed reset can also delete the fixed dev cluster when its installation
+record is missing; normal dev startup still refuses to adopt it. Stop reports
+whether it stopped a running cluster, found it already stopped, or found its
+cluster absent. Status reports the installed release without contacting a remote or fetching a CLI. API-dependent
 project inspection uses an available matching CLI and explains when unavailable.
 
-Working-tree builds may use an explicitly built development image. Released
-CLIs require their release's platform image. `SKALI_DEV_CLUSTER` and port overrides
+Working-tree builds may use an explicitly built development image, but cannot
+use a published release image or reuse a record that mislabels one as working-tree.
+Released CLIs require their release's platform image. `SKALI_DEV_CLUSTER` and port overrides
 exist for isolated tests, not for automatically selecting parallel runtimes.
 
 Records left by testing the abandoned per-release design are detected, never

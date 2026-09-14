@@ -112,7 +112,10 @@ func main() {
 	if handled, code := dispatch(os.Args[1:]); handled {
 		os.Exit(code)
 	}
-	err := newRootCommand().Execute()
+	args := helpArgs(os.Args[1:])
+	root := newRootCommand()
+	root.SetArgs(args)
+	err := root.Execute()
 	// A remote exec command's own exit status, or the status of a command
 	// that handed itself to another release, is a result, not an error:
 	// pass it through silently, the process already wrote its stderr.

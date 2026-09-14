@@ -43,6 +43,7 @@ func TestDevSingleReleaseEndToEnd(t *testing.T) {
 	require.Contains(t, h.run(false, "", "dev", "status"), versions[0])
 	h.binary = binaries[0]
 	require.Contains(t, h.run(false, "", "dev", "stop"), "state is retained")
+	require.Contains(t, h.run(false, "", "dev", "stop"), "already stopped")
 	require.Contains(t, h.run(false, "", "dev", "start", "--offline"), "state retained")
 	h.binary = binaries[1]
 	h.run(true, "\n", "dev", "reset")
@@ -53,6 +54,10 @@ func TestDevSingleReleaseEndToEnd(t *testing.T) {
 	after, err = os.ReadFile(record)
 	require.NoError(t, err)
 	require.Contains(t, string(after), versions[1])
+	// Explicit reset remains an escape hatch if the installation record is lost.
+	require.NoError(t, os.Remove(record))
+	h.run(true, "\n", "dev", "reset")
+	require.Contains(t, h.run(false, "", "dev", "status"), "no installation record")
 	h.run(false, "", "dev", "reset", "--yes")
 	require.NoFileExists(t, record)
 }

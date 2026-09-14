@@ -1,24 +1,20 @@
-// Package skill embeds the skali skill for coding agents (the SKILL.md
-// format shared by Claude Code and Codex). The content comes in two sets
-// (docs/versioning.md, decision 6): the installed set, a version-neutral
-// SKILL.md shell plus the architecture guide, written into user-level
-// agent skill directories; and the references, version-bound documents
-// (the manifest grammar, the CLI surface) served by skali skill read,
-// which dispatches to the release of the project's target cluster. The
-// installed directory is installer-owned: install replaces it wholesale,
-// so local edits do not survive a reinstall.
+// Package skill embeds a version-neutral operational SKILL.md for installation
+// into coding agents, and release-specific manifest, CLI and architecture
+// references served by skali skill read. Installation publishes each managed
+// file atomically and prunes obsolete content; user-owned skills are refused.
 package skill
 
 import (
 	"context"
 	"embed"
 	"fmt"
-	"github.com/Hinkolas/skali/internal/filelock"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Hinkolas/skali/internal/filelock"
 )
 
 //go:embed all:assets
@@ -133,38 +129,52 @@ func Installed(home string, agent Agent) bool {
 	return err == nil && strings.Contains(string(existing), managedMarker)
 }
 
-// Install replaces the agent's skali skill directory under home with the
+// Install refreshes the agent's skali skill directory under home with the
 // installed set and returns the written paths, sorted. The directory is
 // installer-owned, so files from older releases are pruned; a SKILL.md
 // that was not written by this installer is refused rather than replaced.
 // CLAUDE_CONFIG_DIR-style overrides are not honored yet.
 func Install(home string, agent Agent) ([]string, error) {
-	dir := agent.Dir(home)
+	return installContent(agent.Dir(home), FS())
+}
+
+func checkOwnership(dir string) error {
+	existing, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err == nil && !strings.Contains(string(existing), managedMarker) {
+		return fmt.Errorf("%s exists but was not installed by skali; remove the directory to let install replace it", dir)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("inspect %s: %w", dir, err)
+	}
+	return nil
+}
+
+func installContent(dir string, content fs.FS) ([]string, error) {
+	// Refusal must leave a user-owned skill directory and its parent untouched.
+	if err := checkOwnership(dir); err != nil {
+		return nil, err
+	}
 	unlock, err := filelock.Acquire(context.Background(), dir+".lock")
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	existing, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
-	switch {
-	case err == nil:
-		if !strings.Contains(string(existing), managedMarker) {
-			return nil, fmt.Errorf("%s exists but was not installed by skali; remove the directory to let install replace it", dir)
-		}
-	case !os.IsNotExist(err):
-		return nil, fmt.Errorf("inspect %s: %w", dir, err)
+	// Recheck after locking; another installer may have published in between.
+	if err := checkOwnership(dir); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
 
 	var written []string
-	content := FS()
+	keep := map[string]bool{dir: true}
 	err = fs.WalkDir(content, ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		target := filepath.Join(dir, filepath.FromSlash(path))
+		keep[target] = true
 		if entry.IsDir() {
 			if path == "." {
 				return nil
@@ -186,21 +196,23 @@ func Install(home string, agent Agent) ([]string, error) {
 	}
 	// Publish the new shell before pruning stale references. Readers always
 	// see a complete SKILL.md, and an interrupted install is safe to retry.
-	entries, err := os.ReadDir(dir)
+	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if keep[path] {
+			return nil
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	keep := map[string]bool{}
-	for _, path := range written {
-		keep[path] = true
-	}
-	for _, entry := range entries {
-		path := filepath.Join(dir, entry.Name())
-		if !keep[path] {
-			if err := os.RemoveAll(path); err != nil {
-				return nil, err
-			}
-		}
 	}
 	sort.Strings(written)
 	return written, nil

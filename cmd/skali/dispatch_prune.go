@@ -29,7 +29,7 @@ func referencedReleases(cfg *cliconfig.Config, home string, includeLocal bool) m
 	}
 	if cfg != nil {
 		for name, remote := range cfg.Remotes {
-			if remote.Version != "" && (includeLocal || name != localRemoteName) {
+			if remote != nil && remote.Version != "" && (includeLocal || name != localRemoteName) {
 				keep[remote.Version] = true
 			}
 		}

@@ -1,7 +1,11 @@
 # Working with the skali CLI
 
 The CLI is self describing: run `skali --help` and `skali <command> --help`
-for the current surface.
+for the available surface. Help is always local and prefers the target's recorded
+release when its CLI is available. Its header identifies the answering release
+and any fallback to home help; it does not verify target compatibility.
+`--offline` is accepted with help but unnecessary. Use `skill read` for
+authoritative target references; those never fall back.
 
 References, validation, compilation and manifest upgrades select `--remote`,
 then the checkout binding, then the current remote. `--manifest PATH` selects
@@ -25,11 +29,14 @@ header and reread references when the target or release changes.
   Every response identifies the answering release, target, source and mode.
 
 Offline validation does not verify the cluster's currently running release.
-Failed dispatch never permits substituting another release's documentation.
+Failed reference dispatch never permits substituting another release's documentation.
 
 `skali completion install` puts shell completions in place for the login
 shell (`install.sh` already does this); values such as environments, remotes,
 run ids, and manifest commands then complete on tab.
+
+`skali remote list` displays incomplete entries and `skali remote remove NAME`
+can remove them. Invalid YAML diagnostics identify the configuration file to edit.
 
 ## Local development
 
@@ -49,7 +56,9 @@ run ids, and manifest commands then complete on tab.
   also require reset. `skali dev --remote <name>` selects another target.
 - `skali dev stop` retains data; `skali dev start` restarts it. Stop, reset and
   platform status work without the remote or a CLI download. Status identifies
-  the installed release. There is no `dev upgrade` or `dev prune`.
+  the installed release. Stop distinguishes stopped, already stopped, and absent
+  clusters. Confirmed reset can delete the fixed cluster even if its installation
+  record is missing. There is no `dev upgrade` or `dev prune`.
 - `skali dev run <name>` runs a named command from the manifest
   (`applications.<app>.commands`) on this machine with the application's
   resolved environment; `skali dev run <app> -- <command>...` runs a raw
@@ -80,4 +89,3 @@ run ids, and manifest commands then complete on tab.
   Environment admins may force a direct deploy with
   `skali deploy --bypass-protection`; it asks for the password when the
   login has aged and the run records the bypass.
-

@@ -70,13 +70,11 @@ func TestNoDispatchCommandsExist(t *testing.T) {
 	}
 }
 
-// A command path an older release lacks is answered at home rather than
-// by that release's group help.
-func TestLacksCommand(t *testing.T) {
-	require.True(t, lacksCommand("skill read", "v0.1.0-rc.2"))
-	require.True(t, lacksCommand("skill read", "v0.1.0-alpha.8"))
-	require.False(t, lacksCommand("skill read", "v0.1.0-rc.3"))
-	require.False(t, lacksCommand("skill read", "v0.2.0"))
-	require.True(t, lacksCommand("deploy", "v0.1.0-alpha.1"))
-	require.True(t, lacksCommand("skill install", "v0.1.0-alpha.1"))
+// Dispatch requires the first release implementing the shared context contract.
+func TestUnsupportedDispatchRelease(t *testing.T) {
+	require.True(t, unsupportedDispatchRelease("v0.1.0-rc.2"))
+	require.True(t, unsupportedDispatchRelease("v0.1.0-alpha.8"))
+	require.False(t, unsupportedDispatchRelease("v0.1.0-rc.3"))
+	require.False(t, unsupportedDispatchRelease("v0.2.0"))
+	require.True(t, unsupportedDispatchRelease("v0.1.0-alpha.1"))
 }

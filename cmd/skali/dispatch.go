@@ -215,6 +215,9 @@ func (d *dispatcher) run() (bool, int) {
 		d.selected = &versionContext{Release: d.homeVersion, Source: "this CLI", Mode: "home"}
 		return false, 0
 	}
+	if inv.help {
+		return d.help(inv)
+	}
 	cfg, err := cliconfig.Load()
 	if err != nil {
 		return d.failure(err)
@@ -261,7 +264,11 @@ func (d *dispatcher) run() (bool, int) {
 		err := probe.Health(probeCtx)
 		cancel()
 		if err != nil {
-			return d.failure(fmt.Errorf("verify remote %s: %w; local workflows can use --offline with a recorded release", target.Name, err))
+			hint := "check the remote address and cluster availability"
+			if supportsOffline(inv) {
+				hint = "local workflows can use --offline with a recorded release"
+			}
+			return d.failure(fmt.Errorf("verify remote %s: %w; %s", target.Name, err, hint))
 		}
 		record = probe.ObservedVersion()
 		if !versionpkg.IsRelease(record) {
@@ -274,7 +281,7 @@ func (d *dispatcher) run() (bool, int) {
 			target.Remote.Instance = observed
 		}
 	}
-	if lacksCommand(inv.path, record) {
+	if unsupportedDispatchRelease(record) {
 		if inv.completion {
 			return true, 0
 		}
@@ -362,7 +369,7 @@ func (d *dispatcher) handoff(ctx context.Context, remoteName, master, version st
 	}
 	d.selected = &versionContext{Resolved: true, Home: d.executable, Remote: remoteName, Master: master, Instance: instance, Release: version, Source: "remote command", Mode: "verified"}
 
-	if versionpkg.IsRelease(version) && lacksCommand(inv.path, version) {
+	if versionpkg.IsRelease(version) && unsupportedDispatchRelease(version) {
 		return d.failure(fmt.Errorf("unsupported prerelease %s; supported releases start at %s", version, minimumDispatchRelease))
 	}
 	want, ok := dispatchTarget(d.homeVersion, version)

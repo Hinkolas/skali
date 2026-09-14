@@ -20,6 +20,9 @@ func Shared(ctx context.Context, path string) (func(), error) { return acquire(c
 // Try acquires an exclusive lock without waiting. nil unlock means busy.
 func Try(path string) (func(), error) { return acquire(context.Background(), path, false, true) }
 
+// TryShared obtains a read lease without waiting for a writer. nil means busy.
+func TryShared(path string) (func(), error) { return acquire(context.Background(), path, true, true) }
+
 func acquire(ctx context.Context, path string, shared, once bool) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err

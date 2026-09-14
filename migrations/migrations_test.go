@@ -158,7 +158,7 @@ func TestUnrecognizedBaselineRefused(t *testing.T) {
 
 // Schema constants are independent without changing the physical columns.
 // Old daemons can keep querying while the new release rolls out.
-func TestDocumentSchemaMigrationCarriesRows(t *testing.T) {
+func TestDocumentSchemaColumnsAndRowsRemainCompatible(t *testing.T) {
 	db := database(t)
 	ctx := context.Background()
 	_, err := provider(t, db).DownTo(ctx, 1)
