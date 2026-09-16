@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,7 +15,6 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
-	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 )
@@ -47,34 +45,12 @@ func resolvePromoteContext(ctx context.Context, from, override string) (*promote
 	if err != nil {
 		return nil, err
 	}
-	var binding *checkout.Target
-	if override == "" {
-		if path, err := manifest.Discover("", start); err == nil {
-			if binding, err = checkout.Load(filepath.Dir(path)); err != nil {
-				return nil, err
-			}
-		}
+	selected, err := resolveRemoteTarget(cfg, "", start, override)
+	if err != nil {
+		return nil, err
 	}
-	var remoteName string
-	var remote *cliconfig.Remote
-	switch {
-	case override != "":
-		remoteName = override
-		if remote, err = remoteByName(cfg, remoteName); err != nil {
-			return nil, err
-		}
-	case binding != nil:
-		name, found, ok := lookupRemoteByMaster(cfg, binding.Master)
-		if !ok {
-			return nil, fmt.Errorf("no remote for %s on this machine; run skali remote add <name> %s",
-				binding.Master, binding.Master)
-		}
-		remoteName, remote = name, found
-	default:
-		if remoteName, remote, err = cfg.Current(); err != nil {
-			return nil, err
-		}
-	}
+	binding, remoteName, remote := selected.Binding, selected.Name, selected.Remote
+
 	api := remoteClient(cfg, remote)
 
 	if binding != nil {

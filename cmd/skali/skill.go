@@ -7,21 +7,31 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/skill"
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 func newSkillCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "skill",
 		Short: "Manage the skali skill for coding agents",
+		Long: "The skill has two parts (docs/versioning.md, decision 6). skill install " +
+			"writes a small operational guide into the " +
+			"agent's skill directory once; skali upgrade refreshes it. skill read " +
+			"prints the version-bound references (the manifest grammar, the CLI " +
+			"surface and platform architecture) and dispatches like every workflow command, so run from a " +
+			"project directory it answers at the release of the project's target " +
+			"cluster.",
 	}
-	command.AddCommand(newSkillInstallCommand())
+	command.AddCommand(newSkillInstallCommand(), newSkillReadCommand())
 	return command
 }
 
@@ -31,11 +41,12 @@ func newSkillInstallCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "install",
 		Short: "Install the skali skill for coding agents",
-		Long: "Installs the embedded skali skill (SKILL.md plus reference files on " +
-			"application architecture and the skali.yaml manifest) into the user-level " +
-			"skill directories of the selected coding agents. The installed directory " +
-			"is owned by this command: rerun install after upgrading skali to refresh " +
-			"the content.",
+		Long: "Installs the skali operational skill shell (SKILL.md) " +
+			"into the user-level skill directories of the selected coding " +
+			"agents. The shell tells the agent to read the manifest, architecture and CLI references " +
+			"through skali skill read, which answers at the release of the project's " +
+			"target cluster. The installed directory is owned by this command and is " +
+			"refreshed by skali upgrade.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			if len(agentNames) == 0 && !all && !cliprompt.Interactive() {
@@ -57,6 +68,99 @@ func newSkillInstallCommand() *cobra.Command {
 	command.Flags().BoolVar(&all, "all", false, "install for every supported agent")
 	command.MarkFlagsMutuallyExclusive("agent", "all")
 	return command
+}
+
+// newSkillReadCommand serves the version-bound references. Under dispatch
+// the binary that prints is the one for the project's target cluster, so
+// the reference is right by construction; --since renders the ledger for
+// a manifest whose watermark is older than that release.
+func newSkillReadCommand() *cobra.Command {
+	var since string
+	command := &cobra.Command{
+		Use:   "read [topic]",
+		Short: "Print a skali reference at the target's release",
+		Long: "Prints one of the references coding agents read instead of guessing: " +
+			"manifest (grammar), architecture (platform behavior), or " +
+			"cli (the commands used from the terminal). Without a topic the topics are " +
+			"listed. Run from the project directory the command dispatches to the " +
+			"release of the project's target cluster, so the reference matches the " +
+			"cluster that will compile the manifest. --since <release> prints the " +
+			"manifest grammar changes since that release instead of the reference " +
+			"(the same ledger skali validate and skali manifest upgrade consult).",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeTopics,
+		RunE: func(command *cobra.Command, args []string) error {
+			out := command.OutOrStdout()
+			fmt.Fprintln(out, versionDescription())
+			fmt.Fprintln(out)
+			if len(args) == 0 {
+				if since != "" {
+					return errors.New("--since applies to the manifest topic; run skali skill read manifest --since <release>")
+				}
+				listTopics(out)
+				return nil
+			}
+			topic := args[0]
+			content, ok := skill.Reference(topic)
+			if !ok {
+				return fmt.Errorf("unknown topic %q (valid: %s)", topic, strings.Join(skill.TopicNames(), ", "))
+			}
+			if since == "" {
+				_, err := out.Write(content)
+				return err
+			}
+			if topic != "manifest" {
+				return errors.New("--since applies to the manifest topic; run skali skill read manifest --since <release>")
+			}
+			release, ok := manifest.Watermark(since)
+			if !ok {
+				return fmt.Errorf("--since %q is not a skali release; expected a tag like %s", since, manifest.ReferenceRelease())
+			}
+			renderChangesSince(out, release, versionpkg.Version, manifest.ChangesSince(release))
+			return nil
+		},
+	}
+	addVersionFlags(command, true)
+	command.Flags().StringVar(&since, "since", "", "print the manifest changes since this release instead of the reference")
+	return command
+}
+
+// listTopics prints the topics of the binary that answers, so under
+// dispatch the release named is the target cluster's.
+func listTopics(out io.Writer) {
+	fmt.Fprintf(out, "references of skali %s\n", versionpkg.Version)
+	for _, topic := range skill.Topics() {
+		fmt.Fprintf(out, "  %-9s %s\n", topic.Name, topic.Summary)
+	}
+	fmt.Fprintln(out, "run skali skill read <topic> from the project directory")
+}
+
+// renderChangesSince prints the ledger entries after a watermark, oldest
+// first, each with its message and migration hint.
+func renderChangesSince(out io.Writer, since, current string, changes []manifest.Change) {
+	if len(changes) == 0 {
+		fmt.Fprintf(out, "no manifest changes since %s; this skali is %s\n", since, current)
+		return
+	}
+	fmt.Fprintf(out, "manifest changes since %s (this skali is %s)\n", since, current)
+	for _, change := range changes {
+		fmt.Fprintf(out, "  %s  %s  %s\n", change.Release, change.Kind, change.Path)
+		fmt.Fprintf(out, "    %s\n", change.Message)
+		if change.Hint != "" {
+			fmt.Fprintf(out, "    fix: %s\n", change.Hint)
+		}
+	}
+}
+
+func completeTopics(_ *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var values []cobra.Completion
+	for _, topic := range skill.Topics() {
+		values = append(values, cobra.CompletionWithDesc(topic.Name, topic.Summary))
+	}
+	return filterCompletions(values, toComplete)
 }
 
 // selectAgents resolves the requested agents from flags, or asks with every
@@ -119,8 +223,8 @@ func selectAgents(ctx context.Context, session *cliprompt.Session, names []strin
 	return agents, nil
 }
 
-// installSkill installs the embedded skill for each agent and renders a
-// per-agent summary line.
+// installSkill installs the shell for each agent and renders a per-agent
+// summary line.
 func installSkill(out io.Writer, home string, agents []skill.Agent) error {
 	style := clirender.StyleFor(out)
 	for _, agent := range agents {
@@ -133,6 +237,41 @@ func installSkill(out io.Writer, home string, agents []skill.Agent) error {
 	}
 	fmt.Fprintln(out, "Restart agent sessions to pick up the new skill.")
 	return nil
+}
+
+// refreshSkill reinstalls the skill for every agent that already has a
+// managed copy under home, by running the freshly installed binary so the
+// content written is its own. Nothing is installed anew, and a failure is
+// a warning for the caller, never a failed upgrade.
+func refreshSkill(ctx context.Context, tasks *clirender.Tasks, executable, home string) string {
+	if home == "" {
+		return ""
+	}
+	args := []string{"skill", "install"}
+	var labels []string
+	for _, agent := range skill.Agents() {
+		if skill.Installed(home, agent) {
+			args = append(args, "--agent", agent.Name)
+			labels = append(labels, agent.Label)
+		}
+	}
+	if len(labels) == 0 {
+		return ""
+	}
+	task := tasks.Start("Refresh agent skill")
+	err := retryTextFileBusy(ctx, func() error {
+		output, err := exec.CommandContext(ctx, executable, args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	})
+	if err != nil {
+		task.Fail()
+		return fmt.Sprintf("refresh agent skill: %v; run skali skill install", err)
+	}
+	task.Done(strings.Join(labels, ", "))
+	return ""
 }
 
 // tildePath shortens a home-prefixed path for display only.

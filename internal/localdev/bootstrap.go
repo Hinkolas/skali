@@ -41,6 +41,21 @@ func (silentProgress) Note(string)  {}
 // bundle stages in order, and the bootstrap operator user. It returns the
 // installation state for login.
 func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
+	unlock, err := Lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := ObsoletePlatforms(); err != nil {
+		return nil, err
+	}
+	existing, err := LoadState()
+	if err != nil && !errors.Is(err, ErrNotInstalled) {
+		return nil, err
+	}
+	if err := CheckVersion(existing); err != nil {
+		return nil, err
+	}
 	progress := opts.Progress
 	if progress == nil {
 		progress = silentProgress{}
@@ -80,39 +95,21 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		state.SkalidImage = opts.SkalidImage
 	}
 	if state.SkalidImage == "" {
-		return nil, errors.New("no skalid image selected: pass --skalid-image " +
-			"(working from the skali repository, task dev:image builds one)")
+		return nil, errors.New("no skalid image selected: the build or pull above failed; " +
+			"fix that or pass --skalid-image")
 	}
 
-	status, err := Status(ctx)
+	statuses, err := Statuses(ctx)
 	if err != nil {
 		return nil, err
 	}
+	status := StatusOf(statuses, ClusterName())
 	// A cluster without an installation record is not ours to adopt or
 	// destroy (an older or foreign installation); the user decides.
 	if freshInstall && status != ClusterAbsent {
 		return nil, fmt.Errorf("a %s cluster already exists but no local installation record does: "+
 			"remove it with `k3d cluster delete %s`, or pick another name via SKALI_DEV_CLUSTER",
 			ClusterName(), ClusterName())
-	}
-	// A cluster from before the single-container layout cannot be reshaped
-	// in place (its load balancer resolves the node by the old name); the
-	// platform is disposable by design, so recreation is the migration.
-	if status != ClusterAbsent && legacyLayout(ctx) {
-		return nil, fmt.Errorf("the %s cluster predates the single-container layout: "+
-			"recreate it with `skali dev reset`, then run `skali dev` again", ClusterName())
-	}
-	// Loopback service ports (postgres, S3) are create-time k3d options: a
-	// cluster from before them cannot be reshaped in place either.
-	if status != ClusterAbsent {
-		hasPorts, err := HasLoopbackPortMaps(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if !hasPorts {
-			return nil, fmt.Errorf("the %s cluster predates the loopback service port maps: "+
-				"recreate it with `skali dev reset`, then run `skali dev` again", ClusterName())
-		}
 	}
 
 	// Public platform images pre-pull on the host in parallel with the

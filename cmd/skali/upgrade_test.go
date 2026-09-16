@@ -16,9 +16,11 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/version"
@@ -236,6 +238,32 @@ func TestRunUpgradeExplicitDowngradeSkipsFeed(t *testing.T) {
 	require.NotContains(t, server.requested(), "/releases")
 }
 
+// TestRunUpgradeExplicitDowngradeWarnsAboutNewerRemotes: home manages only
+// clusters at or below its release, so a deliberate downgrade names the
+// remotes it puts out of reach. The local platform is not one of them.
+func TestRunUpgradeExplicitDowngradeWarnsAboutNewerRemotes(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedConfig(t, &cliconfig.Config{Remotes: map[string]*cliconfig.Remote{
+		"prod":          {Master: "https://prod.example/api", Version: "v0.3.0"},
+		"lab":           {Master: "https://lab.example/api", Version: "v0.2.0"},
+		"old":           {Master: "https://old.example/api", Version: "v0.1.0"},
+		localRemoteName: {Master: "https://localhost:7443", Version: "v0.9.0"},
+	}})
+	server := newFakeUpgradeServer(t, "v0.2.0", releaseAssets(fakeCLI("v0.2.0")))
+	executable := writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.4.0"))
+
+	opts := server.options("v0.4.0", updates.ChannelStable, executable)
+	opts.Requested = "v0.2.0"
+	opts.CacheDir = t.TempDir()
+	var out bytes.Buffer
+	require.NoError(t, runUpgrade(context.Background(), &out, opts))
+	require.Contains(t, out.String(), "downgraded skali v0.4.0 -> v0.2.0")
+	require.Contains(t, out.String(), "warning: remote prod runs skali v0.3.0; it cannot be managed until you upgrade again")
+	require.NotContains(t, out.String(), "remote lab")
+	require.NotContains(t, out.String(), "remote old")
+	require.NotContains(t, out.String(), localRemoteName+" runs")
+}
+
 func TestRunUpgradeAlreadyCurrentDownloadsNothing(t *testing.T) {
 	t.Parallel()
 	server := newFakeUpgradeServer(t, "v0.1.0", releaseAssets(fakeCLI("v0.1.0")))
@@ -299,7 +327,7 @@ func TestRunUpgradeChecksumMismatchLeavesFileUntouched(t *testing.T) {
 	require.Equal(t, original, got)
 	entries, readErr := os.ReadDir(dir)
 	require.NoError(t, readErr)
-	require.Len(t, entries, 1, "no temp files left behind")
+	require.Len(t, entries, 2, "only the binary and stable installation lock remain")
 }
 
 func TestRunUpgradeUnwritableDirErrorsBeforeDownload(t *testing.T) {
@@ -398,4 +426,42 @@ func TestRunUpgradeRefreshesInstalledCompletions(t *testing.T) {
 	entries, err := os.ReadDir(fresh)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+}
+
+// TestRunUpgradePrunesUnreferencedCache: the installed release becomes the
+// home reference, and a cached dispatch entry no remote names goes away.
+func TestRunUpgradePrunesUnreferencedCache(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cli := fakeCLI("v0.2.0")
+	server := newFakeUpgradeServer(t, "v0.2.0", releaseAssets(cli))
+	executable := writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.1.0"))
+	cacheDir := t.TempDir()
+	stale := installer.CLICachePath(cacheDir, "v0.1.5")
+	kept := installer.CLICachePath(cacheDir, "v0.2.0")
+	for _, path := range []string{stale, kept} {
+		require.NoError(t, installer.StoreBinary(path, cli, "00"))
+		old := time.Now().Add(-time.Hour)
+		require.NoError(t, os.Chtimes(filepath.Dir(path), old, old))
+	}
+
+	opts := server.options("v0.1.0", updates.ChannelStable, executable)
+	opts.CacheDir = cacheDir
+	require.NoError(t, runUpgrade(context.Background(), &bytes.Buffer{}, opts))
+	_, err := os.Stat(stale)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(kept)
+	require.NoError(t, err)
+}
+
+func TestExplicitUpgradeRechecksDiskBeforeClaimingNoOp(t *testing.T) {
+	server := newFakeUpgradeServer(t, "v0.4.0", releaseAssets(fakeCLI("v0.4.0")))
+	executable := writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.0"))
+	opts := server.options("v0.4.0", updates.ChannelStable, executable)
+	opts.Requested = "v0.4.0"
+	var out bytes.Buffer
+	require.NoError(t, runUpgrade(context.Background(), &out, opts))
+	current, err := installedCLIVersion(context.Background(), executable)
+	require.NoError(t, err)
+	require.Equal(t, "v0.4.0", current)
+	require.Contains(t, out.String(), "current  v0.3.0")
 }

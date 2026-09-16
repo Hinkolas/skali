@@ -74,7 +74,8 @@ but these settings must be applied on GitHub.
       The editor schema URL uses the `v0.1.0-alpha.1` tag on
       raw.githubusercontent.com. No custom domain is needed to install.
       Schema `$id` values remain stable identifiers under `skali.dev`; they
-      are not the download URLs used by the README or installed agent skill.
+      are not the download URLs used by the README or the manifest reference
+      `skali skill read manifest` serves.
 - [ ] **Make the repository public** before the tag. `install.sh`
       downloads from public release URLs and the README clones it.
 - [ ] **Flip GHCR packages public after the first push.** Packages created

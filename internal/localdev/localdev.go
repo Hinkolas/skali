@@ -17,11 +17,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Hinkolas/skali/internal/bundle"
+	"github.com/Hinkolas/skali/internal/filelock"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/version"
 )
@@ -33,10 +34,22 @@ const (
 	AdminEmail = "dev@skali.localhost"
 )
 
-// The cluster name and host loopback ports are constants of the product
+// The cluster names and host loopback ports are constants of the product
 // contract; the SKALI_DEV_* environment overrides exist so the end-to-end
 // suite runs against a throwaway installation without touching a real one.
 
+// PlatformVersion is the release this binary's local platform runs: the
+// binary's own release, or empty for a development build, whose platform
+// is the working tree (skalid:dev).
+func PlatformVersion() string {
+	if version.IsRelease(version.Version) {
+		return version.Version
+	}
+	return ""
+}
+
+// The development installation has one durable identity, independent of the
+// selected release. Test overrides must use an isolated state directory too.
 func ClusterName() string { return utils.EnvOr("SKALI_DEV_CLUSTER", "skali-dev") }
 
 // HTTPPort() publishes the traefik edge; the local platform is HTTP-only
@@ -103,9 +116,13 @@ func envPortOr(name string, fallback int) int {
 
 var ErrNotInstalled = errors.New("localdev: the local platform is not installed")
 
-// State is the local installation record; reset removes it.
+// State is one local platform's installation record; reset removes it.
 type State struct {
-	Cluster       string    `json:"cluster"`
+	Cluster string `json:"cluster"`
+	// Version is the platform release this cluster runs; empty for the
+	// working tree. Legacy records (before v0.1.0-rc.3) have none and
+	// imply it through SkalidImage.
+	Version       string    `json:"version,omitempty"`
 	K3sImage      string    `json:"k3s_image"`
 	SkalidImage   string    `json:"skalid_image"`
 	AdminEmail    string    `json:"admin_email"`
@@ -136,28 +153,50 @@ func StateDir() (string, error) {
 	return filepath.Join(home, ".local", "state", "skali"), nil
 }
 
-func statePath() (string, error) {
+// ClusterDir holds one cluster's record, kubeconfig, and registries
+// config: <StateDir>/dev/<cluster>. Each platform release has its own.
+func ClusterDir(name string) (string, error) {
 	dir, err := StateDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "localdev.json"), nil
+	return filepath.Join(dir, "dev", name), nil
 }
 
-// KubeconfigPath is where the dev cluster's kubeconfig lives.
-func KubeconfigPath() (string, error) {
-	dir, err := StateDir()
+func clusterFile(name, file string) (string, error) {
+	dir, err := ClusterDir(name)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "kubeconfig"), nil
+	return filepath.Join(dir, file), nil
 }
 
-func LoadState() (*State, error) {
-	path, err := statePath()
+func statePath() (string, error) { return clusterFile(ClusterName(), "state.json") }
+
+// KubeconfigPath is where this platform's kubeconfig lives.
+func KubeconfigPath() (string, error) { return clusterFile(ClusterName(), "kubeconfig") }
+
+// The legacy record of releases before v0.1.0-rc.3: one record, one
+// kubeconfig, and one registries config at the top of the state directory.
+const (
+	legacyStateFile      = "localdev.json"
+	legacyKubeconfigFile = "kubeconfig"
+	legacyRegistriesFile = "registries.yaml"
+)
+
+func LoadState() (*State, error) { return LoadStateFor(ClusterName()) }
+
+// LoadStateFor reads the record of the named cluster; ErrNotInstalled when
+// there is none.
+func LoadStateFor(name string) (*State, error) {
+	path, err := clusterFile(name, "state.json")
 	if err != nil {
 		return nil, err
 	}
+	return readState(path)
+}
+
+func readState(path string) (*State, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -172,6 +211,150 @@ func LoadState() (*State, error) {
 	return &state, nil
 }
 
+// Record identifies a recorded platform without exposing its credentials.
+// Obsolete records are used only to produce explicit cleanup instructions.
+type Record struct {
+	Name        string
+	Version     string // the platform release; empty for the working tree
+	SkalidImage string
+	K3sImage    string
+	CreatedAt   time.Time
+	// Legacy marks the shared cluster of releases before v0.1.0-rc.3,
+	// recorded at the top of the state directory.
+	Legacy bool
+}
+
+// Records lists every local platform this machine has a record of, sorted
+// by name: the per-cluster records under dev/ and the legacy record when
+// one exists.
+func Records() ([]Record, error) {
+	dir, err := StateDir()
+	if err != nil {
+		return nil, err
+	}
+	var records []Record
+	entries, err := os.ReadDir(filepath.Join(dir, "dev"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("localdev: list platforms: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		state, err := LoadStateFor(entry.Name())
+		if errors.Is(err, ErrNotInstalled) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, Record{
+			Name:        entry.Name(),
+			Version:     state.Version,
+			SkalidImage: state.SkalidImage,
+			K3sImage:    state.K3sImage,
+			CreatedAt:   state.CreatedAt,
+		})
+	}
+	legacy, err := readState(filepath.Join(dir, legacyStateFile))
+	if err != nil && !errors.Is(err, ErrNotInstalled) {
+		return nil, err
+	}
+	if legacy != nil {
+		name := legacy.Cluster
+		if name == "" {
+			name = "skali-dev"
+		}
+		release, _ := version.PublishedSkalidVersion(legacy.SkalidImage)
+		records = append(records, Record{
+			Name:        name,
+			Version:     release,
+			SkalidImage: legacy.SkalidImage,
+			K3sImage:    legacy.K3sImage,
+			CreatedAt:   legacy.CreatedAt,
+			Legacy:      true,
+		})
+	}
+	slices.SortFunc(records, func(a, b Record) int { return strings.Compare(a.Name, b.Name) })
+	return records, nil
+}
+
+// Lock serializes lifecycle operations. It lives outside the record directory
+// so reset cannot unlink an inode another process is waiting to lock.
+type lifecycleLockKey struct{}
+
+// LockContext keeps a lifecycle operation and its login/cleanup in one lock.
+func LockContext(ctx context.Context) (context.Context, func(), error) {
+	unlock, err := Lock(ctx)
+	return context.WithValue(ctx, lifecycleLockKey{}, true), unlock, err
+}
+
+func Lock(ctx context.Context) (func(), error) {
+	if held, _ := ctx.Value(lifecycleLockKey{}).(bool); held {
+		return func() {}, nil
+	}
+	dir, err := StateDir()
+	if err != nil {
+		return nil, err
+	}
+	return filelock.Acquire(ctx, filepath.Join(dir, "dev", "."+ClusterName()+".lock"))
+}
+
+// ObsoletePlatforms reports exact cleanup commands for records created by the
+// abandoned per-release model. It never adopts, stops, or removes them.
+func ObsoletePlatforms() error {
+	records, err := Records()
+	if err != nil {
+		return err
+	}
+	var hints []string
+	for _, record := range records {
+		if record.Name == ClusterName() && !record.Legacy {
+			continue
+		}
+		// Isolated test names are not another release of the user's platform.
+		if !record.Legacy && !strings.HasPrefix(record.Name, "skali-dev-v") && record.Name != "skali-dev-working-tree" {
+			continue
+		}
+		dir, _ := ClusterDir(record.Name)
+		if record.Legacy {
+			root, _ := StateDir()
+			hints = append(hints, fmt.Sprintf("k3d cluster delete %s; then remove %s, %s, and %s", record.Name, filepath.Join(root, legacyStateFile), filepath.Join(root, legacyKubeconfigFile), filepath.Join(root, legacyRegistriesFile)))
+			continue
+		}
+		hints = append(hints, fmt.Sprintf("k3d cluster delete %s; then remove %s", record.Name, dir))
+	}
+	if len(hints) > 0 {
+		return fmt.Errorf("old local platform records need explicit cleanup (deletes their local data):\n  %s", strings.Join(hints, "\n  "))
+	}
+	return nil
+}
+
+// CheckVersion refuses all implicit release and substrate transitions.
+func CheckVersion(state *State) error {
+	if state == nil {
+		return nil
+	}
+	if state.Version != PlatformVersion() || state.K3sImage != K3sImage {
+		installed, wanted := state.Version, PlatformVersion()
+		if installed == "" {
+			installed = "working tree"
+		}
+		if wanted == "" {
+			wanted = "working tree"
+		}
+		return fmt.Errorf("local dev platform runs %s (%s); selected CLI requires %s (%s); run skali dev reset to delete the local platform and its data, then skali dev to recreate it", installed, state.K3sImage, wanted, K3sImage)
+	}
+	_, published := version.PublishedSkalidVersion(state.SkalidImage)
+	if state.Version == "" && published {
+		return fmt.Errorf("working-tree platform record names a released skalid image; run skali dev reset")
+	}
+	if state.Version != "" && state.SkalidImage != version.PublishedSkalidImage(state.Version) {
+		return fmt.Errorf("local platform image and recorded release disagree; run skali dev reset")
+	}
+	return nil
+}
+
 func SaveState(state *State) error {
 	path, err := statePath()
 	if err != nil {
@@ -184,25 +367,36 @@ func SaveState(state *State) error {
 	if err != nil {
 		return fmt.Errorf("localdev: encode state: %w", err)
 	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		return fmt.Errorf("localdev: write state: %w", err)
-	}
-	return nil
-}
-
-// RemoveState deletes the local installation record and kubeconfig.
-func RemoveState() error {
-	path, err := statePath()
+	f, err := os.CreateTemp(filepath.Dir(path), ".state-*")
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("localdev: remove state: %w", err)
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err = f.Write(raw); err != nil {
+		return err
 	}
-	if kubeconfig, err := KubeconfigPath(); err == nil {
-		_ = os.Remove(kubeconfig)
+	if err = f.Sync(); err != nil {
+		return err
 	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// RemoveState deletes this platform's record directory (record,
+// kubeconfig, registries config).
+func RemoveState() error {
+	dir, err := ClusterDir(ClusterName())
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(dir)
 }
 
 // NewState generates the secrets of a fresh installation.
@@ -217,6 +411,7 @@ func NewState(skalidImage string) (*State, error) {
 	}
 	return &State{
 		Cluster:       ClusterName(),
+		Version:       PlatformVersion(),
 		K3sImage:      K3sImage,
 		SkalidImage:   skalidImage,
 		AdminEmail:    AdminEmail,
@@ -272,11 +467,34 @@ const (
 	ClusterRunning ClusterStatus = "running"
 )
 
+// Status reports this platform's cluster.
 func Status(ctx context.Context) (ClusterStatus, error) {
+	statuses, err := Statuses(ctx)
+	if err != nil {
+		return ClusterAbsent, err
+	}
+	return StatusOf(statuses, ClusterName()), nil
+}
+
+// Statuses reports every k3d cluster on this machine in one k3d call,
+// keyed by name.
+func Statuses(ctx context.Context) (map[string]ClusterStatus, error) {
 	out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "list", "-o", "json").Output()
 	if err != nil {
-		return ClusterAbsent, fmt.Errorf("localdev: k3d cluster list: %w", err)
+		return nil, fmt.Errorf("localdev: k3d cluster list: %w", err)
 	}
+	return parseClusterList(out)
+}
+
+// StatusOf looks a cluster up in a Statuses result; missing is absent.
+func StatusOf(statuses map[string]ClusterStatus, name string) ClusterStatus {
+	if status, ok := statuses[name]; ok {
+		return status
+	}
+	return ClusterAbsent
+}
+
+func parseClusterList(raw []byte) (map[string]ClusterStatus, error) {
 	var clusters []struct {
 		Name  string `json:"name"`
 		Nodes []struct {
@@ -285,21 +503,20 @@ func Status(ctx context.Context) (ClusterStatus, error) {
 			} `json:"State"`
 		} `json:"nodes"`
 	}
-	if err := json.Unmarshal(out, &clusters); err != nil {
-		return ClusterAbsent, fmt.Errorf("localdev: decode k3d cluster list: %w", err)
+	if err := json.Unmarshal(raw, &clusters); err != nil {
+		return nil, fmt.Errorf("localdev: decode k3d cluster list: %w", err)
 	}
+	statuses := make(map[string]ClusterStatus, len(clusters))
 	for _, cluster := range clusters {
-		if cluster.Name != ClusterName() {
-			continue
-		}
+		statuses[cluster.Name] = ClusterStopped
 		for _, node := range cluster.Nodes {
 			if node.State.Running {
-				return ClusterRunning, nil
+				statuses[cluster.Name] = ClusterRunning
+				break
 			}
 		}
-		return ClusterStopped, nil
 	}
-	return ClusterAbsent, nil
+	return statuses, nil
 }
 
 // nodeContainer is the docker name of the cluster's only node: the bare
@@ -315,53 +532,6 @@ func nodeContainer() string { return ClusterName() }
 // one up itself.
 func removeToolsNode(ctx context.Context) {
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", "k3d-"+ClusterName()+"-tools").Run()
-}
-
-// legacyLayout reports a cluster from before the single-container layout:
-// its node still has k3d's generated name, with a serverlb next to it.
-// The node cannot be renamed in place, because the load balancer reaches
-// it by its docker DNS name; those clusters are recreated instead.
-func legacyLayout(ctx context.Context) bool {
-	return exec.CommandContext(ctx, "docker", "container", "inspect", "k3d-"+ClusterName()+"-server-0").Run() == nil
-}
-
-// HasLoopbackPortMaps reports whether the existing node container publishes
-// the loopback service range. Port maps are create-time k3d options, so a
-// cluster from before the range must be recreated (skali dev reset).
-// Checking the last port of the range suffices: the maps are created as one
-// block. Works on stopped containers too.
-func HasLoopbackPortMaps(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "docker", "container", "inspect", nodeContainer()).Output()
-	if err != nil {
-		return false, fmt.Errorf("localdev: inspect node container: %w", err)
-	}
-	return portBindingsHaveLoopback(out, bundle.S3NodePort,
-		LoopbackPortBase()+loopbackNodePortCount-1)
-}
-
-// portBindingsHaveLoopback checks a docker-inspect document for a published
-// binding of the container port to the loopback host port.
-func portBindingsHaveLoopback(raw []byte, nodePort, hostPort int) (bool, error) {
-	var doc []struct {
-		HostConfig struct {
-			PortBindings map[string][]struct {
-				HostIP   string `json:"HostIp"`
-				HostPort string `json:"HostPort"`
-			} `json:"PortBindings"`
-		} `json:"HostConfig"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return false, fmt.Errorf("localdev: decode container inspect: %w", err)
-	}
-	if len(doc) == 0 {
-		return false, fmt.Errorf("localdev: container inspect returned no entries")
-	}
-	for _, binding := range doc[0].HostConfig.PortBindings[fmt.Sprintf("%d/tcp", nodePort)] {
-		if binding.HostPort == strconv.Itoa(hostPort) {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // registriesConfig lets containerd on the nodes resolve the artifact
@@ -380,7 +550,7 @@ func registriesConfig() string {
 // server needs no k3d load balancer (--no-lb, direct port mappings), and
 // the node container drops its generated k3d name.
 func Create(ctx context.Context) error {
-	dir, err := StateDir()
+	dir, err := ClusterDir(ClusterName())
 	if err != nil {
 		return err
 	}
@@ -403,7 +573,7 @@ func Create(ctx context.Context) error {
 	}
 	args = append(args, loopbackPortArgs()...)
 	args = append(args, "--wait")
-	if out, err := exec.CommandContext(ctx, k3dBinary(), args...).CombinedOutput(); err != nil {
+	if out, err := k3dRetryingBusyPorts(ctx, args...); err != nil {
 		return fmt.Errorf("localdev: k3d cluster create: %w\n%s", err, out)
 	}
 	if out, err := exec.CommandContext(ctx, "docker", "rename",
@@ -442,23 +612,57 @@ func WriteKubeconfig(ctx context.Context) error {
 }
 
 func Start(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "start", ClusterName()).CombinedOutput(); err != nil {
+	if out, err := k3dRetryingBusyPorts(ctx, "cluster", "start", ClusterName()); err != nil {
 		return fmt.Errorf("localdev: k3d cluster start: %w\n%s", err, out)
 	}
 	removeToolsNode(ctx)
 	return WriteKubeconfig(ctx)
 }
 
-func Stop(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "stop", ClusterName()).CombinedOutput(); err != nil {
-		return fmt.Errorf("localdev: k3d cluster stop: %w\n%s", err, out)
+// k3dRetryingBusyPorts runs a k3d command that binds the platform's host
+// ports. A recently stopped cluster may have exited while Docker Desktop's
+// port proxy still holds the bindings; it can
+// release 127.0.0.1 bindings a moment later; a port still busy gets a
+// short, bounded retry instead of a failure.
+func k3dRetryingBusyPorts(ctx context.Context, args ...string) ([]byte, error) {
+	const attempts = 3
+	var out []byte
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		out, err = exec.CommandContext(ctx, k3dBinary(), args...).CombinedOutput()
+		if err == nil || !portBusy(out) || attempt == attempts {
+			return out, err
+		}
+		select {
+		case <-ctx.Done():
+			return out, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return out, err
+}
+
+func portBusy(out []byte) bool {
+	text := strings.ToLower(string(out))
+	return strings.Contains(text, "port is already allocated") || strings.Contains(text, "address already in use")
+}
+
+func Stop(ctx context.Context) error { return StopFor(ctx, ClusterName()) }
+
+// StopFor stops the named cluster; k3d returns once its container exited.
+func StopFor(ctx context.Context, name string) error {
+	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "stop", name).CombinedOutput(); err != nil {
+		return fmt.Errorf("localdev: k3d cluster stop %s: %w\n%s", name, err, out)
 	}
 	return nil
 }
 
-func Delete(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "delete", ClusterName()).CombinedOutput(); err != nil {
-		return fmt.Errorf("localdev: k3d cluster delete: %w\n%s", err, out)
+func Delete(ctx context.Context) error { return DeleteFor(ctx, ClusterName()) }
+
+// DeleteFor deletes the named cluster with its volumes.
+func DeleteFor(ctx context.Context, name string) error {
+	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "delete", name).CombinedOutput(); err != nil {
+		return fmt.Errorf("localdev: k3d cluster delete %s: %w\n%s", name, err, out)
 	}
 	return nil
 }

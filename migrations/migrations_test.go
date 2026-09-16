@@ -155,3 +155,30 @@ func TestUnrecognizedBaselineRefused(t *testing.T) {
 	_, err = migrations.Up(context.Background(), db)
 	require.ErrorContains(t, err, "unrecognized skali schema baseline")
 }
+
+// Schema constants are independent without changing the physical columns.
+// Old daemons can keep querying while the new release rolls out.
+func TestDocumentSchemaColumnsAndRowsRemainCompatible(t *testing.T) {
+	db := database(t)
+	ctx := context.Background()
+	_, err := provider(t, db).DownTo(ctx, 1)
+	require.NoError(t, err)
+	project, definition := uuid.New(), uuid.New()
+	_, err = db.ExecContext(ctx, "INSERT INTO projects (id, name) VALUES ($1, 'schema-test')", project)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO definition_versions
+    (id, project_id, schema_version, definition_hash, definition, source, format, compiler_version)
+    VALUES ($1, $2, '1', 'abc', '{"version":"1","name":"schema-test"}', 'x', 'yaml', 'v0.1.0-rc.2')`, definition, project)
+	require.NoError(t, err)
+
+	results, err := migrations.Up(ctx, db)
+	require.NoError(t, err)
+	require.Empty(t, results)
+	var schema string
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT schema_version FROM definition_versions WHERE id = $1", definition).Scan(&schema))
+	require.Equal(t, "1", schema)
+	var dataType string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT data_type FROM information_schema.columns
+    WHERE table_name = 'revisions' AND column_name = 'schema_version'`).Scan(&dataType))
+	require.Equal(t, "text", dataType)
+}

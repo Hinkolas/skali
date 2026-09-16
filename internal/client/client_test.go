@@ -16,6 +16,7 @@ func TestLoginDecodesSessionAndSendsHeaders(t *testing.T) {
 		require.Equal(t, "/v1/auth/login", r.URL.Path)
 		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		require.Equal(t, "skali/test (host)", r.Header.Get("User-Agent"))
+		require.Equal(t, "v1.2.3", r.Header.Get(ClientVersionHeader))
 		require.Empty(t, r.Header.Get("Authorization"), "login is a public endpoint")
 
 		var body map[string]string
@@ -27,7 +28,7 @@ func TestLoginDecodesSessionAndSendsHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL+"/", "", "skali/test (host)") // trailing slash is normalized
+	c := New(srv.URL+"/", "", Caller{UserAgent: "skali/test (host)", Version: "v1.2.3"}) // trailing slash is normalized
 	res, err := c.Login(context.Background(), "nick@example.com", "pw")
 	require.NoError(t, err)
 	require.Nil(t, res.Challenge)
@@ -41,7 +42,7 @@ func TestLoginDecodesChallenge(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res, err := New(srv.URL, "", "").Login(context.Background(), "a@b.c", "pw")
+	res, err := New(srv.URL, "", Caller{}).Login(context.Background(), "a@b.c", "pw")
 	require.NoError(t, err)
 	require.Nil(t, res.Session)
 	require.Equal(t, "ch123", res.Challenge.Token)
@@ -54,7 +55,7 @@ func TestErrorEnvelopeBecomesAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := New(srv.URL, "", "").Login(context.Background(), "a@b.c", "wrong")
+	_, err := New(srv.URL, "", Caller{}).Login(context.Background(), "a@b.c", "wrong")
 	var apiErr *APIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, http.StatusUnauthorized, apiErr.Status)
@@ -69,7 +70,7 @@ func TestBearerTokenAttached(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	require.NoError(t, New(srv.URL, "tok123", "").Logout(context.Background()))
+	require.NoError(t, New(srv.URL, "tok123", Caller{}).Logout(context.Background()))
 }
 
 func TestNonEnvelopeErrorBody(t *testing.T) {
@@ -79,12 +80,63 @@ func TestNonEnvelopeErrorBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := New(srv.URL, "", "").Health(context.Background())
+	err := New(srv.URL, "", Caller{}).Health(context.Background())
 	var apiErr *APIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, http.StatusBadGateway, apiErr.Status)
 	require.Equal(t, "internal", apiErr.Code)
 	require.Equal(t, "upstream exploded", apiErr.Message)
+}
+
+// The health probe carries the same identity headers as every other
+// request: it is the first contact a remote sees, and the daemon's version
+// gate reads the client version off every authenticated request after it.
+func TestHealthStampsHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/healthz", r.URL.Path)
+		require.Equal(t, "skali/test (host)", r.Header.Get("User-Agent"))
+		require.Equal(t, "v1.2.3", r.Header.Get(ClientVersionHeader))
+		require.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", Caller{UserAgent: "skali/test (host)", Version: "v1.2.3"})
+	require.NoError(t, c.Health(context.Background()))
+}
+
+// An empty caller sends no identity headers at all, so a test double or a
+// third-party use of the client is never mistaken for a versioned CLI.
+func TestEmptyCallerSendsNoIdentityHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, present := r.Header[ClientVersionHeader]
+		require.False(t, present, "no version header without a caller version")
+		require.Equal(t, "Go-http-client/1.1", r.Header.Get("User-Agent"), "the default agent stands")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	require.NoError(t, New(srv.URL, "", Caller{}).Health(context.Background()))
+}
+
+// The daemon's version refusal arrives as an ordinary error envelope, with
+// the required version on the response header the client already records.
+func TestCLIVersionMismatchEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(VersionHeader, "v9.9.9")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"cli_version_mismatch","message":"this cluster runs skalid v9.9.9 and requires skali v9.9.9 (this CLI is v1.2.3)"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", Caller{Version: "v1.2.3"})
+	_, err := c.Target(context.Background(), "env-1")
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, http.StatusConflict, apiErr.Status)
+	require.Equal(t, CodeCLIVersionMismatch, apiErr.Code)
+	require.Equal(t, "v9.9.9", c.ObservedVersion(), "the refusal names the required version")
 }
 
 // The target endpoint wraps its payload; the client must unwrap it
@@ -98,7 +150,7 @@ func TestTargetDecodesWrapper(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	target, err := New(srv.URL, "tok", "").Target(context.Background(), "env-1")
+	target, err := New(srv.URL, "tok", Caller{}).Target(context.Background(), "env-1")
 	require.NoError(t, err)
 	require.NotNil(t, target.TargetRevisionID)
 	require.Equal(t, "rev-2", *target.TargetRevisionID)
@@ -115,7 +167,7 @@ func TestListRevisionsDecodes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	revisions, err := New(srv.URL, "tok", "").ListRevisions(context.Background(), "env-1")
+	revisions, err := New(srv.URL, "tok", Caller{}).ListRevisions(context.Background(), "env-1")
 	require.NoError(t, err)
 	require.Len(t, revisions, 1)
 	require.Equal(t, "rev-2", revisions[0].ID)
@@ -133,7 +185,7 @@ func TestSetTargetSendsRevisionAndDecodesRun(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	result, err := New(srv.URL, "tok", "").SetTarget(context.Background(), "env-1", "rev-1")
+	result, err := New(srv.URL, "tok", Caller{}).SetTarget(context.Background(), "env-1", "rev-1")
 	require.NoError(t, err)
 	require.Equal(t, "run-9", result.RunID)
 	require.Equal(t, "rev-1", *result.Target.TargetRevisionID)

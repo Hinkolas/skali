@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -97,6 +98,17 @@ func (d *Document) Has(path string) bool {
 	return ok
 }
 
+// Paths lists every dotted path the document wrote, sorted. The manifest
+// ledger matches its entries against it to learn what a manifest uses.
+func (d *Document) Paths() []string {
+	paths := make([]string, 0, len(d.locations))
+	for path := range d.locations {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 func (d *Document) Diagnostic(path, message string) Diagnostic {
 	position := d.Position(path)
 	return Diagnostic{
@@ -123,6 +135,9 @@ func Parse(data []byte, path, noun string, out any) (Document, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(out); err != nil {
+		if unknown := unknownFields(root.Content[0], reflect.TypeOf(out), "", path); len(unknown) > 0 {
+			return Document{}, unknown
+		}
 		return Document{}, syntaxDiagnostic(path, err)
 	}
 	var extra any
@@ -175,4 +190,96 @@ func syntaxDiagnostic(path string, err error) error {
 	}
 	message = strings.ReplaceAll(message, "unmarshal errors:\n  ", "")
 	return Diagnostic{File: path, Line: line, Column: 1, Message: message}
+}
+
+// UnknownFieldMessage is the message of every diagnostic Parse returns for
+// a mapping key the decoded type has no field for. Callers that know more
+// (the manifest's change ledger) rewrite it in place.
+const UnknownFieldMessage = "unknown field"
+
+var yamlUnmarshaler = reflect.TypeFor[yaml.Unmarshaler]()
+
+// unknownFields walks the node tree next to the Go type it was decoded
+// into and reports every mapping key the type has no field for, with the
+// key's dotted path and position. yaml.v3 refuses such a document naming
+// only the Go type and a line; the path is what an author, and the
+// manifest's change ledger, act on. Types with their own UnmarshalYAML are
+// leaves: their shape is theirs to judge.
+func unknownFields(node *yaml.Node, t reflect.Type, path, file string) Diagnostics {
+	var found Diagnostics
+	walkUnknown(node, t, path, file, &found)
+	return found
+}
+
+func walkUnknown(node *yaml.Node, t reflect.Type, path, file string, found *Diagnostics) {
+	if node.Kind == yaml.AliasNode && node.Alias != nil {
+		node = node.Alias
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Implements(yamlUnmarshaler) || reflect.PointerTo(t).Implements(yamlUnmarshaler) {
+		return
+	}
+	switch node.Kind {
+	case yaml.MappingNode:
+		switch t.Kind() {
+		case reflect.Struct:
+			fields := yamlFields(t)
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				key, value := node.Content[i], node.Content[i+1]
+				child := joinPath(path, key.Value)
+				fieldType, ok := fields[key.Value]
+				if !ok {
+					*found = append(*found, Diagnostic{
+						File: file, Path: child, Line: key.Line, Column: key.Column, Message: UnknownFieldMessage,
+					})
+					continue
+				}
+				walkUnknown(value, fieldType, child, file, found)
+			}
+		case reflect.Map:
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				walkUnknown(node.Content[i+1], t.Elem(), joinPath(path, node.Content[i].Value), file, found)
+			}
+		}
+	case yaml.SequenceNode:
+		if t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+			for i, child := range node.Content {
+				walkUnknown(child, t.Elem(), fmt.Sprintf("%s[%d]", path, i), file, found)
+			}
+		}
+	}
+}
+
+// yamlFields maps the keys a struct accepts to their field types the way
+// yaml.v3 resolves them: the tag name, or the lowercased field name.
+// Inline tags are not used by any skali document type.
+func yamlFields(t reflect.Type) map[string]reflect.Type {
+	fields := make(map[string]reflect.Type, t.NumField())
+	for i := range t.NumField() {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		name := strings.ToLower(field.Name)
+		if tag, ok := field.Tag.Lookup("yaml"); ok {
+			tagName, _, _ := strings.Cut(tag, ",")
+			if tagName == "-" {
+				continue
+			}
+			if tagName != "" {
+				name = tagName
+			}
+		}
+		fields[name] = field.Type
+	}
+	return fields
+}
+
+func joinPath(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
 }

@@ -32,7 +32,13 @@ const (
 // (v0.1.0-3-gabc1234, -dirty) never match and keep resolving to the
 // working tree. task release:tag enforces the same shape before a tag
 // exists.
-var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$`)
+// ReleaseShape is the body of a release version without the leading v:
+// X.Y.Z with an optional dotted alpha, beta, or rc suffix. releasePattern
+// anchors it behind a mandatory v; the manifest schema anchors it behind
+// an optional one for the skali watermark field.
+const ReleaseShape = `[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?`
+
+var releasePattern = regexp.MustCompile(`^v` + ReleaseShape + `$`)
 
 // IsRelease reports whether v names a tagged release.
 func IsRelease(v string) bool {
@@ -43,6 +49,16 @@ func IsRelease(v string) bool {
 // suffix; false for plain releases and for anything that is not a release.
 func IsPrerelease(v string) bool {
 	return IsRelease(v) && strings.Contains(v, "-")
+}
+
+// ReleasesDiffer reports whether a and b are two different tagged releases.
+// False when either is not a release (v0.0.0-dev, git-describe builds, the
+// test harness), so callers never gate on versions they cannot judge. This
+// is the one rule behind the CLI/daemon exact-match contract: a released
+// CLI must match a released daemon, and every development build is exempt
+// on either side.
+func ReleasesDiffer(a, b string) bool {
+	return IsRelease(a) && IsRelease(b) && a != b
 }
 
 // PublishedSkalidImage is the control-plane image a release publishes.
@@ -64,6 +80,12 @@ func PublishedSkalidVersion(image string) (string, bool) {
 // with no version in the name, and checksums.txt sits next to them.
 func ReleaseAssetURL(base, v, asset string) string {
 	return strings.TrimSuffix(base, "/") + "/" + ReleaseRepo + "/releases/download/" + v + "/" + asset
+}
+
+// ReleasePageURL is the human release page of one release (notes and the
+// asset list), on the same host the assets download from.
+func ReleasePageURL(base, v string) string {
+	return strings.TrimSuffix(base, "/") + "/" + ReleaseRepo + "/releases/tag/" + v
 }
 
 // DefaultReleaseBase is the GitHub host release assets download from.

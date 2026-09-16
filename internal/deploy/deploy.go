@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -189,7 +190,7 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	if err != nil {
 		return nil, fmt.Errorf("deploy: build revision: %w", err)
 	}
-	document, err := json.Marshal(built)
+	document, err := revision.EncodeStored(built)
 	if err != nil {
 		return nil, fmt.Errorf("deploy: encode revision: %w", err)
 	}
@@ -217,7 +218,7 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 			ProjectID:           env.ProjectID,
 			EnvironmentID:       env.ID,
 			DefinitionVersionID: definitionVersion.ID,
-			SchemaVersion:       built.SchemaVersion,
+			SchemaVersion:       strconv.Itoa(built.Schema),
 			Checksum:            built.Checksum,
 			DefinitionHash:      built.DefinitionHash,
 			ValuesHash:          built.ValuesHash,
@@ -360,8 +361,9 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	}
 	// The target must never point at a document this build cannot decode;
 	// the reconciler would hot-loop on it.
-	if row.SchemaVersion != revision.SchemaVersion {
-		return nil, &revision.SchemaError{Got: row.SchemaVersion, Want: revision.SchemaVersion}
+	storedSchema, err := strconv.Atoi(row.SchemaVersion)
+	if err != nil || storedSchema != revision.Schema {
+		return nil, &revision.SchemaError{Got: storedSchema, Want: revision.Schema}
 	}
 	target, err := s.st.GetEnvironmentTarget(ctx, in.EnvironmentID)
 	if err != nil {

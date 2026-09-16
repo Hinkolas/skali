@@ -8,6 +8,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
+	"github.com/Hinkolas/skali/internal/version"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
@@ -18,8 +19,16 @@ func Validate(document *Document) yamldoc.Diagnostics {
 		diagnostics = append(diagnostics, document.Diagnostic(path, fmt.Sprintf(format, args...)))
 	}
 
-	if project.Version != CurrentVersion {
-		add("version", "unsupported manifest version %q; expected %q", project.Version, CurrentVersion)
+	watermark, ok := Watermark(project.Skali)
+	switch {
+	case strings.TrimSpace(project.Skali) == "":
+		add("skali", "is required: the skali release this manifest was last reviewed against, for example skali: %s", ReferenceRelease())
+	case !ok:
+		add("skali", "%q is not a skali release; expected a tag like %s", project.Skali, ReferenceRelease())
+	case version.IsRelease(version.Version) && version.Older(version.Version, watermark):
+		add("skali", "reviewed against %s, newer than this compiler (%s); select that release or review this release's references and explicitly edit the watermark to acknowledge the older target", watermark, version.Version)
+	default:
+		validateLedger(&diagnostics, document, Ledger, watermark)
 	}
 	if err := naming.CheckKey(project.Name); err != nil {
 		add("name", "%s", err)
@@ -173,4 +182,57 @@ func volumeExists(project Project, reference string) bool {
 		}
 	}
 	return false
+}
+
+// validateLedger applies the changed entries: a manifest that writes a path
+// whose meaning moved after its watermark fails until the watermark moves
+// past the change (docs/versioning.md, decision 4). Removed entries are
+// handled while parsing, where the unknown field surfaces; added entries
+// are silent.
+func validateLedger(diagnostics *yamldoc.Diagnostics, document *Document, ledger []Change, watermark string) {
+	paths := document.Paths()
+	for _, change := range ledger {
+		if change.Kind != ChangeChanged || !version.Older(watermark, change.Release) {
+			continue
+		}
+		matched := map[string]bool{}
+		for _, path := range paths {
+			if !change.WhenOmitted && change.Matches(path) {
+				matched[path] = true
+			}
+		}
+		if change.WhenOmitted {
+			// Expand wildcards against declared resources, then append any omitted
+			// fixed suffix (including omitted parent objects such as deployment).
+			prefix, suffix := "", change.Path
+			if i := strings.LastIndex(change.Path, "*"); i >= 0 {
+				prefix, suffix = change.Path[:i+1], change.Path[i+1:]
+			}
+			if prefix == "" {
+				if !document.Has(change.Path) {
+					matched[change.Path] = true
+				}
+			} else {
+				pattern := Change{Path: prefix}
+				for _, path := range paths {
+					if pattern.Matches(path) && !document.Has(path+suffix) {
+						matched[path+suffix] = true
+					}
+				}
+			}
+		}
+		for _, path := range utils.SortedKeys(matched) {
+			*diagnostics = append(*diagnostics, document.Diagnostic(path, fmt.Sprintf(
+				"%s (changed in %s; this manifest was reviewed against %s); %s, then explicitly review and edit skali: to acknowledge",
+				change.Message, change.Release, watermark, change.Hint)))
+		}
+	}
+}
+
+// ReviewChanges evaluates meaning/default changes against the original review
+// point before a command can replace that point with a newer watermark.
+func ReviewChanges(document *Document, watermark string) yamldoc.Diagnostics {
+	var diagnostics yamldoc.Diagnostics
+	validateLedger(&diagnostics, document, Ledger, watermark)
+	return diagnostics
 }

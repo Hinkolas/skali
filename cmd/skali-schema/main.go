@@ -13,6 +13,7 @@ import (
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
+	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
 func main() {
@@ -84,5 +85,27 @@ func main() {
 }
 
 func releaseMetadata(version string) ([]byte, error) {
+	if err := ledgerWithin(version); err != nil {
+		return nil, err
+	}
 	return json.MarshalIndent(installer.ReleaseMetadata{Version: version, K3s: installer.K3sVersion}, "", "  ")
+}
+
+// ledgerWithin refuses to cut a release the manifest change ledger is
+// ahead of: an entry naming a later release would describe a change as
+// not yet shipped while the binaries next to this file already carry it.
+// The entries are written before the tag exists, so this is where a tag
+// named differently from the plan is caught. Snapshot rehearsals carry a
+// goreleaser pseudo-version instead of a tag, so there is no planned
+// release to compare and nothing to refuse.
+func ledgerWithin(release string) error {
+	if !versionpkg.IsRelease(release) {
+		return nil
+	}
+	for _, change := range manifest.Ledger {
+		if versionpkg.Older(release, change.Release) {
+			return fmt.Errorf("the manifest ledger names %s but the release being cut is %s; fix internal/manifest/ledger.go", change.Release, release)
+		}
+	}
+	return nil
 }

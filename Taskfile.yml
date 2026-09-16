@@ -142,7 +142,7 @@ tasks:
       - TEST_DOCKER=1 go test -timeout 15m -run 'TestDocker|TestImport' ./internal/build/...
 
   test:dev:
-    desc: Run the skali dev end-to-end suite (creates and mutates the skali-dev cluster)
+    desc: Run the skali dev end-to-end suite (creates and mutates the skali-dev-e2e clusters)
     cmds:
       - TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run 'TestDev' ./cmd/skali/...
 

@@ -95,12 +95,7 @@ func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOption
 	}
 
 	header := http.Header{}
-	if c.token != "" {
-		header.Set("Authorization", "Bearer "+c.token)
-	}
-	if c.userAgent != "" {
-		header.Set("User-Agent", c.userAgent)
-	}
+	c.stamp(header)
 
 	// Never c.http: its 15s client timeout would sever the session. The
 	// dialer bounds only the handshake.

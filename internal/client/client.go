@@ -28,40 +28,76 @@ const InstanceHeader = "Skali-Instance"
 
 // VersionHeader is the response header carrying the daemon's build version,
 // available pre-auth and on error responses (the meta endpoint needs a
-// session). Diagnostics only: compatibility decisions belong to explicit
-// signals like error codes and the capabilities list, never to comparing
-// version strings (a working-tree daemon reports v0.0.0-dev).
+// session). The API is a private wire built from one commit: a released
+// daemon answers CodeCLIVersionMismatch to a released CLI of another
+// version, and cmd/skali turns the observed version into the upgrade hint.
+// Development builds on either side (v0.0.0-dev, git describe) are never
+// compared.
 const VersionHeader = "Skali-Version"
+
+// ClientVersionHeader is the request header carrying this client's build
+// version on every request, the daemon's side of the exact-match contract.
+const ClientVersionHeader = "Skali-Client-Version"
+
+// CodeCLIVersionMismatch is the error code a released daemon answers when
+// this CLI is another release; the required version is the response's
+// VersionHeader.
+const CodeCLIVersionMismatch = "cli_version_mismatch"
+
+// Caller identifies the program behind a client: UserAgent lands in session
+// lists, Version rides ClientVersionHeader for the daemon's exact-match
+// gate. Either may be empty, which sends no header.
+type Caller struct {
+	UserAgent string
+	Version   string
+}
 
 // Client talks to one master. Token may be empty for public endpoints.
 type Client struct {
-	base      string
-	token     string
-	userAgent string
-	http      *http.Client
+	base   string
+	token  string
+	caller Caller
+	http   *http.Client
 	// streaming has no client timeout: SSE subscriptions outlive any
 	// sensible request deadline.
 	streaming *http.Client
 
-	// Install-identity pinning state; see PinInstance.
+	// Install-identity pinning and version observation state; see
+	// PinInstance and OnVersion.
 	mu              sync.Mutex
 	pinned          string
 	observed        string
 	observedVersion string
 	onAdopt         func(observed string)
+	onVersion       func(observed string)
 }
 
 // Master reports the base URL this client talks to.
 func (c *Client) Master() string { return c.base }
 
-func New(master, token, userAgent string) *Client {
+func New(master, token string, caller Caller) *Client {
 	transport := localhostTransport()
 	return &Client{
 		base:      strings.TrimRight(master, "/"),
 		token:     token,
-		userAgent: userAgent,
+		caller:    caller,
 		http:      &http.Client{Timeout: 15 * time.Second, Transport: transport},
 		streaming: &http.Client{Transport: transport},
+	}
+}
+
+// stamp sets the headers every request carries: the session, the caller
+// identity, and the caller version the daemon gates on. All four request
+// builders (JSON, health, SSE, exec) go through it.
+func (c *Client) stamp(h http.Header) {
+	if c.token != "" {
+		h.Set("Authorization", "Bearer "+c.token)
+	}
+	if c.caller.UserAgent != "" {
+		h.Set("User-Agent", c.caller.UserAgent)
+	}
+	if c.caller.Version != "" {
+		h.Set(ClientVersionHeader, c.caller.Version)
 	}
 }
 
@@ -121,34 +157,43 @@ func (c *Client) ObservedVersion() string {
 	return c.observedVersion
 }
 
-// checkInstance records the response's platform headers and enforces the
-// install-identity pin.
-func (c *Client) checkInstance(res *http.Response) error {
-	if version := res.Header.Get(VersionHeader); version != "" {
-		c.mu.Lock()
-		c.observedVersion = version
-		c.mu.Unlock()
-	}
-	observed := res.Header.Get(InstanceHeader)
-	if observed == "" {
-		return nil
-	}
+// OnVersion registers a callback for the daemon version: it fires the first
+// time a response carries VersionHeader and again whenever the value
+// changes, so callers can act on skew without polling ObservedVersion. It
+// fires on error responses too, including the daemon's own version refusal.
+func (c *Client) OnVersion(fn func(observed string)) {
 	c.mu.Lock()
-	c.observed = observed
-	pinned := c.pinned
-	adopt := c.onAdopt
-	if pinned == "" {
+	defer c.mu.Unlock()
+	c.onVersion = fn
+}
+
+// checkInstance records the response's platform headers and enforces the
+// install-identity pin before publishing version observations. A response
+// from a different installation cannot change the selected release.
+func (c *Client) checkInstance(res *http.Response) error {
+	observed, release := res.Header.Get(InstanceHeader), res.Header.Get(VersionHeader)
+	c.mu.Lock()
+	pinned, adopt, notify := c.pinned, c.onAdopt, c.onVersion
+	if observed != "" {
+		c.observed = observed
+	}
+	if observed != "" && pinned != "" && observed != pinned {
+		c.mu.Unlock()
+		return &InstanceMismatchError{Master: c.base, Pinned: pinned, Observed: observed}
+	}
+	if observed != "" && pinned == "" {
 		c.pinned = observed
 	}
-	c.mu.Unlock()
-	if pinned == "" {
-		if adopt != nil {
-			adopt(observed)
-		}
-		return nil
+	changed := release != "" && release != c.observedVersion
+	if release != "" {
+		c.observedVersion = release
 	}
-	if observed != pinned {
-		return &InstanceMismatchError{Master: c.base, Pinned: pinned, Observed: observed}
+	c.mu.Unlock()
+	if changed && notify != nil {
+		notify(release)
+	}
+	if observed != "" && pinned == "" && adopt != nil {
+		adopt(observed)
 	}
 	return nil
 }
@@ -303,6 +348,7 @@ func (c *Client) Health(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("client: %w", err)
 	}
+	c.stamp(req.Header)
 	res, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("client: %s unreachable: %w", c.base, err)
@@ -316,16 +362,7 @@ func (c *Client) Health(ctx context.Context) error {
 		return fmt.Errorf("client: read response: %w", err)
 	}
 	if res.StatusCode >= 400 {
-		var envelope struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Error.Code == "" {
-			return &APIError{Status: res.StatusCode, Code: "internal", Message: strings.TrimSpace(string(raw))}
-		}
-		return &APIError{Status: res.StatusCode, Code: envelope.Error.Code, Message: envelope.Error.Message}
+		return decodeErrorEnvelope(res.StatusCode, raw)
 	}
 	var body struct {
 		Status string `json:"status"`
@@ -355,12 +392,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	if c.userAgent != "" {
-		req.Header.Set("User-Agent", c.userAgent)
-	}
+	c.stamp(req.Header)
 
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -378,16 +410,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 
 	if res.StatusCode >= 400 {
-		var envelope struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Error.Code == "" {
-			return &APIError{Status: res.StatusCode, Code: "internal", Message: strings.TrimSpace(string(raw))}
-		}
-		return &APIError{Status: res.StatusCode, Code: envelope.Error.Code, Message: envelope.Error.Message}
+		return decodeErrorEnvelope(res.StatusCode, raw)
 	}
 
 	if out == nil || len(raw) == 0 {

@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const routedManifest = `version: "1"
+const routedManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

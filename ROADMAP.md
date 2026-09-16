@@ -36,8 +36,8 @@ Working and used daily:
 - Web console on real APIs: projects, services, deployments, runs (cancel,
   redeploy, promote), metrics, values, users, nodes, account/2FA; every
   other tab is an honest placeholder.
-- Agent skill (`skali skill install`), kept in step with the compiler by
-  tests.
+- Agent skill (`skali skill install`, references served at the target's
+  release by `skali skill read`), kept in step with the compiler by tests.
 - Release plumbing: goreleaser, `install.sh`, published images, prerelease
   handling, CI gating the tag.
 
@@ -172,9 +172,10 @@ Ordered loosely by how often I have wanted them.
       releases, stable or beta channel), the System / Software update page
       with per-node progress, automatic updates, and the coordinator moving
       every node's hostd and k3s plus the bundle in one operation.
-      `skali cluster upgrade` remains the path for legacy installs and
-      `skali dev upgrade` for the local platform. Not yet rehearsed on a
-      real cluster from a released binary.
+      `skali cluster upgrade` remains the path for legacy installs; the
+      local platform follows the skali release that runs it, one cluster
+      per release. Not yet rehearsed on a real cluster from a released
+      binary.
 - [ ] Version pin bumps as a routine (k3s, CNPG, SeaweedFS, Traefik,
       cert-manager, Longhorn) with the cluster e2e as the gate.
 - [ ] Node lifecycle: drain, replace, retire a node without hand surgery;
@@ -195,8 +196,8 @@ Ordered loosely by how often I have wanted them.
       reference and an operations guide do not, and the examples suite is
       not exercised by tests.
 - [x] `skali` skill and manifest schema kept in lockstep with the compiler:
-      every manifest fence in the skill compiles under test, and the schema
-      is generated from the Go types.
+      every manifest fence in the skill's served references compiles under
+      test, and the schema is generated from the Go types.
 - [ ] Simplify what grew crooked: revisit CLI command grouping, flag names,
       and error wording once the console catch-up shows what is actually
       used.

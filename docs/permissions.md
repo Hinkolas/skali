@@ -321,11 +321,16 @@ environment production required: this deploy changes the definition");
 protection answers 403 `environment_protected`; a bypass without a fresh
 session answers 403 `reauth_required`.
 
-Public: `GET /healthz`, `GET /openapi.yaml`, `GET /token` (registry realm,
-Basic auth per request as today), `POST /auth/device/requests` and
+Public (no session): `GET /healthz`, `GET /openapi.yaml`, `GET /token`
+(registry realm, Basic auth per request as today), `POST /auth/login`,
+`POST /auth/2fa/verify`, `POST /auth/device/requests` and
 `POST /auth/device/token` (the CLI side of browser device authorization;
 the poll answer carries the bearer token, so the console never proxies
-them).
+them). Public is not the same as version-free: every route under `/v1`,
+these included, refuses a released CLI of another version with
+`cli_version_mismatch` (docs/versioning.md); only `GET /healthz` answers
+any CLI, because a stale CLI dispatches to the cluster's release before
+it logs in.
 
 Authenticated, self: `POST /auth/logout`, `POST /auth/reauth`,
 `GET /auth/session`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}`,

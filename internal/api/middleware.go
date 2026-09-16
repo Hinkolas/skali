@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/version"
 )
 
 // RequireAuth guards a route group with bearer or cookie authentication and puts
@@ -132,10 +134,38 @@ func requestLogger(next http.Handler) http.Handler {
 const InstanceHeader = "Skali-Instance"
 
 // VersionHeader carries the daemon build version on every response, so
-// clients can diagnose version skew pre-auth and on failures (the meta
-// endpoint needs a session). Diagnostics only: compatibility gates stay on
-// explicit signals (error codes, capabilities), never on comparing versions.
+// clients can read it pre-auth and on failures (the meta endpoint needs a
+// session). The API is a private wire built from one commit: a released CLI
+// must match a released daemon exactly, which requireClientVersion enforces
+// from the ClientVersionHeader the CLI sends. Development builds on either
+// side are never compared (see version.ReleasesDiffer).
 const VersionHeader = "Skali-Version"
+
+// ClientVersionHeader is the request header the CLI stamps with its own
+// build version on every request. Browsers never send it, so the console is
+// never gated; a third-party client that omits it is not gated either.
+const ClientVersionHeader = "Skali-Client-Version"
+
+// requireClientVersion rejects a released CLI whose version is not this
+// released daemon's, naming the required version so the CLI can point at the
+// fix. Requests without the header pass, and so does any non-release version
+// on either side: working-tree daemons and development CLIs are exempt, not
+// guarded. It runs ahead of authentication because the wrong binary is the
+// explanation regardless of session state.
+func requireClientVersion(server string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			client := r.Header.Get(ClientVersionHeader)
+			if client != "" && version.ReleasesDiffer(client, server) {
+				writeError(w, http.StatusConflict, codeCLIVersionMismatch,
+					fmt.Sprintf("this cluster runs skalid %s and requires skali %s (this CLI is %s)",
+						server, server, client))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 // platformHeaders stamps the installation identity and daemon version onto
 // every response.

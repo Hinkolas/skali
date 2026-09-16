@@ -5,7 +5,7 @@
   "title": "Skali project manifest",
   "description": "Portable, declarative project definition consumed by the Skali compiler.",
   "required": [
-    "version",
+    "skali",
     "name"
   ],
   "properties": {
@@ -935,10 +935,10 @@
       "description": "Stable project name.",
       "pattern": "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
     },
-    "version": {
+    "skali": {
       "type": "string",
-      "description": "Manifest schema version. Currently 1.",
-      "const": "1"
+      "description": "The skali release this manifest was last reviewed against, for example v0.1.0-rc.3.",
+      "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-(alpha|beta|rc)\\.[0-9]+)?$"
     }
   },
   "additionalProperties": false,

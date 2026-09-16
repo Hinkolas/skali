@@ -33,6 +33,26 @@ func TestOlder(t *testing.T) {
 	}
 }
 
+func TestReleasesDiffer(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"v0.4.0", "v0.4.0", false},
+		{"v0.3.2", "v0.4.0", true},
+		{"v0.4.0", "v0.3.2", true},
+		{"v0.4.0-rc.1", "v0.4.0", true}, // a prerelease is another release
+		{"v0.0.0-dev", "v0.4.0", false}, // development builds are never compared
+		{"v0.4.0", "v0.0.0-dev", false},
+		{"v0.4.0", "test", false},
+		{"v0.4.0-3-gabc1234", "v0.4.0", false}, // git describe is not a release
+		{"", "v0.4.0", false},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, ReleasesDiffer(c.a, c.b), "ReleasesDiffer(%q, %q)", c.a, c.b)
+	}
+}
+
 func TestReleaseShapes(t *testing.T) {
 	require.True(t, IsRelease("v0.1.0"))
 	require.True(t, IsRelease("v0.1.0-rc.1"))
@@ -52,4 +72,11 @@ func TestReleaseShapes(t *testing.T) {
 
 	require.Equal(t, "https://github.com/Hinkolas/skali/releases/download/v0.1.0/checksums.txt",
 		ReleaseAssetURL(DefaultReleaseBase, "v0.1.0", "checksums.txt"))
+}
+
+func TestReleasePageURL(t *testing.T) {
+	require.Equal(t, "https://github.com/Hinkolas/skali/releases/tag/v0.4.0",
+		ReleasePageURL(DefaultReleaseBase, "v0.4.0"))
+	require.Equal(t, "https://mirror.example/Hinkolas/skali/releases/tag/v0.4.0",
+		ReleasePageURL("https://mirror.example/", "v0.4.0"))
 }

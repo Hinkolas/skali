@@ -3,6 +3,7 @@ package cliconfig
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestSaveRepairsExistingPermissions(t *testing.T) {
 	path, err := Path()
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o644))
 	require.NoError(t, os.Chmod(path, 0o644))
 	require.NoError(t, os.Chmod(filepath.Dir(path), 0o755))
 	require.NoError(t, Save(&Config{}))
@@ -44,12 +45,12 @@ func TestSaveReplacesSymlinkWithoutWritingTarget(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	target := filepath.Join(dir, "target")
-	require.NoError(t, os.WriteFile(target, []byte("untouched"), 0o644))
+	require.NoError(t, os.WriteFile(target, []byte("{}"), 0o644))
 	require.NoError(t, os.Symlink(target, path))
 	require.NoError(t, Save(&Config{}))
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
-	require.Equal(t, "untouched", string(data))
+	require.Equal(t, "{}", string(data))
 	info, err := os.Lstat(path)
 	require.NoError(t, err)
 	require.True(t, info.Mode().IsRegular())
@@ -134,4 +135,27 @@ func TestOldContextKeysAreIgnored(t *testing.T) {
 
 	_, _, err = cfg.Current()
 	require.ErrorContains(t, err, "no remote selected")
+}
+
+// TestRemoteVersionRoundTrips covers the per-remote version record dispatch
+// reads: saved when set, omitted when empty (older files stay valid).
+func TestRemoteVersionRoundTrips(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	require.NoError(t, Save(&Config{
+		CurrentRemote: "prod",
+		Remotes: map[string]*Remote{
+			"prod": {Master: "https://skali.example.com/api", Token: "tok", Version: "v0.4.0"},
+			"lab":  {Master: "https://lab.example.com/api"},
+		},
+	}))
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "v0.4.0", cfg.Remotes["prod"].Version)
+	require.Empty(t, cfg.Remotes["lab"].Version)
+	path, err := Path()
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "version: v0.4.0")
+	require.Equal(t, 1, strings.Count(string(raw), "version:"), "an empty record writes no key")
 }

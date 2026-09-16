@@ -17,6 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/installer"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -32,7 +33,7 @@ func newRemoteCommand() *cobra.Command {
 	}
 	command.AddCommand(newRemoteAddCommand(), newRemoteLoginCommand(), newRemoteLogoutCommand(),
 		newRemoteListCommand(), newRemoteUseCommand(), newRemoteStatusCommand(),
-		newRemoteTokenCommand(), newRemoteRemoveCommand())
+		newRemoteTokenCommand(), newRemoteRemoveCommand(), newRemoteRevokeCommand())
 	return command
 }
 
@@ -48,7 +49,8 @@ func newRemoteAddCommand() *cobra.Command {
 			"tries https then http and targets the cluster's /api path\n" +
 			"(skali.example.com becomes https://skali.example.com/api); an explicit URL\n" +
 			"is used verbatim. On success the new remote becomes the current one; on\n" +
-			"failure nothing is stored.\n\n" +
+			"failure nothing is stored. The login runs in the cluster's own skali\n" +
+			"release, fetched from the release feed on first contact.\n\n" +
 			"In a terminal the login opens the web console in your browser and waits\n" +
 			"for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and\n" +
 			"non-interactive runs ask for email and password on the terminal instead.",
@@ -76,16 +78,17 @@ func newRemoteAddCommand() *cobra.Command {
 			// Probe before prompting so a typo'd URL never asks for a
 			// password. /healthz is unauthenticated on every skali master;
 			// the first candidate that answers like one wins.
-			master := ""
+			master, version := "", ""
 			var probeErr error
 			for _, candidate := range candidates {
-				if err := client.New(candidate, "", userAgent()).Health(command.Context()); err != nil {
+				probe := client.New(candidate, "", caller())
+				if err := probe.Health(command.Context()); err != nil {
 					if probeErr == nil {
 						probeErr = fmt.Errorf("master %s is not reachable: %w", candidate, err)
 					}
 					continue
 				}
-				master = candidate
+				master, version = candidate, probe.ObservedVersion()
 				break
 			}
 			if master == "" {
@@ -94,11 +97,21 @@ func newRemoteAddCommand() *cobra.Command {
 				}
 				return probeErr
 			}
+			// The login speaks the cluster's own release: hand the rest of
+			// the command to it before anything is asked or printed. When
+			// the command stays here, a differing release will be refused,
+			// so the probe's version feeds the hint main prints afterwards.
+			if err := dispatchTo(command.Context(), remoteName, master, version); err != nil {
+				return err
+			}
+			skew.record(remoteName, version)
 			sess, instance, err := loginRemote(command.Context(), cliprompt.New(command.InOrStdin(), command.ErrOrStderr()), command.ErrOrStderr(), master, email, noBrowser)
 			if err != nil {
 				return fmt.Errorf("remote %q not added: %w", remoteName, err)
 			}
-			cfg.Remotes[remoteName] = &cliconfig.Remote{Master: master, Token: sess.Token, Instance: instance}
+			// The daemon version rides the probe's headers; recording it
+			// here lets the first command dispatch without another probe.
+			cfg.Remotes[remoteName] = &cliconfig.Remote{Master: master, Token: sess.Token, Instance: instance, Version: version}
 			cfg.CurrentRemote = remoteName
 			if err := cliconfig.Save(cfg); err != nil {
 				return err
@@ -144,19 +157,38 @@ func newRemoteLoginCommand() *cobra.Command {
 					return fmt.Errorf("remote %q does not exist; run `skali remote add %s <url>`", name, name)
 				}
 			} else {
-				name, target, err = cfg.Current()
+				if invocationContext != nil && invocationContext.Remote != "" {
+					name = invocationContext.Remote
+					target, err = remoteByName(cfg, name)
+					if err == nil && target.Master != invocationContext.Master {
+						err = errors.New("remote changed during invocation; run again")
+					}
+				} else {
+					name, target, err = cfg.Current()
+				}
 				if err != nil {
 					return err
 				}
 			}
-			// The trust decision comes before the credentials: an unpinned
-			// probe fetches the identity the master answers with today, and
-			// a change (the cluster was reinstalled) must be confirmed. An
-			// unreachable master skips the probe; the login surfaces it.
+			// An unpinned probe first: it names the release the master runs
+			// today, and the rest of the command (the trust decision and
+			// the login) happens in that release. An unreachable master
+			// skips the probe; the login surfaces it.
+			probe := client.New(target.Master, "", caller())
+			if err := probe.Health(command.Context()); err != nil {
+				return err
+			}
+			if version := probe.ObservedVersion(); version != "" {
+				target.Version = version
+				if err := dispatchTo(command.Context(), name, target.Master, version); err != nil {
+					return err
+				}
+				skew.record(name, version)
+			}
+			// The trust decision comes before the credentials: a changed
+			// identity (the cluster was reinstalled) must be confirmed.
 			prompts := cliprompt.New(command.InOrStdin(), command.ErrOrStderr())
 			if target.Instance != "" {
-				probe := client.New(target.Master, "", userAgent())
-				_ = probe.Health(command.Context())
 				observed := probe.ObservedInstance()
 				if observed != "" && observed != target.Instance {
 					trusted, err := prompts.Confirm(command.Context(), cliprompt.ConfirmOptions{
@@ -228,8 +260,7 @@ func newRemoteLogoutCommand() *cobra.Command {
 			}
 			// Best effort server-side; the local token is cleared regardless,
 			// so an unreachable master can't keep you "logged in".
-			c := remoteClient(cfg, target)
-			if err := c.Logout(command.Context()); err != nil {
+			if err := revokeRemoteSession(command.Context(), cfg, name, target); err != nil {
 				fmt.Fprintf(command.ErrOrStderr(), "warning: server-side revoke failed: %v\n", err)
 			}
 			target.Token = ""
@@ -253,7 +284,7 @@ func newRemoteListCommand() *cobra.Command {
 }
 
 func runRemoteList(command *cobra.Command, args []string) error {
-	cfg, err := cliconfig.Load()
+	cfg, err := cliconfig.LoadForRepair()
 	if err != nil {
 		return err
 	}
@@ -273,6 +304,13 @@ func remoteNames(cfg *cliconfig.Config) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func remoteMasterLabel(remote *cliconfig.Remote) string {
+	if remote == nil || remote.Master == "" {
+		return "(missing master)"
+	}
+	return remote.Master
 }
 
 // renderRemoteTable prints the remotes the way the other list commands
@@ -300,7 +338,7 @@ func renderRemoteTable(out io.Writer, cfg *cliconfig.Config) {
 			width += len(currentSuffix)
 		}
 		nameWidth = max(nameWidth, width)
-		masterWidth = max(masterWidth, len(cfg.Remotes[name].Master))
+		masterWidth = max(masterWidth, len(remoteMasterLabel(cfg.Remotes[name])))
 	}
 	fmt.Fprintf(out, "%-*s  %-*s  %s\n", nameWidth, "NAME", masterWidth, "MASTER", "SESSION")
 	for _, name := range names {
@@ -312,10 +350,12 @@ func renderRemoteTable(out io.Writer, cfg *cliconfig.Config) {
 			padding -= len(currentSuffix)
 		}
 		session := style.Green("logged in")
-		if remote.Token == "" {
+		if remote == nil || remote.Master == "" {
+			session = style.Red("invalid entry")
+		} else if remote.Token == "" {
 			session = style.Dim("not logged in")
 		}
-		fmt.Fprintf(out, "%s%s  %-*s  %s\n", label, strings.Repeat(" ", max(padding, 0)), masterWidth, remote.Master, session)
+		fmt.Fprintf(out, "%s%s  %-*s  %s\n", label, strings.Repeat(" ", max(padding, 0)), masterWidth, remoteMasterLabel(remote), session)
 	}
 }
 
@@ -397,6 +437,14 @@ func newRemoteStatusCommand() *cobra.Command {
 				return err
 			}
 			remote := cfg.Remotes[name]
+			// The session lookup is a versioned request: run the whole
+			// report in the release the record names (an empty record is
+			// probed) before printing anything.
+			if invocationContext == nil || invocationContext.Remote == "" {
+				if err := dispatchTo(command.Context(), name, remote.Master, ""); err != nil {
+					return err
+				}
+			}
 			fmt.Fprintf(out, "remote:  %s\nmaster:  %s\n", name, remote.Master)
 
 			if err := c.Health(command.Context()); err != nil {
@@ -491,20 +539,19 @@ func newRemoteRemoveCommand() *cobra.Command {
 			if name == localRemoteName {
 				return errors.New("remote \"local\" is managed by skali dev; run `skali dev reset` to remove the local platform")
 			}
-			cfg, err := cliconfig.Load()
+			cfg, err := cliconfig.LoadForRepair()
 			if err != nil {
 				return err
 			}
-			target := cfg.Remotes[name]
-			if target == nil {
+			target, exists := cfg.Remotes[name]
+			if !exists {
 				return fmt.Errorf("remote %q does not exist; run `skali remote list`", name)
 			}
-			if target.Token != "" {
+			if target != nil && target.Master != "" && target.Token != "" {
 				// Best effort, like logout: removal must not strand a live
 				// session server-side, but an unreachable master cannot
 				// block the removal either.
-				c := remoteClient(cfg, target)
-				if err := c.Logout(command.Context()); err != nil {
+				if err := revokeRemoteSession(command.Context(), cfg, name, target); err != nil {
 					fmt.Fprintf(command.ErrOrStderr(), "warning: server-side revoke failed: %v\n", err)
 				}
 			}
@@ -513,9 +560,12 @@ func newRemoteRemoveCommand() *cobra.Command {
 			if cleared {
 				cfg.CurrentRemote = ""
 			}
-			if err := cliconfig.Save(cfg); err != nil {
+			if err := cliconfig.Remove(name, target); err != nil {
 				return err
 			}
+			// The remote's release may have been the last reference to a
+			// cached skali.
+			pruneCLICache(cfg, versionpkg.Version, installer.DefaultCacheDir())
 			fmt.Fprintf(out, "removed remote %q\n", name)
 			if cleared && len(cfg.Remotes) > 0 {
 				fmt.Fprintln(out, "no remote selected; run `skali remote use <name>`")
@@ -617,7 +667,7 @@ func loginSession(ctx context.Context, prompts *cliprompt.Session, master, email
 		return nil, "", fmt.Errorf("read password: %w", err)
 	}
 
-	c := client.New(master, "", userAgent())
+	c := client.New(master, "", caller())
 	res, err := c.Login(ctx, email, password)
 	if err != nil {
 		return nil, "", err

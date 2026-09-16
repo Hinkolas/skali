@@ -4,7 +4,7 @@ package main
 // would iterate on (replicas, resources, a new variable), so consecutive
 // deployments produce distinct revisions instead of deduplicating.
 
-const storefrontV1 = `version: "1"
+const storefrontV1 = `skali: v0.1.0-rc.3
 name: storefront
 description: Web shop with a public storefront, a JSON API, and a background worker
 
@@ -150,7 +150,7 @@ buckets:
       storage: 10GB
 `
 
-const storefrontV2 = `version: "1"
+const storefrontV2 = `skali: v0.1.0-rc.3
 name: storefront
 description: Web shop with a public storefront, a JSON API, and a background worker
 
@@ -310,7 +310,7 @@ backups:
       volumes: all
 `
 
-const storefrontV3 = `version: "1"
+const storefrontV3 = `skali: v0.1.0-rc.3
 name: storefront
 description: Web shop with a public storefront, a JSON API, and a background worker
 
@@ -487,7 +487,7 @@ backups:
       volumes: all
 `
 
-const analyticsV1 = `version: "1"
+const analyticsV1 = `skali: v0.1.0-rc.3
 name: analytics
 description: Event ingestion, a scheduler, and a reporting dashboard
 
@@ -595,7 +595,7 @@ buckets:
       storage: 500GB
 `
 
-const analyticsV2 = `version: "1"
+const analyticsV2 = `skali: v0.1.0-rc.3
 name: analytics
 description: Event ingestion, a scheduler, and a reporting dashboard
 
@@ -704,7 +704,7 @@ buckets:
       storage: 500GB
 `
 
-const docsV1 = `version: "1"
+const docsV1 = `skali: v0.1.0-rc.3
 name: docs
 description: Static documentation site served by nginx
 
@@ -740,7 +740,7 @@ applications:
         min: 2
 `
 
-const mailerV1 = `version: "1"
+const mailerV1 = `skali: v0.1.0-rc.3
 name: mailer
 description: Transactional email API with a delivery queue
 
@@ -819,7 +819,7 @@ databases:
       size: 10GB
 `
 
-const sandboxV1 = `version: "1"
+const sandboxV1 = `skali: v0.1.0-rc.3
 name: sandbox
 description: Scratch project for trying things out
 

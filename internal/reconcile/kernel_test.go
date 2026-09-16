@@ -29,7 +29,7 @@ import (
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
-const kernelManifest = `version: "1"
+const kernelManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

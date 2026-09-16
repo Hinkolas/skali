@@ -15,7 +15,7 @@ import (
 	"github.com/Hinkolas/skali/internal/observe"
 )
 
-const releaseManifest = `version: "1"
+const releaseManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

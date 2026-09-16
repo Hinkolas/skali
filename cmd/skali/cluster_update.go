@@ -76,6 +76,12 @@ func runManagedUpdate(ctx context.Context, out io.Writer, reader *bufio.Reader, 
 			return nil
 		}
 	}
+	// Only a CLI at least as new as the target may move a cluster there:
+	// the binary in PATH always manages every cluster it knows, so the
+	// CLI upgrades first and the cluster follows.
+	if home := homeRelease(); version.IsRelease(home) && version.Older(home, target) {
+		return fmt.Errorf("cluster upgrade to %s needs a skali at least that new; this is skali %s. Run skali upgrade --version %s first, then skali cluster upgrade", target, home, target)
+	}
 	if status.Summary.Action != "retry" {
 		if err := updates.ValidateTarget(status, target); err != nil {
 			return err
@@ -108,7 +114,14 @@ func runManagedUpdate(ctx context.Context, out io.Writer, reader *bufio.Reader, 
 	return nil
 }
 
-func waitAPIUpdate(ctx context.Context, out io.Writer, api *client.Client, id string) error {
+func waitAPIUpdate(ctx context.Context, out io.Writer, api *client.Client, id string) (result error) {
+	defer func() {
+		if result != nil {
+			if _, dispatched := passthroughExit(result); !dispatched {
+				result = fmt.Errorf("observation of cluster update %s ended: %w", id, result)
+			}
+		}
+	}()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	last := ""
@@ -120,6 +133,9 @@ func waitAPIUpdate(ctx context.Context, out io.Writer, api *client.Client, id st
 		}
 		status, err := api.UpdateStatus(ctx)
 		if err != nil {
+			if refusedAsWrongRelease(err) {
+				return handoffUpdateObservation(ctx, api, id)
+			}
 			var apiErr *client.APIError
 			var identityErr *client.InstanceMismatchError
 			if errors.As(err, &identityErr) || errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && apiErr.Status != 429 {

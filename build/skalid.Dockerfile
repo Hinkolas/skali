@@ -16,7 +16,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/internal/webui/dist ./internal/webui/dist
-RUN CGO_ENABLED=0 go build -o /skalid ./cmd/skalid
+ARG VERSION=v0.0.0-dev
+RUN CGO_ENABLED=0 go build -ldflags "-X github.com/Hinkolas/skali/internal/version.Version=${VERSION}" -o /skalid ./cmd/skalid
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates

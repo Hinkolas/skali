@@ -34,7 +34,7 @@ func writeFile(t *testing.T, root, name, content string) string {
 	return path
 }
 
-const flowManifest = `version: "1"
+const flowManifest = `skali: v0.1.0-rc.3
 name: flowdemo
 applications:
   web:

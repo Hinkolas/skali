@@ -28,7 +28,7 @@ func (a *testAPI) promoteCandidate(t *testing.T, envID, candidateID string) {
 
 // The value contract is derived from ${NAME} references alone; every value
 // is secret and write-only.
-const valuesManifest = `version: "1"
+const valuesManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   api:

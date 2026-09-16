@@ -26,7 +26,7 @@ func TestValidateCommandsAndDev(t *testing.T) {
 	t.Parallel()
 
 	valid := parseForValidation(t, `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -51,7 +51,7 @@ applications:
 		{
 			name: "bad command key",
 			source: `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -64,7 +64,7 @@ applications:
 		{
 			name: "empty command vector",
 			source: `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -77,7 +77,7 @@ applications:
 		{
 			name: "dev without command",
 			source: `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -91,7 +91,7 @@ applications:
 		{
 			name: "dev port references unknown application port",
 			source: `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -106,7 +106,7 @@ applications:
 		{
 			name: "dev port out of range",
 			source: `
-version: "1"
+skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

@@ -70,6 +70,21 @@ const testInstanceID = "11111111-2222-4333-8444-555555555555"
 
 func newTestAPI(t *testing.T) *testAPI {
 	t.Helper()
+	return newTestAPIVersion(t, "test")
+}
+
+// newTestAPIVersion builds the test daemon reporting the given build
+// version. The default "test" is not a release, which keeps the CLI version
+// gate inert for every test that does not target it.
+func newTestAPIVersion(t *testing.T, version string) *testAPI {
+	t.Helper()
+	return newTestAPIWith(t, version, nil)
+}
+
+// newTestAPIWith additionally lets a test adjust the wiring (the shipped
+// CLI store, the serving switch) before the router is built.
+func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
+	t.Helper()
 	pool := testdb.New(t)
 	st := store.NewStore(pool)
 	svc, err := auth.New(st, auth.Config{Secret: strings.Repeat("s", 32)})
@@ -133,7 +148,7 @@ func newTestAPI(t *testing.T) *testAPI {
 
 	// StripAPIPrefix wraps here exactly as in cmd/skalid, so every test
 	// doubles as proof that root paths pass through the /api wrapper.
-	router, ac := newRouter(Deps{
+	deps := Deps{
 		Auth:               svc,
 		Store:              st,
 		DB:                 pool,
@@ -157,7 +172,7 @@ func newTestAPI(t *testing.T) *testAPI {
 			DB: dbstore.New(st), Deploy: deploySvc, Targets: backupTargets,
 		}, backup.Config{}),
 		Metrics:      &metrics.Service{Store: st},
-		Version:      "test",
+		Version:      version,
 		InstanceName: "Test Instance",
 		InstanceID:   testInstanceID,
 		SecretReader: func(_ context.Context, namespace, name string) (map[string][]byte, error) {
@@ -168,7 +183,11 @@ func newTestAPI(t *testing.T) *testAPI {
 				"secret_key": []byte("sk-" + name),
 			}, nil
 		},
-	})
+	}
+	if adjust != nil {
+		adjust(&deps)
+	}
+	router, ac := newRouter(deps)
 	srv := httptest.NewServer(StripAPIPrefix(router))
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc,
@@ -638,6 +657,66 @@ func TestHealthzAndOpenAPI(t *testing.T) {
 	raw, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 	require.True(t, bytes.HasPrefix(raw, []byte("openapi: 3.1")), "spec should be OpenAPI 3.1")
+}
+
+// A released daemon gates every /v1 route, the public login and device
+// routes included: a stale CLI dispatches to the cluster's release before it
+// logs in, so only health (and the spec) must stay reachable from any CLI
+// version. Both authenticated groups (streaming and timed) refuse ahead of
+// authentication; requests without the header (browsers) are never gated.
+func TestClientVersionGateSparesOnlyHealth(t *testing.T) {
+	a := newTestAPIVersion(t, "v0.4.0")
+	token := a.adminToken()
+
+	request := func(method, path, clientVersion, bearer string) int {
+		t.Helper()
+		req, err := http.NewRequest(method, a.srv.URL+path, strings.NewReader("{}"))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		if clientVersion != "" {
+			req.Header.Set(ClientVersionHeader, clientVersion)
+		}
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		res, err := a.srv.Client().Do(req)
+		require.NoError(t, err)
+		defer res.Body.Close()
+		if res.StatusCode == http.StatusConflict {
+			var body errorBody
+			require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
+			require.Equal(t, codeCLIVersionMismatch, body.Error.Code, "%s %s", method, path)
+			require.Equal(t, "v0.4.0", res.Header.Get(VersionHeader), "the required version rides on the refusal")
+		}
+		return res.StatusCode
+	}
+
+	// The bootstrap surface is health alone: never 409, whatever the CLI
+	// version. The spec sits next to it at the root.
+	require.Equal(t, http.StatusOK, request("GET", "/healthz", "v0.3.2", ""))
+	require.Equal(t, http.StatusOK, request("GET", "/openapi.yaml", "v0.3.2", ""))
+
+	// The public login and device routes are gated like everything else
+	// under /v1, and answer for themselves without the header (browsers)
+	// or with the matching version.
+	for _, path := range []string{"/v1/auth/login", "/v1/auth/2fa/verify", "/v1/auth/device/requests", "/v1/auth/device/token"} {
+		require.Equal(t, http.StatusConflict, request("POST", path, "v0.3.2", ""), path)
+		require.NotEqual(t, http.StatusConflict, request("POST", path, "", ""), path)
+		require.NotEqual(t, http.StatusConflict, request("POST", path, "v0.4.0", ""), path)
+	}
+	require.Equal(t, http.StatusBadRequest, request("POST", "/v1/auth/login", "v0.4.0", ""), "login answers for itself once the gate passes")
+
+	// Authenticated routes in both groups, refused ahead of the session
+	// check (a mismatched CLI with an expired token learns the real reason).
+	require.Equal(t, http.StatusConflict, request("GET", "/v1/auth/session", "v0.3.2", token))
+	require.Equal(t, http.StatusConflict, request("GET", "/v1/auth/session", "v0.3.2", ""))
+	require.Equal(t, http.StatusConflict, request("GET", "/v1/environments/x/status/stream", "v0.3.2", token))
+	require.Equal(t, http.StatusConflict, request("GET", "/api/v1/auth/session", "v0.3.2", token), "the /api alias gates identically")
+
+	// Matching, absent, and development versions pass.
+	require.Equal(t, http.StatusOK, request("GET", "/v1/auth/session", "v0.4.0", token))
+	require.Equal(t, http.StatusOK, request("GET", "/v1/auth/session", "", token))
+	require.Equal(t, http.StatusOK, request("GET", "/v1/auth/session", "v0.0.0-dev", token))
 }
 
 // TestAPIPrefixStrip proves the /api alias the production edge routes to:

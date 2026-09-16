@@ -7,8 +7,16 @@ type Result struct {
 	Definition ProjectDefinition "json:\"definition\""
 }
 
+// DefinitionSchema is the generation of the compiled definition document
+// this build writes and reads. It moves only when the compiled shape
+// changes incompatibly, never with the manifest grammar or the release,
+// and the manifest watermark never enters the document, so moving that
+// changes no hash. DecodeDefinition also reads the envelope written up to
+// v0.1.0-rc.2, which carried the manifest version "1" instead.
+const DefinitionSchema = 1
+
 type ProjectDefinition struct {
-	Version           string                   "json:\"version\""
+	Schema            int                      "json:\"schema\""
 	Name              string                   "json:\"name\""
 	Description       string                   "json:\"description,omitempty\""
 	Applications      map[string]Application   "json:\"applications,omitempty\""

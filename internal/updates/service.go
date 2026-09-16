@@ -68,6 +68,10 @@ type Installed struct {
 	// PlatformVersion is the release the cluster state records; empty when
 	// unmanaged or initialized by a dev build.
 	PlatformVersion string `json:"platform_version,omitempty"`
+	// URL is the release page of Version on the release site, where the
+	// matching CLI can be read about and downloaded; empty for a
+	// development build, which has no release.
+	URL string `json:"url,omitempty"`
 }
 
 // Service owns the update lifecycle: scan, settings, apply, and the daily
@@ -79,6 +83,8 @@ type Service struct {
 	Cluster *Cluster
 	// Version is the running daemon's version, one component of convergence.
 	Version string
+	// ReleaseBase is the site hosting release pages; empty means GitHub.
+	ReleaseBase string
 	// ScanInterval is how often the loop scans; zero means daily.
 	ScanInterval time.Duration
 	Logger       *slog.Logger
@@ -120,6 +126,13 @@ func (s *Service) status(ctx context.Context, row store.UpdateSetting) (*Status,
 		Settings:  settingsFromRow(row),
 		Nodes:     []NodeState{},
 	}
+	if version.IsRelease(s.Version) {
+		base := s.ReleaseBase
+		if base == "" {
+			base = version.DefaultReleaseBase
+		}
+		status.Installed.URL = version.ReleasePageURL(base, s.Version)
+	}
 	// Only a released daemon can be behind a release: a working-tree build
 	// has no place in the version order, so it shows what the feed found
 	// without claiming an update.
@@ -130,7 +143,7 @@ func (s *Service) status(ctx context.Context, row store.UpdateSetting) (*Status,
 	switch {
 	case errors.Is(err, ErrNotManaged):
 		status.Reason = "updates from the console need a coordinator-managed cluster; " +
-			"run skali cluster upgrade on each host, or skali dev upgrade locally"
+			"run skali cluster upgrade on each host (the local platform follows the skali release that runs it)"
 	case err != nil:
 		status.Reason = "cluster state unavailable: " + err.Error()
 	default:

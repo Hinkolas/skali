@@ -1,4 +1,4 @@
-version: "1"
+skali: v0.1.0-rc.3
 name: invalid-output
 
 applications:

@@ -30,6 +30,10 @@ func TestInstallWritesSkillForEachAgent(t *testing.T) {
 		installed, err := os.ReadFile(manifest)
 		require.NoError(t, err)
 		require.Equal(t, embedded, installed)
+		require.Equal(t, []string{
+			filepath.Join(agent.Dir(home), "SKILL.md"),
+		}, paths, "only the operational shell is installed")
+		require.True(t, skill.Installed(home, agent))
 	}
 
 	require.DirExists(t, filepath.Join(home, ".claude", "skills", "skali"))
@@ -67,11 +71,16 @@ func TestInstallRefusesUnmanagedSkill(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: skali\n---\nmy own skill\n"), 0o644))
 
+	require.False(t, skill.Installed(home, agent))
 	_, err := skill.Install(home, agent)
 	require.ErrorContains(t, err, "was not installed by skali")
 	installed, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(installed), "my own skill")
+	require.NoFileExists(t, dir+".lock")
+	entries, err := os.ReadDir(filepath.Dir(dir))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
 }
 
 func TestSkillFrontmatter(t *testing.T) {

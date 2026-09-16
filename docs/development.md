@@ -138,8 +138,11 @@ go run ./cmd/skali compile \
 
 The editor schemas in [`schemas/`](../schemas/) are generated from the Go
 types: run `task generate` (or `go generate ./internal/manifest`) after
-changing manifest wire types, and keep `internal/skill/assets/` in step with
-them; a test compiles every manifest fence in the skill. When a compiled
+changing manifest wire types, and keep `internal/skill/assets/reference/`
+(the references `skali skill read` serves) in step with them; a test
+compiles every manifest fence in both asset sets, and another keeps the
+installed set under `internal/skill/assets/skill/` free of release-bound
+content. When a compiled
 default changes, refresh the revision and render goldens with
 `UPDATE_GOLDEN=1 go test ./internal/revision ./internal/kubernetes` and read
 the diff before keeping it.
@@ -245,7 +248,7 @@ internal/
   observe/       in-memory observed store fed by LIST/WATCH
   reconcile/     level-triggered kernel: apply, prune, health, activation
   registry/      managed registry client and token protocol
-  skill/         the agent skill and `skali skill install`
+  skill/         the agent skill: `skali skill install` and `skali skill read`
   store/         pgx glue plus sqlc-generated queries
   substrate/     shared Postgres (CNPG) and S3 (SeaweedFS) provisioning
   updates/       release scan, update settings, and the cluster-state bridge

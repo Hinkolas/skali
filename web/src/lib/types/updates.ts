@@ -92,7 +92,7 @@ export interface UpdateStatus {
 		detail?: string;
 		progress: { done: number; total: number; percent: number; phase: string };
 	};
-	installed: { version: string; platform_version?: string };
+	installed: { version: string; platform_version?: string; url?: string };
 	channel: UpdateChannel;
 	auto_update: boolean;
 	last_checked_at: string | null;

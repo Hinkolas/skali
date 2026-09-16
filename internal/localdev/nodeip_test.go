@@ -7,6 +7,8 @@ import (
 )
 
 func TestNetworkAndAliasNames(t *testing.T) {
+	// The test binary is a development build: its platform is the working
+	// tree's cluster.
 	require.Equal(t, "k3d-skali-dev", networkName())
 	require.Equal(t, "k3d-skali-dev-server-0", serverAlias())
 

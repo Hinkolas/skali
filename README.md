@@ -103,8 +103,11 @@ deploys it, and follows its logs. The example is then served at
 `http://hello-world.localhost:8080`. Ctrl-C pauses the project (data is kept),
 `skali dev` brings it back, `skali dev -d` keeps it running in the
 background. `skali dev list`, `skali dev status`, `skali dev exec`, and
-`skali dev reset` do what they say; reset is the only destructive one and
-asks first.
+`skali dev reset` do what they say. The platform runs the same skali release
+as the project's target cluster in one fixed `skali-dev` cluster. Switching
+releases requires `skali dev reset`, which asks before deleting local data.
+`skali dev stop` and `skali dev start` retain data. Use `--offline` deliberately
+when working against a recorded target release without remote discovery.
 
 Add a `dev:` block to an application and bare `skali dev` runs that app as a
 process on your machine with hot reload, behind the cluster's routes and with
@@ -204,8 +207,8 @@ the browser, and manages users.
 ## The manifest
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-alpha.1/schemas/skali.schema.json
-version: "1"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-rc.3/schemas/skali.schema.json
+skali: v0.1.0-rc.3
 name: guestbook
 
 applications:
@@ -259,7 +262,9 @@ volume ([`guestbook`](examples/guestbook)), and the local hot-reload loop
 ([`dev-loop`](examples/dev-loop)).
 
 If you write manifests with a coding agent, `skali skill install` gives it
-the complete manifest reference and the platform's rules.
+the platform's rules, and the skill reads the manifest, CLI and architecture references
+through `skali skill read`, which answers at the release of the project's
+target cluster.
 
 ## Documentation
 

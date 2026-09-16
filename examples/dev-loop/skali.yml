@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=../../schemas/skali.schema.json
 
-version: "1"
+skali: v0.1.0-rc.3
 
 name: dev-loop
 description: Local dev mode flagship, a dev server on the host behind the cluster edge

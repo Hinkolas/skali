@@ -38,6 +38,9 @@ const (
 	codeRegistryDisabled    = "registry_disabled"
 	codeRegistryUnavailable = "registry_unavailable"
 	codeInternal            = "internal"
+	// codeCLIVersionMismatch: a released daemon refused a released CLI of
+	// another version; the message names the required version.
+	codeCLIVersionMismatch = "cli_version_mismatch"
 
 	// Deployment coordination.
 	codeDeploymentInFlight      = "deployment_in_flight"

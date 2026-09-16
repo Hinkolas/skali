@@ -14,7 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/dbstore"
 )
 
-const appEnvManifest = `version: "1"
+const appEnvManifest = `skali: v0.1.0-rc.3
 name: demo
 applications:
   web:

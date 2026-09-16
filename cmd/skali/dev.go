@@ -29,6 +29,12 @@ import (
 )
 
 const localRemoteName = cliconfig.LocalRemoteName
+
+// devRemote is the dev group's --remote: the local platform runs at the
+// release that remote's cluster runs. The dispatcher reads the same flag
+// before cobra does; dev itself only names it in the reason line.
+var devRemote string
+
 const localEnvironmentName = "local"
 
 func newDevCommand() *cobra.Command {
@@ -227,14 +233,30 @@ func newDevCommand() *cobra.Command {
 			"attaches to it instead of failing; --force cancels it and\n" +
 			"redeploys. Use -d for a background project that keeps running,\n" +
 			"skali dev down to pause it explicitly, and skali dev list to see\n" +
-			"everything on the local platform. The platform's own lifecycle\n" +
-			"lives under skali dev start, stop, upgrade, and reset. Local\n" +
-			"values never leave this machine.",
+			"everything on the local platform. The platform runs the same\n" +
+			"skali release as the project's target cluster (the checkout\n" +
+			"binding, else the current remote, else this skali), using that release\n" +
+			"in one local cluster; switching releases requires skali dev reset.\n" +
+			"The platform lifecycle lives under skali dev start, stop,\n" +
+			"and reset. Local values never leave this machine.",
 		Args: cobra.NoArgs,
 		RunE: runUp,
+		// The nearest PersistentPreRun wins in cobra; the root's own hook
+		// only records completion requests, which dev never completes.
+		PersistentPreRunE: func(command *cobra.Command, args []string) error {
+			if devRemote == localRemoteName {
+				return errors.New("--remote local names the platform dev runs, not a release; " +
+					"pass a remote cluster to run its release locally")
+			}
+			return nil
+		},
 	}
 	command.PersistentFlags().StringVar(&skalidImage, "skalid-image", "",
-		"control-plane image for the local platform (defaults to the recorded or task dev:image build)")
+		"control-plane image for the local platform (defaults to the recorded image, "+
+			"the published image of a released skali, or a working-tree build)")
+	command.PersistentFlags().Bool("offline", false, "use the recorded target release without contacting the remote or downloading a CLI")
+	command.PersistentFlags().StringVar(&devRemote, "remote", "",
+		"run the local platform at the release this remote's cluster runs, ignoring the checkout binding and the current remote")
 
 	up := &cobra.Command{
 		Use:   "up",
@@ -262,27 +284,15 @@ func newDevCommand() *cobra.Command {
 	addProjectFlags(command)
 	addProjectFlags(up)
 
-	upgrade := &cobra.Command{
-		Use:   "upgrade",
-		Short: "Upgrade the local platform to this CLI's skalid version",
-		Long: "Moves the local platform's control plane to the skalid this CLI\n" +
-			"ships: the working-tree build inside the skali repository, the\n" +
-			"published image of the same version for a released CLI. Bare\n" +
-			"skali dev and skali dev start --force repair the platform but\n" +
-			"never change its version; this command is the one that does.\n" +
-			"Project data is retained. Downgrades are refused.",
-		Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, args []string) error {
-			return runDevUpgrade(command, skalidImage)
-		},
-	}
-
 	status := &cobra.Command{
 		Use:   "status",
 		Short: "Show platform and current-project state",
 		Args:  cobra.NoArgs,
 		RunE:  runDevStatus,
 	}
+
+	status.Flags().Bool("project-only", false, "internal project inspection continuation")
+	_ = status.Flags().MarkHidden("project-only")
 
 	logs := &cobra.Command{
 		Use:               "logs [service]",
@@ -331,17 +341,9 @@ func newDevCommand() *cobra.Command {
 
 	stop := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the local platform; state is retained",
+		Short: "Stop the running local platform; state is retained",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, args []string) error {
-			if err := localdev.Stop(command.Context()); err != nil {
-				return err
-			}
-			out := command.OutOrStdout()
-			fmt.Fprintf(out, "%sstopped local platform; state is retained\n",
-				clirender.StyleFor(out).Check())
-			return nil
-		},
+		RunE:  runDevStop,
 	}
 
 	var startForce bool
@@ -353,8 +355,8 @@ func newDevCommand() *cobra.Command {
 			"Project data survives a stop/start cycle. --force runs a full\n" +
 			"converge pass (re-applying the complete platform bundle) even when\n" +
 			"the platform looks healthy; it is the repair verb for a platform\n" +
-			"whose recorded state lies. Neither form changes the platform's\n" +
-			"version; that stays skali dev upgrade's job.",
+			"whose recorded state lies. The platform's release is this skali's;\n" +
+			"a different release or k3s pin requires skali dev reset first.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			clusterStatus, err := localdev.Status(command.Context())
@@ -381,7 +383,8 @@ func newDevCommand() *cobra.Command {
 	var resetYes bool
 	reset := &cobra.Command{
 		Use:   "reset",
-		Short: "Destroy the complete local installation",
+		Short: "Destroy the local dev platform completely",
+		Long:  "Deletes the fixed local cluster and its data, even if its installation record is missing. Requires confirmation or --yes.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			return runDevReset(command, resetYes)
@@ -389,9 +392,71 @@ func newDevCommand() *cobra.Command {
 	}
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
-	command.AddCommand(up, upgrade, status, logs, newDevExecCommand(), newDevRunCommand(),
+	command.AddCommand(up, status, logs, newDevExecCommand(), newDevRunCommand(),
 		newDevValuesCommand(), down, ls, stop, start, reset)
 	return command
+}
+
+// runDevStop stops the fixed local platform without resolving a remote.
+func runDevStop(command *cobra.Command, args []string) error {
+	ctx := command.Context()
+	unlock, err := localdev.Lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	state, err := localdev.LoadState()
+	if errors.Is(err, localdev.ErrNotInstalled) {
+		fmt.Fprintln(command.OutOrStdout(), "no local platform is installed")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	status, err := localdev.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if status == localdev.ClusterAbsent {
+		fmt.Fprintln(command.OutOrStdout(), "local platform cluster is absent; retained installation record can be cleared with skali dev reset")
+		return nil
+	}
+	if status == localdev.ClusterStopped {
+		fmt.Fprintln(command.OutOrStdout(), "local platform is already stopped; state is retained")
+		return nil
+	}
+	if status == localdev.ClusterRunning {
+		if err := localdev.Stop(ctx); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(command.OutOrStdout(), "stopped local platform %s (%s); state is retained\n", localdev.ClusterName(), platformLabel(localdev.Record{Version: state.Version}))
+	return nil
+}
+
+func platformLabel(record localdev.Record) string {
+	if record.Version == "" {
+		return "working tree"
+	}
+	return "skalid " + record.Version
+}
+
+func requireRunningPlatform(ctx context.Context) error {
+	state, err := localdev.LoadState()
+	if err != nil {
+		return err
+	}
+	if err := localdev.CheckVersion(state); err != nil {
+		return err
+	}
+	status, err := localdev.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if status != localdev.ClusterRunning {
+		return errors.New("local platform is not running; run skali dev")
+	}
+	return nil
 }
 
 // runDevDown tears the current project down on the local platform. Plain
@@ -742,6 +807,9 @@ func isRunAlreadyFinished(err error) bool {
 func runDevLs(command *cobra.Command, args []string) error {
 	ctx := command.Context()
 	out := command.OutOrStdout()
+	if err := requireRunningPlatform(ctx); err != nil {
+		return err
+	}
 	cfg, err := cliconfig.Load()
 	if err != nil {
 		return err
@@ -783,9 +851,35 @@ func runDevLs(command *cobra.Command, args []string) error {
 // ensureLocalPlatform brings the platform up and logs the CLI into it,
 // storing the local remote.
 func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConverge bool) (*localdev.State, error) {
+	locked, unlock, err := localdev.LockContext(command.Context())
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	original := command.Context()
+	command.SetContext(locked)
+	defer command.SetContext(original)
 	ctx := command.Context()
 	out := command.OutOrStdout()
+	if err := localdev.ObsoletePlatforms(); err != nil {
+		return nil, err
+	}
+	recorded, err := localdev.LoadState()
+	if err != nil && !errors.Is(err, localdev.ErrNotInstalled) {
+		return nil, err
+	}
+	if err := localdev.CheckVersion(recorded); err != nil {
+		return nil, err
+	}
 
+	// A released CLI runs only its published platform image.
+	if skalidImage != "" && versionpkg.IsRelease(versionpkg.Version) && skalidImage != versionpkg.PublishedSkalidImage(versionpkg.Version) {
+		return nil, fmt.Errorf("--skalid-image must be %s for this released CLI", versionpkg.PublishedSkalidImage(versionpkg.Version))
+	}
+	if platform, ok := versionpkg.PublishedSkalidVersion(skalidImage); ok && !versionpkg.IsRelease(versionpkg.Version) {
+		return nil, fmt.Errorf("--skalid-image names released skalid %s; this working-tree CLI requires a development image; omit --skalid-image to build it, or use skali %s for that release", platform, platform)
+	}
+	fmt.Fprintln(out, devVersionReason())
 	if status, err := localdev.Status(ctx); err == nil && status != localdev.ClusterRunning {
 		fmt.Fprintln(out, "Local platform is not running. Creating it now.")
 	}
@@ -812,10 +906,11 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 			return nil, err
 		}
 	}
-	// A released CLI ahead of the platform names the gap once per session;
-	// nothing here changes versions (that stays skali dev upgrade's job).
-	if hint := upgradeHint(state.SkalidImage); hint != "" {
-		fmt.Fprintln(out, clirender.StyleFor(out).Yellow(hint))
+	// A released platform of another version would refuse this released
+	// CLI on its first authenticated request; name the gap and the fix
+	// here instead; this also guards an image swapped under the record.
+	if err := devSkewError(state.SkalidImage); err != nil {
+		return nil, err
 	}
 	if err := loginLocalRemote(ctx, state); err != nil {
 		return nil, err
@@ -859,27 +954,30 @@ func offerPlatformRecreate(ctx context.Context, out io.Writer,
 	return state, nil
 }
 
-// defaultSkalidImage prefers the recorded image, then a working-tree build
-// when the CLI runs inside the repository (the developer path), then the
-// published image matching a released binary's version.
+// defaultSkalidImage prefers the recorded image (this platform's own),
+// then the image this binary stands for: a released skali runs the
+// published image of its release, never a working tree, because the
+// platform is that release's replica; a development build builds the
+// working tree when it runs inside the repository.
 func defaultSkalidImage(ctx context.Context, tasks *clirender.Tasks) string {
 	if state, err := localdev.LoadState(); err == nil && state.SkalidImage != "" {
 		return state.SkalidImage
+	}
+	if release := localdev.PlatformVersion(); release != "" {
+		image := versionpkg.PublishedSkalidImage(release)
+		task := tasks.Start("Pull " + image)
+		if err := localdev.EnsureHostImage(ctx, image); err == nil {
+			task.Done("")
+			return image
+		}
+		task.Fail()
+		return ""
 	}
 	if root := findRepoRoot(); root != "" {
 		task := tasks.Start("Build skalid:dev from the working tree")
 		if err := localdev.BuildSkalidImage(ctx, root, "skalid:dev", task.NoteWriter()); err == nil {
 			task.Done("")
 			return "skalid:dev"
-		}
-		task.Fail()
-	}
-	if versionpkg.IsRelease(versionpkg.Version) {
-		image := versionpkg.PublishedSkalidImage(versionpkg.Version)
-		task := tasks.Start("Pull " + image)
-		if err := localdev.EnsureHostImage(ctx, image); err == nil {
-			task.Done("")
-			return image
 		}
 		task.Fail()
 	}
@@ -919,15 +1017,18 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 	// login instead of a mismatch prompt.
 	existing := cfg.Remotes[localRemoteName]
 	if existing != nil && existing.Token != "" {
-		probe := client.New(localdev.MasterURL(), existing.Token, userAgent())
+		probe := client.New(localdev.MasterURL(), existing.Token, caller())
 		if _, err := probe.CurrentSession(ctx); err == nil {
 			if observed := probe.ObservedInstance(); observed != "" {
 				existing.Instance = observed
 			}
+			if version := probe.ObservedVersion(); version != "" {
+				existing.Version = version
+			}
 			return cliconfig.Save(cfg)
 		}
 	}
-	api := client.New(localdev.MasterURL(), "", userAgent())
+	api := client.New(localdev.MasterURL(), "", caller())
 	result, err := api.Login(ctx, state.AdminEmail, state.AdminPassword)
 	if err != nil {
 		return fmt.Errorf("log in to the local platform: %w", err)
@@ -942,6 +1043,7 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 		Master:   localdev.MasterURL(),
 		Token:    result.Session.Token,
 		Instance: api.ObservedInstance(),
+		Version:  api.ObservedVersion(),
 	}
 	return cliconfig.Save(cfg)
 }
@@ -951,6 +1053,9 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 func localProjectEnvironment(command *cobra.Command) (*client.Client, string, error) {
 	project, err := loadLocalProject("")
 	if err != nil {
+		return nil, "", err
+	}
+	if err := requireRunningPlatform(command.Context()); err != nil {
 		return nil, "", err
 	}
 	cfg, err := cliconfig.Load()
@@ -978,6 +1083,18 @@ func runDevStatus(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	state, err := localdev.LoadState()
+	if err != nil && !errors.Is(err, localdev.ErrNotInstalled) {
+		return err
+	}
+	k3sImage, installedRelease, releaseLabel := "unknown k3s", "", "no installation record"
+	if state != nil {
+		installedRelease = state.Version
+		releaseLabel = platformLabel(localdev.Record{Version: state.Version})
+		if state.K3sImage != "" {
+			k3sImage = state.K3sImage
+		}
+	}
 	// Docker's running bit hides a crash-looping k3s; a node whose
 	// apiserver does not answer is reported as what it is, and the
 	// project section is skipped (it could only add connection errors).
@@ -987,15 +1104,22 @@ func runDevStatus(command *cobra.Command, args []string) error {
 			if detail == "" {
 				detail = "the kube apiserver does not answer"
 			}
-			fmt.Fprintf(out, "platform   %s (cluster %s, %s; skali dev repairs this)\n",
-				stateColor(style, "unhealthy"), localdev.ClusterName(), detail)
+			fmt.Fprintf(out, "platform   %s (cluster %s, %s, %s; %s; skali dev repairs this)\n",
+				stateColor(style, "unhealthy"), localdev.ClusterName(), releaseLabel, k3sImage, detail)
 			return nil
 		}
 	}
-	fmt.Fprintf(out, "platform   %s (cluster %s, %s)\n",
-		stateColor(style, string(clusterStatus)), localdev.ClusterName(), localdev.K3sImage)
-	if clusterStatus != localdev.ClusterRunning {
+	projectOnly, _ := command.Flags().GetBool("project-only")
+	if !projectOnly {
+		fmt.Fprintf(out, "platform   %s (cluster %s, %s, %s)\n",
+			stateColor(style, string(clusterStatus)), localdev.ClusterName(),
+			releaseLabel, k3sImage)
+	}
+	if clusterStatus != localdev.ClusterRunning || state == nil {
 		return nil
+	}
+	if err := dispatchDevInspection(command, installedRelease); err != nil {
+		return err
 	}
 	api, environmentID, err := localProjectEnvironment(command)
 	if err != nil {
@@ -1118,16 +1242,20 @@ func replicaDots(style *clirender.Style, ready, total int) string {
 }
 
 func runDevReset(command *cobra.Command, yes bool) error {
-	ctx := command.Context()
+	ctx, unlock, err := localdev.LockContext(command.Context())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	out := command.OutOrStdout()
 	style := clirender.StyleFor(out)
 	if !yes {
-		fmt.Fprintln(out, style.BoldRed("This destroys the complete local installation:"))
+		fmt.Fprintln(out, style.BoldRed("This destroys the local dev platform completely:"))
 		fmt.Fprintf(out, "  cluster %s, its volumes, the local registry and its artifacts,\n", localdev.ClusterName())
-		fmt.Fprintln(out, "  local Skali state, and all locally deployed project data.")
-		fmt.Fprintln(out, "Nothing outside this machine is affected.")
+		fmt.Fprintln(out, "  its Skali state, and all project data deployed to it.")
+		fmt.Fprintln(out, "Everything outside this local dev platform is unaffected.")
 		confirmed, err := cliprompt.New(os.Stdin, out).Confirm(ctx, cliprompt.ConfirmOptions{
-			Title: "Destroy the local installation?",
+			Title: "Destroy the local platform?",
 		})
 		if err != nil {
 			return err
@@ -1143,8 +1271,26 @@ func runDevReset(command *cobra.Command, yes bool) error {
 // local installation record, and drops the stored local remote;
 // confirmation is the caller's job.
 func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
+	ctx, unlock, err := localdev.LockContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// Cleanup must tolerate incomplete remote entries too. Parse before deleting
+	// anything, and conditionally remove only the local credentials afterwards.
+	cfg, err := cliconfig.LoadForRepair()
+	if err != nil {
+		return err
+	}
 	tasks := clirender.NewTasks(out)
-	if status, err := localdev.Status(ctx); err == nil && status != localdev.ClusterAbsent {
+	status, err := localdev.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := localdev.LoadState(); err != nil && !errors.Is(err, localdev.ErrNotInstalled) {
+		return err
+	}
+	if status != localdev.ClusterAbsent {
 		task := tasks.Start("Delete cluster " + localdev.ClusterName() + " and volumes")
 		if err := localdev.Delete(ctx); err != nil {
 			task.Fail()
@@ -1160,11 +1306,7 @@ func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
 	task.Done("")
 
 	// Drop the stored local remote; its token died with the cluster.
-	if cfg, err := cliconfig.Load(); err == nil {
-		delete(cfg.Remotes, localRemoteName)
-		_ = cliconfig.Save(cfg)
-	}
-	return nil
+	return cliconfig.Remove(localRemoteName, cfg.Remotes[localRemoteName])
 }
 
 // printDevReady prints the local ready summary: the dashboard, every
