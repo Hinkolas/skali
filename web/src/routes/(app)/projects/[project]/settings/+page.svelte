@@ -6,7 +6,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import { api, ApiError } from '$lib/api/client';
 	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
-	import { formatDateTime, relativeTime } from '$lib/format';
+	import { describeActor, formatDateTime, relativeTime } from '$lib/format';
 	import { HEALTH_META } from '$lib/service-types';
 	import { withEnv } from '$lib/urls';
 	import type { RevisionSummary } from '$lib/types/revisions';
@@ -15,6 +15,7 @@
 	import { modal } from '$lib/stores/modal.svelte';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { users } from '$lib/stores/users.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -41,6 +42,9 @@
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	// Last-deploy facts name the person behind the recorded actor id.
+	users.load();
 
 	// Access: the project role gates project settings and environment
 	// creation; each environment's effective role gates its own controls.
@@ -120,7 +124,7 @@
 		}
 		const deploy = insight.lastDeploy;
 		if (deploy) {
-			const who = deploy.actor.split('@')[0];
+			const who = describeActor(deploy.actor, users.resolve);
 			const when = relativeTime(deploy.finished_at ?? deploy.started_at ?? deploy.created_at);
 			const verb = deploy.kind === 'rollback' ? 'rolled back' : 'deployed';
 			if (deploy.status === 'running' || deploy.status === 'pending') {

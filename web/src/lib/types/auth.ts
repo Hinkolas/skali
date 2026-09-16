@@ -14,6 +14,14 @@ export interface AuthUser {
 	created_at: string;
 }
 
+/** The user directory entry GET /v1/users returns to every member; admins get AuthUser, a superset. */
+export interface DirectoryUser {
+	id: string;
+	email: string;
+	name: string;
+	role: Role;
+}
+
 export interface SessionInfo {
 	id: string;
 	expires_at: string;

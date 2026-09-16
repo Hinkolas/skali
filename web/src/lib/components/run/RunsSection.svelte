@@ -9,7 +9,9 @@
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { users } from '$lib/stores/users.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import CopyId from '$lib/components/ui/CopyId.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
@@ -34,6 +36,9 @@
 		emptyTitle?: string;
 		emptyDescription?: string;
 	} = $props();
+
+	// Actor ids resolve to names once the directory is here; one fetch per page life.
+	users.load();
 
 	let live = $state<Run[] | null>(null);
 	const runs = $derived(
@@ -98,12 +103,17 @@
 			<div
 				class="border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-1.5 @2xl:grid @2xl:items-center {grid}"
 			>
-				<button
-					type="button"
-					onclick={() => openRun(run)}
-					class="font-mono text-text-primary flex cursor-pointer items-center gap-2 text-left text-md hover:underline"
-				>
-					{run.kind}
+				<!-- The id sits beside the kind button, never inside it: the chip
+				     is a button of its own (copy the full id for the CLI). -->
+				<div class="flex min-w-0 items-center gap-2">
+					<button
+						type="button"
+						onclick={() => openRun(run)}
+						class="font-mono text-text-primary flex cursor-pointer items-center gap-2 text-left text-md hover:underline"
+					>
+						{run.kind}
+					</button>
+					<CopyId id={run.id} hint="skali run attach {run.id}" class="text-sm" />
 					{#if run.bypass_protection}
 						<span title="deployed into a promote-only environment on an admin's explicit bypass">
 							<Pill text="bypassed protection" tone="warning" />
@@ -119,14 +129,14 @@
 							/>
 						</span>
 					{/if}
-				</button>
+				</div>
 				<!-- Actor, started and duration: grid cells on a wide pane, one meta
 				     line under the kind on a narrow one. -->
 				<div
 					class="@2xl:contents @max-2xl:order-1 @max-2xl:flex @max-2xl:basis-full @max-2xl:items-center @max-2xl:gap-x-3"
 				>
-					<div class="text-text-muted min-w-0 truncate pr-2 text-md">
-						{describeActor(run.actor)}
+					<div class="text-text-muted min-w-0 truncate pr-2 text-md" title={run.actor}>
+						{describeActor(run.actor, users.resolve)}
 					</div>
 					<div class="font-mono text-text-muted text-sm whitespace-nowrap">
 						{relativeTime(run.started_at ?? run.created_at)}

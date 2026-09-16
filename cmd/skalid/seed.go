@@ -505,6 +505,16 @@ func (s *seeder) user(email string) uuid.UUID {
 	return u.ID
 }
 
+// actorID records what production records for a person who ran something:
+// the user id (the console resolves it to a name). Schedule actors and
+// anything else stay as written.
+func (s *seeder) actorID(actor string) string {
+	if u, ok := s.users[actor]; ok {
+		return u.ID.String()
+	}
+	return actor
+}
+
 func (s *seeder) seedProject(ctx context.Context, p seedProject) error {
 	if _, err := s.st.GetProjectByName(ctx, p.name); err == nil {
 		return fmt.Errorf("project %s already exists (run with --reset)", p.name)
@@ -664,7 +674,7 @@ func (s *seeder) runDeployment(ctx context.Context, proj *store.Project, env *st
 		CandidateID:         candidateID,
 		Resolver:            &artifactstore.Fake{Store: artifactstore.New(s.st), ProjectID: proj.ID},
 		Journal:             s.journal,
-		Actor:               r.actor,
+		Actor:               s.actorID(r.actor),
 	})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("execute deployment: %w", err)
@@ -777,7 +787,7 @@ func (s *seeder) runDeployment(ctx context.Context, proj *store.Project, env *st
 
 func (s *seeder) runRollback(ctx context.Context, env *store.Environment, r seedRun, revisionID uuid.UUID, at time.Time) error {
 	result, err := s.deploy.Rollback(ctx, deploy.RollbackInput{
-		EnvironmentID: env.ID, RevisionID: revisionID, Actor: r.actor, Journal: s.journal,
+		EnvironmentID: env.ID, RevisionID: revisionID, Actor: s.actorID(r.actor), Journal: s.journal,
 	})
 	if err != nil {
 		return fmt.Errorf("rollback: %w", err)
@@ -795,7 +805,7 @@ func (s *seeder) runRollback(ctx context.Context, env *store.Environment, r seed
 
 func (s *seeder) runRestart(ctx context.Context, env *store.Environment, r seedRun, at time.Time) error {
 	result, err := s.deploy.Restart(ctx, deploy.RestartInput{
-		EnvironmentID: env.ID, ApplicationKey: r.application, Actor: r.actor, Journal: s.journal,
+		EnvironmentID: env.ID, ApplicationKey: r.application, Actor: s.actorID(r.actor), Journal: s.journal,
 	})
 	if err != nil {
 		return fmt.Errorf("restart: %w", err)
@@ -851,7 +861,7 @@ func (s *seeder) runBackup(ctx context.Context, proj *store.Project, env *store.
 		kind = backup.KindRestore
 	}
 	run, err := s.journal.CreateRun(ctx, journal.RunInput{
-		Kind: kind, ProjectID: proj.ID, EnvironmentID: env.ID, Actor: r.actor,
+		Kind: kind, ProjectID: proj.ID, EnvironmentID: env.ID, Actor: s.actorID(r.actor),
 	})
 	if err != nil {
 		return err
