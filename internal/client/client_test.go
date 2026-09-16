@@ -174,6 +174,22 @@ func TestListRevisionsDecodes(t *testing.T) {
 	require.Equal(t, "dv-1", revisions[0].DefinitionVersionID)
 }
 
+func TestCompleteDeploymentDecodesRunID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "POST", r.Method)
+		require.Equal(t, "/v1/deployments/dep-1/complete", r.URL.Path)
+		// Completion is accepted, not finished: the promotion continues
+		// under the run.
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"run_id":"run-9"}`))
+	}))
+	defer srv.Close()
+
+	result, err := New(srv.URL, "tok", Caller{}).CompleteDeployment(context.Background(), "dep-1")
+	require.NoError(t, err)
+	require.Equal(t, "run-9", result.RunID)
+}
+
 func TestSetTargetSendsRevisionAndDecodesRun(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "PUT", r.Method)

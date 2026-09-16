@@ -183,9 +183,10 @@ type OpenedDeployment struct {
 	BypassProtection      bool                 `json:"bypass_protection"`
 }
 
+// CompletedDeployment is the 202 body of complete: the run that carries the
+// revision, promotion and rollout from here on.
 type CompletedDeployment struct {
-	RunID      string `json:"run_id"`
-	RevisionID string `json:"revision_id"`
+	RunID string `json:"run_id"`
 }
 
 type VerifiedArtifact struct {

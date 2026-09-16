@@ -315,6 +315,13 @@ func runServe() error {
 	kernel = reconcile.New(kernelDeps, reconcileCfg)
 	deploySvc.SetEnqueuer(kernel)
 
+	// loopCtx is the lifetime of everything that outlives a request: the
+	// loops below and deployment completions handed off by the API. It
+	// exists before the listener so no handler runs without it.
+	loopCtx, cancelLoops := context.WithCancel(ctx)
+	defer cancelLoops()
+	deploySvc.SetLifetime(loopCtx)
+
 	// The backup controller runs beside the kernel and the substrate with
 	// its own queue: backup and restore runs are operational work driven by
 	// durable backup rows, never by the environment converge loop.
@@ -427,8 +434,6 @@ func runServe() error {
 		}
 	}()
 
-	loopCtx, cancelLoops := context.WithCancel(ctx)
-	defer cancelLoops()
 	go sweepLoop(loopCtx, authSvc)
 
 	// The reconciliation kernel: observation sync, workers, and audits. In

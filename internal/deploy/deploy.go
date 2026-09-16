@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"maps"
 	"strconv"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -63,18 +64,60 @@ type Service struct {
 	builds    *buildstore.Service
 	version   string
 	enqueuer  Enqueuer
+	// lifetimeCtx is the daemon's context for work that outlives the
+	// request that started it (deployment completion). nil means
+	// context.Background(), which is what tests and API-only mode want.
+	lifetimeCtx context.Context
+
+	mu sync.Mutex
+	// completing holds the deployments whose completion runs in a
+	// goroutine right now; a repeated complete call must not start a
+	// second promotion. In-memory is exact: a daemon restart kills the
+	// goroutine too, and RecoverOnBoot closes what it left behind.
+	completing map[uuid.UUID]struct{}
 }
 
 func New(st *store.Store, valueSvc *valuestore.Service, artifactSvc *artifactstore.Service, compilerVersion string) *Service {
 	return &Service{
 		st: st, values: valueSvc, artifacts: artifactSvc,
 		builds: buildstore.New(st), version: compilerVersion,
+		completing: make(map[uuid.UUID]struct{}),
 	}
 }
 
 // SetEnqueuer wires the reconciliation kernel after construction (the kernel
 // depends on this service, so the cycle is broken here).
 func (s *Service) SetEnqueuer(e Enqueuer) { s.enqueuer = e }
+
+// SetLifetime wires the context that background completion work runs
+// under. Cancelling it (daemon shutdown) fails in-flight completions
+// cleanly instead of leaving them half done.
+func (s *Service) SetLifetime(ctx context.Context) { s.lifetimeCtx = ctx }
+
+func (s *Service) lifetime() context.Context {
+	if s.lifetimeCtx != nil {
+		return s.lifetimeCtx
+	}
+	return context.Background()
+}
+
+// tryClaim marks a deployment as completing; ErrDeploymentCompleting when
+// another completion already holds it.
+func (s *Service) tryClaim(id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, held := s.completing[id]; held {
+		return ErrDeploymentCompleting
+	}
+	s.completing[id] = struct{}{}
+	return nil
+}
+
+func (s *Service) release(id uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.completing, id)
+}
 
 type PrepareInput struct {
 	EnvironmentID       uuid.UUID
@@ -399,6 +442,10 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		}
 		return nil, err
 	}
+	// From here on a run exists that only this call can conclude: a client
+	// that disconnects mid-rollback must not strand it running.
+	ctx, cancel := detached(ctx)
+	defer cancel()
 
 	rev, err := s.GetRevision(ctx, in.RevisionID)
 	if err != nil {
@@ -580,6 +627,8 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 // finishRunFailed concludes a run after a failure and returns the original
 // error.
 func finishRunFailed(ctx context.Context, jsvc *journal.Service, runID uuid.UUID, cause error) error {
+	ctx, cancel := detached(ctx)
+	defer cancel()
 	if err := jsvc.FinishRun(ctx, runID, journal.RunFailed); err != nil &&
 		!errors.Is(err, journal.ErrInvalidTransition) {
 		return fmt.Errorf("deploy: finish run after failure: %w (original: %w)", err, cause)
