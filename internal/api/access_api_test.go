@@ -117,7 +117,7 @@ func (f *matrixFixture) path(template string) string {
 	case strings.HasPrefix(template, "/v1/builds/{id}"):
 		id = f.build
 	}
-	r := strings.NewReplacer("{id}", id, "{key}", "web", "{name}", "SESSION_SECRET", "{user}", uuid.NewString())
+	r := strings.NewReplacer("{id}", id, "{key}", "web", "{name}", "SESSION_SECRET", "{user}", uuid.NewString(), "{snapshot}", uuid.NewString())
 	return r.Replace(template)
 }
 

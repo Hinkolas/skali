@@ -4,7 +4,7 @@
 	import type { Run, RunKind } from '$lib/types/runs';
 	import { runUnsettled, type RunsList } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
-	import { formatDuration, relativeTime } from '$lib/format';
+	import { describeActor, formatDuration, relativeTime } from '$lib/format';
 	import { clock } from '$lib/stores/clock.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
@@ -125,7 +125,9 @@
 				<div
 					class="@2xl:contents @max-2xl:order-1 @max-2xl:flex @max-2xl:basis-full @max-2xl:items-center @max-2xl:gap-x-3"
 				>
-					<div class="text-text-muted min-w-0 truncate pr-2 text-md">{run.actor}</div>
+					<div class="text-text-muted min-w-0 truncate pr-2 text-md">
+						{describeActor(run.actor)}
+					</div>
 					<div class="font-mono text-text-muted text-sm whitespace-nowrap">
 						{relativeTime(run.started_at ?? run.created_at)}
 					</div>

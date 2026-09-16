@@ -46,12 +46,16 @@ released hosts and can fail if another environment has acquired them. Conflicts
 leave the existing target unchanged. Raw Kubernetes changes are operator actions;
 the claim system governs routes managed through skali.
 
-Backup policies are accepted but inactive: skali does not run scheduled backups
-or enforce retention. Create backups manually. Deploy, promote, redeploy, and
-rollback report this limitation when a revision declares policies. Use
-`skali backup create`, `skali backup list`, and `skali backup --help` for manual
-backup, restore, and removal operations. A successful deploy is not evidence of
-automatic data protection.
+Backup policies in the manifest are enforced: skalid snapshots every active
+environment on each policy's cron schedule (UTC) and deletes the snapshots a
+policy took once they are older than its retention, keeping the newest one.
+Nothing runs until an admin sets the backup target. A failed scheduled run is
+recorded like any other run and the schedule moves on to its next fire; check
+the environment's runs, the console's Backups tab, or `skali backup list`. A
+successful deploy is not evidence of a successful backup. Manual snapshots
+(`skali backup create`) are kept until removed with `skali backup remove`.
+One backup runs at a time per installation, so environments due in the same
+minute are snapshotted one after another.
 
 Volume restore is destructive and may leave partial restored contents on failure.
 It preserves numeric ownership, permissions, and timestamps on Linux, including

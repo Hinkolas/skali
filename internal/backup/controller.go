@@ -55,6 +55,12 @@ type Controller struct {
 	deps  Deps
 	cfg   Config
 	queue workqueue.TypedRateLimitingInterface[uuid.UUID]
+	// openStore opens a bucket-scoped object store for the target; tests
+	// point it at an in-memory fake.
+	openStore func(s3Location) (objectStore, error)
+	// revisions loads revision documents; deps.Deploy in production, a
+	// fake in tests.
+	revisions revisionLoader
 }
 
 func New(deps Deps, cfg Config) *Controller {
@@ -68,12 +74,17 @@ func New(deps Deps, cfg Config) *Controller {
 	if cfg.ReconvergeTimeout <= 0 {
 		cfg.ReconvergeTimeout = 10 * time.Minute
 	}
-	return &Controller{
+	c := &Controller{
 		deps: deps,
 		cfg:  cfg,
 		queue: workqueue.NewTypedRateLimitingQueue(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID]()),
+		openStore: func(loc s3Location) (objectStore, error) { return newObjectStore(loc) },
 	}
+	if deps.Deploy != nil {
+		c.revisions = deps.Deploy
+	}
+	return c
 }
 
 // Enqueue schedules one backup row's execution.

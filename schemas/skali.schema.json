@@ -672,7 +672,7 @@
     },
     "backups": {
       "type": "object",
-      "description": "Accepted but inactive backup policies. Scheduling and retention are not enforced; create backups manually.",
+      "description": "Scheduled backup policies keyed by stable name: a cron schedule (UTC), a retention window, and the resources each snapshot includes. Every active environment of the project is backed up on the schedule.",
       "additionalProperties": {
         "type": "object",
         "required": [
@@ -683,6 +683,7 @@
         "properties": {
           "include": {
             "type": "object",
+            "description": "Which of the project's databases, buckets, and volumes each snapshot contains.",
             "properties": {
               "buckets": {
                 "oneOf": [
@@ -746,7 +747,15 @@
           },
           "schedule": {
             "type": "string",
+            "description": "Five-field cron expression evaluated in UTC, for example 0 3 * * * for daily at 03:00.",
             "minLength": 1
+          },
+          "strategy": {
+            "type": "string",
+            "description": "Backup strategy. complete (the default and only value) copies every included component in full on each run.",
+            "enum": [
+              "complete"
+            ]
           }
         },
         "additionalProperties": false

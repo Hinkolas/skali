@@ -81,6 +81,48 @@ func (q *Queries) GetEnvironmentByID(ctx context.Context, id uuid.UUID) (Environ
 	return i, err
 }
 
+const listActiveEnvironmentRevisions = `-- name: ListActiveEnvironmentRevisions :many
+SELECT e.id AS environment_id, e.project_id, e.name, t.active_revision_id
+FROM environments e
+JOIN environment_targets t ON t.environment_id = e.id
+WHERE t.state = 'active' AND t.active_revision_id IS NOT NULL
+ORDER BY e.project_id, e.name
+`
+
+type ListActiveEnvironmentRevisionsRow struct {
+	EnvironmentID    uuid.UUID
+	ProjectID        uuid.UUID
+	Name             string
+	ActiveRevisionID *uuid.UUID
+}
+
+// Environments the backup scheduler considers: active with a converged
+// revision to snapshot.
+func (q *Queries) ListActiveEnvironmentRevisions(ctx context.Context) ([]ListActiveEnvironmentRevisionsRow, error) {
+	rows, err := q.db.Query(ctx, listActiveEnvironmentRevisions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveEnvironmentRevisionsRow
+	for rows.Next() {
+		var i ListActiveEnvironmentRevisionsRow
+		if err := rows.Scan(
+			&i.EnvironmentID,
+			&i.ProjectID,
+			&i.Name,
+			&i.ActiveRevisionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironments = `-- name: ListEnvironments :many
 SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority FROM environments WHERE project_id = $1 ORDER BY name
 `

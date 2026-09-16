@@ -194,6 +194,11 @@ type API struct {
 	// BackupJobTimeout bounds one backup or restore Job (a database dump,
 	// upload, or volume archive) before it fails as stuck.
 	BackupJobTimeout time.Duration `env:"SKALI_BACKUP_JOB_TIMEOUT,default=1h"`
+
+	// BackupScheduler runs manifest backup policies on their schedules.
+	// Off is for tests and debugging; a cluster without policies or without
+	// a backup target idles either way.
+	BackupScheduler bool `env:"SKALI_BACKUP_SCHEDULER,default=true"`
 }
 
 // Validate shadows Base.Validate, so it must chain to it explicitly.

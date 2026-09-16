@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/authz"
@@ -28,7 +30,10 @@ func (h *backupsHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := UserFrom(r.Context())
-	result, err := h.backups.CreateBackup(r.Context(), id, user.ID.String())
+	result, err := h.backups.CreateBackup(r.Context(), backup.BackupInput{
+		EnvironmentID: id,
+		Actor:         user.ID.String(),
+	})
 	if err != nil {
 		writeBackupError(r.Context(), w, err)
 		return
@@ -178,6 +183,9 @@ func writeBackupError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, backup.ErrEnvironmentNotActive):
 		writeError(w, http.StatusUnprocessableEntity, codeEnvironmentNotActive,
 			"the environment is not active; deploy it before backing it up")
+	case errors.Is(err, backup.ErrSnapshotInUse):
+		writeError(w, http.StatusConflict, codeSnapshotInUse,
+			"a restore is reading this snapshot; wait for it to finish")
 	case errors.Is(err, backup.ErrBackupInFlight):
 		writeError(w, http.StatusConflict, codeBackupInFlight,
 			"another run is in flight for this environment; wait for it or cancel it")
@@ -190,4 +198,59 @@ func writeBackupError(ctx context.Context, w http.ResponseWriter, err error) {
 	default:
 		writeInternalError(ctx, w, "backup", err)
 	}
+}
+
+// DELETE /v1/projects/{id}/backups/{snapshot}: remove one snapshot from the
+// backup target. Snapshot ids are project-wide, so the route is addressed
+// by project; the environment holding the snapshot decides the role:
+// maintain on it, or project admin when the control plane no longer has
+// that environment. One-way, so the route sits behind sudo mode.
+func (h *backupsHandlers) deleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	snapshotID := chi.URLParam(r, "snapshot")
+	if _, err := uuid.Parse(snapshotID); err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "snapshot id must be a UUID")
+		return
+	}
+	project, err := h.st.GetProjectByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, codeNotFound, "project not found")
+			return
+		}
+		writeInternalError(r.Context(), w, "get project", err)
+		return
+	}
+	grant := grantFrom(r.Context())
+	var forbidden *authz.ErrForbidden
+	err = h.backups.DeleteSnapshot(r.Context(), backup.DeleteInput{
+		Project:    project.Name,
+		SnapshotID: snapshotID,
+		Allowed: func(environment string) error {
+			if envGrant, ok := grant.EnvironmentByName(environment); ok {
+				if !envGrant.Role.AtLeast(authz.Maintain) {
+					forbidden = &authz.ErrForbidden{Required: authz.Maintain, Scope: "environment", Name: environment, Reason: "it holds the snapshot"}
+					return forbidden
+				}
+				return nil
+			}
+			if !grant.ProjectRole.AtLeast(authz.Admin) {
+				forbidden = &authz.ErrForbidden{Required: authz.Admin, Scope: "project", Name: project.Name, Reason: "the snapshot's environment no longer exists"}
+				return forbidden
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		if forbidden != nil && errors.Is(err, forbidden) {
+			writeError(w, http.StatusForbidden, codeForbidden, forbidden.Error())
+			return
+		}
+		writeBackupError(r.Context(), w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

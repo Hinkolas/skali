@@ -135,6 +135,9 @@ func Validate(document *Document) yamldoc.Diagnostics {
 		if backup.Retention == "" {
 			add(path+".retention", "is required")
 		}
+		if backup.Strategy != "" && backup.Strategy != StrategyComplete {
+			add(path+".strategy", "must be %q (the only strategy today)", StrategyComplete)
+		}
 		if selectionEmpty(backup.Include.Databases) && selectionEmpty(backup.Include.Buckets) && selectionEmpty(backup.Include.Volumes) {
 			add(path+".include", "must include at least one resource class")
 		}

@@ -59,6 +59,7 @@ const (
 	codeBackupTargetUnreachable  = "backup_target_unreachable"
 	codeEnvironmentNotActive     = "environment_not_active"
 	codeSnapshotNotFound         = "snapshot_not_found"
+	codeSnapshotInUse            = "snapshot_in_use"
 
 	// Exec.
 	codeNoReadyPod = "no_ready_pod"

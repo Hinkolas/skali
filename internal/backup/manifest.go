@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/Hinkolas/skali/internal/compiler"
 )
 
 const (
@@ -40,7 +42,15 @@ type Manifest struct {
 	Environment      string          `json:"environment"`
 	RevisionChecksum string          `json:"revision_checksum"`
 	Revision         json.RawMessage `json:"revision"`
-	Components       []Component     `json:"components"`
+	// Trigger, Policy, and Strategy mark the snapshot's origin: manual
+	// snapshots are kept until deleted, scheduled ones belong to the named
+	// manifest backup policy whose retention applies. They arrived after the
+	// first snapshots were written, so readers default them (manual, "",
+	// complete) and format "1" stays exact.
+	Trigger    string      `json:"trigger,omitempty"`
+	Policy     string      `json:"policy,omitempty"`
+	Strategy   string      `json:"strategy,omitempty"`
+	Components []Component `json:"components"`
 }
 
 // Component is one backed-up data unit. Databases and buckets carry their
@@ -86,6 +96,12 @@ func decodeManifest(data []byte) (*Manifest, error) {
 	}
 	if m.FormatVersion != ManifestFormatVersion {
 		return nil, &UnsupportedManifestError{Found: m.FormatVersion}
+	}
+	if m.Trigger == "" {
+		m.Trigger = TriggerManual
+	}
+	if m.Strategy == "" {
+		m.Strategy = compiler.StrategyComplete
 	}
 	return &m, nil
 }

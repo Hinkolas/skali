@@ -64,6 +64,9 @@ type Backup struct {
 	Error           *string
 	CreatedAt       time.Time
 	FinishedAt      *time.Time
+	Trigger         string
+	Policy          string
+	Strategy        string
 }
 
 type BackupCode struct {
@@ -72,6 +75,14 @@ type BackupCode struct {
 	CodeHash    string
 	UsedAt      *time.Time
 	CreatedAt   time.Time
+}
+
+type BackupSchedule struct {
+	EnvironmentID uuid.UUID
+	Policy        string
+	LastFireAt    time.Time
+	LastBackupID  *uuid.UUID
+	UpdatedAt     time.Time
 }
 
 type BackupTarget struct {

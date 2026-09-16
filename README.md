@@ -301,4 +301,4 @@ for yourself, for your company, or for your own customers, modify it, and
 redistribute it; see the license for the full terms. Security reports go
 through [SECURITY.md](SECURITY.md).
 
-Before installing this prerelease, read the [compatibility and backup limitations](docs/prerelease-safety.md). Backup schedules and retention declarations are accepted but inactive; use manual backups.
+Before installing this prerelease, read the [compatibility and backup limitations](docs/prerelease-safety.md).

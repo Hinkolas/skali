@@ -205,3 +205,28 @@ func TestRestoreValidation(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, status)
 	require.Equal(t, "environment_not_active", errorCode(t, body))
 }
+
+// Deleting a snapshot is one-way and project-addressed: it needs sudo mode,
+// a real project, a UUID snapshot id, and a configured target. The
+// per-environment role check runs after the target answers, so with no
+// target the caller sees the 503 first.
+func TestSnapshotDeletePreconditions(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("owner@example.com", "hunter2hunter2")
+	token := a.login("owner@example.com", "hunter2hunter2")
+	projectID, _ := a.createEnvironment(t, token)
+	snapshot := "0198f2f4-0000-7000-8000-000000000001"
+
+	status, body := a.do("DELETE", "/v1/projects/"+projectID+"/backups/not-a-uuid", token, nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "bad_request", errorCode(t, body))
+
+	status, body = a.do("DELETE", "/v1/projects/"+projectID+"/backups/"+snapshot, token, nil)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "backup_target_unconfigured", errorCode(t, body))
+
+	a.staleAllSessions()
+	status, body = a.do("DELETE", "/v1/projects/"+projectID+"/backups/"+snapshot, token, nil)
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "reauth_required", errorCode(t, body))
+}

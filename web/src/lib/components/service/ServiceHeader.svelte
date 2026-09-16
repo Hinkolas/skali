@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Archive from '@lucide/svelte/icons/archive';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import { page } from '$app/state';
@@ -7,6 +8,7 @@
 	import { renderExpression } from '$lib/types/definition';
 	import { api, ApiError } from '$lib/api/client';
 	import { requiredTitle, roleAtLeast } from '$lib/access';
+	import { backupRefusal, confirmBackup } from '$lib/backups';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
@@ -36,6 +38,9 @@
 		if (!roleAtLeast(env.access, 'deploy')) return requiredTitle('deploy', 'environment', env.name);
 		return undefined;
 	});
+	// A snapshot covers the whole environment, this database included; the
+	// button lives here because this is where someone looks for it.
+	const backupTitle = $derived(backupRefusal(env));
 
 	function confirmRestart() {
 		const target = env;
@@ -123,9 +128,13 @@
 			<span title="The database studio is coming soon">
 				<Button disabled>Open studio</Button>
 			</span>
-			<span title="On-demand backups are coming soon">
-				<Button disabled>Back up now</Button>
-			</span>
+			<Button
+				disabled={!!backupTitle}
+				title={backupTitle}
+				onclick={() => env && confirmBackup(env)}
+			>
+				<Archive size={14} /> Back up now
+			</Button>
 		{/if}
 	{/snippet}
 </PageHeader>

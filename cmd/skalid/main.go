@@ -338,6 +338,13 @@ func runServe() error {
 			return fmt.Errorf("recover backups: %w", err)
 		}
 	}
+	// The scheduler turns manifest backup policies into backup runs. It
+	// stays quiet without a configured target, so the local dev platform
+	// runs it too.
+	var backupScheduler *backup.Scheduler
+	if backupCtl != nil && cfg.BackupScheduler {
+		backupScheduler = backup.NewScheduler(backupCtl)
+	}
 
 	// Platform updates: the scan runs wherever a feed is configured; the
 	// cluster bridge exists only with a cluster, and reports unmanaged on
@@ -433,6 +440,9 @@ func runServe() error {
 	}()
 	if backupCtl != nil {
 		go backupCtl.Run(loopCtx)
+	}
+	if backupScheduler != nil {
+		go backupScheduler.Run(loopCtx)
 	}
 	if substrateCtl != nil {
 		go substrateCtl.Run(loopCtx)

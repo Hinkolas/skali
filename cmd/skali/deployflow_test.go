@@ -389,6 +389,12 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			sub = parts[1]
 		}
 		switch {
+		case sub == "backups" && len(parts) == 3 && r.Method == http.MethodDelete:
+			if !gate(w) {
+				return
+			}
+			f.posts = append(f.posts, "backup-rm:"+parts[2])
+			w.WriteHeader(http.StatusNoContent)
 		case sub == "backups":
 			snapshots := f.backups[projectID]
 			if snapshots == nil {

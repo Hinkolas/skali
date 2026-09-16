@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -130,7 +131,7 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 	}
 	bctx := &backupContext{row: row, credentials: credentials, snapshotID: row.ID.String()}
 	if err := scope.step(ctx, "target", "Check backup target", func(ctx context.Context, log *stepLog) error {
-		bctx.target, err = newObjectStore(targetLocation(credentials))
+		bctx.target, err = c.openStore(targetLocation(credentials))
 		if err != nil {
 			return err
 		}
@@ -146,12 +147,26 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 	if row.RevisionID == nil {
 		return errors.New("backup: row carries no revision")
 	}
-	revisionDoc, err := c.deps.Deploy.GetRevision(ctx, *row.RevisionID)
+	revisionDoc, err := c.revisions.GetRevision(ctx, *row.RevisionID)
 	if err != nil {
 		return fmt.Errorf("backup: load revision: %w", err)
 	}
 	snapshotID := bctx.snapshotID
-	components := planComponents(&revisionDoc.Definition)
+	// A scheduled snapshot holds what its policy includes; a manual one
+	// holds everything stateful.
+	var policy *compiler.Backup
+	var include *compiler.Selection
+	if row.Trigger == TriggerScheduled {
+		found, ok := revisionDoc.Definition.Backups[row.Policy]
+		if !ok {
+			return fmt.Errorf("%w: %q", ErrPolicyNotFound, row.Policy)
+		}
+		policy, include = &found, &found.Include
+	}
+	components := planComponents(&revisionDoc.Definition, include)
+	if len(components) == 0 {
+		return fmt.Errorf("backup: policy %q includes nothing the revision declares; nothing to snapshot", row.Policy)
+	}
 
 	for i := range components {
 		if scope.cancelled(ctx) {
@@ -164,23 +179,26 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 		component.Status = "complete"
 	}
 
-	return scope.step(ctx, "manifest", "Write snapshot manifest", func(ctx context.Context, log *stepLog) error {
+	manifest := &Manifest{
+		FormatVersion:    ManifestFormatVersion,
+		SnapshotID:       snapshotID,
+		Encryption:       EncryptionNone,
+		SkaliVersion:     c.deps.Version,
+		Project:          row.ProjectName,
+		Environment:      row.EnvironmentName,
+		RevisionChecksum: revisionDoc.Checksum,
+		Trigger:          row.Trigger,
+		Policy:           row.Policy,
+		Strategy:         row.Strategy,
+		Components:       components,
+	}
+	if err := scope.step(ctx, "manifest", "Write snapshot manifest", func(ctx context.Context, log *stepLog) error {
 		revisionJSON, err := json.Marshal(revisionDoc)
 		if err != nil {
 			return fmt.Errorf("encode revision: %w", err)
 		}
-		manifest := &Manifest{
-			FormatVersion:    ManifestFormatVersion,
-			SnapshotID:       snapshotID,
-			Encryption:       EncryptionNone,
-			CreatedAt:        time.Now().UTC(),
-			SkaliVersion:     c.deps.Version,
-			Project:          row.ProjectName,
-			Environment:      row.EnvironmentName,
-			RevisionChecksum: revisionDoc.Checksum,
-			Revision:         revisionJSON,
-			Components:       components,
-		}
+		manifest.CreatedAt = time.Now().UTC()
+		manifest.Revision = revisionJSON
 		data, err := encodeManifest(manifest)
 		if err != nil {
 			return err
@@ -201,24 +219,45 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 		}
 		log.Info(ctx, "snapshot "+snapshotID+" complete")
 		return nil
+	}); err != nil {
+		return err
+	}
+
+	if policy == nil {
+		return nil
+	}
+	// The snapshot is complete and listed; what follows only removes older
+	// snapshots this policy produced. A failure here fails the run so it is
+	// seen, and the next scheduled run sweeps again.
+	retention := time.Duration(policy.RetentionSeconds) * time.Second
+	return scope.step(ctx, "retention", "Apply retention of policy "+row.Policy, func(ctx context.Context, log *stepLog) error {
+		return c.applyRetention(ctx, log, bctx, row.Policy, retention, manifest.CreatedAt)
 	})
 }
 
-// planComponents enumerates everything stateful in the definition, in
-// deterministic order: databases, buckets, then application volumes.
-func planComponents(definition *compiler.ProjectDefinition) []Component {
+// planComponents enumerates the stateful components a snapshot holds, in
+// deterministic order: databases, buckets, then application volumes. A nil
+// selection means everything; a policy's selection keeps the databases and
+// buckets it names (or all) and the volumes it names as application.volume.
+func planComponents(definition *compiler.ProjectDefinition, include *compiler.Selection) []Component {
 	var components []Component
 	for _, key := range utils.SortedKeys(definition.Databases) {
-		components = append(components, Component{Kind: ComponentDatabase, ServiceKey: key})
+		if include == nil || include.AllDatabases || slices.Contains(include.Databases, key) {
+			components = append(components, Component{Kind: ComponentDatabase, ServiceKey: key})
+		}
 	}
 	for _, key := range utils.SortedKeys(definition.Buckets) {
-		components = append(components, Component{Kind: ComponentBucket, ServiceKey: key})
+		if include == nil || include.AllBuckets || slices.Contains(include.Buckets, key) {
+			components = append(components, Component{Kind: ComponentBucket, ServiceKey: key})
+		}
 	}
 	for _, appKey := range utils.SortedKeys(definition.Applications) {
 		for _, volume := range utils.SortedKeys(definition.Applications[appKey].Volumes) {
-			components = append(components, Component{
-				Kind: ComponentVolume, Application: appKey, Volume: volume,
-			})
+			if include == nil || include.AllVolumes || slices.Contains(include.Volumes, appKey+"."+volume) {
+				components = append(components, Component{
+					Kind: ComponentVolume, Application: appKey, Volume: volume,
+				})
+			}
 		}
 	}
 	return components

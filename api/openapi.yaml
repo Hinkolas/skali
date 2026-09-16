@@ -2552,6 +2552,12 @@ paths:
         secret values are deliberately not included: a snapshot restores
         data into a redeployed environment. The environment must be active,
         and the run claims the environment's single running-run slot.
+
+        Manual snapshots are kept until deleted. Snapshots the manifest's
+        `backups` policies produce are created by the daemon on their cron
+        schedule (UTC) with actor `schedule:<policy>`, carry the policy
+        name, and are the only ones the policy's retention removes; such a
+        run ends with a `retention` step.
       tags: [backups]
       responses:
         "202":
@@ -2646,6 +2652,57 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: |
+            No backup target is configured (`backup_target_unconfigured`)
+            or it did not answer (`backup_target_unreachable`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/projects/{id}/backups/{snapshot}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: snapshot
+        in: path
+        required: true
+        description: Snapshot id; unique across the project's environments.
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: deleteBackupSnapshot
+      summary: Delete a snapshot from the backup target
+      description: |
+        One-way: removes the snapshot's manifest first, so listings stop
+        showing it, then every component object. Snapshot ids are
+        project-wide, so the route is addressed by project; the environment
+        the snapshot was taken from decides the role: `maintain` on it, or
+        project `admin` when this installation no longer has that
+        environment. A snapshot an unfinished restore is reading is refused
+        (`snapshot_in_use`). Manual snapshots are only ever removed this
+        way; scheduled ones also expire under their policy's retention.
+        Requires recent authentication (sudo mode).
+      tags: [backups]
+      responses:
+        "204":
+          description: The snapshot is gone.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404":
+          description: |
+            Unknown project, or no snapshot with this id exists on the
+            backup target (`snapshot_not_found`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: A restore is reading the snapshot (`snapshot_in_use`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
           description: |
             No backup target is configured (`backup_target_unconfigured`)
@@ -4747,7 +4804,7 @@ components:
     BackupSnapshot:
       type: object
       description: One snapshot on the backup target, read from its manifest.
-      required: [id, environment, created_at, revision_checksum, encryption, bytes]
+      required: [id, environment, created_at, revision_checksum, encryption, trigger, strategy, bytes]
       properties:
         id:
           type: string
@@ -4762,6 +4819,21 @@ components:
         encryption:
           type: string
           description: Component object encryption; `none` in this release.
+        trigger:
+          type: string
+          enum: [manual, scheduled]
+          description: |
+            How the snapshot came to be. Manual snapshots are kept until
+            deleted; scheduled ones belong to a manifest backup policy
+            whose retention removes them. Snapshots written before this
+            field existed read as manual.
+        policy:
+          type: string
+          description: The manifest backup policy of a scheduled snapshot; absent for manual ones.
+        strategy:
+          type: string
+          enum: [complete]
+          description: How the snapshot was taken; `complete` copies every included component in full.
         databases:
           type: integer
         buckets:
@@ -5400,7 +5472,7 @@ components:
       type: object
       required: [code, message, paths]
       properties:
-        code: { type: string, example: backup_policy_inactive }
+        code: { type: string, example: hostname_reserved }
         message: { type: string }
         paths:
           type: array

@@ -68,6 +68,26 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
 - `skali dev exec [app]` opens a shell inside the running container
   instead; `skali run` manages journal runs, not project commands.
 
+## Backups
+
+- `skali backup target set --endpoint <url> --bucket <name> --access-key <id>`
+  (admin) configures the external S3 location every snapshot goes to;
+  `show` and `unset` read and remove it. Nothing is backed up without it.
+- `skali backup create [--environment <name>]` takes a manual snapshot of
+  every database, bucket, and volume of the environment; the run streams
+  like a deploy. Manual snapshots are kept until removed.
+- Manifest `backups` policies need no command: skalid snapshots every active
+  environment on the cron schedule (UTC) and deletes that policy's snapshots
+  once they pass its retention. The runs carry actor `schedule:<policy>`.
+- `skali backup list` shows every snapshot of the project with its
+  environment and origin (`manual` or `<policy> (scheduled)`); `--environment`
+  filters. `skali backup restore [<snapshot-id>]` restores into the
+  environment the snapshot came from (or `--environment <other>`) after a
+  typed confirmation; the environment stops while data is written and stays
+  down if the restore fails. `skali backup remove <snapshot-id>` deletes a
+  snapshot for good. Restore and remove need `maintain` on the environment
+  and a recent login.
+
 ## Routes
 
 - `skali route list` shows each route of the environment with its URL,

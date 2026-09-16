@@ -19,15 +19,94 @@ import (
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
-// newBackupCommand groups the manual backup surface: the admin-configured
-// external S3 target plus snapshot creation, listing, and restore.
+// newBackupCommand groups the backup surface: the admin-configured
+// external S3 target plus snapshot creation, listing, restore, and
+// removal. Scheduled snapshots come from the manifest's backups policies
+// and need no command; they list and restore like manual ones.
 func newBackupCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "backup",
 		Short: "Back up and restore environment data",
 	}
 	command.AddCommand(newBackupTargetCommand(), newBackupCreateCommand(),
-		newBackupLsCommand(), newBackupRestoreCommand())
+		newBackupLsCommand(), newBackupRestoreCommand(), newBackupRemoveCommand())
+	return command
+}
+
+func newBackupRemoveCommand() *cobra.Command {
+	var (
+		project string
+		remote  string
+		yes     bool
+	)
+	command := &cobra.Command{
+		Use:     "remove <snapshot-id>",
+		Aliases: []string{"rm"},
+		Short:   "Delete a snapshot from the backup target",
+		Long: "Removes one snapshot of the project from the backup target: its\n" +
+			"manifest first, then every database dump, bucket copy, and volume\n" +
+			"archive it holds. This cannot be undone. Manual snapshots are only\n" +
+			"ever removed this way; snapshots a manifest backup policy took also\n" +
+			"expire under that policy's retention. A snapshot a restore is\n" +
+			"currently reading is refused.\n\n" +
+			"The resolved remote, project, and snapshot are shown and confirmed\n" +
+			"before anything is deleted; --yes skips the question. Needs maintain\n" +
+			"on the environment the snapshot was taken from and a recent login.",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSnapshotArg,
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
+			out := command.OutOrStdout()
+			style := clirender.StyleFor(out)
+			in := bufio.NewReader(command.InOrStdin())
+			start, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			scope, err := resolveQueryProject(ctx, start, project, "", remote)
+			if err != nil {
+				return err
+			}
+			snapshot, err := findSnapshot(ctx, scope, args[0])
+			if err != nil {
+				return err
+			}
+			printHeader(out, style,
+				headerRow{"remote", scope.remoteName, scope.api.Master()},
+				headerRow{"project", scope.project.Name, ""},
+				headerRow{"snapshot", snapshot.ID, fmt.Sprintf("%s, %s, %s, %s", snapshot.Environment, snapshotTime(snapshot), snapshot.Origin(), utils.FormatBytes(snapshot.Bytes))})
+			if !yes {
+				confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title: fmt.Sprintf("Delete snapshot %s?", snapshot.ID),
+					Description: fmt.Sprintf("Taken from %s on %s. Its data is removed from the backup target "+
+						"and cannot be restored afterwards.", snapshot.Environment, snapshotTime(snapshot)),
+					Default: false,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
+			}
+			err = scope.api.DeleteBackupSnapshot(ctx, scope.project.ID, snapshot.ID)
+			if isReauthRequired(err) {
+				if err = reauthSession(ctx, out, in, scope.api); err != nil {
+					return err
+				}
+				err = scope.api.DeleteBackupSnapshot(ctx, scope.project.ID, snapshot.ID)
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s%s  snapshot %s\n", style.Check(), style.Bold(style.Green("snapshot deleted")), snapshot.ID)
+			return nil
+		},
+	}
+	command.Flags().StringVar(&project, "project", "", "project holding the snapshot; defaults to the checkout's project")
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
 }
 
@@ -205,7 +284,7 @@ func snapshotOptions(snapshots []client.BackupSnapshot) []cliprompt.Option {
 		snapshot := &snapshots[index]
 		options = append(options, cliprompt.Option{
 			Label:       fmt.Sprintf("%s  %-*s  %s", snapshotTime(snapshot), width, snapshot.Environment, utils.FormatBytes(snapshot.Bytes)),
-			Description: utils.ShortChecksum(snapshot.RevisionChecksum),
+			Description: snapshot.Origin() + ", revision " + utils.ShortChecksum(snapshot.RevisionChecksum),
 			Value:       snapshot.ID,
 		})
 	}
@@ -377,21 +456,23 @@ func newBackupLsCommand() *cobra.Command {
 }
 
 // renderSnapshotTable prints snapshots as one table with a header row: the
-// id first (it is what restore takes), then where and when the snapshot was
-// taken, the revision that was running, and what it holds.
+// id first (it is what restore and remove take), then where and when the
+// snapshot was taken, whether a person or a policy took it, the revision
+// that was running, and what it holds.
 func renderSnapshotTable(out io.Writer, snapshots []client.BackupSnapshot) {
-	environmentWidth := len("ENVIRONMENT")
-	for _, snapshot := range snapshots {
-		environmentWidth = max(environmentWidth, len(snapshot.Environment))
+	environmentWidth, originWidth := len("ENVIRONMENT"), len("ORIGIN")
+	for i := range snapshots {
+		environmentWidth = max(environmentWidth, len(snapshots[i].Environment))
+		originWidth = max(originWidth, len(snapshots[i].Origin()))
 	}
-	row := func(id, environment, created, revision, databases, buckets, volumes, size string) {
-		fmt.Fprintf(out, "%-36s  %-*s  %-16s  %-12s  %-9s  %-7s  %-7s  %s\n",
-			id, environmentWidth, environment, created, revision, databases, buckets, volumes, size)
+	row := func(id, environment, origin, created, revision, databases, buckets, volumes, size string) {
+		fmt.Fprintf(out, "%-36s  %-*s  %-*s  %-16s  %-12s  %-9s  %-7s  %-7s  %s\n",
+			id, environmentWidth, environment, originWidth, origin, created, revision, databases, buckets, volumes, size)
 	}
-	row("SNAPSHOT", "ENVIRONMENT", "CREATED", "REVISION", "DATABASES", "BUCKETS", "VOLUMES", "SIZE")
+	row("SNAPSHOT", "ENVIRONMENT", "ORIGIN", "CREATED", "REVISION", "DATABASES", "BUCKETS", "VOLUMES", "SIZE")
 	for i := range snapshots {
 		snapshot := &snapshots[i]
-		row(snapshot.ID, snapshot.Environment, snapshotTime(snapshot),
+		row(snapshot.ID, snapshot.Environment, snapshot.Origin(), snapshotTime(snapshot),
 			utils.ShortChecksum(snapshot.RevisionChecksum),
 			strconv.Itoa(snapshot.Databases), strconv.Itoa(snapshot.Buckets), strconv.Itoa(snapshot.Volumes),
 			utils.FormatBytes(snapshot.Bytes))
