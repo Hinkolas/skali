@@ -324,7 +324,15 @@ func outrunRemotes(cfg *cliconfig.Config, home string) []string {
 func installedCLIVersion(ctx context.Context, executable string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, executable, "--version").Output()
+	// The binary may have been written moments ago by another process (an
+	// install racing this inspection, or a test writing its fixture); see
+	// retryTextFileBusy for why the first exec can fail.
+	var out []byte
+	err := retryTextFileBusy(ctx, func() error {
+		var err error
+		out, err = exec.CommandContext(ctx, executable, "--version").Output()
+		return err
+	})
 	if err != nil {
 		return "", err
 	}
