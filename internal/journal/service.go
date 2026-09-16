@@ -311,6 +311,25 @@ func (s *Service) ListRuns(ctx context.Context, environmentID uuid.UUID) ([]stor
 	return runs, nil
 }
 
+// DeferredRoutes counts, per run, the TLS checkpoints that ended skipped
+// because the route's domain did not reach this installation yet; runs
+// without one are absent from the map. Aggregate views mark such runs,
+// whose status stays succeeded, as having ended with warnings.
+func (s *Service) DeferredRoutes(ctx context.Context, runIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+	if len(runIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.st.CountDeferredRoutesByRun(ctx, runIDs)
+	if err != nil {
+		return nil, fmt.Errorf("journal: count deferred routes: %w", err)
+	}
+	counts := make(map[uuid.UUID]int64, len(rows))
+	for _, row := range rows {
+		counts[row.RunID] = row.Deferred
+	}
+	return counts, nil
+}
+
 // prune applies the retention caps after a run reached a terminal status.
 func (s *Service) prune(ctx context.Context, environmentID *uuid.UUID) error {
 	if environmentID != nil {

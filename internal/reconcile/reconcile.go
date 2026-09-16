@@ -158,7 +158,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	// Pre-pass health gates later batches: a dependency that is not ready
 	// produces a visible waiting step, not an opaque retry.
-	preHealth := healthByService(k.evaluateServices(rev, snapshot, intercepts, nil, desired.colors))
+	preHealth := healthByService(k.evaluateServices(environmentID, rev, snapshot, intercepts, nil, desired.colors))
 	var unhealthyEarlier []string
 	for _, batch := range batches {
 		blockedOn := strings.Join(unhealthyEarlier, ", ")
@@ -308,7 +308,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
-	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID), intercepts, nil, desired.colors)
+	statuses := k.evaluateServices(environmentID, rev, k.deps.Observed.Snapshot(environmentID), intercepts, nil, desired.colors)
 	// A service blocked on a projection the observation never delivered
 	// cannot be healed by waiting: the object exists on the cluster but its
 	// creation fell into an informer-establishment gap, and no further
@@ -351,12 +351,22 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	}
 
 	if healthy && !tls.blocked {
+		if tls.failed && attachment.created {
+			// A converged environment's issuance failed after its domain
+			// arrived: the run this pass created to say so closes failed
+			// before the pass concludes, since nothing else is wrong.
+			attachment.finish(ctx, journal.RunFailed)
+		}
 		return soonest(retireRequeue, tls.requeue), k.activate(ctx, attachment, target, rev)
 	}
 	if attachment.created {
 		// The healing work is recorded; health recovery arrives via watch
 		// events and, if needed, the requeue below.
-		attachment.finish(ctx, journal.RunSucceeded)
+		status := journal.RunSucceeded
+		if tls.failed {
+			status = journal.RunFailed
+		}
+		attachment.finish(ctx, status)
 	}
 	if attachment.adopted() && rolloutRun(attachment.run.Kind) {
 		// Release commands extend the deadline by their own budget: their

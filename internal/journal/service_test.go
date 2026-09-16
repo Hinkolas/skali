@@ -345,3 +345,37 @@ func TestSubscribeDeliversBacklogAndLive(t *testing.T) {
 	_, err = f.svc.Subscribe(ctx, uuid.New(), Cursor{})
 	require.ErrorIs(t, err, ErrNotFound)
 }
+
+// DeferredRoutes counts only TLS checkpoints skipped as deferred: a
+// checkpoint skipped by the run's own conclusion carries no deferred
+// snapshot and does not count.
+func TestDeferredRoutes(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	deferred := f.startRun(t)
+	step, err := f.svc.EnsureStep(ctx, deferred.ID, nil, "tls:tls-web-public", "Issue TLS certificate")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetStepStatus(ctx, step.ID, StepWaiting))
+	attempt, err := f.svc.StartAttempt(ctx, step.ID)
+	require.NoError(t, err)
+	require.NoError(t, f.svc.Writer(attempt.ID, nil).Log(ctx, "warn", "TLS deferred", map[string]any{"tls": true, "phase": "deferred"}))
+	require.NoError(t, f.svc.FinishAttempt(ctx, attempt.ID, AttemptSucceeded))
+	require.NoError(t, f.svc.SetStepStatus(ctx, step.ID, StepSkipped))
+	other, err := f.svc.EnsureStep(ctx, deferred.ID, nil, "tls:tls-web-admin", "Issue TLS certificate")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetStepStatus(ctx, other.ID, StepWaiting))
+	require.NoError(t, f.svc.FinishRun(ctx, deferred.ID, RunSucceeded))
+
+	cancelled := f.startRun(t)
+	waiting, err := f.svc.EnsureStep(ctx, cancelled.ID, nil, "tls:tls-web-public", "Issue TLS certificate")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetStepStatus(ctx, waiting.ID, StepWaiting))
+	require.NoError(t, f.svc.FinishRun(ctx, cancelled.ID, RunCancelled))
+
+	counts, err := f.svc.DeferredRoutes(ctx, []uuid.UUID{deferred.ID, cancelled.ID})
+	require.NoError(t, err)
+	require.Equal(t, map[uuid.UUID]int64{deferred.ID: 1}, counts)
+	counts, err = f.svc.DeferredRoutes(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, counts)
+}

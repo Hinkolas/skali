@@ -22,6 +22,9 @@
 
 	const live = $derived(envStatus.service(service.type, service.key));
 	const health = $derived(live?.health ?? 'unknown');
+	// Health speaks for the workload; a route whose domain does not reach
+	// this installation yet is a separate, quieter signal beside it.
+	const deferredRoutes = $derived((live?.routes ?? []).filter((r) => r.edge?.deferred === true));
 
 	// Restarting one service is scoped here; the topbar Actions menu holds
 	// the environment-wide operations (promote, redeploy, restart all).
@@ -92,6 +95,16 @@
 <PageHeader title={service.name}>
 	{#snippet titleTrailing()}
 		<StatusPill status={health} pill diagnostics={live?.diagnostics ?? []} />
+		{#if deferredRoutes.length > 0}
+			<span
+				class="text-status-warning bg-status-warning/10 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-md"
+				title={deferredRoutes
+					.map((r) => `${r.domain} does not reach this installation yet`)
+					.join(' · ')}
+			>
+				<span class="size-[8px] rounded-full bg-status-warning"></span>DNS pending
+			</span>
+		{/if}
 	{/snippet}
 	{#snippet subtitle()}
 		<span class="font-mono text-text-faint text-md">{subtitleText}</span>

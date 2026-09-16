@@ -198,3 +198,17 @@ func TestCertificateDetailLinesDeferred(t *testing.T) {
 		"Point the domain's A/AAAA records at this installation; the certificate is issued automatically once requests arrive here.",
 	}, lines)
 }
+
+// A renamed route names the certificate that keeps serving.
+func TestCertificateLinesDeferredRename(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)
+	entry := deferredEntry(1, map[string]any{"issued_for": "staging.example.com"})
+	require.Equal(t, []string{
+		"! TLS deferred · shop.example.com does not reach this installation yet",
+		"  1 of 2 addresses answer as this installation; 2001:db8::10 answers as another server",
+		"  the certificate for staging.example.com keeps serving",
+	}, CertificateLines([]client.LogEntry{entry}, now, nil))
+	detail := CertificateDetailLines(entry, now)
+	require.Contains(t, detail, "the certificate for staging.example.com keeps serving until the domain arrives")
+}

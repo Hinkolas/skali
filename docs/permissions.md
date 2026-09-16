@@ -51,7 +51,7 @@ smallest thing this person needs to change?
 |---|---|
 | `none` | locked. The environment still appears in the project's environment list (id, name, the fact that it is locked) so names and their collisions are visible, but everything inside it answers 403: no status, runs, deployments, values, settings. |
 | `read` | everything visible: status and health, deployments, revisions, runs and run logs (redacted), runtime logs, value names and versions, routes, database and bucket connection info without secrets, backups list, environment settings, who has access to it. |
-| `deploy` | change only what code runs: promote into this environment, rollback, restart, redeploy, run cancel, backup create, and direct deploys whose definition is unchanged (the manifest compiles to the environment's currently active definition version, so only image digests differ). |
+| `deploy` | change only what code runs: promote into this environment, rollback, restart, redeploy, run cancel, route probe, backup create, and direct deploys whose definition is unchanged (the manifest compiles to the environment's currently active definition version, so only image digests differ). |
 | `maintain` | the full blast radius of `skali.yml`: direct deploys that change the definition (services, routes, databases, buckets, including `--allow-destructive`), set and prune values, restore, and the secret-bearing reads: exec, resolved application environment, credential reveal. |
 | `admin` | management outside the yaml: this environment's protection policy and role ceiling, other users' roles on this environment, lowering priority, delete and teardown, bypassing protection. |
 
@@ -303,7 +303,7 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | environment settings: ceiling, protection, lower priority (S) | E:admin |
 | delete, teardown (S) | E:admin |
 | status, deployments, revisions, runs, run logs, runtime logs, value names, connection info, backups list, settings, access list | E:read |
-| promote into, rollback, restart, redeploy, run cancel, backup create, direct deploy with unchanged definition | E:deploy |
+| promote into, rollback, restart, redeploy, run cancel, route probe, backup create, direct deploy with unchanged definition | E:deploy |
 | direct deploy with definition changes, values set/prune, restore (S) | E:maintain |
 | exec (S on promote-only environments), resolved application environment (S), credential reveal (S) | E:maintain |
 | bypass protection (S) | E:admin |
@@ -401,6 +401,7 @@ their environment first):
 | `GET /deployments/{id}` | E:read |
 | `POST /deployments/{id}/complete`, `.../fail` | E:deploy |
 | `POST /runs/{id}/cancel` | E:deploy |
+| `POST .../routes/probe` (new) | E:deploy; a domain that answers here triggers a fresh certificate issuance |
 | `POST /runs/{id}/steps`, `PATCH /steps/{id}`, `POST /steps/{id}/logs` | E:deploy, plus today's actor rule and artifacts-subtree rule |
 | `GET .../status`, `.../status/stream` | E:read |
 | `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream` | E:read (a run outside any environment is instance-admin only) |

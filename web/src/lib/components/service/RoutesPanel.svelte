@@ -1,8 +1,15 @@
 <script lang="ts">
 	import ExternalLink from '@lucide/svelte/icons/external-link';
-	import type { RouteStatus, CertificateState } from '$lib/types/status';
+	import RadioTower from '@lucide/svelte/icons/radio-tower';
+	import { page } from '$app/state';
+	import type { RouteStatus, CertificateState, RouteProbe } from '$lib/types/status';
+	import type { Environment } from '$lib/types/project';
+	import { api, ApiError } from '$lib/api/client';
+	import { requiredTitle, roleAtLeast } from '$lib/access';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
+	import { toast } from '$lib/stores/toast.svelte';
 	import { formatDateTime } from '$lib/format';
+	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 
 	// Live public routes of one application: domain, balancing policy, and
@@ -13,6 +20,41 @@
 	const routes = $derived<RouteStatus[]>(
 		envStatus.service('application', serviceKey)?.routes ?? []
 	);
+
+	// A manual probe re-checks every route domain of the environment right
+	// now and lets the reconciler act on the result; deploy on the
+	// environment, because a domain that arrived triggers an issuance.
+	const env = $derived((page.data as { env?: Environment | null }).env ?? null);
+	const probeTitle = $derived.by(() => {
+		if (!env) return 'no environment selected';
+		if (!roleAtLeast(env.access, 'deploy')) return requiredTitle('deploy', 'environment', env.name);
+		return 'Check right now whether the domains reach this installation';
+	});
+	const mayProbe = $derived(env != null && roleAtLeast(env.access, 'deploy'));
+	let probing = $state(false);
+
+	async function probe() {
+		const target = env;
+		if (!target || probing) return;
+		probing = true;
+		try {
+			const res = await api.post<{ routes: RouteProbe[] }>(
+				`/v1/environments/${target.id}/routes/probe`
+			);
+			const mine = res.routes.filter((r) => r.service === serviceKey);
+			const arrived = mine.filter((r) => r.edge.state === 'reachable').length;
+			if (mine.length === 0) toast.success('No TLS routes to probe');
+			else if (arrived === mine.length) toast.success('Every domain reaches this installation');
+			else
+				toast.warning(
+					mine.map((r) => `${r.domain}: ${r.edge.message || r.edge.state}`).join(' · ')
+				);
+		} catch (err) {
+			toast.error(err instanceof ApiError ? err.message : 'Could not probe the routes');
+		} finally {
+			probing = false;
+		}
+	}
 
 	const CERT_META: Record<CertificateState, { label: string; dot: string; text: string }> = {
 		active: { label: 'cert active', dot: 'bg-status-success', text: 'text-status-success' },
@@ -36,13 +78,10 @@
 		return parts.join(' · ');
 	}
 
-	// The certificate waits for DNS: the reconciler's edge probe did not find
-	// this installation behind the domain and nothing is active yet. An
-	// unprobed or unknown edge says nothing.
+	// The certificate waits for DNS: the reconciler concluded that the domain
+	// does not reach this installation and nothing usable is on hand.
 	function dnsPending(route: RouteStatus): boolean {
-		const edge = route.edge;
-		if (!edge || edge.state === 'reachable' || edge.state === 'unknown') return false;
-		return route.certificate?.state !== 'active';
+		return route.edge?.deferred === true;
 	}
 
 	function dnsTitle(route: RouteStatus): string {
@@ -85,6 +124,16 @@
 								<span class="text-status-warning flex items-center gap-1.5" title={dnsTitle(route)}>
 									<span class="size-[8px] rounded-full bg-status-warning"></span>DNS pending
 								</span>
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={!mayProbe}
+									busy={probing}
+									title={probeTitle}
+									onclick={probe}
+								>
+									<RadioTower size={12} /> Probe now
+								</Button>
 							{/if}
 							{#if route.certificate}
 								{@const meta = CERT_META[route.certificate.state]}

@@ -31,6 +31,48 @@ func (q *Queries) CloseRunningSteps(ctx context.Context, arg CloseRunningStepsPa
 	return result.RowsAffected(), nil
 }
 
+const countDeferredRoutesByRun = `-- name: CountDeferredRoutesByRun :many
+SELECT steps.run_id, count(*)::bigint AS deferred
+FROM steps
+WHERE steps.run_id = ANY($1::uuid[])
+  AND steps.key LIKE 'tls:%'
+  AND steps.status = 'skipped'
+  AND EXISTS (
+      SELECT 1 FROM attempts
+      JOIN run_logs ON run_logs.attempt_id = attempts.id
+      WHERE attempts.step_id = steps.id AND run_logs.fields->>'phase' = 'deferred')
+GROUP BY steps.run_id
+`
+
+type CountDeferredRoutesByRunRow struct {
+	RunID    uuid.UUID
+	Deferred int64
+}
+
+// CountDeferredRoutesByRun counts, per run, the TLS checkpoints that ended
+// skipped because the route's domain did not reach this installation
+// (their journal carries phase=deferred). A checkpoint skipped by the
+// run's own conclusion (a cancelled rollout) does not count.
+func (q *Queries) CountDeferredRoutesByRun(ctx context.Context, runIds []uuid.UUID) ([]CountDeferredRoutesByRunRow, error) {
+	rows, err := q.db.Query(ctx, countDeferredRoutesByRun, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountDeferredRoutesByRunRow
+	for rows.Next() {
+		var i CountDeferredRoutesByRunRow
+		if err := rows.Scan(&i.RunID, &i.Deferred); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getStepByID = `-- name: GetStepByID :one
 SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE id = $1
 `

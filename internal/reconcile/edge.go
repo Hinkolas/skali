@@ -2,8 +2,11 @@ package reconcile
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/edge/edgeprobe"
@@ -28,6 +31,8 @@ const (
 	// edgeProbeRetention evicts domains no pass has mentioned for this long
 	// (a route removed from the manifest).
 	edgeProbeRetention = time.Hour
+	// issuedNamesTimeout bounds one read of a TLS Secret's annotations.
+	issuedNamesTimeout = 5 * time.Second
 )
 
 // domainProbe is one cached edge verdict.
@@ -40,18 +45,41 @@ type domainProbe struct {
 	arrived bool
 }
 
+// routeKey identifies one route certificate. The Certificate name hashes
+// project, application and route only, so two environments of one project
+// share it; the environment keeps their verdicts apart.
+type routeKey struct {
+	environment uuid.UUID
+	certificate string
+}
+
+// routeRecord is what the last pass concluded about one route certificate:
+// the domain it wants, whether the certificate is deferred (the domain does
+// not reach this edge and nothing usable is on hand) or mismatched (a valid
+// certificate exists, issued for other names), the issued names read for
+// the certificate's current notAfter, and the arrival whose issuance
+// outcome is still owed a run.
+type routeRecord struct {
+	domain    string
+	usable    bool
+	deferred  bool
+	mismatch  bool
+	issued    []string
+	issuedFor time.Time
+	awaiting  time.Time
+}
+
 // observeDomain returns the cached verdict for domain, re-probing when the
 // cache is older than interval. The lock is released during the network
 // call so one slow domain never parks another environment's pass; two
 // workers probing the same domain at once is harmless.
-func (k *Kernel) observeDomain(ctx context.Context, certName, domain string, now time.Time, interval time.Duration) (edgeprobe.Result, bool) {
+func (k *Kernel) observeDomain(ctx context.Context, domain string, now time.Time, interval time.Duration) (edgeprobe.Result, bool) {
 	k.domainMu.Lock()
 	for key, entry := range k.domains {
 		if now.Sub(entry.lastSeen) > edgeProbeRetention {
 			delete(k.domains, key)
 		}
 	}
-	k.certDomains[certName] = domain
 	entry, known := k.domains[domain]
 	entry.lastSeen = now
 	k.domains[domain] = entry
@@ -64,14 +92,21 @@ func (k *Kernel) observeDomain(ctx context.Context, certName, domain string, now
 	probeCtx, cancel := context.WithTimeout(ctx, edgeProbeTimeout)
 	result := k.deps.ProbeDomain(probeCtx, domain)
 	cancel()
+	return k.recordProbe(domain, result, now, false)
+}
+
+// recordProbe stores one probe result. The arrival flag is raised on the
+// transition to reachable (or a first reachable verdict); force raises it
+// on any reachable verdict, which is how a manual probe asks for a fresh
+// issuance of a route whose domain was already here.
+func (k *Kernel) recordProbe(domain string, result edgeprobe.Result, now time.Time, force bool) (edgeprobe.Result, bool) {
 	if result.CheckedAt.IsZero() {
 		result.CheckedAt = now
 	}
-
 	k.domainMu.Lock()
 	defer k.domainMu.Unlock()
-	entry = k.domains[domain]
-	if result.State == edgeprobe.StateReachable && (!known || entry.result.State != edgeprobe.StateReachable) {
+	entry, known := k.domains[domain]
+	if result.State == edgeprobe.StateReachable && (force || !known || entry.result.State != edgeprobe.StateReachable) {
 		entry.arrived = true
 	}
 	entry.result = result
@@ -90,58 +125,125 @@ func (k *Kernel) settleArrival(domain string) {
 	}
 }
 
-// edgeStatus is the read-only projection of the cached verdict for one
-// route certificate; nil when no pass has probed its domain.
-func (k *Kernel) edgeStatus(certName string) *EdgeStatus {
+// issuedNames returns the names the certificate's Secret was issued for,
+// cached per certificate for as long as its notAfter stands (a new
+// issuance moves it). nil means no verdict: no reader wired, no
+// annotation, or a read that failed (logged, retried next pass).
+func (k *Kernel) issuedNames(ctx context.Context, key routeKey, namespace, secretName string, notAfter time.Time) []string {
+	if k.deps.IssuedNames == nil || notAfter.IsZero() {
+		return nil
+	}
+	k.domainMu.Lock()
+	record, ok := k.routes[key]
+	k.domainMu.Unlock()
+	if ok && !record.issuedFor.IsZero() && record.issuedFor.Equal(notAfter) {
+		return record.issued
+	}
+	readCtx, cancel := context.WithTimeout(ctx, issuedNamesTimeout)
+	names, err := k.deps.IssuedNames(readCtx, namespace, secretName)
+	cancel()
+	if err != nil {
+		slog.WarnContext(ctx, "reading the issued names of a route certificate failed", "environment_id", key.environment, "certificate", key.certificate, "error", err)
+		return nil
+	}
 	k.domainMu.Lock()
 	defer k.domainMu.Unlock()
-	domain, ok := k.certDomains[certName]
+	record = k.routes[key]
+	record.issued, record.issuedFor = names, notAfter
+	k.routes[key] = record
+	return names
+}
+
+// noteRoute records the pass's conclusion about one route certificate. A
+// verdict that flipped nudges the status stream, so the console repaints
+// without waiting for the next observation event.
+func (k *Kernel) noteRoute(key routeKey, domain string, usable, deferred, mismatch bool) routeRecord {
+	k.domainMu.Lock()
+	record, known := k.routes[key]
+	changed := !known || record.deferred != deferred || record.mismatch != mismatch
+	record.domain, record.usable, record.deferred, record.mismatch = domain, usable, deferred, mismatch
+	k.routes[key] = record
+	k.domainMu.Unlock()
+	if changed && k.deps.Observed != nil {
+		k.deps.Observed.Invalidate(key.environment)
+	}
+	return record
+}
+
+// awaitIssuance marks (or, with a zero time, clears) the arrival whose
+// issuance outcome the next converged passes narrate.
+func (k *Kernel) awaitIssuance(key routeKey, at time.Time) {
+	k.domainMu.Lock()
+	defer k.domainMu.Unlock()
+	record := k.routes[key]
+	record.awaiting = at
+	k.routes[key] = record
+}
+
+// edgeStatus is the read-only projection of the cached verdict for one
+// route certificate; nil when no pass has probed its domain.
+func (k *Kernel) edgeStatus(environmentID uuid.UUID, certName string) *EdgeStatus {
+	k.domainMu.Lock()
+	defer k.domainMu.Unlock()
+	record, ok := k.routes[routeKey{environmentID, certName}]
 	if !ok {
 		return nil
 	}
-	entry, ok := k.domains[domain]
+	entry, ok := k.domains[record.domain]
 	if !ok || entry.result.State == "" {
 		return nil
 	}
 	return &EdgeStatus{
-		Domain:    domain,
+		Domain:    record.domain,
 		State:     string(entry.result.State),
 		Message:   entry.result.Message,
 		CheckedAt: entry.result.CheckedAt,
 		Addresses: edgeAddressLines(entry.result.Addresses),
+		Deferred:  record.deferred,
 	}
 }
 
 // edgeResources synthesizes the KindEdge resources for one application's
-// TLS routes from the cache, for the module's certificate gate.
-func (k *Kernel) edgeResources(definition compiler.ProjectDefinition, key string) []module.ObservedResource {
-	if k.deps.ProbeDomain == nil {
-		return nil
-	}
+// TLS routes from the cache, for the module's certificate gate. A route
+// the pass never judged yields nothing; one it judged before any probe
+// (a mismatch found while the prober is absent) carries an empty state.
+func (k *Kernel) edgeResources(environmentID uuid.UUID, definition compiler.ProjectDefinition, key string) []module.ObservedResource {
 	application, ok := definition.Applications[key]
 	if !ok {
 		return nil
 	}
+	k.domainMu.Lock()
+	defer k.domainMu.Unlock()
 	var resources []module.ObservedResource
 	for _, routeKey := range utils.SortedKeys(application.Routes) {
 		if application.Routes[routeKey].TLS == "disabled" {
 			continue
 		}
 		name := rendering.RouteTLSName(definition.Name, key, routeKey)
-		status := k.edgeStatus(name)
-		if status == nil {
+		record, ok := k.routes[routeKeyOf(environmentID, name)]
+		if !ok {
 			continue
+		}
+		state := ""
+		if entry, ok := k.domains[record.domain]; ok {
+			state = string(entry.result.State)
 		}
 		resources = append(resources, module.ObservedResource{
 			Kind: module.KindEdge, Name: name,
 			Edge: &module.EdgeReach{
-				Domain:   status.Domain,
-				State:    status.State,
-				Deferred: edgeprobe.State(status.State).Pending(),
+				Domain:   record.domain,
+				State:    state,
+				Deferred: record.deferred,
+				Mismatch: record.mismatch,
+				Issued:   record.issued,
 			},
 		})
 	}
 	return resources
+}
+
+func routeKeyOf(environmentID uuid.UUID, certName string) routeKey {
+	return routeKey{environment: environmentID, certificate: certName}
 }
 
 // edgeAddressLines renders one line per probed address for journals and

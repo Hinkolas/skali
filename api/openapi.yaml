@@ -2951,6 +2951,52 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/environments/{id}/routes/probe:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: probeEnvironmentRoutes
+      summary: Probe whether the environment's route domains reach this installation
+      description: |
+        Resolves every TLS route domain of the environment's target
+        revision and checks, address by address, whether it answers as
+        this installation (the same check the reconciler runs on its own
+        cadence). The verdicts replace the cached ones and a reconcile
+        pass is enqueued: a route without a usable certificate whose
+        domain answers here counts as arrived, which requests one fresh
+        issuance right away even when cert-manager is waiting out a
+        backoff. The response carries the probe verdicts; the environment
+        status then carries the reconciler's conclusion (`edge.deferred`).
+        Requires deploy on the environment.
+      tags: [status]
+      responses:
+        "200":
+          description: One verdict per TLS route.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [routes]
+                properties:
+                  routes:
+                    type: array
+                    items: { $ref: "#/components/schemas/RouteProbe" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            `conflict`: this installation has no edge probe (no
+            cert-manager, as on the local platform).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/environments/{id}/applications/{key}/restart:
     parameters:
       - name: id
@@ -4031,6 +4077,13 @@ components:
           description: |
             A deployment that entered a promote-only environment on an
             environment admin's explicit bypass.
+        deferred_routes:
+          type: integer
+          description: |
+            Routes whose TLS checkpoint this run set aside because the
+            domain did not reach this installation yet: the run succeeded
+            with warnings. Present on list views only, and omitted when
+            zero.
         project_id:
           type: [string, "null"]
           format: uuid
@@ -4319,7 +4372,7 @@ components:
 
     EdgeStatus:
       type: object
-      required: [state, checked_at, addresses]
+      required: [state, checked_at, addresses, deferred]
       properties:
         state:
           type: string
@@ -4341,6 +4394,62 @@ components:
           type: array
           items: { type: string }
           description: One line per resolved address with its verdict, e.g. "203.0.113.10: answered by another server (HTTP 301 without Skali-Instance)".
+        deferred:
+          type: boolean
+          description: >
+            The reconciler's conclusion that TLS waits for the domain: it
+            does not reach this installation and no certificate usable for
+            it is on hand. A valid certificate issued for the route's
+            previous domain keeps serving but does not count, so a domain
+            change on the same route reads deferred until the new domain
+            arrives.
+
+    RouteProbe:
+      type: object
+      required: [service, key, domain, edge]
+      properties:
+        service:
+          type: string
+          description: The application key.
+        key:
+          type: string
+          description: The route key within the application.
+        domain:
+          type: string
+          description: The resolved, canonical route domain that was probed.
+        edge:
+          type: object
+          required: [state, checked_at, addresses]
+          properties:
+            state:
+              type: string
+              enum: [reachable, partial, unreachable, unresolved, unknown]
+            message:
+              type: string
+            checked_at:
+              type: string
+              format: date-time
+            addresses:
+              type: array
+              items: { $ref: "#/components/schemas/EdgeAddress" }
+
+    EdgeAddress:
+      type: object
+      required: [address, outcome]
+      properties:
+        address:
+          type: string
+          description: One resolved A or AAAA address of the domain.
+        outcome:
+          type: string
+          enum: [ours, foreign, unreachable]
+          description: >
+            ours: answered with this installation's identity. foreign:
+            answered HTTP without it (another server). unreachable: no
+            HTTP answer.
+        detail:
+          type: string
+          description: The HTTP status or the connection error behind the outcome.
 
     CertificateStatus:
       type: object

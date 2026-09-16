@@ -45,7 +45,13 @@
 				onclick={() => (expanded[step.id] = !isExpanded)}
 				class="flex w-full cursor-pointer items-center gap-2.5 rounded-[9px] px-2 py-1.75 text-left transition-colors hover:bg-white/3"
 			>
-				<Icon size={15} class="flex-none {meta.class} {meta.spin ? 'animate-spin' : ''}" />
+				<!-- A skipped TLS checkpoint is a deferral, not an omission: it reads as a warning. -->
+				<Icon
+					size={15}
+					class="flex-none {tls && step.status === 'skipped'
+						? 'text-status-warning'
+						: meta.class} {meta.spin ? 'animate-spin' : ''}"
+				/>
 				<span class="text-text-secondary min-w-0 text-base {tls ? 'break-words' : 'truncate'}"
 					>{step.title}</span
 				>

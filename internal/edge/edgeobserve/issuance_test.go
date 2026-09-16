@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	metadatafake "k8s.io/client-go/metadata/fake"
 	ktesting "k8s.io/client-go/testing"
 
 	"github.com/Hinkolas/skali/internal/edge"
@@ -55,12 +56,12 @@ func TestRetryFailedCertificate(t *testing.T) {
 			tc.mutate(obj)
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), obj)
 			ref := kube.ObjectRef{GVK: edge.CertificateGVK, Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: tc.uid}
-			changed, err := RetryFailedCertificate(ctx, client, ref, time.Now())
+			changed, err := RetryFailedCertificate(ctx, client, nil, ref, time.Now())
 			require.NoError(t, err)
 			require.Equal(t, tc.want, changed)
 			// A fresh client call represents another reconciliation, or a daemon
 			// restart: it must not issue again while the request is in flight.
-			changed, err = RetryFailedCertificate(ctx, client, ref, time.Now())
+			changed, err = RetryFailedCertificate(ctx, client, nil, ref, time.Now())
 			require.NoError(t, err)
 			require.False(t, changed)
 			if tc.want {
@@ -87,7 +88,7 @@ func TestRetryCertificateConflictAndErrors(t *testing.T) {
 		}
 		return false, nil, nil
 	})
-	changed, err := RetryFailedCertificate(context.Background(), client, kube.ObjectRef{Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: obj.GetUID()}, time.Now())
+	changed, err := RetryFailedCertificate(context.Background(), client, nil, kube.ObjectRef{Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: obj.GetUID()}, time.Now())
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, 2, count)
@@ -130,4 +131,38 @@ func TestInspectCertificateUsesOwnerAndRevision(t *testing.T) {
 	require.ErrorContains(t, err, "orders")
 	require.NotNil(t, status)
 	require.Equal(t, "current-request", details["request"])
+}
+
+// A still-valid certificate qualifies for a retry only when the names it
+// was issued for do not cover the desired domain (the route's domain
+// changed on the same key); a covered certificate stays untouched even
+// while cert-manager reports it not ready.
+func TestRetryValidCertificateByIssuedNames(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, metav1.AddMetaToScheme(scheme))
+	for _, tc := range []struct {
+		name     string
+		altNames string
+		want     bool
+	}{
+		{"issued for another name", "old.example.com", true},
+		{"issued for the desired name", "app.example.com", false},
+		{"issued for a wildcard", "*.example.com", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obj := failedCertificate()
+			_ = unstructured.SetNestedField(obj.Object, time.Now().Add(30*24*time.Hour).UTC().Format(time.RFC3339), "status", "notAfter")
+			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), obj)
+			meta := metadatafake.NewSimpleMetadataClient(scheme, &metav1.PartialObjectMetadata{
+				TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+				ObjectMeta: metav1.ObjectMeta{Namespace: obj.GetNamespace(), Name: "web-public-tls",
+					Annotations: map[string]string{annotationAltNames: tc.altNames}},
+			})
+			ref := kube.ObjectRef{GVK: edge.CertificateGVK, Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: "cert-uid"}
+			changed, err := RetryFailedCertificate(ctx, client, meta, ref, time.Now())
+			require.NoError(t, err)
+			require.Equal(t, tc.want, changed)
+		})
+	}
 }

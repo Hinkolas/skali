@@ -321,6 +321,10 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				ac.route(r, "POST", "/environments/{id}/deployments", classEnvDeploy, dh.open)
 				ac.route(r, "POST", "/environments/{id}/restart", classEnvDeploy, dh.restart)
 				ac.route(r, "POST", "/environments/{id}/applications/{key}/restart", classEnvDeploy, dh.restart)
+				// A manual edge probe of the environment's route domains,
+				// ahead of the reconciler's cadence; deploy, because a
+				// reachable domain triggers a fresh certificate issuance.
+				ac.route(r, "POST", "/environments/{id}/routes/probe", classEnvDeploy, sh.probeRoutes)
 				ac.route(r, "GET", "/deployments/{id}", classDeploymentRead, dh.get)
 				ac.route(r, "POST", "/deployments/{id}/complete", classDeploymentDeploy, dh.complete)
 				ac.route(r, "POST", "/deployments/{id}/fail", classDeploymentDeploy, dh.fail)

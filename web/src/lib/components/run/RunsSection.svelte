@@ -109,6 +109,16 @@
 							<Pill text="bypassed protection" tone="warning" />
 						</span>
 					{/if}
+					{#if run.deferred_routes}
+						<span
+							title="TLS was set aside for a route whose domain did not reach this installation yet; the certificate is issued once its DNS points here"
+						>
+							<Pill
+								text="{run.deferred_routes} route{run.deferred_routes === 1 ? '' : 's'} deferred"
+								tone="warning"
+							/>
+						</span>
+					{/if}
 				</button>
 				<!-- Actor, started and duration: grid cells on a wide pane, one meta
 				     line under the kind on a narrow one. -->

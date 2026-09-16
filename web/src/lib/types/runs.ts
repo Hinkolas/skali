@@ -22,6 +22,8 @@ export interface Run {
 	finished_at: string | null;
 	/** A deployment that entered a promote-only environment on an admin's explicit bypass. */
 	bypass_protection?: boolean;
+	/** Routes whose TLS this run deferred because the domain did not reach here yet (list views only). */
+	deferred_routes?: number;
 }
 
 export interface Attempt {

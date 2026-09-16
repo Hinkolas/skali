@@ -76,13 +76,16 @@ type RouteStatus struct {
 
 // EdgeStatus projects one edge probe (see internal/edge/edgeprobe). State
 // is one of reachable, partial, unreachable, unresolved, unknown; Addresses
-// carry one line per resolved address with its verdict.
+// carry one line per resolved address with its verdict. Deferred is the
+// pass's conclusion: the domain does not reach this installation and no
+// certificate usable for it is on hand, so TLS waits for the DNS move.
 type EdgeStatus struct {
 	Domain    string
 	State     string
 	Message   string
 	CheckedAt time.Time
 	Addresses []string
+	Deferred  bool
 }
 
 // CertificateInfo projects one route certificate's lifecycle for status
@@ -168,7 +171,7 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		if err != nil {
 			return nil, err
 		}
-		status.Services = k.evaluateServices(targetRevision, k.deps.Observed.Snapshot(environmentID),
+		status.Services = k.evaluateServices(environmentID, targetRevision, k.deps.Observed.Snapshot(environmentID),
 			intercepts, variables, colors)
 	}
 	return status, nil
@@ -236,8 +239,9 @@ func (k *Kernel) SubscribeStatus(environmentID uuid.UUID) (<-chan observe.Invali
 // observed store by bare key (the immutable label contract); database
 // projections use the dotted form so keys can never collide across
 // collections.
-func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snapshot,
+func (k *Kernel) evaluateServices(environmentID uuid.UUID, rev *revision.Revision, snapshot observe.Snapshot,
 	intercepts map[string]map[string]int32, variables map[string]string, colors map[string]string) []ServiceStatus {
+	edgeFor := func(certName string) *EdgeStatus { return k.edgeStatus(environmentID, certName) }
 	type entry struct {
 		key         string
 		serviceType string
@@ -267,7 +271,7 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 		status := ServiceStatus{Key: item.key, Type: item.serviceType}
 		if item.withPods {
 			status.Pods = podsFor(snapshot, item.key)
-			status.Routes = routesFor(rev.Definition, snapshot, item.key, variables, k.edgeStatus)
+			status.Routes = routesFor(rev.Definition, snapshot, item.key, variables, edgeFor)
 		}
 		if _, ok := intercepts[item.key]; ok && item.serviceType == "application" {
 			// Synthesized at the kernel, not in the app module: the module
@@ -308,7 +312,7 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 			// The edge verdicts ride along the same way: a route domain
 			// that does not reach this edge yet relaxes the certificate
 			// gate in the module instead of parking the rollout.
-			observed = append(observed, k.edgeResources(rev.Definition, item.key)...)
+			observed = append(observed, k.edgeResources(environmentID, rev.Definition, item.key)...)
 		}
 		if desiredColor, blueGreen := colors[item.key]; blueGreen && item.serviceType == "application" {
 			// The kernel's intent rides along: the module judges the desired

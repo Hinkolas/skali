@@ -53,6 +53,9 @@ func deferredDetailLines(entry client.LogEntry) []string {
 			lines = append(lines, "  "+address)
 		}
 	}
+	if issued := fieldString(entry.Fields, "issued_for"); issued != "" {
+		lines = append(lines, "the certificate for "+issued+" keeps serving until the domain arrives")
+	}
 	if guidance := fieldString(entry.Fields, "guidance"); guidance != "" {
 		lines = append(lines, guidance)
 	}
@@ -104,6 +107,9 @@ func CertificateLines(entries []client.LogEntry, now time.Time, style *Style) []
 			lines = append(lines, style.tailGlyph("warn")+" "+style.Yellow(text))
 			if message := fieldString(fields, "edge_message"); message != "" {
 				lines = append(lines, "  "+style.Dim(message))
+			}
+			if issued := fieldString(fields, "issued_for"); issued != "" {
+				lines = append(lines, "  "+style.Dim("the certificate for "+issued+" keeps serving"))
 			}
 		case number == 0 && len(order) > 1:
 			// The observation-only snapshot before any attempt was known.

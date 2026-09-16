@@ -30,9 +30,19 @@
 			const healthy = status.services.filter((s) => s.health === 'healthy').length;
 			if (status.services.length > 0) parts.push(`${healthy}/${status.services.length} healthy`);
 			parts.push(status.state);
+			if (deferredRoutes > 0)
+				parts.push(`${deferredRoutes} route${deferredRoutes === 1 ? '' : 's'} deferred`);
 		}
 		return parts.join(' · ');
 	});
+	// Routes whose domain does not reach this installation yet: their TLS
+	// waits for DNS, which health (a workload verdict) does not show.
+	const deferredRoutes = $derived(
+		(status?.services ?? []).reduce(
+			(count, s) => count + (s.routes ?? []).filter((r) => r.edge?.deferred === true).length,
+			0
+		)
+	);
 	const subtitleDot = $derived.by(() => {
 		if (!status || status.services.length === 0) return HEALTH_META.unknown.dot;
 		if (status.services.every((s) => s.health === 'healthy')) return HEALTH_META.healthy.dot;

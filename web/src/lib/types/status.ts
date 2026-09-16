@@ -60,6 +60,25 @@ export interface EdgeStatus {
 	message?: string;
 	checked_at: string | null;
 	addresses: string[];
+	// The reconciler's conclusion: TLS waits for the domain to point here
+	// and nothing usable is on hand (a certificate for the route's previous
+	// domain keeps serving but does not count).
+	deferred: boolean;
+}
+
+// One manual edge probe of a route domain (POST .../routes/probe): the
+// verdict with its per-address detail. The reconciler's own conclusion
+// follows in the status stream once its pass acted on it.
+export interface RouteProbe {
+	service: string;
+	key: string;
+	domain: string;
+	edge: {
+		state: EdgeState;
+		message?: string;
+		checked_at: string;
+		addresses: { address: string; outcome: 'ours' | 'foreign' | 'unreachable'; detail?: string }[];
+	};
 }
 
 // One public route with its edge policies; certificate is absent where none

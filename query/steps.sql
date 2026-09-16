@@ -39,3 +39,19 @@ WHERE run_id = $1 AND status = 'running';
 -- name: SkipUnstartedSteps :execrows
 UPDATE steps SET status = 'skipped', finished_at = now()
 WHERE run_id = $1 AND status IN ('pending', 'waiting');
+
+-- CountDeferredRoutesByRun counts, per run, the TLS checkpoints that ended
+-- skipped because the route's domain did not reach this installation
+-- (their journal carries phase=deferred). A checkpoint skipped by the
+-- run's own conclusion (a cancelled rollout) does not count.
+-- name: CountDeferredRoutesByRun :many
+SELECT steps.run_id, count(*)::bigint AS deferred
+FROM steps
+WHERE steps.run_id = ANY(sqlc.arg(run_ids)::uuid[])
+  AND steps.key LIKE 'tls:%'
+  AND steps.status = 'skipped'
+  AND EXISTS (
+      SELECT 1 FROM attempts
+      JOIN run_logs ON run_logs.attempt_id = attempts.id
+      WHERE attempts.step_id = steps.id AND run_logs.fields->>'phase' = 'deferred')
+GROUP BY steps.run_id;
