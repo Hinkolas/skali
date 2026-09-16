@@ -905,10 +905,24 @@ type BackupSnapshot struct {
 	CreatedAt        string `json:"created_at"`
 	RevisionChecksum string `json:"revision_checksum"`
 	Encryption       string `json:"encryption"`
-	Databases        int    `json:"databases"`
-	Buckets          int    `json:"buckets"`
-	Volumes          int    `json:"volumes"`
-	Bytes            int64  `json:"bytes"`
+	// Trigger is manual or scheduled; Policy names the manifest backup
+	// policy of a scheduled snapshot and is empty for manual ones.
+	Trigger   string `json:"trigger"`
+	Policy    string `json:"policy,omitempty"`
+	Strategy  string `json:"strategy"`
+	Databases int    `json:"databases"`
+	Buckets   int    `json:"buckets"`
+	Volumes   int    `json:"volumes"`
+	Bytes     int64  `json:"bytes"`
+}
+
+// Origin words where a snapshot came from: "manual", or the policy that
+// scheduled it.
+func (s *BackupSnapshot) Origin() string {
+	if s.Trigger == "scheduled" && s.Policy != "" {
+		return s.Policy + " (scheduled)"
+	}
+	return "manual"
 }
 
 // CreateBackupResult identifies the accepted backup operation.
@@ -947,6 +961,12 @@ func (c *Client) ListProjectBackups(ctx context.Context, projectID string) ([]Ba
 		return nil, err
 	}
 	return res.Snapshots, nil
+}
+
+// DeleteBackupSnapshot removes one of the project's snapshots from the
+// backup target. One-way; the server refuses while a restore reads it.
+func (c *Client) DeleteBackupSnapshot(ctx context.Context, projectID, snapshotID string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/projects/"+projectID+"/backups/"+snapshotID, nil, nil)
 }
 
 // RestoreBackup requests a stop-first restore of one of the project's

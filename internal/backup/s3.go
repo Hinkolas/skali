@@ -25,7 +25,11 @@ type objectStore interface {
 	// ListPrefixes returns the immediate "directories" under prefix (the
 	// common prefixes one level down), each ending in a slash.
 	ListPrefixes(ctx context.Context, prefix string) ([]string, error)
+	// Remove deletes one object; a missing object is errNotFound.
 	Remove(ctx context.Context, key string) error
+	// RemovePrefix deletes every object under prefix (which must end in a
+	// slash) and returns how many it removed.
+	RemovePrefix(ctx context.Context, prefix string) (int64, error)
 	// Reachable verifies the bucket exists and answers.
 	Reachable(ctx context.Context) error
 }
@@ -163,7 +167,57 @@ func (s *minioStore) ListPrefixes(ctx context.Context, prefix string) ([]string,
 
 func (s *minioStore) Remove(ctx context.Context, key string) error {
 	if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		if isNoSuchKey(err) {
+			return errNotFound
+		}
 		return fmt.Errorf("backup: remove %s: %w", key, err)
+	}
+	return nil
+}
+
+// RemovePrefix streams the listing into minio's bulk delete (1000 keys per
+// request). The error channel is drained fully: minio-go leaks the sender
+// otherwise.
+func (s *minioStore) RemovePrefix(ctx context.Context, prefix string) (int64, error) {
+	if err := checkRemovePrefix(prefix); err != nil {
+		return 0, err
+	}
+	objects := make(chan minio.ObjectInfo)
+	var listed int64
+	var listErr error
+	go func() {
+		defer close(objects)
+		for object := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+			Prefix: prefix, Recursive: true,
+		}) {
+			if object.Err != nil {
+				listErr = fmt.Errorf("backup: list %s: %w", prefix, object.Err)
+				return
+			}
+			listed++
+			objects <- object
+		}
+	}()
+	var removeErr error
+	for failure := range s.client.RemoveObjects(ctx, s.bucket, objects, minio.RemoveObjectsOptions{}) {
+		if removeErr == nil && failure.Err != nil {
+			removeErr = fmt.Errorf("backup: remove %s: %w", failure.ObjectName, failure.Err)
+		}
+	}
+	if listErr != nil {
+		return 0, listErr
+	}
+	return listed, removeErr
+}
+
+// checkRemovePrefix refuses the two mistakes that would wipe a bucket: an
+// empty prefix and one that is not a directory-style prefix.
+func checkRemovePrefix(prefix string) error {
+	if strings.Trim(prefix, "/") == "" {
+		return errors.New("backup: refusing to remove an empty prefix")
+	}
+	if !strings.HasSuffix(prefix, "/") {
+		return fmt.Errorf("backup: refusing to remove prefix %q: it does not end in a slash", prefix)
 	}
 	return nil
 }

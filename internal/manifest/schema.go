@@ -140,6 +140,7 @@ func Schema() (*jsonschema.Schema, error) {
 	backup := schema.Properties["backups"].AdditionalProperties
 	backup.Properties["schedule"].MinLength = new(1)
 	backup.Properties["retention"] = durationSchema()
+	backup.Properties["strategy"].Enum = utils.AnySlice(StrategyComplete)
 
 	return schema, nil
 }

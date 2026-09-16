@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/testdb"
@@ -68,6 +69,7 @@ func TestRecoverOnBootFailsUnfinishedRows(t *testing.T) {
 	row, err := f.st.CreateBackup(ctx, store.CreateBackupParams{
 		ID: uuid.New(), Kind: KindBackup, EnvironmentID: f.environmentID,
 		ProjectName: "demo", EnvironmentName: "production", RunID: &runID,
+		Trigger: TriggerManual, Strategy: compiler.StrategyComplete,
 	})
 	require.NoError(t, err)
 	claimed, err := f.st.SetBackupStatus(ctx, store.SetBackupStatusParams{
@@ -102,6 +104,7 @@ func TestBackupStatusGuard(t *testing.T) {
 	row, err := f.st.CreateBackup(ctx, store.CreateBackupParams{
 		ID: uuid.New(), Kind: KindBackup, EnvironmentID: f.environmentID,
 		ProjectName: "demo", EnvironmentName: "production",
+		Trigger: TriggerManual, Strategy: compiler.StrategyComplete,
 	})
 	require.NoError(t, err)
 

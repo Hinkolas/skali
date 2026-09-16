@@ -29,8 +29,9 @@ Working and used daily:
 - `skali remote` with instance identity pinning; registry token protocol.
 - Permissions: one role ladder per project and per environment, promote-only
   protection with recorded bypass, environment priority as PriorityClasses.
-- Manual environment backup/restore to an external S3 target, cross-env
-  restore, project-wide listing.
+- Manual and scheduled environment backup/restore to an external S3 target
+  with per-policy retention, cross-env restore, project-wide listing, and
+  snapshot deletion.
 - Metrics: cpu/mem per node and per service, storage per node and per
   project (volumes, databases, objects, temporary), in the API and console.
 - Web console on real APIs: projects, services, deployments, runs (cancel,
@@ -107,7 +108,7 @@ Make the web console honest: every tab is real or gone.
       revision, pending changes.
 - [ ] Dashboard and system pages from observation and node data (what the
       CLI already knows).
-- [ ] Backups page (targets, list, trigger, restore).
+- [x] Backups page (targets, list, trigger, restore, delete).
 - [ ] Domains and certificates overview.
 - [x] Remove or hide until real: the service graph mock and the access
       tokens control are gone; scaling, alerts, and the rest are honest

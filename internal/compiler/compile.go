@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hinkolas/skali/internal/cron"
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
@@ -452,8 +453,11 @@ func (b *builder) compileBucket(key string, source manifest.Bucket) BucketClaim 
 
 func (b *builder) compileBackup(key string, source manifest.Backup) Backup {
 	base := "backups." + key
-	if len(strings.Fields(source.Schedule)) != 5 {
-		b.add(base+".schedule", "must be a five-field cron expression")
+	if _, err := cron.Parse(source.Schedule); err != nil {
+		b.add(base+".schedule", "%s", err)
+	}
+	if source.Strategy != "" && source.Strategy != StrategyComplete {
+		b.add(base+".strategy", "must be %q", StrategyComplete)
 	}
 	retention := b.duration(base+".retention", source.Retention)
 	databases := append([]string(nil), source.Include.Databases.Keys...)
@@ -465,6 +469,7 @@ func (b *builder) compileBackup(key string, source manifest.Backup) Backup {
 	return Backup{
 		Schedule:         source.Schedule,
 		RetentionSeconds: retention / 1000,
+		Strategy:         source.Strategy,
 		Include: Selection{
 			AllDatabases: source.Include.Databases.All,
 			Databases:    databases,

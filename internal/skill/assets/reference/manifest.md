@@ -438,18 +438,30 @@ applications:
 ## Backups
 
 ```yaml
-# Inactive declaration: scheduling and retention are not enforced.
 backups:
   daily:
-    schedule: "0 3 * * *"   # required, five-field cron
-    retention: 7d           # required duration
+    schedule: "0 3 * * *"   # required, five-field cron, evaluated in UTC
+    retention: 7d           # required duration; snapshots older than this go
+    strategy: complete      # optional; complete is the default and only value
     include:
       databases: all        # all, or a list of database keys
       buckets: all
       volumes: all          # all, or application.volume references
 ```
 
-At least one of the three include classes must be non-empty.
+Each policy runs for every active environment of the project: skalid takes
+one complete snapshot of the included components at each cron fire (UTC,
+classic five-field grammar: `*`, numbers, ranges, lists, steps, month and
+weekday names; no `@daily` descriptors) and writes it to the installation's
+backup target. A newly declared policy first runs at its next fire, not at
+deploy time. Runs appear in the environment's journal as kind `backup`
+with actor `schedule:<policy>`; each ends with a `retention` step that
+deletes the snapshots this policy took once they are older than
+`retention`, always keeping the newest one. Snapshots taken by hand
+(`skali backup create`, the console) are never touched by retention; remove
+them with `skali backup remove <snapshot-id>`. Without a configured backup
+target the schedules stay idle. At least one of the three include classes
+must be non-empty.
 
 ## Units
 
@@ -557,7 +569,7 @@ databases:
 ### A production-shaped manifest
 
 Autoscaling, spread across nodes, a release command for migrations, a
-bucket for attachments, and an inactive backup policy:
+bucket for attachments, and a daily backup policy:
 
 ```yaml manifest
 skali: v0.1.0-rc.3
@@ -651,4 +663,4 @@ backups:
       buckets: all
 ```
 
-Backup policies are accepted but inactive: skali does not run scheduled backups or enforce retention. Create backups manually with `skali backup create`; inspect `skali backup --help` for restore and deletion commands.
+Backup policies run once the installation has a backup target (`skali backup target set`, admin only). `skali backup create` takes a snapshot by hand, `skali backup list` shows every snapshot with its origin (manual or the policy that took it), `skali backup restore` replays one, and `skali backup remove` deletes one.

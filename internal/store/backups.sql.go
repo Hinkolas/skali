@@ -13,9 +13,9 @@ import (
 
 const createBackup = `-- name: CreateBackup :one
 INSERT INTO backups (id, kind, environment_id, project_name, environment_name,
-                     revision_id, run_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at
+                     revision_id, run_id, trigger, policy, strategy)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at, trigger, policy, strategy
 `
 
 type CreateBackupParams struct {
@@ -26,6 +26,9 @@ type CreateBackupParams struct {
 	EnvironmentName string
 	RevisionID      *uuid.UUID
 	RunID           *uuid.UUID
+	Trigger         string
+	Policy          string
+	Strategy        string
 }
 
 func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) (Backup, error) {
@@ -37,6 +40,9 @@ func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) (Bac
 		arg.EnvironmentName,
 		arg.RevisionID,
 		arg.RunID,
+		arg.Trigger,
+		arg.Policy,
+		arg.Strategy,
 	)
 	var i Backup
 	err := row.Scan(
@@ -52,6 +58,9 @@ func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) (Bac
 		&i.Error,
 		&i.CreatedAt,
 		&i.FinishedAt,
+		&i.Trigger,
+		&i.Policy,
+		&i.Strategy,
 	)
 	return i, err
 }
@@ -66,7 +75,7 @@ func (q *Queries) DeleteBackup(ctx context.Context, id uuid.UUID) error {
 }
 
 const getBackup = `-- name: GetBackup :one
-SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at FROM backups WHERE id = $1
+SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at, trigger, policy, strategy FROM backups WHERE id = $1
 `
 
 func (q *Queries) GetBackup(ctx context.Context, id uuid.UUID) (Backup, error) {
@@ -85,12 +94,15 @@ func (q *Queries) GetBackup(ctx context.Context, id uuid.UUID) (Backup, error) {
 		&i.Error,
 		&i.CreatedAt,
 		&i.FinishedAt,
+		&i.Trigger,
+		&i.Policy,
+		&i.Strategy,
 	)
 	return i, err
 }
 
 const listBackupsByEnvironment = `-- name: ListBackupsByEnvironment :many
-SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at FROM backups
+SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at, trigger, policy, strategy FROM backups
 WHERE environment_id = $1
 ORDER BY created_at DESC
 `
@@ -117,6 +129,9 @@ func (q *Queries) ListBackupsByEnvironment(ctx context.Context, environmentID uu
 			&i.Error,
 			&i.CreatedAt,
 			&i.FinishedAt,
+			&i.Trigger,
+			&i.Policy,
+			&i.Strategy,
 		); err != nil {
 			return nil, err
 		}
@@ -129,7 +144,7 @@ func (q *Queries) ListBackupsByEnvironment(ctx context.Context, environmentID uu
 }
 
 const listUnfinishedBackups = `-- name: ListUnfinishedBackups :many
-SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at FROM backups WHERE status IN ('pending', 'running')
+SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at, trigger, policy, strategy FROM backups WHERE status IN ('pending', 'running')
 `
 
 // Recovery on boot: rows a dead daemon left behind.
@@ -155,6 +170,9 @@ func (q *Queries) ListUnfinishedBackups(ctx context.Context) ([]Backup, error) {
 			&i.Error,
 			&i.CreatedAt,
 			&i.FinishedAt,
+			&i.Trigger,
+			&i.Policy,
+			&i.Strategy,
 		); err != nil {
 			return nil, err
 		}

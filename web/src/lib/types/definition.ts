@@ -172,8 +172,11 @@ export interface BucketClaim {
 }
 
 export interface Backup {
+	/** Five-field cron, evaluated in UTC. */
 	schedule: string;
 	retentionSeconds: number;
+	/** Absent means complete, the only strategy today. */
+	strategy?: string;
 	include: Selection;
 }
 

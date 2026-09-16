@@ -65,6 +65,7 @@ export const PROJECT_TABS: NavItemDef[] = [
 	{ label: 'Service graph', slug: 'graph', icon: Workflow, stub: true },
 	{ label: 'Activity', slug: 'activity', icon: Activity, stub: true },
 	{ label: 'Logs', slug: 'logs', icon: ScrollText, stub: true },
+	{ label: 'Backups', slug: 'backups', icon: Archive },
 	{ label: 'Settings', slug: 'settings', icon: Settings2 }
 ];
 
@@ -82,7 +83,6 @@ export const SERVICE_TABS: Record<ServiceType, NavItemDef[]> = {
 	database: [
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },
 		{ label: 'Studio', slug: 'studio', icon: Table, stub: true },
-		{ label: 'Backups', slug: 'backups', icon: Archive, stub: true },
 		{ label: 'Metrics', slug: 'metrics', icon: Gauge, stub: true },
 		{ label: 'Access', slug: 'access', icon: KeyRound, stub: true },
 		{ label: 'Config', slug: 'config', icon: Settings2 }

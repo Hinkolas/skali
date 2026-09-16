@@ -88,7 +88,7 @@ func TestConcurrentHostnameClaimsHaveOneWinner(t *testing.T) {
 	require.Equal(t, 1, wins)
 }
 
-func TestReservedHostnameAndPolicyWarnings(t *testing.T) {
+func TestReservedHostnameConflict(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	require.NoError(t, f.deploy.ReserveHostnames(ctx, []string{"example.com"}))
@@ -99,11 +99,6 @@ func TestReservedHostnameAndPolicyWarnings(t *testing.T) {
 	require.ErrorAs(t, err, &conflict)
 	require.True(t, conflict.Reserved)
 	require.Empty(t, compiler.Warnings(p.Revision.Definition))
-	p.Revision.Definition.Backups = map[string]compiler.Backup{"daily": {Schedule: "0 3 * * *", RetentionSeconds: 86400}}
-	warnings := compiler.Warnings(p.Revision.Definition)
-	require.Len(t, warnings, 1)
-	require.Equal(t, "backup_policy_inactive", warnings[0].Code)
-	require.Equal(t, []string{"backups.daily"}, warnings[0].Paths)
 }
 
 func TestRetiredClaimSurvivesRestartAndTargetLock(t *testing.T) {

@@ -52,6 +52,13 @@ var Ledger = []Change{
 		Message: "version was replaced by skali, the release the manifest was last reviewed against",
 		Hint:    "run skali manifest upgrade, or replace the line with skali: and that release, for example skali: v0.1.0-rc.3",
 	},
+	{
+		Release: "v0.1.0-rc.5",
+		Kind:    ChangeAdded,
+		Path:    "backups.*.strategy",
+		Message: "backup policies gained an optional strategy field; complete is the only value and the default, and policies are now enforced: snapshots run on the schedule and retention deletes the ones they produced",
+		Hint:    "nothing to change; write strategy: complete to make the default explicit",
+	},
 }
 
 // Matches reports whether a concrete manifest path is the one the change

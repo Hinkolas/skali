@@ -2,6 +2,8 @@
 // target-independent project definition.
 package compiler
 
+import "github.com/Hinkolas/skali/internal/manifest"
+
 type Result struct {
 	Hash       string            "json:\"hash\""
 	Definition ProjectDefinition "json:\"definition\""
@@ -202,10 +204,26 @@ type BucketClaim struct {
 	ExpireNoncurrentVersionsAfterSec   int64  "json:\"expireNoncurrentVersionsAfterSeconds,omitempty\""
 }
 
+// Backup is one compiled backup policy. Strategy is written only when the
+// manifest set it: the default would otherwise change the definition hash
+// of every manifest that predates the field.
 type Backup struct {
 	Schedule         string    "json:\"schedule\""
 	RetentionSeconds int64     "json:\"retentionSeconds\""
+	Strategy         string    "json:\"strategy,omitempty\""
 	Include          Selection "json:\"include\""
+}
+
+// StrategyComplete mirrors manifest.StrategyComplete for consumers of the
+// compiled definition.
+const StrategyComplete = manifest.StrategyComplete
+
+// EffectiveStrategy resolves the default: an unset strategy is complete.
+func (b Backup) EffectiveStrategy() string {
+	if b.Strategy == "" {
+		return StrategyComplete
+	}
+	return b.Strategy
 }
 
 type Selection struct {

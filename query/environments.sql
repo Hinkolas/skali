@@ -29,3 +29,12 @@ ORDER BY e.project_id, e.name;
 
 -- name: DeleteEnvironmentByID :execrows
 DELETE FROM environments WHERE id = $1;
+
+-- Environments the backup scheduler considers: active with a converged
+-- revision to snapshot.
+-- name: ListActiveEnvironmentRevisions :many
+SELECT e.id AS environment_id, e.project_id, e.name, t.active_revision_id
+FROM environments e
+JOIN environment_targets t ON t.environment_id = e.id
+WHERE t.state = 'active' AND t.active_revision_id IS NOT NULL
+ORDER BY e.project_id, e.name;

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/compiler"
 )
 
 func fixtureManifest(t *testing.T) *Manifest {
@@ -94,4 +96,36 @@ func TestComponentLabels(t *testing.T) {
 	require.Equal(t, "db:data", componentLabel(Component{Kind: ComponentDatabase, ServiceKey: "data"}))
 	require.Equal(t, "bucket:assets", componentLabel(Component{Kind: ComponentBucket, ServiceKey: "assets"}))
 	require.Equal(t, "volume:web.state", componentLabel(Component{Kind: ComponentVolume, Application: "web", Volume: "state"}))
+}
+
+// Snapshots written before the origin fields existed decode as manual,
+// complete snapshots: retention never touches them and listings show them.
+func TestManifestLegacyDefaultsToManual(t *testing.T) {
+	legacy := fixtureManifest(t)
+	legacy.Trigger, legacy.Policy, legacy.Strategy = "", "", ""
+	data, err := encodeManifest(legacy)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"trigger"`)
+
+	decoded, err := decodeManifest(data)
+	require.NoError(t, err)
+	require.Equal(t, TriggerManual, decoded.Trigger)
+	require.Equal(t, "", decoded.Policy)
+	require.Equal(t, compiler.StrategyComplete, decoded.Strategy)
+
+	summary := summarize(decoded)
+	require.Equal(t, TriggerManual, summary.Trigger)
+	require.Equal(t, compiler.StrategyComplete, summary.Strategy)
+}
+
+func TestManifestCarriesOrigin(t *testing.T) {
+	scheduled := fixtureManifest(t)
+	scheduled.Trigger, scheduled.Policy, scheduled.Strategy = TriggerScheduled, "daily", compiler.StrategyComplete
+	data, err := encodeManifest(scheduled)
+	require.NoError(t, err)
+	decoded, err := decodeManifest(data)
+	require.NoError(t, err)
+	require.Equal(t, "daily", decoded.Policy)
+	require.Equal(t, TriggerScheduled, summarize(decoded).Trigger)
+	require.Equal(t, "daily", summarize(decoded).Policy)
 }

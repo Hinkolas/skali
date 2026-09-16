@@ -1,20 +1,12 @@
 package compiler
 
-import (
-	"github.com/Hinkolas/skali/internal/diagnostic"
-	"github.com/Hinkolas/skali/internal/utils"
-)
+import "github.com/Hinkolas/skali/internal/diagnostic"
 
-const BackupPolicyWarning = "Backup policies are accepted but inactive: skali does not run scheduled backups or enforce retention. Create backups manually."
-
-// Warnings are advisory and never enter the immutable definition or its hash.
-func Warnings(def ProjectDefinition) []diagnostic.Warning {
-	if len(def.Backups) == 0 {
-		return nil
-	}
-	paths := make([]string, 0, len(def.Backups))
-	for _, key := range utils.SortedKeys(def.Backups) {
-		paths = append(paths, "backups."+key)
-	}
-	return []diagnostic.Warning{{Code: "backup_policy_inactive", Message: BackupPolicyWarning, Paths: paths}}
+// Warnings are advisory notes about a definition that never enter the
+// immutable definition or its hash; plan, deployment, and rollback
+// responses carry them. Nothing warns today: the backup-policy notice that
+// lived here retired when scheduled backups shipped. The hook stays so the
+// next advisory has a home without touching every caller.
+func Warnings(ProjectDefinition) []diagnostic.Warning {
+	return nil
 }

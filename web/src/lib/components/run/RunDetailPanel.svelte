@@ -6,7 +6,7 @@
 	import type { RunTree, Step } from '$lib/types/runs';
 	import { runUnsettled } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
-	import { formatDuration, formatDateTime } from '$lib/format';
+	import { describeActor, formatDuration, formatDateTime } from '$lib/format';
 	import { clock } from '$lib/stores/clock.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
@@ -146,7 +146,7 @@
 			</div>
 			{#if tree}
 				<div class="font-mono text-text-faint mt-1 truncate text-xs">
-					{tree.run.actor} · {formatDateTime(tree.run.created_at)}
+					{describeActor(tree.run.actor)} · {formatDateTime(tree.run.created_at)}
 					{#if tree.run.started_at}
 						· {formatDuration(tree.run.started_at, tree.run.finished_at, clock.now)}
 					{/if}

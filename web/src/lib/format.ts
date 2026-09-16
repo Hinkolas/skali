@@ -100,3 +100,13 @@ export function formatDateTime(iso: string | null): string {
 		minute: '2-digit'
 	});
 }
+
+/**
+ * A run's actor for display: a person's identifier as recorded, or
+ * "schedule · daily" for runs the backup scheduler started as
+ * `schedule:<policy>`.
+ */
+export function describeActor(actor: string): string {
+	if (actor.startsWith('schedule:')) return `schedule · ${actor.slice('schedule:'.length)}`;
+	return actor;
+}

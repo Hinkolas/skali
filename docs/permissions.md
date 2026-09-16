@@ -304,7 +304,7 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | delete, teardown (S) | E:admin |
 | status, deployments, revisions, runs, run logs, runtime logs, value names, connection info, backups list, settings, access list | E:read |
 | promote into, rollback, restart, redeploy, run cancel, route probe, backup create, direct deploy with unchanged definition | E:deploy |
-| direct deploy with definition changes, values set/prune, restore (S) | E:maintain |
+| direct deploy with definition changes, values set/prune, restore (S), snapshot delete (S; project admin for snapshots of environments that no longer exist) | E:maintain |
 | exec (S on promote-only environments), resolved application environment (S), credential reveal (S) | E:maintain |
 | bypass protection (S) | E:admin |
 | user management writes, nodes, system observation, backup target (S for writes) | IA |

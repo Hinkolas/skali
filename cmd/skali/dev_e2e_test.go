@@ -682,7 +682,7 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 	_ = exec.Command("docker", "rm", "-f", minioName).Run()
 	out, err := exec.Command("docker", "run", "-d", "--name", minioName,
 		"-p", fmt.Sprintf("127.0.0.1:%d:9000", minioPort),
-		"minio/minio", "server", "/data").CombinedOutput()
+		"quay.io/minio/minio", "server", "/data").CombinedOutput()
 	require.NoError(t, err, "start minio: %s", out)
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", minioName).Run() })
 	makeMinioBucket(t, fmt.Sprintf("127.0.0.1:%d", minioPort), "skali-backups")
@@ -712,7 +712,7 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 		"--access-key", "minioadmin", "--secret-key", "minioadmin")
 	require.Contains(t, run, "backup target set")
 
-	run = h.run(false, "", "backup", "create", "--remote", "local", "--environment", "local")
+	run = h.run(false, "", "backup", "create", "--remote", "local", "--environment", "local", "--yes")
 	require.Contains(t, run, "backup complete")
 
 	// The listing is project-wide (the checkout's manifest names the
@@ -1211,4 +1211,80 @@ func (h *e2eHarness) waitManagedRollouts(t *testing.T, kubeconfig string) {
 			"rollout", "status", "deployment", parts[1], "-n", parts[0], "--timeout=120s").CombinedOutput()
 		require.NoError(t, err, string(status))
 	}
+}
+
+// TestDevGuestbookScheduledBackupRetention is the scheduled-backup
+// acceptance loop: a manifest policy firing every minute with a two-minute
+// retention on the local platform. A scheduled snapshot appears without
+// anyone asking, is marked with its policy, and the policy later prunes its
+// own oldest snapshot while the manual one and the newest scheduled one
+// stay. About seven minutes on top of the platform boot.
+func TestDevGuestbookScheduledBackupRetention(t *testing.T) {
+	h := newE2EHarnessFor(t, "guestbook", "guestbook.localhost")
+
+	// The example manifest gains a policy before the first deploy; the
+	// scratch copy keeps the example itself untouched.
+	manifestPath := filepath.Join(h.projectDir, "skali.yml")
+	manifest, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	manifest = append(manifest, []byte("\nbackups:\n  minutely:\n    schedule: \"* * * * *\"\n"+
+		"    retention: 2m\n    include:\n      databases: all\n")...)
+	require.NoError(t, os.WriteFile(manifestPath, manifest, 0o644))
+
+	const minioName = "skali-e2e-minio-scheduled"
+	const minioPort = 19101
+	_ = exec.Command("docker", "rm", "-f", minioName).Run()
+	out, err := exec.Command("docker", "run", "-d", "--name", minioName,
+		"-p", fmt.Sprintf("127.0.0.1:%d:9000", minioPort),
+		"quay.io/minio/minio", "server", "/data").CombinedOutput()
+	require.NoError(t, err, "start minio: %s", out)
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", minioName).Run() })
+	makeMinioBucket(t, fmt.Sprintf("127.0.0.1:%d", minioPort), "skali-backups")
+
+	run := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
+	require.Contains(t, run, "ready")
+	h.waitRoute("visits: ", 10*time.Minute)
+
+	run = h.run(false, "", "backup", "target", "set", "--remote", "local",
+		"--endpoint", fmt.Sprintf("http://host.k3d.internal:%d", minioPort),
+		"--bucket", "skali-backups",
+		"--access-key", "minioadmin", "--secret-key", "minioadmin")
+	require.Contains(t, run, "backup target set")
+
+	// A manual anchor that retention must never touch.
+	run = h.run(false, "", "backup", "create", "--remote", "local", "--environment", "local", "--yes")
+	require.Contains(t, run, "backup complete")
+	manualRow := regexp.MustCompile(`(?m)^([0-9a-f-]{36})  local +manual `)
+	run = h.run(false, "", "backup", "ls", "--remote", "local")
+	manualMatch := manualRow.FindStringSubmatch(run)
+	require.NotNil(t, manualMatch, "no manual snapshot in:\n%s", run)
+	manual := manualMatch[1]
+
+	// The policy is seeded when the scheduler first sees the deployed
+	// revision and fires at the next minute; the snapshot carries the policy.
+	scheduledRow := regexp.MustCompile(`(?m)^([0-9a-f-]{36})  local +minutely \(scheduled\) `)
+	var first string
+	require.Eventually(t, func() bool {
+		listing := h.run(false, "", "backup", "ls", "--remote", "local")
+		match := scheduledRow.FindStringSubmatch(listing)
+		if match == nil {
+			return false
+		}
+		first = match[1]
+		return true
+	}, 5*time.Minute, 10*time.Second, "no scheduled snapshot appeared")
+
+	// Snapshots list newest first and ids are time-ordered, so the first
+	// scheduled id is the oldest of its policy. Once it is older than two
+	// minutes the next scheduled run's retention step removes it, while the
+	// newest scheduled snapshot and the manual one remain.
+	require.Eventually(t, func() bool {
+		listing := h.run(false, "", "backup", "ls", "--remote", "local")
+		scheduled := scheduledRow.FindAllStringSubmatch(listing, -1)
+		if len(scheduled) == 0 || strings.Contains(listing, first) {
+			return false
+		}
+		require.Contains(t, listing, manual, "retention must never remove a manual snapshot")
+		return true
+	}, 8*time.Minute, 10*time.Second, "the oldest scheduled snapshot was never pruned")
 }

@@ -111,6 +111,8 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 		// The revision the environment resumes after data movement.
 		RevisionID: target.TargetRevisionID,
 		RunID:      &runID,
+		Trigger:    TriggerManual,
+		Strategy:   compiler.StrategyComplete,
 	})
 	if err != nil {
 		_ = c.deps.Journal.FinishRun(ctx, run.ID, journal.RunFailed)
