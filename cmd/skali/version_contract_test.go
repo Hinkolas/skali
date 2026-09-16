@@ -18,23 +18,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConcurrentPromotionsChooseNewestRelease(t *testing.T) {
+func TestConcurrentHomeUpgradesChooseNewestRelease(t *testing.T) {
 	f := newDispatchFixture(t, "v0.4.0")
 	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.4.0"))
 	var wg sync.WaitGroup
-	for _, release := range []string{"v0.5.0", "v0.6.0-rc.2", "v0.6.0-rc.1", "v0.3.0"} {
+	errs := make(chan error, 4)
+	for _, release := range []string{"v0.5.0", "v0.6.0-rc.2", "v0.6.0-rc.1", "v0.5.1"} {
 		copy := *f.d
 		copy.stderr = &bytes.Buffer{}
 		wg.Add(1)
-		go func() { defer wg.Done(); copy.promoteHome(context.Background(), fakeCLI(release), release, "target") }()
+		go func() {
+			defer wg.Done()
+			errs <- copy.upgradeHome(context.Background(), fakeCLI(release), release, "target")
+		}()
 	}
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err, "a release already superseded on disk is not an error")
+	}
 	installed, err := installedCLIVersion(context.Background(), f.d.executable)
 	require.NoError(t, err)
 	require.Equal(t, "v0.6.0-rc.2", installed)
 }
 
-func TestUnwritableHomeStillExecutesMatchingCache(t *testing.T) {
+func TestUnwritableHomeRefusesNewerRelease(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can write protected directories")
 	}
@@ -44,22 +52,40 @@ func TestUnwritableHomeStillExecutesMatchingCache(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0555))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
 	f.seedRemote(t, "target", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
-	path := f.seedCache(t, "v0.4.0")
+	f.seedCache(t, "v0.4.0")
+	f.consent(t, true)
 	handled, code := f.d.run()
 	require.True(t, handled)
-	require.Zero(t, code)
-	require.Len(t, f.spawns, 1)
-	require.Equal(t, path, f.spawns[0].path)
-	require.Contains(t, f.stderr.String(), "not writable")
+	require.Equal(t, 1, code)
+	require.Empty(t, f.spawns, "the cached newer release never runs behind a stale home")
+	require.Contains(t, f.stderr.String(), "is not writable; run sudo skali upgrade --version v0.4.0 first, or install skali under ~/.local/bin")
 }
 
-func TestDynamicCompletionNeverFetchesOrPromotes(t *testing.T) {
+func TestDynamicCompletionNeverFetchesOrUpgrades(t *testing.T) {
+	// A record above home yields no suggestions, cached or not: home never
+	// runs a newer release, and completion never asks for an upgrade.
 	f := newDispatchFixture(t, "v0.3.0", "__complete", "env", "list", "")
 	f.seedRemote(t, "target", deadURL(t), "v0.4.0")
 	handled, code := f.d.run()
 	require.True(t, handled)
 	require.Zero(t, code)
 	require.Empty(t, f.spawns)
+	f.seedCache(t, "v0.4.0")
+	handled, code = f.d.run()
+	require.True(t, handled)
+	require.Zero(t, code)
+	require.Empty(t, f.spawns)
+	require.Empty(t, f.stderr.String())
+	_, err := os.Stat(f.d.executable)
+	require.ErrorIs(t, err, os.ErrNotExist, "home is untouched")
+
+	// A record below home completes from the cache only.
+	f = newDispatchFixture(t, "v0.5.0", "__complete", "env", "list", "")
+	f.seedRemote(t, "target", deadURL(t), "v0.4.0")
+	handled, code = f.d.run()
+	require.True(t, handled)
+	require.Zero(t, code)
+	require.Empty(t, f.spawns, "nothing is fetched for completion")
 	path := f.seedCache(t, "v0.4.0")
 	handled, code = f.d.run()
 	require.True(t, handled)
@@ -67,7 +93,6 @@ func TestDynamicCompletionNeverFetchesOrPromotes(t *testing.T) {
 	require.Len(t, f.spawns, 1)
 	require.Equal(t, path, f.spawns[0].path)
 	require.Empty(t, f.stderr.String())
-	require.Equal(t, "v0.3.0", f.d.installed)
 }
 
 func TestWorkerMarkerDoesNotLeakToGrandchildren(t *testing.T) {
@@ -210,14 +235,18 @@ func TestNoMutationReplay(t *testing.T) {
 	}
 }
 
-func TestPromotionRechecksDiskAndKeepsNewerPrerelease(t *testing.T) {
+func TestHomeUpgradeRechecksDiskAndKeepsNewerPrerelease(t *testing.T) {
 	f := newDispatchFixture(t, "v0.4.0")
 	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.6.0-rc.1"))
-	require.False(t, f.d.promoteHome(context.Background(), fakeCLI("v0.5.0"), "v0.5.0", "target"))
+	require.NoError(t, f.d.upgradeHome(context.Background(), fakeCLI("v0.5.0"), "v0.5.0", "target"))
 	data, err := os.ReadFile(f.d.executable)
 	require.NoError(t, err)
-	require.Equal(t, fakeCLI("v0.6.0-rc.1"), data)
-	require.True(t, f.d.promoteHome(context.Background(), fakeCLI("v0.6.0-rc.2"), "v0.6.0-rc.2", "target"))
+	require.Equal(t, fakeCLI("v0.6.0-rc.1"), data, "another process already upgraded past the target")
+	require.Empty(t, f.stderr.String())
+	require.NoError(t, f.d.upgradeHome(context.Background(), fakeCLI("v0.6.0-rc.2"), "v0.6.0-rc.2", "target"))
+	data, err = os.ReadFile(f.d.executable)
+	require.NoError(t, err)
+	require.Equal(t, fakeCLI("v0.6.0-rc.2"), data)
 }
 
 func TestCachePruningRespectsExecutionLease(t *testing.T) {

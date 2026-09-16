@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -82,7 +83,7 @@ type upgradeOptions struct {
 	Home string
 	// CacheDir is the CLI cache root whose dispatch entries are pruned
 	// after the install (the new home version is a reference); empty
-	// skips the prune.
+	// skips the prune and the downgrade warning.
 	CacheDir string
 }
 
@@ -281,6 +282,13 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	if opts.CacheDir != "" {
 		cfg, _ := cliconfig.Load()
 		pruneCLICache(cfg, target, opts.CacheDir)
+		if outcome.Downgrade {
+			// Home manages only clusters at or below its release: name the
+			// ones this downgrade puts out of reach.
+			for _, warning := range outrunRemotes(cfg, target) {
+				fmt.Fprintln(out, style.Yellow("warning: "+warning))
+			}
+		}
 	}
 
 	verb := "upgraded"
@@ -291,17 +299,26 @@ func runUpgrade(ctx context.Context, out io.Writer, opts upgradeOptions) error {
 	return nil
 }
 
-// installCLI replaces executable with binary and proves the result answers
-// for want; when it does not, the previous bytes are put back. Both paths
-// that replace the CLI (skali upgrade and dispatch's home promotion) go
-// through it.
-func installCLI(ctx context.Context, executable string, binary []byte, want string) error {
-	unlock, err := filelock.Acquire(ctx, executable+".lock")
-	if err != nil {
-		return err
+// outrunRemotes names the configured remotes whose recorded release is
+// newer than home's new release, one line each, sorted by name. The local
+// platform is not a remote in this sense: it follows home through skali
+// dev reset, never through skali upgrade.
+func outrunRemotes(cfg *cliconfig.Config, home string) []string {
+	if cfg == nil {
+		return nil
 	}
-	defer unlock()
-	return installCLIUnlocked(ctx, executable, binary, want)
+	names := make([]string, 0, len(cfg.Remotes))
+	for name, remote := range cfg.Remotes {
+		if name != localRemoteName && remote != nil && versionpkg.Older(home, remote.Version) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	warnings := make([]string, 0, len(names))
+	for _, name := range names {
+		warnings = append(warnings, fmt.Sprintf("remote %s runs skali %s; it cannot be managed until you upgrade again", name, cfg.Remotes[name].Version))
+	}
+	return warnings
 }
 
 func installedCLIVersion(ctx context.Context, executable string) (string, error) {
@@ -318,6 +335,10 @@ func installedCLIVersion(ctx context.Context, executable string) (string, error)
 	return words[len(words)-1], nil
 }
 
+// installCLIUnlocked replaces executable with binary and proves the result
+// answers for want; when it does not, the previous bytes are put back. Both
+// paths that replace the CLI (skali upgrade and the dispatcher's consented
+// home upgrade) call it while holding the executable's installation lock.
 func installCLIUnlocked(ctx context.Context, executable string, binary []byte, want string) error {
 	previous, err := os.ReadFile(executable)
 	if err != nil {

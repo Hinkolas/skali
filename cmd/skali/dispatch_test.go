@@ -130,7 +130,6 @@ func newDispatchFixture(t *testing.T, home string, args ...string) *dispatchFixt
 		env:         envMap(nil),
 		environ:     func() []string { return []string{"HOME=/nowhere", envDispatched + "=stale"} },
 		homeVersion: home,
-		installed:   home,
 		executable:  filepath.Join(t.TempDir(), "skali"),
 		cacheDir:    f.cache,
 		cwd:         t.TempDir(),
@@ -140,6 +139,13 @@ func newDispatchFixture(t *testing.T, home string, args ...string) *dispatchFixt
 		releaseBase: deadURL(t),
 		stderr:      f.stderr,
 		root:        newRootCommand,
+		// Not a terminal unless a test says so; a prompt nobody scripted
+		// is a failure, not a hang.
+		interactive: func() bool { return false },
+		confirm: func(context.Context, string, string) (bool, error) {
+			t.Fatal("unexpected upgrade prompt")
+			return false, nil
+		},
 	}
 	f.d.spawn = func(ctx context.Context, path string, args, env []string) (childStatus, error) {
 		call := spawnCall{path: path, args: args, env: env}
@@ -365,21 +371,86 @@ func TestDispatchHonorsRemoteOverrideAndBinding(t *testing.T) {
 	require.Equal(t, lab, f.spawns[0].path, "the binding picks the binary")
 }
 
-func TestDispatchPromotesHomeToNewerRelease(t *testing.T) {
+// consent makes the fixture a terminal whose user answers the upgrade
+// prompt with yes (or no) and records what it asked.
+func (f *dispatchFixture) consent(t *testing.T, yes bool) *[]string {
+	t.Helper()
+	asked := &[]string{}
+	f.d.interactive = func() bool { return true }
+	f.d.confirm = func(_ context.Context, title, description string) (bool, error) {
+		*asked = append(*asked, title+" | "+description)
+		return yes, nil
+	}
+	return asked
+}
+
+func TestDispatchRefusesNewerReleaseNonInteractive(t *testing.T) {
 	f := newDispatchFixture(t, "v0.3.2", "env", "list")
-	dir := t.TempDir()
-	f.d.executable = writeExecutable(t, dir, "skali", fakeCLI("v0.3.2"))
-	f.serveFeed(t, "v0.4.0")
+	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
+	feed := f.serveFeed(t, "v0.4.0")
 	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 
 	handled, code := f.d.run()
 	require.True(t, handled)
+	require.Equal(t, 1, code)
+	require.Empty(t, f.spawns, "nothing runs")
+	require.Empty(t, feed.requested(), "nothing is downloaded before consent")
+	require.Contains(t, f.stderr.String(), "error: remote khz runs skali v0.4.0, newer than this CLI v0.3.2; run skali upgrade --version v0.4.0 first")
+	unchanged, err := os.ReadFile(f.d.executable)
+	require.NoError(t, err)
+	require.Equal(t, fakeCLI("v0.3.2"), unchanged)
+	_, cached := installer.CachedBinary(installer.CLICachePath(f.cache, "v0.4.0"))
+	require.False(t, cached)
+}
+
+func TestDispatchUpgradesHomeOnConsent(t *testing.T) {
+	f := newDispatchFixture(t, "v0.3.2", "env", "list")
+	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
+	f.serveFeed(t, "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
+	asked := f.consent(t, true)
+
+	handled, code := f.d.run()
+	require.True(t, handled)
 	require.Equal(t, 0, code)
+	require.Equal(t, []string{"Upgrade skali v0.3.2 -> v0.4.0 now? | remote khz runs skali v0.4.0; a CLI at least as new is required to manage it"}, *asked)
 	installed, err := os.ReadFile(f.d.executable)
 	require.NoError(t, err)
 	require.Equal(t, fakeCLI("v0.4.0"), installed, "home was replaced")
 	require.Contains(t, f.stderr.String(), "upgraded skali v0.3.2 -> v0.4.0 (remote khz runs skalid v0.4.0)")
 	require.Equal(t, installer.CLICachePath(f.cache, "v0.4.0"), f.spawns[0].path, "the cached copy runs the command")
+}
+
+func TestDispatchDeclinedUpgradeAborts(t *testing.T) {
+	f := newDispatchFixture(t, "v0.3.2", "env", "list")
+	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
+	feed := f.serveFeed(t, "v0.4.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
+	f.consent(t, false)
+
+	handled, code := f.d.run()
+	require.True(t, handled)
+	require.Equal(t, 1, code)
+	require.Empty(t, f.spawns)
+	require.Empty(t, feed.requested())
+	require.Contains(t, f.stderr.String(), "error: upgrade declined; run skali upgrade --version v0.4.0 to manage remote khz")
+	unchanged, err := os.ReadFile(f.d.executable)
+	require.NoError(t, err)
+	require.Equal(t, fakeCLI("v0.3.2"), unchanged)
+}
+
+func TestDispatchOfflineRefusesNewerRecord(t *testing.T) {
+	f := newDispatchFixture(t, "v0.3.2", "validate", "--offline")
+	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
+	f.seedRemote(t, "khz", deadURL(t), "v0.4.0")
+	f.seedCache(t, "v0.4.0")
+	f.consent(t, true)
+
+	handled, code := f.d.run()
+	require.True(t, handled)
+	require.Equal(t, 1, code)
+	require.Empty(t, f.spawns, "a cached newer release is not run behind a stale home")
+	require.Contains(t, f.stderr.String(), "error: remote khz recorded skali v0.4.0, newer than this CLI v0.3.2; run skali upgrade --version v0.4.0 first")
 }
 
 func TestRerunAfterMismatch(t *testing.T) {
@@ -408,13 +479,22 @@ func TestRerunAfterMismatch(t *testing.T) {
 	require.Zero(t, calls)
 	require.Empty(t, stderr.String())
 
-	// A released remote that moved: one hint, then the dispatcher runs.
+	// A released remote that moved past home: no rerun, the pending skew
+	// hint names the upgrade instead.
 	skew.record("khz", "v0.5.0")
+	handled, _ = rerunAfterMismatch(mismatch, none, &stderr, false, run)
+	require.False(t, handled, "home never runs a newer release")
+	require.Zero(t, calls)
+	require.Empty(t, stderr.String())
+
+	// A released remote that moved below home: one hint, then the
+	// dispatcher runs.
+	skew.record("khz", "v0.3.0")
 	handled, code := rerunAfterMismatch(mismatch, none, &stderr, false, run)
 	require.True(t, handled)
 	require.Equal(t, 0, code)
 	require.Equal(t, 1, calls)
-	require.Equal(t, "hint: remote khz now runs skalid v0.5.0; rerunning with skali v0.5.0\n", stderr.String())
+	require.Equal(t, "hint: remote khz now runs skalid v0.3.0; rerunning with skali v0.3.0\n", stderr.String())
 
 	// Never from a child or with dispatch off.
 	for _, key := range []string{envDispatched, envNoDispatch} {
@@ -430,17 +510,45 @@ func TestRerunAfterMismatch(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
-func TestDispatchPromotesTwiceAcrossARerun(t *testing.T) {
-	// Home v0.3.2 meets a v0.4.0 record, is promoted, and the child then
-	// finds the cluster already at v0.5.0: the second promotion names the
-	// version on disk, not the one still running.
-	f := newDispatchFixture(t, "v0.3.2", "env", "list")
-	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
-	f.serveFeed(t, "v0.4.0")
+func TestRerunRefusesUpwardMove(t *testing.T) {
+	// Home v0.6.0 dispatches down to a v0.4.0 record; the child finds the
+	// cluster already at v0.7.0. The rerun never upgrades home behind the
+	// user's back: it stops and names the upgrade.
+	f := newDispatchFixture(t, "v0.6.0", "env", "list")
+	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.6.0"))
+	f.seedCache(t, "v0.4.0")
+	f.serveFeed(t, "v0.7.0")
 	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
 	f.script = []func(spawnCall) (childStatus, error){
 		func(spawnCall) (childStatus, error) {
-			f.serveFeed(t, "v0.5.0")
+			cfg := loadConfig(t)
+			cfg.Remotes["khz"].Version = "v0.7.0"
+			seedConfig(t, cfg)
+			return childStatus{Code: exitVersionMoved}, nil
+		},
+	}
+
+	handled, code := f.d.run()
+	require.True(t, handled)
+	require.Equal(t, 1, code)
+	require.Len(t, f.spawns, 1)
+	require.Contains(t, f.stderr.String(), "error: remote khz now runs skali v0.7.0, newer than this CLI v0.6.0; run skali upgrade --version v0.7.0 and run the command again")
+	installed, err := os.ReadFile(f.d.executable)
+	require.NoError(t, err)
+	require.Equal(t, fakeCLI("v0.6.0"), installed, "home is untouched")
+	_, cached := installer.CachedBinary(installer.CLICachePath(f.cache, "v0.7.0"))
+	require.False(t, cached, "nothing is fetched")
+}
+
+func TestRerunFollowsDownwardMove(t *testing.T) {
+	// The same rerun below home fetches the release the record moved to
+	// and runs the command once more, as before.
+	f := newDispatchFixture(t, "v0.6.0", "env", "list")
+	f.seedCache(t, "v0.4.0")
+	f.serveFeed(t, "v0.5.0")
+	f.seedRemote(t, "khz", fakeDaemon(t, "v0.4.0").URL, "v0.4.0")
+	f.script = []func(spawnCall) (childStatus, error){
+		func(spawnCall) (childStatus, error) {
 			cfg := loadConfig(t)
 			cfg.Remotes["khz"].Version = "v0.5.0"
 			seedConfig(t, cfg)
@@ -452,18 +560,29 @@ func TestDispatchPromotesTwiceAcrossARerun(t *testing.T) {
 	handled, code := f.d.run()
 	require.True(t, handled)
 	require.Equal(t, 0, code)
-	require.Contains(t, f.stderr.String(), "upgraded skali v0.3.2 -> v0.4.0 (remote khz runs skalid v0.4.0)")
-	require.Contains(t, f.stderr.String(), "upgraded skali v0.4.0 -> v0.5.0 (remote khz runs skalid v0.5.0)")
-	installed, err := os.ReadFile(f.d.executable)
-	require.NoError(t, err)
-	require.Equal(t, fakeCLI("v0.5.0"), installed)
+	require.Len(t, f.spawns, 2)
 	require.Equal(t, installer.CLICachePath(f.cache, "v0.5.0"), f.spawns[1].path)
+	require.NotContains(t, f.stderr.String(), "upgraded skali")
 }
 
-func TestHandoffFetchesPromotesAndRuns(t *testing.T) {
+func TestHandoffRefusesNewerReleaseNonInteractive(t *testing.T) {
+	f := newDispatchFixture(t, "v0.3.2", "remote", "add", "khz", "https://khz.example/api")
+	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
+	feed := f.serveFeed(t, "v0.4.0")
+
+	handled, code := f.d.handoff(context.Background(), "khz", deadURL(t), "v0.4.0")
+	require.True(t, handled)
+	require.Equal(t, 1, code)
+	require.Empty(t, f.spawns)
+	require.Empty(t, feed.requested())
+	require.Contains(t, f.stderr.String(), "error: remote khz runs skali v0.4.0, newer than this CLI v0.3.2; run skali upgrade --version v0.4.0 first")
+}
+
+func TestHandoffUpgradesHomeOnConsentAndRuns(t *testing.T) {
 	f := newDispatchFixture(t, "v0.3.2", "remote", "add", "khz", "https://khz.example/api")
 	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.3.2"))
 	f.serveFeed(t, "v0.4.0")
+	f.consent(t, true)
 
 	handled, code := f.d.handoff(context.Background(), "khz", deadURL(t), "v0.4.0")
 	require.True(t, handled)
@@ -473,7 +592,7 @@ func TestHandoffFetchesPromotesAndRuns(t *testing.T) {
 	require.Equal(t, []string{"remote", "add", "khz", "https://khz.example/api"}, f.spawns[0].args, "the child starts the command over")
 	installed, err := os.ReadFile(f.d.executable)
 	require.NoError(t, err)
-	require.Equal(t, fakeCLI("v0.4.0"), installed, "home was promoted")
+	require.Equal(t, fakeCLI("v0.4.0"), installed, "home was upgraded")
 	require.Contains(t, f.stderr.String(), "fetching skali v0.4.0 for remote khz")
 	require.Contains(t, f.stderr.String(), "upgraded skali v0.3.2 -> v0.4.0 (remote khz runs skalid v0.4.0)")
 }
@@ -536,7 +655,7 @@ func TestHandoffProbesEmptyVersion(t *testing.T) {
 }
 
 func TestHandoffFetchFailureFailsClosed(t *testing.T) {
-	f := newDispatchFixture(t, "v0.3.2", "remote", "add", "khz", "khz.example") // the fixture's feed is a dead URL
+	f := newDispatchFixture(t, "v0.5.0", "remote", "add", "khz", "khz.example") // the fixture's feed is a dead URL
 
 	handled, _ := f.d.handoff(context.Background(), "khz", deadURL(t), "v0.4.0")
 	require.True(t, handled)

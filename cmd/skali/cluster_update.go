@@ -76,6 +76,12 @@ func runManagedUpdate(ctx context.Context, out io.Writer, reader *bufio.Reader, 
 			return nil
 		}
 	}
+	// Only a CLI at least as new as the target may move a cluster there:
+	// the binary in PATH always manages every cluster it knows, so the
+	// CLI upgrades first and the cluster follows.
+	if home := homeRelease(); version.IsRelease(home) && version.Older(home, target) {
+		return fmt.Errorf("cluster upgrade to %s needs a skali at least that new; this is skali %s. Run skali upgrade --version %s first, then skali cluster upgrade", target, home, target)
+	}
 	if status.Summary.Action != "retry" {
 		if err := updates.ValidateTarget(status, target); err != nil {
 			return err

@@ -11,7 +11,7 @@ import (
 )
 
 // cliFetch is a runnable binary for one release: its cache path, its bytes
-// (for a promotion), and whether this call stored it.
+// (for a required home upgrade), and whether this call stored it.
 type cliFetch struct {
 	version string
 	path    string

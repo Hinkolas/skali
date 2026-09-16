@@ -18,6 +18,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/filelock"
 	"github.com/Hinkolas/skali/internal/installer"
@@ -30,8 +31,10 @@ import (
 // the dispatcher: it looks up the version the target remote last answered
 // with, and when that differs from its own it runs the cached binary of
 // that release as a child, fetching it from the release feed first when
-// needed. Home, the binary in PATH, is promoted to the newest
-// version in use, so dispatch normally goes downward.
+// needed. Home, the binary in PATH, is always the newest release in use:
+// a target newer than home is not managed until home is upgraded to it
+// (offered on the spot on a terminal, otherwise skali upgrade --version),
+// so dispatch only ever goes downward.
 
 const (
 	// exitVersionMoved is the reserved exit status a dispatched child ends
@@ -58,11 +61,10 @@ type dispatcher struct {
 	env         func(string) string
 	environ     func() []string
 	homeVersion string // the running binary's version, never mutated
-	installed   string // the version on disk at executable; moves with a promotion
 	executable  string
 	cacheDir    string
 	cwd         string
-	home        string // user home, for completion refresh after promotion
+	home        string // user home, for completion refresh after a home upgrade
 	goos        string
 	goarch      string
 	releaseBase string
@@ -70,6 +72,10 @@ type dispatcher struct {
 	stderr      io.Writer
 	root        func() *cobra.Command
 	spawn       func(ctx context.Context, path string, args, env []string) (childStatus, error)
+	// interactive reports whether a required home upgrade may be offered
+	// as a prompt; confirm asks it. Both are substituted by tests.
+	interactive func() bool
+	confirm     func(ctx context.Context, title, description string) (bool, error)
 	selected    *versionContext
 	now         func() time.Time
 }
@@ -89,7 +95,6 @@ func newDispatcher(args []string) (*dispatcher, error) {
 		env:         dispatchEnvironment,
 		environ:     os.Environ,
 		homeVersion: versionpkg.Version,
-		installed:   versionpkg.Version,
 		executable:  executable,
 		cacheDir:    installer.DefaultCacheDir(),
 		cwd:         cwd,
@@ -101,7 +106,13 @@ func newDispatcher(args []string) (*dispatcher, error) {
 		stderr:      os.Stderr,
 		root:        newRootCommand,
 		spawn:       spawnChild,
-		now:         time.Now,
+		interactive: func() bool { return clirender.IsTerminal(os.Stdin) && clirender.IsTerminal(os.Stderr) },
+		confirm: func(ctx context.Context, title, description string) (bool, error) {
+			// The prompt shares stderr with the rest of the dispatcher's
+			// output; stdout stays clean for the command's own result.
+			return cliprompt.New(os.Stdin, os.Stderr).Confirm(ctx, cliprompt.ConfirmOptions{Title: title, Description: description, Default: true})
+		},
+		now: time.Now,
 	}, nil
 }
 
@@ -212,7 +223,7 @@ func (d *dispatcher) run() (bool, int) {
 	inv := preparseArgs(d.args, d.root)
 	if reason := dispatchGate(inv, d.env, d.homeVersion, d.executable, d.cacheDir); reason != "" {
 		d.note(inv, "skipped (%s)", reason)
-		d.selected = &versionContext{Release: d.homeVersion, Source: "this CLI", Mode: "home"}
+		d.selected = &versionContext{Release: d.homeVersion, HomeRelease: d.homeVersion, Source: "this CLI", Mode: "home"}
 		return false, 0
 	}
 	if inv.help {
@@ -227,7 +238,7 @@ func (d *dispatcher) run() (bool, int) {
 		// No configured target is a supported local-only workflow; malformed
 		// bindings and explicit selections never fall through to home.
 		if errors.Is(err, errNoRemote) {
-			d.selected = &versionContext{Resolved: true, Release: d.homeVersion, Source: "this CLI", Mode: "home"}
+			d.selected = &versionContext{Resolved: true, Release: d.homeVersion, HomeRelease: d.homeVersion, Source: "this CLI", Mode: "home"}
 			if !inv.completion && inv.command != "skill" {
 				fmt.Fprintf(d.stderr, "using skali %s (home; no target)\n", d.homeVersion)
 			}
@@ -287,13 +298,25 @@ func (d *dispatcher) run() (bool, int) {
 		}
 		return d.failure(fmt.Errorf("remote %s runs unsupported prerelease %s; this versioning contract starts at %s", target.Name, record, minimumDispatchRelease))
 	}
-	d.selected = &versionContext{Resolved: true, Home: d.executable, Remote: target.Name, Master: target.Remote.Master, Instance: target.Remote.Instance, Release: record, Source: source, Mode: mode, Binding: target.Binding}
+	d.selected = &versionContext{Resolved: true, Home: d.executable, HomeRelease: d.homeVersion, Remote: target.Name, Master: target.Remote.Master, Instance: target.Remote.Instance, Release: record, Source: source, Mode: mode, Binding: target.Binding}
 	if !inv.completion && inv.command != "skill" {
 		fmt.Fprintf(d.stderr, "target %s: skali %s (%s, %s)\n", target.Name, record, source, mode)
 	}
 	want, different := dispatchTarget(d.homeVersion, record)
 	if !different {
 		return false, 0
+	}
+	newer := versionpkg.Older(d.homeVersion, want)
+	if newer {
+		// Home must be at least as new as every cluster it manages.
+		// Completion stays silent; everything else needs the user's
+		// consent to upgrade home before a byte is downloaded.
+		if inv.completion {
+			return true, 0
+		}
+		if err := d.requireUpgrade(ctx, inv, target.Name, want); err != nil {
+			return d.failure(err)
+		}
 	}
 	dispatchTried = true
 	var fetch *cliFetch
@@ -316,13 +339,17 @@ func (d *dispatcher) run() (bool, int) {
 			return d.failure(err)
 		}
 	}
-	if !inv.completion && versionpkg.Older(d.installed, fetch.version) {
-		d.promoteHome(ctx, fetch.binary, fetch.version, target.Name)
+	installed := d.homeVersion
+	if newer {
+		if err := d.upgradeHome(ctx, fetch.binary, want, target.Name); err != nil {
+			return d.failure(err)
+		}
+		installed = want
 	}
 	handled, code := d.runLoop(ctx, target.Name, fetch.version, fetch.path)
 	if fetch.fetched {
 		if current, err := cliconfig.Load(); err == nil {
-			pruneCLICache(current, d.installed, d.cacheDir)
+			pruneCLICache(current, installed, d.cacheDir)
 		}
 	}
 	return handled, code
@@ -367,7 +394,7 @@ func (d *dispatcher) handoff(ctx context.Context, remoteName, master, version st
 	if !versionpkg.IsRelease(version) {
 		return d.failure(fmt.Errorf("remote %s does not advertise a supported release (%q)", remoteName, version))
 	}
-	d.selected = &versionContext{Resolved: true, Home: d.executable, Remote: remoteName, Master: master, Instance: instance, Release: version, Source: "remote command", Mode: "verified"}
+	d.selected = &versionContext{Resolved: true, Home: d.executable, HomeRelease: d.homeVersion, Remote: remoteName, Master: master, Instance: instance, Release: version, Source: "remote command", Mode: "verified"}
 
 	if versionpkg.IsRelease(version) && unsupportedDispatchRelease(version) {
 		return d.failure(fmt.Errorf("unsupported prerelease %s; supported releases start at %s", version, minimumDispatchRelease))
@@ -377,6 +404,12 @@ func (d *dispatcher) handoff(ctx context.Context, remoteName, master, version st
 		d.note(inv, "remote %s runs skalid %q, this skali is %s", remoteName, version, d.homeVersion)
 		return false, 0
 	}
+	newer := versionpkg.Older(d.homeVersion, want)
+	if newer {
+		if err := d.requireUpgrade(ctx, inv, remoteName, want); err != nil {
+			return d.failure(err)
+		}
+	}
 	dispatchTried = true
 	fetch, err := d.ensureCLI(ctx, remoteName, want)
 	if err != nil {
@@ -385,12 +418,16 @@ func (d *dispatcher) handoff(ctx context.Context, remoteName, master, version st
 		}
 		return d.failure(err)
 	}
-	if versionpkg.Older(d.installed, fetch.version) {
-		d.promoteHome(ctx, fetch.binary, fetch.version, remoteName)
+	installed := d.homeVersion
+	if newer {
+		if err := d.upgradeHome(ctx, fetch.binary, want, remoteName); err != nil {
+			return d.failure(err)
+		}
+		installed = want
 	}
 	if fetch.fetched {
 		if cfg, err := cliconfig.Load(); err == nil {
-			pruneCLICache(cfg, d.installed, d.cacheDir)
+			pruneCLICache(cfg, installed, d.cacheDir)
 		}
 	}
 	d.note(inv, "running skali %s for remote %s", fetch.version, remoteName)
@@ -483,15 +520,18 @@ func (d *dispatcher) runLoop(ctx context.Context, remoteName, want, path string)
 		if inv.offline {
 			return d.failure(fmt.Errorf("selected release changed; run the command again online"))
 		}
+		if versionpkg.Older(d.homeVersion, moved) {
+			// The rerun never upgrades home behind the user's back; the
+			// front gate offers that on the next invocation.
+			return d.failure(fmt.Errorf("remote %s now runs skali %s, newer than this CLI %s; run skali upgrade --version %s and run the command again",
+				remoteName, moved, d.homeVersion, moved))
+		}
 		fetch, err := d.ensureCLI(ctx, remoteName, moved)
 		if err != nil {
 			return d.failure(err)
 		}
 		if d.selected != nil {
 			d.selected.Release = moved
-		}
-		if versionpkg.Older(d.installed, moved) {
-			d.promoteHome(ctx, fetch.binary, moved, remoteName)
 		}
 		want, path = moved, fetch.path
 	}
@@ -521,45 +561,66 @@ func (d *dispatcher) finish(status childStatus) int {
 	return status.Code
 }
 
-// promoteHome makes a fetched newer release the binary in PATH (home is
-// the newest version in use). It never changes what runs next: the cached
-// copy is executed either way, so the just-written home path is never
-// execed by the dispatcher itself. Every outcome is one stderr line. The
-// running process keeps its own version; installed tracks the disk.
-func (d *dispatcher) promoteHome(ctx context.Context, binary []byte, target, remoteName string) bool {
-	if insideDir(d.executable, d.cacheDir) {
-		return false
+// requireUpgrade is the consent step before home is upgraded to a target's
+// newer release. It touches no network: it decides, from the invocation
+// and the install directory alone, whether the upgrade can happen here and
+// now (a terminal user agreed) or must be an explicit skali upgrade. Every
+// refusal names that command with the exact release.
+func (d *dispatcher) requireUpgrade(ctx context.Context, inv invocation, remoteName, target string) error {
+	if inv.offline {
+		return fmt.Errorf("remote %s recorded skali %s, newer than this CLI %s; run skali upgrade --version %s first",
+			remoteName, target, d.homeVersion, target)
 	}
-	style := d.style()
+	if insideDir(d.executable, d.cacheDir) {
+		return fmt.Errorf("remote %s runs skali %s, newer than this CLI %s, which is a cached copy; run skali upgrade --version %s on the installed skali",
+			remoteName, target, d.homeVersion, target)
+	}
 	dir := filepath.Dir(d.executable)
 	if err := probeWritableDir(dir); err != nil {
 		sudo := "sudo "
 		if os.Geteuid() == 0 {
 			sudo = ""
 		}
-		fmt.Fprintln(d.stderr, style.Yellow(fmt.Sprintf("hint: skali %s is cached but %s is not writable; run %sskali upgrade --version %s once to make it the default",
-			target, dir, sudo, target)))
-		return false
+		return fmt.Errorf("remote %s runs skali %s, newer than this CLI %s, and %s is not writable; run %sskali upgrade --version %s first, or install skali under ~/.local/bin",
+			remoteName, target, d.homeVersion, dir, sudo, target)
 	}
+	if d.interactive == nil || !d.interactive() {
+		return fmt.Errorf("remote %s runs skali %s, newer than this CLI %s; run skali upgrade --version %s first",
+			remoteName, target, d.homeVersion, target)
+	}
+	ok, err := d.confirm(ctx, fmt.Sprintf("Upgrade skali %s -> %s now?", d.homeVersion, target),
+		fmt.Sprintf("remote %s runs skali %s; a CLI at least as new is required to manage it", remoteName, target))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("upgrade declined; run skali upgrade --version %s to manage remote %s", target, remoteName)
+	}
+	return nil
+}
+
+// upgradeHome makes the fetched release the binary in PATH after
+// requireUpgrade agreed to it. It never changes what runs next: the cached
+// copy is executed either way, so the just-written home path is never
+// execed by the dispatcher itself. Under the installation lock the binary
+// on disk is inspected again: another process may already have upgraded
+// home to this release or a newer one, in which case nothing is written.
+// A failed replacement is an error, not a fallback to the cached copy.
+func (d *dispatcher) upgradeHome(ctx context.Context, binary []byte, target, remoteName string) error {
 	unlock, err := filelock.Acquire(ctx, d.executable+".lock")
 	if err != nil {
-		fmt.Fprintln(d.stderr, "warning: cannot lock home CLI:", err)
-		return false
+		return fmt.Errorf("lock the installed skali: %w", err)
 	}
 	defer unlock()
 	installed, err := installedCLIVersion(ctx, d.executable)
 	if err != nil {
-		fmt.Fprintln(d.stderr, "warning: cannot inspect home CLI:", err)
-		return false
+		return fmt.Errorf("inspect the installed skali %s: %w", d.executable, err)
 	}
-	d.installed = installed
-	if !versionpkg.IsRelease(installed) || !versionpkg.Older(installed, target) {
-		return false
+	if versionpkg.IsRelease(installed) && !versionpkg.Older(installed, target) {
+		return nil
 	}
 	if err := installCLIUnlocked(ctx, d.executable, binary, target); err != nil {
-		fmt.Fprintln(d.stderr, style.Yellow(fmt.Sprintf("warning: could not replace %s with skali %s: %v; running the cached copy",
-			d.executable, target, err)))
-		return false
+		return fmt.Errorf("upgrade %s to skali %s: %w; run skali upgrade --version %s", d.executable, target, err, target)
 	}
 	if warning := refreshCompletions(ctx, clirender.NewTasks(io.Discard), d.executable, d.home); warning != "" {
 		fmt.Fprintln(d.stderr, "warning:", warning)
@@ -567,9 +628,8 @@ func (d *dispatcher) promoteHome(ctx context.Context, binary []byte, target, rem
 	if warning := refreshSkill(ctx, clirender.NewTasks(io.Discard), d.executable, d.home); warning != "" {
 		fmt.Fprintln(d.stderr, "warning:", warning)
 	}
-	fmt.Fprintf(d.stderr, "upgraded skali %s -> %s (remote %s runs skalid %s)\n", d.installed, target, remoteName, target)
-	d.installed = target
-	return true
+	fmt.Fprintf(d.stderr, "upgraded skali %s -> %s (remote %s runs skalid %s)\n", installed, target, remoteName, target)
+	return nil
 }
 
 // rerunAfterMismatch covers the cluster that moved while home matched its
@@ -594,6 +654,11 @@ func rerunAfterMismatch(err error, env func(string) string, stderr io.Writer, tr
 	}
 	remote, server := skew.snapshot()
 	if remote == "" || remote == localRemoteName || !versionpkg.ReleasesDiffer(versionpkg.Version, server) {
+		return false, 0
+	}
+	if versionpkg.Older(versionpkg.Version, server) {
+		// The cluster moved past home; the pending skew hint names the
+		// upgrade, and nothing is rerun until it happened.
 		return false, 0
 	}
 	fmt.Fprintln(stderr, clirender.StyleFor(stderr).Yellow(fmt.Sprintf("hint: remote %s now runs skalid %s; rerunning with skali %s",

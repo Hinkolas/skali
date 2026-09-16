@@ -28,7 +28,8 @@ func TestHelpUsesRecordedCLIWithoutNetworkOrPromotion(t *testing.T) {
 			require.Len(t, f.spawns, 1)
 			require.Equal(t, path, f.spawns[0].path)
 			require.NotContains(t, f.spawns[0].args, "--offline")
-			require.Equal(t, "v0.3.0", f.d.installed)
+			_, err := os.Stat(f.d.executable)
+			require.ErrorIs(t, err, os.ErrNotExist, "home is untouched")
 			require.Contains(t, f.stderr.String(), "recorded release, not verified online")
 		})
 	}

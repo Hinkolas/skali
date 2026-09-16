@@ -97,10 +97,14 @@ func TestManagedCLIPrioritizesAcceptedTarget(t *testing.T) {
 	require.ErrorContains(t, err, "finish the running update")
 }
 
+// TestManagedUpgradeHandsOffOnlyObservation: home v0.6.0 drives a v0.4.0
+// cluster through the dispatched v0.4.0 worker; the update moves the
+// cluster to v0.5.0, still below home, so observation hands off to that
+// release with only the accepted operation ID.
 func TestManagedUpgradeHandsOffOnlyObservation(t *testing.T) {
 	withCLIVersion(t, "v0.4.0")
 	f := newDispatchFixture(t, "v0.4.0", "cluster", "upgrade", "--version", "v0.5.0", "--wait", "--yes")
-	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.5.0"))
+	f.d.executable = writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.6.0"))
 	f.seedCache(t, "v0.5.0")
 	submissions := 0
 	status := updates.Status{Managed: true, Manageable: true, Installed: updates.Installed{Version: "v0.4.0", PlatformVersion: "v0.4.0"}, Summary: updates.Summary{State: "available", Action: "update", TargetVersion: "v0.5.0", ConvergedVersion: "v0.4.0"}}
@@ -132,7 +136,7 @@ func TestManagedUpgradeHandsOffOnlyObservation(t *testing.T) {
 	defer server.Close()
 	f.seedRemote(t, "target", server.URL, "v0.4.0")
 	previous := invocationContext
-	invocationContext = &versionContext{Home: f.d.executable, Remote: "target", Master: server.URL, Instance: "inst-1", Release: "v0.4.0", Source: "--remote", Mode: "verified"}
+	invocationContext = &versionContext{Home: f.d.executable, HomeRelease: "v0.6.0", Remote: "target", Master: server.URL, Instance: "inst-1", Release: "v0.4.0", Source: "--remote", Mode: "verified"}
 	t.Cleanup(func() { invocationContext = previous })
 	factory := newObservationDispatcher
 	t.Cleanup(func() { newObservationDispatcher = factory })
@@ -152,4 +156,61 @@ func TestManagedUpgradeHandsOffOnlyObservation(t *testing.T) {
 	require.Zero(t, dispatched.code)
 	require.Equal(t, 1, submissions)
 	require.Len(t, f.spawns, 1)
+}
+
+// TestManagedUpgradeRefusesTargetNewerThanHome: the CLI upgrades first,
+// the cluster follows. Whether the target is explicit, chosen by the
+// daemon's scan, or an update to finish or retry, a target above home is
+// refused before anything is submitted.
+func TestManagedUpgradeRefusesTargetNewerThanHome(t *testing.T) {
+	withCLIVersion(t, "v0.4.0")
+	previous := invocationContext
+	invocationContext = &versionContext{HomeRelease: "v0.4.0", Remote: "target", Release: "v0.4.0", Source: "--remote", Mode: "verified"}
+	t.Cleanup(func() { invocationContext = previous })
+	for _, scenario := range []struct {
+		name, action, state, target string
+	}{
+		{"explicit", "update", "available", "v0.5.0"},
+		{"scan", "update", "available", ""},
+		{"finish", "finish", "incomplete", ""},
+		{"retry", "retry", "failed", ""},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			var paths []string
+			status := updates.Status{Installed: updates.Installed{Version: "v0.4.0", PlatformVersion: "v0.4.0"}, Managed: true, Manageable: true,
+				Summary: updates.Summary{State: scenario.state, Action: scenario.action, TargetVersion: "v0.5.0", ConvergedVersion: "v0.4.0"}}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.Method+" "+r.URL.Path)
+				_ = json.NewEncoder(w).Encode(status)
+			}))
+			defer server.Close()
+			var out bytes.Buffer
+			err := runManagedUpdate(context.Background(), &out, bufio.NewReader(strings.NewReader("")), client.New(server.URL, "token", client.Caller{UserAgent: "test"}), scenario.target, true, false)
+			require.EqualError(t, err, "cluster upgrade to v0.5.0 needs a skali at least that new; this is skali v0.4.0. Run skali upgrade --version v0.5.0 first, then skali cluster upgrade")
+			for _, path := range paths {
+				require.NotContains(t, path, "/apply")
+				require.NotContains(t, path, "/resume")
+			}
+		})
+	}
+}
+
+// TestUpdateObservationRefusesReleaseAboveHome: a daemon that self-updated
+// past home while the CLI was watching is not followed; the error names the
+// upgrade and the way back into the observation.
+func TestUpdateObservationRefusesReleaseAboveHome(t *testing.T) {
+	withCLIVersion(t, "v0.4.0")
+	f := newDispatchFixture(t, "v0.4.0")
+	factory := newObservationDispatcher
+	t.Cleanup(func() { newObservationDispatcher = factory })
+	newObservationDispatcher = func(args []string) (*dispatcher, error) { f.d.args = args; return f.d, nil }
+	previous := invocationContext
+	selected := &versionContext{Home: f.d.executable, HomeRelease: "v0.4.0", Remote: "target", Master: "https://target.example", Instance: "inst-1", Release: "v0.4.0", Source: "--remote", Mode: "verified"}
+	invocationContext = selected
+	t.Cleanup(func() { invocationContext = previous })
+
+	err := runUpdateObserver(context.Background(), selected, "v0.5.0", "accepted-once")
+	require.EqualError(t, err, "update accepted-once moved the cluster to skali v0.5.0, newer than this CLI v0.4.0; run skali upgrade --version v0.5.0, then skali cluster upgrade --wait --remote target to keep observing")
+	require.Empty(t, f.spawns)
+	require.Empty(t, f.stderr.String(), "no fetch is attempted")
 }

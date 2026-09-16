@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/version"
@@ -235,6 +236,32 @@ func TestRunUpgradeExplicitDowngradeSkipsFeed(t *testing.T) {
 	require.Contains(t, out.String(), "downgraded skali v0.2.0 -> v0.1.0")
 	require.NotContains(t, out.String(), "channel", "an explicit version has no channel")
 	require.NotContains(t, server.requested(), "/releases")
+}
+
+// TestRunUpgradeExplicitDowngradeWarnsAboutNewerRemotes: home manages only
+// clusters at or below its release, so a deliberate downgrade names the
+// remotes it puts out of reach. The local platform is not one of them.
+func TestRunUpgradeExplicitDowngradeWarnsAboutNewerRemotes(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedConfig(t, &cliconfig.Config{Remotes: map[string]*cliconfig.Remote{
+		"prod":          {Master: "https://prod.example/api", Version: "v0.3.0"},
+		"lab":           {Master: "https://lab.example/api", Version: "v0.2.0"},
+		"old":           {Master: "https://old.example/api", Version: "v0.1.0"},
+		localRemoteName: {Master: "https://localhost:7443", Version: "v0.9.0"},
+	}})
+	server := newFakeUpgradeServer(t, "v0.2.0", releaseAssets(fakeCLI("v0.2.0")))
+	executable := writeExecutable(t, t.TempDir(), "skali", fakeCLI("v0.4.0"))
+
+	opts := server.options("v0.4.0", updates.ChannelStable, executable)
+	opts.Requested = "v0.2.0"
+	opts.CacheDir = t.TempDir()
+	var out bytes.Buffer
+	require.NoError(t, runUpgrade(context.Background(), &out, opts))
+	require.Contains(t, out.String(), "downgraded skali v0.4.0 -> v0.2.0")
+	require.Contains(t, out.String(), "warning: remote prod runs skali v0.3.0; it cannot be managed until you upgrade again")
+	require.NotContains(t, out.String(), "remote lab")
+	require.NotContains(t, out.String(), "remote old")
+	require.NotContains(t, out.String(), localRemoteName+" runs")
 }
 
 func TestRunUpgradeAlreadyCurrentDownloadsNothing(t *testing.T) {

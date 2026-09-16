@@ -56,11 +56,16 @@ func runUpdateObserver(ctx context.Context, selected *versionContext, release, i
 	if selected.Home != "" {
 		d.executable = selected.Home
 	}
+	if home := homeRelease(); versionpkg.Older(home, release) {
+		// Observation crosses release boundaries downward only; home is
+		// never upgraded behind a running update.
+		return fmt.Errorf("update %s moved the cluster to skali %s, newer than this CLI %s; run skali upgrade --version %s, then skali cluster upgrade --wait --remote %s to keep observing",
+			id, release, home, release, selected.Remote)
+	}
 	fetch, err := d.ensureCLI(ctx, selected.Remote, release)
 	if err != nil {
 		return err
 	}
-	d.promoteHome(ctx, fetch.binary, release, selected.Remote)
 	fmt.Fprintf(os.Stderr, "Continuing observation of update %s with skali %s.\n", id, release)
 	_, code := d.runLoop(ctx, selected.Remote, release, fetch.path)
 	return &dispatchedExit{code: code}

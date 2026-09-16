@@ -17,17 +17,21 @@ const minimumDispatchRelease = "v0.1.0-rc.3"
 // versionContext is the additive, secret-free contract between the launcher
 // and its release worker. Parent binds it to one child, not grandchildren.
 type versionContext struct {
-	Resolved bool             `json:"resolved,omitempty"`
-	Handoffs int              `json:"handoffs,omitempty"`
-	Home     string           `json:"home,omitempty"`
-	Parent   int              `json:"parent"`
-	Remote   string           `json:"remote,omitempty"`
-	Master   string           `json:"master,omitempty"`
-	Instance string           `json:"instance,omitempty"`
-	Release  string           `json:"release"`
-	Source   string           `json:"source"`
-	Mode     string           `json:"mode"`
-	Binding  *checkout.Target `json:"binding,omitempty"`
+	Resolved bool   `json:"resolved,omitempty"`
+	Handoffs int    `json:"handoffs,omitempty"`
+	Home     string `json:"home,omitempty"`
+	// HomeRelease is the launcher's own release. A worker runs at the
+	// target's release, which may be older; policies about what home may
+	// manage (a cluster upgrade target, for one) compare against this.
+	HomeRelease string           `json:"homeRelease,omitempty"`
+	Parent      int              `json:"parent"`
+	Remote      string           `json:"remote,omitempty"`
+	Master      string           `json:"master,omitempty"`
+	Instance    string           `json:"instance,omitempty"`
+	Release     string           `json:"release"`
+	Source      string           `json:"source"`
+	Mode        string           `json:"mode"`
+	Binding     *checkout.Target `json:"binding,omitempty"`
 }
 
 var invocationContext *versionContext
@@ -64,6 +68,15 @@ func contextEnvironment(environ []string, selected *versionContext) []string {
 		env = append(env, envVersionContext+"="+string(raw))
 	}
 	return append(env, envDispatched+"=1")
+}
+
+// homeRelease is the release of the binary the user invoked: this one, or
+// the launcher's when this process is its dispatched worker.
+func homeRelease() string {
+	if invocationContext != nil && invocationContext.HomeRelease != "" {
+		return invocationContext.HomeRelease
+	}
+	return versionpkg.Version
 }
 
 func versionDescription() string {

@@ -77,43 +77,44 @@ func TestEnsureCLIFeedUnreachable(t *testing.T) {
 	require.NotContains(t, f.stderr.String(), "; running")
 }
 
-func TestPromoteHomeReplacesWritableExecutable(t *testing.T) {
+func TestUpgradeHomeReplacesWritableExecutable(t *testing.T) {
 	f := newDispatchFixture(t, "v0.3.2")
 	dir := t.TempDir()
 	f.d.executable = writeExecutable(t, dir, "skali", fakeCLI("v0.3.2"))
 
-	require.True(t, f.d.promoteHome(context.Background(), fakeCLI("v0.4.0"), "v0.4.0", "khz"))
+	require.NoError(t, f.d.upgradeHome(context.Background(), fakeCLI("v0.4.0"), "v0.4.0", "khz"))
 	installed, err := os.ReadFile(f.d.executable)
 	require.NoError(t, err)
 	require.Equal(t, fakeCLI("v0.4.0"), installed)
 	require.Equal(t, "upgraded skali v0.3.2 -> v0.4.0 (remote khz runs skalid v0.4.0)\n", f.stderr.String())
 }
 
-func TestPromoteHomeUnwritableDirPrintsHint(t *testing.T) {
+func TestRequireUpgradeUnwritableDirNamesSudo(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can write anywhere")
 	}
-	f := newDispatchFixture(t, "v0.3.2")
+	f := newDispatchFixture(t, "v0.3.2", "env", "list")
 	dir := t.TempDir()
 	f.d.executable = writeExecutable(t, dir, "skali", fakeCLI("v0.3.2"))
 	require.NoError(t, os.Chmod(dir, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	f.consent(t, true)
 
-	require.False(t, f.d.promoteHome(context.Background(), fakeCLI("v0.4.0"), "v0.4.0", "khz"))
-	require.Contains(t, f.stderr.String(), "hint: skali v0.4.0 is cached but "+dir+" is not writable; run sudo skali upgrade --version v0.4.0 once to make it the default")
+	err := f.d.requireUpgrade(context.Background(), preparseArgs(f.d.args, f.d.root), "khz", "v0.4.0")
+	require.EqualError(t, err, "remote khz runs skali v0.4.0, newer than this CLI v0.3.2, and "+dir+" is not writable; run sudo skali upgrade --version v0.4.0 first, or install skali under ~/.local/bin")
 	unchanged, err := os.ReadFile(f.d.executable)
 	require.NoError(t, err)
 	require.Equal(t, fakeCLI("v0.3.2"), unchanged)
 }
 
-func TestPromoteHomeVerifyFailureRestores(t *testing.T) {
+func TestUpgradeHomeVerifyFailureRestores(t *testing.T) {
 	f := newDispatchFixture(t, "v0.3.2")
 	dir := t.TempDir()
 	f.d.executable = writeExecutable(t, dir, "skali", fakeCLI("v0.3.2"))
 
-	require.False(t, f.d.promoteHome(context.Background(), fakeCLI("v0.3.9"), "v0.4.0", "khz"))
-	require.Contains(t, f.stderr.String(), "warning: could not replace "+f.d.executable+" with skali v0.4.0:")
-	require.Contains(t, f.stderr.String(), "the previous binary was restored; running the cached copy")
+	err := f.d.upgradeHome(context.Background(), fakeCLI("v0.3.9"), "v0.4.0", "khz")
+	require.ErrorContains(t, err, "upgrade "+f.d.executable+" to skali v0.4.0:")
+	require.ErrorContains(t, err, "the previous binary was restored; run skali upgrade --version v0.4.0")
 	restored, err := os.ReadFile(f.d.executable)
 	require.NoError(t, err)
 	require.Equal(t, fakeCLI("v0.3.2"), restored)

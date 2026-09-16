@@ -34,7 +34,7 @@ commands put selection information on stderr, keeping JSON and compiled output
 on stdout clean. `skali version` reports the invoked binary; it does not identify
 the binary that answered a previous reference request.
 
-## 2. Exact dispatch, offline work and home promotion
+## 2. Exact dispatch, offline work and the home rule
 
 The release feed supplies binaries with published checksums. Cached entries
 retain their checksum and are verified before execution. A missing, corrupted,
@@ -50,13 +50,22 @@ local dev platform remain allowed. Offline validation proves compatibility with
 the selected recorded release, not the cluster's currently running release.
 Reconnect and validate online before deployment.
 
-Home is automatically promoted when a target needs a newer release, including a
-newer prerelease. Explicit CLI upgrades and automatic promotion hold the same
-installation lock and recheck the binary on disk inside it. Automatic promotion
-never downgrades a release installed by another process. If home is unwritable
-or replacement fails, the correct cached CLI still executes and a warning gives
-the remedy. Successful installation refreshes managed skills and completion
-scripts; individual replacements are atomic.
+Home, the CLI in PATH, is always at least as new as every cluster it manages;
+dispatch only goes downward. A target newer than home (including a newer
+prerelease) is not managed until home is upgraded to that release. On a
+terminal the CLI offers that upgrade on the spot and, once accepted, continues
+the command in the matching release; a non-interactive run, an `--offline`
+selection, or an install directory the user cannot write stops with an error
+naming `skali upgrade --version <release>` (with `sudo` where needed, or a
+private install under `~/.local/bin`). Nothing is downloaded before consent,
+and a cached newer release is never executed behind a stale home. `skali
+upgrade` and the consented upgrade hold the same installation lock and recheck
+the binary on disk inside it; a release another process already installed is
+never downgraded. A failed replacement is an error, not a fallback to the cached
+copy. Successful installation refreshes managed skills and completion scripts;
+individual replacements are atomic. An explicit downgrade warns about every
+configured remote it puts out of reach. Because home is the newest release in
+use by construction, removing every remote leaves the newest release installed.
 
 Configuration updates use a locked read-modify-write transaction. Each writer
 applies its changes to the latest file, preserving unknown fields and unrelated
@@ -77,12 +86,15 @@ including the local platform. Locks are stable sidecar files and are not deleted
 Host installation/recovery, binary version reporting and upgrades, skill
 installation, completion installation, and local platform stop/reset/status
 remain with home. API-backed managed cluster upgrades use the selected remote's
-release. Remote configuration commands stay home; their API work hands off
-before execution after resolving the positional target. Local removal of a
-remote or token is still possible when server-side revocation is unavailable.
+release and refuse a target newer than home, whether named explicitly, chosen
+by the daemon's scan, or left over from an update to finish or retry: the CLI
+upgrades first, then the cluster. Remote configuration commands stay home;
+their API work hands off before execution after resolving the positional
+target. Local removal of a remote or token is still possible when server-side
+revocation is unavailable.
 
 Command help (`deploy --help` and `help deploy`, for example) never contacts a
-cluster, downloads a CLI or promotes home. It prefers the recorded target
+cluster, downloads a CLI or upgrades home. It prefers the recorded target
 release's installed/cached CLI and identifies that release as unverified. If
 configuration or the matching CLI is unavailable, it displays explicitly labeled
 home help without claiming target compatibility. `--offline` is accepted with
@@ -90,19 +102,25 @@ help but is unnecessary; it does not enable offline API commands. Embedded
 references remain strict and never substitute another release.
 
 Dynamic completion uses a matching installed/cached CLI without downloading or
-promoting. Missing target context or cache produces no remote suggestions. Local completion sources such
-as remote names remain available without a network request.
+upgrading. Missing target context or cache, or a recorded release newer than
+home, produces no remote suggestions. Local completion sources such as remote
+names remain available without a network request.
 
 An observed version difference alone never causes command replay. A typed
-version rejection may trigger at most one retry of explicitly read-only work.
-Mutating command bodies are never replayed automatically. Deployment and backup
-observation failures preserve the accepted run ID and show `skali run attach`.
+version rejection may trigger at most one retry of explicitly read-only work,
+and only toward a release not newer than home; a cluster that moved past home
+stops the command with the upgrade remedy instead. Mutating command bodies are
+never replayed automatically. Deployment and backup observation failures
+preserve the accepted run ID and show `skali run attach`.
 
 A managed cluster upgrade is submitted once. If the daemon changes release
 while `--wait` observes it, the CLI probes the same pinned installation and
-hands off to the new release with only the accepted operation ID. The internal
-`--observe-operation` path cannot submit, resume or retry an upgrade. It verifies
-that the observed operation is still the accepted one; handoffs are bounded.
+hands off to the new release with only the accepted operation ID, provided that
+release is not newer than home; otherwise the observation stops and the error
+names `skali upgrade --version` followed by `skali cluster upgrade --wait` to
+resume watching. The internal `--observe-operation` path cannot submit, resume
+or retry an upgrade. It verifies that the observed operation is still the
+accepted one; handoffs are bounded.
 
 ## 4. Manifest review and stored document schemas
 

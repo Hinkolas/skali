@@ -1,7 +1,9 @@
-# Versioning redesign — v0.1.0-rc.3 contract
+# Versioning redesign: v0.1.0-rc.3 contract
 
-- Commands verify the selected cluster and run its exact CLI release. Newer
-  targets automatically promote the installed CLI, including prereleases.
+- Commands verify the selected cluster and run its exact CLI release. The
+  installed CLI is always at least as new as every cluster it manages: a newer
+  target (including a prerelease) requires `skali upgrade --version` first,
+  offered interactively on a terminal and otherwise reported as an error.
   Failed execution/reference dispatch is an error; a different home release
   never substitutes. Command help stays available without a cluster, preferring
   cached target help and identifying any fallback to home help.
@@ -19,9 +21,11 @@
   upgrades validate before writing and leave semantic review to the author.
 - Remote listing/removal can repair incomplete configuration entries. Invalid
   YAML reports its file path and is never rewritten automatically.
-- Configuration, CLI promotion and cache operations are serialized. Managed
-  upgrade waiting continues with the accepted operation ID across release changes;
-  mutating commands are never automatically replayed.
+- Configuration, CLI upgrade and cache operations are serialized. `skali
+  cluster upgrade` refuses a target newer than the installed CLI. Managed
+  upgrade waiting continues with the accepted operation ID across release
+  changes below the installed CLI; mutating commands are never automatically
+  replayed.
 - Existing `schema_version` text columns and legacy stored-document aliases remain
   readable during daemon rollout overlap. Existing revisions and checksums are
   unchanged. This revises an unreleased migration; do not apply the abandoned
