@@ -42,9 +42,9 @@ type Renderer struct {
 	Out   io.Writer
 	TTY   bool
 	Style *Style
-	// Logs supplies the tail lines shown under running, waiting, and
-	// failed steps, keyed by step id. It runs on every frame, so it must
-	// answer from memory; see TailStepIDs for what to prefetch.
+	// Logs supplies the tail lines shown under running, waiting, failed,
+	// and skipped TLS steps, keyed by step id. It runs on every frame, so
+	// it must answer from memory; see TailStepIDs for what to prefetch.
 	Logs func(stepID string) []string
 	// Size reports the terminal's columns and rows; nil queries Out. A
 	// zero height disables the cap.
@@ -74,10 +74,20 @@ type treeView struct {
 }
 
 // showsTail reports whether a step's log tail is displayed: live or failed
-// leaves only, the children of composite steps speak for themselves.
+// leaves, plus a skipped TLS checkpoint (a deferred certificate ends
+// skipped, and its one warning row is the only place the transcript says
+// why); the children of composite steps speak for themselves.
 func showsTail(step *client.Step) bool {
-	return (step.Status == "running" || step.Status == "waiting" || step.Status == "failed") &&
-		len(step.Children) == 0
+	if len(step.Children) > 0 {
+		return false
+	}
+	switch step.Status {
+	case "running", "waiting", "failed":
+		return true
+	case "skipped":
+		return strings.HasPrefix(step.Key, "tls:")
+	}
+	return false
 }
 
 // TailStepIDs lists the steps whose log tail a render would show, so the

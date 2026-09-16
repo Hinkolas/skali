@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Hinkolas/skali/internal/edge"
+	"github.com/Hinkolas/skali/internal/edge/edgeprobe"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
@@ -18,16 +19,38 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
+// tlsOutcome is what one TLS pass tells the reconciler: whether an
+// unissued certificate withholds activation, whether the rollout has failed
+// on it, and how soon the pass wants to run again while a route domain is
+// still on its way to this edge.
+type tlsOutcome struct {
+	blocked bool
+	failed  bool
+	requeue time.Duration
+}
+
+// deferredGuidance is the operator's next step on a deferred route.
+const deferredGuidance = "Point the domain's A/AAAA records at this installation; the certificate is issued automatically once requests arrive here."
+
 // reconcileTLS gives each desired route its own checkpoint. Recovery is
 // driven by promotion time and live cluster state, never journal history.
-func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target store.EnvironmentTarget, rev *revision.Revision, desired *desiredSet, snapshot observe.Snapshot) (blocked, failed bool) {
+//
+// A route whose domain does not reach this installation's edge (probed
+// through Deps.ProbeDomain) is deferred: it neither blocks activation nor
+// fails the rollout, its checkpoint ends skipped with a warning naming the
+// domain, and the environment keeps re-probing on a slow cadence. When the
+// domain arrives, a certificate parked in cert-manager's failure backoff
+// gets one fresh issuance attempt right away.
+func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target store.EnvironmentTarget, rev *revision.Revision, desired *desiredSet, snapshot observe.Snapshot) tlsOutcome {
+	var out tlsOutcome
 	if !k.cfg.Certificates {
-		return false, false
+		return out
 	}
 	rollout := target.ActiveRevisionID == nil || *target.ActiveRevisionID != *target.TargetRevisionID
 	attached := a.adopted() && rolloutRun(a.run.Kind)
-	if !rollout && !attached {
-		return false, false
+	gate := rollout || attached
+	if !gate && k.deps.ProbeDomain == nil {
+		return out
 	}
 	now := time.Now()
 	deadline := target.UpdatedAt.Add(rolloutBudget(rev.Definition, k.cfg.RolloutDeadline) + releaseBudget(rev.Definition))
@@ -68,8 +91,33 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 		level := "info"
 		valid := cert != nil && cert.NotAfter.After(now)
 		readOK := true
+
+		// The edge verdict for an unissued certificate. The rendered
+		// Certificate names the domain before the object is ever observed;
+		// the observed dnsNames are the fallback.
+		var probe *edgeprobe.Result
+		arrived := false
+		if !valid && k.deps.ProbeDomain != nil {
+			domain := desired.certDomains[ref.Name]
+			if domain == "" && cert != nil && len(cert.DNSNames) > 0 {
+				domain = cert.DNSNames[0]
+			}
+			if domain != "" {
+				interval := edgeProbeIdleInterval
+				if attached {
+					interval = edgeProbeRolloutInterval
+				}
+				result, seen := k.observeDomain(ctx, ref.Name, domain, now, interval)
+				probe, arrived = &result, seen
+				if result.State.Pending() || result.State == edgeprobe.StateUnknown {
+					out.requeue = soonest(out.requeue, interval)
+				}
+			}
+		}
+		pending := probe != nil && probe.State.Pending()
+
 		if cert != nil && !valid {
-			if rollout && k.deps.RetryCertificate != nil && !cert.Issuing && !cert.LastFailureTime.IsZero() && cert.LastFailureTime.Before(target.UpdatedAt.Truncate(time.Second)) && now.Before(deadline) {
+			if !pending && rollout && k.deps.RetryCertificate != nil && !cert.Issuing && !cert.LastFailureTime.IsZero() && cert.LastFailureTime.Before(target.UpdatedAt.Truncate(time.Second)) && now.Before(deadline) {
 				retryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				changed, err := k.deps.RetryCertificate(retryCtx, ref, target.UpdatedAt)
 				cancel()
@@ -78,18 +126,35 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 					readOK = false
 				} else if changed {
 					slog.InfoContext(ctx, "TLS issuance retry triggered", "environment_id", target.EnvironmentID, "certificate", ref.Name, "failed_attempts", cert.FailedAttempts)
-					// The successful status write is fresher than the informer. Keep
-					// the wait open until the controller's next state arrives.
-					copy := *cert
-					copy.Issuing = true
-					copy.Ready = false
-					copy.NextRetryTime = time.Time{}
-					copy.Reason = "ManuallyTriggered"
-					copy.Message = "Redeploy requested a fresh issuance attempt"
-					cert = &copy
+					cert = retriedCertificate(cert, "Redeploy requested a fresh issuance attempt")
 				}
 			}
-			if attached && k.deps.InspectCertificate != nil {
+			if probe != nil {
+				switch {
+				case cert.Issuing:
+					// Issuance is already under way; the arrival needs no push.
+					k.settleArrival(probe.Domain)
+				case arrived && k.deps.RetryCertificate != nil && !cert.LastFailureTime.IsZero():
+					// The domain reached this edge for the first time since the
+					// certificate last failed. Its failure post-dates the
+					// promotion (the domain was elsewhere), so the retry is
+					// measured against now, not the promotion time.
+					retryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					changed, err := k.deps.RetryCertificate(retryCtx, ref, now)
+					cancel()
+					if err != nil {
+						fields["recovery_error"] = err.Error()
+						readOK = false
+					} else if changed {
+						slog.InfoContext(ctx, "TLS issuance retried: the route domain now reaches this edge", "environment_id", target.EnvironmentID, "certificate", ref.Name, "domain", probe.Domain)
+						k.settleArrival(probe.Domain)
+						cert = retriedCertificate(cert, "The domain now reaches this installation; a fresh issuance was requested")
+					}
+				}
+			}
+			// A domain that is elsewhere cannot validate; its controller
+			// chain says nothing the verdict does not already say.
+			if attached && !pending && k.deps.InspectCertificate != nil {
 				inspectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				fresh, details, err := k.deps.InspectCertificate(inspectCtx, ref)
 				cancel()
@@ -106,6 +171,11 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 					readOK = false
 				}
 			}
+		}
+		if !gate {
+			// Converged environment: the probe and the arrival retry are
+			// the whole job; nothing gates and no run narrates.
+			continue
 		}
 		if cert != nil {
 			valid = cert.NotAfter.After(now)
@@ -148,16 +218,39 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 				detail = "Waiting for TLS issuance"
 			}
 		}
+		if pending && !valid {
+			// Deferred: the domain does not reach this edge, so the
+			// certificate cannot validate and must not hold the rollout.
+			// The checkpoint ends skipped with the verdict; no deadline and
+			// no failure, because nothing here is failing.
+			fields["phase"] = "deferred"
+			fields["domain"] = probe.Domain
+			fields["edge_state"] = string(probe.State)
+			fields["edge_message"] = probe.Message
+			fields["edge_checked_at"] = probe.CheckedAt.UTC().Format(time.RFC3339)
+			fields["edge_addresses"] = edgeAddressField(probe.Addresses)
+			fields["guidance"] = deferredGuidance
+			delete(fields, "deadline")
+			delete(fields, "issuance_attempt")
+			delete(fields, "next_attempt")
+			delete(fields, "next_retry_at")
+			delete(fields, "retry_estimated")
+			detail = fmt.Sprintf("TLS deferred · %s does not reach this installation yet", probe.Domain)
+			if attached {
+				a.tlsStep(ctx, "tls:"+ref.Name, title, journal.StepSkipped, "warn", detail, fields)
+			}
+			continue
+		}
 		state := journal.StepWaiting
 		if valid {
 			state = journal.StepSucceeded
 		} else {
-			blocked = true
+			out.blocked = true
 			// Only a failure of this promotion can fail early. A pre-existing
 			// failure gets its recovery opportunity, including controller/API lag.
 			hopeless := readOK && cert != nil && !cert.Issuing && !cert.LastFailureTime.Before(target.UpdatedAt.Truncate(time.Second)) && cert.NextRetryTime.After(deadline)
 			if now.After(deadline) || hopeless {
-				failed = true
+				out.failed = true
 				state = journal.StepFailed
 				level = "error"
 				if hopeless {
@@ -172,7 +265,20 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 			a.tlsStep(ctx, "tls:"+ref.Name, title, state, level, detail, fields)
 		}
 	}
-	return blocked, failed
+	return out
+}
+
+// retriedCertificate is the local view of a certificate whose issuance the
+// kernel just re-triggered: the status write is fresher than the informer,
+// so the wait stays open until the controller's next state arrives.
+func retriedCertificate(cert *module.CertificateStatus, message string) *module.CertificateStatus {
+	copy := *cert
+	copy.Issuing = true
+	copy.Ready = false
+	copy.NextRetryTime = time.Time{}
+	copy.Reason = "ManuallyTriggered"
+	copy.Message = message
+	return &copy
 }
 
 // tlsStep persists a structured snapshot when state changes. The readable
@@ -235,7 +341,16 @@ func (a *runAttachment) tlsStep(ctx context.Context, key, title string, state jo
 			warn("finish TLS observation", err)
 		}
 	}
-	if state != journal.StepWaiting {
+	switch state {
+	case journal.StepWaiting:
+	case journal.StepSkipped:
+		// A deferred route: the step machine allows waiting -> skipped
+		// directly, and a skipped checkpoint reads as "set aside", which is
+		// exactly what happened.
+		if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepSkipped); err != nil {
+			warn("skip TLS checkpoint", err)
+		}
+	default:
 		if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
 			warn("start TLS checkpoint", err)
 			return

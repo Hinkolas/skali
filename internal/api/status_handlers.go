@@ -71,6 +71,17 @@ type routeStatusPayload struct {
 	TLS         string              `json:"tls"`
 	Strategy    string              `json:"strategy"`
 	Certificate *certificatePayload `json:"certificate,omitempty"`
+	// Edge is the reconciler's last probe of whether the route's domain
+	// reaches this installation; absent where no certificate is expected
+	// or no pass probed it yet.
+	Edge *edgeStatusPayload `json:"edge,omitempty"`
+}
+
+type edgeStatusPayload struct {
+	State     string     `json:"state"` // reachable | partial | unreachable | unresolved | unknown
+	Message   string     `json:"message,omitempty"`
+	CheckedAt *time.Time `json:"checked_at"`
+	Addresses []string   `json:"addresses"`
 }
 
 type certificatePayload struct {
@@ -195,6 +206,18 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 					certificate.NextRetryTime = &value
 				}
 				routeEntry.Certificate = certificate
+			}
+			if route.Edge != nil {
+				edge := &edgeStatusPayload{
+					State:     route.Edge.State,
+					Message:   route.Edge.Message,
+					Addresses: append([]string{}, route.Edge.Addresses...),
+				}
+				if !route.Edge.CheckedAt.IsZero() {
+					checked := route.Edge.CheckedAt
+					edge.CheckedAt = &checked
+				}
+				routeEntry.Edge = edge
 			}
 			servicePayload.Routes = append(servicePayload.Routes, routeEntry)
 		}

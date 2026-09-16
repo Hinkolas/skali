@@ -34,8 +34,10 @@
 		{@const meta = stepMeta[step.status]}
 		{@const Icon = meta.icon}
 		{@const tls = step.key.startsWith('tls:')}
+		<!-- A skipped TLS checkpoint is a deferred certificate: its snapshot is the only explanation, so it opens like a failure. -->
 		{@const isExpanded =
-			expanded[step.id] ?? (tls && (step.status === 'waiting' || step.status === 'failed'))}
+			expanded[step.id] ??
+			(tls && (step.status === 'waiting' || step.status === 'failed' || step.status === 'skipped'))}
 		<div style:padding-left="{depth * 18}px">
 			<button
 				type="button"

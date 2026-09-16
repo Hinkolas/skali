@@ -60,6 +60,32 @@ func printReadySummary(ctx context.Context, out io.Writer, api *client.Client,
 	for _, line := range readySummaryLines(style, status, summary) {
 		fmt.Fprintln(out, line)
 	}
+	for _, line := range readyWarningLines(style, status) {
+		fmt.Fprintf(out, "  %s\n", line)
+	}
+}
+
+// readyWarningLines names every deferred route once per domain: the https
+// link above will not answer until DNS moves, and the certificate issues
+// itself once it does.
+func readyWarningLines(style *clirender.Style, status *client.EnvironmentStatus) []string {
+	seen := map[string]bool{}
+	var lines []string
+	for _, service := range status.Services {
+		for _, route := range service.Routes {
+			if !route.Deferred() || seen[route.Domain] {
+				continue
+			}
+			seen[route.Domain] = true
+			text := "warning: " + route.Domain + " does not reach this installation yet"
+			if route.Edge.Message != "" {
+				text += " (" + route.Edge.Message + ")"
+			}
+			text += "; TLS is issued automatically once its DNS points here"
+			lines = append(lines, style.Yellow(text))
+		}
+	}
+	return lines
 }
 
 // readySummaryLines renders the summary rows. Applications without routes
@@ -128,13 +154,17 @@ func readySummaryLines(style *clirender.Style, status *client.EnvironmentStatus,
 
 // routeReadyLine renders one route as its URL plus, while the certificate
 // is not yet active, the certificate state so an https link that will not
-// answer yet is not a surprise.
+// answer yet is not a surprise. A deferred route says so instead: its
+// certificate waits for the domain, not for the issuer.
 func routeReadyLine(style *clirender.Style, route client.RouteStatus, httpPort int) string {
 	line := style.Link(routeURL(route, httpPort))
-	if certificate := route.Certificate; certificate != nil && certificate.State != "active" {
-		detail := stateColor(style, certificate.State)
-		if certificate.Reason != "" {
-			detail += " (" + certificate.Reason + ")"
+	switch {
+	case route.Deferred():
+		line += "  " + style.Dim("cert ") + style.Yellow("deferred · domain not pointing here yet")
+	case route.Certificate != nil && route.Certificate.State != "active":
+		detail := stateColor(style, route.Certificate.State)
+		if route.Certificate.Reason != "" {
+			detail += " (" + route.Certificate.Reason + ")"
 		}
 		line += "  " + style.Dim("cert ") + detail
 	}

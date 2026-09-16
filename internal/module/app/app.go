@@ -239,9 +239,12 @@ func (s *service) verdict(workload *module.WorkloadStatus, observed []module.Obs
 // verdict. Issuance in flight floors health to progressing, an expired
 // certificate floors it to degraded (the route is genuinely down), and a
 // failing renewal of a still-valid certificate stays a warning so it never
-// blocks a later deploy. When the certificate is the only blocker its
-// diagnostic leads, because the run journal and the failed verify step
-// surface exactly the first diagnostic.
+// blocks a later deploy. A route whose domain the kernel found not to
+// reach this installation yet (the kernel's KindEdge verdict) is deferred:
+// no certificate can validate while the domain is elsewhere, so a missing
+// or invalid certificate is a warning, never a gate. When the certificate
+// is the only blocker its diagnostic leads, because the run journal and
+// the failed verify step surface exactly the first diagnostic.
 func (s *service) applyCertificateGate(observed []module.ObservedResource, evaluation module.Evaluation, now time.Time) module.Evaluation {
 	health := evaluation.Health
 	var blockers, notes []module.Diagnostic
@@ -252,6 +255,12 @@ func (s *service) applyCertificateGate(observed []module.ObservedResource, evalu
 		}
 		name := kubernetes.RouteTLSName(s.project, s.key, routeKey)
 		certificate := findCertificate(observed, name)
+		valid := certificate != nil && !certificate.NotAfter.IsZero() && now.Before(certificate.NotAfter)
+		if edge := findEdge(observed, name); edge != nil && edge.Deferred && !valid {
+			notes = append(notes, warnDiag("certificate-deferred",
+				"certificate "+name+" is deferred: "+edge.Domain+" does not reach this installation yet ("+edge.State+")", name))
+			continue
+		}
 		switch {
 		case certificate == nil:
 			// The rendered Certificate has not reached the snapshot; the
@@ -302,6 +311,15 @@ func findCertificate(observed []module.ObservedResource, name string) *module.Ce
 	for _, resource := range observed {
 		if resource.Kind == module.KindCertificate && resource.Name == name && resource.Certificate != nil {
 			return resource.Certificate
+		}
+	}
+	return nil
+}
+
+func findEdge(observed []module.ObservedResource, name string) *module.EdgeReach {
+	for _, resource := range observed {
+		if resource.Kind == module.KindEdge && resource.Name == name && resource.Edge != nil {
+			return resource.Edge
 		}
 	}
 	return nil

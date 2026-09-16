@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -85,11 +86,34 @@ func TestInstanceHeaderOnEveryResponse(t *testing.T) {
 	// reinstalled cluster is exactly where clients need it to tell "expired
 	// session" from "different installation". The version rides along for
 	// skew diagnostics pre-auth.
-	for _, path := range []string{"/healthz", "/v1/system/meta", "/v1/does-not-exist"} {
+	for _, path := range []string{"/healthz", "/.well-known/skali-edge", "/v1/system/meta", "/v1/does-not-exist"} {
 		res, err := http.Get(a.srv.URL + path)
 		require.NoError(t, err)
 		res.Body.Close()
 		require.Equal(t, testInstanceID, res.Header.Get(InstanceHeader), path)
 		require.Equal(t, "test", res.Header.Get(VersionHeader), path)
+	}
+}
+
+func TestEdgeIdentityRoute(t *testing.T) {
+	a := newTestAPI(t)
+
+	// The kernel's domain probe requests this path through a tenant domain
+	// and recognises its own edge by the header; the body repeats the
+	// identity for humans. No session, no CLI version gate: a released CLI
+	// of any version, or no CLI at all, gets the same answer, at the root
+	// and behind the /api prefix.
+	for _, path := range []string{"/.well-known/skali-edge", "/api/.well-known/skali-edge"} {
+		req, err := http.NewRequest(http.MethodGet, a.srv.URL+path, nil)
+		require.NoError(t, err)
+		req.Header.Set(ClientVersionHeader, "v0.0.1")
+		res, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
+		res.Body.Close()
+		require.Equal(t, http.StatusOK, res.StatusCode, path)
+		require.Equal(t, testInstanceID, res.Header.Get(InstanceHeader), path)
+		require.Equal(t, testInstanceID, body["instance_id"], path)
 	}
 }

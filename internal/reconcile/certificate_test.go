@@ -3,12 +3,15 @@ package reconcile
 import (
 	"context"
 	"fmt"
-	"github.com/Hinkolas/skali/internal/kube"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/edge/edgeprobe"
+	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/module/bucket"
@@ -269,4 +272,251 @@ func TestCertificateRecoveryDoesNotDependOnJournal(t *testing.T) {
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Equal(t, 1, retries)
+}
+
+// probeResult is a ProbeDomain stub answering one fixed verdict and
+// counting its calls.
+func probeResult(calls *atomic.Int32, state edgeprobe.State, addresses ...edgeprobe.AddressResult) func(context.Context, string) edgeprobe.Result {
+	return func(_ context.Context, domain string) edgeprobe.Result {
+		if calls != nil {
+			calls.Add(1)
+		}
+		return edgeprobe.Result{Domain: domain, State: state, Addresses: addresses,
+			Message: "stub verdict: " + string(state), CheckedAt: time.Now()}
+	}
+}
+
+var (
+	foreignAddress = edgeprobe.AddressResult{Address: "203.0.113.9", Outcome: edgeprobe.OutcomeForeign, Detail: "HTTP 301 without Skali-Instance"}
+	oursAddress    = edgeprobe.AddressResult{Address: "198.51.100.7", Outcome: edgeprobe.OutcomeOurs, Detail: "HTTP 200"}
+)
+
+// ageDomainProbe backdates the cached verdict so the next pass probes again.
+func (f *kernelFixture) ageDomainProbe(domain string) {
+	f.kernel.domainMu.Lock()
+	defer f.kernel.domainMu.Unlock()
+	entry := f.kernel.domains[domain]
+	entry.result.CheckedAt = time.Now().Add(-time.Hour)
+	f.kernel.domains[domain] = entry
+}
+
+// deployDeferred runs the deferred path to activation: the route domain
+// does not reach this edge, so a healthy workload activates with the TLS
+// checkpoint skipped.
+func (f *kernelFixture) deployDeferred(t *testing.T, state edgeprobe.State, addresses ...edgeprobe.AddressResult) (*deploy.ExecuteResult, time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	f.kernel.deps.ProbeDomain = probeResult(nil, state, addresses...)
+	result := f.executeDeploymentManifest(t, certManifest)
+	f.fake.SetFresh()
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web",
+		module.CertificateStatus{Issuing: true, Reason: "Pending", Message: "waiting for the ACME challenge"})
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	return result, requeue
+}
+
+// A domain that does not reach this edge defers the certificate: the
+// rollout activates, the run succeeds, the checkpoint ends skipped with the
+// verdict, and the status projection carries the edge state and a warning.
+func TestCertificateDeferredDomainActivates(t *testing.T) {
+	t.Parallel()
+	f := certFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	retries := 0
+	f.kernel.deps.RetryCertificate = func(context.Context, kube.ObjectRef, time.Time) (bool, error) { retries++; return true, nil }
+
+	result, requeue := f.deployDeferred(t, edgeprobe.StateUnreachable, foreignAddress)
+
+	require.Equal(t, edgeProbeRolloutInterval, requeue, "a pending domain keeps the rollout pass on the probe cadence")
+	require.NotNil(t, f.target(t).ActiveRevisionID, "a deferred certificate must not hold activation")
+	require.Equal(t, result.RevisionID, *f.target(t).ActiveRevisionID)
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", run.Status)
+	require.Zero(t, retries, "nothing to retry while the domain is elsewhere")
+
+	step, found, err := f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+certName)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "skipped", step.Status)
+	message, err := f.kernel.deps.Journal.LatestStepMessage(ctx, step.ID)
+	require.NoError(t, err)
+	require.Contains(t, message, "TLS deferred · demo.example.com does not reach this installation yet")
+	require.Contains(t, message, "edge state: unreachable")
+	require.Contains(t, message, "203.0.113.9: answered by another server (HTTP 301 without Skali-Instance)")
+	require.Contains(t, message, "Point the domain's A/AAAA records at this installation")
+	require.NotContains(t, message, "deadline:", "a deferral has no deadline")
+
+	status, err := f.kernel.Status(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Len(t, status.Services, 1)
+	web := status.Services[0]
+	require.Equal(t, module.HealthHealthy, web.Health)
+	require.Len(t, web.Routes, 1)
+	require.NotNil(t, web.Routes[0].Edge)
+	require.Equal(t, "unreachable", web.Routes[0].Edge.State)
+	require.Equal(t, "demo.example.com", web.Routes[0].Edge.Domain)
+	require.Equal(t, []string{"203.0.113.9: answered by another server (HTTP 301 without Skali-Instance)"}, web.Routes[0].Edge.Addresses)
+	require.NotNil(t, web.Routes[0].Certificate)
+	require.Equal(t, "issuing", web.Routes[0].Certificate.State)
+	var codes []string
+	for _, diagnostic := range web.Diagnostics {
+		codes = append(codes, diagnostic.Code)
+	}
+	require.Contains(t, codes, "certificate-deferred")
+}
+
+// One record moved and one left behind reads as partial, which counts as
+// not arrived: the CA prefers IPv6 and would validate against the old host.
+func TestCertificatePartialCountsAsDeferred(t *testing.T) {
+	t.Parallel()
+	f := certFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+
+	result, _ := f.deployDeferred(t, edgeprobe.StatePartial, oursAddress,
+		edgeprobe.AddressResult{Address: "2001:db8::9", Outcome: edgeprobe.OutcomeForeign, Detail: "HTTP 200 without Skali-Instance"})
+
+	require.NotNil(t, f.target(t).ActiveRevisionID)
+	step, _, err := f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+certName)
+	require.NoError(t, err)
+	require.Equal(t, "skipped", step.Status)
+	message, err := f.kernel.deps.Journal.LatestStepMessage(ctx, step.ID)
+	require.NoError(t, err)
+	require.Contains(t, message, "edge state: partial")
+	require.Contains(t, message, "198.51.100.7: answered by this installation")
+	require.Contains(t, message, "2001:db8::9: answered by another server")
+}
+
+// A probe that cannot say anything keeps today's gate: blocking until the
+// certificate issues and failing at the deadline. A broken probe must never
+// hide a real issuance failure.
+func TestCertificateProbeUnknownKeepsGate(t *testing.T) {
+	t.Parallel()
+	f := certFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+
+	result, requeue := f.deployDeferred(t, edgeprobe.StateUnknown)
+
+	require.Equal(t, requeueHealthCheck, requeue)
+	require.Nil(t, f.target(t).ActiveRevisionID, "an unknown verdict must not relax the gate")
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "running", run.Status)
+	step, _, err := f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+certName)
+	require.NoError(t, err)
+	require.Equal(t, "waiting", step.Status)
+
+	f.kernel.cfg.RolloutDeadline = time.Nanosecond
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	run, err = f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", run.Status)
+}
+
+// A domain that does reach this edge keeps the prompt failure on a backoff
+// that outlives the budget: reachable means the failure is real.
+func TestCertificateBackoffFailsPromptlyWhenReachable(t *testing.T) {
+	f := certFixture(t, Config{RolloutDeadline: 10 * time.Minute})
+	ctx := context.Background()
+	f.kernel.deps.ProbeDomain = probeResult(nil, edgeprobe.StateReachable, oursAddress)
+	result := f.executeDeploymentManifest(t, certManifest)
+	f.fake.SetFresh()
+	f.markHealthy(t)
+	failure := f.target(t).UpdatedAt.Add(time.Second)
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", module.CertificateStatus{
+		FailedAttempts: 2, LastFailureTime: failure, NextRetryTime: failure.Add(2 * time.Hour), Reason: "Failed", Message: "ACME order invalid", DNSNames: []string{"demo.example.com"},
+	})
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", run.Status)
+	step, _, err := f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+certName)
+	require.NoError(t, err)
+	require.Equal(t, "failed", step.Status)
+	status, err := f.kernel.Status(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, "reachable", status.Services[0].Routes[0].Edge.State)
+}
+
+// A converged environment with a deferred route keeps re-probing on the
+// idle cadence without probing inside the interval.
+func TestCertificateDeferredConvergedRequeues(t *testing.T) {
+	t.Parallel()
+	f := certFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	f.deployDeferred(t, edgeprobe.StateUnreachable, foreignAddress)
+	var calls atomic.Int32
+	f.kernel.deps.ProbeDomain = probeResult(&calls, edgeprobe.StateUnreachable, foreignAddress)
+
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, edgeProbeIdleInterval, requeue)
+	require.Zero(t, calls.Load(), "the cached verdict is fresh; no probe inside the interval")
+
+	f.ageDomainProbe("demo.example.com")
+	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, edgeProbeIdleInterval, requeue)
+	require.EqualValues(t, 1, calls.Load())
+}
+
+// When the domain arrives, a certificate parked in cert-manager's failure
+// backoff gets exactly one fresh issuance attempt, measured against now
+// rather than the promotion time (the failure post-dates the promotion).
+func TestCertificateArrivalTriggersRetryOnce(t *testing.T) {
+	t.Parallel()
+	f := certFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	f.deployDeferred(t, edgeprobe.StateUnreachable, foreignAddress)
+	require.NotNil(t, f.target(t).ActiveRevisionID)
+
+	now := time.Now()
+	parked := module.CertificateStatus{FailedAttempts: 1, LastFailureTime: now.Add(-time.Minute),
+		NextRetryTime: now.Add(32 * time.Hour), Reason: "Failed", Message: "ACME authorization failed"}
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", parked)
+	retries := 0
+	f.kernel.deps.RetryCertificate = func(_ context.Context, ref kube.ObjectRef, promoted time.Time) (bool, error) {
+		require.Equal(t, certName, ref.Name)
+		require.WithinDuration(t, time.Now(), promoted, 5*time.Second, "the arrival retry is measured against now")
+		retries++
+		issuing := parked
+		issuing.Issuing = true
+		issuing.NextRetryTime = time.Time{}
+		f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", issuing)
+		return true, nil
+	}
+
+	// Still elsewhere: nothing to retry.
+	f.ageDomainProbe("demo.example.com")
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Zero(t, retries)
+
+	// DNS moved: the next probe finds this edge and pushes issuance once.
+	f.kernel.deps.ProbeDomain = probeResult(nil, edgeprobe.StateReachable, oursAddress)
+	f.ageDomainProbe("demo.example.com")
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, 1, retries)
+	require.Equal(t, requeueHealthCheck, requeue,
+		"a reachable domain needs no probe cadence; the issuing certificate gates health on the ordinary one")
+
+	// Issuance is under way; the settled arrival does not retry again.
+	f.ageDomainProbe("demo.example.com")
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, 1, retries)
+
+	status, err := f.kernel.Status(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, "reachable", status.Services[0].Routes[0].Edge.State)
+	for _, diagnostic := range status.Services[0].Diagnostics {
+		require.NotEqual(t, "certificate-deferred", diagnostic.Code, "a reachable domain is no longer deferred")
+	}
 }

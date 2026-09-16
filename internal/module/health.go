@@ -72,6 +72,12 @@ const (
 	// it, so a stale snapshot fails safe (no desired color observed means
 	// not healthy) instead of judging whichever Deployment sorts first.
 	KindRollout = "rollout"
+	// KindEdge is synthesized by the kernel for TLS routes whose domain it
+	// probed: whether the public hostname reaches this installation's edge.
+	// The app module relaxes the certificate gate for a domain that is
+	// still elsewhere (a migration in progress) instead of waiting on an
+	// issuance that cannot validate yet.
+	KindEdge = "edge"
 )
 
 // Observation source states. Anything but fresh means the projection may lag
@@ -101,6 +107,7 @@ type ObservedResource struct {
 
 	Source          *SourceStatus
 	Rollout         *RolloutStatus
+	Edge            *EdgeReach
 	Workload        *WorkloadStatus
 	Pod             *PodStatus
 	Autoscaler      *AutoscalerStatus
@@ -110,6 +117,16 @@ type ObservedResource struct {
 	ObjectStore     *ObjectStoreStatus
 	Bucket          *BucketStatus
 	Certificate     *CertificateStatus
+}
+
+// EdgeReach is the kernel's verdict on one route domain, keyed by the
+// route's Certificate name. Deferred means the domain does not reach this
+// installation yet, so the certificate cannot be validated and must not
+// gate health.
+type EdgeReach struct {
+	Domain   string
+	State    string
+	Deferred bool
 }
 
 // CertificateStatus projects one cert-manager Certificate: its Ready and

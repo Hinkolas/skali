@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/Hinkolas/skali/internal/auth"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/version"
 )
 
@@ -131,7 +132,9 @@ func requestLogger(next http.Handler) http.Handler {
 // pin it per remote to tell a reinstalled cluster apart from an expired
 // session; internal/client owns the pinning side. This is a convenience
 // signal, not a security boundary: server authentication remains TLS's job.
-const InstanceHeader = "Skali-Instance"
+// The name lives in the edge vocabulary because the kernel's domain probe
+// reads it without importing this package.
+const InstanceHeader = edge.InstanceHeader
 
 // VersionHeader carries the daemon build version on every response, so
 // clients can read it pre-auth and on failures (the meta endpoint needs a

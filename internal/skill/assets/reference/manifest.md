@@ -156,9 +156,16 @@ provisions the certificate but keeps answering plain HTTP without a
 redirect (for consumers that cannot follow redirects); `tls: disabled`
 serves plain HTTP only. Local development serves every route over plain
 HTTP on `*.localhost` domains regardless of the policy. On production, a
-first deploy of a route waits for its certificate: the run fails at the
-rollout deadline with the issuance reason if DNS does not point at the
-cluster yet. Each route has an **Issue TLS certificate** checkpoint with the
+first deploy of a route waits for its certificate only when the domain
+already reaches this installation. A domain still pointing elsewhere (a
+migration in progress) is deferred: the run stays green, the checkpoint ends
+skipped with a `TLS deferred` warning naming the domain, the ready summary
+prints `cert deferred · domain not pointing here yet` plus a `warning:`
+line, and the certificate is issued automatically once the A and AAAA
+records point here (one record left behind reads as `partial` and still
+defers). A domain that does point here but fails validation fails the run
+at the rollout deadline with the issuance reason. Each route has an
+**Issue TLS certificate** checkpoint with the
 issuance attempt, consecutive failure count, last failure, estimated next retry,
 and the current CertificateRequest, ACME Order and validation challenge details.
 The CLI shows the checkpoint as one row per issuance attempt with its
@@ -178,8 +185,11 @@ activate it. A still-valid certificate with a failing renewal does not block a
 deployment.
 
 Check public A **and** AAAA records and inbound HTTP port 80 when validation
-fails. HTTP routers reserve `/.well-known/acme-challenge/` for cert-manager's
-solver and do not redirect it to HTTPS. If the ACME response reports a rate
+fails; a deferred checkpoint lists each resolved address and whether it
+answered as this installation. HTTP routers reserve
+`/.well-known/acme-challenge/` for cert-manager's solver and
+`/.well-known/skali-edge` for the installation's own edge identity, and do
+not redirect either to HTTPS. If the ACME response reports a rate
 limit, honor the CA's retry window before redeploying; forcing another attempt
 does not reset a CA limit.
 

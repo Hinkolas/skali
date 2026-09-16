@@ -64,10 +64,10 @@ info:
     (also readable from `Skali-Version` on the refusal). Requests without
     the header (browsers, third-party clients) and development builds on
     either side (`v0.0.0-dev`, git-describe versions) are never compared.
-    Only `/healthz` is reachable from any CLI version: a stale CLI reads
-    the cluster's version there, fetches that release, and dispatches to
-    it before it logs in, so the health response and its two headers only
-    ever change additively.
+    Only `/healthz` and `/.well-known/skali-edge` are reachable from any
+    CLI version: a stale CLI reads the cluster's version at `/healthz`,
+    fetches that release, and dispatches to it before it logs in, so the
+    health response and its two headers only ever change additively.
   version: 0.1.0
   license:
     name: Apache 2.0
@@ -121,6 +121,36 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /.well-known/skali-edge:
+    get:
+      operationId: edgeIdentity
+      summary: Installation identity at the edge
+      description: |
+        Answers on every hostname the edge serves, ahead of tenant routes,
+        so the daemon can check whether a route's domain reaches this
+        installation before it waits for a certificate (docs/limitations.md,
+        "Routes whose domain does not point here yet"). Public and
+        version-free like `/healthz`; the body repeats the `Skali-Instance`
+        header.
+      security: []
+      tags: [status]
+      responses:
+        "200":
+          description: The edge belongs to this installation.
+          headers:
+            Skali-Instance:
+              description: The installation identity minted with the database.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [instance_id]
+                properties:
+                  instance_id:
+                    type: string
+                    format: uuid
 
   /v1/auth/login:
     post:
@@ -4279,6 +4309,38 @@ components:
           description: >
             Null where no certificate exists by design: tls disabled, or an
             installation without cert-manager (local development).
+        edge:
+          $ref: "#/components/schemas/EdgeStatus"
+          description: >
+            Whether the route's domain reaches this installation's edge, as
+            last probed by the reconciler. Present only for routes that get
+            a certificate on certificate-enabled installations, once a
+            reconcile pass has probed the domain; absent elsewhere.
+
+    EdgeStatus:
+      type: object
+      required: [state, checked_at, addresses]
+      properties:
+        state:
+          type: string
+          enum: [reachable, partial, unreachable, unresolved, unknown]
+          description: >
+            reachable: at least one resolved address answered as this
+            installation and none as another server. partial: some did and
+            some answered as another server (typically an AAAA record left
+            behind). unreachable: none did. unresolved: the name has no
+            address records. unknown: the probe itself failed, so the
+            reconciler keeps its default behaviour.
+        message:
+          type: string
+          description: One human sentence, e.g. "1 of 2 addresses answer as this installation; 2001:db8::1 answers as another server".
+        checked_at:
+          type: [string, "null"]
+          format: date-time
+        addresses:
+          type: array
+          items: { type: string }
+          description: One line per resolved address with its verdict, e.g. "203.0.113.10: answered by another server (HTTP 301 without Skali-Instance)".
 
     CertificateStatus:
       type: object

@@ -50,6 +50,18 @@ export interface CertificateStatus {
 	renewal_time: string | null;
 }
 
+export type EdgeState = 'reachable' | 'partial' | 'unreachable' | 'unresolved' | 'unknown';
+
+// The reconciler's last probe of whether the route's domain reaches this
+// installation; absent where no certificate is expected or before the
+// first probe.
+export interface EdgeStatus {
+	state: EdgeState;
+	message?: string;
+	checked_at: string | null;
+	addresses: string[];
+}
+
 // One public route with its edge policies; certificate is absent where none
 // exists by design (tls disabled, local installation).
 export interface RouteStatus {
@@ -59,6 +71,7 @@ export interface RouteStatus {
 	tls: 'automatic' | 'optional' | 'disabled';
 	strategy: 'round-robin' | 'least-requests';
 	certificate?: CertificateStatus | null;
+	edge?: EdgeStatus;
 }
 
 export interface ServiceStatus {

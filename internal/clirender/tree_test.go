@@ -93,6 +93,26 @@ func TestWaitingStepShowsTail(t *testing.T) {
 	require.Contains(t, lines, "          web: progressing (0/2 ready)")
 }
 
+// A skipped TLS checkpoint is a deferred certificate; its warning row is
+// the only place the transcript explains why, so it shows like a failure
+// while every other skipped step stays silent.
+func TestSkippedTLSStepShowsTail(t *testing.T) {
+	t.Parallel()
+	tree := &client.RunTree{
+		Run: client.Run{ID: "1", Kind: "deployment", Status: "succeeded"},
+		Steps: []client.Step{
+			{ID: "b", Key: "build:web", Title: "Build web", Status: "skipped"},
+			{ID: "t", Key: "tls:tls-web-public", Title: "Issue TLS certificate for web / public", Status: "skipped"},
+		},
+	}
+	require.Equal(t, []string{"t"}, TailStepIDs(tree))
+	lines := Lines(tree, func(stepID string) []string {
+		return []string{"! TLS deferred · shop.example.com does not reach this installation yet (" + stepID + ")"}
+	})
+	require.Contains(t, lines, "          ! TLS deferred · shop.example.com does not reach this installation yet (t)")
+	require.NotContains(t, lines, "          ! TLS deferred · shop.example.com does not reach this installation yet (b)")
+}
+
 func TestRendererRewritesOnTTY(t *testing.T) {
 	t.Parallel()
 	var out sink

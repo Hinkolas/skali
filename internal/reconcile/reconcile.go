@@ -300,6 +300,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		return 0, err
 	}
 
+	// Route certificates come before the health evaluation: the pass's
+	// edge verdicts (a domain that does not reach this edge yet) ride into
+	// the module through the kernel cache, so a deferred route stops gating
+	// health in the same pass that discovered it.
+	tls := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID))
+
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
 	statuses := k.evaluateServices(rev, k.deps.Observed.Snapshot(environmentID), intercepts, nil, desired.colors)
@@ -344,9 +350,8 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			"blocked", strings.Join(blocked, "; "))
 	}
 
-	tlsBlocked, tlsFailed := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID))
-	if healthy && !tlsBlocked {
-		return retireRequeue, k.activate(ctx, attachment, target, rev)
+	if healthy && !tls.blocked {
+		return soonest(retireRequeue, tls.requeue), k.activate(ctx, attachment, target, rev)
 	}
 	if attachment.created {
 		// The healing work is recorded; health recovery arrives via watch
@@ -357,7 +362,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		// Release commands extend the deadline by their own budget: their
 		// Jobs enforce the manifest timeouts, so the rollout deadline only
 		// needs to cover everything after them.
-		if tlsFailed || time.Since(target.UpdatedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline)+releaseBudget(rev.Definition) {
+		if tls.failed || time.Since(target.UpdatedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline)+releaseBudget(rev.Definition) {
 			// Product policy: past the deadline the run fails
 			// with diagnostics and the target returns to the last active
 			// revision when one exists. The guarded compare-and-swap makes
@@ -385,12 +390,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// reconciliation continues on the ordinary cadence so a late
 			// recovery still activates, instead of the environment silently
 			// leaving the queue until the audit.
-			return soonest(requeueHealthCheck, retireRequeue), nil
+			return soonest(soonest(requeueHealthCheck, retireRequeue), tls.requeue), nil
 		}
 		attachment.waitStepFields(ctx, "verify", "Verify health",
 			strings.Join(healthSummary(statuses), "\n"), healthFields(statuses))
 	}
-	return soonest(requeueHealthCheck, retireRequeue), nil
+	return soonest(soonest(requeueHealthCheck, retireRequeue), tls.requeue), nil
 }
 
 // soonest picks the shorter of two requeue delays, ignoring zero (none).
@@ -697,7 +702,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	if err := rendering.ValidateObjects(append([]runtime.Object{namespace, secret}, objects...)); err != nil {
 		return nil, err
 	}
-	services, refsList, err := groupObjects(objects)
+	services, refsList, certDomains, err := groupObjects(objects)
 	if err != nil {
 		return nil, err
 	}
@@ -711,7 +716,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	delete(services, "")
 	return &desiredSet{namespace: namespace, secret: secret,
 		environment: shared.rest, services: services, refs: refsList,
-		colors: colors, plans: plans}, nil
+		colors: colors, plans: plans, certDomains: certDomains}, nil
 }
 
 // ensureClaims records the revision's infrastructure claims (databases and
@@ -756,8 +761,11 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 
 // redactor covers the environment's current values plus, when a revision is
 // given, the exact versions it pinned (a tombstoned value is no longer
-// current but still resolvable by an old revision). Kernel log lines carry
-// no values, so this is defense in depth, not the only barrier.
+// current but still resolvable by an old revision). Values a route domain
+// references are exempt: a hostname the edge serves is public by
+// construction (the status projection resolves it for the same reason),
+// and the TLS checkpoints must be able to name it. Kernel log lines carry
+// no other values, so this is defense in depth, not the only barrier.
 func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision) *redact.Redactor {
 	redactor, err := k.deps.Values.Redactor(ctx, environmentID, uuid.Nil)
 	if err != nil {
@@ -774,13 +782,30 @@ func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *rev
 	plaintexts, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
 	if err != nil {
 		slog.Warn("build pinned redactor", "environment", environmentID, "error", err)
-		return redactor
+		return redactor.Without(routeVariableNames(rev))
 	}
 	byPlaintext := make(map[string]string, len(plaintexts))
 	for name, value := range plaintexts {
 		byPlaintext[value] = name
 	}
-	return redactor.Merge(redact.New(byPlaintext))
+	redactor = redactor.Merge(redact.New(byPlaintext))
+	return redactor.Without(routeVariableNames(rev))
+}
+
+// routeVariableNames lists the project variables any route domain of the
+// revision references.
+func routeVariableNames(rev *revision.Revision) map[string]bool {
+	names := map[string]bool{}
+	for _, application := range rev.Definition.Applications {
+		for _, route := range application.Routes {
+			for _, part := range route.Domain.Parts {
+				if part.Kind == "project_variable" {
+					names[part.Name] = true
+				}
+			}
+		}
+	}
+	return names
 }
 
 // liveObjectByRef finds one observed object of a kind by namespace and

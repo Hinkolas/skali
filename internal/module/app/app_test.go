@@ -73,6 +73,65 @@ func certificate(status module.CertificateStatus) module.ObservedResource {
 	}
 }
 
+func deferredEdge(deferred bool) module.ObservedResource {
+	state := "unreachable"
+	if !deferred {
+		state = "reachable"
+	}
+	return module.ObservedResource{
+		Kind: module.KindEdge, Name: "tls-proj-web-public-0f0cfcc88276f2165665ed0173565bcc",
+		Edge: &module.EdgeReach{Domain: "shop.example.com", State: state, Deferred: deferred},
+	}
+}
+
+func TestEvaluateCertificateDeferred(t *testing.T) {
+	t.Parallel()
+	healthyWorkload := []module.ObservedResource{freshSource(), workload(1, 1, 1)}
+
+	t.Run("deferred domain with an unissued certificate stays healthy", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, deferredEdge(true),
+			certificate(module.CertificateStatus{Issuing: true, Reason: "Pending"})))
+		require.Equal(t, module.HealthHealthy, evaluation.Health,
+			"a domain still pointing elsewhere cannot validate; it must not gate activation")
+		require.Len(t, evaluation.Diagnostics, 1)
+		require.Equal(t, "certificate-deferred", evaluation.Diagnostics[0].Code)
+		require.Equal(t, "warning", evaluation.Diagnostics[0].Severity)
+		require.Contains(t, evaluation.Diagnostics[0].Message, "shop.example.com does not reach this installation yet (unreachable)")
+	})
+
+	t.Run("deferred domain with an unobserved certificate stays healthy", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, deferredEdge(true)))
+		require.Equal(t, module.HealthHealthy, evaluation.Health)
+		require.Equal(t, "certificate-deferred", evaluation.Diagnostics[0].Code)
+	})
+
+	t.Run("deferred domain with failed attempts stays healthy", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, deferredEdge(true),
+			certificate(module.CertificateStatus{FailedAttempts: 3, Reason: "Failed"})))
+		require.Equal(t, module.HealthHealthy, evaluation.Health)
+		require.Equal(t, "certificate-deferred", evaluation.Diagnostics[0].Code)
+	})
+
+	t.Run("a reachable domain keeps the gate", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, deferredEdge(false),
+			certificate(module.CertificateStatus{Issuing: true, Reason: "Pending"})))
+		require.Equal(t, module.HealthProgressing, evaluation.Health)
+		require.Equal(t, "certificate-pending", evaluation.Diagnostics[0].Code)
+	})
+
+	t.Run("a valid certificate ignores the edge verdict", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, deferredEdge(true),
+			certificate(module.CertificateStatus{Ready: true, NotAfter: time.Now().Add(60 * 24 * time.Hour)})))
+		require.Equal(t, module.HealthHealthy, evaluation.Health)
+		require.Empty(t, evaluation.Diagnostics)
+	})
+}
+
 func TestEvaluateCertificateGate(t *testing.T) {
 	t.Parallel()
 	healthyWorkload := []module.ObservedResource{freshSource(), workload(1, 1, 1)}

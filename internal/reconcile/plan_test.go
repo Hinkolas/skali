@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/module"
@@ -221,9 +222,18 @@ func TestGroupObjectsSplitsByService(t *testing.T) {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 		ObjectMeta: metav1.ObjectMeta{Name: "app-demo-web-714832ea87e5bc991f3f11667354c6c3", Namespace: "ns", Labels: map[string]string{"skali.dev/service": "web"}},
 	}
-	grouped, refs, err := groupObjects([]runtime.Object{deployment, service})
+	grouped, refs, certDomains, err := groupObjects([]runtime.Object{deployment, service})
 	require.NoError(t, err)
 	require.Len(t, refs, 2)
 	require.NotNil(t, grouped["web"].deployment)
 	require.Len(t, grouped["web"].rest, 1)
+	require.Empty(t, certDomains)
+}
+
+func TestGroupObjectsRecordsCertificateDomains(t *testing.T) {
+	certificate := edge.Certificate("ns", "tls-demo-web-public-abc", "shop.example.com",
+		map[string]string{"skali.dev/service": "web"})
+	_, _, certDomains, err := groupObjects([]runtime.Object{certificate})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"tls-demo-web-public-abc": "shop.example.com"}, certDomains)
 }

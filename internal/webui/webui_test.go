@@ -41,6 +41,9 @@ func TestStaticConsoleRouting(t *testing.T) {
 		{"GET", "/healthz", "text/html", 404, "", "", "API miss"},
 		{"GET", "/openapi.yaml", "text/html", 404, "", "", "API miss"},
 		{"GET", "/token", "text/html", 404, "", "", "API miss"},
+		// The edge identity is the one dot-prefixed path the API owns; every
+		// other dot segment (the .gitkeep row above) still ends at the SPA 404.
+		{"GET", "/.well-known/skali-edge", "text/html", 404, "", "", "API miss"},
 		{"POST", "/auth/login", "text/html", 405, "text/plain", "", "method not allowed"},
 	} {
 		t.Run(tc.method+tc.path, func(t *testing.T) {

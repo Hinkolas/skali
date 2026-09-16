@@ -68,6 +68,21 @@ type RouteStatus struct {
 	Strategy string
 
 	Certificate *CertificateInfo
+	// Edge is the kernel's cached verdict on whether the route's domain
+	// reaches this installation; nil until a pass probed it, and always nil
+	// where no certificate is expected.
+	Edge *EdgeStatus
+}
+
+// EdgeStatus projects one edge probe (see internal/edge/edgeprobe). State
+// is one of reachable, partial, unreachable, unresolved, unknown; Addresses
+// carry one line per resolved address with its verdict.
+type EdgeStatus struct {
+	Domain    string
+	State     string
+	Message   string
+	CheckedAt time.Time
+	Addresses []string
 }
 
 // CertificateInfo projects one route certificate's lifecycle for status
@@ -252,7 +267,7 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 		status := ServiceStatus{Key: item.key, Type: item.serviceType}
 		if item.withPods {
 			status.Pods = podsFor(snapshot, item.key)
-			status.Routes = routesFor(rev.Definition, snapshot, item.key, variables)
+			status.Routes = routesFor(rev.Definition, snapshot, item.key, variables, k.edgeStatus)
 		}
 		if _, ok := intercepts[item.key]; ok && item.serviceType == "application" {
 			// Synthesized at the kernel, not in the app module: the module
@@ -289,6 +304,12 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 			continue
 		}
 		observed := snapshot.ForService(item.observedKey)
+		if item.serviceType == "application" {
+			// The edge verdicts ride along the same way: a route domain
+			// that does not reach this edge yet relaxes the certificate
+			// gate in the module instead of parking the rollout.
+			observed = append(observed, k.edgeResources(rev.Definition, item.key)...)
+		}
 		if desiredColor, blueGreen := colors[item.key]; blueGreen && item.serviceType == "application" {
 			// The kernel's intent rides along: the module judges the desired
 			// color's workload and members against the color the live
@@ -312,7 +333,7 @@ func (k *Kernel) evaluateServices(rev *revision.Revision, snapshot observe.Snaps
 // the expression resolved against the revision's pinned variables; only
 // when neither resolves does it fall back to the manifest expression.
 func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot, key string,
-	variables map[string]string) []RouteStatus {
+	variables map[string]string, edgeFor func(certName string) *EdgeStatus) []RouteStatus {
 	application, ok := definition.Applications[key]
 	if !ok || len(application.Routes) == 0 {
 		return nil
@@ -335,6 +356,9 @@ func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot,
 			Strategy: route.Strategy,
 		}
 		name := rendering.RouteTLSName(definition.Name, key, routeKey)
+		if edgeFor != nil && route.TLS != "disabled" {
+			status.Edge = edgeFor(name)
+		}
 		if certificate := certificates[name]; certificate != nil {
 			if len(certificate.DNSNames) > 0 {
 				status.Domain = certificate.DNSNames[0]

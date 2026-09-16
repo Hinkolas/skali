@@ -197,6 +197,23 @@ func (h *e2eHarness) request(method, path, body string) (int, string) {
 	return response.StatusCode, string(buffer[:read])
 }
 
+// edgeIdentity fetches the platform's edge identity through the tenant
+// hostname: the platform router must outrank the application's Host rule.
+func (h *e2eHarness) edgeIdentity() (int, http.Header, string) {
+	h.t.Helper()
+	request, err := http.NewRequest(http.MethodGet,
+		fmt.Sprintf("http://127.0.0.1:%d/.well-known/skali-edge", e2eHTTPPort), nil)
+	require.NoError(h.t, err)
+	request.Host = h.host
+	client := &http.Client{Timeout: 10 * time.Second}
+	response, err := client.Do(request)
+	require.NoError(h.t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(h.t, err)
+	return response.StatusCode, response.Header, string(body)
+}
+
 func (h *e2eHarness) waitRoute(contains string, timeout time.Duration) {
 	h.t.Helper()
 	require.Eventually(h.t, func() bool {
@@ -222,6 +239,13 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "run ")
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 2*time.Minute)
+		// The edge identity answers on the tenant hostname ahead of the
+		// application's own route: this is what lets the kernel probe a
+		// route domain for the daemon behind it.
+		status, header, body := h.edgeIdentity()
+		require.Equal(t, http.StatusOK, status, body)
+		require.NotEmpty(t, header.Get("Skali-Instance"), "the platform router answers the identity probe on a tenant host")
+		require.Contains(t, body, `"instance_id":"`+header.Get("Skali-Instance")+`"`)
 		// dev never writes the checkout binding.
 		require.NoDirExists(t, filepath.Join(h.projectDir, ".skali"))
 	})

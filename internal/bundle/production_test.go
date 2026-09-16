@@ -239,6 +239,19 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(redirectJSON), `"middlewares":[{"name":"redirect-https"}]`)
 
+	// The edge identity route outranks the Host-scoped redirect router on
+	// the plain entrypoint, so the kernel's probe through a tenant domain
+	// reaches the daemon instead of a redirect to HTTPS.
+	probe := objects.Skalid[9]
+	require.Equal(t, "IngressRoute", probe.GetKind())
+	require.Equal(t, "skalid-edge-probe", probe.GetName())
+	probePoints, _, _ := unstructured.NestedStringSlice(probe.Object, "spec", "entryPoints")
+	require.Equal(t, []string{"web"}, probePoints)
+	probeRoutes, _, _ := unstructured.NestedSlice(probe.Object, "spec", "routes")
+	require.EqualValues(t, 10000, probeRoutes[0].(map[string]any)["priority"])
+	_, probeTLS, _ := unstructured.NestedMap(probe.Object, "spec", "tls")
+	require.False(t, probeTLS)
+
 	// Registry: token secret first, then the four base objects, the public
 	// edge objects (shared redirect Middleware, Certificate, both routers)
 	// last.

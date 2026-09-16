@@ -37,6 +37,14 @@ const (
 	// RedirectMiddlewareName names the shared per-namespace redirectScheme
 	// Middleware that answers plain HTTP on TLS routes.
 	RedirectMiddlewareName = "redirect-https"
+	// ProbePath is the version-free identity route every skalid answers on
+	// the plain-HTTP entrypoint, ahead of tenant Host rules. The kernel
+	// requests it through a route's domain to learn whether that domain
+	// reaches this installation's edge before it waits on a certificate.
+	ProbePath = "/.well-known/skali-edge"
+	// InstanceHeader carries the installation identity on every skalid
+	// response; the probe recognises its own edge by it.
+	InstanceHeader = "Skali-Instance"
 )
 
 // Service is one IngressRoute backend: a Kubernetes Service port addressed

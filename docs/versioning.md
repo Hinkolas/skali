@@ -15,7 +15,9 @@ malformed configuration are errors. They never silently select home.
 
 Online workflow commands probe the selected remote's `/healthz` before choosing
 a CLI, even when its recorded release matches home. Health is the cross-release
-route: its `Skali-Version` and `Skali-Instance` headers identify the daemon.
+route: its `Skali-Version` and `Skali-Instance` headers identify the daemon
+(the edge identity route `/.well-known/skali-edge` is version-free for the
+same reason, but serves the daemon's own probes, not clients).
 A changed pinned installation identity requires an explicit login/trust decision.
 Authenticated API requests carry `Skali-Client-Version`; the daemon rejects
 released clients that do not exactly match its own release. Development builds

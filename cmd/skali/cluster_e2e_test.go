@@ -282,6 +282,15 @@ storage:
 	edgeRedirect := h.vmOK("curl", "-s", "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}",
 		"--resolve", "skali.e2e.test:80:127.0.0.1", "http://skali.e2e.test/api/healthz")
 	require.Regexp(t, `^30[18] https://skali\.e2e\.test/api/healthz`, edgeRedirect)
+	// The edge identity route outranks every Host-scoped router on the
+	// plain entrypoint: a tenant hostname the cluster has never heard of
+	// still reaches the daemon there, which is how the kernel probes a
+	// route domain for itself. Compare with the redirect above.
+	edgeIdentity := h.vmOK("curl", "-s", "-D", "-", "--resolve", "tenant.e2e.test:80:127.0.0.1",
+		"http://tenant.e2e.test/.well-known/skali-edge")
+	require.Contains(t, edgeIdentity, " 200")
+	require.Contains(t, edgeIdentity, "Skali-Instance: ")
+	require.Contains(t, edgeIdentity, `"instance_id"`)
 	consoleHTML := h.vmOK("sudo", "k3s", "kubectl", "get", "--raw",
 		"/api/v1/namespaces/skali-system/services/skalid:80/proxy/200.html")
 	require.Contains(t, strings.ToLower(consoleHTML), "<!doctype html")

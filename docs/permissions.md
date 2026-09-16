@@ -321,16 +321,19 @@ environment production required: this deploy changes the definition");
 protection answers 403 `environment_protected`; a bypass without a fresh
 session answers 403 `reauth_required`.
 
-Public (no session): `GET /healthz`, `GET /openapi.yaml`, `GET /token`
+Public (no session): `GET /healthz`, `GET /.well-known/skali-edge` (the
+edge identity the reconciler probes route domains for, answered on every
+hostname ahead of tenant routes), `GET /openapi.yaml`, `GET /token`
 (registry realm, Basic auth per request as today), `POST /auth/login`,
 `POST /auth/2fa/verify`, `POST /auth/device/requests` and
 `POST /auth/device/token` (the CLI side of browser device authorization;
 the poll answer carries the bearer token, so the console never proxies
 them). Public is not the same as version-free: every route under `/v1`,
 these included, refuses a released CLI of another version with
-`cli_version_mismatch` (docs/versioning.md); only `GET /healthz` answers
-any CLI, because a stale CLI dispatches to the cluster's release before
-it logs in.
+`cli_version_mismatch` (docs/versioning.md); only `GET /healthz` and
+`GET /.well-known/skali-edge` answer any CLI, because a stale CLI
+dispatches to the cluster's release before it logs in and the daemon
+probes its own edge through public domains.
 
 Authenticated, self: `POST /auth/logout`, `POST /auth/reauth`,
 `GET /auth/session`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}`,

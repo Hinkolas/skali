@@ -134,3 +134,67 @@ func TestCompactTailRowsKeepTheirColors(t *testing.T) {
 	require.Equal(t, "      "+style.Green("✓")+" data  healthy", lines[2], "a styled row is not dimmed again")
 	require.Equal(t, "      "+style.Dim("plain detail"), lines[3])
 }
+
+func deferredEntry(seq int64, extra map[string]any) client.LogEntry {
+	fields := map[string]any{
+		"domain":          "shop.example.com",
+		"edge_state":      "partial",
+		"edge_message":    "1 of 2 addresses answer as this installation; 2001:db8::10 answers as another server",
+		"edge_addresses":  "198.51.100.7: answered by this installation (HTTP 200)\n2001:db8::10: answered by another server (HTTP 200 without Skali-Instance)",
+		"edge_checked_at": "2026-09-16T10:00:00Z",
+		"guidance":        "Point the domain's A/AAAA records at this installation; the certificate is issued automatically once requests arrive here.",
+	}
+	for key, value := range extra {
+		if value == nil {
+			delete(fields, key)
+			continue
+		}
+		fields[key] = value
+	}
+	entry := tlsEntry(seq, "deferred", 0, fields)
+	entry.Message = "TLS deferred · shop.example.com does not reach this installation yet\ncertificate: tls-web-public"
+	return entry
+}
+
+func TestCertificateLinesDeferred(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)
+	entries := []client.LogEntry{tlsEntry(1, "pending", 0, nil), deferredEntry(2, nil)}
+	require.Equal(t, []string{
+		"! TLS deferred · shop.example.com does not reach this installation yet",
+		"  1 of 2 addresses answer as this installation; 2001:db8::10 answers as another server",
+	}, CertificateLines(entries, now, nil))
+
+	// Without a verdict sentence the warning row stands alone; without the
+	// domain field the message's first line carries it.
+	require.Equal(t, []string{
+		"! TLS deferred · shop.example.com does not reach this installation yet",
+	}, CertificateLines([]client.LogEntry{deferredEntry(1, map[string]any{"edge_message": nil})}, now, nil))
+	require.Equal(t, []string{
+		"! TLS deferred · shop.example.com does not reach this installation yet",
+		"  1 of 2 addresses answer as this installation; 2001:db8::10 answers as another server",
+	}, CertificateLines([]client.LogEntry{deferredEntry(1, map[string]any{"domain": nil})}, now, nil))
+}
+
+func TestCertificateLinesDeferredStyled(t *testing.T) {
+	t.Parallel()
+	style := &Style{Enabled: true}
+	lines := CertificateLines([]client.LogEntry{deferredEntry(1, nil)}, time.Now(), style)
+	require.Len(t, lines, 2)
+	require.Contains(t, lines[0], "\x1b[33m!\x1b[0m \x1b[33mTLS deferred · shop.example.com")
+	require.Contains(t, lines[1], "\x1b[2m1 of 2 addresses")
+}
+
+func TestCertificateDetailLinesDeferred(t *testing.T) {
+	t.Parallel()
+	checked := time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)
+	lines := CertificateDetailLines(deferredEntry(1, nil), checked)
+	require.Equal(t, []string{
+		"TLS deferred · shop.example.com does not reach this installation yet",
+		"edge partial: 1 of 2 addresses answer as this installation; 2001:db8::10 answers as another server",
+		"checked " + checked.Local().Format(time.RFC3339),
+		"  198.51.100.7: answered by this installation (HTTP 200)",
+		"  2001:db8::10: answered by another server (HTTP 200 without Skali-Instance)",
+		"Point the domain's A/AAAA records at this installation; the certificate is issued automatically once requests arrive here.",
+	}, lines)
+}

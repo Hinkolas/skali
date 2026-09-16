@@ -50,3 +50,12 @@ func TestNilRedactorPassesThrough(t *testing.T) {
 	var r *Redactor
 	require.Equal(t, "unchanged", r.Redact("unchanged"))
 }
+
+func TestWithoutExemptsNamedSecrets(t *testing.T) {
+	r := New(map[string]string{"shop.example.com": "APP_DOMAIN", "hunter2secret": "SESSION_SECRET"})
+	public := r.Without(map[string]bool{"APP_DOMAIN": true})
+	require.Equal(t, "shop.example.com [redacted:SESSION_SECRET]", public.Redact("shop.example.com hunter2secret"))
+	require.Equal(t, "[redacted:APP_DOMAIN] [redacted:SESSION_SECRET]", r.Redact("shop.example.com hunter2secret"),
+		"the original redactor is untouched")
+	require.Same(t, r, r.Without(nil))
+}
