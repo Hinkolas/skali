@@ -243,7 +243,10 @@ func runServe() error {
 		kernelDeps.RefreshObservation = source.Refresh
 		if cfg.CertManager {
 			kernelDeps.RetryCertificate = func(ctx context.Context, ref kube.ObjectRef, promoted time.Time) (bool, error) {
-				return edgeobserve.RetryFailedCertificate(ctx, kubeClient.Dynamic, ref, promoted)
+				return edgeobserve.RetryFailedCertificate(ctx, kubeClient.Dynamic, kubeClient.Metadata, ref, promoted)
+			}
+			kernelDeps.IssuedNames = func(ctx context.Context, namespace, secretName string) ([]string, error) {
+				return edgeobserve.IssuedNames(ctx, kubeClient.Metadata, namespace, secretName)
 			}
 			kernelDeps.InspectCertificate = func(ctx context.Context, ref kube.ObjectRef) (*module.CertificateStatus, map[string]string, error) {
 				return edgeobserve.InspectCertificate(ctx, kubeClient.Dynamic, ref)

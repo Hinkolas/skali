@@ -207,6 +207,9 @@ type Run struct {
 	// BypassProtection marks a deployment that entered a promote-only
 	// environment on an environment admin's explicit bypass.
 	BypassProtection bool `json:"bypass_protection"`
+	// DeferredRoutes counts the routes whose TLS this run deferred because
+	// the domain did not reach the installation yet (list views only).
+	DeferredRoutes int64 `json:"deferred_routes,omitempty"`
 }
 
 type Attempt struct {
@@ -736,16 +739,18 @@ type EdgeStatus struct {
 	Message   string     `json:"message,omitempty"`
 	CheckedAt *time.Time `json:"checked_at"`
 	Addresses []string   `json:"addresses"`
+	// Deferred is the reconciler's conclusion that TLS waits for the
+	// domain: it does not reach this installation and no certificate
+	// usable for it is on hand (a valid one issued for the route's
+	// previous domain keeps serving but does not count).
+	Deferred bool `json:"deferred"`
 }
 
 // Deferred reports a route whose certificate waits for its domain to reach
-// this installation: the edge probe did not find this edge and no
-// certificate is active yet. An unprobed or unknown edge never counts.
+// this installation. The reconciler decides; an unprobed route never
+// counts.
 func (r RouteStatus) Deferred() bool {
-	if r.Edge == nil || r.Edge.State == "reachable" || r.Edge.State == "unknown" {
-		return false
-	}
-	return r.Certificate == nil || r.Certificate.State != "active"
+	return r.Edge != nil && r.Edge.Deferred
 }
 
 type CertificateStatus struct {
@@ -777,6 +782,40 @@ func (c *Client) EnvironmentValues(ctx context.Context, environmentID string) ([
 		return nil, err
 	}
 	return res.Values, nil
+}
+
+// RouteProbe is one manual edge probe of a route domain.
+type RouteProbe struct {
+	Service string    `json:"service"`
+	Key     string    `json:"key"`
+	Domain  string    `json:"domain"`
+	Edge    EdgeProbe `json:"edge"`
+}
+
+// EdgeProbe is a probe's verdict with its per-address detail.
+type EdgeProbe struct {
+	State     string        `json:"state"` // reachable | partial | unreachable | unresolved | unknown
+	Message   string        `json:"message,omitempty"`
+	CheckedAt time.Time     `json:"checked_at"`
+	Addresses []EdgeAddress `json:"addresses"`
+}
+
+type EdgeAddress struct {
+	Address string `json:"address"`
+	Outcome string `json:"outcome"` // ours | foreign | unreachable
+	Detail  string `json:"detail,omitempty"`
+}
+
+// ProbeRoutes checks right now whether the environment's route domains
+// reach the installation and returns one verdict per TLS route.
+func (c *Client) ProbeRoutes(ctx context.Context, environmentID string) ([]RouteProbe, error) {
+	var res struct {
+		Routes []RouteProbe `json:"routes"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/routes/probe", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Routes, nil
 }
 
 func (c *Client) EnvironmentStatus(ctx context.Context, environmentID string) (*EnvironmentStatus, error) {

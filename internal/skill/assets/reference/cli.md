@@ -68,6 +68,19 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
 - `skali dev exec [app]` opens a shell inside the running container
   instead; `skali run` manages journal runs, not project commands.
 
+## Routes
+
+- `skali route list` shows each route of the environment with its URL,
+  certificate state, and the reconciler's last verdict on whether the
+  domain reaches this installation (`cert deferred · domain not pointing
+  here yet` while DNS is elsewhere). `skali route probe` checks the domains
+  right now and prints one line per resolved address (answered by this
+  installation, by another server, or not at all); a domain that answers
+  here counts as arrived and the reconciler requests a fresh certificate
+  issuance without waiting for its cadence or cert-manager's backoff. Both
+  take `--environment <name>` and `--remote <name>`; probe needs `deploy`
+  on the environment.
+
 ## Access
 
 - `skali access list` shows who holds which role on the project: the project

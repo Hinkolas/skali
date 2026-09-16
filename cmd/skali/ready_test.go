@@ -87,7 +87,7 @@ func TestReadySummaryLines(t *testing.T) {
 			{Key: "web", Type: "application", Routes: []client.RouteStatus{
 				{Key: "public", Domain: "shop.example.com", Path: "/",
 					Certificate: &client.CertificateStatus{State: "issuing", Reason: "Pending"},
-					Edge:        &client.EdgeStatus{State: "unreachable", Message: "no address answers as this installation"}},
+					Edge:        &client.EdgeStatus{State: "unreachable", Message: "no address answers as this installation", Deferred: true}},
 			}},
 		}}
 		lines := readySummaryLines(style, remote, readySummary{})
@@ -146,7 +146,7 @@ func TestReadySummaryLines(t *testing.T) {
 func TestReadyWarningLines(t *testing.T) {
 	t.Parallel()
 	style := clirender.StyleFor(&bytes.Buffer{})
-	deferred := &client.EdgeStatus{State: "partial", Message: "AAAA record still points elsewhere"}
+	deferred := &client.EdgeStatus{State: "partial", Message: "AAAA record still points elsewhere", Deferred: true}
 	status := &client.EnvironmentStatus{Services: []client.ServiceStatus{
 		{Key: "web", Type: "application", Routes: []client.RouteStatus{
 			{Key: "public", Domain: "shop.example.com", Path: "/", Certificate: &client.CertificateStatus{State: "pending"}, Edge: deferred},
@@ -159,11 +159,12 @@ func TestReadyWarningLines(t *testing.T) {
 		"warning: shop.example.com does not reach this installation yet (AAAA record still points elsewhere); TLS is issued automatically once its DNS points here",
 	}, readyWarningLines(style, status), "one warning per domain, none for a reachable route")
 
-	// An active certificate with a stale verdict, and a route never probed,
-	// warn about nothing.
+	// A verdict the reconciler no longer calls deferred (the certificate
+	// went active), and a route never probed, warn about nothing.
+	settled := &client.EdgeStatus{State: "partial", Message: "AAAA record still points elsewhere"}
 	quiet := &client.EnvironmentStatus{Services: []client.ServiceStatus{
 		{Key: "web", Type: "application", Routes: []client.RouteStatus{
-			{Key: "public", Domain: "shop.example.com", Certificate: &client.CertificateStatus{State: "active"}, Edge: deferred},
+			{Key: "public", Domain: "shop.example.com", Certificate: &client.CertificateStatus{State: "active"}, Edge: settled},
 			{Key: "api", Domain: "api.example.com", Certificate: &client.CertificateStatus{State: "pending"}},
 		}},
 	}}

@@ -82,6 +82,9 @@ type edgeStatusPayload struct {
 	Message   string     `json:"message,omitempty"`
 	CheckedAt *time.Time `json:"checked_at"`
 	Addresses []string   `json:"addresses"`
+	// Deferred is the reconciler's conclusion: the domain does not reach
+	// this installation and no certificate usable for it is on hand.
+	Deferred bool `json:"deferred"`
 }
 
 type certificatePayload struct {
@@ -212,6 +215,7 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 					State:     route.Edge.State,
 					Message:   route.Edge.Message,
 					Addresses: append([]string{}, route.Edge.Addresses...),
+					Deferred:  route.Edge.Deferred,
 				}
 				if !route.Edge.CheckedAt.IsZero() {
 					checked := route.Edge.CheckedAt
@@ -416,4 +420,63 @@ func writeStatusError(r *http.Request, w http.ResponseWriter, err error) {
 		return
 	}
 	writeInternalError(r.Context(), w, "environment status", err)
+}
+
+// routeProbePayload is one manual edge probe of a route domain.
+type routeProbePayload struct {
+	Service string           `json:"service"`
+	Key     string           `json:"key"`
+	Domain  string           `json:"domain"`
+	Edge    edgeProbePayload `json:"edge"`
+}
+
+// edgeProbePayload is the probe's verdict with its per-address detail; the
+// reconciler's own conclusion (deferred) follows in the status projection
+// once the enqueued pass has acted on it.
+type edgeProbePayload struct {
+	State     string               `json:"state"` // reachable | partial | unreachable | unresolved | unknown
+	Message   string               `json:"message,omitempty"`
+	CheckedAt time.Time            `json:"checked_at"`
+	Addresses []edgeAddressPayload `json:"addresses"`
+}
+
+type edgeAddressPayload struct {
+	Address string `json:"address"`
+	Outcome string `json:"outcome"` // ours | foreign | unreachable
+	Detail  string `json:"detail,omitempty"`
+}
+
+// POST /v1/environments/{id}/routes/probe
+func (h *statusHandlers) probeRoutes(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	probes, err := h.reconcile.ProbeRoutes(r.Context(), id)
+	if errors.Is(err, reconcile.ErrNoEdgeProbe) {
+		writeError(w, http.StatusConflict, codeConflict, "this installation has no edge probe: route domains are not checked here")
+		return
+	}
+	if err != nil {
+		writeStatusError(r, w, err)
+		return
+	}
+	payload := make([]routeProbePayload, 0, len(probes))
+	for _, probe := range probes {
+		edge := edgeProbePayload{
+			State:     string(probe.Result.State),
+			Message:   probe.Result.Message,
+			CheckedAt: probe.Result.CheckedAt,
+			Addresses: make([]edgeAddressPayload, 0, len(probe.Result.Addresses)),
+		}
+		for _, address := range probe.Result.Addresses {
+			edge.Addresses = append(edge.Addresses, edgeAddressPayload{
+				Address: address.Address, Outcome: string(address.Outcome), Detail: address.Detail,
+			})
+		}
+		payload = append(payload, routeProbePayload{Service: probe.Service, Key: probe.Key, Domain: probe.Domain, Edge: edge})
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Routes []routeProbePayload `json:"routes"`
+	}{payload})
 }

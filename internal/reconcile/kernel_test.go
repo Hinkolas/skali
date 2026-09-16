@@ -173,6 +173,17 @@ func (f *kernelFixture) executeDeployment(t *testing.T) *deploy.ExecuteResult {
 
 func (f *kernelFixture) executeDeploymentManifest(t *testing.T, manifestSource string) *deploy.ExecuteResult {
 	t.Helper()
+	return f.executeDeploymentValues(t, manifestSource, map[string]string{
+		"APP_DOMAIN":     "demo.example.com",
+		"SESSION_SECRET": "kernel-plant-value",
+	})
+}
+
+// executeDeploymentValues promotes the manifest with the given plaintext
+// values staged for the environment (a redeploy that changes a route
+// domain stages a new APP_DOMAIN).
+func (f *kernelFixture) executeDeploymentValues(t *testing.T, manifestSource string, values map[string]string) *deploy.ExecuteResult {
+	t.Helper()
 	ctx := context.Background()
 	projects := project.New(f.st)
 	// Resubmitting on top of an earlier draft needs its version; a project
@@ -189,10 +200,7 @@ func (f *kernelFixture) executeDeploymentManifest(t *testing.T, manifestSource s
 	require.NoError(t, err)
 	valueSvc, err := valuestore.New(f.st, strings.Repeat("k", 32))
 	require.NoError(t, err)
-	candidate, err := valueSvc.Stage(ctx, f.environmentID, map[string]string{
-		"APP_DOMAIN":     "demo.example.com",
-		"SESSION_SECRET": "kernel-plant-value",
-	})
+	candidate, err := valueSvc.Stage(ctx, f.environmentID, values)
 	require.NoError(t, err)
 
 	result, err := f.deploy.Execute(ctx, deploy.ExecuteInput{

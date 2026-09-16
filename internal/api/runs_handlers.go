@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/store"
@@ -33,6 +36,29 @@ type runPayload struct {
 	// BypassProtection marks a deployment that entered a promote-only
 	// environment on an environment admin's explicit bypass.
 	BypassProtection bool `json:"bypass_protection"`
+	// DeferredRoutes counts the routes whose TLS checkpoint this run set
+	// aside because the domain did not reach this installation yet: the
+	// run succeeded with warnings. Only list views carry it.
+	DeferredRoutes int64 `json:"deferred_routes,omitempty"`
+}
+
+// runListPayload projects the environment's runs with their deferred-route
+// counts, the one aggregate the list views need beyond the row itself.
+func (h *runsHandlers) runListPayload(ctx context.Context, runs []store.Run) ([]runPayload, error) {
+	ids := make([]uuid.UUID, len(runs))
+	for i := range runs {
+		ids[i] = runs[i].ID
+	}
+	deferred, err := h.journal.DeferredRoutes(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	payload := make([]runPayload, len(runs))
+	for i := range runs {
+		payload[i] = newRunPayload(&runs[i])
+		payload[i].DeferredRoutes = deferred[runs[i].ID]
+	}
+	return payload, nil
 }
 
 func newRunPayload(r *store.Run) runPayload {
@@ -175,9 +201,10 @@ func (h *runsHandlers) list(w http.ResponseWriter, r *http.Request) {
 		writeJournalError(r, w, err)
 		return
 	}
-	payload := make([]runPayload, len(runs))
-	for i := range runs {
-		payload[i] = newRunPayload(&runs[i])
+	payload, err := h.runListPayload(r.Context(), runs)
+	if err != nil {
+		writeJournalError(r, w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Runs []runPayload `json:"runs"`
@@ -360,9 +387,9 @@ func (h *runsHandlers) streamRuns(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	send := func(runs []store.Run) bool {
-		payload := make([]runPayload, len(runs))
-		for i := range runs {
-			payload[i] = newRunPayload(&runs[i])
+		payload, err := h.runListPayload(r.Context(), runs)
+		if err != nil {
+			return false
 		}
 		data, err := json.Marshal(struct {
 			Runs []runPayload `json:"runs"`

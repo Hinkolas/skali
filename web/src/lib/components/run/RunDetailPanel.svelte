@@ -3,7 +3,7 @@
 	import X from '@lucide/svelte/icons/x';
 	import { invalidateAll } from '$app/navigation';
 	import { api, ApiError } from '$lib/api/client';
-	import type { RunTree } from '$lib/types/runs';
+	import type { RunTree, Step } from '$lib/types/runs';
 	import { runUnsettled } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
 	import { formatDuration, formatDateTime } from '$lib/format';
@@ -82,6 +82,20 @@
 		return (settled / tree.steps.length) * 100;
 	});
 
+	// A succeeded run that set TLS aside for a route (its domain did not
+	// reach this installation yet) ended with warnings: the skipped tls:
+	// checkpoints sit under the rollout step, so the count walks the tree.
+	function countDeferred(steps: Step[] | undefined): number {
+		let count = 0;
+		for (const step of steps ?? []) {
+			if (step.key.startsWith('tls:') && step.status === 'skipped') count += 1;
+			count += countDeferred(step.children);
+		}
+		return count;
+	}
+	const deferredRoutes = $derived(countDeferred(tree?.steps));
+	const withWarnings = $derived(tree?.run.status === 'succeeded' && deferredRoutes > 0);
+
 	const statusText: Record<string, string> = {
 		pending: 'text-text-muted',
 		running: 'text-status-warning',
@@ -119,6 +133,15 @@
 				{tree?.run.kind ?? 'run'}
 				{#if tree}
 					<span class="text-md font-medium {statusText[tree.run.status]}">{tree.run.status}</span>
+					{#if withWarnings}
+						<span
+							class="text-status-warning text-md font-medium"
+							title="{deferredRoutes} route{deferredRoutes === 1
+								? ''
+								: 's'} deferred: the domain does not reach this installation yet"
+							>· with warnings</span
+						>
+					{/if}
 				{/if}
 			</div>
 			{#if tree}

@@ -156,15 +156,26 @@ provisions the certificate but keeps answering plain HTTP without a
 redirect (for consumers that cannot follow redirects); `tls: disabled`
 serves plain HTTP only. Local development serves every route over plain
 HTTP on `*.localhost` domains regardless of the policy. On production, a
-first deploy of a route waits for its certificate only when the domain
-already reaches this installation. A domain still pointing elsewhere (a
-migration in progress) is deferred: the run stays green, the checkpoint ends
-skipped with a `TLS deferred` warning naming the domain, the ready summary
-prints `cert deferred · domain not pointing here yet` plus a `warning:`
-line, and the certificate is issued automatically once the A and AAAA
-records point here (one record left behind reads as `partial` and still
-defers). A domain that does point here but fails validation fails the run
-at the rollout deadline with the issuance reason. Each route has an
+deploy waits for a route's certificate only when the domain already
+reaches this installation. A domain still pointing elsewhere (a migration
+in progress) is deferred: the run stays green, the checkpoint ends skipped
+with a `TLS deferred` warning naming the domain, the ready summary prints
+`cert deferred · domain not pointing here yet` plus a `warning:` line, the
+console marks the run (`N routes deferred`, `succeeded · with warnings`)
+and the service (`DNS pending`), and the certificate is issued
+automatically once the A and AAAA records point here (one record left
+behind reads as `partial` and still defers). Changing a route's domain on
+an existing route (staging domain first, production domain later) defers
+the same way: the certificate on hand was issued for the old domain and
+keeps serving it (`issued for` in the checkpoint) while it counts as
+unissued for the new one. When the domain arrives, the reconciler requests
+a fresh issuance at once and records the arrival as a `reconcile` run; a
+second run records the outcome (issued, or failed with cert-manager's
+reason). `skali route probe` checks the domains right now, address by
+address, and counts a domain that answers here as arrived, which also
+retries a certificate stuck in backoff. A domain that does point here but
+fails validation fails the run at the rollout deadline with the issuance
+reason, for a first issuance and for a renamed route alike. Each route has an
 **Issue TLS certificate** checkpoint with the
 issuance attempt, consecutive failure count, last failure, estimated next retry,
 and the current CertificateRequest, ACME Order and validation challenge details.

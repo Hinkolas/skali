@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
@@ -61,7 +62,11 @@ type Client struct {
 	Config    *rest.Config
 	Clientset kubernetes.Interface
 	Dynamic   dynamic.Interface
-	Mapper    meta.RESTMapper
+	// Metadata reads object metadata only (no spec, data or status); the
+	// edge uses it to learn which names a TLS Secret was issued for
+	// without ever requesting key material.
+	Metadata metadata.Interface
+	Mapper   meta.RESTMapper
 
 	// Lazily built service-proxy transport (proxy.go).
 	proxyOnce sync.Once
@@ -100,6 +105,10 @@ func NewFromConfig(config *rest.Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kube: build dynamic client: %w", err)
 	}
+	metadataClient, err := metadata.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("kube: build metadata client: %w", err)
+	}
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("kube: build discovery client: %w", err)
@@ -109,6 +118,7 @@ func NewFromConfig(config *rest.Config) (*Client, error) {
 		Config:    config,
 		Clientset: clientset,
 		Dynamic:   dynamicClient,
+		Metadata:  metadataClient,
 		Mapper:    mapper,
 	}, nil
 }

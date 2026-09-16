@@ -85,6 +85,8 @@
 			<dt class="text-text-muted">Estimated retry</dt>
 			<dd class="text-text-secondary">{formatDateTime(value('next_retry_at'))}</dd>
 		{/if}
+		{#if value('issued_for')}<dt class="text-text-muted">Serving certificate for</dt>
+			<dd class="text-text-secondary break-words">{value('issued_for')}</dd>{/if}
 		{#if value('valid_until')}<dt class="text-text-muted">Valid until</dt>
 			<dd class="text-text-secondary">{formatDateTime(value('valid_until'))}</dd>{/if}
 		{#if phase !== 'active' && phase !== 'deferred' && value('deadline')}<dt

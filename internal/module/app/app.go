@@ -255,10 +255,18 @@ func (s *service) applyCertificateGate(observed []module.ObservedResource, evalu
 		}
 		name := kubernetes.RouteTLSName(s.project, s.key, routeKey)
 		certificate := findCertificate(observed, name)
+		edge := findEdge(observed, name)
 		valid := certificate != nil && !certificate.NotAfter.IsZero() && now.Before(certificate.NotAfter)
-		if edge := findEdge(observed, name); edge != nil && edge.Deferred && !valid {
-			notes = append(notes, warnDiag("certificate-deferred",
-				"certificate "+name+" is deferred: "+edge.Domain+" does not reach this installation yet ("+edge.State+")", name))
+		// A valid certificate issued for other names (the route's domain
+		// changed on the same key) is unissued for the desired domain.
+		mismatch := valid && edge != nil && edge.Mismatch
+		covered := valid && !mismatch
+		if edge != nil && edge.Deferred && !covered {
+			message := "certificate " + name + " is deferred: " + edge.Domain + " does not reach this installation yet (" + edge.State + ")"
+			if mismatch {
+				message += "; the certificate for " + strings.Join(edge.Issued, ", ") + " keeps serving"
+			}
+			notes = append(notes, warnDiag("certificate-deferred", message, name))
 			continue
 		}
 		switch {
@@ -286,6 +294,23 @@ func (s *service) applyCertificateGate(observed []module.ObservedResource, evalu
 			blockers = append(blockers, errorDiag("certificate-expired",
 				"certificate "+name+" expired "+certificate.NotAfter.UTC().Format(time.RFC3339), name))
 			health = floorHealth(health, module.HealthDegraded)
+		case mismatch:
+			// The domain reaches this installation but the certificate on
+			// hand names the old domain: issuance for the new one gates
+			// like a first issuance, and its failures name a cause.
+			message := "certificate " + name + " is not issued for " + edge.Domain + " yet"
+			if len(edge.Issued) > 0 {
+				message += " (issued for " + strings.Join(edge.Issued, ", ") + ")"
+			}
+			if detail := certificateDetail(certificate); detail != "" {
+				message += ": " + detail
+			}
+			if certificate.FailedAttempts > 0 {
+				blockers = append(blockers, errorDiag("certificate-failing", message, name))
+			} else {
+				blockers = append(blockers, infoDiag("certificate-pending", message, name))
+			}
+			health = floorHealth(health, module.HealthProgressing)
 		case !certificate.Ready:
 			// Still valid, renewal failing: post-activation this must never
 			// gate, only warn.

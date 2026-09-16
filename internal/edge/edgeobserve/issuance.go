@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/util/retry"
 
 	"github.com/Hinkolas/skali/internal/edge"
@@ -26,8 +27,12 @@ import (
 // Only failures older than this promotion qualify. The Issuing transition
 // and subsequent lastFailureTime make this restart-safe without using the
 // explanatory journal as a retry ledger. Fresh reads and resourceVersion
-// protect a concurrent controller update; a usable certificate is untouched.
-func RetryFailedCertificate(ctx context.Context, client dynamic.Interface, ref kube.ObjectRef, promoted time.Time) (bool, error) {
+// protect a concurrent controller update; a certificate usable for the
+// desired names is untouched. A still-valid certificate issued for other
+// names (the route's domain changed on the same key) is not usable and
+// qualifies like an unissued one; meta reads the issued names from the
+// Secret's annotations and nil skips that check.
+func RetryFailedCertificate(ctx context.Context, client dynamic.Interface, meta metadata.Interface, ref kube.ObjectRef, promoted time.Time) (bool, error) {
 	changed := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		resource := client.Resource(edge.CertificateGVR).Namespace(ref.Namespace)
@@ -44,8 +49,24 @@ func RetryFailedCertificate(ctx context.Context, client dynamic.Interface, ref k
 		projected, _ := ConvertCertificate(obj)
 		status := projected.Certificate
 		now := time.Now().UTC()
-		if status.Ready || status.Issuing || status.NotAfter.After(now) || status.LastFailureTime.IsZero() || !status.LastFailureTime.Before(promoted.Truncate(time.Second)) {
+		if status.Issuing || status.LastFailureTime.IsZero() || !status.LastFailureTime.Before(promoted.Truncate(time.Second)) {
 			return nil
+		}
+		if status.NotAfter.After(now) {
+			usable := status.Ready
+			if len(status.DNSNames) > 0 {
+				// The names on hand decide, not the Ready condition: after a
+				// domain change cert-manager reports the old certificate as
+				// not ready while the edge keeps serving it.
+				issued, err := IssuedNames(ctx, meta, ref.Namespace, status.SecretName)
+				if err != nil {
+					return err
+				}
+				usable = issued == nil || Covers(issued, status.DNSNames[0])
+			}
+			if usable {
+				return nil
+			}
 		}
 		// Timestamp precision is seconds in cert-manager. Wait until the new
 		// transition is strictly newer than failure, or requestmanager cannot

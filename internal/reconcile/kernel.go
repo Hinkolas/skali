@@ -85,6 +85,11 @@ type Deps struct {
 	LiveRouteHosts     func(context.Context, uuid.UUID) (map[string]bool, error)
 	RetryCertificate   func(context.Context, kube.ObjectRef, time.Time) (bool, error)
 	InspectCertificate func(context.Context, kube.ObjectRef) (*module.CertificateStatus, map[string]string, error)
+	// IssuedNames reads the names a route certificate's TLS Secret was
+	// issued for (edgeobserve.IssuedNames): after a route's domain changed
+	// on the same key, the still-valid certificate on hand covers the old
+	// name only. Nil treats every valid certificate as covering its domain.
+	IssuedNames func(ctx context.Context, namespace, secretName string) ([]string, error)
 	// ProbeDomain reports whether a route domain reaches this installation's
 	// edge (edgeprobe.Prober.Probe). Nil disables deferral: every TLS route
 	// then gates activation as if its domain pointed here.
@@ -150,14 +155,15 @@ type Kernel struct {
 	retireMu sync.Mutex
 	retired  map[retireKey]time.Time
 
-	// domains caches the edge probe per route domain and certDomains maps
-	// each Certificate name to the domain its last pass probed, so the
-	// status projection and the module gate read the pass's own verdict.
-	// In-memory by design, like retired: after a restart the first pass
-	// probes again and a reachable domain counts as freshly arrived.
-	domainMu    sync.Mutex
-	domains     map[string]domainProbe
-	certDomains map[string]string
+	// domains caches the edge probe per route domain and routes holds the
+	// last pass's verdict per environment and Certificate (its domain,
+	// deferral, name mismatch, issued names), so the status projection and
+	// the module gate read the pass's own conclusion. In-memory by design,
+	// like retired: after a restart the first pass probes again and a
+	// reachable domain counts as freshly arrived.
+	domainMu sync.Mutex
+	domains  map[string]domainProbe
+	routes   map[routeKey]routeRecord
 }
 
 func New(deps Deps, cfg Config) *Kernel {
@@ -180,11 +186,11 @@ func New(deps Deps, cfg Config) *Kernel {
 	// error must never park an in-flight rollout longer than an ordinary
 	// waiting pass.
 	return &Kernel{
-		deps:        deps,
-		cfg:         cfg,
-		retired:     map[retireKey]time.Time{},
-		domains:     map[string]domainProbe{},
-		certDomains: map[string]string{},
+		deps:    deps,
+		cfg:     cfg,
+		retired: map[retireKey]time.Time{},
+		domains: map[string]domainProbe{},
+		routes:  map[routeKey]routeRecord{},
 		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck)),
 	}

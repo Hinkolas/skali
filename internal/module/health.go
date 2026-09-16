@@ -121,12 +121,17 @@ type ObservedResource struct {
 
 // EdgeReach is the kernel's verdict on one route domain, keyed by the
 // route's Certificate name. Deferred means the domain does not reach this
-// installation yet, so the certificate cannot be validated and must not
-// gate health.
+// installation yet and nothing usable is on hand, so the certificate
+// cannot be validated and must not gate health. Mismatch means a valid
+// certificate exists but was issued for other names (Issued): the route's
+// domain changed on the same key, and for the desired domain the
+// certificate counts as unissued. State is empty before any probe.
 type EdgeReach struct {
 	Domain   string
 	State    string
 	Deferred bool
+	Mismatch bool
+	Issued   []string
 }
 
 // CertificateStatus projects one cert-manager Certificate: its Ready and

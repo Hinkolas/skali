@@ -84,6 +84,59 @@ func deferredEdge(deferred bool) module.ObservedResource {
 	}
 }
 
+// mismatchEdge is the verdict on a route whose domain changed on the same
+// key: the valid certificate on hand was issued for the old name.
+func mismatchEdge(deferred bool) module.ObservedResource {
+	resource := deferredEdge(deferred)
+	resource.Edge.Mismatch = true
+	resource.Edge.Issued = []string{"staging.example.com"}
+	return resource
+}
+
+// validCertificate is a certificate cert-manager still serves but reports
+// not ready because its request no longer matches the spec.
+func validCertificate(failed int32) module.CertificateStatus {
+	return module.CertificateStatus{Ready: false, Reason: "RequestChanged", NotAfter: time.Now().Add(30 * 24 * time.Hour),
+		DNSNames: []string{"shop.example.com"}, FailedAttempts: failed}
+}
+
+func TestEvaluateCertificateMismatch(t *testing.T) {
+	t.Parallel()
+	healthyWorkload := []module.ObservedResource{freshSource(), workload(1, 1, 1)}
+
+	t.Run("a reachable domain gates on the certificate for the new name", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, mismatchEdge(false), certificate(validCertificate(0))))
+		require.Equal(t, module.HealthProgressing, evaluation.Health)
+		require.Equal(t, "certificate-pending", evaluation.Diagnostics[0].Code)
+		require.Contains(t, evaluation.Diagnostics[0].Message, "is not issued for shop.example.com yet (issued for staging.example.com)")
+	})
+
+	t.Run("failed attempts for the new name are an error", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, mismatchEdge(false), certificate(validCertificate(2))))
+		require.Equal(t, module.HealthProgressing, evaluation.Health)
+		require.Equal(t, "certificate-failing", evaluation.Diagnostics[0].Code)
+		require.Equal(t, "error", evaluation.Diagnostics[0].Severity)
+	})
+
+	t.Run("a deferred domain keeps the old certificate serving", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, mismatchEdge(true), certificate(validCertificate(1))))
+		require.Equal(t, module.HealthHealthy, evaluation.Health)
+		require.Len(t, evaluation.Diagnostics, 1)
+		require.Equal(t, "certificate-deferred", evaluation.Diagnostics[0].Code)
+		require.Contains(t, evaluation.Diagnostics[0].Message, "the certificate for staging.example.com keeps serving")
+	})
+
+	t.Run("a covered certificate with a failing renewal only warns", func(t *testing.T) {
+		t.Parallel()
+		evaluation := decodeRoutes(t, true, "automatic").Evaluate(append(healthyWorkload, deferredEdge(false), certificate(validCertificate(1))))
+		require.Equal(t, module.HealthHealthy, evaluation.Health)
+		require.Equal(t, "certificate-renewal-failing", evaluation.Diagnostics[0].Code)
+	})
+}
+
 func TestEvaluateCertificateDeferred(t *testing.T) {
 	t.Parallel()
 	healthyWorkload := []module.ObservedResource{freshSource(), workload(1, 1, 1)}
