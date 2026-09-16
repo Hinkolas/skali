@@ -924,6 +924,37 @@ func (s *Service) SweepStaleDeployments(ctx context.Context, jsvc *journal.Servi
 	return swept, nil
 }
 
+// RecoverOnBoot fails every preparing deployment whose completion this
+// daemon owned when it last died: the artifacts step of its run already
+// succeeded, so the client's part was over and no client will ever finish
+// the row. The journal's own recovery failed the orphaned attempt; this
+// closes the deployment and its run so the environment is free again.
+func (s *Service) RecoverOnBoot(ctx context.Context, jsvc *journal.Service) (int, error) {
+	rows, err := s.st.ListServerOwnedPreparingDeployments(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("deploy: list interrupted deployments: %w", err)
+	}
+	recovered := 0
+	for _, row := range rows {
+		if row.RunID != nil {
+			if redactor, err := s.values.Redactor(ctx, row.EnvironmentID, uuid.Nil); err == nil {
+				if err := s.instantStep(ctx, jsvc, *row.RunID, redactor, "restart", "Daemon restarted",
+					"deployment failed: daemon restarted while it was completing"); err != nil {
+					slog.WarnContext(ctx, "deploy: journal restart diagnostic", "run", *row.RunID, "err", err)
+				}
+			}
+		}
+		if err := s.FailDeployment(ctx, row.ID, jsvc); err != nil {
+			if errors.Is(err, ErrInvalidDeploymentTransition) {
+				continue
+			}
+			return recovered, err
+		}
+		recovered++
+	}
+	return recovered, nil
+}
+
 // TouchDeployment records artifact-window liveness.
 func (s *Service) TouchDeployment(ctx context.Context, deploymentID uuid.UUID) error {
 	if _, err := s.st.TouchDeployment(ctx, deploymentID); err != nil {

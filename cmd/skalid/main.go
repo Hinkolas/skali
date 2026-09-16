@@ -186,6 +186,13 @@ func runServe() error {
 	} else if failed > 0 {
 		slog.InfoContext(ctx, "recovered orphaned attempts", "failed", failed)
 	}
+	// Deployments whose completion the previous daemon was driving when it
+	// died: their runs would otherwise stay running and block the environment.
+	if failed, err := deploySvc.RecoverOnBoot(ctx, journalSvc); err != nil {
+		return fmt.Errorf("recover deployments: %w", err)
+	} else if failed > 0 {
+		slog.InfoContext(ctx, "failed interrupted deployments", "count", failed)
+	}
 
 	// Cluster access is optional in development: without SKALI_KUBECONFIG or
 	// in-cluster credentials skalid runs API-only, observation reports

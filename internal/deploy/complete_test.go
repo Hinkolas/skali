@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -203,4 +204,66 @@ func TestCloseDeploymentSurvivesCancelledContext(t *testing.T) {
 	tree, err := jsvc.RunTree(ctx, *deployment.RunID)
 	require.NoError(t, err)
 	require.Equal(t, "failed", tree.Run.Status)
+}
+
+// A daemon that dies mid-completion leaves a preparing deployment whose
+// artifacts step already succeeded; boot recovery fails exactly those.
+func TestRecoverOnBootFailsServerOwnedDeployments(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	jsvc := journal.NewService(f.st, "executor-1")
+
+	staging, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging", project.EnvironmentOptions{})
+	require.NoError(t, err)
+	definitionVersion := f.submit(t, testManifest, 0)
+	owned := f.openForComplete(t, jsvc, f.environmentID, definitionVersion, "owned-plant-value")
+	clientSide := f.openForComplete(t, jsvc, staging.ID, definitionVersion, "client-plant-value")
+
+	// The owned deployment's client finished: its artifacts step closed.
+	tree, err := jsvc.RunTree(ctx, *owned.RunID)
+	require.NoError(t, err)
+	var artifactsStep *store.Step
+	for _, step := range tree.Steps {
+		if step.Step.Key == "artifacts" {
+			artifactsStep = &step.Step
+		}
+	}
+	require.NotNil(t, artifactsStep)
+	if artifactsStep.Status == "pending" {
+		require.NoError(t, jsvc.SetStepStatus(ctx, artifactsStep.ID, journal.StepRunning))
+	}
+	require.NoError(t, jsvc.SetStepStatus(ctx, artifactsStep.ID, journal.StepSucceeded))
+
+	recovered, err := f.deploy.RecoverOnBoot(ctx, journal.NewService(f.st, "executor-2"))
+	require.NoError(t, err)
+	require.Equal(t, 1, recovered)
+
+	row, err := f.deploy.GetDeployment(ctx, owned.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(DeploymentFailed), row.Status)
+	tree, err = jsvc.RunTree(ctx, *owned.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", tree.Run.Status)
+	var keys []string
+	for _, step := range tree.Steps {
+		keys = append(keys, step.Step.Key)
+	}
+	require.Contains(t, keys, "restart")
+	var explained int
+	require.NoError(t, f.st.Pool.QueryRow(ctx,
+		"SELECT count(*) FROM run_logs WHERE message LIKE '%daemon restarted%'").Scan(&explained))
+	require.Equal(t, 1, explained)
+
+	// The client-side window is untouched: its client may still be building.
+	row, err = f.deploy.GetDeployment(ctx, clientSide.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(DeploymentPreparing), row.Status)
+	tree, err = jsvc.RunTree(ctx, *clientSide.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "running", tree.Run.Status)
+
+	recovered, err = f.deploy.RecoverOnBoot(ctx, jsvc)
+	require.NoError(t, err)
+	require.Zero(t, recovered)
 }

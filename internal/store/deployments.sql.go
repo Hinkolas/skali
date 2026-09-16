@@ -288,6 +288,57 @@ func (q *Queries) ListDeploymentsForEnvironment(ctx context.Context, arg ListDep
 	return items, nil
 }
 
+const listServerOwnedPreparingDeployments = `-- name: ListServerOwnedPreparingDeployments :many
+SELECT deployments.id, deployments.project_id, deployments.environment_id, deployments.definition_version_id, deployments.candidate_id, deployments.status, deployments.revision_id, deployments.run_id, deployments.actor, deployments.build_executor, deployments.actions, deployments.created_at, deployments.updated_at, deployments.restart, deployments.local_applications, deployments.prune_values, deployments.bypass_protection, deployments.from_environment_id FROM deployments
+JOIN steps ON steps.run_id = deployments.run_id
+WHERE deployments.status = 'preparing'
+  AND steps.key = 'artifacts'
+  AND steps.status = 'succeeded'
+ORDER BY deployments.created_at
+`
+
+// Boot recovery: preparing deployments whose completion the daemon owned
+// when it died. The artifacts step succeeds only when Complete closes the
+// client's window, after which no client ever touches the row again.
+func (q *Queries) ListServerOwnedPreparingDeployments(ctx context.Context) ([]Deployment, error) {
+	rows, err := q.db.Query(ctx, listServerOwnedPreparingDeployments)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Deployment
+	for rows.Next() {
+		var i Deployment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.DefinitionVersionID,
+			&i.CandidateID,
+			&i.Status,
+			&i.RevisionID,
+			&i.RunID,
+			&i.Actor,
+			&i.BuildExecutor,
+			&i.Actions,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Restart,
+			&i.LocalApplications,
+			&i.PruneValues,
+			&i.BypassProtection,
+			&i.FromEnvironmentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStalePreparingDeployments = `-- name: ListStalePreparingDeployments :many
 SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments WHERE status = 'preparing' AND updated_at < $1
 `
