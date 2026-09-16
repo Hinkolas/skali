@@ -1011,6 +1011,30 @@ spec:
           port: 80
 `, Namespace, production.IngressHost, IssuerName)
 	}
+	// The edge identity route answers on every hostname, on purpose: the
+	// kernel probes a tenant domain with that domain's own Host header to
+	// learn whether it reaches this edge (internal/edge/edgeprobe). Traefik
+	// ranks routers by rule length by default, and tenant and platform web
+	// rules stay well under 1000 characters, so the explicit priority wins
+	// on any host while cert-manager's /.well-known/acme-challenge/ solver
+	// Ingresses keep their own, disjoint prefix.
+	edgeSuffix += fmt.Sprintf(`---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: skalid-edge-probe
+  namespace: %[1]s
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`+"`%[2]s`"+`)
+      kind: Rule
+      priority: 10000
+      services:
+        - name: skalid
+          port: 80
+`, Namespace, edge.ProbePath)
 	capabilitiesEnv += "\n            - name: SKALI_COOKIE_SECURE\n              value: \"" + cookieSecure + "\""
 
 	return fmt.Sprintf(`apiVersion: v1

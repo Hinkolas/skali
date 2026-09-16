@@ -36,6 +36,7 @@ import (
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/edge/edgeobserve"
+	"github.com/Hinkolas/skali/internal/edge/edgeprobe"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/metrics"
@@ -247,6 +248,11 @@ func runServe() error {
 			kernelDeps.InspectCertificate = func(ctx context.Context, ref kube.ObjectRef) (*module.CertificateStatus, map[string]string, error) {
 				return edgeobserve.InspectCertificate(ctx, kubeClient.Dynamic, ref)
 			}
+			// The edge probe tells a route domain that is still elsewhere
+			// (a migration in progress) from one whose issuance is failing.
+			prober := edgeprobe.New(instanceID.String(), versionpkg.Version)
+			kernelDeps.ProbeDomain = prober.Probe
+			go selfProbe(ctx, prober, cfg.ReservedHosts)
 		}
 	}
 	if !cfg.ManagedCluster {
@@ -534,4 +540,30 @@ func shutdownWithin(fn func(context.Context) error, d time.Duration) {
 	if err := fn(ctx); err != nil {
 		slog.Error("shutdown", "service", serviceName, "err", err)
 	}
+}
+
+// selfProbe checks once at boot that the platform domain reaches this edge
+// from inside the cluster. It is a diagnostic, not a gate: a cluster that
+// cannot hairpin to its own public address would read every route domain
+// as unreachable and defer every certificate, and cert-manager's own HTTP-01
+// self check would fail on it just the same, so the warning names the
+// cause before the first tenant deploy runs into it.
+func selfProbe(ctx context.Context, prober *edgeprobe.Prober, reservedHosts []string) {
+	if len(reservedHosts) == 0 || reservedHosts[0] == "" {
+		return
+	}
+	// The edge needs a moment after a fresh install; one short wait keeps
+	// the boot log free of a spurious warning.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
+	}
+	result := prober.Probe(ctx, reservedHosts[0])
+	if result.State == edgeprobe.StateReachable {
+		slog.Info("edge self-probe: the platform domain reaches this installation", "domain", result.Domain)
+		return
+	}
+	slog.Warn("edge self-probe: the platform domain does not reach this installation from inside the cluster; route domains will read as unreachable and their certificates will be deferred",
+		"domain", result.Domain, "state", string(result.State), "detail", result.Message)
 }

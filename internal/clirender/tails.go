@@ -22,6 +22,9 @@ import (
 // writes.
 func CertificateDetailLines(entry client.LogEntry, now time.Time) []string {
 	lines := []string{}
+	if fieldString(entry.Fields, "phase") == "deferred" {
+		return deferredDetailLines(entry)
+	}
 	if retry, ok := fieldTime(entry.Fields, "next_retry_at"); ok {
 		remaining := retry.Sub(now).Round(time.Second)
 		if remaining > 0 {
@@ -33,10 +36,35 @@ func CertificateDetailLines(entry client.LogEntry, now time.Time) []string {
 	return append(lines, entry.Message)
 }
 
+// deferredDetailLines is the verbose shape of a deferred route: the
+// verdict, when it was taken, every probed address, and the next step.
+func deferredDetailLines(entry client.LogEntry) []string {
+	lines := []string{firstLine(entry.Message)}
+	verdict := "edge " + fieldString(entry.Fields, "edge_state")
+	if message := fieldString(entry.Fields, "edge_message"); message != "" {
+		verdict += ": " + message
+	}
+	lines = append(lines, verdict)
+	if checked, ok := fieldTime(entry.Fields, "edge_checked_at"); ok {
+		lines = append(lines, "checked "+checked.Local().Format(time.RFC3339))
+	}
+	for _, address := range strings.Split(fieldString(entry.Fields, "edge_addresses"), "\n") {
+		if address = strings.TrimSpace(address); address != "" {
+			lines = append(lines, "  "+address)
+		}
+	}
+	if guidance := fieldString(entry.Fields, "guidance"); guidance != "" {
+		lines = append(lines, guidance)
+	}
+	return lines
+}
+
 // CertificateLines summarizes a TLS checkpoint's snapshots, oldest first,
 // as one row per issuance attempt: past attempts show why they failed, the
 // current one what it waits for, and a valid certificate closes the list.
-// A rollout-level failure and its guidance follow.
+// A rollout-level failure and its guidance follow. A deferred route (its
+// domain does not reach this installation yet) is one warning row naming
+// the domain, with the probe's verdict beneath it.
 func CertificateLines(entries []client.LogEntry, now time.Time, style *Style) []string {
 	if len(entries) == 0 {
 		return nil
@@ -67,6 +95,16 @@ func CertificateLines(entries []client.LogEntry, now time.Time, style *Style) []
 		fields := entry.Fields
 		phase := fieldString(fields, "phase")
 		switch {
+		case phase == "deferred":
+			domain := fieldString(fields, "domain")
+			text := "TLS deferred · " + domain + " does not reach this installation yet"
+			if domain == "" {
+				text = firstLine(entry.Message)
+			}
+			lines = append(lines, style.tailGlyph("warn")+" "+style.Yellow(text))
+			if message := fieldString(fields, "edge_message"); message != "" {
+				lines = append(lines, "  "+style.Dim(message))
+			}
 		case number == 0 && len(order) > 1:
 			// The observation-only snapshot before any attempt was known.
 			continue

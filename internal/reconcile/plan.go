@@ -11,10 +11,12 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/kube"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
@@ -244,16 +246,26 @@ type desiredSet struct {
 	// the per-application traffic decision this render was made under.
 	colors map[string]string
 	plans  map[string]trafficPlan
+	// certDomains maps each rendered Certificate name to the domain it
+	// asks for (spec.dnsNames[0]): canonical, variables resolved, and known
+	// before the object is ever observed. The edge probe keys on it.
+	certDomains map[string]string
 }
 
 // groupObjects splits the flat rendered object list per service key.
-func groupObjects(objects []runtime.Object) (map[string]serviceObjects, []kube.ObjectRef, error) {
+func groupObjects(objects []runtime.Object) (map[string]serviceObjects, []kube.ObjectRef, map[string]string, error) {
 	services := make(map[string]serviceObjects)
 	refs := make([]kube.ObjectRef, 0, len(objects))
+	certDomains := map[string]string{}
 	for _, obj := range objects {
 		accessor, err := meta.Accessor(obj)
 		if err != nil {
-			return nil, nil, fmt.Errorf("reconcile: object metadata: %w", err)
+			return nil, nil, nil, fmt.Errorf("reconcile: object metadata: %w", err)
+		}
+		if u, ok := obj.(*unstructured.Unstructured); ok && u.GroupVersionKind() == edge.CertificateGVK {
+			if names, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "dnsNames"); len(names) > 0 {
+				certDomains[u.GetName()] = names[0]
+			}
 		}
 		refs = append(refs, kube.ObjectRef{
 			GVK:       obj.GetObjectKind().GroupVersionKind(),
@@ -276,5 +288,5 @@ func groupObjects(objects []runtime.Object) (map[string]serviceObjects, []kube.O
 		}
 		services[key] = grouped
 	}
-	return services, refs, nil
+	return services, refs, certDomains, nil
 }

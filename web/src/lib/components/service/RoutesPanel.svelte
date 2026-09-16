@@ -2,6 +2,7 @@
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import type { RouteStatus, CertificateState } from '$lib/types/status';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
+	import { formatDateTime } from '$lib/format';
 	import Card from '$lib/components/ui/Card.svelte';
 
 	// Live public routes of one application: domain, balancing policy, and
@@ -34,6 +35,23 @@
 		if (certificate.not_after) parts.push(`valid until ${certificate.not_after}`);
 		return parts.join(' · ');
 	}
+
+	// The certificate waits for DNS: the reconciler's edge probe did not find
+	// this installation behind the domain and nothing is active yet. An
+	// unprobed or unknown edge says nothing.
+	function dnsPending(route: RouteStatus): boolean {
+		const edge = route.edge;
+		if (!edge || edge.state === 'reachable' || edge.state === 'unknown') return false;
+		return route.certificate?.state !== 'active';
+	}
+
+	function dnsTitle(route: RouteStatus): string {
+		const edge = route.edge;
+		if (!edge) return '';
+		const parts: string[] = [edge.message ?? '', ...edge.addresses];
+		if (edge.checked_at) parts.push(`checked ${formatDateTime(edge.checked_at)}`);
+		return parts.filter(Boolean).join(' · ');
+	}
 </script>
 
 {#if routes.length > 0}
@@ -61,10 +79,19 @@
 							>http allowed</span
 						>
 					{/if}
-					{#if route.certificate}
-						{@const meta = CERT_META[route.certificate.state]}
-						<span class="ml-auto flex items-center gap-1.5 {meta.text}" title={certTitle(route)}>
-							<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label}
+					{#if route.certificate || dnsPending(route)}
+						<span class="ml-auto flex items-center gap-3">
+							{#if dnsPending(route)}
+								<span class="text-status-warning flex items-center gap-1.5" title={dnsTitle(route)}>
+									<span class="size-[8px] rounded-full bg-status-warning"></span>DNS pending
+								</span>
+							{/if}
+							{#if route.certificate}
+								{@const meta = CERT_META[route.certificate.state]}
+								<span class="flex items-center gap-1.5 {meta.text}" title={certTitle(route)}>
+									<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label}
+								</span>
+							{/if}
 						</span>
 					{/if}
 				</div>

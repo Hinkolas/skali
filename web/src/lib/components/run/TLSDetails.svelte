@@ -24,7 +24,8 @@
 		pending: 'Waiting for issuance',
 		issuing: 'Issuing certificate',
 		backoff: 'Waiting to retry',
-		active: 'Certificate is valid'
+		active: 'Certificate is valid',
+		deferred: 'Deferred until the domain points here'
 	};
 	const detailRows = [
 		['certificate', 'Certificate'],
@@ -51,6 +52,25 @@
 	{#if value('failure')}
 		<p class="text-status-danger break-words">{value('failure')}</p>
 	{/if}
+	{#if phase === 'deferred'}
+		<div class="space-y-2">
+			{#if value('edge_message')}
+				<p class="text-status-warning break-words">{value('edge_message')}</p>
+			{/if}
+			<dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+				<dt class="text-text-muted">Domain reaches this installation</dt>
+				<dd class="text-text-primary">{value('edge_state')}</dd>
+				{#if value('edge_checked_at')}<dt class="text-text-muted">Checked</dt>
+					<dd class="text-text-secondary">{formatDateTime(value('edge_checked_at'))}</dd>{/if}
+			</dl>
+			{#if value('edge_addresses')}
+				<pre
+					class="text-text-secondary font-mono text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{value(
+						'edge_addresses'
+					)}</pre>
+			{/if}
+		</div>
+	{/if}
 	<dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
 		{#if Number(fields.failed_attempts) > 0}<dt class="text-text-muted">Failed attempts</dt>
 			<dd class="text-text-primary tabular-nums">{value('failed_attempts')}</dd>{/if}
@@ -67,7 +87,11 @@
 		{/if}
 		{#if value('valid_until')}<dt class="text-text-muted">Valid until</dt>
 			<dd class="text-text-secondary">{formatDateTime(value('valid_until'))}</dd>{/if}
-		{#if phase !== 'active' && value('deadline')}<dt class="text-text-muted">Rollout deadline</dt>
+		{#if phase !== 'active' && phase !== 'deferred' && value('deadline')}<dt
+				class="text-text-muted"
+			>
+				Rollout deadline
+			</dt>
 			<dd class="text-text-secondary">{formatDateTime(value('deadline'))}</dd>{/if}
 	</dl>
 	{#if value('reason') || value('message')}

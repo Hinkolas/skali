@@ -49,6 +49,23 @@ func (r *Redactor) Redact(s string) string {
 	return r.replacer.Replace(s)
 }
 
+// Without returns a new Redactor that no longer matches the plaintexts of
+// the named secrets. It exists for values that are public by construction,
+// such as a route domain the edge serves to the world: redacting those
+// would hide the one fact an operator needs to read.
+func (r *Redactor) Without(names map[string]bool) *Redactor {
+	if r == nil || len(names) == 0 {
+		return r
+	}
+	kept := make(map[string]string, len(r.byPlaintext))
+	for plaintext, name := range r.byPlaintext {
+		if !names[name] {
+			kept[plaintext] = name
+		}
+	}
+	return New(kept)
+}
+
 // Merge returns a new Redactor knowing both sets; on identical plaintexts
 // the other Redactor's name wins.
 func (r *Redactor) Merge(other *Redactor) *Redactor {

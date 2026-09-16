@@ -27,7 +27,21 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Len(t, objects.Database, 1)
 	require.Equal(t, "Cluster", objects.Database[0].GetKind())
 	require.Len(t, objects.Registry, 4)
-	require.Len(t, objects.Skalid, 7)
+	require.Len(t, objects.Skalid, 8)
+	// The edge identity route: host-independent and ranked above every
+	// tenant rule, plain HTTP only, no certificate involved.
+	probe := objects.Skalid[7]
+	require.Equal(t, "IngressRoute", probe.GetKind())
+	require.Equal(t, "skalid-edge-probe", probe.GetName())
+	entryPoints, _, _ := unstructured.NestedStringSlice(probe.Object, "spec", "entryPoints")
+	require.Equal(t, []string{"web"}, entryPoints)
+	probeRoutes, _, _ := unstructured.NestedSlice(probe.Object, "spec", "routes")
+	require.Len(t, probeRoutes, 1)
+	probeRoute := probeRoutes[0].(map[string]any)
+	require.Equal(t, "PathPrefix(`/.well-known/skali-edge`)", probeRoute["match"])
+	require.EqualValues(t, 10000, probeRoute["priority"])
+	_, hasTLS, _ := unstructured.NestedMap(probe.Object, "spec", "tls")
+	require.False(t, hasTLS)
 	require.Len(t, objects.EdgeMetrics, 1)
 	require.Equal(t, "HelmChartConfig", objects.EdgeMetrics[0].GetKind())
 	require.Equal(t, "kube-system", objects.EdgeMetrics[0].GetNamespace(),

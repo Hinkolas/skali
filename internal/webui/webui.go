@@ -9,6 +9,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/Hinkolas/skali/internal/edge"
 )
 
 //go:embed all:dist
@@ -27,7 +29,7 @@ func handler(api http.Handler, assets fs.FS) http.Handler {
 	fallback, buildErr := fs.ReadFile(assets, "200.html")
 	files := http.FileServer(http.FS(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for _, prefix := range []string{"/api", "/v1", "/healthz", "/openapi.yaml", "/token"} {
+		for _, prefix := range []string{"/api", "/v1", "/healthz", "/openapi.yaml", "/token", edge.ProbePath} {
 			if r.URL.Path == prefix || strings.HasPrefix(r.URL.Path, prefix+"/") {
 				api.ServeHTTP(w, r)
 				return

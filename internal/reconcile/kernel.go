@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/edge/edgeprobe"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
@@ -84,6 +85,10 @@ type Deps struct {
 	LiveRouteHosts     func(context.Context, uuid.UUID) (map[string]bool, error)
 	RetryCertificate   func(context.Context, kube.ObjectRef, time.Time) (bool, error)
 	InspectCertificate func(context.Context, kube.ObjectRef) (*module.CertificateStatus, map[string]string, error)
+	// ProbeDomain reports whether a route domain reaches this installation's
+	// edge (edgeprobe.Prober.Probe). Nil disables deferral: every TLS route
+	// then gates activation as if its domain pointed here.
+	ProbeDomain func(context.Context, string) edgeprobe.Result
 	// Claims is nil without a substrate (API-only mode); database services
 	// then wait visibly instead of provisioning.
 	Claims ClaimManager
@@ -144,6 +149,15 @@ type Kernel struct {
 	// one extra window at most.
 	retireMu sync.Mutex
 	retired  map[retireKey]time.Time
+
+	// domains caches the edge probe per route domain and certDomains maps
+	// each Certificate name to the domain its last pass probed, so the
+	// status projection and the module gate read the pass's own verdict.
+	// In-memory by design, like retired: after a restart the first pass
+	// probes again and a reachable domain counts as freshly arrived.
+	domainMu    sync.Mutex
+	domains     map[string]domainProbe
+	certDomains map[string]string
 }
 
 func New(deps Deps, cfg Config) *Kernel {
@@ -166,9 +180,11 @@ func New(deps Deps, cfg Config) *Kernel {
 	// error must never park an in-flight rollout longer than an ordinary
 	// waiting pass.
 	return &Kernel{
-		deps:    deps,
-		cfg:     cfg,
-		retired: map[retireKey]time.Time{},
+		deps:        deps,
+		cfg:         cfg,
+		retired:     map[retireKey]time.Time{},
+		domains:     map[string]domainProbe{},
+		certDomains: map[string]string{},
 		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck)),
 	}

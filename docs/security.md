@@ -71,6 +71,21 @@ session is opened. Scheme detection accepts `X-Forwarded-Proto` only from a
 trusted socket peer; configure TLS-terminating proxies to overwrite it and
 preserve the public Host. CLI bearer WebSockets do not require Origin.
 
+## Edge probes reach out to route domains
+
+The reconciler decides whether a route's domain already points at this
+installation by requesting `/.well-known/skali-edge` from every address the
+domain resolves to, with the domain as the Host header, from inside the
+cluster. The request is a fixed-path GET on port 80 that never follows
+redirects and reads response headers only; the body is never read. Whoever
+operates the old host sees one small request per domain every two minutes
+in their access log, identified as `skali-edge-probe/<version>`. The
+addresses are whatever public DNS returns for a domain a project member
+declared, so a member with deploy rights can make the daemon send that GET
+to an address of their choosing; the request carries nothing about the
+installation beyond its User-Agent, and the answer is compared to the
+installation's own identity, never interpreted.
+
 ## Secret scanning
 
 CI runs pinned Gitleaks against the full Git history, including on release tags.

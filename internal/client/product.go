@@ -724,6 +724,28 @@ type RouteStatus struct {
 	TLS         string             `json:"tls"`
 	Strategy    string             `json:"strategy"`
 	Certificate *CertificateStatus `json:"certificate,omitempty"`
+	// Edge reports whether the domain reaches this installation; nil where
+	// no certificate is expected, before the first probe, or when the
+	// server predates the field.
+	Edge *EdgeStatus `json:"edge,omitempty"`
+}
+
+// EdgeStatus is the reconciler's last probe of a route domain.
+type EdgeStatus struct {
+	State     string     `json:"state"` // reachable | partial | unreachable | unresolved | unknown
+	Message   string     `json:"message,omitempty"`
+	CheckedAt *time.Time `json:"checked_at"`
+	Addresses []string   `json:"addresses"`
+}
+
+// Deferred reports a route whose certificate waits for its domain to reach
+// this installation: the edge probe did not find this edge and no
+// certificate is active yet. An unprobed or unknown edge never counts.
+func (r RouteStatus) Deferred() bool {
+	if r.Edge == nil || r.Edge.State == "reachable" || r.Edge.State == "unknown" {
+		return false
+	}
+	return r.Certificate == nil || r.Certificate.State != "active"
 }
 
 type CertificateStatus struct {

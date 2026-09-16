@@ -22,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/metrics"
 	"github.com/Hinkolas/skali/internal/project"
@@ -86,7 +87,8 @@ type Deps struct {
 	// Version is the daemon build version reported on /v1/system/meta and
 	// stamped onto every response as the Skali-Version header. When it is a
 	// tagged release, every /v1 route refuses a released CLI of any other
-	// version (requireClientVersion); only /healthz is exempt.
+	// version (requireClientVersion); only the root /healthz and the edge
+	// identity route are exempt.
 	Version string
 	// InstanceName is the operator-chosen installation name reported on
 	// /v1/system/meta; empty leaves naming to the client.
@@ -169,6 +171,15 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 		_, _ = w.Write(apispec.OpenAPI)
 	})
 
+	// The edge identity: the bundle routes this path to skalid on every
+	// hostname ahead of tenant rules, so the kernel can request it through
+	// a route's domain and recognise its own edge by the instance header
+	// (the body repeats it for humans). Public and version-free like
+	// /healthz; it reveals nothing the header does not already carry.
+	ac.root(r, "GET", edge.ProbePath, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"instance_id": d.InstanceID})
+	})
+
 	// The registry token realm: the registry-domain ingress routes /token
 	// here. Registered only when a signing key is configured (production);
 	// the endpoint authenticates per request via Basic, never RequireAuth.
@@ -221,8 +232,9 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 			// Public: everything a client can reach without a session. The
 			// CLI version gate still applies: a stale CLI dispatches to the
 			// cluster's release before it logs in (docs/versioning.md,
-			// decision 3), so only /healthz at the root stays reachable from
-			// any CLI version. Browsers send no client version and pass.
+			// decision 3), so only /healthz and the edge identity route at
+			// the root stay reachable from any CLI version. Browsers send no
+			// client version and pass.
 			r.Group(func(r chi.Router) {
 				r.Use(requireClientVersion(d.Version))
 

@@ -79,6 +79,39 @@ values, TOTP secrets, or backup credentials without the original key. See
 [security and key recovery](security.md). Environment data (databases, buckets, volumes) is covered
 by `skali backup`, but skali's own state is not backed up automatically.
 
+## Routes whose domain does not point here yet
+
+When you migrate a project from another host, a route's domain usually still
+resolves to the old provider on the first deploy. Before it waits for a
+certificate, the reconciler checks whether the domain reaches this
+installation's edge: it resolves the domain and requests
+`/.well-known/skali-edge` from every address with the domain as the Host
+header, and recognises its own edge by the `Skali-Instance` header. A domain
+that does not reach this edge is deferred. The deploy still goes green and
+the application serves on every route that does point here; the run's
+"Issue TLS certificate" checkpoint ends skipped with a warning naming the
+domain; the ready summary prints `cert deferred · domain not pointing here
+yet` and a `warning:` line; the environment status carries the verdict per
+route (`edge.state`); and the console shows a "DNS pending" badge next to
+the route. The Certificate object stays rendered, and cert-manager holds off
+validation while its own HTTP-01 self check fails, so nothing counts against
+the CA's failed-validation limits while DNS is elsewhere.
+
+A domain that does reach this edge but fails validation keeps failing the
+run at the rollout deadline with the issuance reason, exactly as before. A
+probe that cannot say anything (a resolver outage) also keeps that
+behaviour, so a broken probe never hides a real failure.
+
+Migration workflow: deploy here first, test through other routes or by
+pinning the domain in `/etc/hosts`, then move the A and AAAA records
+together (one record left behind reads as `partial`, which still defers:
+certificate authorities prefer IPv6 and would validate against the old
+host). The reconciler re-probes every two minutes; when the domain arrives
+it requests a fresh issuance right away, so a certificate parked in
+cert-manager's failure backoff does not wait it out. No redeploy is needed.
+Until then the https URL of a deferred route does not answer here. An
+installation without certificates (local development) never probes.
+
 ## Builds run on your machine
 
 Every `skali deploy` builds and pushes from the machine running the CLI;
