@@ -155,12 +155,14 @@ type Kernel struct {
 	retireMu sync.Mutex
 	retired  map[retireKey]time.Time
 
-	// domains caches the edge probe per route domain and routes holds the
-	// last pass's verdict per environment and Certificate (its domain,
-	// deferral, name mismatch, issued names), so the status projection and
-	// the module gate read the pass's own conclusion. In-memory by design,
-	// like retired: after a restart the first pass probes again and a
-	// reachable domain counts as freshly arrived.
+	// domains caches the edge probe per route domain (filled by the pass's
+	// pre-lock probe phase and by manual probes, only read under the
+	// environment lock) and routes holds the last pass's verdict per
+	// environment and Certificate (its domain, deferral, name mismatch,
+	// issued names), so the status projection and the module gate read
+	// the pass's own conclusion. In-memory by design, like retired: after
+	// a restart the first pass probes again and a reachable domain counts
+	// as freshly arrived.
 	domainMu sync.Mutex
 	domains  map[string]domainProbe
 	routes   map[routeKey]routeRecord

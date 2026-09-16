@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,8 +27,13 @@ const (
 	// cost is kept low while issuance still starts within minutes of the
 	// DNS change.
 	edgeProbeIdleInterval = 2 * time.Minute
-	// edgeProbeTimeout bounds one probe inside a pass.
+	// edgeProbeTimeout bounds one probe.
 	edgeProbeTimeout = 5 * time.Second
+	// edgeProbeMissRequeue is the requeue when a pass finds no verdict for
+	// a route domain (the route appeared after the pre-lock probe phase, or
+	// a usable certificate just stopped covering it): the next pass probes
+	// the domain before it takes the environment lock.
+	edgeProbeMissRequeue = time.Second
 	// edgeProbeRetention evicts domains no pass has mentioned for this long
 	// (a route removed from the manifest).
 	edgeProbeRetention = time.Hour
@@ -69,30 +75,67 @@ type routeRecord struct {
 	awaiting  time.Time
 }
 
-// observeDomain returns the cached verdict for domain, re-probing when the
-// cache is older than interval. The lock is released during the network
-// call so one slow domain never parks another environment's pass; two
-// workers probing the same domain at once is harmless.
-func (k *Kernel) observeDomain(ctx context.Context, domain string, now time.Time, interval time.Duration) (edgeprobe.Result, bool) {
+// lookupDomain is the cache half of an edge verdict: never network, so a
+// pass may call it while holding the environment lock. It evicts domains
+// no pass has mentioned within the retention and marks this one seen.
+// known reports that a verdict exists, fresh that it is younger than
+// interval.
+func (k *Kernel) lookupDomain(domain string, now time.Time, interval time.Duration) (result edgeprobe.Result, arrived, known, fresh bool) {
 	k.domainMu.Lock()
+	defer k.domainMu.Unlock()
 	for key, entry := range k.domains {
 		if now.Sub(entry.lastSeen) > edgeProbeRetention {
 			delete(k.domains, key)
 		}
 	}
 	entry, known := k.domains[domain]
+	if !known {
+		return edgeprobe.Result{}, false, false, false
+	}
 	entry.lastSeen = now
 	k.domains[domain] = entry
-	stale := !known || now.Sub(entry.result.CheckedAt) >= interval
-	k.domainMu.Unlock()
-	if !stale {
-		return entry.result, entry.arrived
-	}
+	return entry.result, entry.arrived, true, now.Sub(entry.result.CheckedAt) < interval
+}
 
+// probeDomain is the network half: one bounded probe, recorded in the
+// cache. Two workers probing the same domain at once is harmless.
+func (k *Kernel) probeDomain(ctx context.Context, domain string, now time.Time) (edgeprobe.Result, bool) {
 	probeCtx, cancel := context.WithTimeout(ctx, edgeProbeTimeout)
 	result := k.deps.ProbeDomain(probeCtx, domain)
 	cancel()
 	return k.recordProbe(domain, result, now, false)
+}
+
+// probeDue refreshes, before the environment lock is taken, the verdict of
+// every route domain the pass will judge whose cached verdict is missing or
+// older than interval. A route whose last pass proved a usable certificate
+// for the same domain is skipped: the pass will not ask. Probes run in
+// parallel, each bounded by edgeProbeTimeout, so a pass never holds the
+// lock through network waits and Promote is not parked behind them.
+func (k *Kernel) probeDue(ctx context.Context, environmentID uuid.UUID, routes []RouteProbe, now time.Time, interval time.Duration) {
+	var group sync.WaitGroup
+	queued := make(map[string]bool, len(routes))
+	for _, route := range routes {
+		if route.Domain == "" || queued[route.Domain] {
+			continue
+		}
+		k.domainMu.Lock()
+		record := k.routes[routeKeyOf(environmentID, route.certificate)]
+		k.domainMu.Unlock()
+		if record.usable && record.domain == route.Domain {
+			continue
+		}
+		if _, _, known, fresh := k.lookupDomain(route.Domain, now, interval); known && fresh {
+			continue
+		}
+		queued[route.Domain] = true
+		group.Add(1)
+		go func(domain string) {
+			defer group.Done()
+			k.probeDomain(ctx, domain, now)
+		}(route.Domain)
+	}
+	group.Wait()
 }
 
 // recordProbe stores one probe result. The arrival flag is raised on the

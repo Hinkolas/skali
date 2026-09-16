@@ -59,7 +59,12 @@ type arrivalNote struct {
 // domain arrives, a certificate parked in cert-manager's failure backoff
 // gets one fresh issuance attempt right away; a converged environment
 // records the arrival as a run and, in a later pass, the outcome.
-func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target store.EnvironmentTarget, rev *revision.Revision, desired *desiredSet, snapshot observe.Snapshot) tlsOutcome {
+//
+// The probes themselves ran before the pass took the environment lock
+// (prepareEdgeVerdicts, on the cadence interval); under the lock this only
+// reads the cache. A domain without a verdict counts as unknown and the
+// pass requeues quickly so the next pre-lock phase probes it.
+func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target store.EnvironmentTarget, rev *revision.Revision, desired *desiredSet, snapshot observe.Snapshot, interval time.Duration) tlsOutcome {
 	var out tlsOutcome
 	if !k.cfg.Certificates {
 		return out
@@ -135,11 +140,19 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 		var probe *edgeprobe.Result
 		arrived := false
 		if !(valid && covered) && k.deps.ProbeDomain != nil && domain != "" {
-			interval := edgeProbeIdleInterval
-			if attached {
-				interval = edgeProbeRolloutInterval
+			result, seen, known, fresh := k.lookupDomain(domain, now, interval)
+			if !known {
+				// No verdict yet: the route appeared after the pre-lock
+				// probe phase, or a usable certificate just stopped
+				// covering it. Unknown keeps the gate's default behaviour;
+				// the next pass probes before it locks.
+				result = edgeprobe.Result{Domain: domain, State: edgeprobe.StateUnknown,
+					Message: "edge verdict pending", CheckedAt: now}
+				seen = false
 			}
-			result, seen := k.observeDomain(ctx, domain, now, interval)
+			if !known || !fresh {
+				out.requeue = soonest(out.requeue, edgeProbeMissRequeue)
+			}
 			probe, arrived = &result, seen
 			if result.State.Pending() || result.State == edgeprobe.StateUnknown {
 				out.requeue = soonest(out.requeue, interval)

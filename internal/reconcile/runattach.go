@@ -49,20 +49,16 @@ type runAttachment struct {
 	ensureKind string     // kind of a lazily created run; "reconcile" if empty
 }
 
-// attachRun adopts the environment's running run when one exists.
-func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UUID, redactor *redact.Redactor) *runAttachment {
-	attachment := &runAttachment{
-		journal:       k.deps.Journal,
-		redactor:      redactor,
-		environmentID: environmentID,
-		projectID:     projectID,
-	}
+// adoptableRun is the environment's running run that attachRun would
+// adopt, when there is one. Read-only, so the pre-lock probe phase can ask
+// it for the probe cadence without touching the journal.
+func (k *Kernel) adoptableRun(ctx context.Context, environmentID uuid.UUID) (*store.Run, bool) {
 	run, err := k.deps.Store.GetRunningRunByEnvironment(ctx, &environmentID)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			warn("adopt run", err, "environment", environmentID)
 		}
-		return attachment
+		return nil, false
 	}
 	switch run.Kind {
 	case "deployment", "rollback", "restart", "teardown", "reconcile":
@@ -71,8 +67,8 @@ func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UU
 		// restore run is driven by the backup controller; adopting it would
 		// let a converged pass's activate() or the teardown path finish it
 		// mid-flight. The pass still reconciles, and its lazy run loses the
-		// StartRun race below, journaling nothing.
-		return attachment
+		// StartRun race in attachRun, journaling nothing.
+		return nil, false
 	}
 	if run.Kind == "deployment" {
 		// A deployment run in its artifact window still belongs to the build
@@ -83,13 +79,28 @@ func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UU
 		if err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) {
 				warn("look up adopted run deployment", err, "run", run.ID)
-				return attachment
+				return nil, false
 			}
 		} else if deployment.Status == string(deploy.DeploymentPreparing) {
-			return attachment
+			return nil, false
 		}
 	}
-	attachment.run = &run
+	return &run, true
+}
+
+// attachRun adopts the environment's running run when one exists.
+func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UUID, redactor *redact.Redactor) *runAttachment {
+	attachment := &runAttachment{
+		journal:       k.deps.Journal,
+		redactor:      redactor,
+		environmentID: environmentID,
+		projectID:     projectID,
+	}
+	run, ok := k.adoptableRun(ctx, environmentID)
+	if !ok {
+		return attachment
+	}
+	attachment.run = run
 	if rolloutRun(run.Kind) {
 		step, err := attachment.journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision")
 		if err != nil {

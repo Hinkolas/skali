@@ -37,6 +37,11 @@ const requeueHealthCheck = 15 * time.Second
 // evaluate health, and activate when the revision's health conditions pass.
 // A pass that changes nothing writes no journal rows.
 func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UUID) (time.Duration, error) {
+	// Edge probes are network waits (5s each); they run before the lock so
+	// a pass holds it only for database and cluster work and a Promote or
+	// Rollback waiting on the same lock is never parked behind DNS.
+	probeInterval := k.prepareEdgeVerdicts(ctx, environmentID)
+
 	unlock, lockErr := k.deps.Store.LockEnvironment(ctx, environmentID)
 	if lockErr != nil {
 		return 0, lockErr
@@ -304,7 +309,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// edge verdicts (a domain that does not reach this edge yet) ride into
 	// the module through the kernel cache, so a deferred route stops gating
 	// health in the same pass that discovered it.
-	tls := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID))
+	tls := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID), probeInterval)
 
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
@@ -438,6 +443,33 @@ func (k *Kernel) waitHostGateway(ctx context.Context, attachment *runAttachment,
 	attachment.waitStep(ctx, "render", "Render desired state",
 		"waiting for the host gateway to resolve in the cluster: "+cause.Error())
 	return requeueHealthCheck, nil
+}
+
+// prepareEdgeVerdicts probes, outside the environment lock, every TLS route
+// domain of the target revision whose cached verdict is due, and returns
+// the probe cadence the pass runs under: the rollout interval while a
+// rollout run is attached, the idle interval otherwise. Best effort: a
+// failure here leaves the cache as it was and the locked pass, which
+// re-derives everything, requeues quickly on a missing verdict.
+func (k *Kernel) prepareEdgeVerdicts(ctx context.Context, environmentID uuid.UUID) time.Duration {
+	interval := edgeProbeIdleInterval
+	if !k.cfg.Certificates || k.deps.ProbeDomain == nil {
+		return interval
+	}
+	target, rev, err := k.targetRevision(ctx, environmentID)
+	if err != nil || rev == nil || target.State != deploy.EnvironmentStateActive {
+		return interval
+	}
+	if run, ok := k.adoptableRun(ctx, environmentID); ok && rolloutRun(run.Kind) {
+		interval = edgeProbeRolloutInterval
+	}
+	routes, err := k.routeDomains(ctx, environmentID, rev)
+	if err != nil {
+		slog.DebugContext(ctx, "edge probe phase skipped", "environment_id", environmentID, "err", err)
+		return interval
+	}
+	k.probeDue(ctx, environmentID, routes, time.Now(), interval)
+	return interval
 }
 
 func soonest(a, b time.Duration) time.Duration {
