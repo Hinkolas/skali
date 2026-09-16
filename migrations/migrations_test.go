@@ -171,9 +171,13 @@ func TestDocumentSchemaColumnsAndRowsRemainCompatible(t *testing.T) {
     VALUES ($1, $2, '1', 'abc', '{"version":"1","name":"schema-test"}', 'x', 'yaml', 'v0.1.0-rc.2')`, definition, project)
 	require.NoError(t, err)
 
+	// Everything above the baseline re-applies over the seeded rows; the
+	// baseline itself, which owns these columns, stays as it is.
 	results, err := migrations.Up(ctx, db)
 	require.NoError(t, err)
-	require.Empty(t, results)
+	for _, result := range results {
+		require.Greater(t, result.Source.Version, int64(1), "the baseline must not re-run")
+	}
 	var schema string
 	require.NoError(t, db.QueryRowContext(ctx, "SELECT schema_version FROM definition_versions WHERE id = $1", definition).Scan(&schema))
 	require.Equal(t, "1", schema)
