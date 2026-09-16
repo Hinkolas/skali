@@ -186,6 +186,13 @@ func runServe() error {
 	} else if failed > 0 {
 		slog.InfoContext(ctx, "recovered orphaned attempts", "failed", failed)
 	}
+	// Deployments whose completion the previous daemon was driving when it
+	// died: their runs would otherwise stay running and block the environment.
+	if failed, err := deploySvc.RecoverOnBoot(ctx, journalSvc); err != nil {
+		return fmt.Errorf("recover deployments: %w", err)
+	} else if failed > 0 {
+		slog.InfoContext(ctx, "failed interrupted deployments", "count", failed)
+	}
 
 	// Cluster access is optional in development: without SKALI_KUBECONFIG or
 	// in-cluster credentials skalid runs API-only, observation reports
@@ -315,6 +322,13 @@ func runServe() error {
 	kernel = reconcile.New(kernelDeps, reconcileCfg)
 	deploySvc.SetEnqueuer(kernel)
 
+	// loopCtx is the lifetime of everything that outlives a request: the
+	// loops below and deployment completions handed off by the API. It
+	// exists before the listener so no handler runs without it.
+	loopCtx, cancelLoops := context.WithCancel(ctx)
+	defer cancelLoops()
+	deploySvc.SetLifetime(loopCtx)
+
 	// The backup controller runs beside the kernel and the substrate with
 	// its own queue: backup and restore runs are operational work driven by
 	// durable backup rows, never by the environment converge loop.
@@ -427,8 +441,6 @@ func runServe() error {
 		}
 	}()
 
-	loopCtx, cancelLoops := context.WithCancel(ctx)
-	defer cancelLoops()
 	go sweepLoop(loopCtx, authSvc)
 
 	// The reconciliation kernel: observation sync, workers, and audits. In

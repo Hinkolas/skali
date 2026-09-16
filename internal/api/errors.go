@@ -44,6 +44,7 @@ const (
 
 	// Deployment coordination.
 	codeDeploymentInFlight      = "deployment_in_flight"
+	codeDeploymentCompleting    = "deployment_completing"
 	codeDestructiveChange       = "destructive_change"
 	codeDigestMismatch          = "digest_mismatch"
 	codeArtifactsIncomplete     = "artifacts_incomplete"

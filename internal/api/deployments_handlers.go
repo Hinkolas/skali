@@ -498,20 +498,23 @@ func (h *deploymentsHandlers) get(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /v1/deployments/{id}/complete
+//
+// Validation is synchronous; revision, promotion and the rollout handoff
+// continue on the daemon after the 202, under the returned run. Clients
+// follow the run, never this request.
 func (h *deploymentsHandlers) complete(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	result, err := h.deploy.Complete(r.Context(), id, h.journal)
+	runID, err := h.deploy.Complete(r.Context(), id, h.journal)
 	if err != nil {
 		writeDeployError(r.Context(), w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
-		RunID      string `json:"run_id"`
-		RevisionID string `json:"revision_id"`
-	}{result.RunID.String(), result.RevisionID.String()})
+	writeJSON(w, http.StatusAccepted, struct {
+		RunID string `json:"run_id"`
+	}{runID.String()})
 }
 
 // POST /v1/deployments/{id}/fail
@@ -894,6 +897,9 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, codeNotFound, "the target revision declares no such application")
 	case errors.Is(err, deploy.ErrInvalidDeploymentTransition):
 		writeError(w, http.StatusConflict, codeConflict, trimDeployPrefix(err))
+	case errors.Is(err, deploy.ErrDeploymentCompleting):
+		writeError(w, http.StatusConflict, codeDeploymentCompleting,
+			"the deployment is already completing; attach to its run")
 	case errors.Is(err, deploy.ErrDefinitionMismatch):
 		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &capabilities):

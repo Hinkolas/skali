@@ -44,6 +44,17 @@ UPDATE deployments SET updated_at = now() WHERE id = $1 AND status = 'preparing'
 -- name: ListStalePreparingDeployments :many
 SELECT * FROM deployments WHERE status = 'preparing' AND updated_at < $1;
 
+-- Boot recovery: preparing deployments whose completion the daemon owned
+-- when it died. The artifacts step succeeds only when Complete closes the
+-- client's window, after which no client ever touches the row again.
+-- name: ListServerOwnedPreparingDeployments :many
+SELECT deployments.* FROM deployments
+JOIN steps ON steps.run_id = deployments.run_id
+WHERE deployments.status = 'preparing'
+  AND steps.key = 'artifacts'
+  AND steps.status = 'succeeded'
+ORDER BY deployments.created_at;
+
 -- The environment each source was last promoted to, one row per source.
 -- Any promotion attempt counts: even a failed run states where the team
 -- routes this source.

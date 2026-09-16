@@ -21,6 +21,8 @@ var ErrDeploymentInFlight = errors.New("deploy: another deployment is already ru
 // and the journal's retention only reclaims terminal runs, so abandoning it
 // would leave a pending run in every reader's view forever.
 func discardUnstartedRun(ctx context.Context, jr *journal.Service, id uuid.UUID) {
+	ctx, cancel := detached(ctx)
+	defer cancel()
 	if err := jr.DiscardRun(ctx, id); err != nil {
 		slog.WarnContext(ctx, "discard unstarted run", "run", id, "error", err)
 	}
@@ -129,10 +131,13 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		ActionPlatforms:     in.ActionPlatforms,
 	})
 	if err != nil {
-		_ = writer.Error(ctx, "preparation failed: "+err.Error())
-		_ = in.Journal.FinishAttempt(ctx, attempt.ID, journal.AttemptFailed)
-		_ = in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepFailed)
-		return result, s.fail(ctx, in, runID, writer, err)
+		// The diagnostic must land even when ctx is what failed.
+		cctx, cancel := detached(ctx)
+		defer cancel()
+		_ = writer.Error(cctx, "preparation failed: "+err.Error())
+		_ = in.Journal.FinishAttempt(cctx, attempt.ID, journal.AttemptFailed)
+		_ = in.Journal.SetStepStatus(cctx, prepareStep.ID, journal.StepFailed)
+		return result, s.fail(cctx, in, runID, writer, err)
 	}
 	for _, warning := range compiler.Warnings(prepared.Revision.Definition) {
 		if err := writer.Warn(ctx, warning.Code+": "+warning.Message); err != nil {
@@ -173,10 +178,12 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		_ = promoteWriter.Info(ctx, "pruning stored values not referenced by this definition: "+strings.Join(prepared.Pruned, ", "))
 	}
 	if err := s.Promote(ctx, prepared); err != nil {
-		_ = promoteWriter.Error(ctx, "promotion failed: "+err.Error())
-		_ = in.Journal.FinishAttempt(ctx, promoteAttempt.ID, journal.AttemptFailed)
-		_ = in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepFailed)
-		return result, s.fail(ctx, in, runID, promoteWriter, err)
+		cctx, cancel := detached(ctx)
+		defer cancel()
+		_ = promoteWriter.Error(cctx, "promotion failed: "+err.Error())
+		_ = in.Journal.FinishAttempt(cctx, promoteAttempt.ID, journal.AttemptFailed)
+		_ = in.Journal.SetStepStatus(cctx, promoteStep.ID, journal.StepFailed)
+		return result, s.fail(cctx, in, runID, promoteWriter, err)
 	}
 	_ = promoteWriter.Info(ctx, "target set to revision "+prepared.Revision.Checksum)
 	if err := in.Journal.FinishAttempt(ctx, promoteAttempt.ID, journal.AttemptSucceeded); err != nil {
@@ -206,8 +213,12 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 // fail is the single failure path: discard the staged candidate (its rows
 // were only ever staged), finish the run failed, and return the original
 // error. The journal steps were already closed by the caller where one was
-// active; FinishRun forces the rest terminal.
+// active; FinishRun forces the rest terminal. It runs detached from ctx's
+// cancellation: the cause may well be that ctx died, and a run that stays
+// running would wedge the environment.
 func (s *Service) fail(ctx context.Context, in ExecuteInput, runID uuid.UUID, writer *journal.Writer, cause error) error {
+	ctx, cancel := detached(ctx)
+	defer cancel()
 	if in.CandidateID != uuid.Nil {
 		if err := s.values.DiscardCandidate(ctx, in.EnvironmentID, in.CandidateID); err != nil {
 			_ = writer.Error(ctx, "discarding the staged candidate failed: "+err.Error())

@@ -3153,24 +3153,24 @@ paths:
       summary: Complete a deployment
       description: |
         Closes the artifact window: every recorded action must reference a
-        verified artifact, then the immutable revision is created, values
-        and target promote atomically, and the reconciliation kernel takes
-        over the rollout under the same run. Failure leaves values, target,
-        and active revision untouched.
+        verified artifact. The daemon then creates the immutable revision,
+        promotes values and target atomically, and hands the rollout to the
+        reconciliation kernel, all under the deployment's run and after
+        this request has returned. Follow the run for the outcome. Failure
+        leaves values, target, and active revision untouched.
       tags: [deployments]
       responses:
-        "200":
-          description: The revision was created and promoted.
+        "202":
+          description: |
+            The completion was accepted; revision, promotion and rollout
+            continue under `run_id`.
           content:
             application/json:
               schema:
                 type: object
-                required: [run_id, revision_id]
+                required: [run_id]
                 properties:
                   run_id:
-                    type: string
-                    format: uuid
-                  revision_id:
                     type: string
                     format: uuid
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -3178,8 +3178,10 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
-            `artifacts_incomplete` (not every artifact verified) or the
-            deployment is not preparing.
+            `artifacts_incomplete` (not every artifact verified),
+            `deployment_completing` (a completion for this deployment is
+            already running; attach to its run) or the deployment is not
+            preparing.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

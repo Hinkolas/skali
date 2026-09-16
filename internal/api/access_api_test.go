@@ -89,8 +89,10 @@ func newMatrixFixture(t *testing.T) *matrixFixture {
 	})
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	status, body = a.do("POST", "/v1/deployments/"+f.deployment+"/complete", owner, nil)
-	require.Equal(t, http.StatusOK, status, "%v", body)
-	f.revision = body["revision_id"].(string)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	completed := a.awaitDeployment(t, owner, f.deployment)
+	require.Equal(t, "promoted", completed["status"], "%v", completed)
+	f.revision = completed["revision_id"].(string)
 	a.finishRun(t, f.run)
 	a.activate(t, f.env)
 	return f

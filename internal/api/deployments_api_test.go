@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -243,16 +244,17 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, a.registryHost+"/skali/demo/web", artifact.Reference)
 
-	// Complete: revision, atomic promotion, rollout handoff.
+	// Complete: the request only accepts; revision, atomic promotion and
+	// the rollout handoff continue on the daemon under the run.
 	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
-	require.Equal(t, http.StatusOK, status, "%v", body)
-	revisionID := body["revision_id"].(string)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	require.Equal(t, runID, body["run_id"])
+	completed := a.awaitDeployment(t, token, deploymentID)
+	require.Equal(t, "promoted", completed["status"])
+	revisionID := completed["revision_id"].(string)
 	target := a.targetOf(t, envID)
 	require.Equal(t, revisionID, target.TargetRevisionID.String())
 	require.Nil(t, target.ActiveRevisionID)
-	status, body = a.do("GET", "/v1/deployments/"+deploymentID, token, nil)
-	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, "promoted", body["deployment"].(map[string]any)["status"])
 	status, body = a.do("GET", "/v1/runs/"+runID, token, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "running", body["run"].(map[string]any)["status"],
@@ -293,8 +295,9 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	forcedDeployment := body["deployment"].(map[string]any)["id"].(string)
 	forcedRun := body["deployment"].(map[string]any)["run_id"].(string)
 	status, body = a.do("POST", "/v1/deployments/"+forcedDeployment+"/complete", token, nil)
-	require.Equal(t, http.StatusOK, status, "%v", body)
-	require.Equal(t, revisionID, body["revision_id"], "the unchanged revision is re-promoted")
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	require.Equal(t, revisionID, a.awaitDeployment(t, token, forcedDeployment)["revision_id"],
+		"the unchanged revision is re-promoted")
 	require.NotNil(t, a.targetOf(t, envID).RestartedAt)
 	a.finishRun(t, forcedRun)
 	a.activate(t, envID)
@@ -322,8 +325,116 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Equal(t, "reuse", body["actions"].([]any)[0].(map[string]any)["action"])
 	secondDeployment := body["deployment"].(map[string]any)["id"].(string)
 	status, body = a.do("POST", "/v1/deployments/"+secondDeployment+"/complete", token, nil)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	require.NotEqual(t, revisionID, a.awaitDeployment(t, token, secondDeployment)["revision_id"])
+}
+
+// While the first completion is still promoting (here: waiting on the
+// environment lock) a retry is refused instead of starting a second
+// promotion; once promoted, complete is the ordinary status conflict.
+func TestDeploymentCompleteIsIdempotentWhileRunning(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("twice@example.com", "hunter2hunter2")
+	token := a.login("twice@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+	definitionVersion := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	candidate := a.stageValues(t, token, envID, definitionVersion, "twice-plant-value")
+
+	status, body := a.do("POST", "/v1/environments/"+envID+"/deployments", token, map[string]any{
+		"definition_version_id": definitionVersion,
+		"candidate_id":          candidate,
+		"builds":                buildsPayload(),
+	})
+	require.Equal(t, http.StatusCreated, status, "%v", body)
+	deploymentID := body["deployment"].(map[string]any)["id"].(string)
+	runID := body["deployment"].(map[string]any)["run_id"].(string)
+	artifactID := body["actions"].([]any)[0].(map[string]any)["artifact_id"].(string)
+	a.registryHolds("skali/demo/web", webDigest)
+	status, body = a.do("POST", "/v1/artifacts/"+artifactID+"/verify", token, map[string]any{
+		"deployment_id": deploymentID, "digest": webDigest,
+	})
 	require.Equal(t, http.StatusOK, status, "%v", body)
-	require.NotEqual(t, revisionID, body["revision_id"])
+
+	unlock, err := a.st.LockEnvironment(context.Background(), uuid.MustParse(envID))
+	require.NoError(t, err)
+	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	require.Equal(t, runID, body["run_id"])
+	status, body = a.do("GET", "/v1/deployments/"+deploymentID, token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "preparing", body["deployment"].(map[string]any)["status"], "blocked on the lock")
+	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	require.Equal(t, "deployment_completing", errCode(body))
+
+	unlock()
+	require.Equal(t, "promoted", a.awaitDeployment(t, token, deploymentID)["status"])
+	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	require.Equal(t, "conflict", errCode(body))
+}
+
+// Cancelling a run whose completion is blocked on the environment lock
+// wins: the deployment ends cancelled and the late promotion finds a row
+// it may not move.
+func TestDeploymentCancelWhileCompleting(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("cancelmid@example.com", "hunter2hunter2")
+	token := a.login("cancelmid@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+	definitionVersion := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	candidate := a.stageValues(t, token, envID, definitionVersion, "cancelmid-plant-value")
+
+	status, body := a.do("POST", "/v1/environments/"+envID+"/deployments", token, map[string]any{
+		"definition_version_id": definitionVersion,
+		"candidate_id":          candidate,
+		"builds":                buildsPayload(),
+	})
+	require.Equal(t, http.StatusCreated, status, "%v", body)
+	deploymentID := body["deployment"].(map[string]any)["id"].(string)
+	runID := body["deployment"].(map[string]any)["run_id"].(string)
+	artifactID := body["actions"].([]any)[0].(map[string]any)["artifact_id"].(string)
+	a.registryHolds("skali/demo/web", webDigest)
+	status, body = a.do("POST", "/v1/artifacts/"+artifactID+"/verify", token, map[string]any{
+		"deployment_id": deploymentID, "digest": webDigest,
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+
+	unlock, err := a.st.LockEnvironment(context.Background(), uuid.MustParse(envID))
+	require.NoError(t, err)
+	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	status, body = a.do("POST", "/v1/runs/"+runID+"/cancel", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	unlock()
+
+	// Give the blocked promotion time to wake up and lose.
+	time.Sleep(300 * time.Millisecond)
+	status, body = a.do("GET", "/v1/deployments/"+deploymentID, token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "cancelled", body["deployment"].(map[string]any)["status"])
+	require.Nil(t, a.targetOf(t, envID).TargetRevisionID, "the late promotion moved nothing")
+	status, body = a.do("GET", "/v1/runs/"+runID, token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "cancelled", body["run"].(map[string]any)["status"])
+}
+
+// awaitDeployment polls a deployment until completion has left it
+// preparing: promotion runs on the daemon after the 202, so tests wait for
+// the row rather than the response. Returns the deployment object.
+func (a *testAPI) awaitDeployment(t *testing.T, token, deploymentID string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		status, body := a.do("GET", "/v1/deployments/"+deploymentID, token, nil)
+		require.Equal(t, http.StatusOK, status, "%v", body)
+		deployment := body["deployment"].(map[string]any)
+		if deployment["status"] != "preparing" {
+			return deployment
+		}
+		require.True(t, time.Now().Before(deadline), "deployment %s still preparing", deploymentID)
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // deployAPIManifestNoSecret drops the ${SESSION_SECRET} reference; the
@@ -369,10 +480,13 @@ func (a *testAPI) completeDeployment(t *testing.T, token, envID, definitionVersi
 		require.Equal(t, http.StatusOK, status, "%v", body)
 	}
 	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
-	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	// Promotion must have handed off before the test plays the kernel.
+	completed := a.awaitDeployment(t, token, deploymentID)
+	require.Equal(t, "promoted", completed["status"])
 	a.finishRun(t, deployment["run_id"].(string))
 	a.activate(t, envID)
-	return body
+	return completed
 }
 
 // Pruning is a deployment concern: the plan reports orphaned stored values
@@ -462,7 +576,8 @@ func TestDeploymentDestructiveGate(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, status)
 	status, _ = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
-	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, http.StatusAccepted, status)
+	require.Equal(t, "promoted", a.awaitDeployment(t, token, deploymentID)["status"])
 	a.finishRun(t, runID)
 	a.activate(t, envID)
 
@@ -579,8 +694,10 @@ func TestRunCancellationPolicy(t *testing.T) {
 			require.Contains(t, []int{http.StatusOK, http.StatusConflict}, status, "%v", verifyBody)
 		}
 		status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
-		require.Equal(t, http.StatusOK, status, "%v", body)
-		return deploymentID, runID, body["revision_id"].(string)
+		require.Equal(t, http.StatusAccepted, status, "%v", body)
+		completed := a.awaitDeployment(t, token, deploymentID)
+		require.Equal(t, "promoted", completed["status"], "%v", completed)
+		return deploymentID, runID, completed["revision_id"].(string)
 	}
 
 	// Cancellation before promotion closes the window; nothing moved.

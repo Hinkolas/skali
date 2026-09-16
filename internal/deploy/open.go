@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Hinkolas/skali/internal/diagnostic"
+	"log/slog"
 	"maps"
 	"slices"
 	"sort"
@@ -19,6 +19,7 @@ import (
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/diagnostic"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/plan"
@@ -649,11 +650,40 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 	}, nil
 }
 
-// Complete closes the artifact window: every recorded action must reference
-// a verified artifact, then revision creation, promotion, and the rollout
-// handoff run under the deployment's own run. Failure leaves values,
-// target, and active revision untouched.
-func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service) (*ExecuteResult, error) {
+// ErrDeploymentCompleting: a completion for this deployment is already
+// running; the caller should attach to its run.
+var ErrDeploymentCompleting = errors.New("deploy: the deployment is already completing")
+
+// completion is the hand-off from the request-bound half of Complete to the
+// half that runs on the service lifetime.
+type completion struct {
+	deploymentID uuid.UUID
+	runID        uuid.UUID
+	jsvc         *journal.Service
+	in           ExecuteInput
+}
+
+// Complete closes the artifact window and returns the deployment's run:
+// every recorded action must reference a verified artifact, then revision
+// creation, promotion, and the rollout handoff run under that run on the
+// service lifetime context, not the caller's. A client that gives up on the
+// request cannot strand the promotion or its cleanup; it follows the run
+// instead. A second call while the first is still promoting returns
+// ErrDeploymentCompleting. Failure leaves values, target, and active
+// revision untouched.
+func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service) (uuid.UUID, error) {
+	c, err := s.beginComplete(ctx, deploymentID, jsvc)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	go s.runCompletion(c)
+	return c.runID, nil
+}
+
+// beginComplete is the request-bound half: validation, run resolution, and
+// closing the artifacts step. On success the deployment is claimed and the
+// caller owns the release.
+func (s *Service) beginComplete(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service) (*completion, error) {
 	deployment, err := s.GetDeployment(ctx, deploymentID)
 	if err != nil {
 		return nil, err
@@ -661,6 +691,18 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 	if deployment.Status != string(DeploymentPreparing) {
 		return nil, fmt.Errorf("%w: %s deployments cannot complete", ErrInvalidDeploymentTransition, deployment.Status)
 	}
+	if err := s.tryClaim(deploymentID); err != nil {
+		return nil, err
+	}
+	c, err := s.prepareCompletion(ctx, deployment, jsvc)
+	if err != nil {
+		s.release(deploymentID)
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deployment, jsvc *journal.Service) (*completion, error) {
 	var actions []ArtifactAction
 	if err := json.Unmarshal(deployment.Actions, &actions); err != nil {
 		return nil, fmt.Errorf("deploy: decode actions: %w", err)
@@ -710,10 +752,6 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 		}
 	}
 
-	if err := s.closeArtifactsStep(ctx, jsvc, runID, deployment, actions); err != nil {
-		return nil, err
-	}
-
 	candidateID := uuid.Nil
 	if deployment.CandidateID != nil {
 		candidateID = *deployment.CandidateID
@@ -732,27 +770,59 @@ func (s *Service) Complete(ctx context.Context, deploymentID uuid.UUID, jsvc *jo
 			actionPlatforms[action.Application] = action.Platform
 		}
 	}
-	result, err := s.runStages(ctx, runID, ExecuteInput{
-		ProjectID:           deployment.ProjectID,
-		EnvironmentID:       deployment.EnvironmentID,
-		DefinitionVersionID: deployment.DefinitionVersionID,
-		CandidateID:         candidateID,
-		Resolver:            &artifactstore.RecordResolver{Store: s.artifacts, IDs: ids},
-		Journal:             jsvc,
-		Actor:               deployment.Actor,
-		Restart:             deployment.Restart,
-		DeploymentID:        deploymentID,
-		LocalApplications:   locals,
-		PruneValues:         deployment.PruneValues,
-		ActionPlatforms:     actionPlatforms,
-	})
+
+	// Closing the artifacts step is the durable mark that the client's part
+	// is over: from here the daemon owns the deployment (see RecoverOnBoot).
+	if err := s.closeArtifactsStep(ctx, jsvc, runID, deployment, actions); err != nil {
+		return nil, err
+	}
+	return &completion{
+		deploymentID: deployment.ID,
+		runID:        runID,
+		jsvc:         jsvc,
+		in: ExecuteInput{
+			ProjectID:           deployment.ProjectID,
+			EnvironmentID:       deployment.EnvironmentID,
+			DefinitionVersionID: deployment.DefinitionVersionID,
+			CandidateID:         candidateID,
+			Resolver:            &artifactstore.RecordResolver{Store: s.artifacts, IDs: ids},
+			Journal:             jsvc,
+			Actor:               deployment.Actor,
+			Restart:             deployment.Restart,
+			DeploymentID:        deployment.ID,
+			LocalApplications:   locals,
+			PruneValues:         deployment.PruneValues,
+			ActionPlatforms:     actionPlatforms,
+		},
+	}, nil
+}
+
+// runCompletion drives finishComplete on the service lifetime and releases
+// the claim; failures are journaled on the run, so the log line is only a
+// trace.
+func (s *Service) runCompletion(c *completion) {
+	defer s.release(c.deploymentID)
+	ctx := s.lifetime()
+	if _, err := s.finishComplete(ctx, c); err != nil {
+		slog.WarnContext(ctx, "deploy: complete deployment", "deployment", c.deploymentID, "run", c.runID, "err", err)
+	}
+}
+
+// finishComplete is the half that moves state: revision, promotion, and the
+// rollout handoff, with the deployment marked failed on any error. The
+// failure mark runs detached from ctx so that a cancelled ctx (the daemon
+// shutting down) still leaves a closed row behind.
+func (s *Service) finishComplete(ctx context.Context, c *completion) (*ExecuteResult, error) {
+	result, err := s.runStages(ctx, c.runID, c.in)
 	if err != nil {
 		// Promotion marks the deployment promoted inside its own
 		// transaction, so a failure after that point (journal writes on the
 		// way to the rollout handoff) finds a row the kernel already owns:
 		// the target moved, and calling it failed would be a lie the
 		// lifecycle machine correctly refuses.
-		if statusErr := s.setDeploymentStatus(ctx, deploymentID, DeploymentFailed, uuid.Nil); statusErr != nil &&
+		dctx, cancel := detached(ctx)
+		defer cancel()
+		if statusErr := s.setDeploymentStatus(dctx, c.deploymentID, DeploymentFailed, uuid.Nil); statusErr != nil &&
 			!errors.Is(statusErr, ErrInvalidDeploymentTransition) {
 			return result, fmt.Errorf("deploy: mark deployment failed: %w (original: %w)", statusErr, err)
 		}
@@ -775,6 +845,11 @@ func (s *Service) CancelDeployment(ctx context.Context, deploymentID uuid.UUID, 
 }
 
 func (s *Service) closeDeployment(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service, to DeploymentStatus) error {
+	// Closing is all-or-nothing from the caller's point of view: a client
+	// that disconnects after asking for it must not leave the row claimed
+	// but the run still running.
+	ctx, cancel := detached(ctx)
+	defer cancel()
 	deployment, err := s.GetDeployment(ctx, deploymentID)
 	if err != nil {
 		return err
@@ -847,6 +922,37 @@ func (s *Service) SweepStaleDeployments(ctx context.Context, jsvc *journal.Servi
 		swept++
 	}
 	return swept, nil
+}
+
+// RecoverOnBoot fails every preparing deployment whose completion this
+// daemon owned when it last died: the artifacts step of its run already
+// succeeded, so the client's part was over and no client will ever finish
+// the row. The journal's own recovery failed the orphaned attempt; this
+// closes the deployment and its run so the environment is free again.
+func (s *Service) RecoverOnBoot(ctx context.Context, jsvc *journal.Service) (int, error) {
+	rows, err := s.st.ListServerOwnedPreparingDeployments(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("deploy: list interrupted deployments: %w", err)
+	}
+	recovered := 0
+	for _, row := range rows {
+		if row.RunID != nil {
+			if redactor, err := s.values.Redactor(ctx, row.EnvironmentID, uuid.Nil); err == nil {
+				if err := s.instantStep(ctx, jsvc, *row.RunID, redactor, "restart", "Daemon restarted",
+					"deployment failed: daemon restarted while it was completing"); err != nil {
+					slog.WarnContext(ctx, "deploy: journal restart diagnostic", "run", *row.RunID, "err", err)
+				}
+			}
+		}
+		if err := s.FailDeployment(ctx, row.ID, jsvc); err != nil {
+			if errors.Is(err, ErrInvalidDeploymentTransition) {
+				continue
+			}
+			return recovered, err
+		}
+		recovered++
+	}
+	return recovered, nil
 }
 
 // TouchDeployment records artifact-window liveness.

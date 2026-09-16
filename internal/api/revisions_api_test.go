@@ -38,8 +38,10 @@ func (a *testAPI) deployAndActivate(t *testing.T, token, envID, definitionVersio
 		require.Equal(t, http.StatusOK, status, "%v", body)
 	}
 	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
-	require.Equal(t, http.StatusOK, status, "%v", body)
-	revisionID := body["revision_id"].(string)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	completed := a.awaitDeployment(t, token, deploymentID)
+	require.Equal(t, "promoted", completed["status"], "%v", completed)
+	revisionID := completed["revision_id"].(string)
 	a.finishRun(t, runID)
 	a.activate(t, envID)
 	return revisionID
@@ -189,8 +191,10 @@ func TestPromotionFlowEndToEnd(t *testing.T) {
 	deployment := body["deployment"].(map[string]any)
 	require.Equal(t, "reuse", body["actions"].([]any)[0].(map[string]any)["action"])
 	status, body = a.do("POST", "/v1/deployments/"+deployment["id"].(string)+"/complete", token, nil)
-	require.Equal(t, http.StatusOK, status, "%v", body)
-	promoted := body["revision_id"].(string)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	completed := a.awaitDeployment(t, token, deployment["id"].(string))
+	require.Equal(t, "promoted", completed["status"], "%v", completed)
+	promoted := completed["revision_id"].(string)
 	require.NotEqual(t, sourceRevision, promoted)
 	require.Equal(t, promoted, a.targetOf(t, targetEnv).TargetRevisionID.String())
 

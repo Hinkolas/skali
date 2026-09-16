@@ -25,14 +25,8 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
+	import type { DirectoryUser } from '$lib/types/auth';
 	import type { AccessRole, Member, Project } from '$lib/types/project';
-
-	type DirectoryUser = {
-		id: string;
-		email: string;
-		name: string;
-		role: string;
-	};
 
 	let { project, close }: { project: Project; close: (added?: boolean) => void } = $props();
 

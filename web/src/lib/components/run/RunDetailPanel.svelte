@@ -7,16 +7,21 @@
 	import { runUnsettled } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
 	import { describeActor, formatDuration, formatDateTime } from '$lib/format';
+	import { authState } from '$lib/stores/auth.svelte';
 	import { clock } from '$lib/stores/clock.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { users } from '$lib/stores/users.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import CopyId from '$lib/components/ui/CopyId.svelte';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
 	import RunStepTree from './RunStepTree.svelte';
 
 	// Lives in the shared side panel; re-opening with a different runId
 	// updates props in place, so all state below is keyed on runId.
 	let { runId, close }: { runId: string; close: () => void } = $props();
+
+	users.load();
 
 	let tree = $state<RunTree | null>(null);
 	let failed = $state(false);
@@ -145,8 +150,13 @@
 				{/if}
 			</div>
 			{#if tree}
-				<div class="font-mono text-text-faint mt-1 truncate text-xs">
-					{describeActor(tree.run.actor)} · {formatDateTime(tree.run.created_at)}
+				<div class="font-mono text-text-faint mt-1 flex flex-wrap items-center gap-x-1 text-xs">
+					<CopyId id={tree.run.id} hint="skali run attach {tree.run.id}" class="text-xs" />
+					· <span title={tree.run.actor}>{describeActor(tree.run.actor, users.resolve)}</span>
+					{#if tree.run.actor === authState.user?.id}
+						<span class="text-text-ghost">(you)</span>
+					{/if}
+					· {formatDateTime(tree.run.created_at)}
 					{#if tree.run.started_at}
 						· {formatDuration(tree.run.started_at, tree.run.finished_at, clock.now)}
 					{/if}

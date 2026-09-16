@@ -15,6 +15,7 @@ import (
 	"github.com/Hinkolas/skali/internal/edge/edgeprobe"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/revision"
+	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
@@ -43,24 +44,68 @@ func (k *Kernel) ProbeRoutes(ctx context.Context, environmentID uuid.UUID) ([]Ro
 	if k.deps.ProbeDomain == nil {
 		return nil, ErrNoEdgeProbe
 	}
-	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrEnvironmentNotFound
-		}
-		return nil, fmt.Errorf("reconcile: get target: %w", err)
-	}
-	if target.TargetRevisionID == nil {
-		return nil, nil
-	}
-	row, err := k.deps.Store.GetRevisionByID(ctx, *target.TargetRevisionID)
-	if err != nil {
-		return nil, fmt.Errorf("reconcile: get target revision: %w", err)
-	}
-	rev, err := revision.Decode(row.Document)
+	_, rev, err := k.targetRevision(ctx, environmentID)
 	if err != nil {
 		return nil, err
 	}
+	if rev == nil {
+		return nil, nil
+	}
+	probes, err := k.routeDomains(ctx, environmentID, rev)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	var group sync.WaitGroup
+	for i := range probes {
+		group.Add(1)
+		go func(probe *RouteProbe) {
+			defer group.Done()
+			probeCtx, cancel := context.WithTimeout(ctx, edgeProbeTimeout)
+			result := k.deps.ProbeDomain(probeCtx, probe.Domain)
+			cancel()
+			k.domainMu.Lock()
+			usable := k.routes[routeKeyOf(environmentID, probe.certificate)].usable
+			k.domainMu.Unlock()
+			probe.Result, _ = k.recordProbe(probe.Domain, result, now, !usable)
+		}(&probes[i])
+	}
+	group.Wait()
+	k.Enqueue(environmentID)
+	if k.deps.Observed != nil {
+		k.deps.Observed.Invalidate(environmentID)
+	}
+	return probes, nil
+}
+
+// targetRevision loads the environment's target and decodes its target
+// revision; rev is nil when the environment has no target yet.
+func (k *Kernel) targetRevision(ctx context.Context, environmentID uuid.UUID) (store.EnvironmentTarget, *revision.Revision, error) {
+	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return target, nil, ErrEnvironmentNotFound
+		}
+		return target, nil, fmt.Errorf("reconcile: get target: %w", err)
+	}
+	if target.TargetRevisionID == nil {
+		return target, nil, nil
+	}
+	row, err := k.deps.Store.GetRevisionByID(ctx, *target.TargetRevisionID)
+	if err != nil {
+		return target, nil, fmt.Errorf("reconcile: get target revision: %w", err)
+	}
+	rev, err := revision.Decode(row.Document)
+	if err != nil {
+		return target, nil, err
+	}
+	return target, rev, nil
+}
+
+// routeDomains resolves every TLS route of rev to its canonical domain and
+// Certificate name, the same way rendering fills the Certificate's
+// dnsNames, so the strings match what a pass judges under the lock.
+func (k *Kernel) routeDomains(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision) ([]RouteProbe, error) {
 	variables, err := k.routeVariables(ctx, environmentID, rev)
 	if err != nil {
 		return nil, err
@@ -84,26 +129,6 @@ func (k *Kernel) ProbeRoutes(ctx context.Context, environmentID uuid.UUID) ([]Ro
 			probes = append(probes, RouteProbe{Service: appKey, Key: routeKey, Domain: domain,
 				certificate: rendering.RouteTLSName(rev.Definition.Name, appKey, routeKey)})
 		}
-	}
-	now := time.Now()
-	var group sync.WaitGroup
-	for i := range probes {
-		group.Add(1)
-		go func(probe *RouteProbe) {
-			defer group.Done()
-			probeCtx, cancel := context.WithTimeout(ctx, edgeProbeTimeout)
-			result := k.deps.ProbeDomain(probeCtx, probe.Domain)
-			cancel()
-			k.domainMu.Lock()
-			usable := k.routes[routeKeyOf(environmentID, probe.certificate)].usable
-			k.domainMu.Unlock()
-			probe.Result, _ = k.recordProbe(probe.Domain, result, now, !usable)
-		}(&probes[i])
-	}
-	group.Wait()
-	k.Enqueue(environmentID)
-	if k.deps.Observed != nil {
-		k.deps.Observed.Invalidate(environmentID)
 	}
 	return probes, nil
 }
