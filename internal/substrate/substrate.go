@@ -429,10 +429,7 @@ func (c *Controller) reconcilePool(ctx context.Context, id uuid.UUID) (time.Dura
 	case dbstore.StateReleasing:
 		return 0, c.releasePool(ctx, *pool)
 	}
-	if err := c.ensurePool(ctx, *pool); err != nil {
-		return 0, err
-	}
-	return 0, nil
+	return c.ensurePool(ctx, *pool)
 }
 
 func hasCapability(capabilities []string, capability string) bool {
@@ -449,4 +446,10 @@ func ownerNames(ownerRef string) (project, environment, service string, ok bool)
 		return "", "", "", false
 	}
 	return parts[1], parts[3], parts[5], true
+}
+
+// QueueLen reports the number of queued work items, for tests that check
+// a wake-up was recorded without running workers.
+func (c *Controller) QueueLen() int {
+	return c.queue.Len()
 }

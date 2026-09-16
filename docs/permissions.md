@@ -363,7 +363,9 @@ the six-digit code prompt as the direct path.
 Instance admin: `GET /nodes`, `GET /system/observation` (both member-readable
 today, the console only hides them), `GET /users`; sudo: `POST /users`,
 `PATCH /users/{id}` (gains `create_projects`), `DELETE /users/{id}`,
-`POST /users/{id}/password`, `GET|PUT|DELETE /system/backup-target`.
+`POST /users/{id}/password`, `GET|PUT|DELETE /system/backup-target`,
+`PUT /system/database-pools/{name}/settings` (`GET /system/database-pools`
+is a plain admin read).
 
 Project scoped:
 

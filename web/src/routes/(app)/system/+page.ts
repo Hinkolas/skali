@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { apiFetch } from '$lib/api/client';
 import type { BackupTarget } from '$lib/types/backups';
+import type { DatabasePoolsResponse } from '$lib/types/pools';
 import type { UpdateStatus } from '$lib/types/updates';
 import type { PageLoad } from './$types';
 
@@ -12,14 +13,16 @@ export const load: PageLoad = async ({ fetch, parent }) => {
 	if (user?.role !== 'admin') {
 		error(403, 'You need the admin role to see system settings');
 	}
-	const [res, targetRes] = await Promise.all([
+	const [res, targetRes, poolsRes] = await Promise.all([
 		apiFetch(fetch, '/v1/system/updates'),
-		apiFetch(fetch, '/v1/system/backup-target')
+		apiFetch(fetch, '/v1/system/backup-target'),
+		apiFetch(fetch, '/v1/system/database-pools')
 	]);
 	return {
 		updates: res.ok ? ((await res.json()) as UpdateStatus) : null,
 		backupTarget: targetRes.ok
 			? ((await targetRes.json()) as { target: BackupTarget }).target
-			: null
+			: null,
+		pools: poolsRes.ok ? ((await poolsRes.json()) as DatabasePoolsResponse).pools : null
 	};
 };

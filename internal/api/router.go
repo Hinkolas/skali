@@ -81,6 +81,10 @@ type Deps struct {
 	// Databases serves database connection projections; nil hides the
 	// routes (no substrate wired).
 	Databases *dbstore.Service
+	// Pools sizes database pools and wakes the substrate after a settings
+	// change; nil (API-only mode) reports budgets as unknown and leaves
+	// changes for the next resync. The pool routes need Databases.
+	Pools PoolTuner
 	// SecretReader is the sanctioned request-time Secret read behind
 	// credential reveal; nil (API-only mode) disables reveal.
 	SecretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
@@ -447,6 +451,14 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 						ac.route(r, "POST", "/system/updates/scan", classInstanceAdmin, uph.scan)
 					}
 
+					// Database pools: budgets and effective parameters are a
+					// plain admin read; retuning is a write below.
+					var plh *poolsHandlers
+					if d.Databases != nil {
+						plh = &poolsHandlers{db: d.Databases, pools: d.Pools, reconcile: d.Reconcile, managed: d.ManagedCluster}
+						ac.route(r, "GET", "/system/database-pools", classInstanceAdmin, plh.list)
+					}
+
 					// Writes additionally need sudo mode. RequireAdmin sits
 					// outside RequireFresh so non-admins get "forbidden", never a
 					// reauth prompt that would not help them.
@@ -474,6 +486,11 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 							ac.route(r, "POST", "/system/updates/apply", classInstanceAdmin, uph.apply)
 							ac.route(r, "POST", "/system/updates/resume", classInstanceAdmin, uph.resume)
 							ac.route(r, "PUT", "/system/updates/settings", classInstanceAdmin, uph.putSettings)
+						}
+
+						// Retuning a pool can restart its instances.
+						if plh != nil {
+							ac.route(r, "PUT", "/system/database-pools/{name}/settings", classInstanceAdmin, plh.putSettings)
 						}
 					})
 				})

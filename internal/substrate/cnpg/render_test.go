@@ -73,6 +73,32 @@ func TestRenderClusterSynchronousManaged(t *testing.T) {
 	require.Equal(t, map[string]string{"skali.dev/capability-database": "true"}, selector)
 }
 
+func TestRenderClusterParametersAndResources(t *testing.T) {
+	t.Parallel()
+	spec := clusterSpec()
+	spec.Parameters = map[string]string{"shared_buffers": "1024MB", "work_mem": "10MB"}
+	spec.MemoryRequestBytes = 4 << 30
+	object := RenderCluster(spec).Object
+
+	parameters, _, _ := unstructured.NestedStringMap(object, "spec", "postgresql", "parameters")
+	require.Equal(t, map[string]string{"shared_buffers": "1024MB", "work_mem": "10MB"}, parameters)
+	_, found, _ := unstructured.NestedMap(object, "spec", "postgresql", "synchronous")
+	require.False(t, found, "parameters alone render no synchronous block")
+	memory, _, _ := unstructured.NestedString(object, "spec", "resources", "requests", "memory")
+	require.Equal(t, "4Gi", memory, "kubernetes units on the request, PostgreSQL units in the parameters")
+	_, found, _ = unstructured.NestedMap(object, "spec", "resources", "limits")
+	require.False(t, found, "no limit: a tight cap would OOM-kill the primary")
+
+	// Both parameters and quorum replication share the one postgresql block.
+	spec.Instances = 3
+	spec.Synchronous = true
+	object = RenderCluster(spec).Object
+	parameters, _, _ = unstructured.NestedStringMap(object, "spec", "postgresql", "parameters")
+	require.Equal(t, "1024MB", parameters["shared_buffers"])
+	method, _, _ := unstructured.NestedString(object, "spec", "postgresql", "synchronous", "method")
+	require.Equal(t, "any", method)
+}
+
 func TestRenderDatabase(t *testing.T) {
 	t.Parallel()
 	object := RenderDatabase(DatabaseSpec{

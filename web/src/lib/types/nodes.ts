@@ -17,6 +17,8 @@ export interface ClusterNode {
 	internal_ip?: string;
 	external_ip?: string;
 	last_heartbeat: string | null;
+	/** Allocatable memory reported by the kubelet; absent until observed. */
+	memory_allocatable_bytes?: number;
 }
 
 export interface NodesResponse {

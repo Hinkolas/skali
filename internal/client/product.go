@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
 	"net/url"
@@ -983,4 +984,91 @@ func (c *Client) RestoreBackup(ctx context.Context, environmentID, snapshotID st
 		return "", err
 	}
 	return res.RunID, nil
+}
+
+// DatabasePool is one managed PostgreSQL pool with its tuning, from
+// GET /v1/system/database-pools.
+type DatabasePool struct {
+	Name         string                 `json:"name"`
+	Class        string                 `json:"class"`
+	Engine       string                 `json:"engine"`
+	Major        int                    `json:"major"`
+	Instances    int                    `json:"instances"`
+	StorageBytes int64                  `json:"storage_bytes"`
+	State        string                 `json:"state"`
+	Memory       DatabasePoolMemory     `json:"memory"`
+	Parameters   DatabasePoolParameters `json:"parameters"`
+	Observed     *DatabasePoolObserved  `json:"observed"`
+	CreatedAt    string                 `json:"created_at"`
+	UpdatedAt    string                 `json:"updated_at"`
+}
+
+// DatabasePoolMemory is a pool's memory budget. Bytes is nil while the
+// automatic budget cannot be computed (no database node observed yet).
+type DatabasePoolMemory struct {
+	Bytes  *int64 `json:"bytes"`
+	Auto   bool   `json:"auto"`
+	Node   string `json:"node,omitempty"`
+	Capped bool   `json:"capped,omitempty"`
+}
+
+// DatabasePoolParameters is the effective postgresql.conf set with the
+// overrides that shaped it.
+type DatabasePoolParameters struct {
+	Effective   map[string]string `json:"effective"`
+	Overrides   map[string]string `json:"overrides"`
+	RestartKeys []string          `json:"restart_keys"`
+	Allowed     []string          `json:"allowed"`
+}
+
+// DatabasePoolObserved is the CNPG cluster status when observed.
+type DatabasePoolObserved struct {
+	Phase          string `json:"phase"`
+	Instances      int    `json:"instances"`
+	ReadyInstances int    `json:"ready_instances"`
+	Primary        string `json:"primary,omitempty"`
+}
+
+// DatabasePoolSettingsInput is a pool tuning write. MemoryBytes nil keeps
+// the budget; AutoMemory returns it to automatic (an explicit JSON null);
+// Parameters nil keeps the overrides, otherwise replaces them all.
+type DatabasePoolSettingsInput struct {
+	MemoryBytes *int64
+	AutoMemory  bool
+	Parameters  map[string]string
+}
+
+// MarshalJSON renders the three-way memory field: absent, null, or a number.
+func (in DatabasePoolSettingsInput) MarshalJSON() ([]byte, error) {
+	body := map[string]any{}
+	switch {
+	case in.AutoMemory:
+		body["memory_bytes"] = nil
+	case in.MemoryBytes != nil:
+		body["memory_bytes"] = *in.MemoryBytes
+	}
+	if in.Parameters != nil {
+		body["parameters"] = in.Parameters
+	}
+	return json.Marshal(body)
+}
+
+func (c *Client) ListDatabasePools(ctx context.Context) ([]DatabasePool, error) {
+	var res struct {
+		Pools []DatabasePool `json:"pools"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/system/database-pools", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Pools, nil
+}
+
+func (c *Client) PutDatabasePoolSettings(ctx context.Context, name string, input DatabasePoolSettingsInput) (*DatabasePool, error) {
+	var res struct {
+		Pool DatabasePool `json:"pool"`
+	}
+	if err := c.do(ctx, http.MethodPut, "/v1/system/database-pools/"+url.PathEscape(name)+"/settings", input, &res); err != nil {
+		return nil, err
+	}
+	return &res.Pool, nil
 }

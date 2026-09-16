@@ -50,6 +50,13 @@ type ClusterSpec struct {
 	// selector because its nodes carry no capability labels.
 	Managed bool
 	Roles   []Role
+	// Parameters is the effective postgresql.conf set (pgtune.Effective):
+	// budget-derived values with the administrator's overrides on top, in
+	// PostgreSQL units. Empty renders no parameters block.
+	Parameters map[string]string
+	// MemoryRequestBytes becomes the instances' memory request (no limit)
+	// so the scheduler accounts for the pool's budget; 0 renders none.
+	MemoryRequestBytes int64
 }
 
 // RenderCluster renders the CNPG Cluster object for one pool.
@@ -99,9 +106,28 @@ func RenderCluster(spec ClusterSpec) *unstructured.Unstructured {
 			},
 		}
 	}
+	// One postgresql block carries both the parameter set and the quorum
+	// replication switch; it is assigned only when something is in it so
+	// an untuned single pool renders exactly as before.
+	postgresql := map[string]any{}
+	if len(spec.Parameters) > 0 {
+		parameters := make(map[string]any, len(spec.Parameters))
+		for key, value := range spec.Parameters {
+			parameters[key] = value
+		}
+		postgresql["parameters"] = parameters
+	}
 	if spec.Synchronous {
-		clusterSpec["postgresql"] = map[string]any{
-			"synchronous": map[string]any{"method": "any", "number": int64(1)},
+		postgresql["synchronous"] = map[string]any{"method": "any", "number": int64(1)}
+	}
+	if len(postgresql) > 0 {
+		clusterSpec["postgresql"] = postgresql
+	}
+	if spec.MemoryRequestBytes > 0 {
+		clusterSpec["resources"] = map[string]any{
+			"requests": map[string]any{
+				"memory": resource.NewQuantity(spec.MemoryRequestBytes, resource.BinarySI).String(),
+			},
 		}
 	}
 	return &unstructured.Unstructured{Object: object}

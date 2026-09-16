@@ -150,8 +150,9 @@ func (c *Controller) finishClaimRelease(ctx context.Context, row store.DatabaseC
 		return c.releasePool(ctx, *pool)
 	}
 	// The shared pool survives its tenants; re-apply so the role list
-	// shrinks.
-	if err := c.ensurePool(ctx, *pool); err != nil {
+	// shrinks. A pool still waiting for node memory is picked up by the
+	// enqueue below.
+	if _, err := c.ensurePool(ctx, *pool); err != nil {
 		return err
 	}
 	c.EnqueuePool(poolID)

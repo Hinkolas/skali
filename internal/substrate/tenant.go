@@ -100,8 +100,12 @@ func (c *Controller) provision(ctx context.Context, row store.DatabaseClaim) (bo
 	if err != nil {
 		return false, err
 	}
-	if err := c.ensurePool(ctx, *pool); err != nil {
+	wait, err := c.ensurePool(ctx, *pool)
+	if err != nil {
 		return false, err
+	}
+	if wait > 0 {
+		return false, errWaiting{reason: "waiting for database node memory to size the pool"}
 	}
 	ready, reason, err := c.poolReady(ctx, *pool)
 	if err != nil {

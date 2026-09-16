@@ -60,3 +60,10 @@ WHERE id = $1 AND node_port IS NULL;
 SELECT node_port FROM database_clusters
 WHERE node_port IS NOT NULL AND state <> 'released'
 ORDER BY node_port;
+
+-- Tuning: the memory budget (NULL = automatic) and the parameter overrides,
+-- both replaced wholesale. A released pool is never retuned.
+-- name: SetDatabaseClusterTuning :execrows
+UPDATE database_clusters
+SET memory_bytes = $2, parameters = $3, updated_at = now()
+WHERE id = $1 AND state <> 'released';

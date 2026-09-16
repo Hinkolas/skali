@@ -2,6 +2,7 @@ package dbstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -223,6 +224,63 @@ func (s *Service) SetClusterShape(ctx context.Context, id uuid.UUID, instances i
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ClusterTuning is a pool's tuning as an administrator sets it: the memory
+// budget (nil = automatic) and the PostgreSQL parameter overrides.
+type ClusterTuning struct {
+	MemoryBytes *int64
+	Parameters  map[string]string
+}
+
+// SetClusterTuning replaces a live pool's budget and overrides. The caller
+// validates the overrides (pgtune.ValidateOverrides) before storing them.
+func (s *Service) SetClusterTuning(ctx context.Context, id uuid.UUID, tuning ClusterTuning) error {
+	parameters := tuning.Parameters
+	if parameters == nil {
+		parameters = map[string]string{}
+	}
+	encoded, err := json.Marshal(parameters)
+	if err != nil {
+		return fmt.Errorf("dbstore: encode cluster parameters: %w", err)
+	}
+	rows, err := s.st.SetDatabaseClusterTuning(ctx, store.SetDatabaseClusterTuningParams{
+		ID:          id,
+		MemoryBytes: tuning.MemoryBytes,
+		Parameters:  encoded,
+	})
+	if err != nil {
+		return fmt.Errorf("dbstore: set cluster tuning: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClusterParameters decodes a pool row's parameter overrides; a malformed
+// column (impossible through this package) reads as no overrides.
+func ClusterParameters(row store.DatabaseCluster) map[string]string {
+	parameters := map[string]string{}
+	if len(row.Parameters) == 0 {
+		return parameters
+	}
+	if err := json.Unmarshal(row.Parameters, &parameters); err != nil {
+		return map[string]string{}
+	}
+	return parameters
+}
+
+// LiveClusterByName resolves a pool by its unique live name.
+func (s *Service) LiveClusterByName(ctx context.Context, name string) (*store.DatabaseCluster, error) {
+	row, err := s.st.GetLiveDatabaseClusterByName(ctx, name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("dbstore: get cluster %s: %w", name, err)
+	}
+	return &row, nil
 }
 
 // ListClusterClaims returns the live claims placed on a cluster.

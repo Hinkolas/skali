@@ -786,8 +786,9 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 			Store: a.st, Journal: journalSvc, Values: values,
 			DB: dbstore.New(a.st), Deploy: deploySvc, Targets: backupTargets,
 		}, backup.Config{}),
-		Metrics: &metrics.Service{Store: a.st},
-		Updates: &updates.Service{Store: a.st, Version: "test"},
+		Metrics:   &metrics.Service{Store: a.st},
+		Updates:   &updates.Service{Store: a.st, Version: "test"},
+		Databases: dbstore.New(a.st),
 	})
 
 	routes := 0
@@ -808,5 +809,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 94, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 100, routes, "route count changed; update the OpenAPI spec and this number")
 }

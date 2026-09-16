@@ -563,6 +563,49 @@ func (s *Store) CapableNodes(capability string) []string {
 	return nodes
 }
 
+// SmallestCapableNodeMemory names the node carrying a capability with the
+// least allocatable memory and that amount. Pools place one instance on
+// every capable node, so the smallest one bounds every pool's budget.
+// ("", 0) until at least one capable node has reported a size; ties break
+// by name so the answer is stable.
+func (s *Store) SmallestCapableNodeMemory(capability string) (string, int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	name, bytes := "", int64(0)
+	for node, set := range s.nodeCapabilities {
+		if !set[capability] {
+			continue
+		}
+		record, ok := s.nodeRecords[node]
+		if !ok || record.MemoryAllocatableBytes <= 0 {
+			continue
+		}
+		smaller := record.MemoryAllocatableBytes < bytes ||
+			(record.MemoryAllocatableBytes == bytes && node < name)
+		if bytes == 0 || smaller {
+			name, bytes = node, record.MemoryAllocatableBytes
+		}
+	}
+	return name, bytes
+}
+
+// SharedObject returns the platform-scoped object registered under a shared
+// key: a database pool's CNPG Cluster is keyed by the pool name. The copy is
+// safe to keep after the lock is released.
+func (s *Store) SharedObject(sharedKey string) (Object, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	key, ok := s.sharedObjects[sharedKey]
+	if !ok {
+		return Object{}, false
+	}
+	obj := s.objects[key]
+	if obj == nil {
+		return Object{}, false
+	}
+	return *obj, true
+}
+
 // RemoveNode drops a deleted node's architecture, capability, and record
 // entries.
 func (s *Store) RemoveNode(name string) {
@@ -589,6 +632,10 @@ type NodeRecord struct {
 	InternalIP     string
 	ExternalIP     string
 	LastHeartbeat  time.Time
+	// MemoryAllocatableBytes is the node's allocatable memory as reported by
+	// the kubelet; 0 until the node informer delivers it. The substrate
+	// sizes database pools from it.
+	MemoryAllocatableBytes int64
 }
 
 // SetNodeRecord stores one node's projection, keyed by name.
