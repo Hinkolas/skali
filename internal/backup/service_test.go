@@ -120,3 +120,35 @@ func TestBackupStatusGuard(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, second, "a second claim must lose")
 }
+
+// An environment whose active revision declares nothing stateful is refused
+// before a run exists: the reason reaches the caller, and no failed run or
+// backup row is left behind. One application volume is enough to accept.
+func TestCreateBackupRefusesNothingToBackUp(t *testing.T) {
+	f := newServiceFixture(t)
+	ctx := context.Background()
+	f.configureTarget(t)
+	f.activate(t, compiler.ProjectDefinition{
+		Schema: compiler.DefinitionSchema, Name: "demo",
+		Applications: map[string]compiler.Application{"web": {}},
+	})
+
+	_, err := f.controller.CreateBackup(ctx, BackupInput{EnvironmentID: f.environmentID, Actor: "tester"})
+	require.ErrorIs(t, err, ErrNothingToBackUp)
+	unfinished, err := f.st.ListUnfinishedBackups(ctx)
+	require.NoError(t, err)
+	require.Empty(t, unfinished)
+	runs, err := f.journal.ListRuns(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Empty(t, runs, "a refused backup leaves no run behind")
+
+	f.activate(t, compiler.ProjectDefinition{
+		Schema: compiler.DefinitionSchema, Name: "demo",
+		Applications: map[string]compiler.Application{"web": {
+			Volumes: map[string]compiler.Volume{"data": {MountPath: "/data", SizeBytes: 1 << 30}},
+		}},
+	})
+	result, err := f.controller.CreateBackup(ctx, BackupInput{EnvironmentID: f.environmentID, Actor: "tester"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+}

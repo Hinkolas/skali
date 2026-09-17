@@ -230,3 +230,34 @@ func TestSnapshotDeletePreconditions(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, status)
 	require.Equal(t, "reauth_required", errorCode(t, body))
 }
+
+// An active environment whose revision declares no database, bucket, or
+// volume is refused with a distinct 422 instead of an accepted run that
+// fails without a visible reason.
+func TestBackupCreateRefusesNothingToBackUp(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("dev@example.com", "hunter2hunter2")
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	token := a.login("dev@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+
+	// deployAPIManifestNoVolume runs one application and nothing stateful.
+	definitionVersion := a.submitDefinition(t, token, projectID, deployAPIManifestNoVolume)
+	candidate := a.stageValues(t, token, envID, definitionVersion, "backup-nothing-value")
+	a.deployAndActivate(t, token, envID, definitionVersion, candidate)
+	status, _ := a.do("PUT", "/v1/system/backup-target", admin, map[string]string{
+		"endpoint": "http://127.0.0.1:1", "bucket": "backups",
+		"access_key_id": "AK", "secret_access_key": "sk",
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	status, body := a.do("POST", "/v1/environments/"+envID+"/backups", token, nil)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "%v", body)
+	require.Equal(t, "nothing_to_back_up", errorCode(t, body))
+	status, body = a.do("GET", "/v1/environments/"+envID+"/runs", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	for _, raw := range body["runs"].([]any) {
+		require.NotEqual(t, "backup", raw.(map[string]any)["kind"], "a refused backup leaves no run")
+	}
+}

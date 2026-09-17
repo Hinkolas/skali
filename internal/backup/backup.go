@@ -16,6 +16,7 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kubernetes"
+	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
@@ -144,28 +145,48 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 		return err
 	}
 
-	if row.RevisionID == nil {
-		return errors.New("backup: row carries no revision")
-	}
-	revisionDoc, err := c.revisions.GetRevision(ctx, *row.RevisionID)
-	if err != nil {
-		return fmt.Errorf("backup: load revision: %w", err)
-	}
+	// Planning runs under its own step so a revision that cannot be loaded
+	// or holds nothing to snapshot fails with the reason in the run, not in
+	// a column nothing reads. CreateBackup already refused the empty case;
+	// this is the executor's own account of what the snapshot holds.
 	snapshotID := bctx.snapshotID
-	// A scheduled snapshot holds what its policy includes; a manual one
-	// holds everything stateful.
-	var policy *compiler.Backup
-	var include *compiler.Selection
-	if row.Trigger == TriggerScheduled {
-		found, ok := revisionDoc.Definition.Backups[row.Policy]
-		if !ok {
-			return fmt.Errorf("%w: %q", ErrPolicyNotFound, row.Policy)
+	var (
+		revisionDoc *revision.Revision
+		policy      *compiler.Backup
+		components  []Component
+	)
+	if err := scope.step(ctx, "plan", "Plan snapshot contents", func(ctx context.Context, log *stepLog) error {
+		if row.RevisionID == nil {
+			return errors.New("row carries no revision")
 		}
-		policy, include = &found, &found.Include
-	}
-	components := planComponents(&revisionDoc.Definition, include)
-	if len(components) == 0 {
-		return fmt.Errorf("backup: policy %q includes nothing the revision declares; nothing to snapshot", row.Policy)
+		doc, err := c.revisions.GetRevision(ctx, *row.RevisionID)
+		if err != nil {
+			return fmt.Errorf("load revision: %w", err)
+		}
+		revisionDoc = doc
+		// A scheduled snapshot holds what its policy includes; a manual one
+		// holds everything stateful.
+		var include *compiler.Selection
+		if row.Trigger == TriggerScheduled {
+			found, ok := doc.Definition.Backups[row.Policy]
+			if !ok {
+				return fmt.Errorf("%w: %q", ErrPolicyNotFound, row.Policy)
+			}
+			policy, include = &found, &found.Include
+		}
+		components = planComponents(&doc.Definition, include)
+		if len(components) == 0 {
+			if policy != nil {
+				return fmt.Errorf("%w (policy %q includes none of them)", ErrNothingToBackUp, row.Policy)
+			}
+			return ErrNothingToBackUp
+		}
+		for _, component := range components {
+			log.Info(ctx, "snapshot holds "+componentLabel(component))
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	for i := range components {

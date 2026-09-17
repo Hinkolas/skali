@@ -183,7 +183,8 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 				case errors.Is(err, ErrBackupInFlight):
 					s.log().DebugContext(ctx, "backup scheduler: environment busy, retrying next minute",
 						"environment", environment.Name, "policy", key)
-				case errors.Is(err, ErrEnvironmentNotActive), errors.Is(err, ErrEnvironmentNotFound), errors.Is(err, ErrPolicyNotFound):
+				case errors.Is(err, ErrEnvironmentNotActive), errors.Is(err, ErrEnvironmentNotFound),
+					errors.Is(err, ErrPolicyNotFound), errors.Is(err, ErrNothingToBackUp):
 					s.log().DebugContext(ctx, "backup scheduler: skipped",
 						"environment", environment.Name, "policy", key, "reason", err)
 				case errors.Is(err, ErrTargetNotFound):

@@ -44,6 +44,11 @@ var (
 	// ErrPolicyNotFound: the active revision declares no backup policy of
 	// that name (the manifest changed under a schedule).
 	ErrPolicyNotFound = errors.New("backup: backup policy not found in the active revision")
+	// ErrNothingToBackUp: the active revision declares no database, bucket,
+	// or application volume the snapshot would hold (for a scheduled run:
+	// none the policy includes). Refused before a run exists, so the reason
+	// reaches the caller instead of an empty failed run.
+	ErrNothingToBackUp = errors.New("backup: the active revision declares no database, bucket, or application volume to snapshot")
 )
 
 // TargetUnreachableError wraps a synchronous S3 failure so the API can
@@ -103,22 +108,31 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 	if target.State != "active" || target.ActiveRevisionID == nil {
 		return nil, ErrEnvironmentNotActive
 	}
-	// A configured target is a precondition; reachability is proven inside
-	// the run where the failure has a visible step.
-	if _, err := c.deps.Targets.Get(ctx, DefaultTargetName); err != nil {
-		return nil, err
+	// The snapshot must hold something: a manual one takes every stateful
+	// component, a scheduled one what its policy includes. An environment
+	// with nothing to snapshot is refused here, before a run exists, so the
+	// reason reaches the caller instead of an empty failed run.
+	revisionDoc, err := c.revisions.GetRevision(ctx, *target.ActiveRevisionID)
+	if err != nil {
+		return nil, fmt.Errorf("backup: load revision: %w", err)
 	}
 	strategy := compiler.StrategyComplete
+	var include *compiler.Selection
 	if trigger == TriggerScheduled {
-		revisionDoc, err := c.revisions.GetRevision(ctx, *target.ActiveRevisionID)
-		if err != nil {
-			return nil, fmt.Errorf("backup: load revision: %w", err)
-		}
 		policy, ok := revisionDoc.Definition.Backups[in.Policy]
 		if !ok {
 			return nil, ErrPolicyNotFound
 		}
 		strategy = policy.EffectiveStrategy()
+		include = &policy.Include
+	}
+	if len(planComponents(&revisionDoc.Definition, include)) == 0 {
+		return nil, ErrNothingToBackUp
+	}
+	// A configured target is a precondition; reachability is proven inside
+	// the run where the failure has a visible step.
+	if _, err := c.deps.Targets.Get(ctx, DefaultTargetName); err != nil {
+		return nil, err
 	}
 
 	run, err := c.deps.Journal.CreateRun(ctx, journal.RunInput{

@@ -75,7 +75,10 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   `show` and `unset` read and remove it. Nothing is backed up without it.
 - `skali backup create [--environment <name>]` takes a manual snapshot of
   every database, bucket, and volume of the environment; the run streams
-  like a deploy. Manual snapshots are kept until removed.
+  like a deploy. Manual snapshots are kept until removed. An environment
+  whose manifest declares no database, bucket, or volume has nothing to
+  snapshot and is refused (`nothing_to_back_up`); the console disables
+  the button there.
 - Manifest `backups` policies need no command: skalid snapshots every active
   environment on the cron schedule (UTC) and deletes that policy's snapshots
   once they pass its retention. The runs carry actor `schedule:<policy>`.
