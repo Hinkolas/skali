@@ -155,3 +155,46 @@ DELETE FROM metric_storage_node_samples WHERE sampled_at < $1;
 
 -- name: DeleteAgedStorageSamples :execrows
 DELETE FROM metric_storage_samples WHERE sampled_at < $1;
+
+-- Pool samples arrive one row per pool per tick: pools are few, and the
+-- exporter fields are nullable (a failed scrape stores NULL), which the
+-- unnest batch form cannot express per column.
+-- name: InsertPoolMetricSample :exec
+INSERT INTO metric_pool_samples (cluster_id, sampled_at, cpu_millicores, memory_bytes,
+    instances, instances_ready, connections, xact_commit, xact_rollback, blks_hit, blks_read, database_bytes)
+VALUES ($1, $2, $3, $4, $5, $6,
+    sqlc.narg(connections)::bigint, sqlc.narg(xact_commit)::bigint, sqlc.narg(xact_rollback)::bigint,
+    sqlc.narg(blks_hit)::bigint, sqlc.narg(blks_read)::bigint, sqlc.narg(database_bytes)::bigint)
+ON CONFLICT DO NOTHING;
+
+-- Gauges average, counter deltas sum (per-interval counts), sizes and ready
+-- counts take the bucket max. The exporter columns are nullable, and sqlc
+-- cannot type a nullable aggregate, so buckets with no exporter reading
+-- coalesce to -1 (never a real value: these are counts and bytes) and the
+-- reader maps -1 back to a chart gap.
+-- name: PoolMetricSeries :many
+SELECT (date_bin(make_interval(secs => sqlc.arg(step_seconds)::int), sampled_at, sqlc.arg(origin)::timestamptz))::timestamptz AS bucket,
+       (avg(cpu_millicores))::bigint                 AS cpu_millicores,
+       (avg(memory_bytes))::bigint                   AS memory_bytes,
+       (coalesce(avg(connections), -1))::bigint      AS connections,
+       (coalesce(sum(xact_commit), -1))::bigint      AS xact_commit,
+       (coalesce(sum(xact_rollback), -1))::bigint    AS xact_rollback,
+       (coalesce(sum(blks_hit), -1))::bigint         AS blks_hit,
+       (coalesce(sum(blks_read), -1))::bigint        AS blks_read,
+       (coalesce(max(database_bytes), -1))::bigint   AS database_bytes,
+       (max(instances_ready))::bigint                AS instances_ready
+FROM metric_pool_samples
+WHERE cluster_id = $1
+  AND sampled_at >= sqlc.arg(since)::timestamptz
+  AND sampled_at < sqlc.arg(until)::timestamptz
+GROUP BY bucket
+ORDER BY bucket;
+
+-- name: LatestPoolMetricSample :one
+SELECT * FROM metric_pool_samples
+WHERE cluster_id = $1 AND sampled_at >= sqlc.arg(since)::timestamptz
+ORDER BY sampled_at DESC
+LIMIT 1;
+
+-- name: DeleteAgedPoolMetricSamples :execrows
+DELETE FROM metric_pool_samples WHERE sampled_at < $1;

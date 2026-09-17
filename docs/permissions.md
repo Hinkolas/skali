@@ -364,8 +364,9 @@ Instance admin: `GET /nodes`, `GET /system/observation` (both member-readable
 today, the console only hides them), `GET /users`; sudo: `POST /users`,
 `PATCH /users/{id}` (gains `create_projects`), `DELETE /users/{id}`,
 `POST /users/{id}/password`, `GET|PUT|DELETE /system/backup-target`,
-`PUT /system/database-pools/{name}/settings` (`GET /system/database-pools`
-is a plain admin read).
+`PUT /system/database-pools/{name}/settings` (`GET /system/database-pools`,
+`GET /system/database-pools/{name}` and
+`GET /system/database-pools/{name}/metrics` are plain admin reads).
 
 Project scoped:
 

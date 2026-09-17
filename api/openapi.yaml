@@ -2304,6 +2304,77 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/system/database-pools/{name}:
+    get:
+      operationId: getDatabasePool
+      summary: Get one database pool with its members and databases
+      description: |
+        Admin only. The pool as the list serves it, plus `members`: its
+        live instance pods (role, node, readiness, restarts) read straight
+        from the cluster, empty in API-only mode; and `databases`: every
+        logical database on the pool with its owning project and
+        environment (null for system-owned ones), its claim phase, the
+        requested size and the newest measured logical size. Released pools
+        answer 404.
+      tags: [system]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The pool.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pool]
+                properties:
+                  pool: { $ref: "#/components/schemas/DatabasePoolDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/system/database-pools/{name}/metrics:
+    get:
+      operationId: getDatabasePoolMetrics
+      summary: Get bucketed usage series of a database pool
+      description: |
+        Admin only. The pool's usage over the requested window on a fixed
+        step grid: CPU and memory summed over its instances, the ready
+        instance count, and the primary's exporter view (client
+        connections, committed and rolled back transactions per bucket,
+        buffer hits and reads with the derived cache hit ratio, the
+        logical size of every database). Replica-side activity is not
+        observed. `current` is the newest sample with the denominators
+        the console draws against, null when the sampler has not seen the
+        pool in the last minutes. Served from stored samples; empty series
+        before the sampler has written any.
+      tags: [system]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [1h, 24h, 7d]
+            default: 24h
+      responses:
+        "200":
+          description: Pool usage series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatabasePoolMetrics" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/system/database-pools/{name}/settings:
     put:
       operationId: putDatabasePoolSettings
@@ -5173,7 +5244,7 @@ components:
         the budget every parameter derives from; memory.auto reports it was
         sized from the node named in memory.node, memory.capped that the
         automatic share was reduced so the live pools fit the node.
-      required: [name, class, engine, major, instances, storage_bytes, state, memory, parameters, observed, created_at, updated_at]
+      required: [name, class, engine, major, instances, storage_bytes, image, node_port, state, memory, parameters, observed, created_at, updated_at]
       properties:
         name:
           type: string
@@ -5189,6 +5260,12 @@ components:
         storage_bytes:
           type: integer
           format: int64
+        image:
+          type: string
+          description: The engine image the pool was pinned to at creation.
+        node_port:
+          type: [integer, "null"]
+          description: The loopback NodePort of the primary, null when none is allocated.
         state:
           type: string
         memory:
@@ -5241,6 +5318,158 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    DatabasePoolDetail:
+      description: |
+        A pool with its live instance pods and every database on it.
+      allOf:
+        - $ref: "#/components/schemas/DatabasePool"
+        - type: object
+          required: [members, databases]
+          properties:
+            members:
+              type: array
+              items: { $ref: "#/components/schemas/DatabasePoolMember" }
+            databases:
+              type: array
+              items: { $ref: "#/components/schemas/DatabasePoolDatabase" }
+
+    DatabasePoolMember:
+      type: object
+      description: One instance pod of a pool as the cluster reports it.
+      required: [name, role, ready, restarts, started_at, phase]
+      properties:
+        name: { type: string }
+        role:
+          type: string
+          description: primary or replica; empty while the operator has not labeled the pod.
+        node: { type: string }
+        ready: { type: boolean }
+        restarts: { type: integer }
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        phase: { type: string }
+
+    DatabasePoolDatabase:
+      type: object
+      description: |
+        One logical database on a pool. owner is service for a project's
+        declared database (project, environment and service_key set) or
+        system for the platform's own (system_key set, project and
+        environment null). used_bytes is the newest measured logical size,
+        null before the sampler has seen the database.
+      required: [database_name, role_name, owner, project, environment, phase, storage_bytes, used_bytes, created_at]
+      properties:
+        database_name: { type: string }
+        role_name: { type: string }
+        owner:
+          type: string
+          enum: [service, system]
+        system_key: { type: string }
+        service_key: { type: string }
+        project:
+          type: [object, "null"]
+          required: [id, name, display_name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            display_name: { type: string }
+        environment:
+          type: [object, "null"]
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        phase: { type: string }
+        storage_bytes:
+          type: integer
+          format: int64
+        used_bytes:
+          type: [integer, "null"]
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+
+    DatabasePoolMetrics:
+      type: object
+      description: |
+        Bucketed usage series of one pool. Value arrays are index-aligned
+        with `timestamps`; null marks a bucket without samples (the
+        exporter series also gap where the primary's exporter was not
+        reachable, and on the interval after a counter reset). commits,
+        rollbacks, blks_hit and blks_read are per-bucket counts;
+        cache_hit_ratio is blks_hit over blks_hit plus blks_read.
+      required:
+        [
+          pool,
+          window,
+          step_seconds,
+          timestamps,
+          cpu_millicores,
+          memory_bytes,
+          connections,
+          commits,
+          rollbacks,
+          blks_hit,
+          blks_read,
+          cache_hit_ratio,
+          database_bytes,
+          instances_ready,
+          current,
+        ]
+      properties:
+        pool: { type: string }
+        window: { type: string, enum: [1h, 24h, 7d] }
+        step_seconds: { type: integer }
+        timestamps:
+          type: array
+          items: { type: string, format: date-time }
+        cpu_millicores:
+          type: array
+          items: { type: integer, nullable: true }
+        memory_bytes:
+          type: array
+          items: { type: integer, nullable: true }
+        connections:
+          type: array
+          items: { type: integer, nullable: true }
+        commits:
+          type: array
+          items: { type: integer, nullable: true }
+        rollbacks:
+          type: array
+          items: { type: integer, nullable: true }
+        blks_hit:
+          type: array
+          items: { type: integer, nullable: true }
+        blks_read:
+          type: array
+          items: { type: integer, nullable: true }
+        cache_hit_ratio:
+          type: array
+          items: { type: number, nullable: true }
+        database_bytes:
+          type: array
+          items: { type: integer, nullable: true }
+        instances_ready:
+          type: array
+          items: { type: integer, nullable: true }
+        current:
+          type: [object, "null"]
+          description: The newest sample within the last minutes, with the denominators the console draws against.
+          required: [sampled_at, cpu_millicores, memory_bytes, instances, instances_ready, connections, database_bytes, memory_budget_bytes, max_connections]
+          properties:
+            sampled_at: { type: string, format: date-time }
+            cpu_millicores: { type: integer }
+            memory_bytes: { type: integer, format: int64 }
+            instances: { type: integer }
+            instances_ready: { type: integer }
+            connections: { type: [integer, "null"] }
+            database_bytes: { type: [integer, "null"], format: int64 }
+            memory_budget_bytes: { type: [integer, "null"], format: int64 }
+            max_connections: { type: [integer, "null"] }
 
     ValueEntry:
       type: object

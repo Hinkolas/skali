@@ -86,9 +86,17 @@ first and then the primary, so a single-instance pool is briefly
 unavailable, and a budget change moves `shared_buffers`.
 
 Admins see and change all of this on the console's System > Databases
-page and with `skali database list`, `skali database show <name>` and
+pages and with `skali database list`, `skali database show <name>` and
 `skali database set <name> --memory 4Gi | --auto-memory --set key=value
---unset key`.
+--unset key`. Every pool has its own console page: the overview shows
+the pool's usage over time (CPU and memory of its instances, client
+connections, transactions, cache hit ratio and the size of its
+databases), its instances with their roles and nodes, and the databases
+on it; the tuning tab holds the budget and the parameters; the databases
+tab lists every logical database with its owning project, environment
+and measured size. The exporter figures are the primary's view: replica
+reads are not observed. `skali database show <name>` prints the same
+instances and databases.
 
 ## Deleting a database
 

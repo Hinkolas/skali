@@ -998,12 +998,52 @@ type DatabasePool struct {
 	Major        int                    `json:"major"`
 	Instances    int                    `json:"instances"`
 	StorageBytes int64                  `json:"storage_bytes"`
+	Image        string                 `json:"image"`
+	NodePort     *int                   `json:"node_port"`
 	State        string                 `json:"state"`
 	Memory       DatabasePoolMemory     `json:"memory"`
 	Parameters   DatabasePoolParameters `json:"parameters"`
 	Observed     *DatabasePoolObserved  `json:"observed"`
 	CreatedAt    string                 `json:"created_at"`
 	UpdatedAt    string                 `json:"updated_at"`
+	// Members and Databases come with GET /v1/system/database-pools/{name}
+	// only; the list leaves them empty.
+	Members   []DatabasePoolMember   `json:"members"`
+	Databases []DatabasePoolDatabase `json:"databases"`
+}
+
+// DatabasePoolMember is one instance pod of a pool.
+type DatabasePoolMember struct {
+	Name      string  `json:"name"`
+	Role      string  `json:"role"`
+	Node      string  `json:"node,omitempty"`
+	Ready     bool    `json:"ready"`
+	Restarts  int     `json:"restarts"`
+	StartedAt *string `json:"started_at"`
+	Phase     string  `json:"phase"`
+}
+
+// DatabasePoolDatabase is one logical database on a pool with its owner;
+// Project and Environment are nil for system-owned databases.
+type DatabasePoolDatabase struct {
+	DatabaseName string `json:"database_name"`
+	RoleName     string `json:"role_name"`
+	Owner        string `json:"owner"`
+	SystemKey    string `json:"system_key,omitempty"`
+	ServiceKey   string `json:"service_key,omitempty"`
+	Project      *struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		DisplayName string `json:"display_name"`
+	} `json:"project"`
+	Environment *struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"environment"`
+	Phase        string `json:"phase"`
+	StorageBytes int64  `json:"storage_bytes"`
+	UsedBytes    *int64 `json:"used_bytes"`
+	CreatedAt    string `json:"created_at"`
 }
 
 // DatabasePoolMemory is a pool's memory budget. Bytes is nil while the
@@ -1064,6 +1104,17 @@ func (c *Client) ListDatabasePools(ctx context.Context) ([]DatabasePool, error) 
 		return nil, err
 	}
 	return res.Pools, nil
+}
+
+// GetDatabasePool reads one pool with its members and databases.
+func (c *Client) GetDatabasePool(ctx context.Context, name string) (*DatabasePool, error) {
+	var res struct {
+		Pool DatabasePool `json:"pool"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/system/database-pools/"+url.PathEscape(name), nil, &res); err != nil {
+		return nil, err
+	}
+	return &res.Pool, nil
 }
 
 func (c *Client) PutDatabasePoolSettings(ctx context.Context, name string, input DatabasePoolSettingsInput) (*DatabasePool, error) {

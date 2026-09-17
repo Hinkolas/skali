@@ -369,6 +369,21 @@ type MetricNodeSample struct {
 	MemoryAllocatableBytes   int64
 }
 
+type MetricPoolSample struct {
+	ClusterID      uuid.UUID
+	SampledAt      time.Time
+	CpuMillicores  int64
+	MemoryBytes    int64
+	Instances      int64
+	InstancesReady int64
+	Connections    *int64
+	XactCommit     *int64
+	XactRollback   *int64
+	BlksHit        *int64
+	BlksRead       *int64
+	DatabaseBytes  *int64
+}
+
 type MetricStorageNodeSample struct {
 	NodeName       string
 	SampledAt      time.Time

@@ -471,6 +471,9 @@ func (s *seeder) run(ctx context.Context) error {
 	if err := s.seedNodeTelemetry(ctx); err != nil {
 		return fmt.Errorf("seed node telemetry: %w", err)
 	}
+	if err := s.seedPoolTelemetry(ctx); err != nil {
+		return fmt.Errorf("seed pool telemetry: %w", err)
+	}
 	return nil
 }
 
@@ -1327,6 +1330,47 @@ func (s *seeder) seedEnvironmentTelemetry(ctx context.Context, envID uuid.UUID, 
 	return nil
 }
 
+// seedPoolTelemetry fills the shared pool's usage series: two instances
+// worth of CPU and memory, a daily connection curve, transaction and
+// block counters per tick, and a slowly growing database size, so the
+// pool page draws every chart in development.
+func (s *seeder) seedPoolTelemetry(ctx context.Context) error {
+	pool, err := s.db.LiveSharedCluster(ctx, "postgres", 17)
+	if errors.Is(err, dbstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	size := int64(4200) << 20
+	for _, at := range s.ticks() {
+		size += s.rand.Int63n(96 << 10)
+		connections := s.load(24, at, 0.3)
+		commits := s.load(1800, at, 0.4)
+		rollbacks := s.load(12, at, 0.8)
+		blksHit := s.load(90000, at, 0.3)
+		blksRead := s.load(1800, at, 0.6)
+		databaseBytes := size
+		if err := s.st.InsertPoolMetricSample(ctx, store.InsertPoolMetricSampleParams{
+			ClusterID:      pool.ID,
+			SampledAt:      at,
+			CpuMillicores:  s.load(340, at, 0.25),
+			MemoryBytes:    s.load(2300<<20, at, 0.03),
+			Instances:      2,
+			InstancesReady: 2,
+			Connections:    &connections,
+			XactCommit:     &commits,
+			XactRollback:   &rollbacks,
+			BlksHit:        &blksHit,
+			BlksRead:       &blksRead,
+			DatabaseBytes:  &databaseBytes,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *seeder) seedNodeTelemetry(ctx context.Context) error {
 	for _, at := range s.ticks() {
 		params := store.InsertNodeMetricSamplesParams{SampledAt: at}
@@ -1411,8 +1455,12 @@ func (s *seeder) reset(ctx context.Context) error {
 			}
 		}
 	}
-	// The shared pool and object store are only seed rows when nothing
-	// else references them any more.
+	// The seeded pool telemetry goes with the seed; the pool row itself and
+	// the object store are only seed rows when nothing else references
+	// them any more.
+	if _, err := s.st.Pool.Exec(ctx, `DELETE FROM metric_pool_samples WHERE cluster_id IN (SELECT id FROM database_clusters WHERE name = 'pg17-shared')`); err != nil {
+		return err
+	}
 	if _, err := s.st.Pool.Exec(ctx, `DELETE FROM database_clusters WHERE name = 'pg17-shared' AND NOT EXISTS (SELECT 1 FROM database_placements WHERE cluster_id = database_clusters.id)`); err != nil {
 		return err
 	}

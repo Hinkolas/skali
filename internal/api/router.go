@@ -455,8 +455,12 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 					// plain admin read; retuning is a write below.
 					var plh *poolsHandlers
 					if d.Databases != nil {
-						plh = &poolsHandlers{db: d.Databases, pools: d.Pools, reconcile: d.Reconcile, managed: d.ManagedCluster}
+						plh = &poolsHandlers{db: d.Databases, pools: d.Pools, reconcile: d.Reconcile, metrics: d.Metrics, managed: d.ManagedCluster}
 						ac.route(r, "GET", "/system/database-pools", classInstanceAdmin, plh.list)
+						ac.route(r, "GET", "/system/database-pools/{name}", classInstanceAdmin, plh.get)
+						if d.Metrics != nil {
+							ac.route(r, "GET", "/system/database-pools/{name}/metrics", classInstanceAdmin, plh.poolMetrics)
+						}
 					}
 
 					// Writes additionally need sudo mode. RequireAdmin sits

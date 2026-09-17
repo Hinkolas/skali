@@ -809,5 +809,5 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 100, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 102, routes, "route count changed; update the OpenAPI spec and this number")
 }

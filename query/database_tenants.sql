@@ -29,3 +29,31 @@ WHERE id = $1 AND released_at IS NULL;
 UPDATE database_tenants
 SET credential_version = credential_version + 1
 WHERE id = $1 AND released_at IS NULL;
+
+-- Every live tenant on a cluster with its claim, the owning project and
+-- environment (NULL for system claims), and the newest database storage
+-- sample within the cutoff: the pool page's database list in one query.
+-- Service-owned tenants sort first, then by project, environment and key.
+-- name: ListLiveDatabaseTenantDetailsByCluster :many
+SELECT t.id AS tenant_id, t.database_name, t.role_name, t.created_at,
+       c.id AS claim_id, c.owner_kind, c.system_key, c.service_key, c.phase, c.storage_bytes,
+       c.project_id, c.environment_id,
+       p.name AS project_name, p.display_name AS project_display_name,
+       e.name AS environment_name,
+       s.used_bytes
+FROM database_tenants t
+JOIN database_claims c ON c.id = t.claim_id
+LEFT JOIN projects p ON p.id = c.project_id
+LEFT JOIN environments e ON e.id = c.environment_id
+LEFT JOIN LATERAL (
+    SELECT m.used_bytes
+    FROM metric_storage_samples m
+    WHERE m.environment_id = c.environment_id
+      AND m.service_key = 'databases.' || c.service_key
+      AND m.kind = 'database'
+      AND m.sampled_at >= sqlc.arg(since)::timestamptz
+    ORDER BY m.sampled_at DESC
+    LIMIT 1
+) s ON true
+WHERE t.cluster_id = $1 AND t.released_at IS NULL
+ORDER BY (c.owner_kind = 'system'), p.name, e.name, c.service_key, c.system_key;
