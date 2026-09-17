@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -155,6 +156,12 @@ applications:
 	require.Equal(t, "round-robin", routes["public"].Strategy)
 	require.Equal(t, "optional", routes["admin"].TLS)
 	require.Equal(t, "least-requests", routes["admin"].Strategy)
+	require.Empty(t, routes["public"].Compress, "compression is the default and never serialized")
+	require.Empty(t, routes["admin"].Compress)
+	encoded, err := json.Marshal(result.Definition)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), `"compress"`,
+		"a manifest that never mentions compress must keep its definition hash")
 
 	_, err = compileManifest(t, `
 skali: v0.1.0-rc.3
@@ -172,6 +179,33 @@ applications:
         strategy: fastest
 `)
 	require.ErrorContains(t, err, "must be round-robin or least-requests")
+}
+
+func TestRouteCompressOptOut(t *testing.T) {
+	t.Parallel()
+	result, err := compileManifest(t, `
+skali: v0.1.0-rc.3
+name: route-compress
+applications:
+  api:
+    image: example.invalid/api:1
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: api.example.com
+        port: http
+        compress: true
+      events:
+        domain: events.example.com
+        port: http
+        compress: false
+`)
+	require.NoError(t, err)
+	routes := result.Definition.Applications["api"].Routes
+	require.Empty(t, routes["public"].Compress, "an explicit true compiles like the default")
+	require.Equal(t, RouteCompressDisabled, routes["events"].Compress)
 }
 
 func TestProjectVariableDefault(t *testing.T) {

@@ -873,6 +873,26 @@ spec:
 `, Namespace, IssuerName, production.RegistryDomain)
 }
 
+// compressMiddlewareYAML renders the platform namespace's compress
+// Middleware, the same object the renderer emits per environment: the
+// console and API compress like every application route. Registry and S3
+// routers never reference it (blobs and objects are already compressed).
+func compressMiddlewareYAML() string {
+	var excluded strings.Builder
+	for _, contentType := range edge.CompressExcludedContentTypes {
+		excluded.WriteString("\n      - " + contentType)
+	}
+	return `---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ` + edge.CompressMiddlewareName + `
+  namespace: ` + Namespace + `
+spec:
+  compress:
+    excludedContentTypes:` + excluded.String() + "\n"
+}
+
 func skalidYAML(profile Profile) string {
 	// Pod-template annotations force a roll on changes the spec cannot
 	// see: a re-imported image under the same tag, and the secret-backed
@@ -912,7 +932,9 @@ func skalidYAML(profile Profile) string {
 	// to the web console (Traefik prioritizes the longer match), with a
 	// shared redirect Middleware answering plain HTTP and an explicit
 	// Certificate for the platform domain.
-	edgeSuffix := fmt.Sprintf(`---
+	// Both profiles compress the console through the shared Middleware
+	// this stage renders ahead of its routers.
+	edgeSuffix := compressMiddlewareYAML() + fmt.Sprintf(`---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -924,10 +946,12 @@ spec:
   routes:
     - match: Host(`+"`skali.localhost`"+`) && PathPrefix(`+"`/`"+`)
       kind: Rule
+      middlewares:
+        - name: %[2]s
       services:
         - name: skalid
           port: 80
-`, Namespace)
+`, Namespace, edge.CompressMiddlewareName)
 	if production := profile.Production; production != nil {
 		// Production states the installation's capability union. The token
 		// signing key and node pull secret ride the same production block:
@@ -961,7 +985,9 @@ spec:
 		}
 		// The shared redirect-https Middleware rides the registry stage,
 		// which converges first; both platform -http routers reference it.
-		edgeSuffix = fmt.Sprintf(`---
+		// The compress Middleware is this stage's own: only the console
+		// router references it.
+		edgeSuffix = compressMiddlewareYAML() + fmt.Sprintf(`---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -987,6 +1013,8 @@ spec:
   routes:
     - match: Host(`+"`%[2]s`"+`) && PathPrefix(`+"`/`"+`)
       kind: Rule
+      middlewares:
+        - name: %[4]s
       services:
         - name: skalid
           port: 80
@@ -1009,7 +1037,7 @@ spec:
       services:
         - name: skalid
           port: 80
-`, Namespace, production.IngressHost, IssuerName)
+`, Namespace, production.IngressHost, IssuerName, edge.CompressMiddlewareName)
 	}
 	// The edge identity route answers on every hostname, on purpose: the
 	// kernel probes a tenant domain with that domain's own Host header to

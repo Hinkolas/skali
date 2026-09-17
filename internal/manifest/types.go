@@ -150,6 +150,9 @@ type Route struct {
 	// Strategy selects how the edge balances requests across the
 	// application's replicas; it only matters above one replica.
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"Load-balancing strategy: round-robin (default) or least-requests."`
+	// Compress opts a route out of edge response compression; nil and
+	// true both mean compressed (the default).
+	Compress *bool `yaml:"compress,omitempty" json:"compress,omitempty" jsonschema:"Compress responses at the edge (gzip, br, zstd) for text-like content types. Defaults to true; set false for routes that stream events or already compress."`
 }
 
 type Health struct {

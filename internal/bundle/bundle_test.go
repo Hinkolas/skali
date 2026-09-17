@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"github.com/Hinkolas/skali/internal/edge"
 	"strings"
 	"testing"
 
@@ -27,10 +28,23 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Len(t, objects.Database, 1)
 	require.Equal(t, "Cluster", objects.Database[0].GetKind())
 	require.Len(t, objects.Registry, 4)
-	require.Len(t, objects.Skalid, 8)
+	require.Len(t, objects.Skalid, 9)
+	// The console compresses locally too, through the stage's own
+	// Middleware ahead of its router.
+	compress := objects.Skalid[6]
+	require.Equal(t, "Middleware", compress.GetKind())
+	require.Equal(t, "compress", compress.GetName())
+	excluded, _, _ := unstructured.NestedStringSlice(compress.Object, "spec", "compress", "excludedContentTypes")
+	require.Equal(t, edge.CompressExcludedContentTypes, excluded)
+	console := objects.Skalid[7]
+	require.Equal(t, "IngressRoute", console.GetKind())
+	require.Equal(t, "skalid", console.GetName())
+	consoleJSON, err := console.MarshalJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(consoleJSON), `"middlewares":[{"name":"compress"}]`)
 	// The edge identity route: host-independent and ranked above every
 	// tenant rule, plain HTTP only, no certificate involved.
-	probe := objects.Skalid[7]
+	probe := objects.Skalid[8]
 	require.Equal(t, "IngressRoute", probe.GetKind())
 	require.Equal(t, "skalid-edge-probe", probe.GetName())
 	entryPoints, _, _ := unstructured.NestedStringSlice(probe.Object, "spec", "entryPoints")

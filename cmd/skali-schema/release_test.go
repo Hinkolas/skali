@@ -11,7 +11,7 @@ import (
 )
 
 func TestGeneratedReleaseMetadataConsumer(t *testing.T) {
-	const version = "v0.1.0-rc.5"
+	const version = "v0.1.0-rc.7"
 	data, err := releaseMetadata(version)
 	require.NoError(t, err)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/kube"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
@@ -127,6 +128,46 @@ func TestTeardownDownRemovesWorkloadsAndKeepsData(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, rows, "a promote resurrects a down environment")
 	require.Equal(t, deploy.EnvironmentStateActive, f.target(t).State)
+}
+
+// The shared edge Middlewares belong to the environment, not to a service:
+// a plain down must delete them with the environment resources, and their
+// presence must hold the teardown open until the watch confirms deletion.
+func TestTeardownDownRemovesEnvironmentMiddlewares(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	serviceRef, _, _ := f.deployedAndActive(t)
+	deploymentName := f.webDeploymentName(t)
+	middlewareRef := f.seedObject(edge.MiddlewareGVK, module.KindIngress, f.namespace, edge.CompressMiddlewareName, "")
+
+	run, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
+	require.NoError(t, err)
+
+	f.cluster.ops = nil
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Contains(t, f.cluster.recorded(), "delete "+middlewareRef.String(),
+		"the service-less Middleware is removed with the environment resources")
+
+	// Workloads gone, Middleware still observed: not settled yet.
+	f.fake.Remove(f.workloadRef(deploymentName))
+	f.fake.Remove(f.podRef())
+	f.fake.Remove(serviceRef)
+	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, requeueHealthCheck, requeue, "a lingering Middleware holds the teardown open")
+	row, err := f.st.GetRunByID(ctx, run.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, "succeeded", row.Status)
+
+	f.fake.Remove(middlewareRef)
+	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Zero(t, requeue)
+	row, err = f.st.GetRunByID(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", row.Status)
 }
 
 // A completed release Job outlives the workloads on purpose (it is the

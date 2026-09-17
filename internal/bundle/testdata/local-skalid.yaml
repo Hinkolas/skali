@@ -160,6 +160,30 @@ spec:
       targetPort: 7070
 ---
 apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: compress
+  namespace: skali-system
+spec:
+  compress:
+    excludedContentTypes:
+      - text/event-stream
+      - image/png
+      - image/jpeg
+      - image/gif
+      - image/webp
+      - image/avif
+      - video/mp4
+      - video/webm
+      - audio/mpeg
+      - font/woff
+      - font/woff2
+      - application/zip
+      - application/gzip
+      - application/pdf
+      - application/octet-stream
+---
+apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: skalid
@@ -170,6 +194,8 @@ spec:
   routes:
     - match: Host(`skali.localhost`) && PathPrefix(`/`)
       kind: Rule
+      middlewares:
+        - name: compress
       services:
         - name: skalid
           port: 80

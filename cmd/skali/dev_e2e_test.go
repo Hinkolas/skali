@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net"
@@ -197,6 +198,37 @@ func (h *e2eHarness) request(method, path, body string) (int, string) {
 	return response.StatusCode, string(buffer[:read])
 }
 
+// requestEncoded fetches through the local edge asking for gzip explicitly,
+// which keeps Go's transport from negotiating and silently decoding it.
+// It returns the response headers and the body decoded when the edge
+// compressed it.
+func (h *e2eHarness) requestEncoded(method, path, body string) (int, http.Header, string) {
+	h.t.Helper()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	request, err := http.NewRequest(method,
+		fmt.Sprintf("http://127.0.0.1:%d%s", e2eHTTPPort, path), reader)
+	require.NoError(h.t, err)
+	request.Host = h.host
+	request.Header.Set("Accept-Encoding", "gzip")
+	client := &http.Client{Timeout: 10 * time.Second}
+	response, err := client.Do(request)
+	require.NoError(h.t, err)
+	defer response.Body.Close()
+	var source io.Reader = response.Body
+	if response.Header.Get("Content-Encoding") == "gzip" {
+		decoder, err := gzip.NewReader(response.Body)
+		require.NoError(h.t, err)
+		defer decoder.Close()
+		source = decoder
+	}
+	decoded, err := io.ReadAll(source)
+	require.NoError(h.t, err)
+	return response.StatusCode, response.Header, string(decoded)
+}
+
 // edgeIdentity fetches the platform's edge identity through the tenant
 // hostname: the platform router must outrank the application's Host rule.
 func (h *e2eHarness) edgeIdentity() (int, http.Header, string) {
@@ -239,10 +271,17 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "run ")
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 2*time.Minute)
+		// The local edge carries the compress Middleware like production:
+		// it negotiates on every response (Vary) and leaves a body under
+		// Traefik's minimum size alone.
+		status, header, body := h.requestEncoded(http.MethodGet, "/", "")
+		require.Equal(t, http.StatusOK, status, body)
+		require.Contains(t, header.Values("Vary"), "Accept-Encoding", "the compress Middleware is attached to the dev router")
+		require.Empty(t, header.Get("Content-Encoding"), "a tiny body stays uncompressed")
 		// The edge identity answers on the tenant hostname ahead of the
 		// application's own route: this is what lets the kernel probe a
 		// route domain for the daemon behind it.
-		status, header, body := h.edgeIdentity()
+		status, header, body = h.edgeIdentity()
 		require.Equal(t, http.StatusOK, status, body)
 		require.NotEmpty(t, header.Get("Skali-Instance"), "the platform router answers the identity probe on a tenant host")
 		require.Contains(t, body, `"instance_id":"`+header.Get("Skali-Instance")+`"`)
@@ -621,6 +660,17 @@ func TestDevGuestbookDatabase(t *testing.T) {
 	status, body = h.route("/notes/e2e")
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "stored through skali buckets", body)
+
+	// A text body above Traefik's minimum size comes back gzip-encoded
+	// through the dev edge, byte-identical once decoded.
+	large := strings.Repeat("compressible text through the skali edge\n", 128)
+	status, _, body = h.requestEncoded(http.MethodPut, "/notes/large", large)
+	require.Equal(t, http.StatusOK, status, "store large note: %s", body)
+	status, header, body := h.requestEncoded(http.MethodGet, "/notes/large", "")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "gzip", header.Get("Content-Encoding"), "the edge compresses large text responses")
+	require.Contains(t, header.Values("Vary"), "Accept-Encoding")
+	require.Equal(t, large, body)
 
 	out = h.run(false, "", "dev", "status")
 	require.Contains(t, out, "application.web")

@@ -96,10 +96,29 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 		}
 	}
 
+	// Environment-owned exposure (the shared Middlewares) carries no service
+	// label, so no service group above removed it; it goes with the
+	// environment resources, or the settle gate below never opens.
+	var envDeleted []string
+	for _, kind := range workloadKinds {
+		for _, obj := range snapshot.Objects {
+			if obj.Service != "" || obj.Kind != kind {
+				continue
+			}
+			removed, err := k.deps.Cluster.Delete(ctx, obj.Ref)
+			if err != nil {
+				k.journalOpFailure(ctx, attachment, "delete:environment", "Remove environment resources", envDeleted, err)
+				return 0, err
+			}
+			if removed {
+				envDeleted = append(envDeleted, "deleted "+obj.Ref.String())
+			}
+		}
+	}
+
 	// The values Secret is rendered, never observed; delete it by its fixed
 	// name inside the observed namespace. Without an observed namespace
 	// nothing was ever created, so there is no Secret either.
-	var envDeleted []string
 	namespace := observedNamespace(snapshot)
 	if namespace != nil {
 		secretRef := kube.ObjectRef{

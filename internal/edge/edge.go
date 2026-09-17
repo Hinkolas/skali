@@ -37,6 +37,9 @@ const (
 	// RedirectMiddlewareName names the shared per-namespace redirectScheme
 	// Middleware that answers plain HTTP on TLS routes.
 	RedirectMiddlewareName = "redirect-https"
+	// CompressMiddlewareName names the shared per-namespace compress
+	// Middleware that negotiates gzip, br, or zstd on text-like responses.
+	CompressMiddlewareName = "compress"
 	// ProbePath is the version-free identity route every skalid answers on
 	// the plain-HTTP entrypoint, ahead of tenant Host rules. The kernel
 	// requests it through a route's domain to learn whether that domain
@@ -127,6 +130,45 @@ func RedirectMiddleware(namespace string, labels map[string]string) *unstructure
 		"redirectScheme": map[string]any{
 			"scheme":    "https",
 			"permanent": true,
+		},
+	})
+}
+
+// CompressExcludedContentTypes lists the response media types the compress
+// Middleware leaves alone. Traefik matches these exactly (no wildcards):
+// event streams would otherwise be buffered per event, and the rest are
+// already compressed, so encoding them only burns CPU. Everything else
+// above Traefik's default minimum body size is compressed when the client
+// asks for it; responses that already carry Content-Encoding pass through.
+var CompressExcludedContentTypes = []string{
+	"text/event-stream",
+	"image/png",
+	"image/jpeg",
+	"image/gif",
+	"image/webp",
+	"image/avif",
+	"video/mp4",
+	"video/webm",
+	"audio/mpeg",
+	"font/woff",
+	"font/woff2",
+	"application/zip",
+	"application/gzip",
+	"application/pdf",
+	"application/octet-stream",
+}
+
+// CompressMiddleware builds the shared compress Middleware. Encodings and
+// the minimum body size stay Traefik's defaults (gzip, br, zstd; 1 KiB);
+// only the exclusions are explicit.
+func CompressMiddleware(namespace string, labels map[string]string) *unstructured.Unstructured {
+	excluded := make([]any, 0, len(CompressExcludedContentTypes))
+	for _, contentType := range CompressExcludedContentTypes {
+		excluded = append(excluded, contentType)
+	}
+	return object(MiddlewareGVK, namespace, CompressMiddlewareName, labels, map[string]any{
+		"compress": map[string]any{
+			"excludedContentTypes": excluded,
 		},
 	})
 }

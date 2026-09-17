@@ -146,6 +146,7 @@ always excluded.
         port: http                # named port from this app, or a number
         tls: automatic            # automatic | optional | disabled, default automatic
         strategy: round-robin     # round-robin | least-requests, default round-robin
+        compress: true            # true | false, default true
 ```
 
 Each route's domain and path pair must be unique across the whole
@@ -209,6 +210,15 @@ replicas: `round-robin` rotates evenly, `least-requests` sends each
 request to the less busy of two randomly chosen replicas (better when
 request durations vary, e.g. long streams next to fast calls). It only
 matters above one replica.
+
+`compress` controls edge response compression, on by default in production
+and in local development alike: the edge answers with gzip, br, or zstd as
+the client accepts for bodies of 1 KiB and more, skips event streams,
+images, video, audio, fonts, archives, PDFs, and octet streams, and passes
+through any response that already carries `Content-Encoding`. Applications
+therefore need no compression of their own. `compress: false` turns it off
+for one route; use it for routes that stream events under another content
+type or that must deliver exact bytes.
 
 ### Health
 

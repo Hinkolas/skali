@@ -89,6 +89,8 @@ export interface RouteStatus {
 	path: string;
 	tls: 'automatic' | 'optional' | 'disabled';
 	strategy: 'round-robin' | 'least-requests';
+	/** False only where the manifest opted the route out of edge compression. */
+	compress: boolean;
 	certificate?: CertificateStatus | null;
 	edge?: EdgeStatus;
 }

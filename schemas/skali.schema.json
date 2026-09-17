@@ -503,6 +503,13 @@
                 "port"
               ],
               "properties": {
+                "compress": {
+                  "type": [
+                    "null",
+                    "boolean"
+                  ],
+                  "description": "Compress responses at the edge (gzip, br, zstd) for text-like content types. Defaults to true; set false for routes that stream events or already compress."
+                },
                 "domain": {
                   "type": "string",
                   "description": "Public hostname. Project variable expressions are allowed.",

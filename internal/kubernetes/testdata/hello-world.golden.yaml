@@ -11,6 +11,33 @@ spec:
     permanent: true
     scheme: https
 ---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  labels:
+    skali.dev/managed: "true"
+    skali.dev/project: hello-world
+  name: compress
+  namespace: skali-hello-world
+spec:
+  compress:
+    excludedContentTypes:
+    - text/event-stream
+    - image/png
+    - image/jpeg
+    - image/gif
+    - image/webp
+    - image/avif
+    - video/mp4
+    - video/webm
+    - audio/mpeg
+    - font/woff
+    - font/woff2
+    - application/zip
+    - application/gzip
+    - application/pdf
+    - application/octet-stream
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -126,6 +153,8 @@ spec:
   routes:
   - kind: Rule
     match: Host("hello.localhost") && PathPrefix("/")
+    middlewares:
+    - name: compress
     services:
     - name: app-hello-world-web-abd78f077498c5242c35cf22a58ff77a
       port: http

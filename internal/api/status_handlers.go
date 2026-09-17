@@ -70,6 +70,7 @@ type routeStatusPayload struct {
 	Path        string              `json:"path"`
 	TLS         string              `json:"tls"`
 	Strategy    string              `json:"strategy"`
+	Compress    bool                `json:"compress"`
 	Certificate *certificatePayload `json:"certificate,omitempty"`
 	// Edge is the reconciler's last probe of whether the route's domain
 	// reaches this installation; absent where no certificate is expected
@@ -181,6 +182,7 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 				Path:     route.Path,
 				TLS:      route.TLS,
 				Strategy: route.Strategy,
+				Compress: route.Compress,
 			}
 			if route.Certificate != nil {
 				certificate := &certificatePayload{

@@ -66,6 +66,9 @@ type RouteStatus struct {
 	Path     string
 	TLS      string
 	Strategy string
+	// Compress is false only where the manifest opted the route out of
+	// edge compression.
+	Compress bool
 
 	Certificate *CertificateInfo
 	// Edge is the kernel's cached verdict on whether the route's domain
@@ -358,6 +361,7 @@ func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot,
 			Path:     route.Path,
 			TLS:      route.TLS,
 			Strategy: route.Strategy,
+			Compress: route.Compress != compiler.RouteCompressDisabled,
 		}
 		name := rendering.RouteTLSName(definition.Name, key, routeKey)
 		if edgeFor != nil && route.TLS != "disabled" {

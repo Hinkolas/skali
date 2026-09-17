@@ -77,6 +77,7 @@ func TestCertificateGatesActivation(t *testing.T) {
 	require.Contains(t, recorded, "apply IngressRoute/"+f.namespace+"/route-demo-web-public-http-5f1b04c211d4f06c08a014badc51a3fb")
 	require.Contains(t, recorded, "apply Certificate/"+f.namespace+"/"+certName)
 	require.Contains(t, recorded, "apply Middleware/"+f.namespace+"/redirect-https")
+	require.Contains(t, recorded, "apply Middleware/"+f.namespace+"/compress")
 
 	// Healthy workload, certificate pending: no activation.
 	f.markHealthy(t)

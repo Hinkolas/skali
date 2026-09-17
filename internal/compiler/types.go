@@ -100,6 +100,11 @@ type Route struct {
 	Port     PortTarget "json:\"port\""
 	TLS      string     "json:\"tls\""
 	Strategy string     "json:\"strategy\""
+	// Compress is "disabled" when the manifest opted the route out of edge
+	// compression and empty otherwise. It stays omitempty on purpose: the
+	// definition hash covers this JSON, and a field that only appears when
+	// used keeps every existing manifest's hash unchanged.
+	Compress string "json:\"compress,omitempty\""
 }
 
 type Health struct {
@@ -152,6 +157,10 @@ type ReleaseCommand struct {
 	Command       []string "json:\"command,omitempty\""
 	TimeoutMillis int64    "json:\"timeoutMillis,omitempty\""
 }
+
+// RouteCompressDisabled is the only value Route.Compress ever carries: the
+// manifest opted the route out of edge compression. Empty means compressed.
+const RouteCompressDisabled = "disabled"
 
 // Rollout strategies. BlueGreen is the default for applications without
 // volumes: the new version starts beside the old one, becomes fully

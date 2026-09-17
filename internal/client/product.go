@@ -723,11 +723,14 @@ type ServiceStatus struct {
 // RouteStatus is one public route with its edge policies; Certificate is
 // nil where none exists by design (tls disabled, local installation).
 type RouteStatus struct {
-	Key         string             `json:"key"`
-	Domain      string             `json:"domain"`
-	Path        string             `json:"path"`
-	TLS         string             `json:"tls"`
-	Strategy    string             `json:"strategy"`
+	Key      string `json:"key"`
+	Domain   string `json:"domain"`
+	Path     string `json:"path"`
+	TLS      string `json:"tls"`
+	Strategy string `json:"strategy"`
+	// Compress is false only where the route opted out of edge
+	// compression (and on servers that predate the field).
+	Compress    bool               `json:"compress"`
 	Certificate *CertificateStatus `json:"certificate,omitempty"`
 	// Edge reports whether the domain reaches this installation; nil where
 	// no certificate is expected, before the first probe, or when the
