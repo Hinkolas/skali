@@ -2665,7 +2665,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "422":
-          description: The environment is not active (`environment_not_active`).
+          description: |
+            The environment is not active (`environment_not_active`), or its
+            active revision declares no database, bucket, or application
+            volume to snapshot (`nothing_to_back_up`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

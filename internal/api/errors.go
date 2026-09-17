@@ -59,6 +59,7 @@ const (
 	codeBackupTargetUnconfigured = "backup_target_unconfigured"
 	codeBackupTargetUnreachable  = "backup_target_unreachable"
 	codeEnvironmentNotActive     = "environment_not_active"
+	codeNothingToBackUp          = "nothing_to_back_up"
 	codeSnapshotNotFound         = "snapshot_not_found"
 	codeSnapshotInUse            = "snapshot_in_use"
 

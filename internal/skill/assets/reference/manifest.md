@@ -471,7 +471,10 @@ deletes the snapshots this policy took once they are older than
 (`skali backup create`, the console) are never touched by retention; remove
 them with `skali backup remove <snapshot-id>`. Without a configured backup
 target the schedules stay idle. At least one of the three include classes
-must be non-empty.
+must be non-empty, and the selection must match something the manifest
+declares: `databases: all` on a manifest without databases is rejected by
+`skali validate`. A manifest with no database, bucket, or volume has
+nothing to snapshot; manual backups of it are refused as well.
 
 ## Units
 

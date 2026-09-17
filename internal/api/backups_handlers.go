@@ -183,6 +183,9 @@ func writeBackupError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, backup.ErrEnvironmentNotActive):
 		writeError(w, http.StatusUnprocessableEntity, codeEnvironmentNotActive,
 			"the environment is not active; deploy it before backing it up")
+	case errors.Is(err, backup.ErrNothingToBackUp):
+		writeError(w, http.StatusUnprocessableEntity, codeNothingToBackUp,
+			"nothing to back up: the environment declares no database, bucket, or application volume")
 	case errors.Is(err, backup.ErrSnapshotInUse):
 		writeError(w, http.StatusConflict, codeSnapshotInUse,
 			"a restore is reading this snapshot; wait for it to finish")

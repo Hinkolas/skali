@@ -150,6 +150,13 @@ func Validate(document *Document) yamldoc.Diagnostics {
 				}
 			}
 		}
+		// "all" of a class the manifest does not declare selects nothing; a
+		// policy that would snapshot nothing is a mistake, not a schedule.
+		if !selectionMatches(backup.Include.Databases, len(project.Databases)) &&
+			!selectionMatches(backup.Include.Buckets, len(project.Buckets)) &&
+			!selectionMatches(backup.Include.Volumes, countVolumes(project)) {
+			add(path+".include", "includes nothing the manifest declares (no database, bucket, or volume matches)")
+		}
 	}
 
 	return diagnostics
@@ -174,6 +181,24 @@ func validateSelection[T any](diagnostics *yamldoc.Diagnostics, document *Docume
 
 func selectionEmpty(selection Selection) bool {
 	return !selection.All && len(selection.Keys) == 0
+}
+
+// selectionMatches reports whether the selection names at least one
+// resource of a class with declared members. Named keys are checked for
+// existence separately; here a key list counts as a match.
+func selectionMatches(selection Selection, declared int) bool {
+	if selection.All {
+		return declared > 0
+	}
+	return len(selection.Keys) > 0
+}
+
+func countVolumes(project Project) int {
+	total := 0
+	for _, application := range project.Applications {
+		total += len(application.Volumes)
+	}
+	return total
 }
 
 func volumeExists(project Project, reference string) bool {

@@ -67,6 +67,21 @@ export function servicesFromDefinition(definition: ProjectDefinition | null): Se
 	return services;
 }
 
+/**
+ * Whether the definition declares anything a snapshot would hold: a
+ * database, a bucket, or an application volume. Mirrors the server's
+ * planComponents; a project without a draft is treated as having some, so
+ * the server stays the authority for it.
+ */
+export function hasStatefulServices(definition: ProjectDefinition | null): boolean {
+	if (!definition) return true;
+	if (Object.keys(definition.databases ?? {}).length > 0) return true;
+	if (Object.keys(definition.buckets ?? {}).length > 0) return true;
+	return Object.values(definition.applications ?? {}).some(
+		(application) => Object.keys(application.volumes ?? {}).length > 0
+	);
+}
+
 function sorted<T>(record: Record<string, T> | undefined): [string, T][] {
 	return Object.entries(record ?? {}).sort(([a], [b]) => a.localeCompare(b));
 }

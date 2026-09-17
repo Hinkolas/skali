@@ -9,6 +9,7 @@
 	import { api, ApiError } from '$lib/api/client';
 	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
 	import { backupRefusal, confirmBackup } from '$lib/backups';
+	import { hasStatefulServices } from '$lib/models/service';
 	import { describeCron, describeSeconds, nextCronFire } from '$lib/cron';
 	import { formatBytes, formatDateTime, relativeTime } from '$lib/format';
 	import { dialog } from '$lib/stores/dialog.svelte';
@@ -71,7 +72,8 @@
 		envName ? snapshots.filter((s) => s.environment === envName).length : 0
 	);
 
-	const backupTitle = $derived(backupRefusal(data.env));
+	const backupTitle = $derived(backupRefusal(data.env, data.definition));
+	const stateful = $derived(hasStatefulServices(data.definition));
 
 	// Restore needs maintain on the target, delete maintain on the origin
 	// (or project admin when the origin environment is gone). The server
@@ -255,13 +257,21 @@
 			<EmptyState icon={CloudOff} title="Could not list snapshots" description={refusal.message} />
 		{/if}
 	{:else if shown.length === 0}
-		<EmptyState
-			icon={Archive}
-			title="No snapshots yet"
-			description={scope === 'env' && envName
-				? `nothing has been backed up from ${envName}`
-				: 'back up an environment now, or declare a backups policy in skali.yaml'}
-		/>
+		{#if !stateful}
+			<EmptyState
+				icon={Archive}
+				title="Nothing to back up"
+				description="this project declares no database, bucket, or volume, so there is nothing to snapshot"
+			/>
+		{:else}
+			<EmptyState
+				icon={Archive}
+				title="No snapshots yet"
+				description={scope === 'env' && envName
+					? `nothing has been backed up from ${envName}`
+					: 'back up an environment now, or declare a backups policy in skali.yaml'}
+			/>
+		{/if}
 	{:else}
 		<Table
 			columns={['Snapshot', 'Environment', 'Origin', 'Created', 'Contents', 'Size', '']}

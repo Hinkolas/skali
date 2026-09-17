@@ -5,7 +5,7 @@
 	import { page } from '$app/state';
 	import type { ServiceView } from '$lib/models/service';
 	import type { Environment } from '$lib/types/project';
-	import { renderExpression } from '$lib/types/definition';
+	import { renderExpression, type ProjectDefinition } from '$lib/types/definition';
 	import { api, ApiError } from '$lib/api/client';
 	import { requiredTitle, roleAtLeast } from '$lib/access';
 	import { backupRefusal, confirmBackup } from '$lib/backups';
@@ -33,6 +33,9 @@
 	// Deploy on the environment is the rung the server checks; it also
 	// refuses when nothing runs.
 	const env = $derived((page.data as { env?: Environment | null }).env ?? null);
+	const definition = $derived(
+		(page.data as { definition?: ProjectDefinition | null }).definition ?? null
+	);
 	const restartTitle = $derived.by(() => {
 		if (!env) return 'no environment selected';
 		if (!roleAtLeast(env.access, 'deploy')) return requiredTitle('deploy', 'environment', env.name);
@@ -40,7 +43,7 @@
 	});
 	// A snapshot covers the whole environment, this database included; the
 	// button lives here because this is where someone looks for it.
-	const backupTitle = $derived(backupRefusal(env));
+	const backupTitle = $derived(backupRefusal(env, definition));
 
 	function confirmRestart() {
 		const target = env;

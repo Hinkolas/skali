@@ -258,3 +258,31 @@ func TestPlanComponentsHonorsSelection(t *testing.T) {
 		labels(planComponents(&definition, &compiler.Selection{AllDatabases: true, AllBuckets: true})))
 	require.Empty(t, planComponents(&definition, &compiler.Selection{Databases: []string{"gone"}}))
 }
+
+// A policy whose include matches nothing the revision declares is skipped
+// at its fire instead of producing a failed run every time it is due.
+func TestSchedulerSkipsPolicyWithNothingToBackUp(t *testing.T) {
+	f := newServiceFixture(t)
+	ctx := context.Background()
+	f.configureTarget(t)
+	f.activate(t, compiler.ProjectDefinition{
+		Schema: compiler.DefinitionSchema, Name: "demo",
+		Applications: map[string]compiler.Application{"web": {}},
+		Backups: map[string]compiler.Backup{
+			"daily": {Schedule: "0 3 * * *", RetentionSeconds: 7 * 86400, Include: compiler.Selection{AllDatabases: true}},
+		},
+	})
+	now := time.Date(2026, 9, 16, 2, 0, 0, 0, time.UTC)
+	s := newTestScheduler(f, &now)
+	require.NoError(t, s.Tick(ctx))
+
+	now = now.Add(2 * time.Hour)
+	require.NoError(t, s.Tick(ctx))
+	unfinished, err := f.st.ListUnfinishedBackups(ctx)
+	require.NoError(t, err)
+	require.Empty(t, unfinished)
+	rows, err := f.st.ListBackupSchedules(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Nil(t, rows[0].LastBackupID)
+}
