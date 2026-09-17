@@ -118,7 +118,7 @@
 			<div class="flex min-w-0 flex-1 flex-col">
 				<span class="text-text-primary text-lg font-medium">Databases</span>
 				<span class="text-text-muted text-md"
-					>Managed PostgreSQL pools, their memory budgets and parameters</span
+					>Managed PostgreSQL pools: their usage, tuning and the databases on them</span
 				>
 			</div>
 			<Pill text={poolsSummary.text} tone={poolsSummary.tone} />

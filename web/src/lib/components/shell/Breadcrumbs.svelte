@@ -37,6 +37,8 @@
 			env?: Environment | null;
 			services?: ServiceView[];
 			service?: ServiceView;
+			/** Plain crumbs for pages outside a project (system detail pages). */
+			crumbs?: { label: string; href?: string }[];
 		}
 	);
 
@@ -69,6 +71,30 @@
 	>
 		{data.org.name}
 	</a>
+
+	{#if !data.project && data.crumbs}
+		<!-- Pages outside a project name their place with plain crumbs; all
+		     but the last two hide on narrow panes like the org crumb does. -->
+		{#each data.crumbs as crumb, i (crumb.label)}
+			{@const narrow = i < data.crumbs.length - 2}
+			<span class="text-text-ghost text-md {narrow ? 'hidden xl:block' : ''}">/</span>
+			{#if crumb.href}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- resolved by the layout load -->
+				<a
+					href={crumb.href}
+					class="text-text-tertiary hover:text-text-primary truncate rounded-lg px-2 py-1 text-base font-medium transition-colors {narrow
+						? 'hidden xl:block'
+						: ''}"
+				>
+					{crumb.label}
+				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
+			{:else}
+				<span class="text-text-primary truncate px-2 py-1 text-base font-medium">{crumb.label}</span
+				>
+			{/if}
+		{/each}
+	{/if}
 
 	{#if data.project}
 		{@const project = data.project}

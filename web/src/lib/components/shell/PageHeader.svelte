@@ -3,11 +3,14 @@
 
 	let {
 		title,
+		mono = false,
 		titleTrailing,
 		subtitle,
 		actions
 	}: {
 		title: string;
+		/** Set the title in the mono face: the page names an identifier. */
+		mono?: boolean;
 		/** Rendered next to the title, e.g. a status pill. */
 		titleTrailing?: Snippet;
 		subtitle?: Snippet;
@@ -21,7 +24,13 @@
 <div class="mb-5.5 flex flex-wrap items-start gap-x-6 gap-y-3">
 	<div class="min-w-0">
 		<div class="flex items-center gap-3">
-			<h1 class="text-text-primary text-5xl font-semibold tracking-[-0.02em]">{title}</h1>
+			<h1
+				class="text-text-primary text-5xl font-semibold tracking-[-0.02em] {mono
+					? 'font-mono'
+					: ''}"
+			>
+				{title}
+			</h1>
 			{#if titleTrailing}
 				{@render titleTrailing()}
 			{/if}
