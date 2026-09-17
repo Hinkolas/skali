@@ -205,7 +205,10 @@ func TestRenderProductionObjects(t *testing.T) {
 	// websecure IngressRoute splitting the platform domain by path, /api to
 	// the daemon and everything else to the web console (Traefik prioritizes
 	// the longer match), plus the plain-HTTP redirect router.
-	certificate := objects.Skalid[6]
+	compress := objects.Skalid[6]
+	require.Equal(t, "Middleware", compress.GetKind())
+	require.Equal(t, "compress", compress.GetName())
+	certificate := objects.Skalid[7]
 	require.Equal(t, "Certificate", certificate.GetKind())
 	require.Equal(t, "skalid-tls", certificate.GetName())
 	certSecret, _, _ := unstructured.NestedString(certificate.Object, "spec", "secretName")
@@ -215,9 +218,13 @@ func TestRenderProductionObjects(t *testing.T) {
 	certNames, _, _ := unstructured.NestedStringSlice(certificate.Object, "spec", "dnsNames")
 	require.Equal(t, []string{"skali.example.com"}, certNames)
 
-	route := objects.Skalid[7]
+	route := objects.Skalid[8]
 	require.Equal(t, "IngressRoute", route.GetKind())
 	require.Equal(t, "skalid", route.GetName())
+	routeJSON, err := route.MarshalJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(routeJSON), `"middlewares":[{"name":"compress"}]`,
+		"the console compresses like every application route")
 	points, _, _ := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
 	require.Equal(t, []string{"websecure"}, points)
 	routeSecret, _, _ := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
@@ -228,7 +235,7 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.Equal(t, "Host(`skali.example.com`) && PathPrefix(`/`)", rule["match"])
 	require.Equal(t, "skalid", rule["services"].([]any)[0].(map[string]any)["name"])
 
-	redirect := objects.Skalid[8]
+	redirect := objects.Skalid[9]
 	require.Equal(t, "IngressRoute", redirect.GetKind())
 	require.Equal(t, "skalid-http", redirect.GetName())
 	consoleRules, _, _ := unstructured.NestedSlice(redirect.Object, "spec", "routes")
@@ -242,7 +249,7 @@ func TestRenderProductionObjects(t *testing.T) {
 	// The edge identity route outranks the Host-scoped redirect router on
 	// the plain entrypoint, so the kernel's probe through a tenant domain
 	// reaches the daemon instead of a redirect to HTTPS.
-	probe := objects.Skalid[9]
+	probe := objects.Skalid[10]
 	require.Equal(t, "IngressRoute", probe.GetKind())
 	require.Equal(t, "skalid-edge-probe", probe.GetName())
 	probePoints, _, _ := unstructured.NestedStringSlice(probe.Object, "spec", "entryPoints")

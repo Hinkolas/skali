@@ -209,7 +209,11 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path+".strategy", "must be round-robin or least-requests")
 		}
 		target := b.portTarget(path+".port", string(route.Port), source.Ports)
-		compiled := Route{Domain: domain, Path: routePath, Port: target, TLS: tls, Strategy: strategy}
+		compress := ""
+		if route.Compress != nil && !*route.Compress {
+			compress = RouteCompressDisabled
+		}
+		compiled := Route{Domain: domain, Path: routePath, Port: target, TLS: tls, Strategy: strategy, Compress: compress}
 		conflictKey := canonicalExpression(domain) + "|" + routePath
 		if previous, exists := b.routes[conflictKey]; exists {
 			b.add(path, "conflicts with route %s; domain and path pairs must be unique", previous)

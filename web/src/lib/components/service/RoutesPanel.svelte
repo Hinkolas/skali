@@ -118,6 +118,12 @@
 							>http allowed</span
 						>
 					{/if}
+					{#if route.compress === false}
+						<span
+							class="text-text-faint font-mono"
+							title="responses leave the edge uncompressed (compress: false)">no compression</span
+						>
+					{/if}
 					{#if route.certificate || dnsPending(route)}
 						<span class="ml-auto flex items-center gap-3">
 							{#if dnsPending(route)}

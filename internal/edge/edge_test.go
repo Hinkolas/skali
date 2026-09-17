@@ -81,6 +81,24 @@ func TestRedirectMiddleware(t *testing.T) {
 	require.True(t, permanent)
 }
 
+func TestCompressMiddleware(t *testing.T) {
+	t.Parallel()
+	middleware := CompressMiddleware("proj-env", map[string]string{"skali.dev/managed": "true"})
+	require.Equal(t, MiddlewareGVK, middleware.GroupVersionKind())
+	require.Equal(t, CompressMiddlewareName, middleware.GetName())
+	require.Equal(t, "true", middleware.GetLabels()["skali.dev/managed"])
+	excluded, _, err := unstructured.NestedStringSlice(middleware.Object, "spec", "compress", "excludedContentTypes")
+	require.NoError(t, err)
+	require.Equal(t, CompressExcludedContentTypes, excluded)
+	require.Contains(t, excluded, "text/event-stream", "event streams must never be buffered by the compressor")
+	compress, _, err := unstructured.NestedMap(middleware.Object, "spec", "compress")
+	require.NoError(t, err)
+	_, hasEncodings := compress["encodings"]
+	require.False(t, hasEncodings, "encodings stay Traefik's default set")
+	_, hasMinSize := compress["minResponseBodyBytes"]
+	require.False(t, hasMinSize, "the minimum body size stays Traefik's default")
+}
+
 func TestCertificate(t *testing.T) {
 	t.Parallel()
 	certificate := Certificate("proj-env", "web-public-tls", "app.example.com", nil)

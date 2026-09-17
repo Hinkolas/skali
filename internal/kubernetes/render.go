@@ -149,14 +149,13 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 	// the environment; it carries no service label, so it joins pruning and
 	// teardown without ever entering a service snapshot.
 	if options.Certificates && needsRedirect(result.Definition) {
-		labels := map[string]string{
-			LabelManaged: "true",
-			LabelProject: result.Definition.Name,
-		}
-		if options.EnvironmentID != "" {
-			labels[LabelEnvironment] = options.EnvironmentID
-		}
-		objects = append(objects, edge.RedirectMiddleware(options.Namespace, labels))
+		objects = append(objects, edge.RedirectMiddleware(options.Namespace, environmentLabels(result.Definition, options)))
+	}
+	// One shared compress Middleware serves every compressing route, in
+	// every profile: the local edge is the same Traefik, and an application
+	// that misbehaves under compression should show it in dev first.
+	if needsCompress(result.Definition) {
+		objects = append(objects, edge.CompressMiddleware(options.Namespace, environmentLabels(result.Definition, options)))
 	}
 	for _, key := range utils.SortedKeys(result.Definition.Applications) {
 		rendered, err := renderApplication(result.Definition, key, options)
@@ -169,6 +168,38 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 		return nil, err
 	}
 	return objects, nil
+}
+
+// environmentLabels labels an object owned by the environment rather than
+// by one service: managed, project, and environment, never a service label,
+// so it joins pruning and teardown without entering a service snapshot.
+func environmentLabels(project compiler.ProjectDefinition, options Options) map[string]string {
+	labels := map[string]string{
+		LabelManaged: "true",
+		LabelProject: project.Name,
+	}
+	if options.EnvironmentID != "" {
+		labels[LabelEnvironment] = options.EnvironmentID
+	}
+	return labels
+}
+
+// needsCompress reports whether any route still compresses at the edge.
+func needsCompress(project compiler.ProjectDefinition) bool {
+	for _, application := range project.Applications {
+		for _, route := range application.Routes {
+			if routeCompresses(route) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// routeCompresses reports whether a route carries the compress Middleware;
+// only an explicit opt-out turns it off.
+func routeCompresses(route compiler.Route) bool {
+	return route.Compress != compiler.RouteCompressDisabled
 }
 
 // needsRedirect reports whether any route wants the HTTP-to-HTTPS redirect.
@@ -369,15 +400,21 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		if route.Strategy == "least-requests" {
 			backend.Strategy = edge.StrategyP2C
 		}
+		// Every router that serves the backend compresses unless the route
+		// opted out; a redirecting router never reaches the backend.
+		var serving []string
+		if routeCompresses(route) {
+			serving = []string{edge.CompressMiddlewareName}
+		}
 		if options.Certificates && route.TLS != "disabled" {
 			secretName := RouteTLSName(project.Name, key, routeKey)
 			objects = append(objects, edge.IngressRoute(options.Namespace, RouteName(project.Name, key, routeKey, "primary"),
 				maps.Clone(labels), []string{edge.EntryPointWebSecure},
-				[]edge.Route{{Match: match, Service: backend}}, secretName))
+				[]edge.Route{{Match: match, Service: backend, Middlewares: serving}}, secretName))
 			// The plain-HTTP router redirects on `automatic` and serves the
 			// backend directly on `optional`, the per-route escape hatch for
 			// consumers that cannot follow redirects.
-			httpRoute := edge.Route{Match: edge.HTTPMatch(domain, route.Path), Service: backend}
+			httpRoute := edge.Route{Match: edge.HTTPMatch(domain, route.Path), Service: backend, Middlewares: serving}
 			if route.TLS == "automatic" {
 				httpRoute.Middlewares = []string{edge.RedirectMiddlewareName}
 			}
@@ -388,7 +425,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		} else {
 			objects = append(objects, edge.IngressRoute(options.Namespace, RouteName(project.Name, key, routeKey, "primary"),
 				maps.Clone(labels), []string{edge.EntryPointWeb},
-				[]edge.Route{{Match: match, Service: backend}}, ""))
+				[]edge.Route{{Match: match, Service: backend, Middlewares: serving}}, ""))
 		}
 	}
 

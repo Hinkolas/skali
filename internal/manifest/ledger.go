@@ -59,6 +59,13 @@ var Ledger = []Change{
 		Message: "backup policies gained an optional strategy field; complete is the only value and the default, and policies are now enforced: snapshots run on the schedule and retention deletes the ones they produced",
 		Hint:    "nothing to change; write strategy: complete to make the default explicit",
 	},
+	{
+		Release: "v0.1.0-rc.7",
+		Kind:    ChangeAdded,
+		Path:    "applications.*.routes.*.compress",
+		Message: "routes gained an optional compress field; the edge now compresses text-like responses by default (gzip, br, zstd) and compress: false opts a route out",
+		Hint:    "nothing to change; write compress: false for routes that stream events or already compress their responses",
+	},
 }
 
 // Matches reports whether a concrete manifest path is the one the change

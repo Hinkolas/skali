@@ -47,7 +47,7 @@ func TestRenderHelloWorldGolden(t *testing.T) {
 	for _, object := range objects {
 		kinds = append(kinds, object.GetObjectKind().GroupVersionKind().Kind)
 	}
-	require.Equal(t, []string{"Middleware", "Deployment", "Service",
+	require.Equal(t, []string{"Middleware", "Middleware", "Deployment", "Service",
 		"IngressRoute", "IngressRoute", "Certificate"}, kinds)
 
 	actual, err := MarshalYAML(objects)
@@ -72,15 +72,19 @@ func TestRenderClusterPlacementOptions(t *testing.T) {
 	// Local dev: no pull secret, no capability placement, and the HTTP-only
 	// edge shape (a single web-entrypoint IngressRoute, no Certificate, no
 	// redirect Middleware) even though the route declares tls: automatic.
+	// The compress Middleware is the one edge object every profile shares.
 	managed, err := Render(result, Options{
 		Namespace:   "skali-hello-world",
 		Variables:   map[string]string{"APP_DOMAIN": "hello.localhost"},
 		BuildImages: map[string]string{"web": "localhost:5510/skali/hello-world/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"},
 	})
 	require.NoError(t, err)
-	require.Len(t, managed, 3)
-	require.Nil(t, managed[0].(*appsv1.Deployment).Spec.Template.Spec.ImagePullSecrets)
-	route := managed[2].(*unstructured.Unstructured)
+	require.Len(t, managed, 4)
+	compress := managed[0].(*unstructured.Unstructured)
+	require.Equal(t, edge.MiddlewareGVK, compress.GroupVersionKind())
+	require.Equal(t, edge.CompressMiddlewareName, compress.GetName())
+	require.Nil(t, managed[1].(*appsv1.Deployment).Spec.Template.Spec.ImagePullSecrets)
+	route := managed[3].(*unstructured.Unstructured)
 	require.Equal(t, edge.IngressRouteGVK, route.GroupVersionKind())
 	points, _, err := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
 	require.NoError(t, err)
@@ -88,6 +92,8 @@ func TestRenderClusterPlacementOptions(t *testing.T) {
 	_, hasTLS, err := unstructured.NestedMap(route.Object, "spec", "tls")
 	require.NoError(t, err)
 	require.False(t, hasTLS, "the local edge never terminates TLS")
+	require.Equal(t, []string{edge.CompressMiddlewareName}, routeMiddlewares(t, route),
+		"the local web router compresses like production")
 
 	managed, err = Render(result, Options{
 		Namespace: "skali-hello-world", ManagedCluster: true,
@@ -99,8 +105,8 @@ func TestRenderClusterPlacementOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{
 		layout.CapabilityLabel(layout.CapabilityApplication): layout.CapabilityLabelValue,
-	}, managed[0].(*appsv1.Deployment).Spec.Template.Spec.NodeSelector)
-	require.Nil(t, managed[0].(*appsv1.Deployment).Spec.Template.Spec.Affinity,
+	}, firstDeployment(t, managed).Spec.Template.Spec.NodeSelector)
+	require.Nil(t, firstDeployment(t, managed).Spec.Template.Spec.Affinity,
 		"an unknown platform set renders no arch constraint")
 }
 
@@ -126,7 +132,7 @@ func TestRenderArchAffinity(t *testing.T) {
 	}
 
 	pinned := render(true, map[string][]string{"web": {"linux/arm64"}})
-	affinity := pinned[0].(*appsv1.Deployment).Spec.Template.Spec.Affinity
+	affinity := firstDeployment(t, pinned).Spec.Template.Spec.Affinity
 	require.NotNil(t, affinity)
 	terms := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
 	require.Len(t, terms, 1)
@@ -135,14 +141,14 @@ func TestRenderArchAffinity(t *testing.T) {
 	}}, terms[0].MatchExpressions)
 
 	multi := render(true, map[string][]string{"web": {"linux/arm64", "linux/amd64"}})
-	terms = multi[0].(*appsv1.Deployment).Spec.Template.Spec.Affinity.
+	terms = firstDeployment(t, multi).Spec.Template.Spec.Affinity.
 		NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
 	require.Equal(t, []string{"amd64", "arm64"}, terms[0].MatchExpressions[0].Values,
 		"archs are sorted so equal sets render identically")
 
-	require.Nil(t, render(false, map[string][]string{"web": {"linux/arm64"}})[0].(*appsv1.Deployment).
+	require.Nil(t, firstDeployment(t, render(false, map[string][]string{"web": {"linux/arm64"}})).
 		Spec.Template.Spec.Affinity, "unmanaged clusters never render the constraint")
-	require.Nil(t, render(true, nil)[0].(*appsv1.Deployment).Spec.Template.Spec.Affinity)
+	require.Nil(t, firstDeployment(t, render(true, nil)).Spec.Template.Spec.Affinity)
 }
 
 // The release Job carries the same arch affinity as the Deployment: the
@@ -161,7 +167,9 @@ func TestRenderArchAffinityReleaseJob(t *testing.T) {
 		AppPlatforms:   map[string][]string{"web": {"linux/amd64"}},
 	})
 	require.NoError(t, err)
-	job := objects[0].(*batchv1.Job)
+	// The environment-owned compress Middleware leads; the release Job is
+	// the first service object.
+	job := objects[1].(*batchv1.Job)
 	require.NotNil(t, job.Spec.Template.Spec.Affinity)
 	values := job.Spec.Template.Spec.Affinity.NodeAffinity.
 		RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values
@@ -187,12 +195,13 @@ func TestRenderPriorityClass(t *testing.T) {
 		require.NoError(t, err)
 		return objects
 	}
+	// Index 0 is the environment-owned compress Middleware.
 	high := render(layout.PriorityClassHigh)
-	require.Equal(t, layout.PriorityClassHigh, high[0].(*batchv1.Job).Spec.Template.Spec.PriorityClassName)
-	require.Equal(t, layout.PriorityClassHigh, high[1].(*appsv1.Deployment).Spec.Template.Spec.PriorityClassName)
+	require.Equal(t, layout.PriorityClassHigh, high[1].(*batchv1.Job).Spec.Template.Spec.PriorityClassName)
+	require.Equal(t, layout.PriorityClassHigh, high[2].(*appsv1.Deployment).Spec.Template.Spec.PriorityClassName)
 	plain := render("")
-	require.Empty(t, plain[0].(*batchv1.Job).Spec.Template.Spec.PriorityClassName)
-	require.Empty(t, plain[1].(*appsv1.Deployment).Spec.Template.Spec.PriorityClassName)
+	require.Empty(t, plain[1].(*batchv1.Job).Spec.Template.Spec.PriorityClassName)
+	require.Empty(t, plain[2].(*appsv1.Deployment).Spec.Template.Spec.PriorityClassName)
 }
 
 // The three TLS policies and the strategy knob shape the edge objects: an
@@ -248,24 +257,27 @@ applications:
 	secret, _, err := unstructured.NestedString(public.Object, "spec", "tls", "secretName")
 	require.NoError(t, err)
 	require.Equal(t, RouteTLSName("policies", "api", "public"), secret)
+	require.Equal(t, []string{edge.CompressMiddlewareName}, routeMiddlewares(t, public),
+		"the serving router compresses by default")
 	publicHTTP := byName["IngressRoute/"+RouteName("policies", "api", "public", "http")]
 	require.NotNil(t, publicHTTP)
 	httpRoutes, _, err := unstructured.NestedSlice(publicHTTP.Object, "spec", "routes")
 	require.NoError(t, err)
 	require.Contains(t, httpRoutes[0].(map[string]any)["match"], `!PathPrefix("/.well-known/acme-challenge/")`)
-	require.Contains(t, httpRoutes[0].(map[string]any), "middlewares",
-		"automatic routes redirect plain HTTP")
+	require.Equal(t, []string{edge.RedirectMiddlewareName}, routeMiddlewares(t, publicHTTP),
+		"automatic routes redirect plain HTTP and never compress a redirect")
 	require.NotNil(t, byName["Certificate/"+RouteTLSName("policies", "api", "public")])
 	require.NotNil(t, byName["Middleware/redirect-https"])
+	require.NotNil(t, byName["Middleware/compress"])
 
-	// tls optional: both routers serve, no redirect.
+	// tls optional: both routers serve, no redirect, both compress.
 	relaxedHTTP := byName["IngressRoute/"+RouteName("policies", "api", "relaxed", "http")]
 	require.NotNil(t, relaxedHTTP)
 	relaxedRoutes, _, err := unstructured.NestedSlice(relaxedHTTP.Object, "spec", "routes")
 	require.NoError(t, err)
 	require.Contains(t, relaxedRoutes[0].(map[string]any)["match"], `!PathPrefix("/.well-known/acme-challenge/")`)
-	require.NotContains(t, relaxedRoutes[0].(map[string]any), "middlewares",
-		"optional routes keep serving plain HTTP")
+	require.Equal(t, []string{edge.CompressMiddlewareName}, routeMiddlewares(t, relaxedHTTP),
+		"optional routes keep serving plain HTTP, compressed")
 	require.NotNil(t, byName["Certificate/"+RouteTLSName("policies", "api", "relaxed")])
 
 	// tls disabled: one web router, no certificate, default strategy.
@@ -280,6 +292,7 @@ applications:
 	require.NoError(t, err)
 	internalService := internalRoutes[0].(map[string]any)["services"].([]any)[0].(map[string]any)
 	require.NotContains(t, internalService, "strategy")
+	require.Equal(t, []string{edge.CompressMiddlewareName}, routeMiddlewares(t, internal))
 
 	// RouteTLSName mirrors the renderer's composition.
 	require.Equal(t, RouteTLSName("policies", "api", "public"), RouteTLSName("policies", "api", "public"))
@@ -302,13 +315,13 @@ func TestRenderRestartStampAnnotation(t *testing.T) {
 
 	objects, err := Render(result, options)
 	require.NoError(t, err)
-	require.Nil(t, objects[0].(*appsv1.Deployment).Spec.Template.Annotations)
+	require.Nil(t, firstDeployment(t, objects).Spec.Template.Annotations)
 
 	options.RestartedAt = "2026-07-29T12:00:00Z"
 	objects, err = Render(result, options)
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{AnnotationRestartedAt: "2026-07-29T12:00:00Z"},
-		objects[0].(*appsv1.Deployment).Spec.Template.Annotations)
+		firstDeployment(t, objects).Spec.Template.Annotations)
 }
 
 func TestBuildApplicationRequiresPreparedArtifact(t *testing.T) {
@@ -344,12 +357,12 @@ func TestRenderBuildApplicationWithManagedOutputs(t *testing.T) {
 		BuildImages: map[string]string{"web": "registry.local/web@sha256:test"},
 	})
 	require.NoError(t, err)
-	require.Len(t, objects, 5)
-	release, ok := objects[0].(*batchv1.Job)
-	require.True(t, ok, "the example's releaseCommand renders a Job ahead of the workload")
+	require.Len(t, objects, 6)
+	release, ok := objects[1].(*batchv1.Job)
+	require.True(t, ok, "the example's releaseCommand renders a Job ahead of the workload, behind the shared Middleware")
 	require.Equal(t, []string{"/app/file-sharing", "migrate", "up"},
 		release.Spec.Template.Spec.Containers[0].Args)
-	deployment, ok := objects[1].(*appsv1.Deployment)
+	deployment, ok := objects[2].(*appsv1.Deployment)
 	require.True(t, ok)
 	require.Nil(t, deployment.Spec.Replicas, "the HPA must exclusively own Deployment.spec.replicas")
 	require.Len(t, deployment.Spec.Template.Spec.TopologySpreadConstraints, 1)
@@ -383,8 +396,7 @@ func TestRenderSelectorStableAcrossRevisions(t *testing.T) {
 			RevisionChecksum: checksum,
 		})
 		require.NoError(t, err)
-		deployment, ok := objects[0].(*appsv1.Deployment)
-		require.True(t, ok)
+		deployment := firstDeployment(t, objects)
 		return deployment
 	}
 
@@ -773,12 +785,13 @@ func TestRenderInterceptedApplication(t *testing.T) {
 	for _, object := range objects {
 		kinds = append(kinds, object.GetObjectKind().GroupVersionKind().Kind)
 	}
-	require.Equal(t, []string{"Service", "EndpointSlice", "IngressRoute"}, kinds)
+	// The intercepted route still passes the edge, so it compresses too.
+	require.Equal(t, []string{"Middleware", "Service", "EndpointSlice", "IngressRoute"}, kinds)
 
-	service := objects[0].(*corev1.Service)
+	service := objects[1].(*corev1.Service)
 	require.Nil(t, service.Spec.Selector, "intercepted Services drop their selector")
 
-	slice := objects[1].(*discoveryv1.EndpointSlice)
+	slice := objects[2].(*discoveryv1.EndpointSlice)
 	require.Equal(t, objectName("intercept", "hello-world", "web"), slice.Name)
 	require.Equal(t, "true", slice.Labels[LabelManaged])
 	require.Equal(t, service.Name, slice.Labels["kubernetes.io/service-name"])
@@ -1002,4 +1015,78 @@ applications:
 	result.Definition.Applications["api"] = api
 	_, err = Render(result, Options{Namespace: "skali-unknown"})
 	require.ErrorContains(t, err, `unsupported rollout strategy "canary"`)
+}
+
+// routeMiddlewares lists the middleware names on an IngressRoute's first
+// router, nil when it carries none.
+func routeMiddlewares(t *testing.T, route *unstructured.Unstructured) []string {
+	t.Helper()
+	routes, _, err := unstructured.NestedSlice(route.Object, "spec", "routes")
+	require.NoError(t, err)
+	require.NotEmpty(t, routes)
+	raw, ok := routes[0].(map[string]any)["middlewares"]
+	if !ok {
+		return nil
+	}
+	var names []string
+	for _, entry := range raw.([]any) {
+		names = append(names, entry.(map[string]any)["name"].(string))
+	}
+	return names
+}
+
+func TestRenderCompressOptOut(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+skali: v0.1.0-rc.3
+name: quiet
+applications:
+  api:
+    image: example.invalid/api:1
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: api.example.com
+        port: http
+        compress: false
+      events:
+        domain: events.example.com
+        port: http
+        tls: optional
+        compress: false
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	objects, err := Render(result, Options{Namespace: "skali-quiet", Certificates: true})
+	require.NoError(t, err)
+	byName := map[string]*unstructured.Unstructured{}
+	for _, object := range objects {
+		if typed, ok := object.(*unstructured.Unstructured); ok {
+			byName[typed.GetKind()+"/"+typed.GetName()] = typed
+		}
+	}
+	require.Nil(t, byName["Middleware/compress"], "no compressing route, no Middleware to prune later")
+	require.NotNil(t, byName["Middleware/redirect-https"])
+	require.Nil(t, routeMiddlewares(t, byName["IngressRoute/"+RouteName("quiet", "api", "public", "primary")]))
+	require.Equal(t, []string{edge.RedirectMiddlewareName},
+		routeMiddlewares(t, byName["IngressRoute/"+RouteName("quiet", "api", "public", "http")]))
+	require.Nil(t, routeMiddlewares(t, byName["IngressRoute/"+RouteName("quiet", "api", "events", "primary")]))
+	require.Nil(t, routeMiddlewares(t, byName["IngressRoute/"+RouteName("quiet", "api", "events", "http")]))
+}
+
+// firstDeployment returns the rendered Deployment; environment-owned edge
+// objects may precede it, so tests never rely on its position.
+func firstDeployment(t *testing.T, objects []runtime.Object) *appsv1.Deployment {
+	t.Helper()
+	for _, object := range objects {
+		if deployment, ok := object.(*appsv1.Deployment); ok {
+			return deployment
+		}
+	}
+	require.FailNow(t, "no Deployment rendered")
+	return nil
 }
