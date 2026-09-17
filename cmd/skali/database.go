@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -97,7 +98,19 @@ func newDatabaseShowCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pool, err := findDatabasePool(ctx, out, bufio.NewReader(command.InOrStdin()), api, args[0])
+			in := bufio.NewReader(command.InOrStdin())
+			var pool *client.DatabasePool
+			err = withReauth(ctx, out, in, api, func() (err error) {
+				pool, err = api.GetDatabasePool(ctx, args[0])
+				return err
+			})
+			var apiErr *client.APIError
+			if errors.As(err, &apiErr) && apiErr.Status == 404 {
+				// The list names the pools that do exist.
+				if _, listErr := findDatabasePool(ctx, out, in, api, args[0]); listErr != nil {
+					return listErr
+				}
+			}
 			if err != nil {
 				return err
 			}
@@ -330,11 +343,68 @@ func printDatabasePool(out io.Writer, master string, pool *client.DatabasePool) 
 	printHeader(out, style,
 		headerRow{"remote", master, ""},
 		headerRow{"pool", pool.Name, pool.Class},
-		headerRow{"engine", pool.Engine + " " + strconv.Itoa(pool.Major), ""},
+		headerRow{"engine", pool.Engine + " " + strconv.Itoa(pool.Major), pool.Image},
 		headerRow{"instances", strconv.Itoa(pool.Instances), poolPhaseCell(*pool)},
 		headerRow{"storage", utils.FormatBytes(pool.StorageBytes), ""},
 		headerRow{"memory", memory, note})
+	printDatabasePoolMembers(out, pool.Members)
+	printDatabasePoolDatabases(out, style, pool.Databases)
 	printDatabasePoolParameters(out, style, pool)
+}
+
+// printDatabasePoolMembers lists the instance pods; the list route carries
+// none, so an empty slice prints nothing.
+func printDatabasePoolMembers(out io.Writer, members []client.DatabasePoolMember) {
+	if len(members) == 0 {
+		return
+	}
+	rows := make([][]string, 0, len(members))
+	for _, member := range members {
+		ready := "no"
+		if member.Ready {
+			ready = "yes"
+		}
+		started := "-"
+		if member.StartedAt != nil {
+			if at, err := time.Parse(time.RFC3339, *member.StartedAt); err == nil {
+				started = poolAge(time.Since(at))
+			}
+		}
+		role := member.Role
+		if role == "" {
+			role = "-"
+		}
+		rows = append(rows, []string{member.Name, role, member.Node, ready, strconv.Itoa(member.Restarts), started})
+	}
+	fmt.Fprintln(out)
+	renderColumns(out, []string{"INSTANCE", "ROLE", "NODE", "READY", "RESTARTS", "STARTED"}, rows)
+}
+
+// printDatabasePoolDatabases lists every logical database on the pool with
+// its owner and measured size.
+func printDatabasePoolDatabases(out io.Writer, style *clirender.Style, databases []client.DatabasePoolDatabase) {
+	fmt.Fprintln(out)
+	if len(databases) == 0 {
+		fmt.Fprintln(out, style.Dim("no databases on this pool"))
+		return
+	}
+	rows := make([][]string, 0, len(databases))
+	for _, database := range databases {
+		owner, environment := "system "+database.SystemKey, "-"
+		if database.Owner == "service" && database.Project != nil {
+			owner = database.Project.Name + "/" + database.ServiceKey
+			if database.Environment != nil {
+				environment = database.Environment.Name
+			}
+		}
+		used := "-"
+		if database.UsedBytes != nil {
+			used = utils.FormatBytes(*database.UsedBytes)
+		}
+		rows = append(rows, []string{database.DatabaseName, owner, environment,
+			utils.FormatBytes(database.StorageBytes), used, database.Phase})
+	}
+	renderColumns(out, []string{"DATABASE", "OWNER", "ENVIRONMENT", "SIZE", "USED", "PHASE"}, rows)
 }
 
 func printDatabasePoolParameters(out io.Writer, style *clirender.Style, pool *client.DatabasePool) {
@@ -446,4 +516,19 @@ func poolPhaseCell(pool client.DatabasePool) string {
 		return "not observed"
 	}
 	return fmt.Sprintf("%s, %d/%d ready", pool.Observed.Phase, pool.Observed.ReadyInstances, pool.Observed.Instances)
+}
+
+// poolAge renders how long ago an instance started, coarsely: pods live
+// days, not seconds.
+func poolAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return strconv.Itoa(int(d.Minutes())) + "m ago"
+	case d < 48*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + "h ago"
+	default:
+		return strconv.Itoa(int(d.Hours()/24)) + "d ago"
+	}
 }

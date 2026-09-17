@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -108,6 +109,96 @@ func (q *Queries) GetLiveDatabaseTenantByClaim(ctx context.Context, claimID uuid
 		&i.ReleasedAt,
 	)
 	return i, err
+}
+
+const listLiveDatabaseTenantDetailsByCluster = `-- name: ListLiveDatabaseTenantDetailsByCluster :many
+SELECT t.id AS tenant_id, t.database_name, t.role_name, t.created_at,
+       c.id AS claim_id, c.owner_kind, c.system_key, c.service_key, c.phase, c.storage_bytes,
+       c.project_id, c.environment_id,
+       p.name AS project_name, p.display_name AS project_display_name,
+       e.name AS environment_name,
+       s.used_bytes
+FROM database_tenants t
+JOIN database_claims c ON c.id = t.claim_id
+LEFT JOIN projects p ON p.id = c.project_id
+LEFT JOIN environments e ON e.id = c.environment_id
+LEFT JOIN LATERAL (
+    SELECT m.used_bytes
+    FROM metric_storage_samples m
+    WHERE m.environment_id = c.environment_id
+      AND m.service_key = 'databases.' || c.service_key
+      AND m.kind = 'database'
+      AND m.sampled_at >= $2::timestamptz
+    ORDER BY m.sampled_at DESC
+    LIMIT 1
+) s ON true
+WHERE t.cluster_id = $1 AND t.released_at IS NULL
+ORDER BY (c.owner_kind = 'system'), p.name, e.name, c.service_key, c.system_key
+`
+
+type ListLiveDatabaseTenantDetailsByClusterParams struct {
+	ClusterID uuid.UUID
+	Since     time.Time
+}
+
+type ListLiveDatabaseTenantDetailsByClusterRow struct {
+	TenantID           uuid.UUID
+	DatabaseName       string
+	RoleName           string
+	CreatedAt          time.Time
+	ClaimID            uuid.UUID
+	OwnerKind          string
+	SystemKey          string
+	ServiceKey         string
+	Phase              string
+	StorageBytes       int64
+	ProjectID          *uuid.UUID
+	EnvironmentID      *uuid.UUID
+	ProjectName        *string
+	ProjectDisplayName *string
+	EnvironmentName    *string
+	UsedBytes          *int64
+}
+
+// Every live tenant on a cluster with its claim, the owning project and
+// environment (NULL for system claims), and the newest database storage
+// sample within the cutoff: the pool page's database list in one query.
+// Service-owned tenants sort first, then by project, environment and key.
+func (q *Queries) ListLiveDatabaseTenantDetailsByCluster(ctx context.Context, arg ListLiveDatabaseTenantDetailsByClusterParams) ([]ListLiveDatabaseTenantDetailsByClusterRow, error) {
+	rows, err := q.db.Query(ctx, listLiveDatabaseTenantDetailsByCluster, arg.ClusterID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveDatabaseTenantDetailsByClusterRow
+	for rows.Next() {
+		var i ListLiveDatabaseTenantDetailsByClusterRow
+		if err := rows.Scan(
+			&i.TenantID,
+			&i.DatabaseName,
+			&i.RoleName,
+			&i.CreatedAt,
+			&i.ClaimID,
+			&i.OwnerKind,
+			&i.SystemKey,
+			&i.ServiceKey,
+			&i.Phase,
+			&i.StorageBytes,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ProjectName,
+			&i.ProjectDisplayName,
+			&i.EnvironmentName,
+			&i.UsedBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listLiveDatabaseTenantsByCluster = `-- name: ListLiveDatabaseTenantsByCluster :many

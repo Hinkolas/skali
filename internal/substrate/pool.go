@@ -146,3 +146,17 @@ func poolConditionDetail(object *unstructured.Unstructured) string {
 	}
 	return ""
 }
+
+// PoolMembers lists a pool's live instance pods as members. Instance pods
+// carry no managed label and never enter the observed store, so this is a
+// direct read; nil without a cluster (API-only, tests).
+func (c *Controller) PoolMembers(ctx context.Context, pool string) ([]cnpg.Instance, error) {
+	if c.deps.Cluster == nil {
+		return nil, nil
+	}
+	pods, err := c.deps.Cluster.ListPods(ctx, Namespace, cnpg.InstanceSelector(pool))
+	if err != nil {
+		return nil, fmt.Errorf("substrate: list pool members: %w", err)
+	}
+	return cnpg.InstancesFromPods(pods), nil
+}

@@ -4,14 +4,24 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 
+	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/pgtune"
+	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate"
+	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 )
 
 // poolsTestAPI wires a real (idle) substrate controller as the PoolTuner
@@ -192,4 +202,220 @@ func TestDatabasePoolSettingsRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	pool = body["pools"].([]any)[0].(map[string]any)
 	require.Equal(t, true, pool["memory"].(map[string]any)["auto"])
+}
+
+// poolsTestAPIWithCluster is poolsTestAPI with a fake Kubernetes cluster
+// behind the substrate, so member reads see the given pods.
+func poolsTestAPIWithCluster(t *testing.T, objects ...runtime.Object) *testAPI {
+	t.Helper()
+	return newTestAPIWith(t, "test", func(deps *Deps) {
+		deps.Pools = substrate.New(substrate.Deps{
+			DB:       deps.Databases,
+			Observed: deps.RuntimeLogs.Observed,
+			Cluster:  substrate.KubeCluster{Client: &kube.Client{Clientset: kubefake.NewClientset(objects...)}},
+		}, substrate.Config{Managed: true})
+		deps.ManagedCluster = true
+	})
+}
+
+func instancePod(name, pool, role, node string, ready bool, restarts int32) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: substrate.Namespace,
+			Labels:    map[string]string{cnpg.LabelCluster: pool, cnpg.LabelPodRole: cnpg.PodRoleInstance, cnpg.LabelInstanceRole: role},
+		},
+		Spec: corev1.PodSpec{NodeName: node},
+		Status: corev1.PodStatus{
+			Phase:             corev1.PodRunning,
+			Conditions:        []corev1.PodCondition{{Type: corev1.PodReady, Status: map[bool]corev1.ConditionStatus{true: corev1.ConditionTrue, false: corev1.ConditionFalse}[ready]}},
+			ContainerStatuses: []corev1.ContainerStatus{{RestartCount: restarts}},
+		},
+	}
+}
+
+func TestDatabasePoolDetailRequiresAdmin(t *testing.T) {
+	a := newTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	a.createUser("member@example.com", "hunter2hunter2")
+	member := a.login("member@example.com", "hunter2hunter2")
+
+	for _, path := range []string{"/v1/system/database-pools/pg17-shared", "/v1/system/database-pools/pg17-shared/metrics"} {
+		status, body := a.do("GET", path, member, nil)
+		require.Equal(t, http.StatusForbidden, status, path)
+		require.Equal(t, "forbidden", errorCode(t, body))
+	}
+}
+
+func TestDatabasePoolGet(t *testing.T) {
+	a, _ := poolsTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	token := a.login("admin@example.com", "hunter2hunter2")
+
+	status, body := a.do("GET", "/v1/system/database-pools/pg17-shared", token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errorCode(t, body))
+
+	seedPool(t, a, "pg17-shared", pgtune.ClassShared)
+	status, body = a.do("GET", "/v1/system/database-pools/pg17-shared", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	pool := body["pool"].(map[string]any)
+	require.Equal(t, "pg17-shared", pool["name"])
+	require.Equal(t, "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie", pool["image"])
+	require.Nil(t, pool["node_port"])
+	require.Equal(t, []any{}, pool["members"], "no cluster behind the controller: no members, never null")
+	require.Equal(t, []any{}, pool["databases"])
+
+	// A project database and the platform's own on the pool, with one
+	// fresh and one stale size sample for the project one.
+	ctx := context.Background()
+	db := dbstore.New(a.st)
+	cluster, err := db.LiveClusterByName(ctx, "pg17-shared")
+	require.NoError(t, err)
+	projectID, environmentID := a.createEnvironment(t, token)
+	project, environment := uuid.MustParse(projectID), uuid.MustParse(environmentID)
+	claimRow, err := db.EnsureClaim(ctx, dbstore.ServiceOwner(project, environment, "demo", "production", "data"),
+		dbstore.ClaimSpec{Engine: "postgres", Major: 17, Isolation: "shared", Availability: "single", StorageBytes: 5 << 30})
+	require.NoError(t, err)
+	_, err = db.BindClaim(ctx, claimRow.ID, cluster.ID)
+	require.NoError(t, err)
+	_, err = db.RecordTenant(ctx, dbstore.TenantInput{ClaimID: claimRow.ID, ClusterID: cluster.ID,
+		DatabaseName: "demo_production_data", RoleName: "demo_production_data", CredentialSecret: "db-demo",
+		Host: "pg17-shared-rw.skali-platform.svc", Port: 5432})
+	require.NoError(t, err)
+	_, err = db.TransitionClaim(ctx, claimRow.ID, claim.PhaseProvisioned)
+	require.NoError(t, err)
+	systemClaim, err := db.EnsureClaim(ctx, dbstore.SystemOwner("object-storage/metadata"),
+		dbstore.ClaimSpec{Engine: "postgres", Major: 17, Isolation: "shared", Availability: "single"})
+	require.NoError(t, err)
+	_, err = db.BindClaim(ctx, systemClaim.ID, cluster.ID)
+	require.NoError(t, err)
+	_, err = db.RecordTenant(ctx, dbstore.TenantInput{ClaimID: systemClaim.ID, ClusterID: cluster.ID,
+		DatabaseName: "skali_objects", RoleName: "skali_objects", CredentialSecret: "db-objects",
+		Host: "pg17-shared-rw.skali-platform.svc", Port: 5432})
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	for _, sample := range []struct {
+		at   time.Time
+		used int64
+	}{{now.Add(-30 * time.Hour), 111}, {now.Add(-time.Hour), 222}} {
+		_, err := a.st.InsertStorageSamples(ctx, store.InsertStorageSamplesParams{
+			SampledAt:      sample.at,
+			EnvironmentIds: []uuid.UUID{environment},
+			ServiceKeys:    []string{"databases.data"},
+			Kinds:          []string{"database"},
+			UsedBytes:      []int64{sample.used},
+			UsedMeasured:   []bool{true},
+			CapacityBytes:  []int64{5 << 30},
+		})
+		require.NoError(t, err)
+	}
+
+	status, body = a.do("GET", "/v1/system/database-pools/pg17-shared", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	databases := body["pool"].(map[string]any)["databases"].([]any)
+	require.Len(t, databases, 2)
+	first := databases[0].(map[string]any)
+	require.Equal(t, "demo_production_data", first["database_name"])
+	require.Equal(t, "service", first["owner"])
+	require.Equal(t, "data", first["service_key"])
+	require.Equal(t, "provisioned", first["phase"])
+	require.EqualValues(t, 5<<30, first["storage_bytes"])
+	require.EqualValues(t, 222, first["used_bytes"], "the newest sample within a day")
+	require.Equal(t, map[string]any{"id": projectID, "name": "demo", "display_name": ""}, first["project"])
+	require.Equal(t, map[string]any{"id": environmentID, "name": "production"}, first["environment"])
+	second := databases[1].(map[string]any)
+	require.Equal(t, "skali_objects", second["database_name"])
+	require.Equal(t, "system", second["owner"])
+	require.Equal(t, "object-storage/metadata", second["system_key"])
+	require.Nil(t, second["project"])
+	require.Nil(t, second["environment"])
+	require.Nil(t, second["used_bytes"])
+
+	// Released pools are gone.
+	_, err = db.TransitionCluster(ctx, cluster.ID, "releasing")
+	require.NoError(t, err)
+	_, err = db.TransitionCluster(ctx, cluster.ID, "released")
+	require.NoError(t, err)
+	status, _ = a.do("GET", "/v1/system/database-pools/pg17-shared", token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+}
+
+func TestDatabasePoolGetMembers(t *testing.T) {
+	a := poolsTestAPIWithCluster(t,
+		instancePod("pg17-shared-2", "pg17-shared", cnpg.RoleReplica, "db-2", false, 3),
+		instancePod("pg17-shared-1", "pg17-shared", cnpg.RolePrimary, "db-1", true, 0),
+		instancePod("pg18-shared-1", "pg18-shared", cnpg.RolePrimary, "db-1", true, 0),
+	)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	token := a.login("admin@example.com", "hunter2hunter2")
+	seedPool(t, a, "pg17-shared", pgtune.ClassShared)
+
+	status, body := a.do("GET", "/v1/system/database-pools/pg17-shared", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	members := body["pool"].(map[string]any)["members"].([]any)
+	require.Len(t, members, 2, "the other pool's instance is not a member")
+	primary := members[0].(map[string]any)
+	require.Equal(t, "pg17-shared-1", primary["name"])
+	require.Equal(t, "primary", primary["role"])
+	require.Equal(t, "db-1", primary["node"])
+	require.Equal(t, true, primary["ready"])
+	require.EqualValues(t, 0, primary["restarts"])
+	require.Equal(t, "Running", primary["phase"])
+	replica := members[1].(map[string]any)
+	require.Equal(t, "pg17-shared-2", replica["name"])
+	require.Equal(t, "replica", replica["role"])
+	require.Equal(t, false, replica["ready"])
+	require.EqualValues(t, 3, replica["restarts"])
+}
+
+func TestDatabasePoolMetrics(t *testing.T) {
+	a, _ := poolsTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	token := a.login("admin@example.com", "hunter2hunter2")
+	path := "/v1/system/database-pools/pg17-shared/metrics"
+
+	status, _ := a.do("GET", path+"?window=2h", token, nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	status, _ = a.do("GET", path, token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+
+	seedPool(t, a, "pg17-shared", pgtune.ClassShared)
+	status, body := a.do("GET", path+"?window=1h", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "pg17-shared", body["pool"])
+	require.Equal(t, "1h", body["window"])
+	require.EqualValues(t, 60, body["step_seconds"])
+	require.Len(t, body["timestamps"], 60)
+	require.Len(t, body["connections"], 60)
+	require.Nil(t, body["current"], "no sample yet")
+
+	ctx := context.Background()
+	cluster, err := dbstore.New(a.st).LiveClusterByName(ctx, "pg17-shared")
+	require.NoError(t, err)
+	ptr := func(v int64) *int64 { return &v }
+	// Sampled right now, so it always lands in the trailing (in-progress)
+	// bucket whatever the wall clock.
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, a.st.InsertPoolMetricSample(ctx, store.InsertPoolMetricSampleParams{
+		ClusterID: cluster.ID, SampledAt: now, CpuMillicores: 250, MemoryBytes: 900 << 20,
+		Instances: 2, InstancesReady: 2, Connections: ptr(12), XactCommit: ptr(40), XactRollback: ptr(1),
+		BlksHit: ptr(300), BlksRead: ptr(100), DatabaseBytes: ptr(70 << 20),
+	}))
+	seedDatabaseNode(a, "db-1", 7782<<20)
+
+	status, body = a.do("GET", path+"?window=1h", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	last := len(body["timestamps"].([]any)) - 1
+	require.EqualValues(t, 250, body["cpu_millicores"].([]any)[last])
+	require.EqualValues(t, 12, body["connections"].([]any)[last])
+	require.EqualValues(t, 40, body["commits"].([]any)[last])
+	require.InDelta(t, 0.75, body["cache_hit_ratio"].([]any)[last], 0.0001)
+	require.Nil(t, body["connections"].([]any)[0])
+	current := body["current"].(map[string]any)
+	require.EqualValues(t, 250, current["cpu_millicores"])
+	require.EqualValues(t, 12, current["connections"])
+	require.EqualValues(t, 2, current["instances_ready"])
+	require.EqualValues(t, 3328<<20, current["memory_budget_bytes"], "the shared pool's automatic budget on that node")
+	require.EqualValues(t, 100, current["max_connections"])
 }

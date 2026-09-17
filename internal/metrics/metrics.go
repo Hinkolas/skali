@@ -8,10 +8,12 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -291,4 +293,122 @@ func (s *Service) NodesSeries(ctx context.Context, w Window, now time.Time) (*No
 		current.MemoryBytes[i] = &mem
 	}
 	return series, nil
+}
+
+// PoolSeries carries one pool's aligned usage series. CPU and memory are
+// the instances summed; the exporter series (connections, transaction and
+// block counters, database size) are the primary's view, nil in buckets
+// where no exporter reading landed.
+type PoolSeries struct {
+	Window         Window
+	Timestamps     []time.Time
+	CPUMillicores  []*int64
+	MemoryBytes    []*int64
+	Connections    []*int64
+	Commits        []*int64
+	Rollbacks      []*int64
+	BlksHit        []*int64
+	BlksRead       []*int64
+	CacheHitRatio  []*float64
+	DatabaseBytes  []*int64
+	InstancesReady []*int64
+}
+
+// poolValue maps the query's -1 sentinel (no exporter reading in the
+// bucket) back to a gap.
+func poolValue(v int64) *int64 {
+	if v < 0 {
+		return nil
+	}
+	return &v
+}
+
+func (s *Service) PoolSeries(ctx context.Context, clusterID uuid.UUID, w Window, now time.Time) (*PoolSeries, error) {
+	since, until, timestamps := w.grid(now)
+	rows, err := s.Store.PoolMetricSeries(ctx, store.PoolMetricSeriesParams{
+		ClusterID:   clusterID,
+		StepSeconds: int32(w.Step / time.Second),
+		Origin:      since,
+		Since:       since,
+		Until:       until,
+	})
+	if err != nil {
+		return nil, err
+	}
+	n := len(timestamps)
+	series := &PoolSeries{
+		Window:         w,
+		Timestamps:     timestamps,
+		CPUMillicores:  make([]*int64, n),
+		MemoryBytes:    make([]*int64, n),
+		Connections:    make([]*int64, n),
+		Commits:        make([]*int64, n),
+		Rollbacks:      make([]*int64, n),
+		BlksHit:        make([]*int64, n),
+		BlksRead:       make([]*int64, n),
+		CacheHitRatio:  make([]*float64, n),
+		DatabaseBytes:  make([]*int64, n),
+		InstancesReady: make([]*int64, n),
+	}
+	for _, row := range rows {
+		i, ok := bucketIndex(since, row.Bucket, w.Step, n)
+		if !ok {
+			continue
+		}
+		cpu, mem, ready := row.CpuMillicores, row.MemoryBytes, row.InstancesReady
+		series.CPUMillicores[i] = &cpu
+		series.MemoryBytes[i] = &mem
+		series.InstancesReady[i] = &ready
+		series.Connections[i] = poolValue(row.Connections)
+		series.Commits[i] = poolValue(row.XactCommit)
+		series.Rollbacks[i] = poolValue(row.XactRollback)
+		series.BlksHit[i] = poolValue(row.BlksHit)
+		series.BlksRead[i] = poolValue(row.BlksRead)
+		series.DatabaseBytes[i] = poolValue(row.DatabaseBytes)
+		if hit, read := series.BlksHit[i], series.BlksRead[i]; hit != nil && read != nil && *hit+*read > 0 {
+			ratio := float64(*hit) / float64(*hit+*read)
+			series.CacheHitRatio[i] = &ratio
+		}
+	}
+	return series, nil
+}
+
+// PoolCurrent is a pool's newest sample; the exporter fields are nil when
+// that scrape failed.
+type PoolCurrent struct {
+	SampledAt      time.Time
+	CPUMillicores  int64
+	MemoryBytes    int64
+	Instances      int64
+	InstancesReady int64
+	Connections    *int64
+	DatabaseBytes  *int64
+}
+
+// poolCurrentCutoff is how old the newest sample may be to still count as
+// current: a few missed ticks, not a dead sampler.
+const poolCurrentCutoff = 10 * time.Minute
+
+// PoolCurrent returns the pool's newest sample within the cutoff, or nil
+// when the sampler has not observed the pool recently.
+func (s *Service) PoolCurrent(ctx context.Context, clusterID uuid.UUID, now time.Time) (*PoolCurrent, error) {
+	row, err := s.Store.LatestPoolMetricSample(ctx, store.LatestPoolMetricSampleParams{
+		ClusterID: clusterID,
+		Since:     now.Add(-poolCurrentCutoff),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &PoolCurrent{
+		SampledAt:      row.SampledAt,
+		CPUMillicores:  row.CpuMillicores,
+		MemoryBytes:    row.MemoryBytes,
+		Instances:      row.Instances,
+		InstancesReady: row.InstancesReady,
+		Connections:    row.Connections,
+		DatabaseBytes:  row.DatabaseBytes,
+	}, nil
 }

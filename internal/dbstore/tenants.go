@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -105,4 +106,18 @@ func (s *Service) BumpCredentialVersion(ctx context.Context, tenantID uuid.UUID)
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ListClusterTenantDetails returns the live tenants on a cluster joined
+// with their claim, owning project and environment, and the newest
+// database storage sample since the cutoff: the pool page's database list.
+func (s *Service) ListClusterTenantDetails(ctx context.Context, clusterID uuid.UUID, since time.Time) ([]store.ListLiveDatabaseTenantDetailsByClusterRow, error) {
+	rows, err := s.st.ListLiveDatabaseTenantDetailsByCluster(ctx, store.ListLiveDatabaseTenantDetailsByClusterParams{
+		ClusterID: clusterID,
+		Since:     since,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dbstore: list cluster tenant details: %w", err)
+	}
+	return rows, nil
 }

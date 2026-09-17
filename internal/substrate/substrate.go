@@ -72,6 +72,10 @@ type Cluster interface {
 	// ProxyCIDRs derives the /32 source addresses skalid's service-proxy
 	// traffic presents to pods, the object-store fence's admit list.
 	ProxyCIDRs(ctx context.Context) ([]string, error)
+	// ListPods lists a namespace's pods by label selector; pool members
+	// are read live because instance pods carry no managed label and so
+	// never enter the observed store.
+	ListPods(ctx context.Context, namespace, selector string) ([]corev1.Pod, error)
 }
 
 // KubeCluster adapts *kube.Client to the Cluster interface.
@@ -97,6 +101,14 @@ func (k KubeCluster) GetObject(ctx context.Context, gvr schema.GroupVersionResou
 
 func (k KubeCluster) ProxyCIDRs(ctx context.Context) ([]string, error) {
 	return k.Client.NodeProxyCIDRs(ctx)
+}
+
+func (k KubeCluster) ListPods(ctx context.Context, namespace, selector string) ([]corev1.Pod, error) {
+	list, err := k.Client.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
 }
 
 type Deps struct {

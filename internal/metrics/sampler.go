@@ -60,6 +60,9 @@ type Sampler struct {
 	// lastEdge holds the previous scrape's cumulative counters per Traefik
 	// router; deltas against it become the stored edge samples.
 	lastEdge map[string]routerCounters
+	// lastPool holds the previous exporter counters per pool row, keyed by
+	// id so a recreated namesake starts a fresh baseline.
+	lastPool map[uuid.UUID]poolCounters
 	// edgeUnavailable suppresses repeat logging while the Traefik metrics
 	// port is not exposed yet.
 	edgeUnavailable bool
@@ -95,6 +98,9 @@ func (s *Sampler) tick(ctx context.Context) {
 	}
 	if err := s.sampleEdge(tickCtx, now); err != nil && !errors.Is(err, context.Canceled) {
 		slog.WarnContext(ctx, "sample edge metrics", "err", err)
+	}
+	if err := s.samplePools(tickCtx, now); err != nil && !errors.Is(err, context.Canceled) {
+		slog.WarnContext(ctx, "sample pool metrics", "err", err)
 	}
 	// Storage rides its own slower cadence and a wider timeout: one
 	// kubelet proxy per node plus one scrape per pool. Time-based rather
@@ -293,8 +299,12 @@ func (s *Sampler) prune(ctx context.Context, now time.Time) {
 	if err != nil {
 		slog.WarnContext(ctx, "prune storage samples", "err", err)
 	}
-	if apps+nodes+edges+storageNodes+storageServices > 0 {
+	pools, err := s.Store.DeleteAgedPoolMetricSamples(ctx, cutoff)
+	if err != nil {
+		slog.WarnContext(ctx, "prune pool metric samples", "err", err)
+	}
+	if apps+nodes+edges+storageNodes+storageServices+pools > 0 {
 		slog.InfoContext(ctx, "pruned metric samples", "apps", apps, "nodes", nodes, "edges", edges,
-			"storage_nodes", storageNodes, "storage_services", storageServices)
+			"storage_nodes", storageNodes, "storage_services", storageServices, "pools", pools)
 	}
 }

@@ -68,6 +68,10 @@ func (f *fakeCluster) Delete(context.Context, kube.ObjectRef) (bool, error) {
 	return false, nil
 }
 
+func (f *fakeCluster) ListPods(context.Context, string, string) ([]corev1.Pod, error) {
+	return nil, nil
+}
+
 func (f *fakeCluster) GetSecret(_ context.Context, namespace, name string) (*corev1.Secret, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

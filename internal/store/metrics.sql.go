@@ -195,6 +195,18 @@ func (q *Queries) DeleteAgedNodeMetricSamples(ctx context.Context, sampledAt tim
 	return result.RowsAffected(), nil
 }
 
+const deleteAgedPoolMetricSamples = `-- name: DeleteAgedPoolMetricSamples :execrows
+DELETE FROM metric_pool_samples WHERE sampled_at < $1
+`
+
+func (q *Queries) DeleteAgedPoolMetricSamples(ctx context.Context, sampledAt time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAgedPoolMetricSamples, sampledAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteAgedStorageNodeSamples = `-- name: DeleteAgedStorageNodeSamples :execrows
 DELETE FROM metric_storage_node_samples WHERE sampled_at < $1
 `
@@ -406,6 +418,51 @@ func (q *Queries) InsertNodeMetricSamples(ctx context.Context, arg InsertNodeMet
 	return result.RowsAffected(), nil
 }
 
+const insertPoolMetricSample = `-- name: InsertPoolMetricSample :exec
+INSERT INTO metric_pool_samples (cluster_id, sampled_at, cpu_millicores, memory_bytes,
+    instances, instances_ready, connections, xact_commit, xact_rollback, blks_hit, blks_read, database_bytes)
+VALUES ($1, $2, $3, $4, $5, $6,
+    $7::bigint, $8::bigint, $9::bigint,
+    $10::bigint, $11::bigint, $12::bigint)
+ON CONFLICT DO NOTHING
+`
+
+type InsertPoolMetricSampleParams struct {
+	ClusterID      uuid.UUID
+	SampledAt      time.Time
+	CpuMillicores  int64
+	MemoryBytes    int64
+	Instances      int64
+	InstancesReady int64
+	Connections    *int64
+	XactCommit     *int64
+	XactRollback   *int64
+	BlksHit        *int64
+	BlksRead       *int64
+	DatabaseBytes  *int64
+}
+
+// Pool samples arrive one row per pool per tick: pools are few, and the
+// exporter fields are nullable (a failed scrape stores NULL), which the
+// unnest batch form cannot express per column.
+func (q *Queries) InsertPoolMetricSample(ctx context.Context, arg InsertPoolMetricSampleParams) error {
+	_, err := q.db.Exec(ctx, insertPoolMetricSample,
+		arg.ClusterID,
+		arg.SampledAt,
+		arg.CpuMillicores,
+		arg.MemoryBytes,
+		arg.Instances,
+		arg.InstancesReady,
+		arg.Connections,
+		arg.XactCommit,
+		arg.XactRollback,
+		arg.BlksHit,
+		arg.BlksRead,
+		arg.DatabaseBytes,
+	)
+	return err
+}
+
 const insertStorageNodeSamples = `-- name: InsertStorageNodeSamples :execrows
 INSERT INTO metric_storage_node_samples (node_name, sampled_at, capacity_bytes, used_bytes, available_bytes, volumes_bytes, databases_bytes, objects_bytes, images_bytes, temporary_bytes)
 SELECT s.node_name, $1::timestamptz, s.capacity_bytes, s.used_bytes, s.available_bytes, s.volumes_bytes, s.databases_bytes, s.objects_bytes, s.images_bytes, s.temporary_bytes
@@ -500,6 +557,38 @@ func (q *Queries) InsertStorageSamples(ctx context.Context, arg InsertStorageSam
 	return result.RowsAffected(), nil
 }
 
+const latestPoolMetricSample = `-- name: LatestPoolMetricSample :one
+SELECT cluster_id, sampled_at, cpu_millicores, memory_bytes, instances, instances_ready, connections, xact_commit, xact_rollback, blks_hit, blks_read, database_bytes FROM metric_pool_samples
+WHERE cluster_id = $1 AND sampled_at >= $2::timestamptz
+ORDER BY sampled_at DESC
+LIMIT 1
+`
+
+type LatestPoolMetricSampleParams struct {
+	ClusterID uuid.UUID
+	Since     time.Time
+}
+
+func (q *Queries) LatestPoolMetricSample(ctx context.Context, arg LatestPoolMetricSampleParams) (MetricPoolSample, error) {
+	row := q.db.QueryRow(ctx, latestPoolMetricSample, arg.ClusterID, arg.Since)
+	var i MetricPoolSample
+	err := row.Scan(
+		&i.ClusterID,
+		&i.SampledAt,
+		&i.CpuMillicores,
+		&i.MemoryBytes,
+		&i.Instances,
+		&i.InstancesReady,
+		&i.Connections,
+		&i.XactCommit,
+		&i.XactRollback,
+		&i.BlksHit,
+		&i.BlksRead,
+		&i.DatabaseBytes,
+	)
+	return i, err
+}
+
 const nodeMetricSeries = `-- name: NodeMetricSeries :many
 SELECT (date_bin(make_interval(secs => $1::int), sampled_at, $2::timestamptz))::timestamptz AS bucket,
        node_name,
@@ -551,6 +640,88 @@ func (q *Queries) NodeMetricSeries(ctx context.Context, arg NodeMetricSeriesPara
 			&i.MemoryBytes,
 			&i.CpuAllocatableMillicores,
 			&i.MemoryAllocatableBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const poolMetricSeries = `-- name: PoolMetricSeries :many
+SELECT (date_bin(make_interval(secs => $2::int), sampled_at, $3::timestamptz))::timestamptz AS bucket,
+       (avg(cpu_millicores))::bigint                 AS cpu_millicores,
+       (avg(memory_bytes))::bigint                   AS memory_bytes,
+       (coalesce(avg(connections), -1))::bigint      AS connections,
+       (coalesce(sum(xact_commit), -1))::bigint      AS xact_commit,
+       (coalesce(sum(xact_rollback), -1))::bigint    AS xact_rollback,
+       (coalesce(sum(blks_hit), -1))::bigint         AS blks_hit,
+       (coalesce(sum(blks_read), -1))::bigint        AS blks_read,
+       (coalesce(max(database_bytes), -1))::bigint   AS database_bytes,
+       (max(instances_ready))::bigint                AS instances_ready
+FROM metric_pool_samples
+WHERE cluster_id = $1
+  AND sampled_at >= $4::timestamptz
+  AND sampled_at < $5::timestamptz
+GROUP BY bucket
+ORDER BY bucket
+`
+
+type PoolMetricSeriesParams struct {
+	ClusterID   uuid.UUID
+	StepSeconds int32
+	Origin      time.Time
+	Since       time.Time
+	Until       time.Time
+}
+
+type PoolMetricSeriesRow struct {
+	Bucket         time.Time
+	CpuMillicores  int64
+	MemoryBytes    int64
+	Connections    int64
+	XactCommit     int64
+	XactRollback   int64
+	BlksHit        int64
+	BlksRead       int64
+	DatabaseBytes  int64
+	InstancesReady int64
+}
+
+// Gauges average, counter deltas sum (per-interval counts), sizes and ready
+// counts take the bucket max. The exporter columns are nullable, and sqlc
+// cannot type a nullable aggregate, so buckets with no exporter reading
+// coalesce to -1 (never a real value: these are counts and bytes) and the
+// reader maps -1 back to a chart gap.
+func (q *Queries) PoolMetricSeries(ctx context.Context, arg PoolMetricSeriesParams) ([]PoolMetricSeriesRow, error) {
+	rows, err := q.db.Query(ctx, poolMetricSeries,
+		arg.ClusterID,
+		arg.StepSeconds,
+		arg.Origin,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PoolMetricSeriesRow
+	for rows.Next() {
+		var i PoolMetricSeriesRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.CpuMillicores,
+			&i.MemoryBytes,
+			&i.Connections,
+			&i.XactCommit,
+			&i.XactRollback,
+			&i.BlksHit,
+			&i.BlksRead,
+			&i.DatabaseBytes,
+			&i.InstancesReady,
 		); err != nil {
 			return nil, err
 		}

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,9 +14,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/metrics"
 	"github.com/Hinkolas/skali/internal/pgtune"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 )
 
 // PoolTuner is the substrate's sizing and wake-up surface behind the
@@ -31,13 +35,17 @@ type PoolTuner interface {
 	// EnqueuePool re-applies one pool's CNPG objects now instead of at the
 	// next resync.
 	EnqueuePool(id uuid.UUID)
+	// PoolMembers lists a pool's live instance pods; nil without a cluster.
+	PoolMembers(ctx context.Context, pool string) ([]cnpg.Instance, error)
 }
 
 type poolsHandlers struct {
 	db        *dbstore.Service
 	pools     PoolTuner
 	reconcile *reconcile.Kernel
-	managed   bool
+	// metrics serves the pool usage series; nil hides the metrics route.
+	metrics *metrics.Service
+	managed bool
 }
 
 type poolMemoryPayload struct {
@@ -75,6 +83,8 @@ type poolPayload struct {
 	Major        int32                 `json:"major"`
 	Instances    int32                 `json:"instances"`
 	StorageBytes int64                 `json:"storage_bytes"`
+	Image        string                `json:"image"`
+	NodePort     *int32                `json:"node_port"`
 	State        string                `json:"state"`
 	Memory       poolMemoryPayload     `json:"memory"`
 	Parameters   poolParametersPayload `json:"parameters"`
@@ -105,6 +115,8 @@ func (h *poolsHandlers) payload(r *http.Request, pool store.DatabaseCluster, bud
 		Major:        pool.Major,
 		Instances:    pool.Instances,
 		StorageBytes: pool.StorageBytes,
+		Image:        pool.Image,
+		NodePort:     pool.NodePort,
 		State:        pool.State,
 		Memory:       poolMemoryPayload{Auto: pool.MemoryBytes == nil},
 		Parameters: poolParametersPayload{
@@ -162,6 +174,235 @@ func (h *poolsHandlers) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
+// poolMemberPayload is one instance pod of a pool.
+type poolMemberPayload struct {
+	Name      string     `json:"name"`
+	Role      string     `json:"role"`
+	Node      string     `json:"node,omitempty"`
+	Ready     bool       `json:"ready"`
+	Restarts  int32      `json:"restarts"`
+	StartedAt *time.Time `json:"started_at"`
+	Phase     string     `json:"phase"`
+}
+
+type poolProjectRef struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+}
+
+type poolEnvironmentRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// poolDatabasePayload is one logical database on a pool with its owner.
+// Project and environment are null for system-owned databases.
+type poolDatabasePayload struct {
+	DatabaseName string              `json:"database_name"`
+	RoleName     string              `json:"role_name"`
+	Owner        string              `json:"owner"`
+	SystemKey    string              `json:"system_key,omitempty"`
+	ServiceKey   string              `json:"service_key,omitempty"`
+	Project      *poolProjectRef     `json:"project"`
+	Environment  *poolEnvironmentRef `json:"environment"`
+	Phase        string              `json:"phase"`
+	StorageBytes int64               `json:"storage_bytes"`
+	// UsedBytes is the newest measured logical size, null before the
+	// sampler has seen the database.
+	UsedBytes *int64    `json:"used_bytes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type poolDetailPayload struct {
+	poolPayload
+	Members   []poolMemberPayload   `json:"members"`
+	Databases []poolDatabasePayload `json:"databases"`
+}
+
+// livePool resolves the path's pool or writes the 404; released pools
+// are gone from the API's point of view.
+func (h *poolsHandlers) livePool(w http.ResponseWriter, r *http.Request) (*store.DatabaseCluster, bool) {
+	pool, err := h.db.LiveClusterByName(r.Context(), chi.URLParam(r, "name"))
+	if errors.Is(err, dbstore.ErrNotFound) {
+		writeError(w, http.StatusNotFound, codeNotFound, "database pool not found")
+		return nil, false
+	}
+	if err != nil {
+		writeInternalError(r.Context(), w, "get database pool", err)
+		return nil, false
+	}
+	return pool, true
+}
+
+// get serves one pool with its members (live instance pods) and every
+// database on it. A failed pod read degrades to an empty member list:
+// the pool's stored facts still answer.
+func (h *poolsHandlers) get(w http.ResponseWriter, r *http.Request) {
+	pool, ok := h.livePool(w, r)
+	if !ok {
+		return
+	}
+	budgets, err := h.budgets(r)
+	if err != nil {
+		writeInternalError(r.Context(), w, "size database pools", err)
+		return
+	}
+	payload := poolDetailPayload{
+		poolPayload: h.payload(r, *pool, budgets),
+		Members:     []poolMemberPayload{},
+		Databases:   []poolDatabasePayload{},
+	}
+	if h.pools != nil {
+		members, err := h.pools.PoolMembers(r.Context(), pool.Name)
+		if err != nil {
+			slog.WarnContext(r.Context(), "list database pool members", "pool", pool.Name, "err", err)
+		}
+		for _, member := range members {
+			payload.Members = append(payload.Members, poolMemberPayload{
+				Name:      member.Name,
+				Role:      member.Role,
+				Node:      member.Node,
+				Ready:     member.Ready,
+				Restarts:  member.Restarts,
+				StartedAt: member.StartedAt,
+				Phase:     member.Phase,
+			})
+		}
+	}
+	rows, err := h.db.ListClusterTenantDetails(r.Context(), pool.ID, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		writeInternalError(r.Context(), w, "list database pool tenants", err)
+		return
+	}
+	for _, row := range rows {
+		entry := poolDatabasePayload{
+			DatabaseName: row.DatabaseName,
+			RoleName:     row.RoleName,
+			Owner:        row.OwnerKind,
+			SystemKey:    row.SystemKey,
+			ServiceKey:   row.ServiceKey,
+			Phase:        row.Phase,
+			StorageBytes: row.StorageBytes,
+			UsedBytes:    row.UsedBytes,
+			CreatedAt:    row.CreatedAt,
+		}
+		if row.ProjectID != nil && row.ProjectName != nil {
+			entry.Project = &poolProjectRef{ID: row.ProjectID.String(), Name: *row.ProjectName}
+			if row.ProjectDisplayName != nil {
+				entry.Project.DisplayName = *row.ProjectDisplayName
+			}
+		}
+		if row.EnvironmentID != nil && row.EnvironmentName != nil {
+			entry.Environment = &poolEnvironmentRef{ID: row.EnvironmentID.String(), Name: *row.EnvironmentName}
+		}
+		payload.Databases = append(payload.Databases, entry)
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Pool poolDetailPayload `json:"pool"`
+	}{payload})
+}
+
+// Every series shares the timestamps array and value arrays carry null
+// for buckets without samples (the console chart contract). CPU and
+// memory sum the instances; the rest is the primary's exporter view.
+type poolMetricsPayload struct {
+	Pool           string                     `json:"pool"`
+	Window         string                     `json:"window"`
+	StepSeconds    int                        `json:"step_seconds"`
+	Timestamps     []time.Time                `json:"timestamps"`
+	CPUMillicores  []*int64                   `json:"cpu_millicores"`
+	MemoryBytes    []*int64                   `json:"memory_bytes"`
+	Connections    []*int64                   `json:"connections"`
+	Commits        []*int64                   `json:"commits"`
+	Rollbacks      []*int64                   `json:"rollbacks"`
+	BlksHit        []*int64                   `json:"blks_hit"`
+	BlksRead       []*int64                   `json:"blks_read"`
+	CacheHitRatio  []*float64                 `json:"cache_hit_ratio"`
+	DatabaseBytes  []*int64                   `json:"database_bytes"`
+	InstancesReady []*int64                   `json:"instances_ready"`
+	Current        *poolMetricsCurrentPayload `json:"current"`
+}
+
+// poolMetricsCurrentPayload is the newest sample plus the denominators the
+// console draws against; null when the sampler has not seen the pool in
+// the last minutes.
+type poolMetricsCurrentPayload struct {
+	SampledAt         time.Time `json:"sampled_at"`
+	CPUMillicores     int64     `json:"cpu_millicores"`
+	MemoryBytes       int64     `json:"memory_bytes"`
+	Instances         int64     `json:"instances"`
+	InstancesReady    int64     `json:"instances_ready"`
+	Connections       *int64    `json:"connections"`
+	DatabaseBytes     *int64    `json:"database_bytes"`
+	MemoryBudgetBytes *int64    `json:"memory_budget_bytes"`
+	MaxConnections    *int64    `json:"max_connections"`
+}
+
+// poolMetrics serves one pool's bucketed usage series for a window.
+func (h *poolsHandlers) poolMetrics(w http.ResponseWriter, r *http.Request) {
+	window, err := metrics.WindowByName(r.URL.Query().Get("window"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "unknown window; expected 1h, 24h, or 7d")
+		return
+	}
+	pool, ok := h.livePool(w, r)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	series, err := h.metrics.PoolSeries(r.Context(), pool.ID, window, now)
+	if err != nil {
+		writeInternalError(r.Context(), w, "read database pool metrics", err)
+		return
+	}
+	payload := poolMetricsPayload{
+		Pool:           pool.Name,
+		Window:         window.Name,
+		StepSeconds:    int(window.Step / time.Second),
+		Timestamps:     series.Timestamps,
+		CPUMillicores:  series.CPUMillicores,
+		MemoryBytes:    series.MemoryBytes,
+		Connections:    series.Connections,
+		Commits:        series.Commits,
+		Rollbacks:      series.Rollbacks,
+		BlksHit:        series.BlksHit,
+		BlksRead:       series.BlksRead,
+		CacheHitRatio:  series.CacheHitRatio,
+		DatabaseBytes:  series.DatabaseBytes,
+		InstancesReady: series.InstancesReady,
+	}
+	current, err := h.metrics.PoolCurrent(r.Context(), pool.ID, now)
+	if err != nil {
+		writeInternalError(r.Context(), w, "read database pool sample", err)
+		return
+	}
+	if current != nil {
+		budgets, err := h.budgets(r)
+		if err != nil {
+			writeInternalError(r.Context(), w, "size database pools", err)
+			return
+		}
+		facts := h.payload(r, *pool, budgets)
+		payload.Current = &poolMetricsCurrentPayload{
+			SampledAt:         current.SampledAt,
+			CPUMillicores:     current.CPUMillicores,
+			MemoryBytes:       current.MemoryBytes,
+			Instances:         current.Instances,
+			InstancesReady:    current.InstancesReady,
+			Connections:       current.Connections,
+			DatabaseBytes:     current.DatabaseBytes,
+			MemoryBudgetBytes: facts.Memory.Bytes,
+		}
+		if raw, ok := facts.Parameters.Effective["max_connections"]; ok {
+			if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				payload.Current.MaxConnections = &n
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 // putSettings replaces a pool's tuning. memory_bytes absent keeps the
 // budget, null returns it to automatic, a number sets it; parameters, when
 // present, replaces the whole override map. The substrate re-applies the
@@ -184,13 +425,8 @@ func (h *poolsHandlers) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pool, err := h.db.LiveClusterByName(r.Context(), chi.URLParam(r, "name"))
-	if errors.Is(err, dbstore.ErrNotFound) {
-		writeError(w, http.StatusNotFound, codeNotFound, "database pool not found")
-		return
-	}
-	if err != nil {
-		writeInternalError(r.Context(), w, "get database pool", err)
+	pool, ok := h.livePool(w, r)
+	if !ok {
 		return
 	}
 
