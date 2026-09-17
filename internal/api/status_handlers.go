@@ -331,6 +331,8 @@ type nodePayload struct {
 	InternalIP     string     `json:"internal_ip,omitempty"`
 	ExternalIP     string     `json:"external_ip,omitempty"`
 	LastHeartbeat  *time.Time `json:"last_heartbeat"`
+	// MemoryAllocatableBytes is omitted until the kubelet reported it.
+	MemoryAllocatableBytes int64 `json:"memory_allocatable_bytes,omitempty"`
 }
 
 // nodes serves the member-visible node projection. The observation payload
@@ -346,16 +348,17 @@ func (h *statusHandlers) nodes(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, record := range records {
 		entry := nodePayload{
-			Name:           record.Name,
-			Role:           record.Role,
-			Capabilities:   append([]string{}, record.Capabilities...),
-			Arch:           record.Arch,
-			OS:             record.OS,
-			KubeletVersion: record.KubeletVersion,
-			Ready:          record.Ready,
-			Schedulable:    record.Schedulable,
-			InternalIP:     record.InternalIP,
-			ExternalIP:     record.ExternalIP,
+			Name:                   record.Name,
+			Role:                   record.Role,
+			Capabilities:           append([]string{}, record.Capabilities...),
+			Arch:                   record.Arch,
+			OS:                     record.OS,
+			KubeletVersion:         record.KubeletVersion,
+			Ready:                  record.Ready,
+			Schedulable:            record.Schedulable,
+			InternalIP:             record.InternalIP,
+			ExternalIP:             record.ExternalIP,
+			MemoryAllocatableBytes: record.MemoryAllocatableBytes,
 		}
 		if !record.LastHeartbeat.IsZero() {
 			heartbeat := record.LastHeartbeat

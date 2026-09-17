@@ -190,6 +190,8 @@ type DatabaseCluster struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	NodePort      *int32
+	MemoryBytes   *int64
+	Parameters    []byte
 }
 
 type DatabasePlacement struct {

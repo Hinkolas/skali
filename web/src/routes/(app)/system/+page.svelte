@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import Archive from '@lucide/svelte/icons/archive';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import Database from '@lucide/svelte/icons/database';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Server from '@lucide/svelte/icons/server';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
@@ -32,6 +33,18 @@
 		data.backupTarget
 			? { text: data.backupTarget.bucket, tone: 'success' as const }
 			: { text: 'not set', tone: 'neutral' as const }
+	);
+
+	// One line about the pools: how many there are, or that they are unknown.
+	const poolsSummary = $derived(
+		data.pools === null
+			? { text: 'unavailable', tone: 'neutral' as const }
+			: data.pools.length === 0
+				? { text: 'no pools', tone: 'neutral' as const }
+				: {
+						text: data.pools.length === 1 ? '1 pool' : `${data.pools.length} pools`,
+						tone: 'success' as const
+					}
 	);
 
 	// One line about updates: running, available, up to date, or unknown.
@@ -89,6 +102,26 @@
 				>
 			</div>
 			<Pill text={summary.text} tone={summary.tone} />
+			<ChevronRight size={16} class="text-text-faint flex-none" />
+		</a>
+	</Card>
+	<Card class="flex overflow-hidden">
+		<a
+			href={resolve('/(app)/system/databases')}
+			class="flex flex-1 items-center gap-3.5 px-5 py-4 transition-colors hover:bg-white/2"
+		>
+			<div
+				class="bg-accent/10 text-accent-nav grid size-9 flex-none place-items-center rounded-[11px]"
+			>
+				<Database size={17} strokeWidth={1.75} />
+			</div>
+			<div class="flex min-w-0 flex-1 flex-col">
+				<span class="text-text-primary text-lg font-medium">Databases</span>
+				<span class="text-text-muted text-md"
+					>Managed PostgreSQL pools, their memory budgets and parameters</span
+				>
+			</div>
+			<Pill text={poolsSummary.text} tone={poolsSummary.tone} />
 			<ChevronRight size={16} class="text-text-faint flex-none" />
 		</a>
 	</Card>

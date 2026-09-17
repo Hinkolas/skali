@@ -2275,6 +2275,92 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/system/database-pools:
+    get:
+      operationId: listDatabasePools
+      summary: List database pools with their tuning
+      description: |
+        Admin only. Every live pool with its memory budget (automatic from
+        the smallest database-capable node, or set explicitly) and the
+        effective PostgreSQL parameter set the pool runs: the values
+        derived from the budget with the administrator's overrides on top.
+        The budget is null and the effective set empty while a managed
+        cluster has not observed its database nodes yet (or in API-only
+        mode). The observed block is the CNPG cluster status when the
+        cluster is observed.
+      tags: [system]
+      responses:
+        "200":
+          description: The live pools.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pools]
+                properties:
+                  pools:
+                    type: array
+                    items: { $ref: "#/components/schemas/DatabasePool" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/system/database-pools/{name}/settings:
+    put:
+      operationId: putDatabasePoolSettings
+      summary: Retune a database pool
+      description: |
+        Admin only, sudo mode. memory_bytes absent keeps the budget, null
+        returns it to automatic, a number sets it (at least 256 MB and at
+        most what the smallest database node leaves to pools). parameters,
+        when present, replaces the whole override map; every key must be
+        one of the allowed tunables and every value must parse for its
+        kind (memory values in PostgreSQL syntax, e.g. 512MB). The
+        substrate re-applies the pool at once: parameters that reload live
+        take effect without interruption, the restart_keys restart the
+        instances (a single-instance pool is briefly unavailable).
+      tags: [system]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                memory_bytes:
+                  type: [integer, "null"]
+                  format: int64
+                parameters:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        "200":
+          description: The retuned pool.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pool]
+                properties:
+                  pool: { $ref: "#/components/schemas/DatabasePool" }
+        "400":
+          description: Malformed body or nothing to update.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: A budget or override failed validation; the message names the key and the limit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/nodes:
     get:
       operationId: listNodes
@@ -5068,6 +5154,89 @@ components:
           type: string
         last_heartbeat:
           type: [string, "null"]
+          format: date-time
+        memory_allocatable_bytes:
+          type: integer
+          format: int64
+          description: |
+            Allocatable memory reported by the kubelet, the base for
+            database pool budgets. Absent until observed.
+
+    DatabasePool:
+      type: object
+      description: |
+        One managed PostgreSQL pool (a CloudNativePG cluster) with its
+        tuning. class is shared, environment or dedicated. memory.bytes is
+        the budget every parameter derives from; memory.auto reports it was
+        sized from the node named in memory.node, memory.capped that the
+        automatic share was reduced so the live pools fit the node.
+      required: [name, class, engine, major, instances, storage_bytes, state, memory, parameters, observed, created_at, updated_at]
+      properties:
+        name:
+          type: string
+        class:
+          type: string
+          enum: [shared, environment, dedicated]
+        engine:
+          type: string
+        major:
+          type: integer
+        instances:
+          type: integer
+        storage_bytes:
+          type: integer
+          format: int64
+        state:
+          type: string
+        memory:
+          type: object
+          required: [bytes, auto]
+          properties:
+            bytes:
+              type: [integer, "null"]
+              format: int64
+            auto:
+              type: boolean
+            node:
+              type: string
+            capped:
+              type: boolean
+        parameters:
+          type: object
+          required: [effective, overrides, restart_keys, allowed]
+          properties:
+            effective:
+              type: object
+              additionalProperties: { type: string }
+              description: The postgresql.conf values the pool runs, PostgreSQL units.
+            overrides:
+              type: object
+              additionalProperties: { type: string }
+            restart_keys:
+              type: array
+              items: { type: string }
+              description: Tunables whose change restarts the instances.
+            allowed:
+              type: array
+              items: { type: string }
+              description: Every parameter an override may name.
+        observed:
+          type: [object, "null"]
+          required: [phase, instances, ready_instances]
+          properties:
+            phase:
+              type: string
+            instances:
+              type: integer
+            ready_instances:
+              type: integer
+            primary:
+              type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
           format: date-time
 
     ValueEntry:

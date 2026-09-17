@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -12,6 +13,7 @@ import (
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/pgtune"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 )
@@ -21,41 +23,62 @@ import (
 const clusterHealthyPhase = "Cluster in healthy state"
 
 // ensurePool applies one pool's CNPG Cluster from its row plus the live
-// tenant roles. Idempotent server-side apply under the platform manager.
-func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster) error {
+// tenant roles and its tuned parameter set. Idempotent server-side apply
+// under the platform manager. On a managed cluster the pool waits (requeue)
+// until a database node's memory is observed: applying an untuned spec
+// first and the tuned one a minute later would restart the pool twice.
+func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster) (time.Duration, error) {
 	tenants, err := c.deps.DB.ListClusterTenants(ctx, pool.ID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	roles := make([]cnpg.Role, 0, len(tenants))
 	for _, tenant := range tenants {
 		roles = append(roles, cnpg.Role{Name: tenant.RoleName, SecretName: tenant.CredentialSecret})
 	}
+	budgets, ok, err := c.PoolBudgets(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		slog.Info("substrate: pool waits for database node memory", "pool", pool.Name)
+		return requeueWait, nil
+	}
+	budget, ok := budgets[pool.ID]
+	if !ok {
+		// The row is live (the caller checked) but raced the listing;
+		// size it alone rather than render it untuned.
+		budgets, _ = c.resolveBudgets([]store.DatabaseCluster{pool})
+		budget = budgets[pool.ID]
+	}
+	parameters := pgtune.Effective(budget.Bytes, pool.StorageBytes, c.cfg.Managed, dbstore.ClusterParameters(pool))
 	object := cnpg.RenderCluster(cnpg.ClusterSpec{
-		Namespace:    Namespace,
-		Name:         pool.Name,
-		Image:        pool.Image,
-		Instances:    int(pool.Instances),
-		StorageBytes: pool.StorageBytes,
-		Synchronous:  pool.Instances >= 3,
-		Managed:      c.cfg.Managed,
-		Roles:        roles,
+		Namespace:          Namespace,
+		Name:               pool.Name,
+		Image:              pool.Image,
+		Instances:          int(pool.Instances),
+		StorageBytes:       pool.StorageBytes,
+		Synchronous:        pool.Instances >= 3,
+		Managed:            c.cfg.Managed,
+		Roles:              roles,
+		Parameters:         parameters,
+		MemoryRequestBytes: budget.Bytes,
 	})
 	if _, err := c.deps.Cluster.ApplyAs(ctx, object, kube.FieldManagerPlatform, false); err != nil {
-		return fmt.Errorf("substrate: apply pool %s: %w", pool.Name, err)
+		return 0, fmt.Errorf("substrate: apply pool %s: %w", pool.Name, err)
 	}
 	// The exporter Service feeds the storage sampler's database-size
 	// scrape; both platform shapes carry it.
 	metricsService := cnpg.RenderMetricsService(Namespace, pool.Name)
 	if _, err := c.deps.Cluster.ApplyAs(ctx, metricsService, kube.FieldManagerPlatform, false); err != nil {
-		return fmt.Errorf("substrate: apply pool %s metrics service: %w", pool.Name, err)
+		return 0, fmt.Errorf("substrate: apply pool %s metrics service: %w", pool.Name, err)
 	}
 	if !c.cfg.Managed {
 		if err := c.ensurePoolNodePort(ctx, pool); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 // ensurePoolNodePort gives a dev pool its loopback NodePort Service. An

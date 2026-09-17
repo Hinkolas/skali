@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
@@ -81,6 +82,8 @@ func TestNodeRecordProjection(t *testing.T) {
 				{Type: corev1.NodeInternalIP, Address: "10.0.0.1"},
 				{Type: corev1.NodeExternalIP, Address: "203.0.113.1"},
 			},
+			Capacity:    corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
+			Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("7680Mi")},
 		},
 	}
 
@@ -96,6 +99,7 @@ func TestNodeRecordProjection(t *testing.T) {
 	require.Equal(t, "10.0.0.1", record.InternalIP)
 	require.Equal(t, "203.0.113.1", record.ExternalIP)
 	require.Equal(t, heartbeat.Time, record.LastHeartbeat)
+	require.Equal(t, int64(7680)<<20, record.MemoryAllocatableBytes, "allocatable, not capacity")
 
 	// A bare agent node: not ready, cordoned, nothing reported yet.
 	record = nodeRecord(&corev1.Node{
@@ -107,6 +111,7 @@ func TestNodeRecordProjection(t *testing.T) {
 	require.False(t, record.Schedulable)
 	require.True(t, record.LastHeartbeat.IsZero())
 	require.Empty(t, record.Capabilities)
+	require.Zero(t, record.MemoryAllocatableBytes)
 }
 
 func TestRefreshSkipsEndedConnections(t *testing.T) {

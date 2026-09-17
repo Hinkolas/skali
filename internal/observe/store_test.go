@@ -162,6 +162,67 @@ func TestNodeRecords(t *testing.T) {
 	require.Equal(t, "b", nodes[0].Name)
 }
 
+func TestSmallestCapableNodeMemory(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	name, bytes := store.SmallestCapableNodeMemory("database")
+	require.Empty(t, name)
+	require.Zero(t, bytes)
+
+	// Capabilities and records arrive separately; a capable node without a
+	// reported size does not count yet.
+	store.SetNodeCapabilities("db-1", []string{"database"})
+	store.SetNodeCapabilities("db-2", []string{"database"})
+	store.SetNodeCapabilities("app-1", []string{"application"})
+	name, bytes = store.SmallestCapableNodeMemory("database")
+	require.Empty(t, name)
+	require.Zero(t, bytes)
+
+	store.SetNodeRecord(NodeRecord{Name: "app-1", MemoryAllocatableBytes: 1 << 30})
+	store.SetNodeRecord(NodeRecord{Name: "db-2", MemoryAllocatableBytes: 16 << 30})
+	name, bytes = store.SmallestCapableNodeMemory("database")
+	require.Equal(t, "db-2", name, "the application node never counts")
+	require.Equal(t, int64(16<<30), bytes)
+
+	store.SetNodeRecord(NodeRecord{Name: "db-1", MemoryAllocatableBytes: 8 << 30})
+	name, bytes = store.SmallestCapableNodeMemory("database")
+	require.Equal(t, "db-1", name, "the smallest capable node bounds the pools")
+	require.Equal(t, int64(8<<30), bytes)
+
+	// Ties break by name.
+	store.SetNodeRecord(NodeRecord{Name: "db-2", MemoryAllocatableBytes: 8 << 30})
+	name, _ = store.SmallestCapableNodeMemory("database")
+	require.Equal(t, "db-1", name)
+
+	store.RemoveNode("db-1")
+	name, _ = store.SmallestCapableNodeMemory("database")
+	require.Equal(t, "db-2", name)
+}
+
+func TestSharedObject(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	_, ok := store.SharedObject("pg17-shared")
+	require.False(t, ok)
+
+	ref := kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"},
+		Namespace: "skali-platform", Name: "pg17-shared"}
+	store.Upsert(Object{Ref: ref, Kind: module.KindDatabaseCluster, Name: "pg17-shared", SharedKey: "pg17-shared",
+		DatabaseCluster: &module.DatabaseClusterStatus{Instances: 2, ReadyInstances: 1, Phase: "Upgrading cluster"}})
+	obj, ok := store.SharedObject("pg17-shared")
+	require.True(t, ok)
+	require.Equal(t, "Upgrading cluster", obj.DatabaseCluster.Phase)
+
+	// Environment-owned objects carrying the shared key are references, not
+	// the shared object itself.
+	_, ok = store.SharedObject("other")
+	require.False(t, ok)
+
+	store.Remove(ref)
+	_, ok = store.SharedObject("pg17-shared")
+	require.False(t, ok)
+}
+
 func TestStalenessEvaluation(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1700000000, 0)

@@ -399,6 +399,12 @@ func runServe() error {
 	if kubeClient != nil {
 		go trustedProxies.Run(proxyCtx, kubeClient.Clientset)
 	}
+	// A typed nil would satisfy the interface; only a live controller sizes
+	// pools.
+	var poolTuner api.PoolTuner
+	if substrateCtl != nil {
+		poolTuner = substrateCtl
+	}
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: webui.Handler(api.StripAPIPrefix(api.NewRouter(api.Deps{
@@ -423,6 +429,7 @@ func runServe() error {
 			ManagedCluster:     cfg.ManagedCluster,
 			StorageClass:       cfg.StorageClass,
 			Databases:          dbstore.New(st),
+			Pools:              poolTuner,
 			SecretReader:       secretReader,
 			Version:            versionpkg.Version,
 			InstanceName:       cfg.InstanceName,

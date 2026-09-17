@@ -351,6 +351,17 @@ func (k *Kernel) Nodes() []observe.NodeRecord {
 	return k.deps.Observed.Nodes()
 }
 
+// DatabaseCluster returns the observed status of one pool's CNPG Cluster,
+// keyed by pool name, without leaking the observed store.
+func (k *Kernel) DatabaseCluster(name string) (*module.DatabaseClusterStatus, bool) {
+	obj, ok := k.deps.Observed.SharedObject(name)
+	if !ok || obj.DatabaseCluster == nil {
+		return nil, false
+	}
+	status := *obj.DatabaseCluster
+	return &status, true
+}
+
 func (k *Kernel) Observation() ObservationInfo {
 	info := ObservationInfo{
 		Mode:       "api-only",

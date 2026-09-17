@@ -512,6 +512,9 @@ func nodeRecord(node *corev1.Node) NodeRecord {
 		OS:             node.Status.NodeInfo.OSImage,
 		KubeletVersion: node.Status.NodeInfo.KubeletVersion,
 		Schedulable:    !node.Spec.Unschedulable,
+		// Allocatable is what the scheduler hands out (capacity minus the
+		// kubelet's system reserves), the right base for pool budgets.
+		MemoryAllocatableBytes: node.Status.Allocatable.Memory().Value(),
 	}
 	sort.Strings(record.Capabilities)
 	for _, condition := range node.Status.Conditions {
