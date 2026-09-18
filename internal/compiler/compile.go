@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Hinkolas/skali/internal/cron"
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
@@ -48,7 +47,6 @@ func Compile(document *manifest.Document) (*Result, error) {
 		Applications: make(map[string]Application, len(source.Applications)),
 		Databases:    make(map[string]DatabaseClaim, len(source.Databases)),
 		Buckets:      make(map[string]BucketClaim, len(source.Buckets)),
-		Backups:      make(map[string]Backup, len(source.Backups)),
 		Dependencies: make(map[string][]string, len(source.Applications)),
 	}
 
@@ -60,9 +58,6 @@ func Compile(document *manifest.Document) (*Result, error) {
 	}
 	for _, key := range utils.SortedKeys(source.Buckets) {
 		definition.Buckets[key] = b.compileBucket(key, source.Buckets[key])
-	}
-	for _, key := range utils.SortedKeys(source.Backups) {
-		definition.Backups[key] = b.compileBackup(key, source.Backups[key])
 	}
 
 	for _, name := range utils.SortedKeys(b.variables) {
@@ -455,36 +450,6 @@ func (b *builder) compileBucket(key string, source manifest.Bucket) BucketClaim 
 	}
 }
 
-func (b *builder) compileBackup(key string, source manifest.Backup) Backup {
-	base := "backups." + key
-	if _, err := cron.Parse(source.Schedule); err != nil {
-		b.add(base+".schedule", "%s", err)
-	}
-	if source.Strategy != "" && source.Strategy != StrategyComplete {
-		b.add(base+".strategy", "must be %q", StrategyComplete)
-	}
-	retention := b.duration(base+".retention", source.Retention)
-	databases := append([]string(nil), source.Include.Databases.Keys...)
-	buckets := append([]string(nil), source.Include.Buckets.Keys...)
-	volumes := append([]string(nil), source.Include.Volumes.Keys...)
-	sort.Strings(databases)
-	sort.Strings(buckets)
-	sort.Strings(volumes)
-	return Backup{
-		Schedule:         source.Schedule,
-		RetentionSeconds: retention / 1000,
-		Strategy:         source.Strategy,
-		Include: Selection{
-			AllDatabases: source.Include.Databases.All,
-			Databases:    databases,
-			AllBuckets:   source.Include.Buckets.All,
-			Buckets:      buckets,
-			AllVolumes:   source.Include.Volumes.All,
-			Volumes:      volumes,
-		},
-	}
-}
-
 func (b *builder) collectVariables(path string, expression Expression) {
 	for _, part := range expression.Parts {
 		if part.Kind != "project_variable" {
@@ -577,7 +542,7 @@ func (b *builder) cpu(path string, value manifest.Text) int64 {
 }
 
 func (b *builder) duration(path string, value manifest.Text) int64 {
-	result, err := parseDuration(string(value))
+	result, err := ParseDuration(string(value))
 	if err != nil {
 		b.add(path, "%s", err)
 	}

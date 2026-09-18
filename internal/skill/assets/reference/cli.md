@@ -79,11 +79,16 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   whose manifest declares no database, bucket, or volume has nothing to
   snapshot and is refused (`nothing_to_back_up`); the console disables
   the button there.
-- Manifest `backups` policies need no command: skalid snapshots every active
-  environment on the cron schedule (UTC) and deletes that policy's snapshots
-  once they pass its retention. The runs carry actor `schedule:<policy>`.
+- `skali backup schedule set --environment <name> --every "<cron>" --keep
+  <duration>` turns automatic backups on for one environment (environment
+  admin, recent login): skalid snapshots every database, bucket, and volume
+  on the five-field cron schedule (UTC) and deletes the snapshots the
+  schedule took once they pass the retention, always keeping the newest.
+  `skali backup schedule show` prints the setting, `skali backup schedule
+  remove` turns it off (existing snapshots stay and stop expiring). The
+  runs carry actor `schedule`. Nothing is on until someone sets it.
 - `skali backup list` shows every snapshot of the project with its
-  environment and origin (`manual` or `<policy> (scheduled)`); `--environment`
+  environment and origin (`manual` or `scheduled`); `--environment`
   filters. `skali backup restore [<snapshot-id>]` restores into the
   environment the snapshot came from (or `--environment <other>`) after a
   typed confirmation; the environment stops while data is written and stays
@@ -113,7 +118,7 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   `--environment <name>` it sets an explicit role on that environment only
   (`none` locks it). `skali access remove <email>` removes a member.
 - `skali env list` lists environments with your access, priority, deploy
-  policy, and ceiling; `skali env create <name>`, `skali env set
+  policy, ceiling, and backup schedule; `skali env create <name>`, `skali env set
   --environment <name> --max-role read --deploy-policy promote-only`, and
   `skali env remove <name>` (purge) configure them. Writes need a recent login;
   the CLI asks for the password when it has aged.

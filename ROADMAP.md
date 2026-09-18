@@ -30,8 +30,8 @@ Working and used daily:
 - Permissions: one role ladder per project and per environment, promote-only
   protection with recorded bypass, environment priority as PriorityClasses.
 - Manual and scheduled environment backup/restore to an external S3 target
-  with per-policy retention, cross-env restore, project-wide listing, and
-  snapshot deletion.
+  with per-environment schedules and retention, cross-env restore,
+  project-wide listing, and snapshot deletion.
 - Metrics: cpu/mem per node and per service, storage per node and per
   project (volumes, databases, objects, temporary), in the API and console.
 - Web console on real APIs: projects, services, deployments, runs (cancel,

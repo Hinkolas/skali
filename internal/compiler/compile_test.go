@@ -34,8 +34,6 @@ func TestCompileExamples(t *testing.T) {
 	require.EqualValues(t, 200, files.Definition.Applications["web"].Resources.Requests.MilliCPU)
 	require.EqualValues(t, 256_000_000, files.Definition.Applications["web"].Resources.Requests.MemoryBytes)
 	require.EqualValues(t, 20_000_000_000, files.Definition.Databases["data"].StorageBytes)
-	require.True(t, files.Definition.Backups["daily"].Include.AllDatabases)
-	require.True(t, files.Definition.Backups["daily"].Include.AllBuckets)
 }
 
 func TestEquivalentYAMLAndJSONHaveSameHash(t *testing.T) {

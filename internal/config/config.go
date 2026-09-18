@@ -195,9 +195,9 @@ type API struct {
 	// upload, or volume archive) before it fails as stuck.
 	BackupJobTimeout time.Duration `env:"SKALI_BACKUP_JOB_TIMEOUT,default=1h"`
 
-	// BackupScheduler runs manifest backup policies on their schedules.
-	// Off is for tests and debugging; a cluster without policies or without
-	// a backup target idles either way.
+	// BackupScheduler runs the environments' backup schedules. Off is for
+	// tests and debugging; a cluster without schedules or without a backup
+	// target idles either way.
 	BackupScheduler bool `env:"SKALI_BACKUP_SCHEDULER,default=true"`
 }
 

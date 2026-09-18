@@ -24,16 +24,10 @@ func Schema() (*jsonschema.Schema, error) {
 		{Type: "number"},
 		{Type: "boolean"},
 	}}
-	selectionSchema := &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-		{Type: "string", Const: new(any("all"))},
-		{Type: "array", Items: stableKeySchema(), UniqueItems: true},
-	}}
-
 	schema, err := jsonschema.For[Project](&jsonschema.ForOptions{
 		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
-			reflect.TypeFor[Text]():      textSchema,
-			reflect.TypeFor[Scalar]():    scalarSchema,
-			reflect.TypeFor[Selection](): selectionSchema,
+			reflect.TypeFor[Text]():   textSchema,
+			reflect.TypeFor[Scalar](): scalarSchema,
 		},
 	})
 	if err != nil {
@@ -50,7 +44,7 @@ func Schema() (*jsonschema.Schema, error) {
 		{Required: []string{"buckets"}},
 	}
 
-	for _, collection := range []string{"applications", "databases", "buckets", "backups"} {
+	for _, collection := range []string{"applications", "databases", "buckets"} {
 		schema.Properties[collection].PropertyNames = stableKeySchema()
 	}
 
@@ -136,11 +130,6 @@ func Schema() (*jsonschema.Schema, error) {
 	bucket.Properties["quotas"].Properties["maxObjectSize"] = quantitySchema()
 	setDuration(bucket.Properties["lifecycle"], "abortIncompleteUploadsAfter")
 	setDuration(bucket.Properties["lifecycle"], "expireNoncurrentVersionsAfter")
-
-	backup := schema.Properties["backups"].AdditionalProperties
-	backup.Properties["schedule"].MinLength = new(1)
-	backup.Properties["retention"] = durationSchema()
-	backup.Properties["strategy"].Enum = utils.AnySlice(StrategyComplete)
 
 	return schema, nil
 }

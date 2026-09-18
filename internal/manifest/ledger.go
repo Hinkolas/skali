@@ -66,6 +66,13 @@ var Ledger = []Change{
 		Message: "routes gained an optional compress field; the edge now compresses text-like responses by default (gzip, br, zstd) and compress: false opts a route out",
 		Hint:    "nothing to change; write compress: false for routes that stream events or already compress their responses",
 	},
+	{
+		Release: "v0.1.0-rc.8",
+		Kind:    ChangeRemoved,
+		Path:    "backups",
+		Message: "backups was removed from the manifest; automatic backups are an environment setting now, one schedule per environment, set outside the manifest",
+		Hint:    "run skali manifest upgrade to drop the block, then turn automatic backups on per environment with skali backup schedule set",
+	},
 }
 
 // Matches reports whether a concrete manifest path is the one the change

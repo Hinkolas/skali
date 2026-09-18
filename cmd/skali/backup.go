@@ -20,15 +20,15 @@ import (
 )
 
 // newBackupCommand groups the backup surface: the admin-configured
-// external S3 target plus snapshot creation, listing, restore, and
-// removal. Scheduled snapshots come from the manifest's backups policies
-// and need no command; they list and restore like manual ones.
+// external S3 target, the per-environment automatic backup schedule, plus
+// snapshot creation, listing, restore, and removal. Scheduled snapshots
+// list and restore like manual ones.
 func newBackupCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "backup",
 		Short: "Back up and restore environment data",
 	}
-	command.AddCommand(newBackupTargetCommand(), newBackupCreateCommand(),
+	command.AddCommand(newBackupTargetCommand(), newBackupScheduleCommand(), newBackupCreateCommand(),
 		newBackupLsCommand(), newBackupRestoreCommand(), newBackupRemoveCommand())
 	return command
 }
@@ -46,8 +46,8 @@ func newBackupRemoveCommand() *cobra.Command {
 		Long: "Removes one snapshot of the project from the backup target: its\n" +
 			"manifest first, then every database dump, bucket copy, and volume\n" +
 			"archive it holds. This cannot be undone. Manual snapshots are only\n" +
-			"ever removed this way; snapshots a manifest backup policy took also\n" +
-			"expire under that policy's retention. A snapshot a restore is\n" +
+			"ever removed this way; snapshots an environment's schedule took also\n" +
+			"expire under that environment's retention. A snapshot a restore is\n" +
 			"currently reading is refused.\n\n" +
 			"The resolved remote, project, and snapshot are shown and confirmed\n" +
 			"before anything is deleted; --yes skips the question. Needs maintain\n" +
@@ -457,7 +457,7 @@ func newBackupLsCommand() *cobra.Command {
 
 // renderSnapshotTable prints snapshots as one table with a header row: the
 // id first (it is what restore and remove take), then where and when the
-// snapshot was taken, whether a person or a policy took it, the revision
+// snapshot was taken, whether a person or the schedule took it, the revision
 // that was running, and what it holds.
 func renderSnapshotTable(out io.Writer, snapshots []client.BackupSnapshot) {
 	environmentWidth, originWidth := len("ENVIRONMENT"), len("ORIGIN")

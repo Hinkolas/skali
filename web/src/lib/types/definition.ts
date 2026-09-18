@@ -9,7 +9,6 @@ export interface ProjectDefinition {
 	applications?: Record<string, Application>;
 	databases?: Record<string, DatabaseClaim>;
 	buckets?: Record<string, BucketClaim>;
-	backups?: Record<string, Backup>;
 	requiredVariables?: VariableRequirement[];
 	dependencies?: Record<string, string[]>;
 }
@@ -169,24 +168,6 @@ export interface BucketClaim {
 	versioning: string;
 	abortIncompleteUploadsAfterSeconds?: number;
 	expireNoncurrentVersionsAfterSeconds?: number;
-}
-
-export interface Backup {
-	/** Five-field cron, evaluated in UTC. */
-	schedule: string;
-	retentionSeconds: number;
-	/** Absent means complete, the only strategy today. */
-	strategy?: string;
-	include: Selection;
-}
-
-export interface Selection {
-	allDatabases?: boolean;
-	databases?: string[];
-	allBuckets?: boolean;
-	buckets?: string[];
-	allVolumes?: boolean;
-	volumes?: string[];
 }
 
 export interface DraftResponse {

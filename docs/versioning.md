@@ -138,8 +138,9 @@ changes. Changed entries report every affected location, including omitted
 fields whose defaults changed. It is not a general compatibility engine.
 
 `skali manifest upgrade` evaluates changes against the original review point.
-It proposes safe mechanical edits (including replacing legacy `version: "1"`)
-and ordinary review-point advances, then validates and compiles before atomically
+It proposes safe mechanical edits (including replacing legacy `version: "1"`
+and dropping removed top-level blocks such as `backups:`) and ordinary
+review-point advances, then validates and compiles before atomically
 replacing the source. Semantic changes requiring author review produce diagnostics
 and leave the file unchanged. Manual review and watermark editing acknowledge
 those changes. Comments and formatting survive supported edits; unsupported YAML

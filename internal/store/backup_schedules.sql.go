@@ -13,21 +13,16 @@ import (
 )
 
 const deleteBackupSchedule = `-- name: DeleteBackupSchedule :exec
-DELETE FROM backup_schedules WHERE environment_id = $1 AND policy = $2
+DELETE FROM backup_schedules WHERE environment_id = $1
 `
 
-type DeleteBackupScheduleParams struct {
-	EnvironmentID uuid.UUID
-	Policy        string
-}
-
-func (q *Queries) DeleteBackupSchedule(ctx context.Context, arg DeleteBackupScheduleParams) error {
-	_, err := q.db.Exec(ctx, deleteBackupSchedule, arg.EnvironmentID, arg.Policy)
+func (q *Queries) DeleteBackupSchedule(ctx context.Context, environmentID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteBackupSchedule, environmentID)
 	return err
 }
 
 const listBackupSchedules = `-- name: ListBackupSchedules :many
-SELECT environment_id, policy, last_fire_at, last_backup_id, updated_at FROM backup_schedules
+SELECT environment_id, last_fire_at, last_backup_id, updated_at, schedule FROM backup_schedules
 `
 
 func (q *Queries) ListBackupSchedules(ctx context.Context) ([]BackupSchedule, error) {
@@ -41,10 +36,10 @@ func (q *Queries) ListBackupSchedules(ctx context.Context) ([]BackupSchedule, er
 		var i BackupSchedule
 		if err := rows.Scan(
 			&i.EnvironmentID,
-			&i.Policy,
 			&i.LastFireAt,
 			&i.LastBackupID,
 			&i.UpdatedAt,
+			&i.Schedule,
 		); err != nil {
 			return nil, err
 		}
@@ -57,26 +52,27 @@ func (q *Queries) ListBackupSchedules(ctx context.Context) ([]BackupSchedule, er
 }
 
 const upsertBackupSchedule = `-- name: UpsertBackupSchedule :exec
-INSERT INTO backup_schedules (environment_id, policy, last_fire_at, last_backup_id)
+INSERT INTO backup_schedules (environment_id, schedule, last_fire_at, last_backup_id)
 VALUES ($1, $2, $3, $4)
-ON CONFLICT (environment_id, policy) DO UPDATE
-SET last_fire_at = EXCLUDED.last_fire_at,
+ON CONFLICT (environment_id) DO UPDATE
+SET schedule = EXCLUDED.schedule,
+    last_fire_at = EXCLUDED.last_fire_at,
     last_backup_id = EXCLUDED.last_backup_id,
     updated_at = now()
 `
 
 type UpsertBackupScheduleParams struct {
 	EnvironmentID uuid.UUID
-	Policy        string
+	Schedule      string
 	LastFireAt    time.Time
 	LastBackupID  *uuid.UUID
 }
 
-// Seed or advance one policy's state; the scheduler is the only writer.
+// Seed or advance one environment's state; the scheduler is the only writer.
 func (q *Queries) UpsertBackupSchedule(ctx context.Context, arg UpsertBackupScheduleParams) error {
 	_, err := q.db.Exec(ctx, upsertBackupSchedule,
 		arg.EnvironmentID,
-		arg.Policy,
+		arg.Schedule,
 		arg.LastFireAt,
 		arg.LastBackupID,
 	)

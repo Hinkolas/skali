@@ -1,4 +1,4 @@
-// Human wording for the cron schedules the manifest accepts. Covers the
+// Human wording for the cron schedules an environment's backup setting accepts. Covers the
 // shapes people actually write (every N minutes or hours, hourly, daily,
 // weekly, monthly); anything else falls back to the raw expression so the
 // reader still sees the truth.
@@ -36,6 +36,7 @@ export function describeCron(expr: string): string {
 	const every = (field: string) => (field.startsWith('*/') ? Number(field.slice(2)) : null);
 
 	if (dom === '*' && dow === '*') {
+		if (minute === '*' && hour === '*') return 'every minute';
 		const n = every(minute);
 		if (n && hour === '*') return n === 1 ? 'every minute' : `every ${n} minutes`;
 		const h = every(hour);
@@ -167,6 +168,11 @@ function dayMatches(c: ParsedCron, t: Date): boolean {
 	if (c.domStar) return dowHit;
 	if (c.dowStar) return domHit;
 	return domHit || dowHit;
+}
+
+/** Whether the expression is a five-field cron skalid would accept. */
+export function isValidCron(expr: string): boolean {
+	return parseCron(expr) !== null;
 }
 
 /**

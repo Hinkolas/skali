@@ -4,7 +4,6 @@
 package manifest
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -46,41 +45,6 @@ func (s *Scalar) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// Selection is either the keyword "all" or a list of stable resource keys.
-type Selection struct {
-	All  bool
-	Keys []string
-}
-
-func (s *Selection) UnmarshalYAML(node *yaml.Node) error {
-	switch node.Kind {
-	case yaml.ScalarNode:
-		if node.Value != "all" {
-			return fmt.Errorf("must be \"all\" or a list of resource keys")
-		}
-		s.All = true
-		s.Keys = nil
-		return nil
-	case yaml.SequenceNode:
-		var keys []string
-		if err := node.Decode(&keys); err != nil {
-			return fmt.Errorf("must be \"all\" or a list of resource keys: %w", err)
-		}
-		s.All = false
-		s.Keys = keys
-		return nil
-	default:
-		return fmt.Errorf("must be \"all\" or a list of resource keys")
-	}
-}
-
-func (s Selection) MarshalJSON() ([]byte, error) {
-	if s.All {
-		return json.Marshal("all")
-	}
-	return json.Marshal(s.Keys)
-}
-
 type Project struct {
 	// Skali is the watermark: the release the author last reviewed the
 	// manifest against (watermark.go). It is validated as a release tag,
@@ -91,7 +55,6 @@ type Project struct {
 	Applications map[string]Application `yaml:"applications,omitempty" json:"applications,omitempty" jsonschema:"Container applications keyed by stable service name."`
 	Databases    map[string]Database    `yaml:"databases,omitempty" json:"databases,omitempty" jsonschema:"Managed databases keyed by stable service name."`
 	Buckets      map[string]Bucket      `yaml:"buckets,omitempty" json:"buckets,omitempty" jsonschema:"Managed object-storage buckets keyed by stable service name."`
-	Backups      map[string]Backup      `yaml:"backups,omitempty" json:"backups,omitempty" jsonschema:"Scheduled backup policies keyed by stable name: a cron schedule (UTC), a retention window, and the resources each snapshot includes. Every active environment of the project is backed up on the schedule."`
 }
 
 type Application struct {
@@ -272,26 +235,4 @@ type BucketQuotas struct {
 type BucketLifecycle struct {
 	AbortIncompleteUploadsAfter   Text `yaml:"abortIncompleteUploadsAfter,omitempty" json:"abortIncompleteUploadsAfter,omitempty"`
 	ExpireNoncurrentVersionsAfter Text `yaml:"expireNoncurrentVersionsAfter,omitempty" json:"expireNoncurrentVersionsAfter,omitempty"`
-}
-
-// Backup is one scheduled backup policy. skalid snapshots every active
-// environment of the project on the schedule and deletes the snapshots
-// this policy produced once they are older than the retention window;
-// snapshots created by hand are never touched by retention.
-type Backup struct {
-	Schedule  string        `yaml:"schedule" json:"schedule" jsonschema:"Five-field cron expression evaluated in UTC, for example 0 3 * * * for daily at 03:00."`
-	Retention Text          `yaml:"retention" json:"retention" jsonschema:"How long snapshots taken by this policy are kept, for example 7d or 4w. The newest one is always kept."`
-	Strategy  string        `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"Backup strategy. complete (the default and only value) copies every included component in full on each run."`
-	Include   BackupInclude `yaml:"include" json:"include" jsonschema:"Which of the project's databases, buckets, and volumes each snapshot contains."`
-}
-
-// StrategyComplete copies every included component in full on each run. It
-// is the only strategy today; the field exists so differential strategies
-// can be added without a grammar break.
-const StrategyComplete = "complete"
-
-type BackupInclude struct {
-	Databases Selection `yaml:"databases,omitempty" json:"databases,omitempty"`
-	Buckets   Selection `yaml:"buckets,omitempty" json:"buckets,omitempty"`
-	Volumes   Selection `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 }

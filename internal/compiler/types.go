@@ -2,8 +2,6 @@
 // target-independent project definition.
 package compiler
 
-import "github.com/Hinkolas/skali/internal/manifest"
-
 type Result struct {
 	Hash       string            "json:\"hash\""
 	Definition ProjectDefinition "json:\"definition\""
@@ -24,7 +22,6 @@ type ProjectDefinition struct {
 	Applications      map[string]Application   "json:\"applications,omitempty\""
 	Databases         map[string]DatabaseClaim "json:\"databases,omitempty\""
 	Buckets           map[string]BucketClaim   "json:\"buckets,omitempty\""
-	Backups           map[string]Backup        "json:\"backups,omitempty\""
 	RequiredVariables []VariableRequirement    "json:\"requiredVariables,omitempty\""
 	Dependencies      map[string][]string      "json:\"dependencies,omitempty\""
 }
@@ -211,35 +208,4 @@ type BucketClaim struct {
 	Versioning                         string "json:\"versioning\""
 	AbortIncompleteUploadsAfterSeconds int64  "json:\"abortIncompleteUploadsAfterSeconds,omitempty\""
 	ExpireNoncurrentVersionsAfterSec   int64  "json:\"expireNoncurrentVersionsAfterSeconds,omitempty\""
-}
-
-// Backup is one compiled backup policy. Strategy is written only when the
-// manifest set it: the default would otherwise change the definition hash
-// of every manifest that predates the field.
-type Backup struct {
-	Schedule         string    "json:\"schedule\""
-	RetentionSeconds int64     "json:\"retentionSeconds\""
-	Strategy         string    "json:\"strategy,omitempty\""
-	Include          Selection "json:\"include\""
-}
-
-// StrategyComplete mirrors manifest.StrategyComplete for consumers of the
-// compiled definition.
-const StrategyComplete = manifest.StrategyComplete
-
-// EffectiveStrategy resolves the default: an unset strategy is complete.
-func (b Backup) EffectiveStrategy() string {
-	if b.Strategy == "" {
-		return StrategyComplete
-	}
-	return b.Strategy
-}
-
-type Selection struct {
-	AllDatabases bool     "json:\"allDatabases,omitempty\""
-	Databases    []string "json:\"databases,omitempty\""
-	AllBuckets   bool     "json:\"allBuckets,omitempty\""
-	Buckets      []string "json:\"buckets,omitempty\""
-	AllVolumes   bool     "json:\"allVolumes,omitempty\""
-	Volumes      []string "json:\"volumes,omitempty\""
 }

@@ -9,11 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/cron"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
-	"github.com/Hinkolas/skali/internal/utils"
 )
 
 const (
@@ -22,36 +20,24 @@ const (
 	schedulerTickBudget = 50 * time.Second
 )
 
-// revisionLoader is the slice of deploy.Service the scheduler reads.
+// revisionLoader is the slice of deploy.Service the controller reads.
 type revisionLoader interface {
 	GetRevision(ctx context.Context, id uuid.UUID) (*revision.Revision, error)
 }
 
-// Scheduler turns manifest backup policies into scheduled backup runs. Once
-// a minute it walks every active environment, parses the policies of its
-// active revision (cached per revision), and creates a backup for every
-// policy whose cron fired since the scheduler last acted on it. Due-ness is
-// persisted in backup_schedules, so a restart neither re-fires nor drifts;
-// a policy seen for the first time is seeded to fire at its next cron time.
+// Scheduler turns environment backup schedules into scheduled backup runs.
+// Once a minute it walks every active environment and creates a backup for
+// each one whose schedule fired since the scheduler last acted on it.
+// Due-ness is persisted in backup_schedules, so a restart neither re-fires
+// nor drifts; a schedule seen for the first time, or a changed expression,
+// is seeded to fire at its next cron time rather than immediately.
 type Scheduler struct {
 	controller *Controller
 	st         *store.Store
-	revisions  revisionLoader
 	now        func() time.Time
 	logger     *slog.Logger
 
-	policies       map[uuid.UUID]*cachedPolicies
 	warnedNoTarget bool
-}
-
-type cachedPolicies struct {
-	revisionID uuid.UUID
-	byKey      map[string]compiledPolicy
-}
-
-type compiledPolicy struct {
-	backup   compiler.Backup
-	schedule *cron.Schedule
 }
 
 // NewScheduler builds the scheduler beside a controller; Run starts it.
@@ -59,8 +45,6 @@ func NewScheduler(c *Controller) *Scheduler {
 	return &Scheduler{
 		controller: c,
 		st:         c.deps.Store,
-		revisions:  c.revisions,
-		policies:   make(map[uuid.UUID]*cachedPolicies),
 	}
 }
 
@@ -134,119 +118,89 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list backup schedules: %w", err)
 	}
-	type scheduleKey struct {
-		environment uuid.UUID
-		policy      string
-	}
-	state := make(map[scheduleKey]store.BackupSchedule, len(rows))
+	// Rows still in state after the walk belong to environments that are
+	// no longer active or whose schedule is off; they are dropped so a
+	// schedule that comes back later is seeded afresh instead of catching
+	// up on fires it missed while off.
+	state := make(map[uuid.UUID]store.BackupSchedule, len(rows))
 	for _, row := range rows {
-		state[scheduleKey{row.EnvironmentID, row.Policy}] = row
+		state[row.EnvironmentID] = row
 	}
 
-	active := make(map[uuid.UUID]bool, len(environments))
 	for _, environment := range environments {
-		active[environment.EnvironmentID] = true
-		policies, err := s.policiesFor(ctx, environment.EnvironmentID, *environment.ActiveRevisionID)
-		if err != nil {
-			s.log().WarnContext(ctx, "backup scheduler: read policies", "environment", environment.Name, "err", err)
+		if environment.BackupSchedule == "" {
 			continue
 		}
-		for _, key := range utils.SortedKeys(policies) {
-			policy := policies[key]
-			row, seen := state[scheduleKey{environment.EnvironmentID, key}]
-			delete(state, scheduleKey{environment.EnvironmentID, key})
-			if !seen {
-				if err := s.st.UpsertBackupSchedule(ctx, store.UpsertBackupScheduleParams{
-					EnvironmentID: environment.EnvironmentID, Policy: key, LastFireAt: now,
-				}); err != nil {
-					return fmt.Errorf("seed backup schedule: %w", err)
-				}
-				s.log().InfoContext(ctx, "backup policy scheduled",
-					"environment", environment.Name, "policy", key,
-					"first_run", policy.schedule.Next(now).Format(time.RFC3339))
-				continue
-			}
-			fire, due := nextDue(policy.schedule, row.LastFireAt, now)
-			if !due {
-				continue
-			}
-			result, err := s.controller.CreateBackup(ctx, BackupInput{
-				EnvironmentID: environment.EnvironmentID,
-				Actor:         ScheduleActor(key),
-				Trigger:       TriggerScheduled,
-				Policy:        key,
-			})
-			if err != nil {
-				// Nothing advances: the fire is retried on the next tick
-				// until the environment is free or the reason clears.
-				switch {
-				case errors.Is(err, ErrBackupInFlight):
-					s.log().DebugContext(ctx, "backup scheduler: environment busy, retrying next minute",
-						"environment", environment.Name, "policy", key)
-				case errors.Is(err, ErrEnvironmentNotActive), errors.Is(err, ErrEnvironmentNotFound),
-					errors.Is(err, ErrPolicyNotFound), errors.Is(err, ErrNothingToBackUp):
-					s.log().DebugContext(ctx, "backup scheduler: skipped",
-						"environment", environment.Name, "policy", key, "reason", err)
-				case errors.Is(err, ErrTargetNotFound):
-					return nil
-				default:
-					s.log().WarnContext(ctx, "backup scheduler: create backup",
-						"environment", environment.Name, "policy", key, "err", err)
-				}
-				continue
-			}
-			backupID := result.BackupID
-			if err := s.st.UpsertBackupSchedule(ctx, store.UpsertBackupScheduleParams{
-				EnvironmentID: environment.EnvironmentID, Policy: key, LastFireAt: fire, LastBackupID: &backupID,
-			}); err != nil {
-				return fmt.Errorf("advance backup schedule: %w", err)
-			}
-			s.log().InfoContext(ctx, "scheduled backup started",
-				"environment", environment.Name, "policy", key, "run", result.RunID, "fire", fire.Format(time.RFC3339))
+		row, seen := state[environment.EnvironmentID]
+		delete(state, environment.EnvironmentID)
+		schedule, err := cron.Parse(environment.BackupSchedule)
+		if err != nil {
+			// The setting was validated on write; a failure here means a
+			// stored expression predates the parser. Skip, do not crash.
+			s.log().WarnContext(ctx, "backup scheduler: unparseable schedule",
+				"environment", environment.Name, "schedule", environment.BackupSchedule, "err", err)
+			continue
 		}
+		if !seen || row.Schedule != environment.BackupSchedule {
+			if err := s.st.UpsertBackupSchedule(ctx, store.UpsertBackupScheduleParams{
+				EnvironmentID: environment.EnvironmentID, Schedule: environment.BackupSchedule, LastFireAt: now,
+			}); err != nil {
+				return fmt.Errorf("seed backup schedule: %w", err)
+			}
+			event := "backup schedule seeded"
+			if seen {
+				event = "backup schedule changed, reseeded"
+			}
+			s.log().InfoContext(ctx, event,
+				"environment", environment.Name, "schedule", environment.BackupSchedule,
+				"first_run", schedule.Next(now).Format(time.RFC3339))
+			continue
+		}
+		fire, due := nextDue(schedule, row.LastFireAt, now)
+		if !due {
+			continue
+		}
+		result, err := s.controller.CreateBackup(ctx, BackupInput{
+			EnvironmentID: environment.EnvironmentID,
+			Actor:         ScheduleActor,
+			Trigger:       TriggerScheduled,
+		})
+		if err != nil {
+			// Nothing advances: the fire is retried on the next tick
+			// until the environment is free or the reason clears.
+			switch {
+			case errors.Is(err, ErrBackupInFlight):
+				s.log().DebugContext(ctx, "backup scheduler: environment busy, retrying next minute",
+					"environment", environment.Name)
+			case errors.Is(err, ErrEnvironmentNotActive), errors.Is(err, ErrEnvironmentNotFound),
+				errors.Is(err, ErrScheduleNotSet), errors.Is(err, ErrNothingToBackUp):
+				s.log().DebugContext(ctx, "backup scheduler: skipped",
+					"environment", environment.Name, "reason", err)
+			case errors.Is(err, ErrTargetNotFound):
+				return nil
+			default:
+				s.log().WarnContext(ctx, "backup scheduler: create backup",
+					"environment", environment.Name, "err", err)
+			}
+			continue
+		}
+		backupID := result.BackupID
+		if err := s.st.UpsertBackupSchedule(ctx, store.UpsertBackupScheduleParams{
+			EnvironmentID: environment.EnvironmentID, Schedule: environment.BackupSchedule,
+			LastFireAt: fire, LastBackupID: &backupID,
+		}); err != nil {
+			return fmt.Errorf("advance backup schedule: %w", err)
+		}
+		s.log().InfoContext(ctx, "scheduled backup started",
+			"environment", environment.Name, "run", result.RunID, "fire", fire.Format(time.RFC3339))
 	}
 
-	// Rows left over belong to policies the active revision no longer
-	// declares, or to environments no longer active; drop them so a policy
-	// that comes back later is seeded afresh instead of catching up.
-	for key := range state {
-		if err := s.st.DeleteBackupSchedule(ctx, store.DeleteBackupScheduleParams{
-			EnvironmentID: key.environment, Policy: key.policy,
-		}); err != nil {
+	for environmentID := range state {
+		if err := s.st.DeleteBackupSchedule(ctx, environmentID); err != nil {
 			return fmt.Errorf("drop backup schedule: %w", err)
 		}
 	}
-	for environmentID := range s.policies {
-		if !active[environmentID] {
-			delete(s.policies, environmentID)
-		}
-	}
 	return nil
-}
-
-// policiesFor returns the environment's parsed policies, decoding the
-// revision only when the active pointer moved since the last tick.
-func (s *Scheduler) policiesFor(ctx context.Context, environmentID, revisionID uuid.UUID) (map[string]compiledPolicy, error) {
-	if cached, ok := s.policies[environmentID]; ok && cached.revisionID == revisionID {
-		return cached.byKey, nil
-	}
-	revisionDoc, err := s.revisions.GetRevision(ctx, revisionID)
-	if err != nil {
-		return nil, err
-	}
-	byKey := make(map[string]compiledPolicy, len(revisionDoc.Definition.Backups))
-	for key, policy := range revisionDoc.Definition.Backups {
-		schedule, err := cron.Parse(policy.Schedule)
-		if err != nil {
-			// The compiler validated this expression; a failure here means
-			// a stored revision predates the parser. Skip, do not crash.
-			s.log().WarnContext(ctx, "backup scheduler: unparseable schedule", "policy", key, "schedule", policy.Schedule, "err", err)
-			continue
-		}
-		byKey[key] = compiledPolicy{backup: policy, schedule: schedule}
-	}
-	s.policies[environmentID] = &cachedPolicies{revisionID: revisionID, byKey: byKey}
-	return byKey, nil
 }
 
 // nextDue reports whether the schedule fired since lastFire and, if so, the

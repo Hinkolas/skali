@@ -9,11 +9,12 @@
 
 <script lang="ts">
 	// Modal editor for one environment's access ceiling, deploy policy,
-	// promotion sources, and priority. Each control is shaped like the setting
-	// it edits: the ceiling is a rung on the role ladder, policy and priority
-	// are switches with contextual copy, sources are toggle chips. Saves a
-	// diff with PATCH and closes; the sudo reauth prompt layers above this
-	// modal on the stack.
+	// promotion sources, priority, and automatic backup schedule. Each control
+	// is shaped like the setting it edits: the ceiling is a rung on the role
+	// ladder, policy, priority and backups are switches with contextual copy,
+	// sources are toggle chips, the schedule is a cron field with a retention
+	// picker. Saves a diff with PATCH and closes; the sudo reauth prompt
+	// layers above this modal on the stack.
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { invalidateAll } from '$app/navigation';
@@ -22,12 +23,20 @@
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { api, ApiError } from '$lib/api/client';
 	import { ROLES, ROLE_RANK, ROLE_HINT, requiredTitle } from '$lib/access';
+	import { describeCron, describeSeconds, isValidCron, nextCronFire } from '$lib/cron';
+	import { formatDateTime } from '$lib/format';
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Menu from '$lib/components/ui/Menu.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import type { AccessRole, Environment, EnvironmentSettings } from '$lib/types/project';
+	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import type {
+		AccessRole,
+		BackupSchedule,
+		Environment,
+		EnvironmentSettings
+	} from '$lib/types/project';
 
 	let {
 		environment,
@@ -57,7 +66,29 @@
 	let deployPolicy = $state(settings.deploy_policy);
 	let promoteFrom = $state<string[]>([...settings.promote_from]);
 	let priority = $state(settings.priority);
+	// The schedule fields keep their last values while the switch is off, so
+	// toggling it back on restores them instead of the defaults.
+	let backupOn = $state(settings.backup !== null);
+	let schedule = $state(settings.backup?.schedule ?? '0 3 * * *');
+	let retention = $state(settings.backup?.retention_seconds ?? 604800);
 	let saving = $state(false);
+
+	// Retention is a coarse policy knob: presets cover the sensible windows
+	// and a value set elsewhere (the CLI takes any duration) stays selectable.
+	const RETENTIONS: [number, string][] = [
+		[86400, '1 day'],
+		[259200, '3 days'],
+		[604800, '7 days'],
+		[1209600, '2 weeks'],
+		[2419200, '4 weeks'],
+		[7776000, '90 days']
+	];
+	const retentionOptions = $derived.by((): [number, string][] => {
+		const current = settings.backup?.retention_seconds;
+		if (current === undefined || RETENTIONS.some(([s]) => s === current)) return RETENTIONS;
+		const extra: [number, string] = [current, describeSeconds(current)];
+		return [...RETENTIONS, extra].toSorted((a, b) => a[0] - b[0]);
+	});
 
 	const isProtected = $derived(deployPolicy === 'promote-only');
 	// Tokens render straight from the value, so a stale name (a deleted
@@ -94,12 +125,32 @@
 				: 'instance admin required to raise an environment to high priority'
 	);
 
+	const cronOk = $derived(isValidCron(schedule));
+	const nextFire = $derived(cronOk ? nextCronFire(schedule) : null);
+	const backupHint = $derived(
+		!backupOn
+			? 'Off: only manual snapshots, kept until deleted.'
+			: cronOk
+				? `${describeCron(schedule)} UTC` +
+					(nextFire ? ` · next ${formatDateTime(nextFire.toISOString())} local` : '')
+				: 'Not a five-field cron expression (minute hour day-of-month month day-of-week).'
+	);
+	const backupValue = $derived<BackupSchedule | null>(
+		backupOn ? { schedule: schedule.trim(), retention_seconds: retention } : null
+	);
+	function sameBackup(a: BackupSchedule | null, b: BackupSchedule | null): boolean {
+		if (a === null || b === null) return a === b;
+		return a.schedule === b.schedule && a.retention_seconds === b.retention_seconds;
+	}
+
 	const dirty = $derived(
 		maxRole !== settings.max_role ||
 			deployPolicy !== settings.deploy_policy ||
 			priority !== settings.priority ||
-			promoteFrom.join(',') !== settings.promote_from.join(',')
+			promoteFrom.join(',') !== settings.promote_from.join(',') ||
+			!sameBackup(backupValue, settings.backup)
 	);
+	const canSave = $derived(dirty && (!backupOn || cronOk));
 
 	function rungClass(role: AccessRole): string {
 		const selected = role === maxRole;
@@ -116,26 +167,30 @@
 	}
 
 	async function save() {
-		if (!dirty || saving) return;
+		if (!canSave || saving) return;
 		const patch: Partial<{
 			max_role: AccessRole;
 			deploy_policy: string;
 			promote_from: string[];
 			priority: string;
+			backup: BackupSchedule | null;
 		}> = {};
 		if (maxRole !== settings.max_role) patch.max_role = maxRole;
 		if (deployPolicy !== settings.deploy_policy) patch.deploy_policy = deployPolicy;
 		if (promoteFrom.join(',') !== settings.promote_from.join(',')) patch.promote_from = promoteFrom;
 		if (priority !== settings.priority) patch.priority = priority;
+		if (!sameBackup(backupValue, settings.backup)) patch.backup = backupValue;
 		saving = true;
 		try {
 			await api.patch(`/v1/environments/${environment.id}`, patch);
-			toast.success(
-				`Updated ${environment.name}`,
-				patch.priority
-					? { description: 'Application pods roll onto the new priority class.' }
-					: undefined
-			);
+			const description = patch.priority
+				? 'Application pods roll onto the new priority class.'
+				: 'backup' in patch
+					? patch.backup
+						? 'Automatic backups start at the next scheduled time.'
+						: 'Automatic backups are off; existing snapshots stay and no longer expire.'
+					: undefined;
+			toast.success(`Updated ${environment.name}`, description ? { description } : undefined);
 			await invalidateAll();
 			close(true);
 		} catch (err) {
@@ -311,12 +366,72 @@
 			</div>
 		{/if}
 	</div>
+
+	<!-- Automatic backups: on or off; the schedule and retention only exist
+	     while it is on, so they live inside the switched-on state. -->
+	<div class="flex flex-col px-5.5 py-4">
+		<button
+			type="button"
+			role="switch"
+			aria-checked={backupOn}
+			disabled={!canEdit}
+			title={canEdit ? undefined : readOnlyTitle}
+			onclick={() => (backupOn = !backupOn)}
+			class="flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent/70 {canEdit
+				? 'cursor-pointer'
+				: 'cursor-default'}"
+		>
+			<span class="flex flex-col gap-0.5">
+				<span class="text-text-primary text-base font-medium">Automatic backups</span>
+				<span class="text-text-muted text-md leading-relaxed">{backupHint}</span>
+			</span>
+			<span class="flex flex-none items-center gap-2.5">
+				<span class="font-mono text-md {backupOn ? 'text-accent-light' : 'text-text-faint'}">
+					{backupOn ? 'on' : 'off'}
+				</span>
+				{@render switchPill(backupOn)}
+			</span>
+		</button>
+		{#if backupOn}
+			<div transition:slide={{ duration: 180, easing: cubicOut }}>
+				<div class="border-border-subtle mt-3.5 ml-1 flex flex-col gap-3 border-l pl-4">
+					<label class="flex flex-col gap-1.5">
+						<span class="text-text-tertiary text-md font-medium">Schedule (cron, UTC)</span>
+						<TextInput
+							bind:value={schedule}
+							mono
+							invalid={!cronOk}
+							disabled={!canEdit}
+							placeholder="0 3 * * *"
+							autocomplete="off"
+						/>
+					</label>
+					<label class="flex flex-col gap-1.5">
+						<span class="text-text-tertiary text-md font-medium">Keep snapshots for</span>
+						<select
+							bind:value={retention}
+							disabled={!canEdit}
+							class="border-border-strong bg-surface-base text-text-primary w-full rounded-[11px] border px-3.25 py-2.75 text-base transition-colors focus:border-accent/50 focus:ring-3 focus:ring-accent/10 focus:outline-none disabled:opacity-60"
+						>
+							{#each retentionOptions as [seconds, label] (seconds)}
+								<option value={seconds}>{label}</option>
+							{/each}
+						</select>
+						<span class="text-text-muted text-sm leading-relaxed">
+							Snapshots the schedule takes are deleted after this; the newest one is always kept.
+							Manual snapshots never expire.
+						</span>
+					</label>
+				</div>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <div class="border-border-subtle bg-surface-raised/50 flex justify-end gap-2 border-t px-5.5 py-3">
 	{#if canEdit}
 		<Button variant="ghost" onclick={() => close(false)}>Cancel</Button>
-		<Button variant="primary" busy={saving} disabled={!dirty} onclick={save}>Save</Button>
+		<Button variant="primary" busy={saving} disabled={!canSave} onclick={save}>Save</Button>
 	{:else}
 		<Button variant="secondary" onclick={() => close(false)}>Close</Button>
 	{/if}

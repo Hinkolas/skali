@@ -163,4 +163,4 @@ requires `skali dev reset` and deletes its local data after confirmation. Releas
 verified against `checksums.txt`
 over TLS; there is no signature yet (see the release checklist).
 
-Manifest backup policies run in UTC for every active environment of a project; there is no per-environment opt-out and no time zone setting yet. Retention only removes snapshots the same policy took and always keeps the newest; manual snapshots stay until deleted. One backup runs at a time per installation. See [prerelease safety](prerelease-safety.md) for hostname ownership, restore behavior, and the fresh-install requirement.
+Automatic backups are a per-environment setting with one schedule per environment; the cron expression is evaluated in UTC and there is no time zone setting yet. Retention only removes snapshots the schedule took and always keeps the newest; manual snapshots stay until deleted. One backup runs at a time per installation. See [prerelease safety](prerelease-safety.md) for hostname ownership, restore behavior, and the fresh-install requirement.

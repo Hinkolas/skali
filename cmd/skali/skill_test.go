@@ -107,10 +107,10 @@ func TestSkillReadSince(t *testing.T) {
 	require.Contains(t, out, "    fix: run skali manifest upgrade")
 
 	out, err = runCapturingStdout(t, func() error {
-		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "0.1.0-rc.7")
+		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "0.1.0-rc.8")
 	})
 	require.NoError(t, err)
-	require.Equal(t, versionDescription()+"\n\n"+"no manifest changes since v0.1.0-rc.7; this skali is "+versionpkg.Version+"\n", out)
+	require.Equal(t, versionDescription()+"\n\n"+"no manifest changes since v0.1.0-rc.8; this skali is "+versionpkg.Version+"\n", out)
 
 	_, err = runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "latest")

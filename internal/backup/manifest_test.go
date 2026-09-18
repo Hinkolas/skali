@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/Hinkolas/skali/internal/compiler"
 )
 
 func fixtureManifest(t *testing.T) *Manifest {
@@ -111,21 +109,37 @@ func TestManifestLegacyDefaultsToManual(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, TriggerManual, decoded.Trigger)
 	require.Equal(t, "", decoded.Policy)
-	require.Equal(t, compiler.StrategyComplete, decoded.Strategy)
+	require.Equal(t, StrategyComplete, decoded.Strategy)
 
 	summary := summarize(decoded)
 	require.Equal(t, TriggerManual, summary.Trigger)
-	require.Equal(t, compiler.StrategyComplete, summary.Strategy)
+	require.Equal(t, StrategyComplete, summary.Strategy)
 }
 
 func TestManifestCarriesOrigin(t *testing.T) {
 	scheduled := fixtureManifest(t)
-	scheduled.Trigger, scheduled.Policy, scheduled.Strategy = TriggerScheduled, "daily", compiler.StrategyComplete
+	scheduled.Trigger, scheduled.Strategy = TriggerScheduled, StrategyComplete
 	data, err := encodeManifest(scheduled)
 	require.NoError(t, err)
+	require.NotContains(t, string(data), `"policy"`)
 	decoded, err := decodeManifest(data)
 	require.NoError(t, err)
-	require.Equal(t, "daily", decoded.Policy)
+	require.Equal(t, TriggerScheduled, decoded.Trigger)
 	require.Equal(t, TriggerScheduled, summarize(decoded).Trigger)
-	require.Equal(t, "daily", summarize(decoded).Policy)
+}
+
+// Snapshots a manifest backup policy took (releases before v0.1.0-rc.8
+// named the policy) read as manual: listings show them as such and
+// retention never touches them.
+func TestManifestLegacyPolicyReadsAsManual(t *testing.T) {
+	legacy := fixtureManifest(t)
+	legacy.Trigger, legacy.Policy, legacy.Strategy = TriggerScheduled, "daily", StrategyComplete
+	data, err := encodeManifest(legacy)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"policy": "daily"`)
+	decoded, err := decodeManifest(data)
+	require.NoError(t, err)
+	require.Equal(t, TriggerManual, decoded.Trigger)
+	require.Equal(t, "", decoded.Policy)
+	require.Equal(t, TriggerManual, summarize(decoded).Trigger)
 }

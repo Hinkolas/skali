@@ -159,9 +159,11 @@ var watermarkLine = regexp.MustCompile(`^[A-Za-z_]+:[^#]*?(\s*#.*)?$`)
 // upgradeManifest rewrites the manifest text so its watermark is target:
 // the legacy version line becomes the skali line, an older skali line moves
 // forward, and a manifest with neither gets the line before its first key.
-// Edits are line-based on the original text so formatting and comments
-// elsewhere survive. A nil result means nothing changed; the summary then
-// says why.
+// A top-level backups block (removed in v0.1.0-rc.8, schedules are an
+// environment setting now) is dropped with the comment block directly
+// above it. Edits are line-based on the original text so formatting and
+// comments elsewhere survive. A nil result means nothing changed; the
+// summary then says why.
 func upgradeManifest(data []byte, target string) (rewritten []byte, summary string, err error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
@@ -174,13 +176,15 @@ func upgradeManifest(data []byte, target string) (rewritten []byte, summary stri
 	if mapping.Style&yaml.FlowStyle != 0 {
 		return nil, "", errors.New("cannot safely rewrite a flow-style manifest; edit the watermark explicitly")
 	}
-	var versionKey, versionValue, skaliKey, skaliValue *yaml.Node
+	var versionKey, versionValue, skaliKey, skaliValue, backupsKey, backupsValue *yaml.Node
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		switch mapping.Content[i].Value {
 		case "version":
 			versionKey, versionValue = mapping.Content[i], mapping.Content[i+1]
 		case "skali":
 			skaliKey, skaliValue = mapping.Content[i], mapping.Content[i+1]
+		case "backups":
+			backupsKey, backupsValue = mapping.Content[i], mapping.Content[i+1]
 		}
 	}
 
@@ -188,6 +192,18 @@ func upgradeManifest(data []byte, target string) (rewritten []byte, summary stri
 	newline := "\n"
 	if bytes.Contains(data, []byte("\r\n")) {
 		newline = "\r\n"
+	}
+	var removals []string
+	if backupsKey != nil {
+		if backupsValue.Anchor != "" || backupsValue.Kind == yaml.AliasNode || backupsValue.Style&yaml.FlowStyle != 0 ||
+			!strings.HasPrefix(lines[backupsKey.Line-1], "backups:") {
+			return nil, "", errors.New("cannot safely remove this backups block; delete it explicitly")
+		}
+		start, end := blockExtent(mapping, backupsKey, lines)
+		for i := start; i < end; i++ {
+			lines[i] = ""
+		}
+		removals = append(removals, "removed backups (automatic backups are an environment setting now: skali backup schedule set)")
 	}
 	for _, pair := range [][2]*yaml.Node{{versionKey, versionValue}, {skaliKey, skaliValue}} {
 		key, value := pair[0], pair[1]
@@ -216,17 +232,26 @@ func upgradeManifest(data []byte, target string) (rewritten []byte, summary stri
 	switch {
 	case skaliKey != nil:
 		current, ok := manifest.Watermark(skaliValue.Value)
-		if ok && current == target {
-			return nil, fmt.Sprintf("is already reviewed against %s", target), nil
+		switch {
+		case ok && current == target:
+			summary = fmt.Sprintf("is already reviewed against %s", target)
+		case ok && versionpkg.Older(target, current):
+			summary = fmt.Sprintf("is reviewed against %s, newer than %s; nothing to do", current, target)
+		default:
+			replaceLine(skaliKey)
+			summary = fmt.Sprintf("skali %s -> %s", skaliValue.Value, target)
+			if versionKey != nil {
+				lines[versionKey.Line-1] = ""
+				summary = fmt.Sprintf("removed version %q, %s", versionValue.Value, summary)
+			}
 		}
-		if ok && versionpkg.Older(target, current) {
-			return nil, fmt.Sprintf("is reviewed against %s, newer than %s; nothing to do", current, target), nil
-		}
-		replaceLine(skaliKey)
-		summary = fmt.Sprintf("skali %s -> %s", skaliValue.Value, target)
-		if versionKey != nil {
-			lines[versionKey.Line-1] = ""
-			summary = fmt.Sprintf("removed version %q, %s", versionValue.Value, summary)
+		if ok && !versionpkg.Older(current, target) {
+			// The watermark needs no move; only a removal makes an edit.
+			if len(removals) == 0 {
+				return nil, summary, nil
+			}
+			summary = strings.Join(removals, ", ")
+			return []byte(strings.Join(lines, "")), summary, nil
 		}
 	case versionKey != nil:
 		replaceLine(versionKey)
@@ -239,5 +264,55 @@ func upgradeManifest(data []byte, target string) (rewritten []byte, summary stri
 		lines = append(lines[:first], append([]string{"skali: " + target + newline}, lines[first:]...)...)
 		summary = "added skali: " + target
 	}
+	if len(removals) > 0 {
+		summary = strings.Join(append(removals, summary), ", ")
+	}
 	return []byte(strings.Join(lines, "")), summary, nil
+}
+
+// blockExtent is the half-open line range [start, end) a top-level key
+// occupies: its line through the line before the next top-level key (or
+// the end of the file), pulling in the full-line comment block directly
+// above it. Trailing blank lines are trimmed so exactly one blank line
+// separates the neighbours afterwards, and a column-1 comment run that sits
+// after a blank line right above the next key belongs to that key and is
+// left alone.
+func blockExtent(mapping *yaml.Node, key *yaml.Node, lines []string) (start, end int) {
+	start = key.Line - 1
+	end = len(lines)
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if l := mapping.Content[i].Line - 1; l > start && l < end {
+			end = l
+		}
+	}
+	blank := func(i int) bool { return strings.TrimSpace(lines[i]) == "" }
+	comment := func(i int) bool { return strings.HasPrefix(lines[i], "#") }
+	// A comment run leading straight into the next key is that key's.
+	if end < len(lines) {
+		i := end
+		for i > start+1 && comment(i-1) {
+			i--
+		}
+		if i < end && i > start+1 && blank(i-1) {
+			end = i
+		}
+	}
+	for end > start+1 && blank(end-1) {
+		end--
+	}
+	for start > 0 && comment(start-1) {
+		start--
+	}
+	if start > 0 && blank(start-1) {
+		for end < len(lines) && blank(end) {
+			end++
+		}
+	}
+	// A block that closes the file takes the blank lines above it along.
+	if end == len(lines) {
+		for start > 0 && blank(start-1) {
+			start--
+		}
+	}
+	return start, end
 }

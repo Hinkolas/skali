@@ -22,6 +22,17 @@ type Settings struct {
 	DeployPolicy string
 	PromoteFrom  []string
 	Priority     string
+	// Backup is the automatic backup schedule, nil when off.
+	Backup *BackupSchedule
+}
+
+// BackupSchedule is an environment's automatic backup setting: a five-field
+// cron expression evaluated in UTC, how long the snapshots it takes are kept
+// (the newest is always kept), and the strategy.
+type BackupSchedule struct {
+	Schedule         string
+	RetentionSeconds int64
+	Strategy         string
 }
 
 // EnvironmentGrant is one user's standing on one environment.
@@ -274,12 +285,20 @@ func settingsOf(env *store.Environment) (Settings, error) {
 	if promoteFrom == nil {
 		promoteFrom = []string{}
 	}
-	return Settings{
+	settings := Settings{
 		MaxRole:      maxRole,
 		DeployPolicy: env.DeployPolicy,
 		PromoteFrom:  promoteFrom,
 		Priority:     env.Priority,
-	}, nil
+	}
+	if env.BackupSchedule != "" {
+		settings.Backup = &BackupSchedule{
+			Schedule:         env.BackupSchedule,
+			RetentionSeconds: env.BackupRetentionSeconds,
+			Strategy:         env.BackupStrategy,
+		}
+	}
+	return settings, nil
 }
 
 // Required phrases a refusal: "maintain on environment production required".

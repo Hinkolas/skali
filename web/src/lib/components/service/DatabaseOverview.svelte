@@ -2,13 +2,12 @@
 	import type { DatabaseView, ServiceView } from '$lib/models/service';
 	import type { StatCardData } from '$lib/models/view';
 	import type { DatabaseConnection } from '$lib/types/connections';
-	import type { Backup } from '$lib/types/definition';
+	import type { BackupSchedule } from '$lib/types/project';
 	import type { ServiceStorage } from '$lib/types/metrics';
 	import type { Run } from '$lib/types/runs';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { describeCron } from '$lib/cron';
 	import {
-		backupSchedule,
 		connectedStat,
 		dependents,
 		footprintStat,
@@ -30,7 +29,7 @@
 		connection,
 		envId,
 		runs = null,
-		backups = {},
+		backup = null,
 		storage = null
 	}: {
 		service: DatabaseView;
@@ -38,14 +37,13 @@
 		connection: DatabaseConnection | null;
 		envId: string | null;
 		runs?: Run[] | null;
-		/** The project's backup schedules, keyed by name. */
-		backups?: Record<string, Backup>;
+		/** The environment's automatic backup schedule, null when off. */
+		backup?: BackupSchedule | null;
 		storage?: ServiceStorage | null;
 	} = $props();
 
 	const live = (key: string) => envStatus.service('application', key);
 	const apps = $derived(dependents(services, 'database', service.key));
-	const schedule = $derived(backupSchedule(backups, 'database', service.key));
 
 	// Measured logical size from the sampler when it exists; the declared
 	// request stays the fallback and the denominator.
@@ -55,7 +53,7 @@
 			undeclared: 'default size, not yet measured',
 			measured: 'logical size'
 		}),
-		lastBackupStat(schedule, runs, 'database'),
+		lastBackupStat(backup, runs, 'database'),
 		connectedStat(apps, live, 'private network'),
 		phaseStat(connection)
 	]);
@@ -86,7 +84,7 @@
 <div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Recent backups</h2>
 	<div class="text-text-muted text-md">
-		snapshots of this environment{schedule ? ` · ${describeCron(schedule.backup.schedule)}` : ''}
+		snapshots of this environment{backup ? ` · ${describeCron(backup.schedule)} UTC` : ''}
 	</div>
 </div>
 

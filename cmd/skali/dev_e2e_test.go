@@ -1264,22 +1264,13 @@ func (h *e2eHarness) waitManagedRollouts(t *testing.T, kubeconfig string) {
 }
 
 // TestDevGuestbookScheduledBackupRetention is the scheduled-backup
-// acceptance loop: a manifest policy firing every minute with a two-minute
-// retention on the local platform. A scheduled snapshot appears without
-// anyone asking, is marked with its policy, and the policy later prunes its
-// own oldest snapshot while the manual one and the newest scheduled one
+// acceptance loop: an environment schedule firing every minute with a
+// two-minute retention on the local platform. A scheduled snapshot appears
+// without anyone asking, is marked as such, and the schedule later prunes
+// its oldest snapshot while the manual one and the newest scheduled one
 // stay. About seven minutes on top of the platform boot.
 func TestDevGuestbookScheduledBackupRetention(t *testing.T) {
 	h := newE2EHarnessFor(t, "guestbook", "guestbook.localhost")
-
-	// The example manifest gains a policy before the first deploy; the
-	// scratch copy keeps the example itself untouched.
-	manifestPath := filepath.Join(h.projectDir, "skali.yml")
-	manifest, err := os.ReadFile(manifestPath)
-	require.NoError(t, err)
-	manifest = append(manifest, []byte("\nbackups:\n  minutely:\n    schedule: \"* * * * *\"\n"+
-		"    retention: 2m\n    include:\n      databases: all\n")...)
-	require.NoError(t, os.WriteFile(manifestPath, manifest, 0o644))
 
 	const minioName = "skali-e2e-minio-scheduled"
 	const minioPort = 19101
@@ -1310,9 +1301,13 @@ func TestDevGuestbookScheduledBackupRetention(t *testing.T) {
 	require.NotNil(t, manualMatch, "no manual snapshot in:\n%s", run)
 	manual := manualMatch[1]
 
-	// The policy is seeded when the scheduler first sees the deployed
-	// revision and fires at the next minute; the snapshot carries the policy.
-	scheduledRow := regexp.MustCompile(`(?m)^([0-9a-f-]{36})  local +minutely \(scheduled\) `)
+	// The schedule is an environment setting (the local admin reauthenticates
+	// silently for the settings change); the scheduler seeds it when it first
+	// sees it and fires at the next minute; the snapshot is marked scheduled.
+	run = h.run(false, "", "backup", "schedule", "set", "--remote", "local", "--environment", "local",
+		"--every", "* * * * *", "--keep", "2m", "--yes")
+	require.Contains(t, run, "backups        every minute UTC, keep 2 minutes")
+	scheduledRow := regexp.MustCompile(`(?m)^([0-9a-f-]{36})  local +scheduled `)
 	var first string
 	require.Eventually(t, func() bool {
 		listing := h.run(false, "", "backup", "ls", "--remote", "local")
@@ -1325,9 +1320,9 @@ func TestDevGuestbookScheduledBackupRetention(t *testing.T) {
 	}, 5*time.Minute, 10*time.Second, "no scheduled snapshot appeared")
 
 	// Snapshots list newest first and ids are time-ordered, so the first
-	// scheduled id is the oldest of its policy. Once it is older than two
-	// minutes the next scheduled run's retention step removes it, while the
-	// newest scheduled snapshot and the manual one remain.
+	// scheduled id is the oldest one. Once it is older than two minutes the
+	// next scheduled run's retention step removes it, while the newest
+	// scheduled snapshot and the manual one remain.
 	require.Eventually(t, func() bool {
 		listing := h.run(false, "", "backup", "ls", "--remote", "local")
 		scheduled := scheduledRow.FindAllStringSubmatch(listing, -1)

@@ -82,9 +82,6 @@ func Diff(active, candidate *revision.Revision) *Plan {
 	result.diffCollection(active, candidate, "buckets",
 		func(r *revision.Revision) map[string]json.RawMessage { return rawSpecs(r.Definition.Buckets) },
 		"deletes the bucket and its objects")
-	result.diffCollection(active, candidate, "backups",
-		func(r *revision.Revision) map[string]json.RawMessage { return rawSpecs(r.Definition.Backups) },
-		"")
 	result.diffValues(active, candidate)
 
 	sort.SliceStable(result.Changes, func(i, j int) bool {

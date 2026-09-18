@@ -29,7 +29,7 @@ func seedBackupScope(t *testing.T) *fakeInstall {
 		{ID: testSnapshotProduction, Environment: "production", CreatedAt: "2026-08-15T10:00:00Z",
 			RevisionChecksum: "sha256:abcdef1234567890", Databases: 1, Buckets: 1, Volumes: 1, Bytes: 12345},
 		{ID: testSnapshotStaging, Environment: "staging", CreatedAt: "2026-08-14T09:30:00Z",
-			RevisionChecksum: "sha256:0123456789abcdef", Trigger: "scheduled", Policy: "daily", Databases: 1, Bytes: 512},
+			RevisionChecksum: "sha256:0123456789abcdef", Trigger: "scheduled", Databases: 1, Bytes: 512},
 		{ID: testSnapshotRetired, Environment: "retired", CreatedAt: "2026-08-01T08:00:00Z",
 			RevisionChecksum: "sha256:fedcba9876543210", Volumes: 2, Bytes: 1 << 20},
 	}
@@ -69,9 +69,9 @@ func TestBackupLsListsWholeProjectWithHeader(t *testing.T) {
 	require.Regexp(t, `(?m)^`+testSnapshotStaging+`  staging `, out)
 	require.Regexp(t, `(?m)^`+testSnapshotRetired+`  retired `, out)
 	require.Contains(t, out, "1.0MiB")
-	// Where each snapshot came from: a person, or the policy that took it.
+	// Where each snapshot came from: a person, or the environment's schedule.
 	require.Regexp(t, `(?m)^`+testSnapshotProduction+`  production +manual +2026`, out)
-	require.Regexp(t, `(?m)^`+testSnapshotStaging+`  staging +daily \(scheduled\) +2026`, out)
+	require.Regexp(t, `(?m)^`+testSnapshotStaging+`  staging +scheduled +2026`, out)
 }
 
 func TestBackupRemoveConfirmsAndDeletes(t *testing.T) {
@@ -83,7 +83,7 @@ func TestBackupRemoveConfirmsAndDeletes(t *testing.T) {
 	command.SetErr(out)
 	require.NoError(t, command.ExecuteContext(context.Background()))
 	require.Regexp(t, `(?m)^project +flowdemo$`, out.String())
-	require.Regexp(t, `(?m)^snapshot +`+testSnapshotStaging+` \(staging, .*daily \(scheduled\), 512B\)$`, out.String())
+	require.Regexp(t, `(?m)^snapshot +`+testSnapshotStaging+` \(staging, .*scheduled, 512B\)$`, out.String())
 	require.Contains(t, out.String(), "snapshot deleted")
 	require.Contains(t, install.posts, "backup-rm:"+testSnapshotStaging)
 

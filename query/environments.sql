@@ -15,7 +15,9 @@ SELECT * FROM environments WHERE project_id = ANY(@project_ids::uuid[]) ORDER BY
 
 -- name: UpdateEnvironmentSettings :one
 UPDATE environments
-SET max_role = $2, deploy_policy = $3, promote_from = $4, priority = $5, updated_at = now()
+SET max_role = $2, deploy_policy = $3, promote_from = $4, priority = $5,
+    backup_schedule = $6, backup_retention_seconds = $7, backup_strategy = $8,
+    updated_at = now()
 WHERE id = $1
 RETURNING *;
 
@@ -31,9 +33,10 @@ ORDER BY e.project_id, e.name;
 DELETE FROM environments WHERE id = $1;
 
 -- Environments the backup scheduler considers: active with a converged
--- revision to snapshot.
+-- revision to snapshot, with their backup setting.
 -- name: ListActiveEnvironmentRevisions :many
-SELECT e.id AS environment_id, e.project_id, e.name, t.active_revision_id
+SELECT e.id AS environment_id, e.project_id, e.name, t.active_revision_id,
+       e.backup_schedule, e.backup_retention_seconds, e.backup_strategy
 FROM environments e
 JOIN environment_targets t ON t.environment_id = e.id
 WHERE t.state = 'active' AND t.active_revision_id IS NOT NULL

@@ -73,15 +73,24 @@ func (f *serviceFixture) configureTarget(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func dailyDefinition() compiler.ProjectDefinition {
+func databaseDefinition() compiler.ProjectDefinition {
 	return compiler.ProjectDefinition{
 		Schema: compiler.DefinitionSchema, Name: "demo",
 		Databases: map[string]compiler.DatabaseClaim{"data": {Engine: "postgres"}},
-		Backups: map[string]compiler.Backup{
-			"daily": {Schedule: "0 3 * * *", RetentionSeconds: 7 * 86400, Include: compiler.Selection{AllDatabases: true}},
-		},
 	}
 }
+
+// setSchedule stores the environment's automatic backup setting the way
+// the project service does; an empty expression turns it off.
+func (f *serviceFixture) setSchedule(t *testing.T, expr string, retentionSeconds int64) {
+	t.Helper()
+	_, err := f.st.Pool.Exec(context.Background(),
+		"UPDATE environments SET backup_schedule = $1, backup_retention_seconds = $2 WHERE id = $3",
+		expr, retentionSeconds, f.environmentID)
+	require.NoError(t, err)
+}
+
+const week = 7 * 86400
 
 func newTestScheduler(f *serviceFixture, now *time.Time) *Scheduler {
 	s := NewScheduler(f.controller)
@@ -109,7 +118,8 @@ func TestNextDue(t *testing.T) {
 
 func TestSchedulerIdlesWithoutTarget(t *testing.T) {
 	f := newServiceFixture(t)
-	f.activate(t, dailyDefinition())
+	f.activate(t, databaseDefinition())
+	f.setSchedule(t, "0 3 * * *", week)
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	s := newTestScheduler(f, &now)
 
@@ -123,16 +133,17 @@ func TestSchedulerSeedsThenFiresOnce(t *testing.T) {
 	f := newServiceFixture(t)
 	ctx := context.Background()
 	f.configureTarget(t)
-	f.activate(t, dailyDefinition())
+	f.activate(t, databaseDefinition())
+	f.setSchedule(t, "0 3 * * *", week)
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	s := newTestScheduler(f, &now)
 
-	// First sight seeds the policy at its next fire; nothing runs yet.
+	// First sight seeds the schedule at its next fire; nothing runs yet.
 	require.NoError(t, s.Tick(ctx))
 	rows, err := f.st.ListBackupSchedules(ctx)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	require.Equal(t, "daily", rows[0].Policy)
+	require.Equal(t, "0 3 * * *", rows[0].Schedule)
 	require.True(t, now.Equal(rows[0].LastFireAt))
 	require.Nil(t, rows[0].LastBackupID)
 	unfinished, err := f.st.ListUnfinishedBackups(ctx)
@@ -146,7 +157,8 @@ func TestSchedulerSeedsThenFiresOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unfinished)
 
-	// Past the fire: one scheduled backup, marked by policy and actor.
+	// Past the fire: one scheduled backup, marked by trigger and actor and
+	// carrying the retention in force.
 	now = now.Add(2 * time.Hour)
 	require.NoError(t, s.Tick(ctx))
 	unfinished, err = f.st.ListUnfinishedBackups(ctx)
@@ -154,13 +166,13 @@ func TestSchedulerSeedsThenFiresOnce(t *testing.T) {
 	require.Len(t, unfinished, 1)
 	row := unfinished[0]
 	require.Equal(t, TriggerScheduled, row.Trigger)
-	require.Equal(t, "daily", row.Policy)
-	require.Equal(t, compiler.StrategyComplete, row.Strategy)
+	require.Equal(t, StrategyComplete, row.Strategy)
+	require.EqualValues(t, week, row.RetentionSeconds)
 	require.NotNil(t, row.RunID)
 	run, err := f.journal.Run(ctx, *row.RunID)
 	require.NoError(t, err)
 	require.Equal(t, KindBackup, run.Kind)
-	require.Equal(t, "schedule:daily", run.Actor)
+	require.Equal(t, ScheduleActor, run.Actor)
 
 	rows, err = f.st.ListBackupSchedules(ctx)
 	require.NoError(t, err)
@@ -181,7 +193,8 @@ func TestSchedulerHoldsFireWhileEnvironmentBusy(t *testing.T) {
 	f := newServiceFixture(t)
 	ctx := context.Background()
 	f.configureTarget(t)
-	f.activate(t, dailyDefinition())
+	f.activate(t, databaseDefinition())
+	f.setSchedule(t, "0 3 * * *", week)
 	now := time.Date(2026, 9, 16, 2, 0, 0, 0, time.UTC)
 	s := newTestScheduler(f, &now)
 	require.NoError(t, s.Tick(ctx))
@@ -210,14 +223,49 @@ func TestSchedulerHoldsFireWhileEnvironmentBusy(t *testing.T) {
 	unfinished, err = f.st.ListUnfinishedBackups(ctx)
 	require.NoError(t, err)
 	require.Len(t, unfinished, 1)
-	require.Equal(t, "daily", unfinished[0].Policy)
+	require.Equal(t, TriggerScheduled, unfinished[0].Trigger)
 }
 
-func TestSchedulerDropsRemovedPolicies(t *testing.T) {
+// A changed expression reseeds at the new schedule's next fire instead of
+// catching up on the old one.
+func TestSchedulerReseedsOnExpressionChange(t *testing.T) {
 	f := newServiceFixture(t)
 	ctx := context.Background()
 	f.configureTarget(t)
-	f.activate(t, dailyDefinition())
+	f.activate(t, databaseDefinition())
+	f.setSchedule(t, "0 3 * * *", week)
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	s := newTestScheduler(f, &now)
+	require.NoError(t, s.Tick(ctx))
+
+	// Well past 03:00 the next day the setting moves to 04:00: the row is
+	// reseeded at now and nothing fires for the missed 03:00.
+	now = now.Add(20 * time.Hour)
+	f.setSchedule(t, "0 4 * * *", week)
+	require.NoError(t, s.Tick(ctx))
+	rows, err := f.st.ListBackupSchedules(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "0 4 * * *", rows[0].Schedule)
+	require.True(t, now.Equal(rows[0].LastFireAt))
+	unfinished, err := f.st.ListUnfinishedBackups(ctx)
+	require.NoError(t, err)
+	require.Empty(t, unfinished)
+
+	// Past the new fire: exactly one backup.
+	now = now.Add(24 * time.Hour)
+	require.NoError(t, s.Tick(ctx))
+	unfinished, err = f.st.ListUnfinishedBackups(ctx)
+	require.NoError(t, err)
+	require.Len(t, unfinished, 1)
+}
+
+func TestSchedulerDropsDisabledSchedule(t *testing.T) {
+	f := newServiceFixture(t)
+	ctx := context.Background()
+	f.configureTarget(t)
+	f.activate(t, databaseDefinition())
+	f.setSchedule(t, "0 3 * * *", week)
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	s := newTestScheduler(f, &now)
 	require.NoError(t, s.Tick(ctx))
@@ -225,17 +273,29 @@ func TestSchedulerDropsRemovedPolicies(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 
-	// A new active revision without the policy: the state row goes with it.
-	without := dailyDefinition()
-	without.Backups = nil
-	f.activate(t, without)
+	// Automatic backups turned off: the state row goes with it.
+	f.setSchedule(t, "", 0)
+	require.NoError(t, s.Tick(ctx))
+	rows, err = f.st.ListBackupSchedules(ctx)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+
+	// Turned on again and then the environment leaves the active state:
+	// the row goes as well.
+	f.setSchedule(t, "0 3 * * *", week)
+	require.NoError(t, s.Tick(ctx))
+	rows, err = f.st.ListBackupSchedules(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	_, err = f.st.Pool.Exec(ctx, "UPDATE environment_targets SET state = 'down' WHERE environment_id = $1", f.environmentID)
+	require.NoError(t, err)
 	require.NoError(t, s.Tick(ctx))
 	rows, err = f.st.ListBackupSchedules(ctx)
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }
 
-func TestPlanComponentsHonorsSelection(t *testing.T) {
+func TestPlanComponentsOrders(t *testing.T) {
 	definition := compiler.ProjectDefinition{
 		Databases: map[string]compiler.DatabaseClaim{"main": {}, "analytics": {}},
 		Buckets:   map[string]compiler.BucketClaim{"files": {}},
@@ -251,27 +311,20 @@ func TestPlanComponentsHonorsSelection(t *testing.T) {
 		return out
 	}
 	require.Equal(t, []string{"db:analytics", "db:main", "bucket:files", "volume:web.cache", "volume:web.uploads"},
-		labels(planComponents(&definition, nil)), "manual snapshots take everything")
-	require.Equal(t, []string{"db:main", "volume:web.uploads"},
-		labels(planComponents(&definition, &compiler.Selection{Databases: []string{"main"}, Volumes: []string{"web.uploads"}})))
-	require.Equal(t, []string{"db:analytics", "db:main", "bucket:files"},
-		labels(planComponents(&definition, &compiler.Selection{AllDatabases: true, AllBuckets: true})))
-	require.Empty(t, planComponents(&definition, &compiler.Selection{Databases: []string{"gone"}}))
+		labels(planComponents(&definition)), "every snapshot takes everything, in a fixed order")
 }
 
-// A policy whose include matches nothing the revision declares is skipped
-// at its fire instead of producing a failed run every time it is due.
-func TestSchedulerSkipsPolicyWithNothingToBackUp(t *testing.T) {
+// An environment whose revision declares nothing stateful is skipped at
+// its fire instead of producing a failed run every time it is due.
+func TestSchedulerSkipsEnvironmentWithNothingToBackUp(t *testing.T) {
 	f := newServiceFixture(t)
 	ctx := context.Background()
 	f.configureTarget(t)
 	f.activate(t, compiler.ProjectDefinition{
 		Schema: compiler.DefinitionSchema, Name: "demo",
 		Applications: map[string]compiler.Application{"web": {}},
-		Backups: map[string]compiler.Backup{
-			"daily": {Schedule: "0 3 * * *", RetentionSeconds: 7 * 86400, Include: compiler.Selection{AllDatabases: true}},
-		},
 	})
+	f.setSchedule(t, "0 3 * * *", week)
 	now := time.Date(2026, 9, 16, 2, 0, 0, 0, time.UTC)
 	s := newTestScheduler(f, &now)
 	require.NoError(t, s.Tick(ctx))

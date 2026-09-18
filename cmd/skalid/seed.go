@@ -206,9 +206,9 @@ type seedRun struct {
 	kind  runKind
 	age   float64 // fraction of the span before now
 	actor string
-	// policy names the manifest backup policy of a scheduled backup; empty
+	// scheduled marks a backup the environment's schedule took; false
 	// means the backup was taken by hand.
-	policy string
+	scheduled bool
 	// manifest is the index into the project's manifests for deploys.
 	manifest int
 	// application scopes a restart.
@@ -238,6 +238,7 @@ var seedProjects = []seedProject{
 				settings: &authz.Settings{
 					MaxRole: authz.Maintain, DeployPolicy: "promote-only",
 					PromoteFrom: []string{"staging"}, Priority: "high",
+					Backup: &authz.BackupSchedule{Schedule: "0 3 * * *", RetentionSeconds: 14 * 86400, Strategy: authz.BackupStrategyComplete},
 				},
 				cells: map[string]authz.Role{
 					"linus@seed.skali.local":  authz.Read,
@@ -251,10 +252,10 @@ var seedProjects = []seedProject{
 				},
 				history: []seedRun{
 					{kind: runDeploy, age: 0.95, actor: "ada@seed.skali.local", manifest: 0},
-					{kind: runBackup, age: 0.80, actor: backup.ScheduleActor("daily"), policy: "daily"},
+					{kind: runBackup, age: 0.80, actor: backup.ScheduleActor, scheduled: true},
 					{kind: runDeploy, age: 0.62, actor: "grace@seed.skali.local", manifest: 1},
 					{kind: runRestart, age: 0.50, actor: "linus@seed.skali.local", application: "api"},
-					{kind: runBackup, age: 0.40, actor: backup.ScheduleActor("daily"), policy: "daily"},
+					{kind: runBackup, age: 0.40, actor: backup.ScheduleActor, scheduled: true},
 					{kind: runDeployFailed, age: 0.30, actor: "grace@seed.skali.local", manifest: 2},
 					{kind: runRollback, age: 0.29, actor: "grace@seed.skali.local"},
 					{kind: runDeploy, age: 0.12, actor: "ada@seed.skali.local", manifest: 2},
@@ -325,6 +326,7 @@ var seedProjects = []seedProject{
 				settings: &authz.Settings{
 					MaxRole: authz.Admin, DeployPolicy: "promote-only",
 					PromoteFrom: []string{"staging"}, Priority: "normal",
+					Backup: &authz.BackupSchedule{Schedule: "0 4 * * 0", RetentionSeconds: 28 * 86400, Strategy: authz.BackupStrategyComplete},
 				},
 				values: map[string]string{
 					"APP_DOMAIN":    "analytics.example.com",
@@ -880,7 +882,7 @@ func (s *seeder) runBackup(ctx context.Context, proj *store.Project, env *store.
 		ID: id, Kind: kind, EnvironmentID: env.ID,
 		ProjectName: proj.Name, EnvironmentName: env.Name,
 		RevisionID: utils.NilWhenZero(revisionID), RunID: &run.ID,
-		Trigger: r.trigger(), Policy: r.policy, Strategy: compiler.StrategyComplete,
+		Trigger: r.trigger(), Strategy: backup.StrategyComplete, RetentionSeconds: r.retention(env),
 	})
 	if err != nil {
 		return err
@@ -929,6 +931,13 @@ func (s *seeder) runBackup(ctx context.Context, proj *store.Project, env *store.
 	if err := s.completeStep(ctx, run.ID, nil, "bucket:uploads", "Back up buckets.uploads", redactor,
 		[]string{"synced 12,431 objects (2.1 GiB)", "upload verified"}); err != nil {
 		return err
+	}
+	if r.scheduled {
+		if err := s.completeStep(ctx, run.ID, nil, "retention", "Apply retention", redactor,
+			[]string{"scheduled snapshots are kept for " + (time.Duration(r.retention(env)) * time.Second).String(),
+				"kept 3 snapshot(s), deleted 1 (2.3 GiB)"}); err != nil {
+			return err
+		}
 	}
 	if err := s.journal.FinishRun(ctx, run.ID, journal.RunSucceeded); err != nil {
 		return err
@@ -1471,10 +1480,19 @@ func (s *seeder) reset(ctx context.Context) error {
 	return nil
 }
 
-// trigger is the backup row's origin: scheduled when a policy drove it.
+// trigger is the backup row's origin: scheduled when the schedule drove it.
 func (r seedRun) trigger() string {
-	if r.policy != "" {
+	if r.scheduled {
 		return backup.TriggerScheduled
 	}
 	return backup.TriggerManual
+}
+
+// retention is what a scheduled row carries: the environment's setting at
+// the time the run was accepted; manual rows carry none.
+func (r seedRun) retention(env *store.Environment) int64 {
+	if !r.scheduled {
+		return 0
+	}
+	return env.BackupRetentionSeconds
 }

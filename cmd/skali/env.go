@@ -27,7 +27,8 @@ func newEnvCommand() *cobra.Command {
 		Long: "Environments of the checkout's project (or --project). Listing needs\n" +
 			"project read, creating needs project maintain (the creator becomes\n" +
 			"admin of the new environment), settings and removal need environment\n" +
-			"admin and a recent login.",
+			"admin and a recent login. Automatic backups are configured with\n" +
+			"skali backup schedule.",
 	}
 	command.AddCommand(newEnvLsCommand(), newEnvCreateCommand(), newEnvSetCommand(), newEnvRmCommand())
 	return command
@@ -72,7 +73,7 @@ func renderEnvironmentTable(out io.Writer, scope *accessScope) {
 			name += " (bound)"
 		}
 		if environment.Locked() || environment.Settings == nil {
-			rows = append(rows, []string{name, "locked", "-", "-", "-", "-"})
+			rows = append(rows, []string{name, "locked", "-", "-", "-", "-", "-"})
 			continue
 		}
 		created := "-"
@@ -80,9 +81,10 @@ func renderEnvironmentTable(out io.Writer, scope *accessScope) {
 			created = environment.CreatedAt.Local().Format("2006-01-02 15:04")
 		}
 		rows = append(rows, []string{name, environment.Access, environment.Settings.Priority,
-			describeDeployPolicy(environment.Settings), environment.Settings.MaxRole, created})
+			describeDeployPolicy(environment.Settings), environment.Settings.MaxRole,
+			describeBackupSchedule(environment.Settings), created})
 	}
-	renderColumns(out, []string{"NAME", "ACCESS", "PRIORITY", "POLICY", "CEILING", "CREATED"}, rows)
+	renderColumns(out, []string{"NAME", "ACCESS", "PRIORITY", "POLICY", "CEILING", "BACKUPS", "CREATED"}, rows)
 }
 
 func describeDeployPolicy(settings *client.EnvironmentSettings) string {
@@ -341,6 +343,7 @@ func printEnvironmentSettings(out io.Writer, scope *accessScope, environment *cl
 	fmt.Fprintf(out, "max role       %s\n", environment.Settings.MaxRole)
 	fmt.Fprintf(out, "deploy policy  %s\n", describeDeployPolicy(environment.Settings))
 	fmt.Fprintf(out, "priority       %s\n", environment.Settings.Priority)
+	fmt.Fprintf(out, "backups        %s\n", describeBackupScheduleLong(environment.Settings.Backup))
 }
 
 func newEnvRmCommand() *cobra.Command {

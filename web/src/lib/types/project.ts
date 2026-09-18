@@ -20,11 +20,21 @@ export interface ProjectAccess {
 	environments: Record<string, AccessRole>;
 }
 
+/** An environment's automatic backup schedule: five-field cron in UTC and how long its snapshots are kept. */
+export interface BackupSchedule {
+	schedule: string;
+	retention_seconds: number;
+	/** complete is the only strategy today; absent reads as complete. */
+	strategy?: 'complete';
+}
+
 export interface EnvironmentSettings {
 	max_role: AccessRole;
 	deploy_policy: 'direct' | 'promote-only';
 	promote_from: string[];
 	priority: 'normal' | 'high';
+	/** null when automatic backups are off; manual snapshots always work. */
+	backup: BackupSchedule | null;
 }
 
 /** One user's role on a project (membership) or an environment (cell). */

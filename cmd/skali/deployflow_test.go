@@ -506,6 +506,17 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			if patch.Priority != nil {
 				env.Settings.Priority = *patch.Priority
 			}
+			if patch.Backup != nil {
+				env.Settings.Backup = nil
+				if string(patch.Backup) != "null" {
+					var schedule client.BackupSchedule
+					_ = json.Unmarshal(patch.Backup, &schedule)
+					if schedule.Strategy == "" {
+						schedule.Strategy = "complete"
+					}
+					env.Settings.Backup = &schedule
+				}
+			}
 			f.posts = append(f.posts, "settings:"+env.ID)
 			_ = json.NewEncoder(w).Encode(map[string]any{"environment": env})
 		case sub == "":
