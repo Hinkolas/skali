@@ -44,9 +44,10 @@ type Manifest struct {
 	// kept until deleted, scheduled ones expire under their environment's
 	// retention. They arrived after the first snapshots were written, so
 	// readers default them (manual, complete) and format "1" stays exact.
-	// Policy is never written any more: releases before v0.1.0-rc.8 named
-	// the manifest backup policy of a scheduled snapshot here, and readers
-	// use it to recognize those snapshots (see decodeManifest).
+	// Policy is never written any more: before automatic backups became an
+	// environment setting, the manifest backup policy of a scheduled
+	// snapshot was named here, and readers use it to recognize those
+	// snapshots (see decodeManifest).
 	Trigger    string      `json:"trigger,omitempty"`
 	Policy     string      `json:"policy,omitempty"`
 	Strategy   string      `json:"strategy,omitempty"`
@@ -98,8 +99,8 @@ func decodeManifest(data []byte) (*Manifest, error) {
 		return nil, &UnsupportedManifestError{Found: m.FormatVersion}
 	}
 	// A manifest naming a policy was written before schedules moved to the
-	// environment (v0.1.0-rc.8). Its policy no longer exists, so the
-	// snapshot is nobody's to prune: it reads as manual.
+	// environment. Its policy no longer exists, so the snapshot is nobody's
+	// to prune: it reads as manual.
 	if m.Policy != "" {
 		m.Trigger, m.Policy = TriggerManual, ""
 	}

@@ -52,7 +52,8 @@ func TestReviewNote(t *testing.T) {
 
 func TestReferenceReleaseFallsBackToTheLedger(t *testing.T) {
 	withCLIVersion(t, "v0.0.0-dev")
-	require.Equal(t, Ledger[len(Ledger)-1].Release, ReferenceRelease())
+	require.Equal(t, newestShipped(Ledger), ReferenceRelease())
+	require.True(t, version.IsRelease(ReferenceRelease()), "a pending entry never becomes the reference")
 	withCLIVersion(t, "v9.0.0")
 	require.Equal(t, "v9.0.0", ReferenceRelease())
 }
@@ -92,15 +93,24 @@ func TestValidateRejectsNonRelease(t *testing.T) {
 	require.Empty(t, Validate(document), "the v prefix is optional")
 }
 
+// Shipped entries name releases oldest first; entries still waiting for
+// their tag are written as Next and sit after every shipped one.
 func TestLedgerEntriesAreReleasesInOrder(t *testing.T) {
 	t.Parallel()
 	require.NotEmpty(t, Ledger)
+	require.False(t, Ledger[0].Pending(), "the first entry names the release the watermark started with")
+	pending := false
 	for i, change := range Ledger {
-		require.True(t, version.IsRelease(change.Release), "%d: %q", i, change.Release)
 		require.NotEmpty(t, change.Path)
 		require.NotEmpty(t, change.Message)
 		require.NotEmpty(t, change.Hint)
 		require.Contains(t, []ChangeKind{ChangeAdded, ChangeRemoved, ChangeChanged}, change.Kind)
+		if change.Pending() {
+			pending = true
+			continue
+		}
+		require.False(t, pending, "shipped entry %d follows a pending one; pending entries go last", i)
+		require.True(t, version.IsRelease(change.Release), "%d: %q", i, change.Release)
 		if i > 0 {
 			require.False(t, version.Older(change.Release, Ledger[i-1].Release), "ledger is not oldest first at %d", i)
 		}
@@ -108,6 +118,42 @@ func TestLedgerEntriesAreReleasesInOrder(t *testing.T) {
 	require.Len(t, ChangesSince("v0.1.0-rc.2"), len(Ledger))
 	require.Empty(t, ChangesSince("v9.9.9"))
 	require.Len(t, ChangesSince("not a release"), len(Ledger))
+}
+
+// A pending entry is newer than every release the ledger names: a
+// watermark at or before the newest shipped entry has not seen it, one
+// past it has. Messages call its release "the next release".
+func TestPendingEntryFollowsTheNewestShippedRelease(t *testing.T) {
+	t.Parallel()
+	ledger := []Change{
+		{Release: "v0.1.0-rc.3", Kind: ChangeRemoved, Path: "version", Message: "m", Hint: "h"},
+		{Release: "v0.1.0-rc.7", Kind: ChangeAdded, Path: "applications.*.routes.*.compress", Message: "m", Hint: "h"},
+		{Release: Next, Kind: ChangeRemoved, Path: "backups", Message: "gone", Hint: "drop it"},
+	}
+	require.Equal(t, "v0.1.0-rc.7", newestShipped(ledger))
+	require.Equal(t, "the next release", ledger[2].ReleaseLabel())
+	require.Equal(t, "v0.1.0-rc.7", ledger[1].ReleaseLabel())
+	require.Len(t, changesSince(ledger, "v0.1.0-rc.2"), 3)
+	require.Equal(t, []Change{ledger[2]}, changesSince(ledger, "v0.1.0-rc.7"))
+	require.Empty(t, changesSince(ledger, "v0.1.0-rc.8"), "a watermark past every shipped entry has seen the pending change")
+	require.Empty(t, changesSince(ledger, "v0.1.0"))
+	require.True(t, Change{Release: Next}.after(nil, "v9.9.9"), "with nothing shipped a pending change is after everything")
+	require.Equal(t, "", newestShipped(nil))
+
+	changed := []Change{{Release: Next, Kind: ChangeChanged, Path: "applications.*.build.dockerfile", Message: "moved", Hint: "rewrite it"}}
+	document := parseValid(t, "skali: v0.1.0-rc.7\nname: demo\napplications:\n  web:\n    build:\n      context: ./web\n      dockerfile: Dockerfile\n")
+	var diagnostics yamldoc.Diagnostics
+	validateLedger(&diagnostics, document, changed, "v0.1.0-rc.7")
+	require.Len(t, diagnostics, 1)
+	require.Contains(t, diagnostics[0].Message, "moved (changed in the next release; this manifest was reviewed against v0.1.0-rc.7)")
+	diagnostics = nil
+	validateLedger(&diagnostics, document, changed, "v0.1.0-rc.8")
+	require.Len(t, diagnostics, 1, "with nothing shipped in this ledger the pending change is after every watermark")
+
+	shipped := append([]Change{{Release: "v0.1.0-rc.7", Kind: ChangeAdded, Path: "x", Message: "m", Hint: "h"}}, changed...)
+	diagnostics = nil
+	validateLedger(&diagnostics, document, shipped, "v0.1.0-rc.8")
+	require.Empty(t, diagnostics, "a watermark past the newest shipped entry acknowledges the pending change")
 }
 
 func TestChangeMatchesPaths(t *testing.T) {

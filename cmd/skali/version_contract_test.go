@@ -265,9 +265,7 @@ func TestCachePruningRespectsExecutionLease(t *testing.T) {
 
 func TestManifestSemanticReviewDoesNotWrite(t *testing.T) {
 	withCLIVersion(t, "v0.4.0")
-	previous := manifest.Ledger
-	t.Cleanup(func() { manifest.Ledger = previous })
-	manifest.Ledger = append(append([]manifest.Change{}, previous...), manifest.Change{Release: "v0.4.0", Kind: manifest.ChangeChanged, Path: "applications.*.deployment.rollout.strategy", WhenOmitted: true, Message: "default changed", Hint: "review strategy"})
+	withLedger(t, append(append([]manifest.Change{}, manifest.Ledger...), manifest.Change{Release: "v0.4.0", Kind: manifest.ChangeChanged, Path: "applications.*.deployment.rollout.strategy", WhenOmitted: true, Message: "default changed", Hint: "review strategy"}))
 	path := writeManifestFixture(t, "skali: v0.3.0 # preserve\n")
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)

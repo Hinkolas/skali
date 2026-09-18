@@ -38,12 +38,22 @@ type Change struct {
 	WhenOmitted bool
 }
 
+// Next is the Release of an entry whose change is on main but not yet
+// released. Nobody guesses the coming tag: the entry lands as Next, and
+// task release:stamp replaces it with the tag about to be cut (through
+// cmd/skali-schema, which also refuses to cut a release while an entry is
+// still pending). Pending entries sit after every shipped one. Until
+// stamped, a pending change is newer than every release the ledger names:
+// a watermark past the newest shipped entry counts as having seen it, an
+// older one has not.
+const Next = "next"
+
 // Ledger records every manifest grammar change since the watermark exists,
 // oldest first (docs/versioning.md, decision 4). Parsing consults it for
 // removed fields, validation for changed meanings, skali manifest upgrade
 // moves watermarks past it, and the skill renders it. Changes older than
 // the first entry predate every possible watermark and are history, not
-// ledger.
+// ledger. A new entry is written with Release: Next.
 var Ledger = []Change{
 	{
 		Release: "v0.1.0-rc.3",
@@ -67,7 +77,7 @@ var Ledger = []Change{
 		Hint:    "nothing to change; write compress: false for routes that stream events or already compress their responses",
 	},
 	{
-		Release: "v0.1.0-rc.8",
+		Release: Next,
 		Kind:    ChangeRemoved,
 		Path:    "backups",
 		Message: "backups was removed from the manifest; automatic backups are an environment setting now, one schedule per environment, set outside the manifest",
@@ -91,13 +101,57 @@ func (c Change) Matches(path string) bool {
 	return true
 }
 
-// ChangesSince lists the entries that shipped after a watermark, oldest
-// first; every entry when the watermark is not a release.
+// Pending reports whether the entry still waits for its release tag.
+func (c Change) Pending() bool {
+	return c.Release == Next
+}
+
+// ReleaseLabel names the release in messages: the tag, or "the next
+// release" while the entry is pending.
+func (c Change) ReleaseLabel() string {
+	if c.Pending() {
+		return "the next release"
+	}
+	return c.Release
+}
+
+// after reports whether the change landed after a watermark. A shipped
+// entry did when its release is newer; a pending entry did unless the
+// watermark is already past every release the ledger names (the tag it
+// will be stamped with is newer than all of them). An unparseable
+// watermark has seen nothing.
+func (c Change) after(ledger []Change, watermark string) bool {
+	if !c.Pending() {
+		return version.Older(watermark, c.Release)
+	}
+	newest := newestShipped(ledger)
+	return newest == "" || !version.Older(newest, watermark)
+}
+
+// newestShipped is the newest release a stamped entry names; empty when
+// every entry is pending.
+func newestShipped(ledger []Change) string {
+	newest := ""
+	for _, change := range ledger {
+		if !change.Pending() && (newest == "" || version.Older(newest, change.Release)) {
+			newest = change.Release
+		}
+	}
+	return newest
+}
+
+// ChangesSince lists the entries that landed after a watermark, oldest
+// first, pending ones included; every entry when the watermark is not a
+// release.
 func ChangesSince(watermark string) []Change {
+	return changesSince(Ledger, watermark)
+}
+
+func changesSince(ledger []Change, watermark string) []Change {
 	release, ok := Watermark(watermark)
 	var since []Change
-	for _, change := range Ledger {
-		if !ok || version.Older(release, change.Release) {
+	for _, change := range ledger {
+		if !ok || change.after(ledger, release) {
 			since = append(since, change)
 		}
 	}

@@ -159,9 +159,9 @@ var watermarkLine = regexp.MustCompile(`^[A-Za-z_]+:[^#]*?(\s*#.*)?$`)
 // upgradeManifest rewrites the manifest text so its watermark is target:
 // the legacy version line becomes the skali line, an older skali line moves
 // forward, and a manifest with neither gets the line before its first key.
-// A top-level backups block (removed in v0.1.0-rc.8, schedules are an
-// environment setting now) is dropped with the comment block directly
-// above it. Edits are line-based on the original text so formatting and
+// A top-level backups block (removed from the manifest when automatic
+// backups became an environment setting; the ledger names the release) is
+// dropped with the comment block directly above it. Edits are line-based on the original text so formatting and
 // comments elsewhere survive. A nil result means nothing changed; the
 // summary then says why.
 func upgradeManifest(data []byte, target string) (rewritten []byte, summary string, err error) {
