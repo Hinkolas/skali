@@ -128,9 +128,9 @@ func TestManifestCarriesOrigin(t *testing.T) {
 	require.Equal(t, TriggerScheduled, summarize(decoded).Trigger)
 }
 
-// Snapshots a manifest backup policy took (releases before v0.1.0-rc.8
-// named the policy) read as manual: listings show them as such and
-// retention never touches them.
+// Snapshots a manifest backup policy took (releases before automatic
+// backups became an environment setting named the policy) read as manual:
+// listings show them as such and retention never touches them.
 func TestManifestLegacyPolicyReadsAsManual(t *testing.T) {
 	legacy := fixtureManifest(t)
 	legacy.Trigger, legacy.Policy, legacy.Strategy = TriggerScheduled, "daily", StrategyComplete

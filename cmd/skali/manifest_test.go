@@ -178,7 +178,8 @@ func TestManifestUpgradeStripsBackups(t *testing.T) {
 	path := writeManifestFixture(t, "skali: v0.1.0-rc.7\n")
 	require.NoError(t, os.WriteFile(path, []byte("skali: v0.1.0-rc.7\n"+upgradeFixtureBody+"\n"+block), 0o600))
 	_, err := manifest.ParseFile(path)
-	require.ErrorContains(t, err, "backups: removed in v0.1.0-rc.8")
+	require.ErrorContains(t, err, "backups: removed in ")
+	require.ErrorContains(t, err, "backups was removed from the manifest")
 	out, err := runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "manifest", "upgrade", "--manifest", path)
 	})

@@ -142,7 +142,7 @@ func validateStableKey(diagnostics *yamldoc.Diagnostics, document *Document, pat
 func validateLedger(diagnostics *yamldoc.Diagnostics, document *Document, ledger []Change, watermark string) {
 	paths := document.Paths()
 	for _, change := range ledger {
-		if change.Kind != ChangeChanged || !version.Older(watermark, change.Release) {
+		if change.Kind != ChangeChanged || !change.after(ledger, watermark) {
 			continue
 		}
 		matched := map[string]bool{}
@@ -174,7 +174,7 @@ func validateLedger(diagnostics *yamldoc.Diagnostics, document *Document, ledger
 		for _, path := range utils.SortedKeys(matched) {
 			*diagnostics = append(*diagnostics, document.Diagnostic(path, fmt.Sprintf(
 				"%s (changed in %s; this manifest was reviewed against %s); %s, then explicitly review and edit skali: to acknowledge",
-				change.Message, change.Release, watermark, change.Hint)))
+				change.Message, change.ReleaseLabel(), watermark, change.Hint)))
 		}
 	}
 }

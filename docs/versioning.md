@@ -137,6 +137,16 @@ The small change ledger records additions, removals and exceptional semantic
 changes. Changed entries report every affected location, including omitted
 fields whose defaults changed. It is not a general compatibility engine.
 
+Ledger entries are keyed by the release that shipped the change, prereleases
+included, because that is the same tag the watermark names. An entry lands
+with the sentinel `next` while its change is unreleased; nobody guesses the
+coming tag. The release process stamps pending entries with the tag about to
+be cut (`task release:stamp`), that rewrite is merged like any other change,
+and cutting a release is refused while an entry is still pending or names a
+newer release. Until stamped, a pending change counts as newer than every
+release the ledger names: a watermark past the newest shipped entry has seen
+it, an older one has not, and messages call its release "the next release".
+
 `skali manifest upgrade` evaluates changes against the original review point.
 It proposes safe mechanical edits (including replacing legacy `version: "1"`
 and dropping removed top-level blocks such as `backups:`) and ordinary

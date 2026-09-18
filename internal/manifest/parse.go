@@ -65,7 +65,7 @@ func explainUnknownFields(data []byte, err error) error {
 			continue
 		}
 		if change, found := Removed(diagnostic.Path); found {
-			diagnostics[i].Message = fmt.Sprintf("removed in %s: %s; %s", change.Release, change.Message, change.Hint)
+			diagnostics[i].Message = fmt.Sprintf("removed in %s: %s; %s", change.ReleaseLabel(), change.Message, change.Hint)
 		} else if newer {
 			diagnostics[i].Message = fmt.Sprintf("unknown field; the manifest was reviewed against %s, newer than this CLI (%s)",
 				watermark, version.Version)

@@ -106,11 +106,23 @@ func TestSkillReadSince(t *testing.T) {
 	require.Contains(t, out, "    version was replaced by skali")
 	require.Contains(t, out, "    fix: run skali manifest upgrade")
 
+	// Against a fixed ledger: an entry still pending its release lists as
+	// next, and a watermark past every shipped entry has seen it.
+	withLedger(t, []manifest.Change{
+		{Release: "v0.1.0-rc.3", Kind: manifest.ChangeRemoved, Path: "version", Message: "version was replaced by skali", Hint: "run skali manifest upgrade"},
+		{Release: manifest.Next, Kind: manifest.ChangeRemoved, Path: "backups", Message: "backups left the manifest", Hint: "drop the block"},
+	})
 	out, err = runCapturingStdout(t, func() error {
-		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "0.1.0-rc.8")
+		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "v0.1.0-rc.3")
 	})
 	require.NoError(t, err)
-	require.Equal(t, versionDescription()+"\n\n"+"no manifest changes since v0.1.0-rc.8; this skali is "+versionpkg.Version+"\n", out)
+	require.Equal(t, versionDescription()+"\n\n"+"manifest changes since v0.1.0-rc.3 (this skali is "+versionpkg.Version+")\n"+
+		"  next  removed  backups\n    backups left the manifest\n    fix: drop the block\n", out)
+	out, err = runCapturingStdout(t, func() error {
+		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "0.1.0-rc.4")
+	})
+	require.NoError(t, err)
+	require.Equal(t, versionDescription()+"\n\n"+"no manifest changes since v0.1.0-rc.4; this skali is "+versionpkg.Version+"\n", out)
 
 	_, err = runCapturingStdout(t, func() error {
 		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "latest")
@@ -124,6 +136,15 @@ func TestSkillReadSince(t *testing.T) {
 		return execute(newRootCommand(), "skill", "read", "--since", "v0.1.0-rc.2")
 	})
 	require.ErrorContains(t, err, "--since applies to the manifest topic")
+}
+
+// withLedger swaps the manifest change ledger for the test, so assertions
+// do not depend on which entries are pending right now.
+func withLedger(t *testing.T, ledger []manifest.Change) {
+	t.Helper()
+	previous := manifest.Ledger
+	manifest.Ledger = ledger
+	t.Cleanup(func() { manifest.Ledger = previous })
 }
 
 func TestRenderChangesSinceListsEveryEntry(t *testing.T) {

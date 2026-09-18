@@ -27,18 +27,12 @@ func Watermark(value string) (release string, ok bool) {
 
 // ReferenceRelease is the release messages and skali manifest upgrade name
 // as the current one: this binary's release, or on a development build the
-// newest release the ledger knows.
+// newest release a shipped ledger entry names (pending entries name none).
 func ReferenceRelease() string {
 	if version.IsRelease(version.Version) {
 		return version.Version
 	}
-	newest := ""
-	for _, change := range Ledger {
-		if newest == "" || version.Older(newest, change.Release) {
-			newest = change.Release
-		}
-	}
-	return newest
+	return newestShipped(Ledger)
 }
 
 // ReviewNote is the informational line skali validate prints when the
