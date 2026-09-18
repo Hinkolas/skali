@@ -1,7 +1,7 @@
 // Package backup owns environment backups and restores: the
 // admin-configured external S3 targets, the snapshot layout and manifest
 // format, the controller that executes backup and restore runs, and the
-// scheduler that turns manifest backup policies into runs. Durable
+// scheduler that turns environment backup schedules into runs. Durable
 // snapshot history lives in the S3 manifests, never the control-plane
 // database, because the primary use case is restoring after the cluster
 // that held this database was destroyed.

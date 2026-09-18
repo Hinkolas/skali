@@ -45,6 +45,7 @@ var flagCompleters = map[string]cobra.CompletionFunc{
 	"priority":       fixedCompletions("normal", "high"),
 	"max-role":       fixedCompletions(cellRoles...),
 	"deploy-policy":  fixedCompletions("direct", "promote-only"),
+	"keep":           fixedCompletions("1d", "3d", "7d", "2w", "4w", "90d"),
 	"build":          fixedCompletions("local", "auto"),
 	"target":         fixedCompletions("definition", "revision", "kubernetes"),
 	"scope":          fixedCompletions("bundle", "node"),

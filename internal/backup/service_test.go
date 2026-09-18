@@ -69,7 +69,7 @@ func TestRecoverOnBootFailsUnfinishedRows(t *testing.T) {
 	row, err := f.st.CreateBackup(ctx, store.CreateBackupParams{
 		ID: uuid.New(), Kind: KindBackup, EnvironmentID: f.environmentID,
 		ProjectName: "demo", EnvironmentName: "production", RunID: &runID,
-		Trigger: TriggerManual, Strategy: compiler.StrategyComplete,
+		Trigger: TriggerManual, Strategy: StrategyComplete,
 	})
 	require.NoError(t, err)
 	claimed, err := f.st.SetBackupStatus(ctx, store.SetBackupStatusParams{
@@ -104,7 +104,7 @@ func TestBackupStatusGuard(t *testing.T) {
 	row, err := f.st.CreateBackup(ctx, store.CreateBackupParams{
 		ID: uuid.New(), Kind: KindBackup, EnvironmentID: f.environmentID,
 		ProjectName: "demo", EnvironmentName: "production",
-		Trigger: TriggerManual, Strategy: compiler.StrategyComplete,
+		Trigger: TriggerManual, Strategy: StrategyComplete,
 	})
 	require.NoError(t, err)
 
@@ -151,4 +151,27 @@ func TestCreateBackupRefusesNothingToBackUp(t *testing.T) {
 	result, err := f.controller.CreateBackup(ctx, BackupInput{EnvironmentID: f.environmentID, Actor: "tester"})
 	require.NoError(t, err)
 	require.NotNil(t, result)
+}
+
+// A scheduled backup of an environment whose automatic backups are off is
+// refused before a run exists; a manual one is not affected.
+func TestCreateBackupScheduledNeedsSchedule(t *testing.T) {
+	f := newServiceFixture(t)
+	ctx := context.Background()
+	f.configureTarget(t)
+	f.activate(t, databaseDefinition())
+
+	_, err := f.controller.CreateBackup(ctx, BackupInput{EnvironmentID: f.environmentID, Actor: ScheduleActor, Trigger: TriggerScheduled})
+	require.ErrorIs(t, err, ErrScheduleNotSet)
+	runs, err := f.journal.ListRuns(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Empty(t, runs)
+
+	f.setSchedule(t, "0 3 * * *", week)
+	result, err := f.controller.CreateBackup(ctx, BackupInput{EnvironmentID: f.environmentID, Actor: ScheduleActor, Trigger: TriggerScheduled})
+	require.NoError(t, err)
+	row, err := f.st.GetBackup(ctx, result.BackupID)
+	require.NoError(t, err)
+	require.Equal(t, TriggerScheduled, row.Trigger)
+	require.EqualValues(t, week, row.RetentionSeconds)
 }

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -152,7 +151,6 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 	snapshotID := bctx.snapshotID
 	var (
 		revisionDoc *revision.Revision
-		policy      *compiler.Backup
 		components  []Component
 	)
 	if err := scope.step(ctx, "plan", "Plan snapshot contents", func(ctx context.Context, log *stepLog) error {
@@ -164,21 +162,8 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 			return fmt.Errorf("load revision: %w", err)
 		}
 		revisionDoc = doc
-		// A scheduled snapshot holds what its policy includes; a manual one
-		// holds everything stateful.
-		var include *compiler.Selection
-		if row.Trigger == TriggerScheduled {
-			found, ok := doc.Definition.Backups[row.Policy]
-			if !ok {
-				return fmt.Errorf("%w: %q", ErrPolicyNotFound, row.Policy)
-			}
-			policy, include = &found, &found.Include
-		}
-		components = planComponents(&doc.Definition, include)
+		components = planComponents(&doc.Definition)
 		if len(components) == 0 {
-			if policy != nil {
-				return fmt.Errorf("%w (policy %q includes none of them)", ErrNothingToBackUp, row.Policy)
-			}
 			return ErrNothingToBackUp
 		}
 		for _, component := range components {
@@ -209,7 +194,6 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 		Environment:      row.EnvironmentName,
 		RevisionChecksum: revisionDoc.Checksum,
 		Trigger:          row.Trigger,
-		Policy:           row.Policy,
 		Strategy:         row.Strategy,
 		Components:       components,
 	}
@@ -244,41 +228,34 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 		return err
 	}
 
-	if policy == nil {
+	if row.Trigger != TriggerScheduled {
 		return nil
 	}
 	// The snapshot is complete and listed; what follows only removes older
-	// snapshots this policy produced. A failure here fails the run so it is
-	// seen, and the next scheduled run sweeps again.
-	retention := time.Duration(policy.RetentionSeconds) * time.Second
-	return scope.step(ctx, "retention", "Apply retention of policy "+row.Policy, func(ctx context.Context, log *stepLog) error {
-		return c.applyRetention(ctx, log, bctx, row.Policy, retention, manifest.CreatedAt)
+	// scheduled snapshots of this environment. The retention is the one in
+	// force when the run was accepted. A failure here fails the run so it
+	// is seen, and the next scheduled run sweeps again.
+	retention := time.Duration(row.RetentionSeconds) * time.Second
+	return scope.step(ctx, "retention", "Apply retention", func(ctx context.Context, log *stepLog) error {
+		return c.applyRetention(ctx, log, bctx, retention, manifest.CreatedAt)
 	})
 }
 
 // planComponents enumerates the stateful components a snapshot holds, in
-// deterministic order: databases, buckets, then application volumes. A nil
-// selection means everything; a policy's selection keeps the databases and
-// buckets it names (or all) and the volumes it names as application.volume.
-func planComponents(definition *compiler.ProjectDefinition, include *compiler.Selection) []Component {
+// deterministic order: databases, buckets, then application volumes.
+func planComponents(definition *compiler.ProjectDefinition) []Component {
 	var components []Component
 	for _, key := range utils.SortedKeys(definition.Databases) {
-		if include == nil || include.AllDatabases || slices.Contains(include.Databases, key) {
-			components = append(components, Component{Kind: ComponentDatabase, ServiceKey: key})
-		}
+		components = append(components, Component{Kind: ComponentDatabase, ServiceKey: key})
 	}
 	for _, key := range utils.SortedKeys(definition.Buckets) {
-		if include == nil || include.AllBuckets || slices.Contains(include.Buckets, key) {
-			components = append(components, Component{Kind: ComponentBucket, ServiceKey: key})
-		}
+		components = append(components, Component{Kind: ComponentBucket, ServiceKey: key})
 	}
 	for _, appKey := range utils.SortedKeys(definition.Applications) {
 		for _, volume := range utils.SortedKeys(definition.Applications[appKey].Volumes) {
-			if include == nil || include.AllVolumes || slices.Contains(include.Volumes, appKey+"."+volume) {
-				components = append(components, Component{
-					Kind: ComponentVolume, Application: appKey, Volume: volume,
-				})
-			}
+			components = append(components, Component{
+				Kind: ComponentVolume, Application: appKey, Volume: volume,
+			})
 		}
 	}
 	return components

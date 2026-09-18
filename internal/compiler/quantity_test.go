@@ -33,10 +33,10 @@ func TestParseCPUUsesExactMillicores(t *testing.T) {
 
 func TestParseDurationSupportsDaysAndWeeks(t *testing.T) {
 	t.Parallel()
-	day, err := parseDuration("1d")
+	day, err := ParseDuration("1d")
 	require.NoError(t, err)
 	require.EqualValues(t, 86_400_000, day)
-	week, err := parseDuration("1w")
+	week, err := ParseDuration("1w")
 	require.NoError(t, err)
 	require.EqualValues(t, 604_800_000, week)
 }

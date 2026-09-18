@@ -44,15 +44,43 @@ type EnvironmentSettings struct {
 	DeployPolicy string   `json:"deploy_policy"`
 	PromoteFrom  []string `json:"promote_from"`
 	Priority     string   `json:"priority"`
+	// Backup is the automatic backup schedule; nil when automatic backups
+	// are off.
+	Backup *BackupSchedule `json:"backup"`
+}
+
+// BackupSchedule is an environment's automatic backup setting: a
+// five-field cron expression evaluated in UTC and how long the snapshots
+// it takes are kept (the newest is always kept).
+type BackupSchedule struct {
+	Schedule         string `json:"schedule"`
+	RetentionSeconds int64  `json:"retention_seconds"`
+	Strategy         string `json:"strategy,omitempty"`
 }
 
 // EnvironmentSettingsPatch is a partial settings update; nil fields keep
-// their value.
+// their value. Backup is tri-state on the wire: absent leaves the schedule
+// as it is, null turns automatic backups off, an object sets them; build
+// it with BackupPatch.
 type EnvironmentSettingsPatch struct {
-	MaxRole      *string   `json:"max_role,omitempty"`
-	DeployPolicy *string   `json:"deploy_policy,omitempty"`
-	PromoteFrom  *[]string `json:"promote_from,omitempty"`
-	Priority     *string   `json:"priority,omitempty"`
+	MaxRole      *string         `json:"max_role,omitempty"`
+	DeployPolicy *string         `json:"deploy_policy,omitempty"`
+	PromoteFrom  *[]string       `json:"promote_from,omitempty"`
+	Priority     *string         `json:"priority,omitempty"`
+	Backup       json.RawMessage `json:"backup,omitempty"`
+}
+
+// BackupPatch renders the backup field of a settings patch: nil turns
+// automatic backups off, a schedule sets them.
+func BackupPatch(schedule *BackupSchedule) json.RawMessage {
+	if schedule == nil {
+		return json.RawMessage("null")
+	}
+	raw, err := json.Marshal(schedule)
+	if err != nil {
+		return json.RawMessage("null")
+	}
+	return raw
 }
 
 // Member is one user's role on a project (membership) or on an environment
@@ -910,10 +938,9 @@ type BackupSnapshot struct {
 	CreatedAt        string `json:"created_at"`
 	RevisionChecksum string `json:"revision_checksum"`
 	Encryption       string `json:"encryption"`
-	// Trigger is manual or scheduled; Policy names the manifest backup
-	// policy of a scheduled snapshot and is empty for manual ones.
+	// Trigger is manual or scheduled; scheduled snapshots expire under
+	// their environment's retention.
 	Trigger   string `json:"trigger"`
-	Policy    string `json:"policy,omitempty"`
 	Strategy  string `json:"strategy"`
 	Databases int    `json:"databases"`
 	Buckets   int    `json:"buckets"`
@@ -921,11 +948,11 @@ type BackupSnapshot struct {
 	Bytes     int64  `json:"bytes"`
 }
 
-// Origin words where a snapshot came from: "manual", or the policy that
-// scheduled it.
+// Origin words where a snapshot came from: "manual", or "scheduled" for
+// one the environment's backup schedule took.
 func (s *BackupSnapshot) Origin() string {
-	if s.Trigger == "scheduled" && s.Policy != "" {
-		return s.Policy + " (scheduled)"
+	if s.Trigger == "scheduled" {
+		return "scheduled"
 	}
 	return "manual"
 }

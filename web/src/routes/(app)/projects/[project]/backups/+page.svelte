@@ -15,8 +15,8 @@
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { modal } from '$lib/stores/modal.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
-	import type { Backup } from '$lib/types/definition';
-	import { snapshotContents, snapshotOrigin, type BackupSnapshot } from '$lib/types/backups';
+	import type { Environment } from '$lib/types/project';
+	import { snapshotContents, type BackupSnapshot } from '$lib/types/backups';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -30,6 +30,9 @@
 	import RestoreModal, {
 		modalOptions as restoreModalOptions
 	} from '$lib/components/run/RestoreModal.svelte';
+	import EnvironmentSettingsModal, {
+		modalOptions as environmentSettingsModalOptions
+	} from '$lib/components/access/EnvironmentSettingsModal.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -38,27 +41,40 @@
 	const envName = $derived(data.env?.name ?? null);
 	const snapshots = $derived(data.snapshots ?? []);
 
-	// Policies come from the draft definition: what the next deployment
-	// runs, which is also what the active revisions run unless the manifest
-	// changed since. Each row names its schedule, retention, and what it
-	// includes; the listing tells when the policy last produced a snapshot.
-	const policies = $derived(
-		Object.entries(data.definition?.backups ?? {}).toSorted(([a], [b]) => a.localeCompare(b))
+	// Schedules are an environment setting: one row per environment the
+	// reader can see, with the schedule and retention, the next fire, and
+	// when the schedule last produced a snapshot. Locked environments are
+	// counted, not listed.
+	const schedules = $derived(
+		data.environments
+			.filter((e) => e.access !== 'none')
+			.map((e) => {
+				const backup = e.settings?.backup ?? null;
+				return {
+					environment: e,
+					backup,
+					next: backup ? nextCronFire(backup.schedule) : null,
+					last:
+						snapshots.find((s) => s.trigger === 'scheduled' && s.environment === e.name) ?? null,
+					configureTitle: roleAtLeast(e.access, 'admin')
+						? undefined
+						: requiredTitle('admin', 'environment', e.name)
+				};
+			})
 	);
-	function includes(b: Backup): string {
-		const parts: string[] = [];
-		if (b.include.allDatabases) parts.push('all databases');
-		else if (b.include.databases?.length) parts.push(`databases ${b.include.databases.join(', ')}`);
-		if (b.include.allBuckets) parts.push('all buckets');
-		else if (b.include.buckets?.length) parts.push(`buckets ${b.include.buckets.join(', ')}`);
-		if (b.include.allVolumes) parts.push('all volumes');
-		else if (b.include.volumes?.length) parts.push(`volumes ${b.include.volumes.join(', ')}`);
-		return parts.join(' · ') || 'nothing';
-	}
-	function lastScheduled(policy: string): BackupSnapshot | undefined {
-		return snapshots.find(
-			(s) =>
-				s.trigger === 'scheduled' && s.policy === policy && (!envName || s.environment === envName)
+	const lockedCount = $derived(data.environments.filter((e) => e.access === 'none').length);
+
+	function openEnvironmentSettings(environment: Environment) {
+		if (!environment.settings) return;
+		modal.open(
+			EnvironmentSettingsModal,
+			{
+				environment,
+				environments: data.environments,
+				canEdit: roleAtLeast(environment.access, 'admin'),
+				instanceAdmin: isInstanceAdmin(data.user)
+			},
+			environmentSettingsModalOptions
 		);
 	}
 
@@ -155,53 +171,81 @@
 <div class="flex flex-col gap-3.5 pb-6">
 	<Card class="p-5">
 		<div class="mb-3 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-			<h3 class="text-text-primary text-xl font-semibold">Policies</h3>
+			<h3 class="text-text-primary text-xl font-semibold">Schedules</h3>
 			<span class="text-text-muted text-md">
-				from skali.yaml · every active environment is snapshotted on schedule (UTC)
+				per environment · set in each environment's settings · cron in UTC
 			</span>
 		</div>
-		{#if policies.length === 0}
+		{#if schedules.length === 0}
 			<p class="text-text-muted text-md">
-				No backup policy is declared. Add a <span class="font-mono">backups:</span> block with a
-				cron <span class="font-mono">schedule</span>, a <span class="font-mono">retention</span>
-				window, and what to <span class="font-mono">include</span>; skali takes and expires the
-				snapshots for you. Manual snapshots work without one.
+				No environment of this project is visible to you{lockedCount
+					? ` (${lockedCount} locked)`
+					: ''}.
 			</p>
 		{:else}
 			<div class="flex flex-col">
-				{#each policies as [name, policy] (name)}
-					{@const next = nextCronFire(policy.schedule)}
-					{@const last = lastScheduled(name)}
+				{#each schedules as row (row.environment.id)}
 					<div
-						class="border-border-subtle grid grid-cols-1 gap-x-4 gap-y-1.5 border-b py-3 last:border-0 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1fr)] @3xl:items-center"
+						class="border-border-subtle grid grid-cols-1 gap-x-4 gap-y-1.5 border-b py-3 last:border-0 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1fr)_auto] @3xl:items-center"
 					>
 						<div class="flex min-w-0 items-center gap-2">
-							<CalendarClock size={15} class="text-text-ghost flex-none" />
-							<span class="font-mono text-text-primary truncate text-md">{name}</span>
-							<Pill text={policy.strategy ?? 'complete'} />
-						</div>
-						<div class="text-text-secondary min-w-0 text-md">
-							{describeCron(policy.schedule)} UTC · keeps {describeSeconds(policy.retentionSeconds)}
-							<div class="text-text-muted truncate text-sm" title={includes(policy)}>
-								{includes(policy)}
-							</div>
-						</div>
-						<div class="font-mono text-text-muted text-sm">
-							{#if next}
-								<div title="{next.toISOString()} (your local time is shown)">
-									next {formatDateTime(next.toISOString())} local
-								</div>
+							<CalendarClock
+								size={15}
+								class="{row.backup ? 'text-text-ghost' : 'text-text-faint'} flex-none"
+							/>
+							<span class="font-mono text-text-primary truncate text-md">
+								{row.environment.name}
+							</span>
+							{#if row.backup}
+								<Pill text={row.backup.strategy ?? 'complete'} />
+							{:else}
+								<Pill text="not backed up" tone="warning" />
 							{/if}
-							<div>
-								{#if last}
-									last {relativeTime(last.created_at)}{envName ? ` in ${envName}` : ''}
-								{:else}
-									no snapshot yet{envName ? ` in ${envName}` : ''}
-								{/if}
+						</div>
+						{#if row.backup}
+							<div class="text-text-secondary min-w-0 text-md">
+								{describeCron(row.backup.schedule)} UTC · keeps {describeSeconds(
+									row.backup.retention_seconds
+								)}
+								<div class="font-mono text-text-muted truncate text-sm">{row.backup.schedule}</div>
 							</div>
+							<div class="font-mono text-text-muted text-sm">
+								{#if row.next}
+									<div title="{row.next.toISOString()} (your local time is shown)">
+										next {formatDateTime(row.next.toISOString())} local
+									</div>
+								{/if}
+								<div>
+									{#if row.last}
+										last {relativeTime(row.last.created_at)}
+									{:else}
+										no scheduled snapshot yet
+									{/if}
+								</div>
+							</div>
+						{:else}
+							<div class="text-text-muted min-w-0 text-md @3xl:col-span-2">
+								Only manual snapshots; nothing expires.
+							</div>
+						{/if}
+						<div class="flex @3xl:justify-end">
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={!!row.configureTitle}
+								title={row.configureTitle ?? `Automatic backups of ${row.environment.name}`}
+								onclick={() => openEnvironmentSettings(row.environment)}
+							>
+								Configure
+							</Button>
 						</div>
 					</div>
 				{/each}
+				{#if lockedCount}
+					<p class="text-text-faint pt-3 text-sm">
+						{lockedCount} locked environment{lockedCount === 1 ? '' : 's'} not shown.
+					</p>
+				{/if}
 			</div>
 		{/if}
 	</Card>
@@ -209,7 +253,8 @@
 	<div class="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-2">
 		<h3 class="text-text-primary text-xl font-semibold">Snapshots</h3>
 		<span class="text-text-muted text-md">
-			newest first · manual snapshots stay until deleted, scheduled ones expire under their policy
+			newest first · manual snapshots stay until deleted, scheduled ones expire under their
+			environment's retention
 		</span>
 		{#if envName && !refusal}
 			<div class="ml-auto">
@@ -269,7 +314,7 @@
 				title="No snapshots yet"
 				description={scope === 'env' && envName
 					? `nothing has been backed up from ${envName}`
-					: 'back up an environment now, or declare a backups policy in skali.yaml'}
+					: 'back up an environment now, or turn on automatic backups in its settings'}
 			/>
 		{/if}
 	{:else}
@@ -278,7 +323,6 @@
 			{grid}
 		>
 			{#each shown as snapshot (snapshot.id)}
-				{@const origin = snapshotOrigin(snapshot)}
 				{@const removeTitle = deleteRefusal(snapshot)}
 				<div
 					class="border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-1.5 @2xl:grid @2xl:items-center {grid}"
@@ -296,7 +340,7 @@
 						{#if snapshot.trigger === 'scheduled'}
 							<span class="text-text-secondary inline-flex items-center gap-1.5">
 								<CalendarClock size={13} class="text-text-ghost" />
-								{origin}
+								scheduled
 							</span>
 						{:else}
 							<span class="text-text-muted">manual</span>

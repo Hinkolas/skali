@@ -125,40 +125,6 @@ func Validate(document *Document) yamldoc.Diagnostics {
 		validateStableKey(&diagnostics, document, "buckets."+key, key)
 	}
 
-	for _, key := range utils.SortedKeys(project.Backups) {
-		path := "backups." + key
-		backup := project.Backups[key]
-		validateStableKey(&diagnostics, document, path, key)
-		if backup.Schedule == "" {
-			add(path+".schedule", "is required")
-		}
-		if backup.Retention == "" {
-			add(path+".retention", "is required")
-		}
-		if backup.Strategy != "" && backup.Strategy != StrategyComplete {
-			add(path+".strategy", "must be %q (the only strategy today)", StrategyComplete)
-		}
-		if selectionEmpty(backup.Include.Databases) && selectionEmpty(backup.Include.Buckets) && selectionEmpty(backup.Include.Volumes) {
-			add(path+".include", "must include at least one resource class")
-		}
-		validateSelection(&diagnostics, document, path+".include.databases", backup.Include.Databases, project.Databases)
-		validateSelection(&diagnostics, document, path+".include.buckets", backup.Include.Buckets, project.Buckets)
-		if !backup.Include.Volumes.All {
-			for _, volume := range backup.Include.Volumes.Keys {
-				if !volumeExists(project, volume) {
-					add(path+".include.volumes", "references unknown volume %q; use application.volume", volume)
-				}
-			}
-		}
-		// "all" of a class the manifest does not declare selects nothing; a
-		// policy that would snapshot nothing is a mistake, not a schedule.
-		if !selectionMatches(backup.Include.Databases, len(project.Databases)) &&
-			!selectionMatches(backup.Include.Buckets, len(project.Buckets)) &&
-			!selectionMatches(backup.Include.Volumes, countVolumes(project)) {
-			add(path+".include", "includes nothing the manifest declares (no database, bucket, or volume matches)")
-		}
-	}
-
 	return diagnostics
 }
 
@@ -166,50 +132,6 @@ func validateStableKey(diagnostics *yamldoc.Diagnostics, document *Document, pat
 	if err := naming.CheckKey(key); err != nil {
 		*diagnostics = append(*diagnostics, document.Diagnostic(path, "key "+err.Error()))
 	}
-}
-
-func validateSelection[T any](diagnostics *yamldoc.Diagnostics, document *Document, path string, selection Selection, resources map[string]T) {
-	if selection.All {
-		return
-	}
-	for _, key := range selection.Keys {
-		if _, ok := resources[key]; !ok {
-			*diagnostics = append(*diagnostics, document.Diagnostic(path, fmt.Sprintf("references unknown resource %q", key)))
-		}
-	}
-}
-
-func selectionEmpty(selection Selection) bool {
-	return !selection.All && len(selection.Keys) == 0
-}
-
-// selectionMatches reports whether the selection names at least one
-// resource of a class with declared members. Named keys are checked for
-// existence separately; here a key list counts as a match.
-func selectionMatches(selection Selection, declared int) bool {
-	if selection.All {
-		return declared > 0
-	}
-	return len(selection.Keys) > 0
-}
-
-func countVolumes(project Project) int {
-	total := 0
-	for _, application := range project.Applications {
-		total += len(application.Volumes)
-	}
-	return total
-}
-
-func volumeExists(project Project, reference string) bool {
-	for applicationKey, application := range project.Applications {
-		for volumeKey := range application.Volumes {
-			if reference == applicationKey+"."+volumeKey {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // validateLedger applies the changed entries: a manifest that writes a path

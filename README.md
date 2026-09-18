@@ -23,8 +23,9 @@ it.
 - **Local development** on the real platform: hot reload for the app you are
   working on while its databases and buckets run in the local cluster.
 - **A web console** and a CLI, users with 2FA, and per-project roles.
-- **Backups** of environment data to your own S3 target, cluster upgrades,
-  diagnosis and repair, single node or many.
+- **Backups** of environment data to your own S3 target, on a per-environment
+  schedule or by hand, cluster upgrades, diagnosis and repair, single node or
+  many.
 
 **Status: preparing v0.1.0-alpha.1.** skali is used daily for development
 and staging, and production hardening is tracked in [`ROADMAP.md`](ROADMAP.md).

@@ -6,6 +6,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import { api, ApiError } from '$lib/api/client';
 	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
+	import { describeCron, describeSeconds } from '$lib/cron';
 	import { describeActor, formatDateTime, relativeTime } from '$lib/format';
 	import { HEALTH_META } from '$lib/service-types';
 	import { withEnv } from '$lib/urls';
@@ -94,6 +95,14 @@
 				text: 'high',
 				tone: 'warning',
 				title: 'high priority: keeps running when resources are tight'
+			});
+		}
+		const backup = environment.settings?.backup;
+		if (backup) {
+			pills.push({
+				text: 'backups',
+				tone: 'neutral',
+				title: `automatic backups ${describeCron(backup.schedule)} UTC, kept ${describeSeconds(backup.retention_seconds)}`
 			});
 		}
 		return pills;

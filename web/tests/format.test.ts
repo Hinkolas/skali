@@ -7,7 +7,8 @@ describe('describeActor', () => {
 	const resolve = (id: string) => directory.get(id);
 
 	it('names the scheduler and the reconciler', () => {
-		expect(describeActor('schedule:daily')).toBe('schedule · daily');
+		expect(describeActor('schedule')).toBe('schedule');
+		expect(describeActor('schedule:daily')).toBe('schedule');
 		expect(describeActor('system:reconcile')).toBe('system');
 	});
 

@@ -11,13 +11,13 @@ import (
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
-// applyRetention deletes the snapshots one policy produced for this
-// environment once they are older than the retention window. The newest
-// scheduled snapshot of the policy is always kept, as is anything an
-// unfinished restore reads; manual snapshots and other policies' snapshots
-// are never candidates. Nothing is deleted unless the listing completed
-// and every manifest decoded: a partial view must not drive deletions.
-func (c *Controller) applyRetention(ctx context.Context, log *stepLog, bctx *backupContext, policy string, retention time.Duration, now time.Time) error {
+// applyRetention deletes the scheduled snapshots of this environment once
+// they are older than the retention window. The newest scheduled snapshot
+// is always kept, as is anything an unfinished restore reads; manual
+// snapshots are never candidates. Nothing is deleted unless the listing
+// completed and every manifest decoded: a partial view must not drive
+// deletions.
+func (c *Controller) applyRetention(ctx context.Context, log *stepLog, bctx *backupContext, retention time.Duration, now time.Time) error {
 	if retention <= 0 {
 		log.Info(ctx, "retention is not set; keeping every snapshot")
 		return nil
@@ -52,9 +52,9 @@ func (c *Controller) applyRetention(ctx context.Context, log *stepLog, bctx *bac
 	}
 
 	cutoff := now.Add(-retention)
-	candidates := retentionCandidates(listed, policy, cutoff, protected)
-	log.Info(ctx, fmt.Sprintf("policy %s keeps snapshots for %s; %d scheduled snapshot(s) older than %s to delete",
-		policy, formatRetention(retention), len(candidates), cutoff.Format(time.RFC3339)))
+	candidates := retentionCandidates(listed, cutoff, protected)
+	log.Info(ctx, fmt.Sprintf("scheduled snapshots are kept for %s; %d older than %s to delete",
+		formatRetention(retention), len(candidates), cutoff.Format(time.RFC3339)))
 	var deleted int
 	var freed int64
 	for _, manifest := range candidates {
@@ -77,12 +77,12 @@ func (c *Controller) applyRetention(ctx context.Context, log *stepLog, bctx *bac
 }
 
 // retentionCandidates picks the snapshots retention deletes: scheduled
-// snapshots of the named policy older than the cutoff, never the newest one
-// of the policy and never a protected id. Pure so it is tested alone.
-func retentionCandidates(manifests []*Manifest, policy string, cutoff time.Time, protected map[string]bool) []*Manifest {
+// snapshots older than the cutoff, never the newest scheduled one and never
+// a protected id. Pure so it is tested alone.
+func retentionCandidates(manifests []*Manifest, cutoff time.Time, protected map[string]bool) []*Manifest {
 	var owned []*Manifest
 	for _, manifest := range manifests {
-		if manifest.Trigger == TriggerScheduled && manifest.Policy == policy {
+		if manifest.Trigger == TriggerScheduled {
 			owned = append(owned, manifest)
 		}
 	}

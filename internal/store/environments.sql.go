@@ -14,7 +14,7 @@ import (
 const createEnvironment = `-- name: CreateEnvironment :one
 INSERT INTO environments (id, project_id, name, max_role, priority)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority
+RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy
 `
 
 type CreateEnvironmentParams struct {
@@ -44,6 +44,9 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		&i.DeployPolicy,
 		&i.PromoteFrom,
 		&i.Priority,
+		&i.BackupSchedule,
+		&i.BackupRetentionSeconds,
+		&i.BackupStrategy,
 	)
 	return i, err
 }
@@ -61,7 +64,7 @@ func (q *Queries) DeleteEnvironmentByID(ctx context.Context, id uuid.UUID) (int6
 }
 
 const getEnvironmentByID = `-- name: GetEnvironmentByID :one
-SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority FROM environments WHERE id = $1
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy FROM environments WHERE id = $1
 `
 
 func (q *Queries) GetEnvironmentByID(ctx context.Context, id uuid.UUID) (Environment, error) {
@@ -77,12 +80,16 @@ func (q *Queries) GetEnvironmentByID(ctx context.Context, id uuid.UUID) (Environ
 		&i.DeployPolicy,
 		&i.PromoteFrom,
 		&i.Priority,
+		&i.BackupSchedule,
+		&i.BackupRetentionSeconds,
+		&i.BackupStrategy,
 	)
 	return i, err
 }
 
 const listActiveEnvironmentRevisions = `-- name: ListActiveEnvironmentRevisions :many
-SELECT e.id AS environment_id, e.project_id, e.name, t.active_revision_id
+SELECT e.id AS environment_id, e.project_id, e.name, t.active_revision_id,
+       e.backup_schedule, e.backup_retention_seconds, e.backup_strategy
 FROM environments e
 JOIN environment_targets t ON t.environment_id = e.id
 WHERE t.state = 'active' AND t.active_revision_id IS NOT NULL
@@ -90,14 +97,17 @@ ORDER BY e.project_id, e.name
 `
 
 type ListActiveEnvironmentRevisionsRow struct {
-	EnvironmentID    uuid.UUID
-	ProjectID        uuid.UUID
-	Name             string
-	ActiveRevisionID *uuid.UUID
+	EnvironmentID          uuid.UUID
+	ProjectID              uuid.UUID
+	Name                   string
+	ActiveRevisionID       *uuid.UUID
+	BackupSchedule         string
+	BackupRetentionSeconds int64
+	BackupStrategy         string
 }
 
 // Environments the backup scheduler considers: active with a converged
-// revision to snapshot.
+// revision to snapshot, with their backup setting.
 func (q *Queries) ListActiveEnvironmentRevisions(ctx context.Context) ([]ListActiveEnvironmentRevisionsRow, error) {
 	rows, err := q.db.Query(ctx, listActiveEnvironmentRevisions)
 	if err != nil {
@@ -112,6 +122,9 @@ func (q *Queries) ListActiveEnvironmentRevisions(ctx context.Context) ([]ListAct
 			&i.ProjectID,
 			&i.Name,
 			&i.ActiveRevisionID,
+			&i.BackupSchedule,
+			&i.BackupRetentionSeconds,
+			&i.BackupStrategy,
 		); err != nil {
 			return nil, err
 		}
@@ -124,7 +137,7 @@ func (q *Queries) ListActiveEnvironmentRevisions(ctx context.Context) ([]ListAct
 }
 
 const listEnvironments = `-- name: ListEnvironments :many
-SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority FROM environments WHERE project_id = $1 ORDER BY name
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy FROM environments WHERE project_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]Environment, error) {
@@ -146,6 +159,9 @@ func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]
 			&i.DeployPolicy,
 			&i.PromoteFrom,
 			&i.Priority,
+			&i.BackupSchedule,
+			&i.BackupRetentionSeconds,
+			&i.BackupStrategy,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +174,7 @@ func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]
 }
 
 const listEnvironmentsForProjects = `-- name: ListEnvironmentsForProjects :many
-SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority FROM environments WHERE project_id = ANY($1::uuid[]) ORDER BY project_id, name
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy FROM environments WHERE project_id = ANY($1::uuid[]) ORDER BY project_id, name
 `
 
 // Environments of several projects at once, for the per-user access grant.
@@ -181,6 +197,9 @@ func (q *Queries) ListEnvironmentsForProjects(ctx context.Context, projectIds []
 			&i.DeployPolicy,
 			&i.PromoteFrom,
 			&i.Priority,
+			&i.BackupSchedule,
+			&i.BackupRetentionSeconds,
+			&i.BackupStrategy,
 		); err != nil {
 			return nil, err
 		}
@@ -235,17 +254,22 @@ func (q *Queries) ListEnvironmentsWithTargets(ctx context.Context) ([]ListEnviro
 
 const updateEnvironmentSettings = `-- name: UpdateEnvironmentSettings :one
 UPDATE environments
-SET max_role = $2, deploy_policy = $3, promote_from = $4, priority = $5, updated_at = now()
+SET max_role = $2, deploy_policy = $3, promote_from = $4, priority = $5,
+    backup_schedule = $6, backup_retention_seconds = $7, backup_strategy = $8,
+    updated_at = now()
 WHERE id = $1
-RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority
+RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy
 `
 
 type UpdateEnvironmentSettingsParams struct {
-	ID           uuid.UUID
-	MaxRole      string
-	DeployPolicy string
-	PromoteFrom  []string
-	Priority     string
+	ID                     uuid.UUID
+	MaxRole                string
+	DeployPolicy           string
+	PromoteFrom            []string
+	Priority               string
+	BackupSchedule         string
+	BackupRetentionSeconds int64
+	BackupStrategy         string
 }
 
 func (q *Queries) UpdateEnvironmentSettings(ctx context.Context, arg UpdateEnvironmentSettingsParams) (Environment, error) {
@@ -255,6 +279,9 @@ func (q *Queries) UpdateEnvironmentSettings(ctx context.Context, arg UpdateEnvir
 		arg.DeployPolicy,
 		arg.PromoteFrom,
 		arg.Priority,
+		arg.BackupSchedule,
+		arg.BackupRetentionSeconds,
+		arg.BackupStrategy,
 	)
 	var i Environment
 	err := row.Scan(
@@ -267,6 +294,9 @@ func (q *Queries) UpdateEnvironmentSettings(ctx context.Context, arg UpdateEnvir
 		&i.DeployPolicy,
 		&i.PromoteFrom,
 		&i.Priority,
+		&i.BackupSchedule,
+		&i.BackupRetentionSeconds,
+		&i.BackupStrategy,
 	)
 	return i, err
 }

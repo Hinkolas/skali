@@ -3,7 +3,7 @@
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "36e121c52778929cd7b756fb7c6e752313a8195d499baff5446b6a755cc799af",
+  "definitionHash": "6f8abf9f86a97a2614844ce36bab218feb92966da179b179b9b09ae5a78f6af9",
   "definition": {
     "schema": 1,
     "name": "file-sharing",
@@ -264,17 +264,6 @@
         "versioning": "disabled"
       }
     },
-    "backups": {
-      "daily": {
-        "schedule": "0 3 * * *",
-        "retentionSeconds": 604800,
-        "include": {
-          "allDatabases": true,
-          "allBuckets": true,
-          "allVolumes": true
-        }
-      }
-    },
     "requiredVariables": [
       {
         "name": "APP_DOMAIN",
@@ -315,5 +304,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "9901e88f4294e702abedc4f897f75d4daa3591eca2cd48d98aea9f98c5fbfc24"
+  "checksum": "80eea2712fbb665aca6c696361853aacf243f5372dc44fb8b854cfe5b125c37a"
 }

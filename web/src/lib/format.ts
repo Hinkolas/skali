@@ -111,13 +111,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * backups record the user's id; `resolve` turns it into the person's name
  * (email when the name is empty), or a short id when the directory does
  * not know them (deleted, or not loaded yet). The backup scheduler records
- * `schedule:<policy>`, the reconciler `system:reconcile`.
+ * `schedule` (older runs carry `schedule:<policy>` from the manifest-policy
+ * era), the reconciler `system:reconcile`.
  */
 export function describeActor(
 	actor: string,
 	resolve?: (id: string) => { name: string; email: string } | undefined
 ): string {
-	if (actor.startsWith('schedule:')) return `schedule · ${actor.slice('schedule:'.length)}`;
+	if (actor === 'schedule' || actor.startsWith('schedule:')) return 'schedule';
 	if (actor.startsWith('system:')) return 'system';
 	if (UUID.test(actor)) {
 		const user = resolve?.(actor);

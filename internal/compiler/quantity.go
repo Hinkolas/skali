@@ -66,7 +66,10 @@ func parseCPU(value string) (int64, error) {
 	return number.Num().Int64(), nil
 }
 
-func parseDuration(value string) (int64, error) {
+// ParseDuration reads a duration such as 30s, 5m, 12h, 7d, or 4w into
+// milliseconds; an empty value is zero. The manifest and the CLI's
+// backup retention share it.
+func ParseDuration(value string) (int64, error) {
 	if value == "" {
 		return 0, nil
 	}

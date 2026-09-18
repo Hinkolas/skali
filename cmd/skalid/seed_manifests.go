@@ -299,15 +299,6 @@ buckets:
   assets:
     quotas:
       storage: 10GB
-
-backups:
-  nightly:
-    schedule: "0 3 * * *"
-    retention: 14d
-    include:
-      databases: all
-      buckets: all
-      volumes: all
 `
 
 const storefrontV3 = `skali: v0.1.0-rc.3
@@ -476,15 +467,6 @@ buckets:
   assets:
     quotas:
       storage: 10GB
-
-backups:
-  nightly:
-    schedule: "0 3 * * *"
-    retention: 14d
-    include:
-      databases: all
-      buckets: all
-      volumes: all
 `
 
 const analyticsV1 = `skali: v0.1.0-rc.3

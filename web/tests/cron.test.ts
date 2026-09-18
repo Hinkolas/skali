@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeCron, describeSeconds, nextCronFire } from '../src/lib/cron';
+import { describeCron, describeSeconds, isValidCron, nextCronFire } from '../src/lib/cron';
 
 describe('describeCron', () => {
 	it('reads the common schedules', () => {
@@ -8,6 +8,7 @@ describe('describeCron', () => {
 		expect(describeCron('15 * * * *')).toBe('hourly at :15');
 		expect(describeCron('0 */6 * * *')).toBe('every 6 hours');
 		expect(describeCron('*/15 * * * *')).toBe('every 15 minutes');
+		expect(describeCron('* * * * *')).toBe('every minute');
 		expect(describeCron('0 4 * * 0')).toBe('weekly on Sunday at 04:00');
 		expect(describeCron('0 4 * * 7')).toBe('weekly on Sunday at 04:00');
 		expect(describeCron('0 2 1 * *')).toBe('monthly on the 1st at 02:00');
@@ -66,5 +67,17 @@ describe('nextCronFire', () => {
 		expect(nextCronFire('nonsense')).toBeNull();
 		expect(nextCronFire('60 * * * *')).toBeNull();
 		expect(nextCronFire('0 0 31 4 *', at('2026-01-01T00:00:00Z'))).toBeNull();
+	});
+});
+
+describe('isValidCron', () => {
+	it('accepts the five-field grammar and rejects the rest', () => {
+		expect(isValidCron('0 3 * * *')).toBe(true);
+		expect(isValidCron('*/15 * * * *')).toBe(true);
+		expect(isValidCron('0 4 * * sun')).toBe(true);
+		expect(isValidCron('0 3 * *')).toBe(false);
+		expect(isValidCron('60 3 * * *')).toBe(false);
+		expect(isValidCron('nonsense')).toBe(false);
+		expect(isValidCron('')).toBe(false);
 	});
 });

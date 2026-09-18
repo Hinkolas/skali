@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/client"
 )
 
 func TestEnvLsRendersSettings(t *testing.T) {
@@ -18,14 +20,15 @@ func TestEnvLsRendersSettings(t *testing.T) {
 	install.envs["p1"][0].Settings.PromoteFrom = []string{"staging"}
 	install.envs["p1"][0].Settings.Priority = "high"
 	install.envs["p1"][0].Settings.MaxRole = "read"
+	install.envs["p1"][0].Settings.Backup = &client.BackupSchedule{Schedule: "0 3 * * *", RetentionSeconds: 7 * 86400}
 	install.mu.Unlock()
 
 	out, err := runCommand(t, newEnvCommand(), "", "ls")
 	require.NoError(t, err)
 	require.Contains(t, out, "project  flowdemo (r)")
-	require.Regexp(t, `(?m)^NAME +ACCESS +PRIORITY +POLICY +CEILING +CREATED$`, out)
-	require.Regexp(t, `(?m)^production \(bound\) +admin +high +promote-only \(from staging\) +read +2026-08-19 10:30$`, out)
-	require.Regexp(t, `(?m)^staging +locked +- +- +- +-$`, out)
+	require.Regexp(t, `(?m)^NAME +ACCESS +PRIORITY +POLICY +CEILING +BACKUPS +CREATED$`, out)
+	require.Regexp(t, `(?m)^production \(bound\) +admin +high +promote-only \(from staging\) +read +daily at 03:00 UTC, keep 7d +2026-08-19 10:30$`, out)
+	require.Regexp(t, `(?m)^staging +locked +- +- +- +- +-$`, out)
 }
 
 func TestEnvCreatePassesPriority(t *testing.T) {
@@ -74,6 +77,7 @@ func TestEnvSetBuildsPatch(t *testing.T) {
 	require.Contains(t, out, "max role       read")
 	require.Contains(t, out, "deploy policy  promote-only (from staging, qa)")
 	require.Contains(t, out, "priority       normal")
+	require.Contains(t, out, "backups        off")
 	// --promote-from any clears the list; --environment picks another.
 	out, err = runCommand(t, newEnvCommand(), "", "set", "--yes", "--environment", "staging", "--promote-from", "any", "--deploy-policy", "promote-only")
 	require.NoError(t, err)

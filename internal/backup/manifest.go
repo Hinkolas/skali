@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/Hinkolas/skali/internal/compiler"
 )
 
 const (
@@ -42,11 +40,13 @@ type Manifest struct {
 	Environment      string          `json:"environment"`
 	RevisionChecksum string          `json:"revision_checksum"`
 	Revision         json.RawMessage `json:"revision"`
-	// Trigger, Policy, and Strategy mark the snapshot's origin: manual
-	// snapshots are kept until deleted, scheduled ones belong to the named
-	// manifest backup policy whose retention applies. They arrived after the
-	// first snapshots were written, so readers default them (manual, "",
-	// complete) and format "1" stays exact.
+	// Trigger and Strategy mark the snapshot's origin: manual snapshots are
+	// kept until deleted, scheduled ones expire under their environment's
+	// retention. They arrived after the first snapshots were written, so
+	// readers default them (manual, complete) and format "1" stays exact.
+	// Policy is never written any more: releases before v0.1.0-rc.8 named
+	// the manifest backup policy of a scheduled snapshot here, and readers
+	// use it to recognize those snapshots (see decodeManifest).
 	Trigger    string      `json:"trigger,omitempty"`
 	Policy     string      `json:"policy,omitempty"`
 	Strategy   string      `json:"strategy,omitempty"`
@@ -97,11 +97,17 @@ func decodeManifest(data []byte) (*Manifest, error) {
 	if m.FormatVersion != ManifestFormatVersion {
 		return nil, &UnsupportedManifestError{Found: m.FormatVersion}
 	}
+	// A manifest naming a policy was written before schedules moved to the
+	// environment (v0.1.0-rc.8). Its policy no longer exists, so the
+	// snapshot is nobody's to prune: it reads as manual.
+	if m.Policy != "" {
+		m.Trigger, m.Policy = TriggerManual, ""
+	}
 	if m.Trigger == "" {
 		m.Trigger = TriggerManual
 	}
 	if m.Strategy == "" {
-		m.Strategy = compiler.StrategyComplete
+		m.Strategy = StrategyComplete
 	}
 	return &m, nil
 }

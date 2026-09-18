@@ -10,10 +10,8 @@ export interface BackupSnapshot {
 	created_at: string;
 	revision_checksum: string;
 	encryption: string;
-	/** Manual snapshots are kept until deleted; scheduled ones expire under their policy's retention. */
+	/** Manual snapshots are kept until deleted; scheduled ones expire under their environment's retention. */
 	trigger: BackupTrigger;
-	/** The manifest backup policy of a scheduled snapshot; absent for manual ones. */
-	policy?: string;
 	strategy: string;
 	databases: number;
 	buckets: number;
@@ -42,9 +40,9 @@ export interface BackupTargetInput {
 	secret_access_key: string;
 }
 
-/** "manual", or the policy that took the snapshot. */
+/** "scheduled" for a snapshot the environment's schedule took, "manual" otherwise. */
 export function snapshotOrigin(snapshot: BackupSnapshot): string {
-	return snapshot.trigger === 'scheduled' && snapshot.policy ? snapshot.policy : 'manual';
+	return snapshot.trigger === 'scheduled' ? 'scheduled' : 'manual';
 }
 
 /** "1 database · 2 buckets · 1 volume" for a snapshot's contents. */

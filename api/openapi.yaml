@@ -2608,6 +2608,9 @@ paths:
         Environment admin, sudo mode. Partial: absent properties keep
         their value. Raising `priority` to `high` needs an instance admin;
         `promote_from` must name other environments of the project.
+        `backup` set to null turns automatic backups off; an object sets
+        the schedule (400 for an invalid cron expression, a retention
+        under 60 seconds, or an unknown strategy).
       tags: [environments]
       requestBody:
         required: true
@@ -2627,6 +2630,11 @@ paths:
                 priority:
                   type: string
                   enum: [normal, high]
+                backup:
+                  description: The automatic backup schedule, or null to turn automatic backups off.
+                  oneOf:
+                    - $ref: "#/components/schemas/BackupSchedule"
+                    - type: "null"
       responses:
         "200":
           description: The environment with its updated settings.
@@ -3847,7 +3855,8 @@ components:
         promotion from an allowed source, rollback, or an explicit bypass.
         `priority` marks environments that keep running when resources are
         tight; creating with or raising to `high` is instance-admin only.
-      required: [max_role, deploy_policy, promote_from, priority]
+        `backup` is the automatic backup schedule, null when off.
+      required: [max_role, deploy_policy, promote_from, priority, backup]
       properties:
         max_role: { $ref: "#/components/schemas/AccessRole" }
         deploy_policy:
@@ -3860,6 +3869,33 @@ components:
         priority:
           type: string
           enum: [normal, high]
+        backup:
+          oneOf:
+            - $ref: "#/components/schemas/BackupSchedule"
+            - type: "null"
+
+    BackupSchedule:
+      type: object
+      description: |
+        An environment's automatic backup schedule. Every database, bucket,
+        and volume of the environment is snapshotted on the schedule;
+        snapshots the schedule takes are deleted once older than the
+        retention, the newest one is always kept. Manual snapshots never
+        expire.
+      required: [schedule, retention_seconds, strategy]
+      properties:
+        schedule:
+          type: string
+          description: Five-field cron expression evaluated in UTC, for example `0 3 * * *` for daily at 03:00.
+        retention_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          description: How long snapshots taken by the schedule are kept.
+        strategy:
+          type: string
+          enum: [complete]
+          description: How snapshots are taken; `complete` copies every component in full. Defaults to `complete` when omitted on write.
 
     Member:
       type: object
@@ -4986,16 +5022,14 @@ components:
           enum: [manual, scheduled]
           description: |
             How the snapshot came to be. Manual snapshots are kept until
-            deleted; scheduled ones belong to a manifest backup policy
-            whose retention removes them. Snapshots written before this
-            field existed read as manual.
-        policy:
-          type: string
-          description: The manifest backup policy of a scheduled snapshot; absent for manual ones.
+            deleted; scheduled ones were taken by the environment's backup
+            schedule and expire under its retention. Snapshots written
+            before this field existed, and snapshots taken by the manifest
+            backup policies of earlier releases, read as manual.
         strategy:
           type: string
           enum: [complete]
-          description: How the snapshot was taken; `complete` copies every included component in full.
+          description: How the snapshot was taken; `complete` copies every component in full.
         databases:
           type: integer
         buckets:

@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/store"
 )
@@ -28,10 +28,17 @@ const (
 	StatusFailed    = "failed"
 
 	// TriggerManual marks a snapshot a user asked for; retention never
-	// touches it. TriggerScheduled marks one a manifest backup policy
-	// produced; the policy's retention window applies to it.
+	// touches it. TriggerScheduled marks one the environment's backup
+	// schedule produced; the environment's retention window applies to it.
 	TriggerManual    = "manual"
 	TriggerScheduled = "scheduled"
+
+	// StrategyComplete copies every stateful component in full on each
+	// run; the vocabulary lives in authz beside the other settings.
+	StrategyComplete = authz.BackupStrategyComplete
+
+	// ScheduleActor is the run actor of snapshots the schedule produced.
+	ScheduleActor = "schedule"
 )
 
 var (
@@ -41,13 +48,14 @@ var (
 	// (deployment, backup, or otherwise); the journal's one-running-run
 	// index is the arbiter.
 	ErrBackupInFlight = errors.New("backup: another run is in flight for this environment")
-	// ErrPolicyNotFound: the active revision declares no backup policy of
-	// that name (the manifest changed under a schedule).
-	ErrPolicyNotFound = errors.New("backup: backup policy not found in the active revision")
+	// ErrScheduleNotSet: a scheduled backup was asked of an environment
+	// whose automatic backups are off (the setting changed under a
+	// pending fire).
+	ErrScheduleNotSet = errors.New("backup: the environment has no backup schedule")
 	// ErrNothingToBackUp: the active revision declares no database, bucket,
-	// or application volume the snapshot would hold (for a scheduled run:
-	// none the policy includes). Refused before a run exists, so the reason
-	// reaches the caller instead of an empty failed run.
+	// or application volume the snapshot would hold. Refused before a run
+	// exists, so the reason reaches the caller instead of an empty failed
+	// run.
 	ErrNothingToBackUp = errors.New("backup: the active revision declares no database, bucket, or application volume to snapshot")
 )
 
@@ -67,19 +75,14 @@ type CreateResult struct {
 	RunID    uuid.UUID
 }
 
-// BackupInput describes one snapshot to take. Trigger defaults to manual;
-// a scheduled snapshot names the manifest backup policy driving it, whose
-// include selection and retention then apply. Manual snapshots include
-// every stateful component.
+// BackupInput describes one snapshot to take. Trigger defaults to manual.
+// Every snapshot holds every stateful component; a scheduled one also
+// carries the environment's retention, which its run applies afterwards.
 type BackupInput struct {
 	EnvironmentID uuid.UUID
 	Actor         string
 	Trigger       string
-	Policy        string
 }
-
-// ScheduleActor is the run actor of snapshots a policy produced.
-func ScheduleActor(policy string) string { return "schedule:" + policy }
 
 // CreateBackup accepts a backup of one environment: it validates the
 // environment is active, claims the environment's single running-run slot
@@ -91,12 +94,16 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 	if trigger == "" {
 		trigger = TriggerManual
 	}
-	if trigger == TriggerScheduled && in.Policy == "" {
-		return nil, errors.New("backup: a scheduled backup names its policy")
-	}
 	names, err := c.environmentNames(ctx, environmentID)
 	if err != nil {
 		return nil, err
+	}
+	strategy, retention := StrategyComplete, int64(0)
+	if trigger == TriggerScheduled {
+		if names.backupSchedule == "" {
+			return nil, ErrScheduleNotSet
+		}
+		strategy, retention = names.backupStrategy, names.backupRetentionSeconds
 	}
 	target, err := c.deps.Store.GetEnvironmentTarget(ctx, environmentID)
 	if err != nil {
@@ -108,25 +115,14 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 	if target.State != "active" || target.ActiveRevisionID == nil {
 		return nil, ErrEnvironmentNotActive
 	}
-	// The snapshot must hold something: a manual one takes every stateful
-	// component, a scheduled one what its policy includes. An environment
-	// with nothing to snapshot is refused here, before a run exists, so the
-	// reason reaches the caller instead of an empty failed run.
+	// The snapshot must hold something. An environment with nothing to
+	// snapshot is refused here, before a run exists, so the reason reaches
+	// the caller instead of an empty failed run.
 	revisionDoc, err := c.revisions.GetRevision(ctx, *target.ActiveRevisionID)
 	if err != nil {
 		return nil, fmt.Errorf("backup: load revision: %w", err)
 	}
-	strategy := compiler.StrategyComplete
-	var include *compiler.Selection
-	if trigger == TriggerScheduled {
-		policy, ok := revisionDoc.Definition.Backups[in.Policy]
-		if !ok {
-			return nil, ErrPolicyNotFound
-		}
-		strategy = policy.EffectiveStrategy()
-		include = &policy.Include
-	}
-	if len(planComponents(&revisionDoc.Definition, include)) == 0 {
+	if len(planComponents(&revisionDoc.Definition)) == 0 {
 		return nil, ErrNothingToBackUp
 	}
 	// A configured target is a precondition; reachability is proven inside
@@ -160,16 +156,16 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 	}
 	runID := run.ID
 	row, err := c.deps.Store.CreateBackup(ctx, store.CreateBackupParams{
-		ID:              id,
-		Kind:            KindBackup,
-		EnvironmentID:   environmentID,
-		ProjectName:     names.project,
-		EnvironmentName: names.environment,
-		RevisionID:      target.ActiveRevisionID,
-		RunID:           &runID,
-		Trigger:         trigger,
-		Policy:          in.Policy,
-		Strategy:        strategy,
+		ID:               id,
+		Kind:             KindBackup,
+		EnvironmentID:    environmentID,
+		ProjectName:      names.project,
+		EnvironmentName:  names.environment,
+		RevisionID:       target.ActiveRevisionID,
+		RunID:            &runID,
+		Trigger:          trigger,
+		Strategy:         strategy,
+		RetentionSeconds: retention,
 	})
 	if err != nil {
 		_ = c.deps.Journal.FinishRun(ctx, run.ID, journal.RunFailed)
@@ -218,10 +214,9 @@ type SnapshotSummary struct {
 	CreatedAt        time.Time `json:"created_at"`
 	RevisionChecksum string    `json:"revision_checksum"`
 	Encryption       string    `json:"encryption"`
-	// Trigger is manual or scheduled; Policy names the manifest backup
-	// policy of a scheduled snapshot and is empty for manual ones.
+	// Trigger is manual or scheduled; scheduled snapshots expire under
+	// their environment's retention.
 	Trigger   string `json:"trigger"`
-	Policy    string `json:"policy,omitempty"`
 	Strategy  string `json:"strategy"`
 	Databases int    `json:"databases"`
 	Buckets   int    `json:"buckets"`
@@ -237,7 +232,6 @@ func summarize(m *Manifest) SnapshotSummary {
 		RevisionChecksum: m.RevisionChecksum,
 		Encryption:       m.Encryption,
 		Trigger:          m.Trigger,
-		Policy:           m.Policy,
 		Strategy:         m.Strategy,
 	}
 	for _, component := range m.Components {
@@ -396,6 +390,11 @@ type environmentNames struct {
 	projectID   uuid.UUID
 	project     string
 	environment string
+
+	// The automatic backup setting as stored; schedule is empty when off.
+	backupSchedule         string
+	backupRetentionSeconds int64
+	backupStrategy         string
 }
 
 func (c *Controller) environmentNames(ctx context.Context, environmentID uuid.UUID) (*environmentNames, error) {
@@ -414,5 +413,9 @@ func (c *Controller) environmentNames(ctx context.Context, environmentID uuid.UU
 		projectID:   project.ID,
 		project:     project.Name,
 		environment: environment.Name,
+
+		backupSchedule:         environment.BackupSchedule,
+		backupRetentionSeconds: environment.BackupRetentionSeconds,
+		backupStrategy:         environment.BackupStrategy,
 	}, nil
 }

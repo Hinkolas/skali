@@ -31,7 +31,7 @@
 		connection={data.connection}
 		{envId}
 		runs={data.runs}
-		backups={data.definition?.backups ?? {}}
+		backup={data.env?.settings?.backup ?? null}
 		storage={data.storage}
 	/>
 {:else}
@@ -41,7 +41,7 @@
 		connection={data.bucketConnection}
 		{envId}
 		runs={data.runs}
-		backups={data.definition?.backups ?? {}}
+		backup={data.env?.settings?.backup ?? null}
 		storage={data.storage}
 	/>
 {/if}

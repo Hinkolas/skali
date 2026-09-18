@@ -352,9 +352,9 @@ func runServe() error {
 			return fmt.Errorf("recover backups: %w", err)
 		}
 	}
-	// The scheduler turns manifest backup policies into backup runs. It
-	// stays quiet without a configured target, so the local dev platform
-	// runs it too.
+	// The scheduler turns environment backup schedules into backup runs.
+	// It stays quiet without a configured target, so the local dev
+	// platform runs it too.
 	var backupScheduler *backup.Scheduler
 	if backupCtl != nil && cfg.BackupScheduler {
 		backupScheduler = backup.NewScheduler(backupCtl)

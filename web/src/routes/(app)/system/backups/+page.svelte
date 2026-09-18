@@ -249,9 +249,9 @@
 				self-describing: a fresh installation pointed at the same bucket lists and restores them.
 			</p>
 			<p>
-				Manifest <span class="font-mono">backups</span> policies run on their cron schedule (UTC) for
-				every active environment and delete their own snapshots once past retention. Manual snapshots
-				stay until someone deletes them.
+				Automatic backups are scheduled per environment in its settings: a cron schedule (UTC) and a
+				retention window. Snapshots a schedule takes expire past retention, the newest is always
+				kept; manual snapshots stay until someone deletes them.
 			</p>
 			{#if stored}
 				<p class="text-text-faint text-sm">

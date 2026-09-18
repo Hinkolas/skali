@@ -52,21 +52,21 @@ type Attempt struct {
 }
 
 type Backup struct {
-	ID              uuid.UUID
-	Kind            string
-	EnvironmentID   uuid.UUID
-	ProjectName     string
-	EnvironmentName string
-	Status          string
-	SnapshotKey     string
-	RevisionID      *uuid.UUID
-	RunID           *uuid.UUID
-	Error           *string
-	CreatedAt       time.Time
-	FinishedAt      *time.Time
-	Trigger         string
-	Policy          string
-	Strategy        string
+	ID               uuid.UUID
+	Kind             string
+	EnvironmentID    uuid.UUID
+	ProjectName      string
+	EnvironmentName  string
+	Status           string
+	SnapshotKey      string
+	RevisionID       *uuid.UUID
+	RunID            *uuid.UUID
+	Error            *string
+	CreatedAt        time.Time
+	FinishedAt       *time.Time
+	Trigger          string
+	Strategy         string
+	RetentionSeconds int64
 }
 
 type BackupCode struct {
@@ -79,10 +79,10 @@ type BackupCode struct {
 
 type BackupSchedule struct {
 	EnvironmentID uuid.UUID
-	Policy        string
 	LastFireAt    time.Time
 	LastBackupID  *uuid.UUID
 	UpdatedAt     time.Time
+	Schedule      string
 }
 
 type BackupTarget struct {
@@ -267,15 +267,18 @@ type DeviceRequest struct {
 }
 
 type Environment struct {
-	ID           uuid.UUID
-	ProjectID    uuid.UUID
-	Name         string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	MaxRole      string
-	DeployPolicy string
-	PromoteFrom  []string
-	Priority     string
+	ID                     uuid.UUID
+	ProjectID              uuid.UUID
+	Name                   string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	MaxRole                string
+	DeployPolicy           string
+	PromoteFrom            []string
+	Priority               string
+	BackupSchedule         string
+	BackupRetentionSeconds int64
+	BackupStrategy         string
 }
 
 type EnvironmentAccess struct {

@@ -94,6 +94,25 @@ func ValidPriority(s string) bool {
 	return s == PriorityNormal || s == PriorityHigh
 }
 
+// Automatic backup vocabulary. The strategy lives here rather than in the
+// backup package because the project service validates it and the backup
+// package aliases it; authz must not import backup.
+const (
+	// BackupStrategyComplete copies every stateful component in full on
+	// each run. It is the only strategy today; the field exists so a
+	// differential strategy can be added without a contract break.
+	BackupStrategyComplete = "complete"
+
+	// MinBackupRetentionSeconds is one scheduler tick: cron fires at most
+	// once a minute, so a shorter window could never keep more than the
+	// newest snapshot, which is kept regardless.
+	MinBackupRetentionSeconds int64 = 60
+)
+
+func ValidBackupStrategy(s string) bool { return s == BackupStrategyComplete }
+
+func ValidBackupRetention(seconds int64) bool { return seconds >= MinBackupRetentionSeconds }
+
 // RoleNames lists the ladder for messages and schemas, lowest first.
 func RoleNames() []string {
 	names := make([]string, len(roleNames))

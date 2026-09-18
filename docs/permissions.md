@@ -53,7 +53,7 @@ smallest thing this person needs to change?
 | `read` | everything visible: status and health, deployments, revisions, runs and run logs (redacted), runtime logs, value names and versions, routes, database and bucket connection info without secrets, backups list, environment settings, who has access to it. |
 | `deploy` | change only what code runs: promote into this environment, rollback, restart, redeploy, run cancel, route probe, backup create, and direct deploys whose definition is unchanged (the manifest compiles to the environment's currently active definition version, so only image digests differ). |
 | `maintain` | the full blast radius of `skali.yml`: direct deploys that change the definition (services, routes, databases, buckets, including `--allow-destructive`), set and prune values, restore, and the secret-bearing reads: exec, resolved application environment, credential reveal. |
-| `admin` | management outside the yaml: this environment's protection policy and role ceiling, other users' roles on this environment, lowering priority, delete and teardown, bypassing protection. |
+| `admin` | management outside the yaml: this environment's protection policy, role ceiling, and automatic backup schedule, other users' roles on this environment, lowering priority, delete and teardown, bypassing protection. |
 
 Notes on the placement:
 
@@ -179,6 +179,13 @@ Server-side, edited by environment admins unless noted:
   project): the protection policy.
 - `priority: normal | high` (default `normal`). Creating with `high` or
   raising to `high` is instance admin only; lowering is environment admin.
+- `backup: null | {schedule, retention_seconds, strategy}` (default `null`,
+  automatic backups off): the automatic backup schedule. `schedule` is a
+  five-field cron expression in UTC, `retention_seconds` (at least 60) is
+  how long snapshots the schedule takes are kept (the newest is always
+  kept), `strategy` is `complete`. Manual snapshots never expire. Set with
+  `skali backup schedule set|remove` or the environment's settings in the
+  console; `null` in a PATCH turns it off, an absent key leaves it alone.
 
 Creation: project `maintain` and up create environments; the creator gets an
 explicit `admin` cell. Implicit creation on first deploy (`skali deploy
@@ -300,7 +307,7 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | registry pull | P:read |
 | create environment (`normal`) | P:maintain |
 | create or raise environment to `high` (S) | IA |
-| environment settings: ceiling, protection, lower priority (S) | E:admin |
+| environment settings: ceiling, protection, backup schedule, lower priority (S) | E:admin |
 | delete, teardown (S) | E:admin |
 | status, deployments, revisions, runs, run logs, runtime logs, value names, connection info, backups list, settings, access list | E:read |
 | promote into, rollback, restart, redeploy, run cancel, route probe, backup create, direct deploy with unchanged definition | E:deploy |
@@ -392,7 +399,7 @@ their environment first):
 | route | requirement |
 |---|---|
 | `GET /environments/{id}` | P:read; locked answers the minimal shape (id, name, project, `access: none`) |
-| `PATCH /environments/{id}` (new: settings, S) | E:admin; `priority: high` IA |
+| `PATCH /environments/{id}` (settings incl. `backup`, S) | E:admin; `priority: high` IA |
 | `GET /environments/{id}/access` (new) | E:read |
 | `PUT|DELETE /environments/{id}/access/{user}` (new, S) | E:admin |
 | `DELETE /environments/{id}`, `POST .../teardown` (S) | E:admin |
@@ -455,6 +462,9 @@ and so `skali` can refuse before doing work:
   so `skali deploy` refuses before submitting anything and the console
   explains without a call.
 - Runs and deployments carry the actor and `bypass_protection`.
+- Environment `settings` carry `backup` (`null` or the schedule), so the
+  console's Backups tab and `skali env list` show which environments are
+  backed up automatically without another call.
 
 ## Management surfaces
 

@@ -112,7 +112,7 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 		RevisionID: target.TargetRevisionID,
 		RunID:      &runID,
 		Trigger:    TriggerManual,
-		Strategy:   compiler.StrategyComplete,
+		Strategy:   StrategyComplete,
 	})
 	if err != nil {
 		_ = c.deps.Journal.FinishRun(ctx, run.ID, journal.RunFailed)

@@ -153,15 +153,3 @@ buckets:
 
     quotas:
       storage: 20GB
-
-# Project backups coordinate service-specific backup mechanisms into one
-# recovery point: every active environment is snapshotted daily at 03:00
-# UTC and each snapshot is kept for a week.
-backups:
-  daily:
-    schedule: "0 3 * * *"
-    retention: 7d
-    include:
-      databases: all
-      buckets: all
-      volumes: all

@@ -31,13 +31,12 @@ func newValidateCommand() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(command.OutOrStdout(),
-				"valid %s\n  project: %s\n  applications: %d\n  databases: %d\n  buckets: %d\n  backups: %d\n  required variables: %d\n  definition: sha256:%s\n",
+				"valid %s\n  project: %s\n  applications: %d\n  databases: %d\n  buckets: %d\n  required variables: %d\n  definition: sha256:%s\n",
 				document.Path,
 				result.Definition.Name,
 				len(result.Definition.Applications),
 				len(result.Definition.Databases),
 				len(result.Definition.Buckets),
-				len(result.Definition.Backups),
 				len(result.Definition.RequiredVariables),
 				result.Hash,
 			)

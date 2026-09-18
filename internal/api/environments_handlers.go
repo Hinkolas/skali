@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -48,6 +51,42 @@ type environmentSettingsPayload struct {
 	DeployPolicy string   `json:"deploy_policy"`
 	PromoteFrom  []string `json:"promote_from"`
 	Priority     string   `json:"priority"`
+	// Backup is always present: null when automatic backups are off.
+	Backup *backupSchedulePayload `json:"backup"`
+}
+
+// backupSchedulePayload is the automatic backup schedule on the wire.
+type backupSchedulePayload struct {
+	Schedule         string `json:"schedule"`
+	RetentionSeconds int64  `json:"retention_seconds"`
+	Strategy         string `json:"strategy"`
+}
+
+// optionalBackup tells apart an absent backup field (leave the schedule as
+// it is), null (turn automatic backups off), and an object (set it).
+// encoding/json hands UnmarshalJSON the literal null for a non-pointer
+// field, which is what makes the distinction possible; a pointer field
+// would read null and absent the same way.
+type optionalBackup struct {
+	set   bool
+	value *backupSchedulePayload
+}
+
+func (o *optionalBackup) UnmarshalJSON(data []byte) error {
+	o.set = true
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		o.value = nil
+		return nil
+	}
+	// decodeJSON's strictness does not reach into nested raw bytes.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var v backupSchedulePayload
+	if err := dec.Decode(&v); err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	o.value = &v
+	return nil
 }
 
 func newEnvironmentSettingsPayload(settings authz.Settings) *environmentSettingsPayload {
@@ -55,12 +94,20 @@ func newEnvironmentSettingsPayload(settings authz.Settings) *environmentSettings
 	if promoteFrom == nil {
 		promoteFrom = []string{}
 	}
-	return &environmentSettingsPayload{
+	payload := &environmentSettingsPayload{
 		MaxRole:      settings.MaxRole.String(),
 		DeployPolicy: settings.DeployPolicy,
 		PromoteFrom:  promoteFrom,
 		Priority:     settings.Priority,
 	}
+	if b := settings.Backup; b != nil {
+		payload.Backup = &backupSchedulePayload{
+			Schedule:         b.Schedule,
+			RetentionSeconds: b.RetentionSeconds,
+			Strategy:         b.Strategy,
+		}
+	}
+	return payload
 }
 
 // newEnvironmentPayload renders one environment for a caller with the given
@@ -188,14 +235,17 @@ func (h *environmentsHandlers) update(w http.ResponseWriter, r *http.Request) {
 		DeployPolicy *string   `json:"deploy_policy"`
 		PromoteFrom  *[]string `json:"promote_from"`
 		Priority     *string   `json:"priority"`
+		// Backup: null turns automatic backups off, an object sets the
+		// schedule, absent leaves it unchanged.
+		Backup optionalBackup `json:"backup"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
 		return
 	}
-	if req.MaxRole == nil && req.DeployPolicy == nil && req.PromoteFrom == nil && req.Priority == nil {
+	if req.MaxRole == nil && req.DeployPolicy == nil && req.PromoteFrom == nil && req.Priority == nil && !req.Backup.set {
 		writeError(w, http.StatusBadRequest, codeBadRequest,
-			"nothing to update: provide max_role, deploy_policy, promote_from, and/or priority")
+			"nothing to update: provide max_role, deploy_policy, promote_from, priority, and/or backup")
 		return
 	}
 	settings, err := authz.SettingsOf(env)
@@ -224,14 +274,22 @@ func (h *environmentsHandlers) update(w http.ResponseWriter, r *http.Request) {
 		}
 		settings.Priority = *req.Priority
 	}
+	if req.Backup.set {
+		settings.Backup = nil
+		if v := req.Backup.value; v != nil {
+			settings.Backup = &authz.BackupSchedule{Schedule: v.Schedule, RetentionSeconds: v.RetentionSeconds, Strategy: v.Strategy}
+		}
+	}
 	updated, err := h.projects.UpdateEnvironmentSettings(r.Context(), env.ID, settings)
 	if err != nil {
 		writeProjectError(r.Context(), w, err)
 		return
 	}
 	logAccessChange(r, "environment settings changed", "environment", env.ID.String(),
-		map[string]any{"max_role": env.MaxRole, "deploy_policy": env.DeployPolicy, "promote_from": env.PromoteFrom, "priority": env.Priority},
-		map[string]any{"max_role": updated.MaxRole, "deploy_policy": updated.DeployPolicy, "promote_from": updated.PromoteFrom, "priority": updated.Priority})
+		map[string]any{"max_role": env.MaxRole, "deploy_policy": env.DeployPolicy, "promote_from": env.PromoteFrom, "priority": env.Priority,
+			"backup_schedule": env.BackupSchedule, "backup_retention_seconds": env.BackupRetentionSeconds, "backup_strategy": env.BackupStrategy},
+		map[string]any{"max_role": updated.MaxRole, "deploy_policy": updated.DeployPolicy, "promote_from": updated.PromoteFrom, "priority": updated.Priority,
+			"backup_schedule": updated.BackupSchedule, "backup_retention_seconds": updated.BackupRetentionSeconds, "backup_strategy": updated.BackupStrategy})
 	if updated.Priority != env.Priority && h.reconcile != nil {
 		// Priority renders live from the environment row: the kernel
 		// re-applies the application workloads with the new class and the

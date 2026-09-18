@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Hinkolas/skali/internal/authz"
+	"github.com/Hinkolas/skali/internal/cron"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -198,6 +199,26 @@ func (s *Service) UpdateEnvironmentSettings(ctx context.Context, environmentID u
 	if !authz.ValidPriority(settings.Priority) {
 		return nil, fmt.Errorf("%w: priority must be normal or high", ErrInvalidSettings)
 	}
+	backupSchedule, backupRetention, backupStrategy := "", int64(0), authz.BackupStrategyComplete
+	if b := settings.Backup; b != nil {
+		parsed, err := cron.Parse(b.Schedule)
+		if err != nil {
+			return nil, fmt.Errorf("%w: backup.schedule %q: %v", ErrInvalidSettings, b.Schedule, err)
+		}
+		// The normalized expression is stored so a cosmetic edit does not
+		// read as a new schedule and reseed the scheduler.
+		backupSchedule = parsed.String()
+		if !authz.ValidBackupRetention(b.RetentionSeconds) {
+			return nil, fmt.Errorf("%w: backup.retention_seconds must be at least %d (one minute)", ErrInvalidSettings, authz.MinBackupRetentionSeconds)
+		}
+		backupRetention = b.RetentionSeconds
+		if b.Strategy != "" {
+			backupStrategy = b.Strategy
+		}
+		if !authz.ValidBackupStrategy(backupStrategy) {
+			return nil, fmt.Errorf("%w: backup.strategy must be %s", ErrInvalidSettings, authz.BackupStrategyComplete)
+		}
+	}
 	promoteFrom := settings.PromoteFrom
 	if promoteFrom == nil {
 		promoteFrom = []string{}
@@ -230,6 +251,10 @@ func (s *Service) UpdateEnvironmentSettings(ctx context.Context, environmentID u
 		DeployPolicy: settings.DeployPolicy,
 		PromoteFrom:  promoteFrom,
 		Priority:     settings.Priority,
+
+		BackupSchedule:         backupSchedule,
+		BackupRetentionSeconds: backupRetention,
+		BackupStrategy:         backupStrategy,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("project: update environment settings: %w", err)
