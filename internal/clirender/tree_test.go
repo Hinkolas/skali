@@ -44,6 +44,22 @@ func exampleLogs(stepID string) []string {
 	return nil
 }
 
+// A failed run's one-line reason sits under the header; a running run and
+// a failed run without one show the header alone.
+func TestLinesFailedRunReason(t *testing.T) {
+	t.Parallel()
+	tree := &client.RunTree{Run: client.Run{ID: "0", Kind: "backup", Status: "failed",
+		Failure: "job backup-databases failed: exceeded its timeout"}}
+	require.Equal(t, []string{
+		"run 0  backup",
+		"  failed: job backup-databases failed: exceeded its timeout",
+	}, Lines(tree, nil))
+	tree.Run.Failure = ""
+	require.Equal(t, []string{"run 0  backup"}, Lines(tree, nil))
+	tree.Run.Status, tree.Run.Failure = "running", "stale"
+	require.Equal(t, []string{"run 0  backup"}, Lines(tree, nil))
+}
+
 // The transcript shape: glyph columns, nesting by one two-space level per
 // depth step, durations right-aligned, log tails under failed leaves.
 func TestLinesTranscriptShape(t *testing.T) {

@@ -28,7 +28,18 @@ import (
 type tlsOutcome struct {
 	blocked bool
 	failed  bool
+	// failure is the one-line summary of the first failed issuance, for the
+	// run's failure reason. Empty unless failed.
+	failure string
 	requeue time.Duration
+}
+
+// noteFailure records the first failure line of a pass.
+func (o *tlsOutcome) noteFailure(line string) {
+	o.failed = true
+	if o.failure == "" {
+		o.failure = line
+	}
 }
 
 // deferredGuidance is the operator's next step on a deferred route.
@@ -238,8 +249,8 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 			if arrival != nil {
 				k.recordArrival(ctx, a, key, ref.Name, domain, probe, cert, arrival, now)
 			} else if !record.awaiting.IsZero() && cert != nil {
-				if k.recordOutcome(ctx, a, key, ref.Name, title, domain, cert, usable, record.awaiting, now) {
-					out.failed = true
+				if line := k.recordOutcome(ctx, a, key, ref.Name, title, domain, cert, usable, record.awaiting, now); line != "" {
+					out.noteFailure(line)
 				}
 			}
 			continue
@@ -316,15 +327,18 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 			// failure gets its recovery opportunity, including controller/API lag.
 			hopeless := readOK && cert != nil && !cert.Issuing && !cert.LastFailureTime.Before(target.UpdatedAt.Truncate(time.Second)) && cert.NextRetryTime.After(deadline)
 			if now.After(deadline) || hopeless {
-				out.failed = true
 				state = journal.StepFailed
 				level = "error"
+				failure := "TLS issuance exceeded the rollout deadline"
 				if hopeless {
-					fields["failure"] = "Next automatic retry is after the rollout deadline"
-				} else {
-					fields["failure"] = "TLS issuance exceeded the rollout deadline"
+					failure = "Next automatic retry is after the rollout deadline"
 				}
+				fields["failure"] = failure
 				fields["guidance"] = issuanceGuidance
+				if domain, ok := fields["domain"].(string); ok && domain != "" {
+					failure += " for " + domain
+				}
+				out.noteFailure(failure)
 			}
 		}
 		if attached {
@@ -364,7 +378,7 @@ func (k *Kernel) recordArrival(ctx context.Context, a *runAttachment, key routeK
 // usable, or the issuance attempt after the arrival failed. Either clears
 // the wait; a failure also fails the run this pass created.
 func (k *Kernel) recordOutcome(ctx context.Context, a *runAttachment, key routeKey, certName, title, domain string,
-	cert *module.CertificateStatus, usable bool, awaiting, now time.Time) (failed bool) {
+	cert *module.CertificateStatus, usable bool, awaiting, now time.Time) (failure string) {
 	fields := map[string]any{"tls": true, "certificate": certName, "domain": domain, "secret": cert.SecretName,
 		"failed_attempts": cert.FailedAttempts, "reason": cert.Reason, "message": cert.Message}
 	switch {
@@ -390,12 +404,12 @@ func (k *Kernel) recordOutcome(ctx context.Context, a *runAttachment, key routeK
 			line += ": " + cert.Message
 		}
 		a.completeStepFields(ctx, "tls:"+certName, title, journal.StepFailed, []string{line}, fields)
-		failed = true
+		failure = line
 	default:
-		return false
+		return ""
 	}
 	k.awaitIssuance(key, time.Time{})
-	return failed
+	return failure
 }
 
 // retriedCertificate is the local view of a certificate whose issuance the

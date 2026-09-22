@@ -270,6 +270,9 @@ type Run struct {
 	// DeferredRoutes counts the routes whose TLS this run deferred because
 	// the domain did not reach the installation yet (list views only).
 	DeferredRoutes int64 `json:"deferred_routes,omitempty"`
+	// Failure is the one-line reason a failed run recorded; empty when the
+	// run did not fail or recorded none.
+	Failure string `json:"failure,omitempty"`
 }
 
 type Attempt struct {
@@ -613,8 +616,10 @@ func (c *Client) CompleteDeployment(ctx context.Context, id string) (*CompletedD
 	return &res, nil
 }
 
-func (c *Client) FailDeployment(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/deployments/"+id+"/fail", nil, nil)
+// FailDeployment closes the artifact window as failed; reason becomes the
+// run's one-line failure summary.
+func (c *Client) FailDeployment(ctx context.Context, id, reason string) error {
+	return c.do(ctx, http.MethodPost, "/v1/deployments/"+id+"/fail", map[string]string{"reason": reason}, nil)
 }
 
 func (c *Client) VerifyArtifact(ctx context.Context, artifactID, deploymentID, digest string) (*VerifiedArtifact, error) {

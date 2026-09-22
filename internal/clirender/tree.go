@@ -119,6 +119,15 @@ func treeLines(tree *client.RunTree, logs func(stepID string) []string, view *tr
 			"  " + tree.Run.Kind
 	}
 	lines := []string{header}
+	if tree.Run.Status == "failed" && tree.Run.Failure != "" {
+		// The run's one-line reason sits under the header, dim: the failed
+		// step's tail and the command's closing line carry the emphasis.
+		failure := "  failed: " + tree.Run.Failure
+		if view.style.on() {
+			failure = view.style.Dim(failure)
+		}
+		lines = append(lines, failure)
+	}
 	for index := range tree.Steps {
 		lines = append(lines, stepLines(&tree.Steps[index], 1, logs, view)...)
 	}

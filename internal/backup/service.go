@@ -168,7 +168,7 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 		RetentionSeconds: retention,
 	})
 	if err != nil {
-		_ = c.deps.Journal.FinishRun(ctx, run.ID, journal.RunFailed)
+		_ = c.deps.Journal.FailRun(ctx, run.ID, nil, "recording the backup failed: "+err.Error())
 		return nil, fmt.Errorf("backup: create row: %w", err)
 	}
 	c.Enqueue(row.ID)
@@ -187,7 +187,7 @@ func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 	for _, row := range rows {
 		message := row.Kind + " interrupted: the daemon restarted while it was running"
 		if row.RunID != nil {
-			if err := c.deps.Journal.FinishRun(ctx, *row.RunID, journal.RunFailed); err != nil &&
+			if err := c.deps.Journal.FailRun(ctx, *row.RunID, nil, message); err != nil &&
 				!errors.Is(err, journal.ErrInvalidTransition) && !errors.Is(err, journal.ErrNotFound) {
 				slog.WarnContext(ctx, "backup: finish interrupted run", "run", *row.RunID, "err", err)
 			}

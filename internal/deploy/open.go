@@ -517,7 +517,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	opened, err := s.openUnderRun(ctx, in, env, run.ID, preview)
 	if err != nil {
 		// The window never opened; the run must not stay running.
-		if finishErr := in.Journal.FinishRun(ctx, run.ID, journal.RunFailed); finishErr != nil &&
+		if finishErr := in.Journal.FailRun(ctx, run.ID, nil, err.Error()); finishErr != nil &&
 			!errors.Is(finishErr, journal.ErrInvalidTransition) {
 			return nil, fmt.Errorf("deploy: close run after failed open: %w (original: %w)", finishErr, err)
 		}
@@ -833,18 +833,20 @@ func (s *Service) finishComplete(ctx context.Context, c *completion) (*ExecuteRe
 
 // FailDeployment closes an open artifact window as failed: pending
 // artifacts are abandoned, running builds fail, the staged candidate is
-// discarded, and the run finishes failed. Values, target, and active
-// revision are untouched by construction.
-func (s *Service) FailDeployment(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service) error {
-	return s.closeDeployment(ctx, deploymentID, jsvc, DeploymentFailed)
+// discarded, and the run finishes failed with reason as its one-line
+// summary (the client's build error, or why the daemon gave up on the
+// window). Values, target, and active revision are untouched by
+// construction.
+func (s *Service) FailDeployment(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service, reason string) error {
+	return s.closeDeployment(ctx, deploymentID, jsvc, DeploymentFailed, reason)
 }
 
 // CancelDeployment is FailDeployment with cancellation semantics.
 func (s *Service) CancelDeployment(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service) error {
-	return s.closeDeployment(ctx, deploymentID, jsvc, DeploymentCancelled)
+	return s.closeDeployment(ctx, deploymentID, jsvc, DeploymentCancelled, "")
 }
 
-func (s *Service) closeDeployment(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service, to DeploymentStatus) error {
+func (s *Service) closeDeployment(ctx context.Context, deploymentID uuid.UUID, jsvc *journal.Service, to DeploymentStatus, failure string) error {
 	// Closing is all-or-nothing from the caller's point of view: a client
 	// that disconnects after asking for it must not leave the row claimed
 	// but the run still running.
@@ -876,10 +878,8 @@ func (s *Service) closeDeployment(ctx context.Context, deploymentID uuid.UUID, j
 		return err
 	}
 	buildOutcome := buildstore.StatusFailed
-	runOutcome := journal.RunFailed
 	if to == DeploymentCancelled {
 		buildOutcome = buildstore.StatusCancelled
-		runOutcome = journal.RunCancelled
 	}
 	for _, build := range builds {
 		if build.Status != "running" {
@@ -889,14 +889,36 @@ func (s *Service) closeDeployment(ctx context.Context, deploymentID uuid.UUID, j
 			return err
 		}
 	}
+	// The failure reason may echo the candidate's staged secrets, so the
+	// redactor is built while the candidate still exists. Best-effort: a
+	// redactor that cannot be built must not leave the run running, so the
+	// reason is then dropped rather than stored unredacted.
+	var redactor *redact.Redactor
+	if to == DeploymentFailed && deployment.RunID != nil {
+		candidateID := uuid.Nil
+		if deployment.CandidateID != nil {
+			candidateID = *deployment.CandidateID
+		}
+		if built, err := s.values.Redactor(ctx, deployment.EnvironmentID, candidateID); err == nil {
+			redactor = built
+		} else {
+			slog.WarnContext(ctx, "deploy: build redactor for failure reason", "deployment", deploymentID, "err", err)
+			failure = ""
+		}
+	}
 	if deployment.CandidateID != nil {
 		if err := s.values.DiscardCandidate(ctx, deployment.EnvironmentID, *deployment.CandidateID); err != nil {
 			return err
 		}
 	}
 	if deployment.RunID != nil {
-		if err := jsvc.FinishRun(ctx, *deployment.RunID, runOutcome); err != nil &&
-			!errors.Is(err, journal.ErrInvalidTransition) && !errors.Is(err, journal.ErrNotFound) {
+		var err error
+		if to == DeploymentCancelled {
+			err = jsvc.FinishRun(ctx, *deployment.RunID, journal.RunCancelled)
+		} else {
+			err = jsvc.FailRun(ctx, *deployment.RunID, redactor, failure)
+		}
+		if err != nil && !errors.Is(err, journal.ErrInvalidTransition) && !errors.Is(err, journal.ErrNotFound) {
 			return err
 		}
 	}
@@ -913,7 +935,7 @@ func (s *Service) SweepStaleDeployments(ctx context.Context, jsvc *journal.Servi
 	}
 	swept := 0
 	for _, row := range rows {
-		if err := s.FailDeployment(ctx, row.ID, jsvc); err != nil {
+		if err := s.FailDeployment(ctx, row.ID, jsvc, "the client stopped reporting build progress"); err != nil {
 			if errors.Is(err, ErrInvalidDeploymentTransition) {
 				continue
 			}
@@ -944,7 +966,7 @@ func (s *Service) RecoverOnBoot(ctx context.Context, jsvc *journal.Service) (int
 				}
 			}
 		}
-		if err := s.FailDeployment(ctx, row.ID, jsvc); err != nil {
+		if err := s.FailDeployment(ctx, row.ID, jsvc, "daemon restarted while the deployment was completing"); err != nil {
 			if errors.Is(err, ErrInvalidDeploymentTransition) {
 				continue
 			}

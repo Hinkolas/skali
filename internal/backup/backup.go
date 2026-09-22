@@ -68,16 +68,17 @@ func (c *Controller) process(ctx context.Context, id uuid.UUID) error {
 		err = fmt.Errorf("backup: unknown row kind %q", row.Kind)
 	}
 	if err != nil {
-		status := journal.RunFailed
-		message := err.Error()
+		// The run's failure reason and the row's error are the same text by
+		// construction: whoever reads either sees the same summary.
+		status, message := journal.RunFailed, err.Error()
 		if errors.Is(err, errCancelled) {
 			status, message = journal.RunCancelled, "cancelled"
 		}
-		scope.finish(ctx, status)
+		scope.finish(ctx, status, message)
 		c.cleanupJobs(ctx, &row)
 		return c.failRow(ctx, row.ID, message)
 	}
-	scope.finish(ctx, journal.RunSucceeded)
+	scope.finish(ctx, journal.RunSucceeded, "")
 	c.cleanupJobs(ctx, &row)
 	if _, err := c.deps.Store.SetBackupStatus(ctx, store.SetBackupStatusParams{
 		ID: row.ID, ToStatus: StatusSucceeded, FromStatus: StatusRunning,

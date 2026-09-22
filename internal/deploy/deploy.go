@@ -629,7 +629,7 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 func finishRunFailed(ctx context.Context, jsvc *journal.Service, runID uuid.UUID, cause error) error {
 	ctx, cancel := detached(ctx)
 	defer cancel()
-	if err := jsvc.FinishRun(ctx, runID, journal.RunFailed); err != nil &&
+	if err := jsvc.FailRun(ctx, runID, nil, cause.Error()); err != nil &&
 		!errors.Is(err, journal.ErrInvalidTransition) {
 		return fmt.Errorf("deploy: finish run after failure: %w (original: %w)", err, cause)
 	}

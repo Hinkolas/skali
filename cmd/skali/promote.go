@@ -261,8 +261,9 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	tasks := clirender.NewTasks(out)
 	for _, action := range opened.Actions {
 		if action.Action != "reuse" {
-			_ = api.FailDeployment(ctx, opened.Deployment.ID)
-			return "", fmt.Errorf("unexpected %s action for %s in a promotion", action.Action, action.Application)
+			cause := fmt.Errorf("unexpected %s action for %s in a promotion", action.Action, action.Application)
+			_ = api.FailDeployment(ctx, opened.Deployment.ID, cause.Error())
+			return "", cause
 		}
 		tasks.Start("artifact for " + action.Application).
 			Skip("current, " + utils.ShortChecksum(action.Digest))
@@ -274,11 +275,11 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		fmt.Fprintf(out, "deployment continues on the server; attach with: %s\n", runAttachHint(opts.Remote, opened.Deployment.RunID))
 		return deployOutcomeDetached, nil
 	}
-	status, err := attachRun(ctx, out, api, opened.Deployment.RunID, opts.Remote)
+	outcome, err := attachRun(ctx, out, api, opened.Deployment.RunID, opts.Remote)
 	if err != nil {
 		return "", err
 	}
-	switch status {
+	switch outcome.Status {
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
 		summary := remoteReadySummary(promote.remoteName)
@@ -286,7 +287,7 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		printReadySummary(ctx, out, api, environmentID, summary)
 		return deployOutcomeReady, nil
 	case "failed":
-		return "", fmt.Errorf("run %s failed", opened.Deployment.RunID)
+		return "", failedRunError(opened.Deployment.RunID, outcome.Failure)
 	case "cancelled":
 		return "", fmt.Errorf("run %s was cancelled", opened.Deployment.RunID)
 	default:

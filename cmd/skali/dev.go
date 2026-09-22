@@ -535,20 +535,22 @@ func teardownLocalEnvironment(ctx context.Context, out io.Writer, api *client.Cl
 		verb = "purge"
 	}
 	fmt.Fprintf(out, "%s %s  %s %s\n", style.Dim("run"), style.Bold(runID), verb, name)
-	status, err := attachRunMode(ctx, out, api, runID, localRemoteName, attachSessionEnds)
+	outcome, err := attachRunMode(ctx, out, api, runID, localRemoteName, attachSessionEnds)
 	if err != nil {
 		// The purge epilogue deletes the environment row and every run
 		// with it; losing the run mid-poll means the purge finished.
 		if !purge || !isNotFound(err) {
 			return "", err
 		}
-		status = "succeeded"
+		outcome = attachOutcome{Status: "succeeded"}
 	}
-	switch status {
+	switch outcome.Status {
 	case "succeeded", "detached", "interrupted":
-		return status, nil
+		return outcome.Status, nil
+	case "failed":
+		return "", failedRunError(runID, outcome.Failure)
 	default:
-		return "", fmt.Errorf("run %s %s", runID, status)
+		return "", fmt.Errorf("run %s %s", runID, outcome.Status)
 	}
 }
 
@@ -575,7 +577,7 @@ func finishInterrupted(command *cobra.Command, window string, keepRunning bool) 
 		// The interrupted build client owns the open window; failing it
 		// discards the staged values and unblocks the pause immediately
 		// instead of after the stale-build sweep.
-		if err := api.FailDeployment(ctx, window); err != nil {
+		if err := api.FailDeployment(ctx, window, "the local build was interrupted"); err != nil {
 			fmt.Fprintf(out, "%s\n", style.Dim("close interrupted deployment: "+err.Error()))
 		}
 	}
@@ -641,27 +643,27 @@ func devResolveInFlight(ctx context.Context, out io.Writer, api *client.Client,
 	if running.Kind != "deployment" {
 		fmt.Fprintf(out, "a %s is in flight; waiting for run %s to finish\n",
 			running.Kind, style.Bold(running.ID))
-		status, err := attachRunMode(ctx, out, api, running.ID, localRemoteName, attachSessionEnds)
+		outcome, err := attachRunMode(ctx, out, api, running.ID, localRemoteName, attachSessionEnds)
 		if err != nil {
 			return "", err
 		}
-		if status == "detached" || status == "interrupted" {
+		if outcome.Status == "detached" || outcome.Status == "interrupted" {
 			return devInFlightDetached, nil
 		}
 		return devInFlightProceed, nil
 	}
 	fmt.Fprintf(out, "a deployment is already in flight; attaching to run %s\n",
 		style.Bold(running.ID))
-	status, err := attachRunMode(ctx, out, api, running.ID, localRemoteName, attachSessionEnds)
+	outcome, err := attachRunMode(ctx, out, api, running.ID, localRemoteName, attachSessionEnds)
 	if err != nil {
 		return "", err
 	}
-	switch status {
+	switch outcome.Status {
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
 		return devInFlightAttached, nil
 	case "failed":
-		return "", fmt.Errorf("run %s failed", running.ID)
+		return "", failedRunError(running.ID, outcome.Failure)
 	case "cancelled":
 		return "", fmt.Errorf("run %s was cancelled", running.ID)
 	default:

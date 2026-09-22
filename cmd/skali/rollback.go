@@ -123,17 +123,17 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 		fmt.Fprintf(out, "rollback continues on the server; attach with: %s\n", runAttachHint(opts.Remote, result.RunID))
 		return nil
 	}
-	status, err := attachRun(ctx, out, target.api, result.RunID, opts.Remote)
+	outcome, err := attachRun(ctx, out, target.api, result.RunID, opts.Remote)
 	if err != nil {
 		return err
 	}
-	switch status {
+	switch outcome.Status {
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
 		printReadySummary(ctx, out, target.api, target.environmentID, remoteReadySummary(target.remoteName))
 		return nil
 	case "failed":
-		return fmt.Errorf("run %s failed", result.RunID)
+		return failedRunError(result.RunID, outcome.Failure)
 	case "cancelled":
 		return fmt.Errorf("run %s was cancelled", result.RunID)
 	default:

@@ -109,7 +109,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		attachment.completeStep(ctx, "render", "Render desired state", journal.StepFailed,
 			[]string{"rendering the desired state failed: " + err.Error()})
 		if attachment.adopted() {
-			attachment.finish(ctx, journal.RunFailed)
+			attachment.finish(ctx, journal.RunFailed, "rendering the desired state failed: "+err.Error())
 		}
 		return 0, nil
 	}
@@ -123,7 +123,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		attachment.completeStep(ctx, "render", "Render desired state", journal.StepFailed,
 			[]string{"ordering services failed: " + err.Error()})
 		if attachment.adopted() {
-			attachment.finish(ctx, journal.RunFailed)
+			attachment.finish(ctx, journal.RunFailed, "ordering services failed: "+err.Error())
 		}
 		return 0, nil
 	}
@@ -217,7 +217,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 					// and the target returns to the last active revision
 					// when one exists; a first deployment keeps its target
 					// so a redeploy retries the release.
-					attachment.finish(ctx, journal.RunFailed)
+					attachment.finish(ctx, journal.RunFailed, service+": "+reason)
 					rows, err := k.deps.Deploy.FallbackTargetLocked(ctx, store.FallbackEnvironmentTargetParams{
 						EnvironmentID:    environmentID,
 						TargetRevisionID: target.TargetRevisionID,
@@ -367,18 +367,18 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// A converged environment's issuance failed after its domain
 			// arrived: the run this pass created to say so closes failed
 			// before the pass concludes, since nothing else is wrong.
-			attachment.finish(ctx, journal.RunFailed)
+			attachment.finish(ctx, journal.RunFailed, tls.failure)
 		}
 		return soonest(retireRequeue, tls.requeue), k.activate(ctx, attachment, target, rev)
 	}
 	if attachment.created {
 		// The healing work is recorded; health recovery arrives via watch
 		// events and, if needed, the requeue below.
-		status := journal.RunSucceeded
+		status, reason := journal.RunSucceeded, ""
 		if tls.failed {
-			status = journal.RunFailed
+			status, reason = journal.RunFailed, tls.failure
 		}
-		attachment.finish(ctx, status)
+		attachment.finish(ctx, status, reason)
 	}
 	if attachment.adopted() && rolloutRun(attachment.run.Kind) {
 		// Release commands extend the deadline by their own budget: their
@@ -394,7 +394,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// late recovery still activates.
 			attachment.completeStepFields(ctx, "verify", "Verify health", journal.StepFailed,
 				[]string{strings.Join(healthSummary(statuses), "\n")}, healthFields(statuses))
-			attachment.finish(ctx, journal.RunFailed)
+			attachment.finish(ctx, journal.RunFailed, rolloutFailure(tls, statuses))
 			rows, err := k.deps.Deploy.FallbackTargetLocked(ctx, store.FallbackEnvironmentTargetParams{
 				EnvironmentID:    environmentID,
 				TargetRevisionID: target.TargetRevisionID,
@@ -444,7 +444,7 @@ func (k *Kernel) waitHostGateway(ctx context.Context, attachment *runAttachment,
 		attachment.completeStep(ctx, "render", "Render desired state", journal.StepFailed,
 			[]string{"rendering the desired state failed: " + cause.Error(),
 				"the host gateway did not resolve within the rollout deadline"})
-		attachment.finish(ctx, journal.RunFailed)
+		attachment.finish(ctx, journal.RunFailed, "the host gateway did not resolve within the rollout deadline: "+cause.Error())
 		return requeueHealthCheck, nil
 	}
 	attachment.waitStep(ctx, "render", "Render desired state",
@@ -492,7 +492,7 @@ func (k *Kernel) activate(ctx context.Context, attachment *runAttachment, target
 	upToDate := target.ActiveRevisionID != nil && *target.ActiveRevisionID == *target.TargetRevisionID
 	if upToDate {
 		// Nothing to activate; close a leftover adopted run, if any.
-		attachment.finish(ctx, journal.RunSucceeded)
+		attachment.finish(ctx, journal.RunSucceeded, "")
 		return nil
 	}
 	rows, err := k.deps.Store.SetEnvironmentActiveRevision(ctx, store.SetEnvironmentActiveRevisionParams{
@@ -506,7 +506,7 @@ func (k *Kernel) activate(ctx context.Context, attachment *runAttachment, target
 		// A newer target won the race; its own enqueue drives on.
 		attachment.completeStep(ctx, "activate", "Activate revision", journal.StepFailed,
 			[]string{"activation skipped: the target moved to a newer revision"})
-		attachment.finish(ctx, journal.RunCancelled)
+		attachment.finish(ctx, journal.RunCancelled, "")
 		return nil
 	}
 	attachment.ensure(ctx)
@@ -514,7 +514,7 @@ func (k *Kernel) activate(ctx context.Context, attachment *runAttachment, target
 		[]string{"all services report healthy"})
 	attachment.completeStep(ctx, "activate", "Activate revision", journal.StepSucceeded,
 		[]string{"revision " + rev.Checksum + " is active"})
-	attachment.finish(ctx, journal.RunSucceeded)
+	attachment.finish(ctx, journal.RunSucceeded, "")
 	k.deps.Observed.Invalidate(target.EnvironmentID)
 	return nil
 }
@@ -527,7 +527,7 @@ func (k *Kernel) journalOpFailure(ctx context.Context, attachment *runAttachment
 	attachment.completeStep(ctx, key, title, journal.StepFailed,
 		append(done, "operation failed: "+cause.Error()))
 	if attachment.created {
-		attachment.finish(ctx, journal.RunFailed)
+		attachment.finish(ctx, journal.RunFailed, title+" failed: "+cause.Error())
 	}
 }
 
@@ -935,6 +935,26 @@ func healthSummary(statuses []ServiceStatus) []string {
 	}
 	sort.Strings(lines)
 	return lines
+}
+
+// rolloutFailure is the one-line summary of a rollout that ran out of
+// deadline: the TLS failure when issuance is what failed, otherwise the
+// services that are not healthy. The verify step's log keeps the full
+// per-service summary, whose shape clients parse.
+func rolloutFailure(tls tlsOutcome, statuses []ServiceStatus) string {
+	if tls.failed && tls.failure != "" {
+		return tls.failure
+	}
+	unhealthy := make([]ServiceStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if status.Health != module.HealthHealthy {
+			unhealthy = append(unhealthy, status)
+		}
+	}
+	if len(unhealthy) == 0 {
+		return "rollout deadline exceeded"
+	}
+	return "rollout deadline exceeded: " + strings.Join(healthSummary(unhealthy), "; ")
 }
 
 // healthFields is the structured twin of healthSummary: one record per

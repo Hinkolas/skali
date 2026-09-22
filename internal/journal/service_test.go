@@ -182,6 +182,53 @@ func TestFinishRunForcesTerminality(t *testing.T) {
 	require.NotNil(t, closed.FinishedAt)
 }
 
+// FailRun records the one-line reason lists and closing lines show; other
+// terminal statuses never carry one, and the reason is redacted and bounded
+// like a log line.
+func TestFailRunRecordsReason(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	run := f.startRun(t)
+	redactor := redact.New(map[string]string{"s3cr3t": "DB_PASSWORD"})
+	require.NoError(t, f.svc.FailRun(ctx, run.ID, redactor, "  pg_dump: password s3cr3t rejected\n"))
+	tree, err := f.svc.RunTree(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", tree.Run.Status)
+	require.NotNil(t, tree.Run.Failure)
+	require.Equal(t, "pg_dump: password [redacted:DB_PASSWORD] rejected", *tree.Run.Failure)
+
+	// An empty reason stores NULL rather than an empty string.
+	empty := f.startRun(t)
+	require.NoError(t, f.svc.FailRun(ctx, empty.ID, nil, "   "))
+	row, err := f.svc.Run(ctx, empty.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", row.Status)
+	require.Nil(t, row.Failure)
+
+	// A long reason is cut with the truncation suffix.
+	long := f.startRun(t)
+	require.NoError(t, f.svc.FailRun(ctx, long.ID, nil, strings.Repeat("x", MaxFailureBytes*2)))
+	row, err = f.svc.Run(ctx, long.ID)
+	require.NoError(t, err)
+	require.NotNil(t, row.Failure)
+	require.Len(t, *row.Failure, MaxFailureBytes)
+	require.True(t, strings.HasSuffix(*row.Failure, truncationSuffix))
+
+	// Succeeded and cancelled runs never carry a reason.
+	ok := f.startRun(t)
+	require.NoError(t, f.svc.FinishRun(ctx, ok.ID, RunSucceeded))
+	row, err = f.svc.Run(ctx, ok.ID)
+	require.NoError(t, err)
+	require.Nil(t, row.Failure)
+	cancelled := f.startRun(t)
+	require.NoError(t, f.svc.FinishRun(ctx, cancelled.ID, RunCancelled))
+	row, err = f.svc.Run(ctx, cancelled.ID)
+	require.NoError(t, err)
+	require.Nil(t, row.Failure)
+}
+
 // Exit criterion: secrets cannot appear in run logs. The writer redacts
 // messages and string fields before anything reaches the table.
 func TestAppendRedactsSecrets(t *testing.T) {

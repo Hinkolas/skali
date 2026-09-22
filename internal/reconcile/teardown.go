@@ -58,13 +58,13 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 			return 0, err
 		}
 		if !releasing {
-			attachment.finish(ctx, journal.RunSucceeded)
+			attachment.finish(ctx, journal.RunSucceeded, "")
 			return 0, nil
 		}
 		// Purge epilogue: conclude the run first, because deleting the row
 		// cascades the journal away with everything else. The journal is
 		// explanatory only, so losing it changes nothing.
-		attachment.finish(ctx, journal.RunSucceeded)
+		attachment.finish(ctx, journal.RunSucceeded, "")
 		if err := k.deps.Deploy.DeleteEnvironment(ctx, environmentID); err != nil {
 			return 0, fmt.Errorf("reconcile: delete released environment: %w", err)
 		}

@@ -24,6 +24,8 @@ export interface Run {
 	bypass_protection?: boolean;
 	/** Routes whose TLS this run deferred because the domain did not reach here yet (list views only). */
 	deferred_routes?: number;
+	/** One-line reason a failed run recorded; the step logs hold the detail. */
+	failure?: string;
 }
 
 export interface Attempt {

@@ -145,11 +145,17 @@
 						{run.started_at ? formatDuration(run.started_at, run.finished_at, clock.now) : ''}
 					</div>
 				</div>
-				<div
-					class="flex items-center gap-1.5 text-md whitespace-nowrap {status.text} @max-2xl:ml-auto"
-				>
-					<span class="size-[8px] rounded-full {status.dot}"></span>
-					{run.status}
+				<!-- Status, with a failed run's one-line reason under it. -->
+				<div class="min-w-0 @max-2xl:ml-auto @max-2xl:max-w-[60%]">
+					<div class="flex items-center gap-1.5 text-md whitespace-nowrap {status.text}">
+						<span class="size-[8px] rounded-full {status.dot}"></span>
+						{run.status}
+					</div>
+					{#if run.status === 'failed' && run.failure}
+						<div class="text-text-faint mt-0.5 truncate text-xs" title={run.failure}>
+							{run.failure}
+						</div>
+					{/if}
 				</div>
 				<div class="flex justify-end">
 					{#if runUnsettled(run.status)}

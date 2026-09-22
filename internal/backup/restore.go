@@ -115,13 +115,13 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 		Strategy:   StrategyComplete,
 	})
 	if err != nil {
-		_ = c.deps.Journal.FinishRun(ctx, run.ID, journal.RunFailed)
+		_ = c.deps.Journal.FailRun(ctx, run.ID, nil, "recording the restore failed: "+err.Error())
 		return nil, fmt.Errorf("backup: create row: %w", err)
 	}
 	if err := c.deps.Store.SetBackupSnapshotKey(ctx, store.SetBackupSnapshotKeyParams{
 		ID: row.ID, SnapshotKey: manifestObjectKey,
 	}); err != nil {
-		_ = c.deps.Journal.FinishRun(ctx, run.ID, journal.RunFailed)
+		_ = c.deps.Journal.FailRun(ctx, run.ID, nil, "recording the snapshot key failed: "+err.Error())
 		return nil, fmt.Errorf("backup: record snapshot key: %w", err)
 	}
 	c.Enqueue(row.ID)

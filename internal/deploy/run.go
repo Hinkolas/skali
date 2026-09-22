@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/redact"
 )
 
 // ErrDeploymentInFlight: the environment already has a running deployment.
@@ -103,20 +104,20 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	// candidate's staged ones; every log line passes through it.
 	redactor, err := s.values.Redactor(ctx, in.EnvironmentID, in.CandidateID)
 	if err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, nil, nil, err)
 	}
 
 	// Step 1: create the immutable revision.
 	prepareStep, err := in.Journal.EnsureStep(ctx, runID, nil, "revision", "Create revision")
 	if err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepRunning); err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 	attempt, err := in.Journal.StartAttempt(ctx, prepareStep.ID)
 	if err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 	writer := in.Journal.Writer(attempt.ID, redactor)
 
@@ -137,11 +138,11 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		_ = writer.Error(cctx, "preparation failed: "+err.Error())
 		_ = in.Journal.FinishAttempt(cctx, attempt.ID, journal.AttemptFailed)
 		_ = in.Journal.SetStepStatus(cctx, prepareStep.ID, journal.StepFailed)
-		return result, s.fail(cctx, in, runID, writer, err)
+		return result, s.fail(cctx, in, runID, redactor, writer, err)
 	}
 	for _, warning := range compiler.Warnings(prepared.Revision.Definition) {
 		if err := writer.Warn(ctx, warning.Code+": "+warning.Message); err != nil {
-			return result, s.fail(ctx, in, runID, writer, err)
+			return result, s.fail(ctx, in, runID, redactor, writer, err)
 		}
 	}
 	result.RevisionID = prepared.RevisionID
@@ -150,23 +151,23 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	}
 	_ = writer.Info(ctx, "revision "+prepared.Revision.Checksum+" stored")
 	if err := in.Journal.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded); err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepSucceeded); err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 
 	// Step 2: promote atomically.
 	promoteStep, err := in.Journal.EnsureStep(ctx, runID, nil, "promote", "Promote revision")
 	if err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepRunning); err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 	promoteAttempt, err := in.Journal.StartAttempt(ctx, promoteStep.ID)
 	if err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 	promoteWriter := in.Journal.Writer(promoteAttempt.ID, redactor)
 	prepared.Restart = in.Restart
@@ -183,14 +184,14 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		_ = promoteWriter.Error(cctx, "promotion failed: "+err.Error())
 		_ = in.Journal.FinishAttempt(cctx, promoteAttempt.ID, journal.AttemptFailed)
 		_ = in.Journal.SetStepStatus(cctx, promoteStep.ID, journal.StepFailed)
-		return result, s.fail(cctx, in, runID, promoteWriter, err)
+		return result, s.fail(cctx, in, runID, redactor, promoteWriter, err)
 	}
 	_ = promoteWriter.Info(ctx, "target set to revision "+prepared.Revision.Checksum)
 	if err := in.Journal.FinishAttempt(ctx, promoteAttempt.ID, journal.AttemptSucceeded); err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepSucceeded); err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, nil, err)
 	}
 
 	// With a kernel wired, the run stays running: the reconcile worker owns
@@ -199,7 +200,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	// tests), promotion concludes the run.
 	if s.enqueuer != nil {
 		if _, err := in.Journal.EnsureStep(ctx, runID, nil, "rollout", "Roll out revision"); err != nil {
-			return result, s.fail(ctx, in, runID, nil, err)
+			return result, s.fail(ctx, in, runID, redactor, nil, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)
 		return result, nil
@@ -211,12 +212,14 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 }
 
 // fail is the single failure path: discard the staged candidate (its rows
-// were only ever staged), finish the run failed, and return the original
-// error. The journal steps were already closed by the caller where one was
-// active; FinishRun forces the rest terminal. It runs detached from ctx's
-// cancellation: the cause may well be that ctx died, and a run that stays
-// running would wedge the environment.
-func (s *Service) fail(ctx context.Context, in ExecuteInput, runID uuid.UUID, writer *journal.Writer, cause error) error {
+// were only ever staged), finish the run failed with the cause as its
+// reason, and return the original error. The journal steps were already
+// closed by the caller where one was active; the journal forces the rest
+// terminal. The reason passes through redactor (nil before one exists)
+// because a prepare or promote error can echo staged secrets. It runs
+// detached from ctx's cancellation: the cause may well be that ctx died,
+// and a run that stays running would wedge the environment.
+func (s *Service) fail(ctx context.Context, in ExecuteInput, runID uuid.UUID, redactor *redact.Redactor, writer *journal.Writer, cause error) error {
 	ctx, cancel := detached(ctx)
 	defer cancel()
 	if in.CandidateID != uuid.Nil {
@@ -224,7 +227,7 @@ func (s *Service) fail(ctx context.Context, in ExecuteInput, runID uuid.UUID, wr
 			_ = writer.Error(ctx, "discarding the staged candidate failed: "+err.Error())
 		}
 	}
-	if err := in.Journal.FinishRun(ctx, runID, journal.RunFailed); err != nil &&
+	if err := in.Journal.FailRun(ctx, runID, redactor, cause.Error()); err != nil &&
 		!errors.Is(err, journal.ErrInvalidTransition) {
 		return fmt.Errorf("deploy: finish run after failure: %w (original: %w)", err, cause)
 	}

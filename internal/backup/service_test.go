@@ -90,6 +90,8 @@ func TestRecoverOnBootFailsUnfinishedRows(t *testing.T) {
 	finished, err := f.journal.Run(ctx, run.ID)
 	require.NoError(t, err)
 	require.Equal(t, string(journal.RunFailed), finished.Status)
+	require.NotNil(t, finished.Failure)
+	require.Equal(t, *recovered.Error, *finished.Failure)
 
 	// A second boot is a no-op: nothing unfinished remains.
 	require.NoError(t, f.controller.RecoverOnBoot(ctx))

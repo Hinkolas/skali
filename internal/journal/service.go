@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/broadcast"
 	"github.com/Hinkolas/skali/internal/lifecycle"
+	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -130,17 +132,50 @@ func (s *Service) DiscardRun(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// MaxFailureBytes bounds a run's failure reason; longer reasons are cut with
+// a truncation suffix. The reason is a one-line summary, never the detail.
+const MaxFailureBytes = 512
+
 // FinishRun moves the run to a terminal status and forces every non-terminal
 // step and attempt terminal in the same transaction: running work adopts the
 // run's outcome (failed or cancelled), unstarted steps are skipped. It then
-// applies the retention caps.
+// applies the retention caps. A run finished failed through this path
+// records no reason; FailRun is the path that knows one.
 func (s *Service) FinishRun(ctx context.Context, id uuid.UUID, to RunStatus) error {
+	return s.finish(ctx, id, to, nil)
+}
+
+// FailRun finishes the run failed with a one-line reason, redacted through
+// redactor (nil is fine) and bounded by MaxFailureBytes. The reason is the
+// summary lists and closing lines show; it must be set by the code path that
+// knows why the run failed, because a failure between steps leaves no step
+// log to derive it from. An empty reason stores NULL.
+func (s *Service) FailRun(ctx context.Context, id uuid.UUID, redactor *redact.Redactor, reason string) error {
+	var failure *string
+	if text := boundFailure(redactor.Redact(reason)); text != "" {
+		failure = &text
+	}
+	return s.finish(ctx, id, RunFailed, failure)
+}
+
+// boundFailure trims a reason and cuts it at MaxFailureBytes.
+func boundFailure(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if len(reason) > MaxFailureBytes {
+		reason = reason[:MaxFailureBytes-len(truncationSuffix)] + truncationSuffix
+	}
+	return reason
+}
+
+func (s *Service) finish(ctx context.Context, id uuid.UUID, to RunStatus, failure *string) error {
 	if !Runs.Terminal(to) {
 		return fmt.Errorf("%w: finish requires a terminal status, got %s", ErrInvalidTransition, to)
 	}
 	closeStatus := "cancelled"
 	if to == RunFailed {
 		closeStatus = "failed"
+	} else {
+		failure = nil // a reason only explains a failure
 	}
 	var environmentID *uuid.UUID
 	err := s.st.WithTx(ctx, func(q *store.Queries) error {
@@ -165,7 +200,7 @@ func (s *Service) FinishRun(ctx context.Context, id uuid.UUID, to RunStatus) err
 		if _, err := q.SkipUnstartedSteps(ctx, id); err != nil {
 			return fmt.Errorf("journal: skip steps: %w", err)
 		}
-		return q.MarkRunFinished(ctx, store.MarkRunFinishedParams{ID: id, Status: string(to)})
+		return q.MarkRunFinished(ctx, store.MarkRunFinishedParams{ID: id, Status: string(to), Failure: failure})
 	})
 	if err != nil {
 		return err

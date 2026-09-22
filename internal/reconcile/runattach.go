@@ -272,8 +272,9 @@ func (a *runAttachment) resolveWait(ctx context.Context, key, title string, logs
 }
 
 // finish concludes the attached run. The rollout parent step of an adopted
-// deployment run closes with the run.
-func (a *runAttachment) finish(ctx context.Context, status journal.RunStatus) {
+// deployment run closes with the run. A failed run records reason as its
+// one-line summary; other outcomes ignore it.
+func (a *runAttachment) finish(ctx context.Context, status journal.RunStatus, reason string) {
 	if a.run == nil {
 		return
 	}
@@ -283,8 +284,13 @@ func (a *runAttachment) finish(ctx context.Context, status journal.RunStatus) {
 			warn("finish rollout step", err, "run", a.run.ID)
 		}
 	}
-	if err := a.journal.FinishRun(ctx, a.run.ID, status); err != nil &&
-		!errors.Is(err, journal.ErrInvalidTransition) {
+	var err error
+	if status == journal.RunFailed {
+		err = a.journal.FailRun(ctx, a.run.ID, a.redactor, reason)
+	} else {
+		err = a.journal.FinishRun(ctx, a.run.ID, status)
+	}
+	if err != nil && !errors.Is(err, journal.ErrInvalidTransition) {
 		warn("finish run", err, "run", a.run.ID)
 	}
 	a.run = nil
