@@ -4,9 +4,9 @@
 // nothing about environments or revisions.
 //
 // Field-ownership contract: skalid applies with the stable field manager
-// FieldManagerProject and force=false in steady state; a conflict is a bug,
-// never something to force through. Applied configurations are the full
-// intent: they never include status, server-populated metadata, or fields
+// FieldManagerProject and force=false in steady state; field-ownership
+// conflicts are never forced through. Transient resource-version conflicts
+// are retried after revalidation. Applied configurations are the full intent: they never include status, server-populated metadata, or fields
 // another controller legitimately owns (Deployment.spec.replicas while an
 // autoscaler is active is the canonical case). Dropping a field from the
 // applied configuration removes it via server-side apply; that is the prune
@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
@@ -168,57 +169,82 @@ func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string
 	if owner != "" {
 		stampIdentity(applied)
 	}
+	var result ApplyResult
+	var pinned types.UID
+	var lastErr error
+	err = wait.ExponentialBackoffWithContext(ctx, retry.DefaultRetry, func(ctx context.Context) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		var retryable bool
+		result, retryable, lastErr = c.applyAttempt(ctx, applied.DeepCopy(), resource, owner, manager, force, &pinned)
+		if retryable {
+			return false, nil
+		}
+		return true, lastErr
+	})
+	if wait.Interrupted(err) && ctx.Err() == nil && lastErr != nil {
+		err = lastErr
+	}
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	return result, nil
+}
+
+// applyAttempt never reuses a previous attempt's version or accepts a replacement
+// for an object already observed by this call. Only known concurrency failures
+// are retryable; field ownership, admission and validation failures are not.
+func (c *Client) applyAttempt(ctx context.Context, applied *unstructured.Unstructured, resource dynamic.ResourceInterface,
+	owner, manager string, force bool, pinned *types.UID) (ApplyResult, bool, error) {
 	priorVersion := ""
 	priorGeneration := int64(0)
-	if live, err := resource.Get(ctx, applied.GetName(), metav1.GetOptions{}); err == nil {
+	live, err := resource.Get(ctx, applied.GetName(), metav1.GetOptions{})
+	if err == nil {
+		if *pinned != "" && *pinned != live.GetUID() {
+			return ApplyResult{}, false, fmt.Errorf("kube: ownership changed for %s", applied.GetName())
+		}
+		*pinned = live.GetUID()
 		if owner != "" {
 			if err := checkOwner(live, owner, applied.GroupVersionKind()); err != nil {
-				return ApplyResult{}, err
+				return ApplyResult{}, false, err
 			}
 			applied.SetResourceVersion(live.GetResourceVersion())
 		}
 		priorVersion = live.GetResourceVersion()
 		priorGeneration = live.GetGeneration()
 	} else if !apierrors.IsNotFound(err) {
-		return ApplyResult{}, fmt.Errorf("kube: get %s before apply: %w", applied.GetName(), err)
+		return ApplyResult{}, false, fmt.Errorf("kube: get %s before apply: %w", applied.GetName(), err)
+	} else if *pinned != "" {
+		return ApplyResult{}, false, fmt.Errorf("kube: ownership changed for %s: object disappeared", applied.GetName())
 	}
 	if priorVersion == "" && owner != "" {
 		created, err := resource.Create(ctx, applied, metav1.CreateOptions{FieldManager: manager})
-		if apierrors.IsAlreadyExists(err) {
-			return c.ApplyAs(ctx, obj, manager, force)
-		}
 		if err != nil {
-			return ApplyResult{}, err
+			return ApplyResult{}, apierrors.IsAlreadyExists(err), err
 		}
-		// Create records its fields under an Update entry of this manager.
-		// To the API server that is a different owner from the same
-		// manager's Apply entry: an apply that merely repeats the values
-		// becomes a co-owner, and the next revision's apply then conflicts
-		// on every field it changes (the revision label, to begin with).
-		// Rewriting the entry's operation to Apply (the client-side-apply
-		// upgrade technique) makes creation and every later apply one owner.
+		// Create's Update entry must become Apply so future revisions have one
+		// field owner rather than conflicting with this manager's creation entry.
 		ref := ObjectRef{GVK: applied.GroupVersionKind(), Namespace: applied.GetNamespace(), Name: applied.GetName(), UID: created.GetUID()}
 		if err := c.claimCreatedFields(ctx, resource, ref, manager); err != nil {
-			return ApplyResult{}, err
+			return ApplyResult{}, false, err
 		}
-		return ApplyResult{Changed: true, Live: created}, nil
+		return ApplyResult{Changed: true, Live: created}, false, nil
 	}
 	data, err := applied.MarshalJSON()
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("kube: encode %s: %w", applied.GetName(), err)
+		return ApplyResult{}, false, fmt.Errorf("kube: encode %s: %w", applied.GetName(), err)
 	}
-	result, err := resource.Patch(ctx, applied.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
-		FieldManager: manager,
-		Force:        &force,
-	})
+	result, err := resource.Patch(ctx, applied.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{FieldManager: manager, Force: &force})
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("kube: apply %s: %w", applied.GetName(), err)
+		retryable := applied.GetResourceVersion() != "" && apierrors.IsConflict(err) && !apierrors.HasStatusCause(err, metav1.CauseTypeFieldManagerConflict)
+		return ApplyResult{}, retryable, fmt.Errorf("kube: apply %s: %w", applied.GetName(), err)
 	}
 	changed := result.GetResourceVersion() != priorVersion
 	if result.GetGeneration() > 0 {
 		changed = result.GetGeneration() != priorGeneration
 	}
-	return ApplyResult{Changed: changed, Live: result}, nil
+	return ApplyResult{Changed: changed, Live: result}, false, nil
 }
 
 // claimCreatedFields rewrites a freshly created object's managed fields so
