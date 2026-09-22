@@ -45,8 +45,16 @@ func TestInstallScript(t *testing.T) {
 		releases                               []release
 		private, pretty, badChecksum, noStable bool
 		noCompletions                          bool
+		mac, pathReady                         bool
+		shell, pathHint                        string
 	}{
 		{name: "stable default", want: "v0.2.0"},
+		{name: "mac zsh PATH setup", want: "v0.2.0", mac: true, shell: "/bin/zsh", pathHint: `>> "${ZDOTDIR:-$HOME}/.zshrc"`},
+		{name: "mac bash PATH setup", want: "v0.2.0", mac: true, shell: "/bin/bash", pathHint: `>> "$HOME/.bash_profile"`},
+		{name: "mac sh PATH setup", want: "v0.2.0", mac: true, shell: "/bin/sh", pathHint: `>> "$HOME/.profile"`},
+		{name: "mac fish PATH setup", want: "v0.2.0", mac: true, shell: "/opt/homebrew/bin/fish", pathHint: `fish_add_path "$HOME/.local/bin"`},
+		{name: "mac unknown shell PATH setup", want: "v0.2.0", mac: true, shell: "/bin/other", pathHint: `invoke skali directly: "$HOME/.local/bin/skali"`},
+		{name: "mac PATH already configured", want: "v0.2.0", mac: true, shell: "/bin/zsh", pathReady: true},
 		{name: "completions skipped", want: "v0.2.0", noCompletions: true},
 		{name: "beta includes prereleases", channel: "beta", releases: candidates, want: "v0.3.0-rc.10"},
 		{name: "pretty metadata", channel: "beta", releases: candidates, want: "v0.3.0-rc.10", pretty: true},
@@ -69,6 +77,11 @@ func TestInstallScript(t *testing.T) {
 			root := t.TempDir()
 			toolsDir := filepath.Join(root, "tools")
 			dest := filepath.Join(root, "installed")
+			assetName := "skali_linux_amd64"
+			if tc.mac {
+				dest = filepath.Join(root, ".local", "bin")
+				assetName = "skali_darwin_arm64"
+			}
 			require.NoError(t, os.MkdirAll(toolsDir, 0755))
 			require.NoError(t, os.MkdirAll(dest, 0755))
 			shims := map[string]string{
@@ -78,6 +91,9 @@ func TestInstallScript(t *testing.T) {
 				"install": `cp "$3" "$SKALI_TEST_DEST/${4##*/}" && chmod 0755 "$SKALI_TEST_DEST/${4##*/}"`,
 				"mkdir":   `exit 0`,
 			}
+			if tc.mac {
+				shims["uname"] = `case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac`
+			}
 			for name, script := range shims {
 				require.NoError(t, os.WriteFile(filepath.Join(toolsDir, name), []byte("#!/bin/sh\n"+script+"\n"), 0755))
 			}
@@ -85,7 +101,7 @@ func TestInstallScript(t *testing.T) {
 			// install, which is where completions get installed.
 			calls := filepath.Join(root, "calls")
 			fixtureCLI := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SKALI_TEST_CALLS\"\n"
-			assets := map[string]string{"skali_linux_amd64": fixtureCLI}
+			assets := map[string]string{assetName: fixtureCLI}
 			checksums := ""
 			for name, body := range assets {
 				checksums += fmt.Sprintf("%x  %s\n", sha256.Sum256([]byte(body)), name)
@@ -156,12 +172,16 @@ func TestInstallScript(t *testing.T) {
 			cmd := exec.CommandContext(ctx, "sh", "../../install.sh")
 			for _, entry := range os.Environ() {
 				key, _, _ := strings.Cut(entry, "=")
-				if key == "PATH" || key == "HOME" || key == "GITHUB_TOKEN" || strings.HasPrefix(key, "SKALI_") {
+				if key == "PATH" || key == "HOME" || key == "SHELL" || key == "ZDOTDIR" || key == "GITHUB_TOKEN" || strings.HasPrefix(key, "SKALI_") {
 					continue
 				}
 				cmd.Env = append(cmd.Env, entry)
 			}
-			cmd.Env = append(cmd.Env, "PATH="+toolsDir+":"+os.Getenv("PATH"), "HOME="+root, "SKALI_TEST_EXECUTABLE="+executable, "SKALI_TEST_SERVER="+server.URL, "SKALI_TEST_DEST="+dest, "SKALI_TEST_CALLS="+calls, "SKALI_CHANNEL="+tc.channel, "SKALI_VERSION="+tc.pin)
+			searchPath := toolsDir + ":" + os.Getenv("PATH")
+			if tc.pathReady {
+				searchPath += ":" + dest
+			}
+			cmd.Env = append(cmd.Env, "PATH="+searchPath, "HOME="+root, "SHELL="+tc.shell, "SKALI_TEST_EXECUTABLE="+executable, "SKALI_TEST_SERVER="+server.URL, "SKALI_TEST_DEST="+dest, "SKALI_TEST_CALLS="+calls, "SKALI_CHANNEL="+tc.channel, "SKALI_VERSION="+tc.pin)
 			if tc.noCompletions {
 				cmd.Env = append(cmd.Env, "SKALI_COMPLETIONS=none")
 			}
@@ -178,6 +198,31 @@ func TestInstallScript(t *testing.T) {
 			}
 			require.NoError(t, err, string(output))
 			require.Contains(t, string(output), "("+tc.want+")")
+			if tc.mac && !tc.pathReady {
+				require.Contains(t, string(output), "PATH setup required:")
+				require.Contains(t, string(output), tc.pathHint)
+				if tc.shell == "/bin/zsh" {
+					// Execute the printed commands, then check that a new shell
+					// can find the installed binary from the saved startup file.
+					var commands []string
+					for _, line := range strings.Split(string(output), "\n") {
+						if strings.HasPrefix(line, "  ") {
+							commands = append(commands, strings.TrimPrefix(line, "  "))
+						}
+					}
+					activate := exec.CommandContext(ctx, "sh", "-ec", strings.Join(commands, "\n"))
+					activate.Env = cmd.Env
+					activationOutput, err := activate.CombinedOutput()
+					require.NoError(t, err, string(activationOutput))
+					lookup := exec.CommandContext(ctx, "sh", "-ec", `. "$HOME/.zshrc"; command -v skali`)
+					lookup.Env = cmd.Env
+					found, err := lookup.CombinedOutput()
+					require.NoError(t, err, string(found))
+					require.Equal(t, filepath.Join(dest, "skali"), strings.TrimSpace(string(found)))
+				}
+			} else {
+				require.NotContains(t, string(output), "PATH setup required:")
+			}
 			got, err := os.ReadFile(filepath.Join(dest, "skali"))
 			require.NoError(t, err)
 			require.Equal(t, fixtureCLI, string(got))

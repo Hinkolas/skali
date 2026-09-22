@@ -64,6 +64,19 @@ amd64 and arm64), verifies its checksum, and installs it: `/usr/local/bin`
 on Linux (asks for sudo), `~/.local/bin` on macOS. Run it on your laptop to develop
 and deploy, and on every server that should become a skali node.
 
+On macOS, if `skali` reports `command not found`, add the install directory to
+your PATH. For the default zsh shell, run:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+printf '\n%s\n' 'export PATH="$HOME/.local/bin:$PATH"' >> "${ZDOTDIR:-$HOME}/.zshrc"
+```
+
+The first command activates it in this terminal; run the second once to save
+the setting for future terminals. The installer prints shell-specific setup
+instructions when needed; it does not edit your shell startup files. You can
+also run `~/.local/bin/skali` directly before configuring PATH.
+
 To update an installed CLI later, let it replace itself:
 
 ```sh

@@ -12,7 +12,7 @@
 #   SKALI_CHANNEL   stable (default), or beta to include alpha/beta/rc releases
 #   SKALI_VERSION   optional exact release tag; overrides channel selection
 #   GITHUB_TOKEN    optional; required while the repository is private
-#   SKALI_SHELL     shell to install completions for (default: $SHELL)
+#   SKALI_SHELL     shell for completions and PATH instructions (default: $SHELL)
 #   SKALI_COMPLETIONS  none to skip installing shell completions
 #   SKALI_BASE_URL  override the download base URL (testing only)
 
@@ -216,6 +216,57 @@ completions() {
   log "note: shell completions were not installed; run skali completion install"
 }
 
+# A piped installer cannot change the calling shell's environment. Keep the
+# activation steps separate from completion output and explain persistence.
+path_hint() {
+  case ":${PATH}:" in
+    *":${dest}:"*) return 0 ;;
+  esac
+  log ""
+  log "PATH setup required: ${dest} is not on your PATH."
+  log "The installer cannot change the PATH of your current terminal."
+  user_shell="${SKALI_SHELL:-${SHELL:-}}"
+  case "${user_shell##*/}" in
+    fish)
+      log "Run this once to make skali available now and in future fish sessions:"
+      log '  fish_add_path "$HOME/.local/bin"'
+      ;;
+    zsh|bash|sh)
+      log "Run this in your current terminal:"
+      log '  export PATH="$HOME/.local/bin:$PATH"'
+      log ""
+      case "${user_shell##*/}" in
+        zsh)
+          log "Save it for future terminals by running this once:"
+          cat <<'EOF'
+  printf '\n%s\n' 'export PATH="$HOME/.local/bin:$PATH"' >> "${ZDOTDIR:-$HOME}/.zshrc"
+EOF
+          ;;
+        bash|sh)
+          profile=.profile
+          if [ "${user_shell##*/}" = bash ]; then
+            profile=.bash_profile
+            if [ ! -f "$HOME/$profile" ]; then
+              if [ -f "$HOME/.bash_login" ]; then
+                profile=.bash_login
+              elif [ -f "$HOME/.profile" ]; then
+                profile=.profile
+              fi
+            fi
+          fi
+          log "Save it for future login shells by running this once:"
+          log "  printf '\\n%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/$profile\""
+          ;;
+      esac
+      ;;
+    *)
+      log "Add ${dest} to PATH in your shell's startup configuration, then open a new terminal."
+      log 'Until then, invoke skali directly: "$HOME/.local/bin/skali"'
+      ;;
+  esac
+  log ""
+}
+
 if [ "$os" = "darwin" ]; then
   # Rootless on macOS: `skali cluster` manages its Lima VM from the user
   # session, so the CLI lives on the user PATH.
@@ -224,10 +275,7 @@ if [ "$os" = "darwin" ]; then
   install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"
   log "installed ${dest}/${BINARY}"
   completions
-  case ":${PATH}:" in
-    *":${dest}:"*) ;;
-    *) log "note: ${dest} is not on your PATH; add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-  esac
+  path_hint
   log "next: run skali cluster to set up Skali on this Mac"
 else
   # Cluster installation must run privileged on Linux, and sudo's
