@@ -15,8 +15,8 @@
 	// Service pages keep the project nav; service-level navigation lives in
 	// the tab bar inside the content card (ServiceTabs). Breadcrumbs reads the
 	// same contract; loads that introduce colliding keys would break both.
-	// (The projects page shadows `projects` with the same list carrying
-	// summaries, which both tolerate.)
+	// (The projects page adds its summaries under `summary`, never over
+	// `projects`, for that reason.)
 	const data = $derived(
 		page.data as {
 			org: OrgView;

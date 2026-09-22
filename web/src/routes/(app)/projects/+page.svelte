@@ -4,6 +4,7 @@
 	import List from '@lucide/svelte/icons/list';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { CREATE_PROJECTS_TITLE, canCreateProject, isInstanceAdmin } from '$lib/access';
+	import { deferred } from '$lib/deferred.svelte';
 	import { readPref, writePref } from '$lib/prefs';
 	import { modal } from '$lib/stores/modal.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
@@ -17,9 +18,16 @@
 	} from '$lib/components/project/NewProjectModal.svelte';
 	import type { PageData } from './$types';
 
-	// data.projects is this page's own list (with summaries, see +page.ts);
-	// user and org come from the shell layout.
+	// data.projects is the shell's plain list; data.summary is this page's
+	// own request for the same projects with summaries, returned unawaited
+	// (see +page.ts). The page paints from the plain list right away and
+	// swaps in the summaries when they settle; a reload keeps the previous
+	// summaries on screen instead of flashing skeletons.
 	let { data }: { data: PageData } = $props();
+
+	const summary = deferred(() => data.summary);
+	const source = $derived(summary.value ?? data.projects);
+	const loading = $derived(summary.pending && summary.value === null);
 
 	const mayCreate = $derived(canCreateProject(data.user));
 
@@ -34,8 +42,8 @@
 	// The scope only exists for instance admins: everyone else sees their
 	// memberships and nothing more, so "mine" would equal "all".
 	const scoped = $derived(isInstanceAdmin(data.user));
-	const mine = $derived(data.projects.filter((p) => p.access.member));
-	const projects = $derived(scoped && scope === 'mine' ? mine : data.projects);
+	const mine = $derived(source.filter((p) => p.access.member));
+	const projects = $derived(scoped && scope === 'mine' ? mine : source);
 
 	function setView(id: string) {
 		view = id as (typeof VIEWS)[number];
@@ -111,12 +119,15 @@
 {#if projects.length > 0}
 	{#if view === 'list'}
 		<div class="pb-6">
-			<ProjectList {projects} />
+			<ProjectList {projects} {loading} />
 		</div>
 	{:else}
-		<div class="grid grid-cols-1 gap-3.5 pb-6 @2xl:grid-cols-2 @5xl:grid-cols-3">
+		<div
+			class="grid grid-cols-1 gap-3.5 pb-6 @2xl:grid-cols-2 @5xl:grid-cols-3"
+			aria-busy={loading}
+		>
 			{#each projects as project (project.id)}
-				<ProjectCard {project} />
+				<ProjectCard {project} {loading} />
 			{/each}
 		</div>
 	{/if}

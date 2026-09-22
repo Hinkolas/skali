@@ -5,20 +5,23 @@
 	import { HEALTH_META } from '$lib/service-types';
 	import { projectHealthTitle, projectServiceCount, projectWorstHealth } from '$lib/models/project';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
 	// The dense counterpart of the card grid: one row per project, the same
 	// facts. Follows the Table contract: grid cells on a wide pane, a
 	// wrapping row (identity, health on the right, one meta line beneath)
-	// on a narrow one.
-	let { projects }: { projects: Project[] } = $props();
+	// on a narrow one. `loading` holds the summary columns with skeletons
+	// while the summary is still on its way (see ProjectCard).
+	let { projects, loading = false }: { projects: Project[]; loading?: boolean } = $props();
 
 	const grid = 'grid-cols-[1.6fr_1.4fr_1fr_0.9fr_0.7fr]';
 </script>
 
 <Table columns={['Project', 'Environments', 'Services', 'Health', 'Updated']} {grid}>
 	{#each projects as project (project.id)}
+		{@const pending = loading && !project.summary}
 		{@const environments = project.summary?.environments ?? []}
 		{@const counts = project.summary?.service_counts}
 		{@const serviceCount = projectServiceCount(project)}
@@ -45,7 +48,9 @@
 				<!-- Same rollup as the card: the first environment and a +N for the
 				     rest, so a project with many environments stays one line. -->
 				<div class="flex items-center gap-2 pr-3 whitespace-nowrap">
-					{#if environments.length > 0}
+					{#if pending}
+						<Skeleton variant="pill" />
+					{:else if environments.length > 0}
 						<Pill
 							text={environments[0].name}
 							tone={environments[0].name === 'production' ? 'success' : 'neutral'}
@@ -64,31 +69,42 @@
 						<span class="font-mono text-text-faint text-xs">no environments</span>
 					{/if}
 				</div>
-				<div class="flex items-center gap-1.5 pr-3">
-					{#if counts?.applications}
-						<TypeBadge kind="application" count={counts.applications} />
-					{/if}
-					{#if counts?.databases}
-						<TypeBadge kind="database" count={counts.databases} />
-					{/if}
-					{#if counts?.buckets}
-						<TypeBadge kind="bucket" count={counts.buckets} />
-					{/if}
-					{#if serviceCount === 0}
-						<span class="font-mono text-text-faint text-xs">no services yet</span>
+				<div class="flex items-center gap-1.5 pr-3" aria-busy={pending}>
+					{#if pending}
+						<Skeleton variant="pill" class="w-20" />
+					{:else}
+						{#if counts?.applications}
+							<TypeBadge kind="application" count={counts.applications} />
+						{/if}
+						{#if counts?.databases}
+							<TypeBadge kind="database" count={counts.databases} />
+						{/if}
+						{#if counts?.buckets}
+							<TypeBadge kind="bucket" count={counts.buckets} />
+						{/if}
+						{#if serviceCount === 0}
+							<span class="font-mono text-text-faint text-xs">no services yet</span>
+						{/if}
 					{/if}
 				</div>
 				<div class="font-mono text-text-muted text-sm whitespace-nowrap @2xl:hidden">
 					updated {updated}
 				</div>
 			</div>
-			<div
-				class="flex items-center gap-1.5 text-md whitespace-nowrap {health.text} @max-2xl:ml-auto"
-				title={healthTitle}
-			>
-				<span class="size-[8px] rounded-full {health.dot}"></span>
-				{health.label}
-			</div>
+			{#if pending}
+				<div class="flex items-center gap-1.5 @max-2xl:ml-auto">
+					<Skeleton variant="line" class="size-[8px] w-[8px] rounded-full" />
+					<Skeleton variant="line" class="w-14" />
+				</div>
+			{:else}
+				<div
+					class="flex items-center gap-1.5 text-md whitespace-nowrap {health.text} @max-2xl:ml-auto"
+					title={healthTitle}
+				>
+					<span class="size-[8px] rounded-full {health.dot}"></span>
+					{health.label}
+				</div>
+			{/if}
 			<div class="font-mono text-text-muted text-sm whitespace-nowrap @max-2xl:hidden">
 				{updated}
 			</div>
