@@ -3,7 +3,7 @@
 	import type { Project } from '$lib/types/project';
 	import { relativeTime } from '$lib/format';
 	import { HEALTH_META } from '$lib/service-types';
-	import { projectServiceCount, projectWorstHealth } from '$lib/models/project';
+	import { projectHealthTitle, projectServiceCount, projectWorstHealth } from '$lib/models/project';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
@@ -12,8 +12,10 @@
 	const environments = $derived(project.summary?.environments ?? []);
 	const counts = $derived(project.summary?.service_counts);
 	const serviceCount = $derived(projectServiceCount(project));
-	// The card dot shows the worst environment health.
+	// The card dot shows the worst environment health: the kernel's cached
+	// verdict, so its title says when that was evaluated.
 	const worst = $derived(projectWorstHealth(project));
+	const healthTitle = $derived(projectHealthTitle(project));
 </script>
 
 <a
@@ -35,7 +37,10 @@
 				{/if}
 			</span>
 		{/if}
-		<span class="ml-auto size-[8px] flex-none rounded-full {HEALTH_META[worst].dot}"></span>
+		<span
+			class="ml-auto size-[8px] flex-none rounded-full {HEALTH_META[worst].dot}"
+			title={healthTitle}
+		></span>
 	</div>
 	<div class="flex gap-1.5">
 		{#if counts?.applications}

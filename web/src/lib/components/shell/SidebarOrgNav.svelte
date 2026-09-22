@@ -6,8 +6,8 @@
 
 	const pathname = $derived(page.url.pathname);
 
-	// page.data.user comes from the (app) server layout, so admin-only items
-	// are resolved during SSR too (no post-hydration pop-in).
+	// page.data.user comes from the (app) layout load, which resolves before
+	// anything in the shell renders, so admin-only items never pop in.
 	const isAdmin = $derived(page.data.user?.role === 'admin');
 	// The System item carries the update indicator: one badge, no toast, no
 	// banner, so a pending release is visible without being loud.

@@ -3,7 +3,7 @@
 	import type { Project } from '$lib/types/project';
 	import { relativeTime } from '$lib/format';
 	import { HEALTH_META } from '$lib/service-types';
-	import { projectServiceCount, projectWorstHealth } from '$lib/models/project';
+	import { projectHealthTitle, projectServiceCount, projectWorstHealth } from '$lib/models/project';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
@@ -23,6 +23,7 @@
 		{@const counts = project.summary?.service_counts}
 		{@const serviceCount = projectServiceCount(project)}
 		{@const health = HEALTH_META[projectWorstHealth(project)]}
+		{@const healthTitle = projectHealthTitle(project)}
 		{@const updated = relativeTime(project.updated_at)}
 		<a
 			href={resolve('/(app)/projects/[project]', { project: project.name })}
@@ -83,6 +84,7 @@
 			</div>
 			<div
 				class="flex items-center gap-1.5 text-md whitespace-nowrap {health.text} @max-2xl:ml-auto"
+				title={healthTitle}
 			>
 				<span class="size-[8px] rounded-full {health.dot}"></span>
 				{health.label}

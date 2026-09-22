@@ -81,7 +81,10 @@ export interface SummaryEnvironment {
 	access: AccessRole;
 	/** Absent on a locked environment. */
 	state?: EnvironmentState;
+	/** The kernel's cached verdict from its last reconcile pass. */
 	health?: ServiceHealth;
+	/** When the kernel last evaluated health; absent until the first pass. */
+	health_evaluated_at?: string;
 }
 
 export interface ServiceCounts {

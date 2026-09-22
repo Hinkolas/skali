@@ -17,6 +17,8 @@
 	} from '$lib/components/project/NewProjectModal.svelte';
 	import type { PageData } from './$types';
 
+	// data.projects is this page's own list (with summaries, see +page.ts);
+	// user and org come from the shell layout.
 	let { data }: { data: PageData } = $props();
 
 	const mayCreate = $derived(canCreateProject(data.user));
@@ -51,8 +53,10 @@
 
 <PageHeader title="Projects">
 	{#snippet subtitle()}
-		{data.org.project_count} project{data.org.project_count === 1 ? '' : 's'} across
-		{data.org.node_count} node{data.org.node_count === 1 ? '' : 's'}
+		{data.org.project_count} project{data.org.project_count === 1 ? '' : 's'}
+		{#if data.org.node_count !== null}
+			across {data.org.node_count} node{data.org.node_count === 1 ? '' : 's'}
+		{/if}
 	{/snippet}
 	{#snippet actions()}
 		<Button

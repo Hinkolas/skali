@@ -10,7 +10,8 @@ export interface OrgView {
 	/** A newer release the daemon knows about; drives the System badge. */
 	update_available: string | null;
 	project_count: number;
-	node_count: number;
+	/** null when the caller may not see nodes (only instance admins can). */
+	node_count: number | null;
 }
 
 /**
@@ -23,7 +24,7 @@ export function buildOrg(
 	meta: SystemMeta | null,
 	hostname: string,
 	projectCount: number,
-	nodeCount: number
+	nodeCount: number | null
 ): OrgView {
 	return {
 		name: meta?.name || hostname || 'skali',

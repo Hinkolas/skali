@@ -13,16 +13,20 @@
 
 	let { data }: { data: PageData } = $props();
 
+	// Admin only, so the shell always asked for nodes; the fallback merely
+	// satisfies the shell's nullable type.
+	const nodes = $derived(data.nodes ?? []);
+
 	// One line about the cluster: how many nodes are online, or that the
 	// cluster has not been observed yet.
 	const nodesSummary = $derived.by(() => {
-		const total = data.nodes.length;
+		const total = nodes.length;
 		if (total === 0) {
 			return data.nodesObservation?.state === 'fresh'
 				? { text: 'no nodes', tone: 'neutral' as const }
 				: { text: 'not observed', tone: 'neutral' as const };
 		}
-		const online = data.nodes.filter((n) => n.ready).length;
+		const online = nodes.filter((n) => n.ready).length;
 		return online === total
 			? { text: `${total} online`, tone: 'success' as const }
 			: { text: `${online}/${total} online`, tone: 'warning' as const };

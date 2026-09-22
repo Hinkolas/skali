@@ -16,6 +16,7 @@
 	import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 	import type { ServiceKind } from '$lib/service-types';
 	import type { ServiceView } from '$lib/models/service';
+	import { projectEnvironmentCount } from '$lib/models/project';
 	import type { Project } from '$lib/types/project';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
@@ -41,13 +42,16 @@
 	const results = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		const all: Result[] = [
-			...data.projects.map((p) => ({
-				href: resolve('/(app)/projects/[project]', { project: p.name }),
-				title: p.display_name || p.name,
-				meta: `project · ${p.summary?.environments.length ?? 0} env${
-					(p.summary?.environments.length ?? 0) === 1 ? '' : 's'
-				}`
-			})),
+			...data.projects.map((p) => {
+				// The shell list carries no summary; the access map counts
+				// environments just as well.
+				const environments = projectEnvironmentCount(p);
+				return {
+					href: resolve('/(app)/projects/[project]', { project: p.name }),
+					title: p.display_name || p.name,
+					meta: `project · ${environments} env${environments === 1 ? '' : 's'}`
+				};
+			}),
 			...(data.project
 				? (data.services ?? []).map((s) => ({
 						href: resolve('/(app)/projects/[project]/services/[service]', {

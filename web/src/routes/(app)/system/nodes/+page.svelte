@@ -13,6 +13,10 @@
 	// storage from its own load and presents them.
 	let { data }: { data: PageData } = $props();
 
+	// Admin only, so the shell always asked for nodes; the fallback merely
+	// satisfies the shell's nullable type.
+	const nodes = $derived(data.nodes ?? []);
+
 	const grid = 'grid-cols-[1.1fr_1.3fr_1.1fr_1fr_0.9fr_1.3fr_1.5fr_0.8fr]';
 
 	const storage = $derived.by(() => {
@@ -47,16 +51,16 @@
 		return byNode;
 	});
 
-	const online = $derived(data.nodes.filter((n) => n.ready).length);
+	const online = $derived(nodes.filter((n) => n.ready).length);
 	const subtitleText = $derived.by(() => {
-		if (data.nodes.length === 0) {
+		if (nodes.length === 0) {
 			return data.nodesObservation?.state === 'fresh'
 				? 'no nodes in the cluster'
 				: 'cluster not observed';
 		}
-		return online === data.nodes.length
-			? `all ${data.nodes.length} online`
-			: `${online}/${data.nodes.length} online`;
+		return online === nodes.length
+			? `all ${nodes.length} online`
+			: `${online}/${nodes.length} online`;
 	});
 </script>
 
@@ -71,12 +75,12 @@
 </PageHeader>
 
 <div class="pb-6">
-	{#if data.nodes.length > 0}
+	{#if nodes.length > 0}
 		<Table
 			columns={['Node', 'Addresses', 'Roles', 'OS', 'Kubelet', 'Usage', 'Storage', 'State']}
 			{grid}
 		>
-			{#each data.nodes as node (node.name)}
+			{#each nodes as node (node.name)}
 				{@const state = NODE_STATE_META[node.ready ? 'online' : 'offline']}
 				{@const use = usage[node.name]}
 				{@const disk = storage[node.name]}
