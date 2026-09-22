@@ -79,8 +79,8 @@ func TestAttachRunDetachKeyAndDoubleInterrupt(t *testing.T) {
 		}
 		done := make(chan result, 1)
 		go func() {
-			status, err := attachRunMode(context.Background(), slave, f.client(), "r1", "", attachCancelsRun)
-			done <- result{status, err}
+			outcome, err := attachRunMode(context.Background(), slave, f.client(), "r1", "", attachCancelsRun)
+			done <- result{outcome.Status, err}
 		}()
 		term.waitFor(t, "d detaches, Ctrl-C cancels")
 		_, err := io.WriteString(term.master, "d")
@@ -100,8 +100,8 @@ func TestAttachRunDetachKeyAndDoubleInterrupt(t *testing.T) {
 		}
 		done := make(chan result, 1)
 		go func() {
-			status, err := attachRunMode(context.Background(), slave, f.client(), "r1", "", attachCancelsRun)
-			done <- result{status, err}
+			outcome, err := attachRunMode(context.Background(), slave, f.client(), "r1", "", attachCancelsRun)
+			done <- result{outcome.Status, err}
 		}()
 		term.waitFor(t, "d detaches, Ctrl-C cancels")
 		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGINT))

@@ -81,7 +81,7 @@ func (k *Kernel) ensureRelease(ctx context.Context, attachment *runAttachment, t
 			attachment.completeStep(ctx, stepKey, title, journal.StepFailed,
 				k.releaseFailureLines(ctx, job.Namespace, job.Name, status))
 		}
-		return releaseFailed, "", nil
+		return releaseFailed, releaseFailureLine(status), nil
 	default:
 		reason := "the release command is running"
 		attachment.waitStep(ctx, stepKey, title, reason)
@@ -89,9 +89,9 @@ func (k *Kernel) ensureRelease(ctx context.Context, attachment *runAttachment, t
 	}
 }
 
-// releaseFailureLines assembles the failure diagnostics: the Job's terminal
-// reason plus a best-effort log tail from its pod.
-func (k *Kernel) releaseFailureLines(ctx context.Context, namespace, name string, status *observe.JobStatus) []string {
+// releaseFailureLine is the one-line verdict on a failed release Job: what
+// went wrong and the Job's terminal message when it has one.
+func releaseFailureLine(status *observe.JobStatus) string {
 	line := "the release command failed"
 	if status.Reason == "DeadlineExceeded" {
 		line = "the release command exceeded its timeout"
@@ -99,7 +99,13 @@ func (k *Kernel) releaseFailureLines(ctx context.Context, namespace, name string
 	if status.Message != "" {
 		line += ": " + status.Message
 	}
-	lines := []string{line}
+	return line
+}
+
+// releaseFailureLines assembles the failure diagnostics: the Job's terminal
+// reason plus a best-effort log tail from its pod.
+func (k *Kernel) releaseFailureLines(ctx context.Context, namespace, name string, status *observe.JobStatus) []string {
+	lines := []string{releaseFailureLine(status)}
 	if k.deps.JobLogs == nil {
 		return lines
 	}

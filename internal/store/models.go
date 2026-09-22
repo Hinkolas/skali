@@ -471,6 +471,7 @@ type Run struct {
 	StartedAt        *time.Time
 	FinishedAt       *time.Time
 	BypassProtection bool
+	Failure          *string
 }
 
 type RunLog struct {

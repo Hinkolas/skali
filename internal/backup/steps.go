@@ -82,10 +82,16 @@ func (r *runScope) skip(ctx context.Context, key, title string) {
 	_ = r.journal.SetStepStatus(ctx, step.ID, journal.StepSkipped)
 }
 
-// finish drives the run terminal, tolerating an already-terminal run.
-func (r *runScope) finish(ctx context.Context, status journal.RunStatus) {
-	if err := r.journal.FinishRun(ctx, r.runID, status); err != nil &&
-		!errors.Is(err, journal.ErrInvalidTransition) {
+// finish drives the run terminal, tolerating an already-terminal run. A
+// failed run records reason, redacted, as its one-line summary.
+func (r *runScope) finish(ctx context.Context, status journal.RunStatus, reason string) {
+	var err error
+	if status == journal.RunFailed {
+		err = r.journal.FailRun(ctx, r.runID, r.redactor, reason)
+	} else {
+		err = r.journal.FinishRun(ctx, r.runID, status)
+	}
+	if err != nil && !errors.Is(err, journal.ErrInvalidTransition) {
 		_ = err
 	}
 }

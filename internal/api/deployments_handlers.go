@@ -523,7 +523,18 @@ func (h *deploymentsHandlers) fail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.deploy.FailDeployment(r.Context(), id, h.journal); err != nil {
+	// The body is optional: older clients send none, and the run then
+	// records no reason.
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength != 0 {
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+			return
+		}
+	}
+	if err := h.deploy.FailDeployment(r.Context(), id, h.journal, req.Reason); err != nil {
 		writeDeployError(r.Context(), w, err)
 		return
 	}

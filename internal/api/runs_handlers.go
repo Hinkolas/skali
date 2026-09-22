@@ -40,6 +40,10 @@ type runPayload struct {
 	// aside because the domain did not reach this installation yet: the
 	// run succeeded with warnings. Only list views carry it.
 	DeferredRoutes int64 `json:"deferred_routes,omitempty"`
+	// Failure is the one-line reason recorded by the code that finished
+	// the run failed. Present only on failed runs that recorded one; the
+	// step logs hold the detail.
+	Failure string `json:"failure,omitempty"`
 }
 
 // runListPayload projects the environment's runs with their deferred-route
@@ -79,6 +83,9 @@ func newRunPayload(r *store.Run) runPayload {
 	if r.EnvironmentID != nil {
 		id := r.EnvironmentID.String()
 		payload.EnvironmentID = &id
+	}
+	if r.Failure != nil {
+		payload.Failure = *r.Failure
 	}
 	return payload
 }

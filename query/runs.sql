@@ -13,8 +13,10 @@ SELECT * FROM runs WHERE id = $1 FOR UPDATE;
 -- name: MarkRunRunning :exec
 UPDATE runs SET status = 'running', started_at = now() WHERE id = $1;
 
+-- The failure text is only meaningful with status 'failed'; the journal
+-- passes NULL for every other terminal status.
 -- name: MarkRunFinished :exec
-UPDATE runs SET status = $2, finished_at = now() WHERE id = $1;
+UPDATE runs SET status = $2, finished_at = now(), failure = $3 WHERE id = $1;
 
 -- A run that never started explains nothing and nothing will ever finish
 -- it: the creator removes the row instead of stranding it pending, which

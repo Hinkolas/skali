@@ -84,6 +84,20 @@ func TestRunReadAPI(t *testing.T) {
 
 	status, _ = a.do("GET", "/v1/runs/"+uuid.NewString(), token, nil)
 	require.Equal(t, http.StatusNotFound, status)
+
+	// A running run carries no failure; a failed one carries the reason
+	// its finisher recorded, in the list and in the tree alike.
+	_, hasFailure := runs[0].(map[string]any)["failure"]
+	require.False(t, hasFailure)
+	require.NoError(t, a.journal.FailRun(ctx, runID, nil, "the release command failed: exit status 1"))
+	status, body = a.do("GET", "/v1/environments/"+envID+"/runs", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	listed := body["runs"].([]any)[0].(map[string]any)
+	require.Equal(t, "failed", listed["status"])
+	require.Equal(t, "the release command failed: exit status 1", listed["failure"])
+	status, body = a.do("GET", "/v1/runs/"+runID.String(), token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "the release command failed: exit status 1", body["run"].(map[string]any)["failure"])
 }
 
 // TestStepLogStream exercises the SSE endpoint: catch-up entries, then a

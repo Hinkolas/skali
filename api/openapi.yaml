@@ -3388,11 +3388,23 @@ paths:
         abandoned, running builds fail, the staged candidate is discarded,
         and the run finishes failed. The environment's values, target, and
         active revision are untouched. The client calls this when a local
-        build or import fails.
+        build or import fails and passes the error as the run's failure
+        reason.
       tags: [deployments]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: One-line reason recorded on the run.
       responses:
         "200":
           description: The deployment was failed.
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -4403,6 +4415,12 @@ components:
             domain did not reach this installation yet: the run succeeded
             with warnings. Present on list views only, and omitted when
             zero.
+        failure:
+          type: string
+          description: |
+            One-line reason recorded by the code that finished the run
+            failed. Present only on failed runs that recorded one; the
+            step logs hold the detail.
         project_id:
           type: [string, "null"]
           format: uuid

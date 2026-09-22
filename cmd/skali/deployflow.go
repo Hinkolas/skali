@@ -983,7 +983,7 @@ func verifyAction(ctx context.Context, api *client.Client, opened *client.Opened
 // failDeployment reports the client-side failure and returns the original
 // error; values, target, and active revision stay untouched server-side.
 func failDeployment(ctx context.Context, api *client.Client, opened *client.OpenedDeployment, cause error) error {
-	if err := api.FailDeployment(ctx, opened.Deployment.ID); err != nil {
+	if err := api.FailDeployment(ctx, opened.Deployment.ID, cause.Error()); err != nil {
 		return fmt.Errorf("%w (additionally, failing the deployment: %v)", cause, err)
 	}
 	return cause
@@ -1041,21 +1041,38 @@ const (
 // second press that cancels the run.
 const interruptCancelWindow = 3 * time.Second
 
+// attachOutcome is how an attached run ended: its final status, or
+// "detached" / "interrupted" when the attachment ended before the run did.
+// Failure carries a failed run's one-line reason for the closing line.
+type attachOutcome struct {
+	Status  string
+	Failure string
+}
+
+// failedRunError is the closing line of a command whose run failed: the run
+// id and, when the run recorded one, its reason.
+func failedRunError(runID, failure string) error {
+	if failure == "" {
+		return fmt.Errorf("run %s failed", runID)
+	}
+	return fmt.Errorf("run %s failed: %s", runID, failure)
+}
+
 // attachRun follows a server-side run to its end with the deploy-like key
 // bindings; see attachRunMode.
-func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string) (string, error) {
-	status, err := attachRunMode(ctx, out, api, runID, remoteHint, attachCancelsRun)
+func attachRun(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string) (attachOutcome, error) {
+	outcome, err := attachRunMode(ctx, out, api, runID, remoteHint, attachCancelsRun)
 	if err != nil {
-		return status, fmt.Errorf("observation of run %s ended: %w; reconnect with %s", runID, err, runAttachHint(remoteHint, runID))
+		return outcome, fmt.Errorf("observation of run %s ended: %w; reconnect with %s", runID, err, runAttachHint(remoteHint, runID))
 	}
-	return status, nil
+	return outcome, nil
 }
 
 // attachRunMode renders a run's step tree live until the run ends, the
 // user detaches, or, in the cancel mode, asks for the run to be cancelled.
-// It returns the run's final status, "detached", or "interrupted" (the
-// parent context ended).
-func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string, mode attachMode) (string, error) {
+// The outcome's status is the run's final status, "detached", or
+// "interrupted" (the parent context ended).
+func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID, remoteHint string, mode attachMode) (attachOutcome, error) {
 	tty := clirender.IsTerminal(out)
 	style := clirender.StyleFor(out)
 	tails := &stepLogTails{api: api, style: style, verbose: verboseTranscript, lines: map[string][]string{}}
@@ -1102,24 +1119,24 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 	}
 
 	kind := "run"
-	detach := func() (string, error) {
+	detach := func() (attachOutcome, error) {
 		renderer.Detach()
 		fmt.Fprintf(out, "\ndetached from run %s; the %s continues on the server\n", runID, kind)
 		fmt.Fprintf(out, "  reattach  %s\n", runAttachHint(remoteHint, runID))
-		return "detached", nil
+		return attachOutcome{Status: "detached"}, nil
 	}
 	// interrupt handles Ctrl-C in the cancel mode: the first press arms,
 	// the second within the window cancels the run, and once the
 	// cancellation is requested a further press detaches from the wait.
 	interrupt := func() (done bool, status string, err error) {
 		if !tty {
-			status, err = detach()
-			return true, status, err
+			outcome, err := detach()
+			return true, outcome.Status, err
 		}
 		switch {
 		case cancelRequested:
-			status, err = detach()
-			return true, status, err
+			outcome, err := detach()
+			return true, outcome.Status, err
 		case disarm != nil:
 			cancelRequested = true
 			disarm = nil
@@ -1138,9 +1155,9 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 		tree, err := api.GetRun(ctx, runID)
 		if err != nil {
 			if ctx.Err() != nil {
-				return "interrupted", nil
+				return attachOutcome{Status: "interrupted"}, nil
 			}
-			return "", err
+			return attachOutcome{}, err
 		}
 		if tree.Run.Kind != "" {
 			kind = tree.Run.Kind
@@ -1149,7 +1166,7 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 		switch tree.Run.Status {
 		case "succeeded", "failed", "cancelled":
 			renderer.Finish(tree)
-			return tree.Run.Status, nil
+			return attachOutcome{Status: tree.Run.Status, Failure: tree.Run.Failure}, nil
 		}
 		renderer.Render(tree)
 		for waiting := true; waiting; {
@@ -1157,12 +1174,12 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 			case <-attachCtx.Done():
 				renderer.Detach()
 				if ctx.Err() != nil {
-					return "interrupted", nil
+					return attachOutcome{Status: "interrupted"}, nil
 				}
 				return detach()
 			case <-interrupts:
 				if done, status, err := interrupt(); done {
-					return status, err
+					return attachOutcome{Status: status}, err
 				}
 			case key := <-keys:
 				switch {
@@ -1171,7 +1188,7 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 				case key == 0x03:
 					// A terminal without ISIG delivers Ctrl-C as a key.
 					if done, status, err := interrupt(); done {
-						return status, err
+						return attachOutcome{Status: status}, err
 					}
 				}
 			case <-disarm:
@@ -1686,11 +1703,11 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		fmt.Fprintf(out, "deployment continues on the server; attach with: %s\n", runAttachHint(opts.Remote, opened.Deployment.RunID))
 		return deployOutcomeDetached, nil
 	}
-	status, err := attachRunMode(ctx, out, api, opened.Deployment.RunID, opts.Remote, opts.Attach)
+	outcome, err := attachRunMode(ctx, out, api, opened.Deployment.RunID, opts.Remote, opts.Attach)
 	if err != nil {
 		return "", err
 	}
-	switch status {
+	switch outcome.Status {
 	case "succeeded":
 		fmt.Fprintln(out, "\n"+style.Check()+style.Bold(style.Green("ready")))
 		if !opts.SkipReadySummary {
@@ -1700,7 +1717,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		}
 		return deployOutcomeReady, nil
 	case "failed":
-		return "", fmt.Errorf("run %s failed", opened.Deployment.RunID)
+		return "", failedRunError(opened.Deployment.RunID, outcome.Failure)
 	case "cancelled":
 		return "", fmt.Errorf("run %s was cancelled", opened.Deployment.RunID)
 	default:

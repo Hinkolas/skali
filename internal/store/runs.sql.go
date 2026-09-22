@@ -28,7 +28,7 @@ func (q *Queries) CountRunningRuns(ctx context.Context) (int64, error) {
 const createRun = `-- name: CreateRun :one
 INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection
+RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure
 `
 
 type CreateRunParams struct {
@@ -61,6 +61,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.BypassProtection,
+		&i.Failure,
 	)
 	return i, err
 }
@@ -120,7 +121,7 @@ func (q *Queries) DeletePendingRun(ctx context.Context, id uuid.UUID) (int64, er
 }
 
 const getRunByID = `-- name: GetRunByID :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection FROM runs WHERE id = $1
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRunByID(ctx context.Context, id uuid.UUID) (Run, error) {
@@ -137,12 +138,13 @@ func (q *Queries) GetRunByID(ctx context.Context, id uuid.UUID) (Run, error) {
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.BypassProtection,
+		&i.Failure,
 	)
 	return i, err
 }
 
 const getRunForUpdate = `-- name: GetRunForUpdate :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection FROM runs WHERE id = $1 FOR UPDATE
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE id = $1 FOR UPDATE
 `
 
 // Row lock so status transitions are guarded under the lifecycle machine.
@@ -160,12 +162,13 @@ func (q *Queries) GetRunForUpdate(ctx context.Context, id uuid.UUID) (Run, error
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.BypassProtection,
+		&i.Failure,
 	)
 	return i, err
 }
 
 const getRunningRunByEnvironment = `-- name: GetRunningRunByEnvironment :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection FROM runs WHERE environment_id = $1 AND status = 'running'
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE environment_id = $1 AND status = 'running'
 `
 
 // Journal attachment for the reconcile worker: adopt the environment's
@@ -185,12 +188,13 @@ func (q *Queries) GetRunningRunByEnvironment(ctx context.Context, environmentID 
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.BypassProtection,
+		&i.Failure,
 	)
 	return i, err
 }
 
 const listRunsByEnvironment = `-- name: ListRunsByEnvironment :many
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]Run, error) {
@@ -213,6 +217,7 @@ func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid
 			&i.StartedAt,
 			&i.FinishedAt,
 			&i.BypassProtection,
+			&i.Failure,
 		); err != nil {
 			return nil, err
 		}
@@ -225,16 +230,19 @@ func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid
 }
 
 const markRunFinished = `-- name: MarkRunFinished :exec
-UPDATE runs SET status = $2, finished_at = now() WHERE id = $1
+UPDATE runs SET status = $2, finished_at = now(), failure = $3 WHERE id = $1
 `
 
 type MarkRunFinishedParams struct {
-	ID     uuid.UUID
-	Status string
+	ID      uuid.UUID
+	Status  string
+	Failure *string
 }
 
+// The failure text is only meaningful with status 'failed'; the journal
+// passes NULL for every other terminal status.
 func (q *Queries) MarkRunFinished(ctx context.Context, arg MarkRunFinishedParams) error {
-	_, err := q.db.Exec(ctx, markRunFinished, arg.ID, arg.Status)
+	_, err := q.db.Exec(ctx, markRunFinished, arg.ID, arg.Status, arg.Failure)
 	return err
 }
 

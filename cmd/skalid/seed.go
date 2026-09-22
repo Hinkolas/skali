@@ -753,7 +753,7 @@ func (s *seeder) runDeployment(ctx context.Context, proj *store.Project, env *st
 		if err := s.journal.SetStepStatus(ctx, rollout.ID, journal.StepFailed); err != nil {
 			return uuid.Nil, err
 		}
-		if err := s.journal.FinishRun(ctx, result.RunID, journal.RunFailed); err != nil {
+		if err := s.journal.FailRun(ctx, result.RunID, redactor, "rollout deadline exceeded after 10m0s"); err != nil {
 			return uuid.Nil, err
 		}
 		// The target still names the bad revision; the active pointer stays
@@ -909,10 +909,10 @@ func (s *seeder) runBackup(ctx context.Context, proj *store.Project, env *store.
 		}); err != nil {
 			return err
 		}
-		if err := s.journal.FinishRun(ctx, run.ID, journal.RunFailed); err != nil {
+		msg := "pg_restore failed: extension pg_trgm is not available"
+		if err := s.journal.FailRun(ctx, run.ID, nil, msg); err != nil {
 			return err
 		}
-		msg := "pg_restore failed: extension pg_trgm is not available"
 		if _, err := s.st.SetBackupStatus(ctx, store.SetBackupStatusParams{
 			ID: row.ID, FromStatus: "running", ToStatus: "failed", Error: &msg,
 		}); err != nil {

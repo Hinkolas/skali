@@ -192,16 +192,17 @@ func newBackupRestoreCommand() *cobra.Command {
 			}
 			fmt.Fprintf(out, "%s %s  restore %s (%s) into %s\n", style.Dim("run"),
 				style.Bold(runID), snapshotID, snapshot.Environment, targetEnvironment.Name)
-			status, err := attachRun(ctx, out, scope.api, runID, remote)
+			outcome, err := attachRun(ctx, out, scope.api, runID, remote)
 			if err != nil {
 				return err
 			}
-			switch status {
+			switch outcome.Status {
 			case "succeeded":
 				fmt.Fprintf(out, "\n%s%s\n", style.Check(), style.Bold(style.Green("restore complete")))
 				return nil
 			case "failed":
-				return fmt.Errorf("run %s failed; the environment stays down until a restore succeeds or it is redeployed", runID)
+				return fmt.Errorf("%w; the environment stays down until a restore succeeds or it is redeployed",
+					failedRunError(runID, outcome.Failure))
 			case "cancelled":
 				return fmt.Errorf("run %s was cancelled; the environment stays down until a restore succeeds or it is redeployed", runID)
 			default:
@@ -376,17 +377,17 @@ func newBackupCreateCommand() *cobra.Command {
 				fmt.Fprintf(out, "backup continues on the server; attach with: %s\n", runAttachHint(remote, result.RunID))
 				return nil
 			}
-			status, err := attachRun(ctx, out, target.api, result.RunID, remote)
+			outcome, err := attachRun(ctx, out, target.api, result.RunID, remote)
 			if err != nil {
 				return err
 			}
-			switch status {
+			switch outcome.Status {
 			case "succeeded":
 				fmt.Fprintf(out, "\n%s%s  snapshot %s\n", style.Check(),
 					style.Bold(style.Green("backup complete")), result.BackupID)
 				return nil
 			case "failed":
-				return fmt.Errorf("run %s failed", result.RunID)
+				return failedRunError(result.RunID, outcome.Failure)
 			case "cancelled":
 				return fmt.Errorf("run %s was cancelled", result.RunID)
 			default:

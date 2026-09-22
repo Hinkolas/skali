@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/client"
@@ -62,7 +64,10 @@ func newRunCommand() *cobra.Command {
 				}
 				note := ""
 				if run.BypassProtection {
-					note = "  " + style.Yellow("bypassed protection")
+					note += "  " + style.Yellow("bypassed protection")
+				}
+				if run.Status == "failed" && run.Failure != "" {
+					note += "  " + style.Red(failureNote(run.Failure))
 				}
 				fmt.Fprintf(out, "%-36s  %-11s  %-9s  %s%s\n", run.ID, run.Kind, run.Status, started, note)
 			}
@@ -108,12 +113,12 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			status, err := attachRun(command.Context(), command.OutOrStdout(), api, args[0], remote)
+			outcome, err := attachRun(command.Context(), command.OutOrStdout(), api, args[0], remote)
 			if err != nil {
 				return err
 			}
-			if status == "failed" {
-				return fmt.Errorf("run %s failed", args[0])
+			if outcome.Status == "failed" {
+				return failedRunError(args[0], outcome.Failure)
 			}
 			return nil
 		},
@@ -345,4 +350,12 @@ func findStep(steps []client.Step, key string) *client.Step {
 		}
 	}
 	return nil
+}
+
+// failureNote fits a run's failure reason into the list's trailing note:
+// its first line, cut to a width that keeps the row readable. The full text
+// is one `skali run show` away.
+func failureNote(failure string) string {
+	line, _, _ := strings.Cut(failure, "\n")
+	return ansi.Truncate(strings.TrimSpace(line), 72, "…")
 }

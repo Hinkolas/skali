@@ -196,7 +196,7 @@ func TestCloseDeploymentSurvivesCancelledContext(t *testing.T) {
 
 	dead, cancel := context.WithCancel(ctx)
 	cancel()
-	require.NoError(t, f.deploy.FailDeployment(dead, deployment.ID, jsvc))
+	require.NoError(t, f.deploy.FailDeployment(dead, deployment.ID, jsvc, "the local build failed"))
 
 	row, err := f.deploy.GetDeployment(ctx, deployment.ID)
 	require.NoError(t, err)

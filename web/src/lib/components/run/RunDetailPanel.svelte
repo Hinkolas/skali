@@ -164,6 +164,9 @@
 						· <span class="text-status-warning">bypassed protection</span>
 					{/if}
 				</div>
+				{#if tree.run.status === 'failed' && tree.run.failure}
+					<div class="text-text-muted mt-1.5 text-sm break-words">{tree.run.failure}</div>
+				{/if}
 			{/if}
 		</div>
 		<div class="ml-auto flex flex-none items-center gap-2">
