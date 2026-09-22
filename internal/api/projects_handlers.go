@@ -98,6 +98,17 @@ type summaryEnvironmentPayload struct {
 	State             string     `json:"state,omitempty"`
 	Health            string     `json:"health,omitempty"`
 	HealthEvaluatedAt *time.Time `json:"health_evaluated_at,omitempty"`
+	// The pointer row's revisions, so a listing can name what an
+	// environment runs without a status projection per environment.
+	TargetRevision *revisionRefPayload `json:"target_revision,omitempty"`
+	ActiveRevision *revisionRefPayload `json:"active_revision,omitempty"`
+}
+
+func newRevisionRefPayload(ref *project.RevisionRef) *revisionRefPayload {
+	if ref == nil {
+		return nil
+	}
+	return &revisionRefPayload{ID: ref.ID.String(), Checksum: ref.Checksum}
 }
 
 type serviceCountsPayload struct {
@@ -298,6 +309,8 @@ func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projec
 					if !envGrant.Locked() {
 						item.State = env.State
 						item.Health = string(module.HealthUnknown)
+						item.TargetRevision = newRevisionRefPayload(env.TargetRevision)
+						item.ActiveRevision = newRevisionRefPayload(env.ActiveRevision)
 						unlocked = append(unlocked, env.ID)
 					}
 				}

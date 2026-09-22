@@ -21,12 +21,18 @@ SET max_role = $2, deploy_policy = $3, promote_from = $4, priority = $5,
 WHERE id = $1
 RETURNING *;
 
--- Every environment joined with its target pointer state, for the project
--- list summary (one query across all projects, not one per project).
+-- Every environment joined with its target pointer state and revision
+-- pointers, for the project list summary (one query across all projects,
+-- not one per project). The checksums ride along so list consumers never
+-- load a revision to name it.
 -- name: ListEnvironmentsWithTargets :many
-SELECT e.id, e.project_id, e.name, t.state
+SELECT e.id, e.project_id, e.name, t.state,
+       t.target_revision_id, tr.checksum AS target_checksum,
+       t.active_revision_id, ar.checksum AS active_checksum
 FROM environments e
 JOIN environment_targets t ON t.environment_id = e.id
+LEFT JOIN revisions tr ON tr.id = t.target_revision_id
+LEFT JOIN revisions ar ON ar.id = t.active_revision_id
 ORDER BY e.project_id, e.name;
 
 -- One project's environments with their target pointer state, for the

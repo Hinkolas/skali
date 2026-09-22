@@ -16,6 +16,28 @@ type EnvironmentSummary struct {
 	ID    uuid.UUID
 	Name  string
 	State string
+	// TargetRevision and ActiveRevision are the pointer row's revisions
+	// with their checksums; nil where the pointer is unset (never
+	// deployed, or taken down).
+	TargetRevision *RevisionRef
+	ActiveRevision *RevisionRef
+}
+
+// RevisionRef names one revision without loading it.
+type RevisionRef struct {
+	ID       uuid.UUID
+	Checksum string
+}
+
+func revisionRef(id *uuid.UUID, checksum *string) *RevisionRef {
+	if id == nil {
+		return nil
+	}
+	ref := &RevisionRef{ID: *id}
+	if checksum != nil {
+		ref.Checksum = *checksum
+	}
+	return ref
 }
 
 // ServiceCounts are the per-type service counts of a project's draft
@@ -60,9 +82,11 @@ func (s *Service) ListSummaries(ctx context.Context) (map[uuid.UUID]Summary, err
 	for _, env := range environments {
 		summary := summaries[env.ProjectID]
 		summary.Environments = append(summary.Environments, EnvironmentSummary{
-			ID:    env.ID,
-			Name:  env.Name,
-			State: env.State,
+			ID:             env.ID,
+			Name:           env.Name,
+			State:          env.State,
+			TargetRevision: revisionRef(env.TargetRevisionID, env.TargetChecksum),
+			ActiveRevision: revisionRef(env.ActiveRevisionID, env.ActiveChecksum),
 		})
 		summaries[env.ProjectID] = summary
 	}

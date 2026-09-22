@@ -4232,6 +4232,16 @@ components:
                   pass after boot, never deployed, torn down, API-only
                   mode), which tells a pending `unknown` apart from an
                   evaluated one.
+              target_revision:
+                $ref: "#/components/schemas/RevisionRef"
+                description: |
+                  The revision the environment is converging to; absent
+                  when never deployed or taken down. Unlocked only.
+              active_revision:
+                $ref: "#/components/schemas/RevisionRef"
+                description: |
+                  The revision the environment is running; absent until
+                  the first activation or after a teardown. Unlocked only.
         service_counts:
           type: object
           required: [applications, databases, buckets]

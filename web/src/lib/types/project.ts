@@ -85,6 +85,9 @@ export interface SummaryEnvironment {
 	health?: ServiceHealth;
 	/** When the kernel last evaluated health; absent until the first pass. */
 	health_evaluated_at?: string;
+	/** The pointer row's revisions; absent where the pointer is unset. */
+	target_revision?: { id: string; checksum: string };
+	active_revision?: { id: string; checksum: string };
 }
 
 export interface ServiceCounts {
