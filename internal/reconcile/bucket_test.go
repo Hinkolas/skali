@@ -11,8 +11,7 @@ import (
 	"github.com/Hinkolas/skali/internal/module"
 )
 
-const bucketManifest = `skali: v0.1.0-rc.3
-name: demo
+const bucketManifest = `name: demo
 applications:
   web:
     image: ghcr.io/example/web:1.0.0

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/Hinkolas/skali/internal/checkout"
 
 	"bytes"
 	"encoding/json"
@@ -265,8 +266,10 @@ func TestCachePruningRespectsExecutionLease(t *testing.T) {
 
 func TestManifestSemanticReviewDoesNotWrite(t *testing.T) {
 	withCLIVersion(t, "v0.4.0")
-	withLedger(t, append(append([]manifest.Change{}, manifest.Ledger...), manifest.Change{Release: "v0.4.0", Kind: manifest.ChangeChanged, Path: "applications.*.deployment.rollout.strategy", WhenOmitted: true, Message: "default changed", Hint: "review strategy"}))
+	withLedger(t, append(append([]manifest.Change{}, manifest.Ledger...), manifest.Change{Revision: manifest.CurrentRevision() + 1, Kind: manifest.ChangeChanged, Path: "applications.*.deployment.rollout.strategy", WhenOmitted: true, Message: "default changed", Hint: "review strategy"}))
 	path := writeManifestFixture(t, "skali: v0.3.0 # preserve\n")
+	_, err := checkout.SaveReview(path, 5, false)
+	require.NoError(t, err)
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
 	err = execute(newRootCommand(), "manifest", "upgrade", "--manifest", path)

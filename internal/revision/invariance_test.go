@@ -13,8 +13,7 @@ import (
 
 // Two semantically identical manifests with every map in a different key
 // order: applications, ports, environment.
-const orderedManifest = `skali: v0.1.0-rc.3
-name: demo
+const orderedManifest = `name: demo
 applications:
   api:
     image: example.invalid/api:1
@@ -32,8 +31,7 @@ applications:
     image: example.invalid/worker:1
 `
 
-const reorderedManifest = `skali: v0.1.0-rc.3
-name: demo
+const reorderedManifest = `name: demo
 applications:
   worker:
     image: example.invalid/worker:1

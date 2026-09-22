@@ -920,8 +920,7 @@ func TestDevLocalDev(t *testing.T) {
 	// ${PORT}, so nothing here can collide with a developer's real dev
 	// servers.
 	manifestFor := func(devBlock string) string {
-		return fmt.Sprintf(`skali: v0.1.0-rc.3
-name: dev-loop
+		return fmt.Sprintf(`name: dev-loop
 applications:
   web:
     build:

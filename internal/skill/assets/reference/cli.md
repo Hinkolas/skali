@@ -15,17 +15,17 @@ or CLI downloads. With no target, the invoked CLI answers. Read the provenance
 header and reread references when the target or release changes.
 
 - `skali validate` parses and validates with file, line, column and path errors.
-  A newer review watermark is rejected by an older released compiler.
-- `skali manifest upgrade` proposes safe mechanical edits and a review-point
-  advance, then validates before writing. Semantic changes requiring review
-  leave the source unchanged. Read the diagnostic, review the behavior and
-  deliberately edit the watermark to acknowledge it. A released CLI can certify
-  only its own release; working-tree builds require explicit `--to`.
+  Local review history gates relevant semantic changes. Missing history trusts
+  current semantics and starts tracking after successful manifest compilation.
+- `skali manifest upgrade` validates safe removals before editing the manifest
+  and updates local `.skali/` review history. Semantic changes leave both untouched
+  unless explicitly reviewed and confirmed with `--acknowledge`. Development
+  builds use their embedded revision too; there is no `--to` option.
 - `skali compile` prints the compiled definition, including defaults and
   normalized units. Version-selection context goes to stderr.
 - `skali skill read manifest`, `skali skill read cli` and `skali skill read
   architecture` serve references embedded in the matching CLI. Bare `skali skill
-  read` lists topics; `skali skill read manifest --since <release>` lists changes.
+  read` lists topics; `skali skill read manifest --since <revision>` lists changes.
   Every response identifies the answering release, target, source and mode.
 
 Offline validation does not verify the cluster's currently running release.

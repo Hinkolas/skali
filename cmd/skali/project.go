@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -26,7 +27,7 @@ func newValidateCommand() *cobra.Command {
 		Short: "Validate a Skali project manifest and optionally an environment file",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			result, document, err := loadAndCompile(manifestPath)
+			result, document, err := loadAndCompile(manifestPath, command.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -40,9 +41,7 @@ func newValidateCommand() *cobra.Command {
 				len(result.Definition.RequiredVariables),
 				result.Hash,
 			)
-			if note := manifest.ReviewNote(document.Project.Skali, versionpkg.Version); note != "" {
-				fmt.Fprintln(command.OutOrStdout(), "  "+note)
-			}
+
 			if envFile != "" {
 				resolved, path, skipped, err := resolveValues(result, envFile)
 				if err != nil {
@@ -80,7 +79,7 @@ func newCompileCommand() *cobra.Command {
 		Short: "Compile a Skali manifest into canonical IR, a revision, or Kubernetes objects",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			result, _, err := loadAndCompile(manifestPath)
+			result, _, err := loadAndCompile(manifestPath, command.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -168,7 +167,7 @@ func newCompileCommand() *cobra.Command {
 	return command
 }
 
-func loadAndCompile(explicit string) (*compiler.Result, *manifest.Document, error) {
+func loadAndCompile(explicit string, outputs ...io.Writer) (*compiler.Result, *manifest.Document, error) {
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		return nil, nil, fmt.Errorf("get working directory: %w", err)
@@ -181,7 +180,7 @@ func loadAndCompile(explicit string) (*compiler.Result, *manifest.Document, erro
 	if err != nil {
 		return nil, nil, err
 	}
-	result, err := compiler.Compile(document)
+	result, err := compileReviewed(document, reviewOutput(outputs))
 	if err != nil {
 		return nil, nil, err
 	}

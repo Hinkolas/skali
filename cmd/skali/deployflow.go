@@ -121,7 +121,12 @@ func devApplications(project *localProject) map[string]manifest.Dev {
 	return devs
 }
 
-func loadLocalProject(explicit string) (*localProject, error) {
+func loadLocalProject(explicit string, outputs ...io.Writer) (*localProject, error) {
+	return readLocalProject(explicit, reviewOutput(outputs))
+}
+
+// A nil review output selects metadata-only loading, with no local state access.
+func readLocalProject(explicit string, review io.Writer) (*localProject, error) {
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("get working directory: %w", err)
@@ -134,11 +139,16 @@ func loadLocalProject(explicit string) (*localProject, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
-	document, err := manifest.ParseFile(path)
+	document, err := manifest.Parse(source, path)
 	if err != nil {
 		return nil, err
 	}
-	result, err := compiler.Compile(document)
+	var result *compiler.Result
+	if review == nil {
+		result, err = compiler.Compile(document)
+	} else {
+		result, err = compileReviewed(document, review)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1490,7 +1500,7 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (string, error) {
 	ctx := command.Context()
 	out := command.OutOrStdout()
-	project, err := loadLocalProject(opts.Manifest)
+	project, err := loadLocalProject(opts.Manifest, command.ErrOrStderr())
 	if err != nil {
 		return "", err
 	}

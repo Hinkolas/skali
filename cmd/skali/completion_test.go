@@ -128,8 +128,7 @@ func TestCompleteSnapshotsRunsAndMembers(t *testing.T) {
 	require.Equal(t, []string{"bob@example.com\tread"}, values)
 }
 
-const commandsManifest = `skali: v0.1.0-rc.3
-name: flowdemo
+const commandsManifest = `name: flowdemo
 applications:
   web:
     build:

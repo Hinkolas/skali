@@ -9,8 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const devRunManifest = `skali: v0.1.0-rc.3
-name: rundemo
+const devRunManifest = `name: rundemo
 applications:
   web:
     image: example.invalid/web:1
@@ -150,7 +149,7 @@ func TestRenderDevCommands(t *testing.T) {
 	require.Contains(t, text, "run one with skali dev run web <name>")
 
 	// No commands at all points at the manifest key and the raw form.
-	writeFile(t, root, "bare.yml", "skali: v0.1.0-rc.3\nname: bare\napplications:\n  web:\n    image: example.invalid/web:1\n")
+	writeFile(t, root, "bare.yml", "name: bare\napplications:\n  web:\n    image: example.invalid/web:1\n")
 	bare, err := loadLocalProject(filepath.Join(root, "bare.yml"))
 	require.NoError(t, err)
 	out.Reset()

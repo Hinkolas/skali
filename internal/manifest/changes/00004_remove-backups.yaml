@@ -1,0 +1,4 @@
+kind: removed
+path: "backups"
+message: "backups was removed from the manifest; automatic backups are an environment setting now, one schedule per environment, set outside the manifest"
+hint: "run skali manifest upgrade to drop the block, then turn automatic backups on per environment with skali backup schedule set"

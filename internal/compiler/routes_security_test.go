@@ -32,8 +32,7 @@ func TestRouteLiteralsCannotInjectRules(t *testing.T) {
 }
 
 func TestResolvedDomainAliasesConflict(t *testing.T) {
-	doc, err := manifest.Parse([]byte(`skali: v0.1.0-rc.3
-name: routes
+	doc, err := manifest.Parse([]byte(`name: routes
 applications:
   web:
     image: nginx:alpine

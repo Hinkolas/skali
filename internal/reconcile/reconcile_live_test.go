@@ -63,7 +63,7 @@ func liveManifest(project string, replicas int, autoscaled bool) string {
 				"      autoscaling:\n        cpu:\n          targetUtilization: 70\n"
 		}
 	}
-	return "skali: v0.1.0-rc.3\nname: " + project + "\napplications:\n  web:\n" +
+	return "name: " + project + "\napplications:\n  web:\n" +
 		"    image: traefik/whoami:v1.10.2\n" +
 		"    ports:\n      http:\n        port: 80\n        protocol: http\n" +
 		scaling

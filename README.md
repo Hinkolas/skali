@@ -221,8 +221,7 @@ the browser, and manages users.
 ## The manifest
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-rc.3/schemas/skali.schema.json
-skali: v0.1.0-rc.3
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/main/schemas/skali.schema.json
 name: guestbook
 
 applications:

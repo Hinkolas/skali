@@ -38,9 +38,9 @@ func TestCompileExamples(t *testing.T) {
 
 func TestEquivalentYAMLAndJSONHaveSameHash(t *testing.T) {
 	t.Parallel()
-	yamlDocument, err := manifest.Parse([]byte("skali: v0.1.0-rc.3\nname: equivalent\napplications:\n  api:\n    image: example.invalid/api:1\n    resources:\n      requests:\n        cpu: 0.2\n"), "skali.yml")
+	yamlDocument, err := manifest.Parse([]byte("name: equivalent\napplications:\n  api:\n    image: example.invalid/api:1\n    resources:\n      requests:\n        cpu: 0.2\n"), "skali.yml")
 	require.NoError(t, err)
-	jsonDocument, err := manifest.Parse([]byte(`{"skali":"v0.1.0-rc.3","name":"equivalent","applications":{"api":{"image":"example.invalid/api:1","resources":{"requests":{"cpu":"0.2"}}}}}`), "skali.json")
+	jsonDocument, err := manifest.Parse([]byte(`{"name":"equivalent","applications":{"api":{"image":"example.invalid/api:1","resources":{"requests":{"cpu":"0.2"}}}}}`), "skali.json")
 	require.NoError(t, err)
 
 	yamlResult, err := Compile(yamlDocument)
@@ -58,7 +58,7 @@ func TestDockerfileResolvesAgainstContext(t *testing.T) {
 	t.Parallel()
 	compile := func(t *testing.T, context, dockerfile string) (Build, error) {
 		t.Helper()
-		source := "skali: v0.1.0-rc.3\nname: dockerfiles\napplications:\n  api:\n    build:\n      context: " + context + "\n"
+		source := "name: dockerfiles\napplications:\n  api:\n    build:\n      context: " + context + "\n"
 		if dockerfile != "" {
 			source += "      dockerfile: " + dockerfile + "\n"
 		}
@@ -130,7 +130,6 @@ func TestSameDomainSupportsDistinctRoutePaths(t *testing.T) {
 func TestRoutePolicyDefaultsAndBounds(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: route-policies
 applications:
   api:
@@ -162,7 +161,6 @@ applications:
 		"a manifest that never mentions compress must keep its definition hash")
 
 	_, err = compileManifest(t, `
-skali: v0.1.0-rc.3
 name: route-policies
 applications:
   api:
@@ -182,7 +180,6 @@ applications:
 func TestRouteCompressOptOut(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: route-compress
 applications:
   api:
@@ -223,7 +220,6 @@ func TestProjectVariableDefault(t *testing.T) {
 func TestBuildFieldsAreLiteral(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: literal-build
 applications:
   api:
@@ -259,7 +255,6 @@ applications:
 func TestPlatformsCompileCanonically(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: platform-demo
 applications:
   api:
@@ -283,7 +278,6 @@ applications:
 func TestEnvironmentValueConcatenation(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: concatenation
 applications:
   api:
@@ -310,7 +304,6 @@ applications:
 func TestServiceOutputMustOccupyEntireEnvironmentValue(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: output-concat
 applications:
   api:
@@ -330,7 +323,6 @@ databases:
 func TestValuesBlockIsRejected(t *testing.T) {
 	t.Parallel()
 	_, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: legacy-values
 values:
   APP_DOMAIN:
@@ -345,7 +337,6 @@ applications:
 func TestValueNamesMustBeEnvironmentStyle(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: bad-value-name
 applications:
   api:
@@ -359,7 +350,6 @@ applications:
 func TestRolloutDefaultsToBlueGreen(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: rollout-default
 applications:
   api:
@@ -380,7 +370,6 @@ applications:
 func TestRolloutRejectsUnknownStrategy(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: invalid-rollout
 applications:
   api:
@@ -395,7 +384,6 @@ applications:
 func TestBlueGreenRejectsRollingUpdateControls(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: invalid-blue-green
 applications:
   api:
@@ -411,7 +399,6 @@ applications:
 func TestVolumeBackedApplicationRejectsBlueGreenStrategy(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: invalid-volume-rollout
 applications:
   api:
@@ -436,7 +423,6 @@ func TestRolloutTimeoutIsCompiledForEveryStrategy(t *testing.T) {
 	}
 	for strategy, extra := range cases {
 		result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: rollout-timeout
 applications:
   api:
@@ -456,7 +442,6 @@ applications:
 func TestRollingUpdateDefaultsSurgeWhenUnavailableIsSpecified(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: rollout-defaults
 applications:
   api:
@@ -477,7 +462,6 @@ applications:
 func TestRollingUpdateRejectsZeroUnavailableAndSurge(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: invalid-rollout
 applications:
   api:
@@ -494,7 +478,6 @@ applications:
 func TestRollingUpdateRejectsNegativeValues(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: invalid-rollout
 applications:
   api:
@@ -510,7 +493,6 @@ applications:
 func TestVolumeBackedApplicationDefaultsToRecreate(t *testing.T) {
 	t.Parallel()
 	result, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: volume-rollout
 applications:
   api:
@@ -527,7 +509,6 @@ applications:
 func TestVolumeBackedApplicationRejectsRollingStrategy(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: invalid-volume-rollout
 applications:
   api:
@@ -546,7 +527,6 @@ applications:
 func TestRecreateRejectsRollingUpdateControls(t *testing.T) {
 	t.Parallel()
 	_, err := compileManifest(t, `
-skali: v0.1.0-rc.3
 name: invalid-recreate
 applications:
   api:

@@ -62,7 +62,7 @@ func TestSkillCompleteManifestsCompile(t *testing.T) {
 }
 
 // The installed set is version-neutral: no complete manifest (which would
-// carry a watermark) and no release tag anywhere. Everything bound to a
+// contain release-specific grammar) and no release tag anywhere. Everything bound to a
 // release is served by skali skill read instead.
 func TestInstalledSetIsVersionNeutral(t *testing.T) {
 	t.Parallel()

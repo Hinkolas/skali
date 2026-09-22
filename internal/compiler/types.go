@@ -10,8 +10,7 @@ type Result struct {
 // DefinitionSchema is the generation of the compiled definition document
 // this build writes and reads. It moves only when the compiled shape
 // changes incompatibly, never with the manifest grammar or the release,
-// and the manifest watermark never enters the document, so moving that
-// changes no hash. DecodeDefinition also reads the envelope written up to
+// and local manifest review history never enters the document or its hash. DecodeDefinition also reads the envelope written up to
 // v0.1.0-rc.2, which carried the manifest version "1" instead.
 const DefinitionSchema = 1
 

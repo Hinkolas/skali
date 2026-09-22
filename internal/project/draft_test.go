@@ -10,8 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const validManifest = `skali: v0.1.0-rc.3
-name: demo
+const validManifest = `name: demo
 applications:
   api:
     image: ghcr.io/example/api:1.0.0
@@ -21,8 +20,7 @@ applications:
         protocol: http
 `
 
-const updatedManifest = `skali: v0.1.0-rc.3
-name: demo
+const updatedManifest = `name: demo
 applications:
   api:
     image: ghcr.io/example/api:1.1.0

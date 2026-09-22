@@ -212,28 +212,6 @@ tasks:
     cmds:
       - goreleaser release --snapshot --clean {{.CLI_ARGS}}
 
-  # Manifest ledger entries (internal/manifest/ledger.go) land as
-  # Release: Next while their change is unreleased, so nobody guesses the
-  # coming tag. Stamping replaces the sentinel with the release about to be
-  # cut; the rewrite lands through a pull request like any other change,
-  # and release:tag refuses a tag while an entry is still pending.
-  release:stamp:
-    desc: "Stamp pending manifest ledger entries with the release about to be cut: task release:stamp V=v0.1.0"
-    preconditions:
-      - sh: test -n "{{.V}}"
-        msg: "pass the version: task release:stamp V=v0.1.0"
-      - sh: printf '%s' "{{.V}}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'
-        msg: "version must look like v1.2.3 or v1.2.3-rc.1 (dotted alpha, beta, rc suffixes only, never -rc1; see internal/version)"
-    cmds:
-      - go run ./cmd/skali-schema --schema ledger --version {{.V}} --output internal/manifest/ledger.go
-      - go test ./internal/manifest/ ./cmd/skali-schema/
-      - |
-        if git diff --quiet -- internal/manifest/ledger.go; then
-          echo "nothing to commit; the ledger is ready for {{.V}}"
-        else
-          echo "review the diff, commit it on a branch and merge it, then run task release:tag V={{.V}}"
-        fi
-
   # Pushing a v* tag is the release button: CI runs on the tag, goreleaser
   # publishes binaries and images, and the GitHub release it creates is what
   # every running cluster's update scan offers as an upgrade. The
@@ -252,10 +230,6 @@ tasks:
         msg: "version must look like v1.2.3 or v1.2.3-rc.1 (dotted alpha, beta, rc suffixes only, never -rc1; see internal/version)"
       - sh: git diff --quiet && git diff --cached --quiet
         msg: "commit or stash your changes first"
-      # The same check goreleaser runs when it writes release.json: no
-      # ledger entry may still be pending or name a newer release.
-      - sh: go run ./cmd/skali-schema --schema release --version "{{.V}}" --output .cache/release-check/release.json
-        msg: "the manifest ledger is not ready for {{.V}}: a pending entry needs task release:stamp V={{.V}} merged first, or an entry names a newer release (see internal/manifest/ledger.go)"
       - sh: test "$(git rev-parse --abbrev-ref HEAD)" = main
         msg: "releases are tagged on main"
       - sh: git fetch --quiet origin main --tags && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"

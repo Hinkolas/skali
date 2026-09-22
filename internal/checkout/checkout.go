@@ -61,15 +61,8 @@ func Load(root string) (*Target, error) {
 // dropping a .gitignore containing "*"; an existing .gitignore is never
 // overwritten, and the user's own .gitignore is never touched.
 func Save(root string, target *Target) error {
-	dir := Dir(root)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("checkout: mkdir %s: %w", dir, err)
-	}
-	ignore := filepath.Join(dir, ".gitignore")
-	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(ignore, []byte("*\n"), 0o644); err != nil {
-			return fmt.Errorf("checkout: write %s: %w", ignore, err)
-		}
+	if err := EnsureDir(root); err != nil {
+		return err
 	}
 	data, err := yaml.Marshal(target)
 	if err != nil {
@@ -78,6 +71,28 @@ func Save(root string, target *Target) error {
 	path := Path(root)
 	if err := os.WriteFile(path, append([]byte(header), data...), 0o644); err != nil {
 		return fmt.Errorf("checkout: write %s: %w", path, err)
+	}
+	return nil
+}
+
+// EnsureDir initializes self-ignoring checkout state without touching custom ignores.
+func EnsureDir(root string) error {
+	dir := Dir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("checkout: mkdir %s: %w", dir, err)
+	}
+	ignore := filepath.Join(dir, ".gitignore")
+	f, err := os.OpenFile(ignore, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("checkout: create %s: %w", ignore, err)
+	}
+	_, writeErr := f.WriteString("*\n")
+	closeErr := f.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return fmt.Errorf("checkout: write %s: %w", ignore, err)
 	}
 	return nil
 }

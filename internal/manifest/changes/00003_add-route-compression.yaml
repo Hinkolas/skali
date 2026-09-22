@@ -1,0 +1,4 @@
+kind: added
+path: "applications.*.routes.*.compress"
+message: "routes gained an optional compress field; the edge now compresses text-like responses by default (gzip, br, zstd) and compress: false opts a route out"
+hint: "nothing to change; write compress: false for routes that stream events or already compress their responses"

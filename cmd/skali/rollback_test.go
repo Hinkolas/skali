@@ -91,7 +91,6 @@ func TestHealthHints(t *testing.T) {
 	}
 
 	bare := compile(t, `
-skali: v0.1.0-rc.3
 name: hints
 applications:
   worker:
@@ -113,7 +112,6 @@ applications:
 	}, hints)
 
 	probed := compile(t, `
-skali: v0.1.0-rc.3
 name: hints
 applications:
   web:

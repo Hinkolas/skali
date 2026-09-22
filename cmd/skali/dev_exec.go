@@ -31,7 +31,7 @@ func newDevExecCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := loadLocalProject("")
+			project, err := loadLocalProject("", command.ErrOrStderr())
 			if err != nil {
 				return err
 			}

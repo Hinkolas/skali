@@ -211,7 +211,6 @@ func TestRenderPriorityClass(t *testing.T) {
 func TestRenderRoutePolicies(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: policies
 applications:
   api:
@@ -431,7 +430,6 @@ func TestRenderSelectorStableAcrossRevisions(t *testing.T) {
 func TestRenderVolumeBackedApplicationUsesRecreate(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: volume-rollout
 applications:
   api:
@@ -478,7 +476,6 @@ func TestRenderReleaseJob(t *testing.T) {
 	render := func(t *testing.T, releaseYAML string) []runtime.Object {
 		t.Helper()
 		document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: shop
 applications:
   web:
@@ -564,7 +561,6 @@ applications:
 func TestRenderReleaseJobLongNamesKeepLabelsValid(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: trackr-escpos
 applications:
   proxy:
@@ -626,7 +622,6 @@ func environmentVariableFromSecret(variable, secret, key string) corev1.EnvVar {
 func TestRenderValuesIdentity(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: identity
 applications:
   web:
@@ -739,7 +734,6 @@ applications:
 func TestRenderProgressDeadlineAndHistoryLimit(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: deadline
 applications:
   api:
@@ -941,7 +935,6 @@ func TestRenderTrafficColorsHold(t *testing.T) {
 	// Rolling applications honor the pin too: opting out of blue-green
 	// keeps the colored Deployment serving until the rolling one is ready.
 	rollingDoc, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: opt-out
 applications:
   api:
@@ -976,7 +969,6 @@ func TestRenderRolloutTimeoutOverridesDeadline(t *testing.T) {
 	render := func(t *testing.T, rollout string) *appsv1.Deployment {
 		t.Helper()
 		document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: deadline
 applications:
   api:
@@ -1001,7 +993,6 @@ applications:
 func TestRenderRejectsUnknownStrategy(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: unknown
 applications:
   api:
@@ -1038,7 +1029,6 @@ func routeMiddlewares(t *testing.T, route *unstructured.Unstructured) []string {
 func TestRenderCompressOptOut(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: quiet
 applications:
   api:

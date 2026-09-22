@@ -105,7 +105,7 @@ func parseExecArgs(command *cobra.Command, args []string) (service string, argv 
 // defaultExecService picks the service when none was named: the manifest's
 // sole application, or an interactive choice among several.
 func defaultExecService(command *cobra.Command) (string, error) {
-	project, err := loadLocalProject("")
+	project, err := readLocalProject("", nil)
 	if err != nil {
 		return "", errors.New("no service named and no manifest found; name the service explicitly")
 	}

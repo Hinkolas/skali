@@ -42,7 +42,7 @@ func TestDispatchWorkerUsesFrozenContext(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"code":"test_stop","message":"frozen target reached"}}`))
 	}))
 	other := fakeMaster(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { otherRequests.Add(1); w.WriteHeader(500) }))
-	require.NoError(t, os.WriteFile(filepath.Join(f.d.cwd, "skali.yml"), []byte("skali: v0.4.0\n"+upgradeFixtureBody), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(f.d.cwd, "skali.yml"), []byte(""+upgradeFixtureBody), 0600))
 	f.d.environ = os.Environ
 	var workerOutput string
 	f.d.spawn = func(ctx context.Context, path string, args, env []string) (childStatus, error) {

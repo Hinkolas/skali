@@ -17,8 +17,10 @@
   Abandoned per-release records require the cleanup instructions printed by CLI.
 - The installed agent skill is an operational guide. Release-specific manifest,
   CLI and architecture references are embedded in the matching binary.
-- Newer manifest watermarks are rejected by older released compilers. Manifest
-  upgrades validate before writing and leave semantic review to the author.
+- Manifest review history is stored locally under `.skali/`, independently of
+  release versions. Numbered change records require no release stamping.
+  Manifest upgrades validate safe edits and require explicit acknowledgement
+  of relevant semantic changes; manifests carry no version field.
 - Remote listing/removal can repair incomplete configuration entries. Invalid
   YAML reports its file path and is never rewritten automatically.
 - Configuration, CLI upgrade and cache operations are serialized. `skali

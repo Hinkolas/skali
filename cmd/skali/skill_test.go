@@ -97,45 +97,22 @@ func TestSkillReadPrintsReferenceVerbatim(t *testing.T) {
 }
 
 func TestSkillReadSince(t *testing.T) {
-	out, err := runCapturingStdout(t, func() error {
-		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "v0.1.0-rc.2")
-	})
+	out, err := runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", "0") })
 	require.NoError(t, err)
-	require.Contains(t, out, "manifest changes since v0.1.0-rc.2 (this skali is "+versionpkg.Version+")")
-	require.Contains(t, out, "  v0.1.0-rc.3  removed  version\n")
-	require.Contains(t, out, "    version was replaced by skali")
-	require.Contains(t, out, "    fix: run skali manifest upgrade")
-
-	// Against a fixed ledger: an entry still pending its release lists as
-	// next, and a watermark past every shipped entry has seen it.
-	withLedger(t, []manifest.Change{
-		{Release: "v0.1.0-rc.3", Kind: manifest.ChangeRemoved, Path: "version", Message: "version was replaced by skali", Hint: "run skali manifest upgrade"},
-		{Release: manifest.Next, Kind: manifest.ChangeRemoved, Path: "backups", Message: "backups left the manifest", Hint: "drop the block"},
-	})
-	out, err = runCapturingStdout(t, func() error {
-		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "v0.1.0-rc.3")
-	})
+	require.Contains(t, out, "manifest changes since revision 0")
+	require.Contains(t, out, "  1  removed  version")
+	require.Contains(t, out, "  5  removed  skali")
+	for _, value := range []string{"-1", "6", "v0.1.0-rc.3", "latest", ""} {
+		_, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", value) })
+		require.ErrorContains(t, err, "must be a revision")
+	}
+	out, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", "5") })
 	require.NoError(t, err)
-	require.Equal(t, versionDescription()+"\n\n"+"manifest changes since v0.1.0-rc.3 (this skali is "+versionpkg.Version+")\n"+
-		"  next  removed  backups\n    backups left the manifest\n    fix: drop the block\n", out)
-	out, err = runCapturingStdout(t, func() error {
-		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "0.1.0-rc.4")
-	})
-	require.NoError(t, err)
-	require.Equal(t, versionDescription()+"\n\n"+"no manifest changes since v0.1.0-rc.4; this skali is "+versionpkg.Version+"\n", out)
-
-	_, err = runCapturingStdout(t, func() error {
-		return execute(newRootCommand(), "skill", "read", "manifest", "--since", "latest")
-	})
-	require.ErrorContains(t, err, `--since "latest" is not a skali release; expected a tag like `+manifest.ReferenceRelease())
-	_, err = runCapturingStdout(t, func() error {
-		return execute(newRootCommand(), "skill", "read", "cli", "--since", "v0.1.0-rc.2")
-	})
-	require.ErrorContains(t, err, "--since applies to the manifest topic")
-	_, err = runCapturingStdout(t, func() error {
-		return execute(newRootCommand(), "skill", "read", "--since", "v0.1.0-rc.2")
-	})
-	require.ErrorContains(t, err, "--since applies to the manifest topic")
+	require.Contains(t, out, "no manifest changes since revision 5")
+	for _, args := range [][]string{{"skill", "read", "cli", "--since", "0"}, {"skill", "read", "--since", "0"}} {
+		_, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), args...) })
+		require.ErrorContains(t, err, "--since applies to the manifest topic")
+	}
 }
 
 // withLedger swaps the manifest change ledger for the test, so assertions
@@ -149,15 +126,15 @@ func withLedger(t *testing.T, ledger []manifest.Change) {
 
 func TestRenderChangesSinceListsEveryEntry(t *testing.T) {
 	var out bytes.Buffer
-	renderChangesSince(&out, "v0.1.0", "v0.2.0", []manifest.Change{
-		{Release: "v0.1.1", Kind: manifest.ChangeAdded, Path: "applications.*.dev", Message: "dev blocks exist"},
-		{Release: "v0.2.0", Kind: manifest.ChangeChanged, Path: "applications.*.rollout", Message: "the default is blue-green", Hint: "declare strategy: rolling to keep the old behavior"},
+	renderChangesSince(&out, 0, "v0.2.0", []manifest.Change{
+		{Revision: 1, Kind: manifest.ChangeAdded, Path: "applications.*.dev", Message: "dev blocks exist"},
+		{Revision: 2, Kind: manifest.ChangeChanged, Path: "applications.*.rollout", Message: "the default is blue-green", Hint: "declare strategy: rolling to keep the old behavior"},
 	})
 	require.Equal(t, strings.Join([]string{
-		"manifest changes since v0.1.0 (this skali is v0.2.0)",
-		"  v0.1.1  added  applications.*.dev",
+		"manifest changes since revision 0 (this skali is v0.2.0)",
+		"  1  added  applications.*.dev",
 		"    dev blocks exist",
-		"  v0.2.0  changed  applications.*.rollout",
+		"  2  changed  applications.*.rollout",
 		"    the default is blue-green",
 		"    fix: declare strategy: rolling to keep the old behavior",
 		"",

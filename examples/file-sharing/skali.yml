@@ -1,6 +1,5 @@
 # yaml-language-server: $schema=../../schemas/skali.schema.json
 
-skali: v0.1.0-rc.3
 
 name: file-sharing
 description: Reference manifest exercising most of the schema (no application source ships with it)
