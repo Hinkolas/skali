@@ -252,6 +252,42 @@ func (q *Queries) ListEnvironmentsWithTargets(ctx context.Context) ([]ListEnviro
 	return items, nil
 }
 
+const listProjectEnvironmentStates = `-- name: ListProjectEnvironmentStates :many
+SELECT e.id, t.state
+FROM environments e
+JOIN environment_targets t ON t.environment_id = e.id
+WHERE e.project_id = $1
+ORDER BY e.name
+`
+
+type ListProjectEnvironmentStatesRow struct {
+	ID    uuid.UUID
+	State string
+}
+
+// One project's environments with their target pointer state, for the
+// environments listing's summary (one query per project, never one per
+// environment).
+func (q *Queries) ListProjectEnvironmentStates(ctx context.Context, projectID uuid.UUID) ([]ListProjectEnvironmentStatesRow, error) {
+	rows, err := q.db.Query(ctx, listProjectEnvironmentStates, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectEnvironmentStatesRow
+	for rows.Next() {
+		var i ListProjectEnvironmentStatesRow
+		if err := rows.Scan(&i.ID, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateEnvironmentSettings = `-- name: UpdateEnvironmentSettings :one
 UPDATE environments
 SET max_role = $2, deploy_policy = $3, promote_from = $4, priority = $5,

@@ -117,3 +117,60 @@ func TestProjectListSummaryLockedEnvironmentHidesCachedHealth(t *testing.T) {
 	// The locked environment is never even asked for.
 	require.Equal(t, []uuid.UUID{uuid.MustParse(stagingID)}, stub.lastIDs)
 }
+
+func TestEnvironmentListSummaryReadsKernelHealth(t *testing.T) {
+	a, stub := newHealthAPI(t)
+	a.createUser("owner@example.com", "hunter2hunter2")
+	a.createMember("bob@example.com", "hunter2hunter2")
+	owner := a.login("owner@example.com", "hunter2hunter2")
+	bob := a.login("bob@example.com", "hunter2hunter2")
+	projectID, prodID := a.createEnvironment(t, owner)
+	status, body := a.do("POST", "/v1/projects/"+projectID+"/environments", owner, map[string]any{"name": "staging"})
+	require.Equal(t, http.StatusCreated, status, "%v", body)
+	stagingID := body["environment"].(map[string]any)["id"].(string)
+
+	evaluatedAt := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	stub.entries[uuid.MustParse(prodID)] = reconcile.EnvironmentHealth{Health: module.HealthHealthy, EvaluatedAt: evaluatedAt}
+	stub.entries[uuid.MustParse(stagingID)] = reconcile.EnvironmentHealth{Health: module.HealthDegraded, EvaluatedAt: evaluatedAt}
+
+	byName := func(body map[string]any) map[string]map[string]any {
+		out := map[string]map[string]any{}
+		for _, raw := range body["environments"].([]any) {
+			env := raw.(map[string]any)
+			out[env["name"].(string)] = env
+		}
+		return out
+	}
+
+	// Without the include the listing stays lean and reads nothing.
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/environments", owner, nil)
+	require.Equal(t, http.StatusOK, status)
+	envs := byName(body)
+	require.Nil(t, envs["production"]["state"])
+	require.Nil(t, envs["production"]["health"])
+	require.Equal(t, 0, stub.calls)
+
+	// With it, state and the cached verdict arrive in one batch read.
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/environments?include=summary", owner, nil)
+	require.Equal(t, http.StatusOK, status)
+	envs = byName(body)
+	require.Equal(t, "active", envs["production"]["state"])
+	require.Equal(t, "healthy", envs["production"]["health"])
+	require.Equal(t, evaluatedAt.Format(time.RFC3339), envs["production"]["health_evaluated_at"])
+	require.Equal(t, "degraded", envs["staging"]["health"])
+	require.Equal(t, 1, stub.calls)
+	require.Len(t, stub.lastIDs, 2)
+
+	// A locked environment shows neither state nor health, and is not asked for.
+	a.grantMember(t, projectID, "bob@example.com", "read")
+	a.setCell(t, prodID, "bob@example.com", "none")
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/environments?include=summary", bob, nil)
+	require.Equal(t, http.StatusOK, status)
+	envs = byName(body)
+	require.Equal(t, "none", envs["production"]["access"])
+	require.Nil(t, envs["production"]["state"])
+	require.Nil(t, envs["production"]["health"])
+	require.Nil(t, envs["production"]["health_evaluated_at"])
+	require.Equal(t, "degraded", envs["staging"]["health"])
+	require.Equal(t, []uuid.UUID{uuid.MustParse(stagingID)}, stub.lastIDs)
+}

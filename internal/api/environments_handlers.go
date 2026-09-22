@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
@@ -29,6 +31,9 @@ type environmentsHandlers struct {
 	// reconcile re-renders an environment whose priority changed so its
 	// application pods move onto the new PriorityClass right away.
 	reconcile *reconcile.Kernel
+	// health is the kernel's cached verdict surface behind the listing's
+	// optional summary; never the status projection per environment.
+	health environmentHealthReader
 }
 
 type environmentPayload struct {
@@ -44,6 +49,13 @@ type environmentPayload struct {
 	// to, derived from the recorded promotions; the console preselects it.
 	// Only on the project listing, and only for unlocked environments.
 	LastPromotionTarget string `json:"last_promotion_target,omitempty"`
+	// State, Health and HealthEvaluatedAt are the listing's summary
+	// (`?include=summary`): the target pointer state and the kernel's
+	// cached health verdict, unlocked environments only. Same semantics as
+	// the project list summary.
+	State             string     `json:"state,omitempty"`
+	Health            string     `json:"health,omitempty"`
+	HealthEvaluatedAt *time.Time `json:"health_evaluated_at,omitempty"`
 }
 
 type environmentSettingsPayload struct {
@@ -176,7 +188,10 @@ func (h *environmentsHandlers) create(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /v1/projects/{id}/environments: every environment of the project,
-// locked ones by id and name only.
+// locked ones by id and name only. `?include=summary` adds each unlocked
+// environment's pointer state and cached health verdict: one query and one
+// cache read for the whole project, so a page listing environments never
+// asks for the status projection per row.
 func (h *environmentsHandlers) list(w http.ResponseWriter, r *http.Request) {
 	projectID, ok := pathID(w, r)
 	if !ok {
@@ -198,6 +213,7 @@ func (h *environmentsHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}
 	grant := grantFrom(r.Context())
 	payload := make([]environmentPayload, len(environments))
+	var unlocked []uuid.UUID
 	for i := range environments {
 		role := authz.None
 		if envGrant, ok := grant.Environment(environments[i].ID); ok {
@@ -210,11 +226,49 @@ func (h *environmentsHandlers) list(w http.ResponseWriter, r *http.Request) {
 			if target, ok := targets[environments[i].ID]; ok {
 				payload[i].LastPromotionTarget = names[target]
 			}
+			unlocked = append(unlocked, environments[i].ID)
+		}
+	}
+	if r.URL.Query().Get("include") == "summary" && len(unlocked) > 0 {
+		if err := h.attachSummary(r.Context(), projectID, payload, unlocked); err != nil {
+			writeProjectError(r.Context(), w, err)
+			return
 		}
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Environments []environmentPayload `json:"environments"`
 	}{payload})
+}
+
+// attachSummary fills state and cached health for the unlocked rows of one
+// project's listing. A missing verdict reads unknown without an evaluation
+// time, exactly as on the project list.
+func (h *environmentsHandlers) attachSummary(ctx context.Context, projectID uuid.UUID, payload []environmentPayload, unlocked []uuid.UUID) error {
+	states, err := h.projects.ListEnvironmentStates(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	var healths map[uuid.UUID]reconcile.EnvironmentHealth
+	if h.health != nil {
+		healths = h.health.EnvironmentHealths(unlocked)
+	}
+	for i := range payload {
+		if payload[i].Access == authz.None.String() {
+			continue
+		}
+		id, err := uuid.Parse(payload[i].ID)
+		if err != nil {
+			continue
+		}
+		payload[i].State = states[id]
+		payload[i].Health = string(module.HealthUnknown)
+		if verdict, ok := healths[id]; ok {
+			payload[i].Health = string(verdict.Health)
+			evaluatedAt := verdict.EvaluatedAt
+			payload[i].HealthEvaluatedAt = &evaluatedAt
+		}
+	}
+	return nil
 }
 
 // GET /v1/environments/{id}: the minimal shape for a locked environment.

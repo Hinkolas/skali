@@ -29,6 +29,16 @@ FROM environments e
 JOIN environment_targets t ON t.environment_id = e.id
 ORDER BY e.project_id, e.name;
 
+-- One project's environments with their target pointer state, for the
+-- environments listing's summary (one query per project, never one per
+-- environment).
+-- name: ListProjectEnvironmentStates :many
+SELECT e.id, t.state
+FROM environments e
+JOIN environment_targets t ON t.environment_id = e.id
+WHERE e.project_id = $1
+ORDER BY e.name;
+
 -- name: DeleteEnvironmentByID :execrows
 DELETE FROM environments WHERE id = $1;
 

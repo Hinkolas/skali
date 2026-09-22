@@ -17,8 +17,10 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 
 	// Environments and the draft need only the project id, so they leave
 	// together; the status projection waits for the resolved environment.
+	// The summary rides along: each environment's state and cached health,
+	// so pages listing environments never ask for status per row.
 	const [envsRes, draftRes] = await Promise.all([
-		apiFetch(fetch, `/v1/projects/${project.id}/environments`),
+		apiFetch(fetch, `/v1/projects/${project.id}/environments?include=summary`),
 		apiFetch(fetch, `/v1/projects/${project.id}/draft`)
 	]);
 	if (!envsRes.ok) error(502, 'Could not load environments');

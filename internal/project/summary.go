@@ -33,6 +33,20 @@ type Summary struct {
 	ServiceCounts ServiceCounts
 }
 
+// ListEnvironmentStates maps one project's environments to their target
+// pointer state, in one query, for the environments listing's summary.
+func (s *Service) ListEnvironmentStates(ctx context.Context, projectID uuid.UUID) (map[uuid.UUID]string, error) {
+	rows, err := s.st.ListProjectEnvironmentStates(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("project: list environment states: %w", err)
+	}
+	states := make(map[uuid.UUID]string, len(rows))
+	for _, row := range rows {
+		states[row.ID] = row.State
+	}
+	return states, nil
+}
+
 // ListSummaries builds the rollup for every project in two queries: all
 // environments with target states, and all draft definitions. Projects
 // without environments or drafts still get an entry with empty fields.

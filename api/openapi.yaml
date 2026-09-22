@@ -1038,6 +1038,19 @@ paths:
       operationId: listEnvironments
       summary: List environments of a project
       tags: [environments]
+      parameters:
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [summary]
+          description: |
+            With `summary`, each unlocked environment carries its pointer
+            `state` and the reconcile kernel's cached `health` verdict with
+            `health_evaluated_at`, one query and one cache read for the
+            whole project. Same semantics as the project list summary;
+            per-service detail is `GET /v1/environments/{id}/status`.
       responses:
         "200":
           description: |
@@ -4263,6 +4276,27 @@ components:
             Name of the environment this one was last promoted to, derived
             from the recorded promotions. Present on the project listing
             only, for unlocked environments with at least one promotion.
+        state:
+          type: string
+          enum: [active, down, releasing]
+          description: |
+            The target pointer state. Present on the project listing with
+            `?include=summary`, for unlocked environments.
+        health:
+          type: string
+          enum: [unknown, progressing, healthy, degraded, unhealthy]
+          description: |
+            The kernel's cached worst service health from its last pass,
+            folded to `unknown` while the cluster observation is not fresh.
+            Present on the project listing with `?include=summary`, for
+            unlocked environments.
+        health_evaluated_at:
+          type: string
+          format: date-time
+          description: |
+            When the kernel last evaluated this environment's health;
+            absent when nothing was evaluated yet. With `?include=summary`
+            only.
 
     MembersResponse:
       type: object

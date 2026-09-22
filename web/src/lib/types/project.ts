@@ -103,4 +103,10 @@ export interface Environment {
 	settings?: EnvironmentSettings;
 	/** Name of the environment this one was last promoted to (project listing only). */
 	last_promotion_target?: string;
+	/** Project listing with ?include=summary, unlocked only: the pointer state. */
+	state?: EnvironmentState;
+	/** Project listing with ?include=summary, unlocked only: the kernel's cached verdict. */
+	health?: ServiceHealth;
+	/** When the kernel last evaluated health; absent until the first pass. */
+	health_evaluated_at?: string;
 }
