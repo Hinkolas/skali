@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -68,6 +69,8 @@ type Client struct {
 	// without ever requesting key material.
 	Metadata metadata.Interface
 	Mapper   meta.RESTMapper
+
+	ownership atomic.Pointer[ownershipProtection]
 
 	// Lazily built service-proxy transport (proxy.go).
 	proxyOnce sync.Once
@@ -209,7 +212,12 @@ func (c *Client) applyAttempt(ctx context.Context, applied *unstructured.Unstruc
 			if err := checkOwner(live, owner, applied.GroupVersionKind()); err != nil {
 				return ApplyResult{}, false, err
 			}
-			applied.SetResourceVersion(live.GetResourceVersion())
+			if protected := c.protectedResource(applied.GroupVersionKind(), applied.GetNamespace()); protected != nil && live.GetUID() != "" {
+				resource = protected
+				applied.SetUID(live.GetUID())
+			} else {
+				applied.SetResourceVersion(live.GetResourceVersion())
+			}
 		}
 		priorVersion = live.GetResourceVersion()
 		priorGeneration = live.GetGeneration()

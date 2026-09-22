@@ -71,3 +71,40 @@ symlinks; symlink contents are never followed during extraction.
 Release verification: `scripts/check-release-snapshot.sh` builds a nonpublishing
 snapshot and checks its metadata against the binaries and installer pin. CI also
 verifies metadata downloaded from the exact tag after a real publication.
+
+## Reconciliation ownership protection
+
+Environment-owned applies retry resource-version conflicts at most five times,
+with a fresh ownership check on every attempt. Field-manager conflicts and
+ownership failures are returned immediately; retries never enable force. A
+recovered attempt is internal to the operation and creates no failed run.
+
+The installer now installs the versioned `skali-environment-ownership-v1`
+admission policy and binding before updating skalid. Kubernetes makes the
+`skali.dev/managed` and `skali.dev/environment` labels and the
+`skali.dev/resource-identity` annotation immutable on objects carrying the full
+identity. Status, ordinary configuration, unrelated metadata, finalizers, and
+deletions remain supported. Existing valid objects need no migration. Moving
+ownership by editing these keys is no longer supported.
+
+Skalid verifies the exact contract, completed type checking, and positive and
+negative dry-run updates of the installer-owned probe ConfigMap. It verifies
+every serving Kubernetes API endpoint and sends UID-guarded applies directly to
+a verified endpoint. Those applies omit `resourceVersion`, so unrelated HPA
+status updates no longer conflict with configuration writes. The UID prevents
+an update from affecting a replacement object or implicitly creating one.
+
+Policy, binding, and API membership watches invalidate this capability on
+changes or observation loss; verification has a one-minute lease. Unavailable
+policies, missing permissions, unreachable API endpoints, and verification
+failures retain resource-version checks with bounded retries. Installations
+without admission support can still run the daemon in this fallback mode;
+installer-managed upgrades require the admission stage to pass. Joining servers
+verify the installed policy before enrollment completes.
+
+Admission configuration is installer-owned infrastructure, not a security
+boundary against cluster administrators who can disable admission itself. Do
+not remove or weaken it while UID-guarded clients are active. Roll back the
+daemon to version-guarded behavior before deliberately removing the policy.
+Older daemons remain compatible with the policy. No database migration or
+application redeployment is required.

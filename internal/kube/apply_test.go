@@ -134,3 +134,48 @@ func TestApplyCancellationStopsRetry(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, calls)
 }
+
+func TestApplyProtectedIdentityAndFallback(t *testing.T) {
+	for _, mode := range []string{"active", "invalidated", "expired"} {
+		t.Run(mode, func(t *testing.T) {
+			want := ownedSecret(uuid.NewString())
+			client, ambient := ownershipClient(want)
+			peer, verified := ownershipClient(want)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			guard := &ownershipProtection{server: peer, context: ctx}
+			guard.valid.Store(mode != "invalidated")
+			if mode == "expired" {
+				cancel()
+			}
+			client.ownership.Store(guard)
+			ambientCalls, verifiedCalls := 0, 0
+			ambient.PrependReactor("patch", "secrets", func(action kt.Action) (bool, runtime.Object, error) {
+				ambientCalls++
+				applied := &unstructured.Unstructured{}
+				require.NoError(t, json.Unmarshal(action.(kt.PatchAction).GetPatch(), applied))
+				require.Equal(t, "7", applied.GetResourceVersion())
+				require.Empty(t, applied.GetUID())
+				return true, want, nil
+			})
+			verified.PrependReactor("patch", "secrets", func(action kt.Action) (bool, runtime.Object, error) {
+				verifiedCalls++
+				applied := &unstructured.Unstructured{}
+				require.NoError(t, json.Unmarshal(action.(kt.PatchAction).GetPatch(), applied))
+				require.Empty(t, applied.GetResourceVersion())
+				require.Equal(t, want.GetUID(), applied.GetUID())
+				return true, want, nil
+			})
+			result, err := client.Apply(context.Background(), want, false)
+			require.NoError(t, err)
+			require.False(t, result.Changed)
+			if mode == "active" {
+				require.Equal(t, 1, verifiedCalls)
+				require.Zero(t, ambientCalls)
+			} else {
+				require.Equal(t, 1, ambientCalls)
+				require.Zero(t, verifiedCalls)
+			}
+		})
+	}
+}

@@ -208,6 +208,8 @@ func TestInstallServerJoin(t *testing.T) {
 		return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
 	}
 
+	legacyAdmissionOnStart(t, fake)
+
 	record, err := Install(ctx, fake, InstallOptions{
 		Cluster:      "e2e",
 		Role:         layout.RoleServer,

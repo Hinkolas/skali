@@ -55,16 +55,17 @@ func TestLocalRenderFrozen(t *testing.T) {
 	t.Parallel()
 	profile := localProfile()
 	sources := stageSources(profile)
-	require.Len(t, sources, 11)
+	require.Len(t, sources, 12)
 
 	frozen := map[string]int{
+		"local-ownership.yaml":    1,
 		"local-namespace.yaml":    0,
-		"local-priority.yaml":     1,
-		"local-database.yaml":     5,
-		"local-registry.yaml":     6,
-		"local-skalid.yaml":       7,
-		"local-edge-metrics.yaml": 9,
-		"local-bootstrap.yaml":    10,
+		"local-priority.yaml":     2,
+		"local-database.yaml":     6,
+		"local-registry.yaml":     7,
+		"local-skalid.yaml":       8,
+		"local-edge-metrics.yaml": 10,
+		"local-bootstrap.yaml":    11,
 	}
 	for name, index := range frozen {
 		path := filepath.Join("testdata", name)
@@ -78,10 +79,10 @@ func TestLocalRenderFrozen(t *testing.T) {
 		require.Equal(t, string(golden), sources[index], name)
 	}
 	// Production-only stages contribute zero bytes locally.
-	require.Empty(t, sources[2], "storage stage must be empty locally")
-	require.Empty(t, sources[3], "issuer stage must be empty locally")
-	require.Empty(t, sources[4], "edge stage must be empty locally")
-	require.Empty(t, sources[8], "record stage must be empty locally")
+	require.Empty(t, sources[3], "storage stage must be empty locally")
+	require.Empty(t, sources[4], "issuer stage must be empty locally")
+	require.Empty(t, sources[5], "edge stage must be empty locally")
+	require.Empty(t, sources[9], "record stage must be empty locally")
 
 	// The full hash including the vendored operator manifests is frozen
 	// too: cert-manager must not leak into the local fingerprint.

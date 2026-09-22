@@ -1,0 +1,56 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: skali-environment-ownership-v1
+spec:
+  failurePolicy: Fail
+  matchConditions:
+  - expression: oldObject != null && has(oldObject.metadata.labels) && has(oldObject.metadata.annotations)
+      && 'skali.dev/managed' in oldObject.metadata.labels && oldObject.metadata.labels['skali.dev/managed']
+      == 'true' && 'skali.dev/environment' in oldObject.metadata.labels && oldObject.metadata.labels['skali.dev/environment']
+      != '' && 'skali.dev/resource-identity' in oldObject.metadata.annotations &&
+      oldObject.metadata.annotations['skali.dev/resource-identity'] != ''
+    name: existing-environment-identity
+  matchConstraints:
+    matchPolicy: Equivalent
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+    - apiGroups:
+      - '*'
+      apiVersions:
+      - '*'
+      operations:
+      - UPDATE
+      resources:
+      - '*/*'
+      scope: '*'
+  validations:
+  - expression: has(object.metadata.labels) && has(object.metadata.annotations) &&
+      ['skali.dev/managed', 'skali.dev/environment'].all(k, k in object.metadata.labels
+      && object.metadata.labels[k] == oldObject.metadata.labels[k]) && 'skali.dev/resource-identity'
+      in object.metadata.annotations && object.metadata.annotations['skali.dev/resource-identity']
+      == oldObject.metadata.annotations['skali.dev/resource-identity']
+    message: skali ownership metadata is immutable
+    reason: Forbidden
+status: {}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: skali-environment-ownership-v1
+spec:
+  policyName: skali-environment-ownership-v1
+  validationActions:
+  - Deny
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  annotations:
+    skali.dev/resource-identity: /ConfigMap/skali-ownership-probe-v1
+  labels:
+    skali.dev/environment: ownership-probe
+    skali.dev/managed: "true"
+  name: skali-ownership-probe-v1
+  namespace: skali-system

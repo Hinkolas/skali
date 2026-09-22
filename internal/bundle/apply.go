@@ -249,3 +249,20 @@ func (a *Applier) wait(ctx context.Context, what string, probe func(context.Cont
 		}
 	}
 }
+
+// ApplyOwnershipProtection precedes the daemon in both bootstrap paths. A
+// positive dry-run and policy-specific negative probes prove admission is active.
+func (a *Applier) ApplyOwnershipProtection(ctx context.Context, objects []unstructured.Unstructured) error {
+	if err := a.ApplyObjects(ctx, objects); err != nil {
+		return err
+	}
+	var lastErr error
+	err := a.wait(ctx, "ownership admission policy", func(ctx context.Context) (bool, error) {
+		lastErr = a.Client.VerifyOwnershipPolicy(ctx)
+		return lastErr == nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("%w (last verification: %v)", err, lastErr)
+	}
+	return nil
+}
