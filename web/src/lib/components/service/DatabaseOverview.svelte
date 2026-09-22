@@ -54,7 +54,7 @@
 			measured: 'logical size'
 		}),
 		lastBackupStat(backup, runs, 'database'),
-		connectedStat(apps, live, 'private network'),
+		connectedStat(apps, live, 'private network', envStatus.pending),
 		phaseStat(connection)
 	]);
 

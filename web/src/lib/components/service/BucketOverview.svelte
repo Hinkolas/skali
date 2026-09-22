@@ -60,7 +60,7 @@
 			}
 		),
 		lastBackupStat(backup, runs, 'bucket'),
-		connectedStat(apps, live, 'keys injected'),
+		connectedStat(apps, live, 'keys injected', envStatus.pending),
 		phaseStat(connection)
 	]);
 

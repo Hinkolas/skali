@@ -77,20 +77,23 @@ export function dependents(services: ServiceView[], kind: ClaimKind, key: string
 	return services.filter((s) => s.type === 'application' && s.dependencies.includes(ref));
 }
 
+/** The dependents tile. `pending` means the live status has not arrived
+ * yet, so the note holds off the healthy count instead of reading 0/N. */
 export function connectedStat(
 	apps: ServiceView[],
 	live: (key: string) => ServiceStatus | undefined,
-	how: string
+	how: string,
+	pending = false
 ): StatCardData {
 	const healthy = apps.filter((a) => live(a.key)?.health === 'healthy').length;
+	let note = `${healthy}/${apps.length} healthy · ${how}`;
+	if (apps.length === 0) note = 'no application depends on it';
+	else if (pending) note = `health pending · ${how}`;
 	return {
 		label: 'CONNECTED',
 		value: `${apps.length}`,
 		unit: `app${apps.length === 1 ? '' : 's'}`,
-		note:
-			apps.length === 0
-				? 'no application depends on it'
-				: `${healthy}/${apps.length} healthy · ${how}`
+		note
 	};
 }
 

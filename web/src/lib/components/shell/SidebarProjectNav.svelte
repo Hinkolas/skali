@@ -6,6 +6,7 @@
 	import type { Project } from '$lib/types/project';
 	import { PROJECT_TABS } from '$lib/navigation';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import StatusDot from '$lib/components/ui/StatusDot.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 	import { withEnv } from '$lib/urls';
@@ -66,7 +67,11 @@
 			<TypeBadge kind={service.type} form="tile" />
 			<span class="truncate">{service.name}</span>
 			<span class="ml-auto flex-none">
-				<StatusDot status={envStatus.service(service.type, service.key)?.health ?? 'unknown'} />
+				{#if envStatus.pending}
+					<Skeleton variant="line" class="size-[8px] w-[8px] rounded-full" />
+				{:else}
+					<StatusDot status={envStatus.service(service.type, service.key)?.health ?? 'unknown'} />
+				{/if}
 			</span>
 		</a>
 		<!-- eslint-enable svelte/no-navigation-without-resolve -->

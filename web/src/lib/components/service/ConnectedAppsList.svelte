@@ -7,6 +7,7 @@
 	import { withEnv } from '$lib/urls';
 	import Card from '$lib/components/ui/Card.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Container from '@lucide/svelte/icons/container';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
@@ -46,9 +47,13 @@
 				<TypeBadge kind="application" form="tile" />
 				<span class="text-text-primary text-lg font-medium">{app.name}</span>
 				<span class="font-mono text-text-faint text-xs">via {ref}</span>
-				<span class="ml-auto flex items-center gap-1.5 text-md {meta.text}">
-					<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
-				</span>
+				{#if envStatus.pending}
+					<Skeleton variant="pill" class="ml-auto w-16" />
+				{:else}
+					<span class="ml-auto flex items-center gap-1.5 text-md {meta.text}">
+						<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
+					</span>
+				{/if}
 			</a>
 			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 		{/each}

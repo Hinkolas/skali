@@ -15,6 +15,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import StatusPill from '$lib/components/ui/StatusPill.svelte';
 	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
 
@@ -102,7 +103,11 @@
 
 <PageHeader title={service.name}>
 	{#snippet titleTrailing()}
-		<StatusPill status={health} pill diagnostics={live?.diagnostics ?? []} />
+		{#if envStatus.pending}
+			<Skeleton variant="pill" class="h-7 w-24" />
+		{:else}
+			<StatusPill status={health} pill diagnostics={live?.diagnostics ?? []} />
+		{/if}
 		{#if deferredRoutes.length > 0}
 			<span
 				class="text-status-warning bg-status-warning/10 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-md"

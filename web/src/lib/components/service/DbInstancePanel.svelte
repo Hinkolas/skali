@@ -7,6 +7,7 @@
 	import { describeSeconds } from '$lib/cron';
 	import Card from '$lib/components/ui/Card.svelte';
 	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import PodList from './PodList.svelte';
 
 	// The server behind one database claim: the engine it runs on, how it is
@@ -45,9 +46,13 @@
 <Card class="flex flex-col p-5">
 	<div class="mb-3.5 flex items-center gap-2.5">
 		<h3 class="text-text-primary text-xl font-semibold">Instance</h3>
-		<span class="flex items-center gap-1.5 text-md {meta.text}">
-			<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
-		</span>
+		{#if envStatus.pending}
+			<Skeleton variant="pill" class="w-16" />
+		{:else}
+			<span class="flex items-center gap-1.5 text-md {meta.text}">
+				<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
+			</span>
+		{/if}
 	</div>
 	<div class="flex flex-col">
 		<KeyValueRow k="Engine" v={engine} labelWidth="w-36" />
@@ -61,10 +66,14 @@
 	{#if dedicated || pods.length > 0}
 		<div class="mt-5 mb-2.5 flex items-baseline gap-2.5">
 			<h4 class="text-text-primary text-base font-semibold">Pods</h4>
-			<span class="font-mono text-text-faint text-xs">
-				{pods.filter((p) => p.ready).length}/{pods.length} ready
-			</span>
+			{#if envStatus.pending}
+				<Skeleton variant="line" class="h-3 w-16" />
+			{:else}
+				<span class="font-mono text-text-faint text-xs">
+					{pods.filter((p) => p.ready).length}/{pods.length} ready
+				</span>
+			{/if}
 		</div>
-		<PodList {pods} />
+		<PodList {pods} pending={envStatus.pending} />
 	{/if}
 </Card>

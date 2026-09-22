@@ -109,13 +109,13 @@
 	}
 
 	// One line of facts per environment: state, health, and the newest
-	// deploy. The selected environment has a live status document (seeded
-	// by the layout, kept fresh by the stream) and follows the project
-	// overview's rule: all healthy is green, any unhealthy is red, anything
-	// in between is amber. Every other row shows the kernel's cached verdict
-	// that came with the environment listing, so no row costs a status
-	// projection of its own.
-	const liveStatus = $derived(envStatus.doc ?? data.status);
+	// deploy. The selected environment has a live status document (from the
+	// stream the layout opens) and follows the project overview's rule: all
+	// healthy is green, any unhealthy is red, anything in between is amber.
+	// Every other row, and the selected one until its stream delivers,
+	// shows the kernel's cached verdict that came with the environment
+	// listing, so no row costs a status projection of its own.
+	const liveStatus = $derived(envStatus.doc);
 	function isSelected(environment: Environment): boolean {
 		return environment.id === data.env?.id;
 	}
