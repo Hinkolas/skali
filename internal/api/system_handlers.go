@@ -34,11 +34,10 @@ func (h *systemHandlers) meta(w http.ResponseWriter, r *http.Request) {
 	if h.updates != nil {
 		// Best effort: meta must answer even when the settings row cannot
 		// be read, and the indicator is a hint, not a fact worth failing on.
-		if status, err := h.updates.Status(r.Context()); err == nil && status.UpdateAvailable {
-			payload.UpdateAvailable = status.Latest
-			if target := status.Summary.TargetVersion; target != "" && (payload.UpdateAvailable == nil || payload.UpdateAvailable.Version != target) {
-				payload.UpdateAvailable = &updates.Release{Version: target}
-			}
+		// The hint is memoized in the service: meta runs on every shell
+		// load, and the full status document is the Updates page's to ask.
+		if release, err := h.updates.UpdateHint(r.Context()); err == nil {
+			payload.UpdateAvailable = release
 		}
 	}
 	writeJSON(w, http.StatusOK, payload)
