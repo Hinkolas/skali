@@ -13,8 +13,9 @@
 	// is shaped like the setting it edits: the ceiling is a rung on the role
 	// ladder, policy, priority and backups are switches with contextual copy,
 	// sources are toggle chips, the schedule is a cron field with a retention
-	// picker. Saves a diff with PATCH and closes; the sudo reauth prompt
-	// layers above this modal on the stack.
+	// picker. A schedule on a project that declares nothing to snapshot is
+	// allowed but flagged as idle (#55). Saves a diff with PATCH and closes;
+	// the sudo reauth prompt layers above this modal on the stack.
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { invalidateAll } from '$app/navigation';
@@ -23,14 +24,19 @@
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { api, ApiError } from '$lib/api/client';
 	import { ROLES, ROLE_RANK, ROLE_HINT, requiredTitle } from '$lib/access';
+	import { SCHEDULE_IDLE_DETAIL } from '$lib/backups';
 	import { describeCron, describeSeconds, isValidCron, nextCronFire } from '$lib/cron';
 	import { formatDateTime } from '$lib/format';
+	import { hasStatefulServices } from '$lib/models/service';
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Menu from '$lib/components/ui/Menu.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
+	import Select from '$lib/components/ui/Select.svelte';
+	import Switch from '$lib/components/ui/Switch.svelte';
 	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import type { ProjectDefinition } from '$lib/types/definition';
 	import type {
 		AccessRole,
 		BackupSchedule,
@@ -41,6 +47,7 @@
 	let {
 		environment,
 		environments,
+		definition,
 		canEdit,
 		instanceAdmin,
 		close
@@ -48,6 +55,12 @@
 		environment: Environment;
 		/** All environments of the project, for the promotion sources. */
 		environments: Environment[];
+		/**
+		 * The project's draft definition, standing in for the active revision
+		 * the way the manual backup guard reads it: it decides whether a
+		 * schedule has anything to snapshot. null when the project has none.
+		 */
+		definition: ProjectDefinition | null;
 		canEdit: boolean;
 		instanceAdmin: boolean;
 		close: (saved?: boolean) => void;
@@ -138,6 +151,11 @@
 	const backupValue = $derived<BackupSchedule | null>(
 		backupOn ? { schedule: schedule.trim(), retention_seconds: retention } : null
 	);
+	// On, but with nothing to snapshot: the server accepts the schedule and
+	// skips its fires until a deploy declares a database, bucket, or volume.
+	// The manual "Back up now" button is refused for the same reason; here
+	// the switch stays usable so the schedule is in place when that happens.
+	const backupIdle = $derived(backupOn && !hasStatefulServices(definition));
 	function sameBackup(a: BackupSchedule | null, b: BackupSchedule | null): boolean {
 		if (a === null || b === null) return a === b;
 		return a.schedule === b.schedule && a.retention_seconds === b.retention_seconds;
@@ -187,7 +205,9 @@
 				? 'Application pods roll onto the new priority class.'
 				: 'backup' in patch
 					? patch.backup
-						? 'Automatic backups start at the next scheduled time.'
+						? backupIdle
+							? 'The schedule is saved; snapshots start once a deploy declares a database, bucket, or volume.'
+							: 'Automatic backups start at the next scheduled time.'
 						: 'Automatic backups are off; existing snapshots stay and no longer expire.'
 					: undefined;
 			toast.success(`Updated ${environment.name}`, description ? { description } : undefined);
@@ -200,20 +220,6 @@
 		}
 	}
 </script>
-
-{#snippet switchPill(on: boolean)}
-	<span
-		class="relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors {on
-			? 'bg-accent'
-			: 'bg-white/12'}"
-	>
-		<span
-			class="bg-surface-base inline-block size-4 rounded-full shadow transition-transform {on
-				? 'translate-x-4.5'
-				: 'translate-x-0.5'}"
-		></span>
-	</span>
-{/snippet}
 
 <ModalHeader title={environment.name} mono>
 	Environment settings{#if !canEdit}
@@ -272,7 +278,7 @@
 				<span class="font-mono text-md {isProtected ? 'text-accent-light' : 'text-text-faint'}">
 					{deployPolicy}
 				</span>
-				{@render switchPill(isProtected)}
+				<Switch checked={isProtected} />
 			</span>
 		</button>
 		{#if isProtected}
@@ -352,7 +358,7 @@
 				>
 					{priority}
 				</span>
-				{@render switchPill(priority === 'high')}
+				<Switch checked={priority === 'high'} />
 			</span>
 		</button>
 		{#if priority !== settings.priority}
@@ -389,12 +395,20 @@
 				<span class="font-mono text-md {backupOn ? 'text-accent-light' : 'text-text-faint'}">
 					{backupOn ? 'on' : 'off'}
 				</span>
-				{@render switchPill(backupOn)}
+				<Switch checked={backupOn} />
 			</span>
 		</button>
 		{#if backupOn}
 			<div transition:slide={{ duration: 180, easing: cubicOut }}>
 				<div class="border-border-subtle mt-3.5 ml-1 flex flex-col gap-3 border-l pl-4">
+					{#if backupIdle}
+						<div class="text-status-warning flex items-start gap-1.5">
+							<TriangleAlert size={13} class="mt-0.75 flex-none" />
+							<span class="text-md leading-relaxed">
+								Nothing to back up yet: no database, bucket, or volume is declared. {SCHEDULE_IDLE_DETAIL}
+							</span>
+						</div>
+					{/if}
 					<label class="flex flex-col gap-1.5">
 						<span class="text-text-tertiary text-md font-medium">Schedule (cron, UTC)</span>
 						<TextInput
@@ -408,15 +422,11 @@
 					</label>
 					<label class="flex flex-col gap-1.5">
 						<span class="text-text-tertiary text-md font-medium">Keep snapshots for</span>
-						<select
-							bind:value={retention}
-							disabled={!canEdit}
-							class="border-border-strong bg-surface-base text-text-primary w-full rounded-[11px] border px-3.25 py-2.75 text-base transition-colors focus:border-accent/50 focus:ring-3 focus:ring-accent/10 focus:outline-none disabled:opacity-60"
-						>
+						<Select bind:value={retention} disabled={!canEdit}>
 							{#each retentionOptions as [seconds, label] (seconds)}
 								<option value={seconds}>{label}</option>
 							{/each}
-						</select>
+						</Select>
 						<span class="text-text-muted text-sm leading-relaxed">
 							Snapshots the schedule takes are deleted after this; the newest one is always kept.
 							Manual snapshots never expire.

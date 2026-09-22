@@ -19,6 +19,17 @@ import type { Environment } from '$lib/types/project';
 export const NOTHING_TO_BACK_UP = 'nothing to back up: no database, bucket, or volume is declared';
 
 /**
+ * A schedule may be on while the project declares nothing stateful: the
+ * server accepts it and skips each fire. Rather than refusing the switch
+ * (a project gains a database on its next deploy and the schedule should
+ * already be there), the console says the schedule is idle and why. Shared
+ * by the settings modal, the Backups page and the settings rows.
+ */
+export const SCHEDULE_IDLE = 'nothing to back up yet: no database, bucket, or volume is declared';
+export const SCHEDULE_IDLE_DETAIL =
+	'The schedule stays in place and snapshots start once a deploy adds one.';
+
+/**
  * Why "Back up now" is disabled, or undefined when it may run. The draft
  * definition stands in for the active revision, the same way the Backups
  * tab reads policies from it.

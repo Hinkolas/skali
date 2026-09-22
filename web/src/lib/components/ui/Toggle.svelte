@@ -1,6 +1,8 @@
 <script lang="ts">
 	// Accessible switch: a button with role="switch"; the label sits beside
 	// it and is clickable.
+	import Switch from '$lib/components/ui/Switch.svelte';
+
 	let {
 		checked = $bindable(false),
 		label,
@@ -33,17 +35,7 @@
 		? 'cursor-default opacity-60'
 		: 'cursor-pointer'}"
 >
-	<span
-		class="relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors {checked
-			? 'bg-accent'
-			: 'bg-white/12'}"
-	>
-		<span
-			class="bg-surface-base inline-block size-4 rounded-full shadow transition-transform {checked
-				? 'translate-x-4.5'
-				: 'translate-x-0.5'}"
-		></span>
-	</span>
+	<Switch {checked} />
 	<span class="flex flex-col">
 		<span class="text-text-secondary text-base font-medium">{label}</span>
 		{#if description}
