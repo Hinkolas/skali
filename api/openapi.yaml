@@ -831,7 +831,12 @@ paths:
             enum: [summary]
           description: |
             With `summary`, each project carries its environments (state
-            plus worst service health) and draft service counts.
+            plus worst service health) and draft service counts. Health is
+            the reconcile kernel's cached verdict from its last pass, never
+            a per-environment status projection: it reads `unknown` before
+            the first pass after boot, while the cluster observation is not
+            fresh, without a deployed revision, and in API-only mode.
+            Per-service detail is `GET /v1/environments/{id}/status`.
       responses:
         "200":
           description: |
@@ -4201,6 +4206,19 @@ components:
               health:
                 type: string
                 enum: [unknown, progressing, healthy, degraded, unhealthy]
+                description: |
+                  The worst service health the kernel evaluated on its last
+                  pass over this environment, folded to `unknown` while the
+                  cluster observation is not fresh.
+              health_evaluated_at:
+                type: string
+                format: date-time
+                description: |
+                  When the kernel last evaluated this environment's health.
+                  Absent when nothing was evaluated yet (before the first
+                  pass after boot, never deployed, torn down, API-only
+                  mode), which tells a pending `unknown` apart from an
+                  evaluated one.
         service_counts:
           type: object
           required: [applications, databases, buckets]

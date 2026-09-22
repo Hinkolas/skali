@@ -51,21 +51,25 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			k.forgetHealth(environmentID)
 			return 0, nil // environment deleted; the audit reports orphans
 		}
 		return 0, fmt.Errorf("reconcile: get target: %w", err)
 	}
 	if target.State != deploy.EnvironmentStateActive {
 		// A persisted destructive decision replaces convergence entirely:
-		// desired state is absence.
+		// desired state is absence, so no health verdict stands either.
+		k.forgetHealth(environmentID)
 		return k.teardownEnvironment(ctx, environmentID, target)
 	}
 	if target.TargetRevisionID == nil {
+		k.forgetHealth(environmentID) // created, never deployed
 		return 0, nil
 	}
 	env, err := k.deps.Store.GetEnvironmentByID(ctx, environmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			k.forgetHealth(environmentID)
 			return 0, nil
 		}
 		return 0, fmt.Errorf("reconcile: get environment: %w", err)
@@ -314,6 +318,9 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
 	statuses := k.evaluateServices(environmentID, rev, k.deps.Observed.Snapshot(environmentID), intercepts, nil, desired.colors)
+	// The list rollup reads this verdict instead of projecting status per
+	// environment; it is the same evaluation over the same snapshot.
+	k.recordHealth(environmentID, statuses, time.Now())
 	// A service blocked on a projection the observation never delivered
 	// cannot be healed by waiting: the object exists on the cluster but its
 	// creation fell into an informer-establishment gap, and no further

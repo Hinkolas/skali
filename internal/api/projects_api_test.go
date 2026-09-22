@@ -129,6 +129,7 @@ func TestProjectListSummary(t *testing.T) {
 	require.Equal(t, "production", env["name"])
 	require.Equal(t, "active", env["state"])
 	require.Equal(t, "unknown", env["health"], "no services deployed yet")
+	require.Nil(t, env["health_evaluated_at"], "nothing was evaluated yet")
 	counts = summary["service_counts"].(map[string]any)
 	require.Equal(t, float64(1), counts["applications"])
 	require.Equal(t, float64(0), counts["databases"])
