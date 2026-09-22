@@ -259,3 +259,37 @@ func TestServiceFinishesPlatformAheadWithoutFeedAndDoesNotRepairAutomatically(t 
 	require.Equal(t, "v0.1.0", status.Summary.ConvergedVersion)
 	require.Equal(t, "v0.2.0", status.Operation.TargetVersion)
 }
+
+// The console's update indicator is memoized: writers on the service drop
+// the memo so a user's own action shows at once, while a change that
+// reaches the settings row from elsewhere waits for the TTL.
+func TestUpdateHintMemoizesUntilWritersOrTTL(t *testing.T) {
+	st := store.NewStore(testdb.New(t))
+	ctx := context.Background()
+	now := time.Now().UTC()
+	svc := &Service{Store: st, Feed: &staticFeed{release: &Release{Version: "v0.2.0", PublishedAt: now}},
+		Version: "v0.1.0", now: func() time.Time { return now }}
+
+	hint, err := svc.UpdateHint(ctx)
+	require.NoError(t, err)
+	require.Nil(t, hint, "nothing scanned yet")
+
+	_, err = svc.Scan(ctx)
+	require.NoError(t, err)
+	hint, err = svc.UpdateHint(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, hint)
+	require.Equal(t, "v0.2.0", hint.Version, "a writer on the service drops the memo")
+
+	newer := "v0.3.0"
+	_, err = st.RecordUpdateScan(ctx, store.RecordUpdateScanParams{LatestVersion: &newer, LatestPublishedAt: &now})
+	require.NoError(t, err)
+	hint, err = svc.UpdateHint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "v0.2.0", hint.Version, "a change from outside the service waits for the TTL")
+
+	now = now.Add(hintTTL + time.Second)
+	hint, err = svc.UpdateHint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "v0.3.0", hint.Version)
+}

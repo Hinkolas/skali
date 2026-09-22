@@ -129,6 +129,7 @@ func TestProjectListSummary(t *testing.T) {
 	require.Equal(t, "production", env["name"])
 	require.Equal(t, "active", env["state"])
 	require.Equal(t, "unknown", env["health"], "no services deployed yet")
+	require.Nil(t, env["health_evaluated_at"], "nothing was evaluated yet")
 	counts = summary["service_counts"].(map[string]any)
 	require.Equal(t, float64(1), counts["applications"])
 	require.Equal(t, float64(0), counts["databases"])
@@ -216,4 +217,35 @@ func TestDraftSubmitAndConflicts(t *testing.T) {
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, status)
 	require.Equal(t, "invalid_manifest", errorCode(t, body))
+}
+
+// The summary names each environment's revisions from the pointer row, so
+// a listing can say what runs where without a status projection per row.
+func TestProjectListSummaryRevisionPointers(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("nick@example.com", "hunter2hunter2")
+	token := a.login("nick@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+
+	summaryEnvironment := func() map[string]any {
+		status, body := a.do("GET", "/v1/projects?include=summary", token, nil)
+		require.Equal(t, http.StatusOK, status)
+		summary := body["projects"].([]any)[0].(map[string]any)["summary"].(map[string]any)
+		environments := summary["environments"].([]any)
+		require.Len(t, environments, 1)
+		return environments[0].(map[string]any)
+	}
+	env := summaryEnvironment()
+	require.Nil(t, env["target_revision"], "never deployed")
+	require.Nil(t, env["active_revision"])
+
+	definitionVersion := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	candidate := a.stageValues(t, token, envID, definitionVersion, "summary-value")
+	revisionID := a.deployAndActivate(t, token, envID, definitionVersion, candidate)
+
+	env = summaryEnvironment()
+	target := env["target_revision"].(map[string]any)
+	require.Equal(t, revisionID, target["id"])
+	require.NotEmpty(t, target["checksum"])
+	require.Equal(t, target, env["active_revision"], "activated: both pointers name the same revision")
 }

@@ -166,6 +166,14 @@ type Kernel struct {
 	domainMu sync.Mutex
 	domains  map[string]domainProbe
 	routes   map[routeKey]routeRecord
+
+	// health holds the worst service health the last pass evaluated per
+	// environment, read by list endpoints that must never run the status
+	// projection per environment (see health.go). In-memory by design:
+	// after a restart every verdict is absent (unknown) until the boot
+	// audit's passes re-derive it.
+	healthMu sync.RWMutex
+	health   map[uuid.UUID]EnvironmentHealth
 }
 
 func New(deps Deps, cfg Config) *Kernel {
@@ -193,6 +201,7 @@ func New(deps Deps, cfg Config) *Kernel {
 		retired: map[retireKey]time.Time{},
 		domains: map[string]domainProbe{},
 		routes:  map[routeKey]routeRecord{},
+		health:  map[uuid.UUID]EnvironmentHealth{},
 		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck)),
 	}
@@ -306,6 +315,7 @@ func (k *Kernel) worker(ctx context.Context) {
 // nothing (removal is a destructive transition that does not exist yet;
 // see docs/limitations.md).
 func (k *Kernel) audit(ctx context.Context) {
+	listedAt := time.Now()
 	targets, err := k.deps.Store.ListEnvironmentTargets(ctx)
 	if err != nil {
 		slog.Warn("audit: list environment targets", "error", err)
@@ -316,6 +326,9 @@ func (k *Kernel) audit(ctx context.Context) {
 		known[target.EnvironmentID] = true
 		k.queue.Add(target.EnvironmentID)
 	}
+	// The same authoritative set retires health verdicts of environments
+	// whose rows vanished without a pass.
+	k.sweepHealth(known, listedAt)
 	for _, namespace := range k.deps.Observed.ManagedNamespaces() {
 		if namespace.Environment != uuid.Nil && !known[namespace.Environment] {
 			slog.Warn("orphaned managed namespace retained",

@@ -26,7 +26,9 @@
 
 	// Same merged `page.data` contract the Sidebar reads: nested layouts set
 	// `project`/`environments`/`env`/`services`/`service`; loads that
-	// introduce colliding keys would break both consumers.
+	// introduce colliding keys would break both consumers. The projects page
+	// adds its summaries under `summary`, never over `projects`, for that
+	// reason.
 	const data = $derived(
 		page.data as {
 			user: AuthUser | null;

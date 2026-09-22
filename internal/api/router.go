@@ -50,6 +50,9 @@ type Deps struct {
 	Builds     *buildstore.Service
 	Journal    *journal.Service
 	Reconcile  *reconcile.Kernel
+	// Health serves the project list's cached health rollup; nil defaults
+	// to Reconcile. Tests inject a stub because no kernel pass runs there.
+	Health environmentHealthReader
 	// Registry is the managed-registry client; a zero-host client means
 	// the build and import surfaces answer registry_disabled.
 	Registry *registry.Client
@@ -145,6 +148,9 @@ func NewRouter(d Deps) http.Handler {
 // newRouter builds the router and returns the access layer with it so tests
 // can read the route classification back.
 func newRouter(d Deps) (*chi.Mux, *access) {
+	if d.Health == nil && d.Reconcile != nil {
+		d.Health = d.Reconcile
+	}
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -290,8 +296,8 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				// Product surface: projects, environments, drafts. Access is
 				// per project and per environment (docs/permissions.md);
 				// destructive deletes and access management need sudo mode.
-				ph := &projectsHandlers{projects: d.Projects, reconcile: d.Reconcile, resolver: ac.resolver}
-				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal, reconcile: d.Reconcile}
+				ph := &projectsHandlers{projects: d.Projects, health: d.Health, resolver: ac.resolver}
+				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal, reconcile: d.Reconcile, health: d.Health}
 				ah := &accessHandlers{projects: d.Projects}
 				ac.route(r, "POST", "/projects", classProjectCreate, ph.create)
 				ac.route(r, "GET", "/projects", classProjectList, ph.list)

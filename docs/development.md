@@ -246,7 +246,8 @@ internal/
   manifest/      strict skali.yaml parser, diagnostics, schema generation
   metrics/       usage sampling: nodes, services, storage
   observe/       in-memory observed store fed by LIST/WATCH
-  reconcile/     level-triggered kernel: apply, prune, health, activation
+  reconcile/     level-triggered kernel: apply, prune, health, activation;
+                 caches per-environment health for list endpoints
   registry/      managed registry client and token protocol
   skill/         the agent skill: `skali skill install` and `skali skill read`
   store/         pgx glue plus sqlc-generated queries
@@ -255,6 +256,15 @@ internal/
   valuestore/    versioned, encrypted, write-only environment values
 web/           the console (SvelteKit)
 ```
+
+List and overview surfaces read what the kernel already knows: every
+reconcile pass records the environment's worst service health in memory
+(`internal/reconcile/health.go`), and `GET /v1/projects?include=summary`
+serves that verdict in one batch read. No list endpoint runs the status
+projection or a per-item database read in a loop; detail endpoints such as
+`GET /v1/environments/{id}/status` project on demand. The console follows
+the same rule: the shell loads only what every page needs, and each page
+fetches its own data.
 
 Run `scripts/check-release-snapshot.sh` to rehearse a clean, nonpublishing release and verify its metadata against the built CLI.
 

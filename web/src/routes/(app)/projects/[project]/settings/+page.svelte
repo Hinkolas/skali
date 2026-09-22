@@ -11,8 +11,8 @@
 	import { HEALTH_META } from '$lib/service-types';
 	import { withEnv } from '$lib/urls';
 	import type { RevisionSummary } from '$lib/types/revisions';
-	import type { EnvironmentStatus } from '$lib/types/status';
 	import { dialog } from '$lib/stores/dialog.svelte';
+	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { modal } from '$lib/stores/modal.svelte';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
@@ -38,7 +38,7 @@
 		modalOptions as environmentSettingsModalOptions
 	} from '$lib/components/access/EnvironmentSettingsModal.svelte';
 	import type { AuthUser } from '$lib/types/auth';
-	import type { Environment } from '$lib/types/project';
+	import type { Environment, ServiceHealth } from '$lib/types/project';
 	import type { Target } from '$lib/types/revisions';
 	import type { PageData } from './$types';
 
@@ -108,28 +108,38 @@
 		return pills;
 	}
 
-	// One line of live facts per environment: aggregate health, state, and
-	// the newest deploy. Health follows the project
+	// One line of facts per environment: state, health, and the newest
+	// deploy. The selected environment has a live status document (seeded
+	// by the layout, kept fresh by the stream) and follows the project
 	// overview's rule: all healthy is green, any unhealthy is red, anything
-	// else in between is amber; an unobserved environment stays grey.
-	function healthDot(status: EnvironmentStatus | null): string {
-		if (!status || status.services.length === 0) return HEALTH_META.unknown.dot;
-		if (status.services.every((s) => s.health === 'healthy')) return HEALTH_META.healthy.dot;
-		if (status.services.some((s) => s.health === 'unhealthy')) return HEALTH_META.unhealthy.dot;
-		if (status.services.every((s) => s.health === 'unknown')) return HEALTH_META.unknown.dot;
-		return HEALTH_META.degraded.dot;
+	// in between is amber. Every other row shows the kernel's cached verdict
+	// that came with the environment listing, so no row costs a status
+	// projection of its own.
+	const liveStatus = $derived(envStatus.doc ?? data.status);
+	function isSelected(environment: Environment): boolean {
+		return environment.id === data.env?.id;
+	}
+	function environmentHealth(environment: Environment): ServiceHealth {
+		if (isSelected(environment) && liveStatus) {
+			const services = liveStatus.services;
+			if (services.length === 0) return 'unknown';
+			if (services.every((s) => s.health === 'healthy')) return 'healthy';
+			if (services.some((s) => s.health === 'unhealthy')) return 'unhealthy';
+			if (services.every((s) => s.health === 'unknown')) return 'unknown';
+			return 'degraded';
+		}
+		return environment.health ?? 'unknown';
 	}
 	function environmentFacts(environment: Environment): string[] {
 		const insight = data.insights[environment.id];
 		if (!insight) return [];
 		const facts: string[] = [];
-		const status = insight.status;
-		if (status) {
-			facts.push(status.state);
-			if (status.services.length > 0) {
-				const healthy = status.services.filter((s) => s.health === 'healthy').length;
-				facts.push(`${healthy}/${status.services.length} healthy`);
-			}
+		if (environment.state) facts.push(environment.state);
+		if (isSelected(environment) && liveStatus && liveStatus.services.length > 0) {
+			const healthy = liveStatus.services.filter((s) => s.health === 'healthy').length;
+			facts.push(`${healthy}/${liveStatus.services.length} healthy`);
+		} else if (environment.health && environment.health !== 'unknown') {
+			facts.push(environment.health);
 		}
 		const deploy = insight.lastDeploy;
 		if (deploy) {
@@ -143,7 +153,7 @@
 			} else {
 				facts.push(`${deploy.kind} ${deploy.status} ${when} · ${who}`);
 			}
-		} else if (status) {
+		} else if (environment.state) {
 			facts.push('never deployed');
 		}
 		return facts;
@@ -324,7 +334,7 @@
 					<span
 						class="size-[8px] flex-none rounded-full {locked
 							? 'bg-text-ghost'
-							: healthDot(data.insights[environment.id]?.status ?? null)}"
+							: HEALTH_META[environmentHealth(environment)].dot}"
 					></span>
 					<div class="flex min-w-0 flex-1 flex-col gap-1">
 						<div class="flex flex-wrap items-center gap-x-3 gap-y-1">

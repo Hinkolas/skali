@@ -803,7 +803,9 @@ func isRunAlreadyFinished(err error) bool {
 }
 
 // runDevLs lists every project on the local platform with the state of its
-// environments, the docker compose ls of the local cluster.
+// environments, the docker compose ls of the local cluster. One request:
+// the daemon's list rollup carries state and revision pointers per
+// environment, so the table never asks for a status projection per row.
 func runDevLs(command *cobra.Command, args []string) error {
 	ctx := command.Context()
 	out := command.OutOrStdout()
@@ -819,27 +821,25 @@ func runDevLs(command *cobra.Command, args []string) error {
 		return errors.New("the local platform is not set up; run skali dev start first")
 	}
 	api := remoteClient(cfg, localRemote)
-	projects, err := api.ListProjects(ctx)
+	projects, err := api.ListProjectSummaries(ctx)
 	if err != nil {
 		return err
 	}
 	style := clirender.StyleFor(out)
 	fmt.Fprintln(out, style.Dim(fmt.Sprintf("%-24s  %-13s  %-10s  %s", "PROJECT", "ENVIRONMENT", "STATE", "ACTIVE")))
 	for _, project := range projects {
-		environments, err := api.ListEnvironments(ctx, project.ID)
-		if err != nil {
-			return err
+		if project.Summary == nil {
+			continue
 		}
-		for _, environment := range environments {
-			state, active := "unknown", "-"
-			if status, err := api.EnvironmentStatus(ctx, environment.ID); err == nil {
-				state = status.State
-				if status.ActiveRevision != nil {
-					active = utils.ShortChecksum(status.ActiveRevision.Checksum)
+		for _, environment := range project.Summary.Environments {
+			// A locked environment lists by name only; its state is not
+			// the caller's to see.
+			state, active := "locked", "-"
+			if environment.State != "" {
+				state = environment.State
+				if environment.ActiveRevision != nil {
+					active = utils.ShortChecksum(environment.ActiveRevision.Checksum)
 				}
-			} else {
-				fmt.Fprintf(out, "  %s\n", style.Yellow(fmt.Sprintf(
-					"warning: could not fetch status of %s/%s: %v", project.Name, environment.Name, err)))
 			}
 			fmt.Fprintf(out, "%-24s  %-13s  %s  %s\n", project.Name, environment.Name,
 				stateColor(style, fmt.Sprintf("%-10s", state)), active)

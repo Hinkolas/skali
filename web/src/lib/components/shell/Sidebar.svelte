@@ -15,20 +15,34 @@
 	// Service pages keep the project nav; service-level navigation lives in
 	// the tab bar inside the content card (ServiceTabs). Breadcrumbs reads the
 	// same contract; loads that introduce colliding keys would break both.
+	// (The projects page adds its summaries under `summary`, never over
+	// `projects`, for that reason.)
 	const data = $derived(
 		page.data as {
 			org: OrgView;
-			nodes: ClusterNode[];
+			nodes: ClusterNode[] | null;
 			project?: Project;
 			services?: ServiceView[];
 		}
 	);
 
-	const online = $derived(data.nodes.filter((n) => n.ready).length);
-	const statusText = $derived(
-		data.nodes.length === 0 ? 'cluster not observed' : `${online}/${data.nodes.length} nodes online`
-	);
-	const statusOk = $derived(data.nodes.length > 0 && online === data.nodes.length);
+	// The footer line: nodes online for instance admins (the only callers
+	// /v1/nodes answers), the daemon version for everyone else. null means
+	// the shell did not ask; an empty list means it asked and the cluster is
+	// not observed yet.
+	type Tone = 'success' | 'warning' | 'neutral';
+	const status = $derived.by((): { text: string; tone: Tone } => {
+		const nodes = data.nodes ?? null;
+		if (nodes === null) {
+			return { text: data.org.version ? `skalid ${data.org.version}` : '', tone: 'neutral' };
+		}
+		if (nodes.length === 0) return { text: 'cluster not observed', tone: 'warning' };
+		const online = nodes.filter((n) => n.ready).length;
+		return {
+			text: `${online}/${nodes.length} nodes online`,
+			tone: online === nodes.length ? 'success' : 'warning'
+		};
+	});
 </script>
 
 <aside class="flex w-[275px] flex-none flex-col overflow-y-auto">
@@ -59,5 +73,7 @@
 
 	<div class="flex-1"></div>
 
-	<SidebarStatus text={statusText} ok={statusOk} />
+	{#if status.text}
+		<SidebarStatus text={status.text} tone={status.tone} />
+	{/if}
 </aside>

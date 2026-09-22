@@ -24,12 +24,19 @@ import (
 // invisible projects and 403 for insufficient roles; handlers read the grant
 // back for payloads and for the checks only they can make (project creation
 // needs the create_projects permission, the list filters to memberships).
-// The reconcile kernel is only consulted for the optional list summary
-// rollup.
+// The optional list summary reads the kernel's cached health verdicts and
+// never projects status per environment.
 type projectsHandlers struct {
-	projects  *project.Service
-	reconcile *reconcile.Kernel
-	resolver  *authz.Resolver
+	projects *project.Service
+	health   environmentHealthReader
+	resolver *authz.Resolver
+}
+
+// environmentHealthReader is the kernel's cached health surface, the one
+// batch read the list summary makes per request. *reconcile.Kernel
+// implements it; tests substitute a stub because no pass runs there.
+type environmentHealthReader interface {
+	EnvironmentHealths(ids []uuid.UUID) map[uuid.UUID]reconcile.EnvironmentHealth
 }
 
 // pathID parses the {id} route param, writing a 404 on malformed ids so they
@@ -80,13 +87,28 @@ type projectSummaryPayload struct {
 }
 
 // summaryEnvironmentPayload: a locked environment carries id, name, and
-// access only; state and health are part of its contents.
+// access only; state and health are part of its contents. Health is the
+// kernel's cached verdict from its last pass; the evaluation time is absent
+// when nothing was evaluated yet, so unknown-and-pending reads apart from
+// unknown-and-evaluated.
 type summaryEnvironmentPayload struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Access string `json:"access"`
-	State  string `json:"state,omitempty"`
-	Health string `json:"health,omitempty"`
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	Access            string     `json:"access"`
+	State             string     `json:"state,omitempty"`
+	Health            string     `json:"health,omitempty"`
+	HealthEvaluatedAt *time.Time `json:"health_evaluated_at,omitempty"`
+	// The pointer row's revisions, so a listing can name what an
+	// environment runs without a status projection per environment.
+	TargetRevision *revisionRefPayload `json:"target_revision,omitempty"`
+	ActiveRevision *revisionRefPayload `json:"active_revision,omitempty"`
+}
+
+func newRevisionRefPayload(ref *project.RevisionRef) *revisionRefPayload {
+	if ref == nil {
+		return nil
+	}
+	return &revisionRefPayload{ID: ref.ID.String(), Checksum: ref.Checksum}
 }
 
 type serviceCountsPayload struct {
@@ -252,25 +274,18 @@ func (h *projectsHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}{payload})
 }
 
-// healthRank orders service healths for the rollup: anything mixed with
-// healthy pulls the badge toward the worse state, and unknown outranks
-// healthy so a half-observed environment never reads as fine.
-var healthRank = map[module.Health]int{
-	module.HealthHealthy:     1,
-	module.HealthUnknown:     2,
-	module.HealthProgressing: 3,
-	module.HealthDegraded:    4,
-	module.HealthUnhealthy:   5,
-}
-
 // attachSummaries decorates the list payload with environments, states,
 // health rollups, and draft service counts. Locked environments keep their
-// name and access only.
+// name and access only. The whole rollup costs two batched queries plus one
+// read of the kernel's health cache: the list never iterates environments
+// against the database or the status projection.
 func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projectPayload, grants map[uuid.UUID]*authz.Grant) error {
 	summaries, err := h.projects.ListSummaries(ctx)
 	if err != nil {
 		return err
 	}
+	// First pass: the shape, and the ids whose health the caller may see.
+	var unlocked []uuid.UUID
 	for i := range payload {
 		id, err := uuid.Parse(payload[i].ID)
 		if err != nil {
@@ -288,38 +303,49 @@ func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projec
 		}
 		for _, env := range summary.Environments {
 			item := summaryEnvironmentPayload{ID: env.ID.String(), Name: env.Name, Access: authz.None.String()}
-			if grant == nil {
-				entry.Environments = append(entry.Environments, item)
-				continue
-			}
-			if envGrant, ok := grant.Environment(env.ID); ok {
-				item.Access = envGrant.Role.String()
-				if !envGrant.Locked() {
-					item.State = env.State
-					item.Health = string(h.environmentHealth(ctx, env.ID))
+			if grant != nil {
+				if envGrant, ok := grant.Environment(env.ID); ok {
+					item.Access = envGrant.Role.String()
+					if !envGrant.Locked() {
+						item.State = env.State
+						item.Health = string(module.HealthUnknown)
+						item.TargetRevision = newRevisionRefPayload(env.TargetRevision)
+						item.ActiveRevision = newRevisionRefPayload(env.ActiveRevision)
+						unlocked = append(unlocked, env.ID)
+					}
 				}
 			}
 			entry.Environments = append(entry.Environments, item)
 		}
 		payload[i].Summary = entry
 	}
-	return nil
-}
-
-// environmentHealth is the worst service health of one environment; unknown
-// when there is nothing to evaluate or the status read fails.
-func (h *projectsHandlers) environmentHealth(ctx context.Context, environmentID uuid.UUID) module.Health {
-	status, err := h.reconcile.Status(ctx, environmentID)
-	if err != nil || len(status.Services) == 0 {
-		return module.HealthUnknown
+	// Second pass: one batch read fills the verdicts; a miss stays unknown
+	// without an evaluation time.
+	if h.health == nil || len(unlocked) == 0 {
+		return nil
 	}
-	worst := module.HealthHealthy
-	for _, service := range status.Services {
-		if healthRank[service.Health] > healthRank[worst] {
-			worst = service.Health
+	healths := h.health.EnvironmentHealths(unlocked)
+	for i := range payload {
+		if payload[i].Summary == nil {
+			continue
+		}
+		for j := range payload[i].Summary.Environments {
+			item := &payload[i].Summary.Environments[j]
+			if item.Health == "" {
+				continue // locked
+			}
+			id, err := uuid.Parse(item.ID)
+			if err != nil {
+				continue
+			}
+			if verdict, ok := healths[id]; ok {
+				item.Health = string(verdict.Health)
+				evaluatedAt := verdict.EvaluatedAt
+				item.HealthEvaluatedAt = &evaluatedAt
+			}
 		}
 	}
-	return worst
+	return nil
 }
 
 // GET /v1/projects/{id}

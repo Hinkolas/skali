@@ -18,6 +18,36 @@ type Project struct {
 	// Access is the caller's standing: the project role and the effective
 	// role per environment name (locked environments report none).
 	Access ProjectAccess `json:"access"`
+	// Summary is the list rollup, present only from ListProjectSummaries.
+	Summary *ProjectSummary `json:"summary,omitempty"`
+}
+
+// ProjectSummary is the daemon's list rollup: every environment with its
+// pointer state, cached health verdict, and revision pointers. Nothing in
+// it costs the daemon a status projection, so listing every project of an
+// installation is one cheap request.
+type ProjectSummary struct {
+	Environments []SummaryEnvironment `json:"environments"`
+}
+
+// SummaryEnvironment is one environment in the rollup. A locked one carries
+// id, name, and access only.
+type SummaryEnvironment struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Access string `json:"access"`
+	State  string `json:"state,omitempty"`
+	Health string `json:"health,omitempty"`
+	// TargetRevision and ActiveRevision are the pointer row's revisions,
+	// nil where the pointer is unset.
+	TargetRevision *RevisionRef `json:"target_revision,omitempty"`
+	ActiveRevision *RevisionRef `json:"active_revision,omitempty"`
+}
+
+// RevisionRef names one revision.
+type RevisionRef struct {
+	ID       string `json:"id"`
+	Checksum string `json:"checksum"`
 }
 
 type ProjectAccess struct {
@@ -312,6 +342,19 @@ func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
 		Projects []Project `json:"projects"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/v1/projects", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Projects, nil
+}
+
+// ListProjectSummaries lists the caller's projects with the daemon's
+// rollup attached: environments, states, cached health, and revision
+// pointers, in one request.
+func (c *Client) ListProjectSummaries(ctx context.Context) ([]Project, error) {
+	var res struct {
+		Projects []Project `json:"projects"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/projects?include=summary", nil, &res); err != nil {
 		return nil, err
 	}
 	return res.Projects, nil

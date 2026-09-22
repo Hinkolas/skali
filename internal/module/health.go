@@ -14,6 +14,34 @@ const (
 	HealthUnhealthy   Health = "unhealthy"
 )
 
+// healthRank orders healths for the rollup: anything mixed with healthy
+// pulls the verdict toward the worse state, and unknown outranks healthy so
+// a half-observed environment never reads as fine. The console mirrors this
+// ladder in web/src/lib/models/project.ts (HEALTH_RANK); app.floorHealth
+// ranks in the other direction for a different purpose and is not this.
+var healthRank = map[Health]int{
+	HealthHealthy:     1,
+	HealthUnknown:     2,
+	HealthProgressing: 3,
+	HealthDegraded:    4,
+	HealthUnhealthy:   5,
+}
+
+// WorstHealth rolls service healths up to one verdict, the worst of them by
+// healthRank. Nothing to evaluate is unknown, never healthy.
+func WorstHealth(healths []Health) Health {
+	if len(healths) == 0 {
+		return HealthUnknown
+	}
+	worst := HealthHealthy
+	for _, health := range healths {
+		if healthRank[health] > healthRank[worst] {
+			worst = health
+		}
+	}
+	return worst
+}
+
 // Diagnostic is one structured observation attached to an evaluation.
 type Diagnostic struct {
 	Severity string `json:"severity"` // info | warning | error

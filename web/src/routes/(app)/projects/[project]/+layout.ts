@@ -15,7 +15,14 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 	const project = projects.find((p) => p.name === params.project);
 	if (!project) error(404, 'Project not found');
 
-	const envsRes = await apiFetch(fetch, `/v1/projects/${project.id}/environments`);
+	// Environments and the draft need only the project id, so they leave
+	// together; the status projection waits for the resolved environment.
+	// The summary rides along: each environment's state and cached health,
+	// so pages listing environments never ask for status per row.
+	const [envsRes, draftRes] = await Promise.all([
+		apiFetch(fetch, `/v1/projects/${project.id}/environments?include=summary`),
+		apiFetch(fetch, `/v1/projects/${project.id}/draft`)
+	]);
 	if (!envsRes.ok) error(502, 'Could not load environments');
 	const { environments } = (await envsRes.json()) as { environments: Environment[] };
 
@@ -34,10 +41,7 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 
 	// A project may have no draft (404: zero services) and status may be
 	// briefly unavailable; both degrade instead of erroring the whole scope.
-	const [draftRes, statusRes] = await Promise.all([
-		apiFetch(fetch, `/v1/projects/${project.id}/draft`),
-		env ? apiFetch(fetch, `/v1/environments/${env.id}/status`) : Promise.resolve(null)
-	]);
+	const statusRes = env ? await apiFetch(fetch, `/v1/environments/${env.id}/status`) : null;
 	const draft = draftRes.ok ? ((await draftRes.json()) as DraftResponse).draft : null;
 	const definition = draft?.definition ?? null;
 	const status = statusRes && statusRes.ok ? ((await statusRes.json()) as EnvironmentStatus) : null;

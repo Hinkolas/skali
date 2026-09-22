@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/Hinkolas/skali/internal/clusterstate"
@@ -89,6 +90,23 @@ type Service struct {
 	ScanInterval time.Duration
 	Logger       *slog.Logger
 	now          func() time.Time
+
+	// hint memoizes the console's update indicator, which every shell load
+	// asks for: Status costs a settings read plus a cluster state read, and
+	// the badge tolerates a minute of lag. Writers on this service drop the
+	// memo so a user's own action shows at once.
+	hintMu sync.Mutex
+	hint   hintMemo
+}
+
+// hintTTL bounds how stale the memoized indicator may be for changes that
+// arrive from outside this daemon (a coordinator finishing an update).
+const hintTTL = time.Minute
+
+type hintMemo struct {
+	release *Release
+	at      time.Time
+	valid   bool
 }
 
 const (
@@ -109,6 +127,47 @@ func (s *Service) log() *slog.Logger {
 		return s.Logger
 	}
 	return slog.Default()
+}
+
+// UpdateHint is the release the console's update indicator points at: nil
+// when nothing is available. It is memoized for hintTTL and dropped by
+// every writer on this service, so list surfaces read it for free while
+// the Updates page keeps reading Status on demand.
+func (s *Service) UpdateHint(ctx context.Context) (*Release, error) {
+	s.hintMu.Lock()
+	defer s.hintMu.Unlock()
+	now := s.clock()
+	if s.hint.valid && now.Sub(s.hint.at) < hintTTL {
+		return s.hint.release, nil
+	}
+	status, err := s.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.hint = hintMemo{release: updateHint(status), at: now, valid: true}
+	return s.hint.release, nil
+}
+
+// forgetHint drops the memoized indicator; writers defer it so the next
+// read reflects what they changed.
+func (s *Service) forgetHint() {
+	s.hintMu.Lock()
+	s.hint = hintMemo{}
+	s.hintMu.Unlock()
+}
+
+// updateHint reduces a status document to the indicator's release: the
+// newest release when one is available, or the running operation's target
+// when the cluster is mid-update toward something else.
+func updateHint(status *Status) *Release {
+	if !status.UpdateAvailable {
+		return nil
+	}
+	release := status.Latest
+	if target := status.Summary.TargetVersion; target != "" && (release == nil || release.Version != target) {
+		release = &Release{Version: target}
+	}
+	return release
 }
 
 // Status assembles the document from the settings row and the cluster.
@@ -201,6 +260,7 @@ func settingsFromRow(row store.UpdateSetting) Settings {
 // answer; a feed failure is recorded too (classified, see FeedError), never
 // returned as a scan error, because the last known release stays useful.
 func (s *Service) Scan(ctx context.Context) (*Status, error) {
+	defer s.forgetHint()
 	if s.Feed == nil {
 		return nil, ErrScanDisabled
 	}
@@ -235,6 +295,7 @@ func (s *Service) Scan(ctx context.Context) (*Status, error) {
 // UpdateSettings persists the channel and auto-update choice. A channel
 // change invalidates the last scan's answer, so it rescans when it can.
 func (s *Service) UpdateSettings(ctx context.Context, channel Channel, autoUpdate bool) (*Status, error) {
+	defer s.forgetHint()
 	if _, err := ParseChannel(string(channel)); err != nil {
 		return nil, err
 	}
@@ -260,6 +321,7 @@ func (s *Service) UpdateSettings(ctx context.Context, channel Channel, autoUpdat
 // is a typed error the API maps: unmanaged clusters, in-flight runs, a
 // version that is not newer, and the cluster state's own conditions.
 func (s *Service) Apply(ctx context.Context, target string) (*Status, error) {
+	defer s.forgetHint()
 	if !version.IsRelease(target) {
 		return nil, &BlockedError{Reason: fmt.Sprintf("%q is not a tagged release", target)}
 	}
@@ -311,6 +373,7 @@ func (s *Service) Apply(ctx context.Context, target string) (*Status, error) {
 // proven ones are never replayed. It is Apply for the operation that
 // already exists.
 func (s *Service) Resume(ctx context.Context) (*Status, error) {
+	defer s.forgetHint()
 	if s.Cluster == nil || s.Cluster.Client == nil {
 		return nil, &BlockedError{Reason: "updates from the console need a coordinator-managed cluster"}
 	}

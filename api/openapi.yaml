@@ -831,7 +831,12 @@ paths:
             enum: [summary]
           description: |
             With `summary`, each project carries its environments (state
-            plus worst service health) and draft service counts.
+            plus worst service health) and draft service counts. Health is
+            the reconcile kernel's cached verdict from its last pass, never
+            a per-environment status projection: it reads `unknown` before
+            the first pass after boot, while the cluster observation is not
+            fresh, without a deployed revision, and in API-only mode.
+            Per-service detail is `GET /v1/environments/{id}/status`.
       responses:
         "200":
           description: |
@@ -1033,6 +1038,19 @@ paths:
       operationId: listEnvironments
       summary: List environments of a project
       tags: [environments]
+      parameters:
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [summary]
+          description: |
+            With `summary`, each unlocked environment carries its pointer
+            `state` and the reconcile kernel's cached `health` verdict with
+            `health_evaluated_at`, one query and one cache read for the
+            whole project. Same semantics as the project list summary;
+            per-service detail is `GET /v1/environments/{id}/status`.
       responses:
         "200":
           description: |
@@ -4201,6 +4219,29 @@ components:
               health:
                 type: string
                 enum: [unknown, progressing, healthy, degraded, unhealthy]
+                description: |
+                  The worst service health the kernel evaluated on its last
+                  pass over this environment, folded to `unknown` while the
+                  cluster observation is not fresh.
+              health_evaluated_at:
+                type: string
+                format: date-time
+                description: |
+                  When the kernel last evaluated this environment's health.
+                  Absent when nothing was evaluated yet (before the first
+                  pass after boot, never deployed, torn down, API-only
+                  mode), which tells a pending `unknown` apart from an
+                  evaluated one.
+              target_revision:
+                $ref: "#/components/schemas/RevisionRef"
+                description: |
+                  The revision the environment is converging to; absent
+                  when never deployed or taken down. Unlocked only.
+              active_revision:
+                $ref: "#/components/schemas/RevisionRef"
+                description: |
+                  The revision the environment is running; absent until
+                  the first activation or after a teardown. Unlocked only.
         service_counts:
           type: object
           required: [applications, databases, buckets]
@@ -4245,6 +4286,27 @@ components:
             Name of the environment this one was last promoted to, derived
             from the recorded promotions. Present on the project listing
             only, for unlocked environments with at least one promotion.
+        state:
+          type: string
+          enum: [active, down, releasing]
+          description: |
+            The target pointer state. Present on the project listing with
+            `?include=summary`, for unlocked environments.
+        health:
+          type: string
+          enum: [unknown, progressing, healthy, degraded, unhealthy]
+          description: |
+            The kernel's cached worst service health from its last pass,
+            folded to `unknown` while the cluster observation is not fresh.
+            Present on the project listing with `?include=summary`, for
+            unlocked environments.
+        health_evaluated_at:
+          type: string
+          format: date-time
+          description: |
+            When the kernel last evaluated this environment's health;
+            absent when nothing was evaluated yet. With `?include=summary`
+            only.
 
     MembersResponse:
       type: object
