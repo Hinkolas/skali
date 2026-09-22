@@ -1,7 +1,10 @@
-// Live environment status: seeded from the layout load, kept fresh by the
-// status SSE stream. One instance app-wide; the project layout drives sync()
-// from an $effect (browser only, so SSR never leaks state across requests).
-// Consumers derive `envStatus.doc ?? data.status` so SSR renders the seed.
+// Live environment status, fed by the status SSE stream alone: the stream's
+// first event is the full document, so the project layout no longer waits
+// on a status request before painting. One instance app-wide; the project
+// layout drives sync() from an $effect (browser only). Consumers read
+// `envStatus.doc` and show a pending state while `envStatus.pending` holds,
+// instead of rendering the absence of a document as unknown health or an
+// empty workload.
 
 import { openStream, type StreamHandle, type StreamState } from '$lib/sse';
 import type { EnvironmentStatus, ServiceStatus } from '$lib/types/status';
@@ -9,24 +12,29 @@ import type { EnvironmentStatus, ServiceStatus } from '$lib/types/status';
 class EnvStatusStore {
 	doc = $state<EnvironmentStatus | null>(null);
 	streamState = $state<StreamState>('closed');
+	private envId = $state<string | null>(null);
 
 	private handle: StreamHandle | null = null;
-	private envId: string | null = null;
+
+	/**
+	 * True between opening an environment's stream and its first document:
+	 * nothing is known yet, which is not the same as knowing nothing runs.
+	 * A stream that keeps failing stays pending; the rest of the console
+	 * fails alongside it, since the same daemon serves both.
+	 */
+	get pending(): boolean {
+		return this.envId !== null && this.doc === null;
+	}
 
 	/**
 	 * Idempotent per environment: a repeat call for the same id keeps the
-	 * live stream (the stream is authoritative over a re-run load's seed).
-	 * Switching environments closes the old stream first; late events from
-	 * it are dropped by the id guard.
+	 * live stream. Switching environments closes the old stream first; late
+	 * events from it are dropped by the id guard.
 	 */
-	sync(envId: string, seed: EnvironmentStatus | null): void {
-		if (this.envId === envId) {
-			if (!this.doc && seed) this.doc = seed;
-			return;
-		}
+	sync(envId: string): void {
+		if (this.envId === envId) return;
 		this.stop();
 		this.envId = envId;
-		this.doc = seed;
 		const id = envId;
 		this.handle = openStream<EnvironmentStatus>({
 			path: `/v1/environments/${envId}/status/stream`,

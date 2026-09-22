@@ -1,23 +1,22 @@
 <script lang="ts">
-	import { page } from '$app/state';
-	import type { EnvironmentStatus, PodStatus } from '$lib/types/status';
+	import type { PodStatus } from '$lib/types/status';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { relativeTime } from '$lib/format';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 
 	// The pods of one service from the live status projection: their node,
 	// restarts, age, and on blue-green workloads which color is serving.
 	// Serving pods sort first, then by name, so the active color reads as one
-	// block during a switch.
-	let { pods: input }: { pods: PodStatus[] } = $props();
+	// block during a switch. `pending` holds the list's place until the
+	// status stream delivers its first document: an empty list before that
+	// means nothing is known yet, not that nothing runs.
+	let { pods: input, pending = false }: { pods: PodStatus[]; pending?: boolean } = $props();
 
 	const pods = $derived(
 		input.toSorted((a, b) => Number(b.serving) - Number(a.serving) || a.name.localeCompare(b.name))
 	);
-	const observed = $derived(
-		((envStatus.doc ?? (page.data.status as EnvironmentStatus | null))?.observation.state ??
-			'unknown') === 'fresh'
-	);
+	const observed = $derived((envStatus.doc?.observation.state ?? 'unknown') === 'fresh');
 
 	// A pod that is not ready is usually just starting (ContainerCreating,
 	// PodInitializing); only the reasons that mean it will not get there on
@@ -42,7 +41,15 @@
 	}
 </script>
 
-{#if pods.length > 0}
+{#if pending && pods.length === 0}
+	<div
+		class="border-border-default flex flex-col gap-2.5 rounded-[11px] border px-3 py-3"
+		aria-busy="true"
+	>
+		<Skeleton variant="line" class="w-3/4" />
+		<Skeleton variant="line" class="w-1/2" />
+	</div>
+{:else if pods.length > 0}
 	<div class="border-border-default overflow-hidden rounded-[11px] border">
 		{#each pods as pod (pod.name)}
 			<div

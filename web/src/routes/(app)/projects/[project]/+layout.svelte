@@ -1,7 +1,9 @@
 <script lang="ts">
 	// Drives the live status store for the resolved environment. $effect runs
 	// in the browser only; sync() is idempotent per environment id, so load
-	// re-runs do not churn the stream.
+	// re-runs do not churn the stream. The stream's first event is the full
+	// status document, so the layout paints before any status arrives and
+	// consumers show a pending state until then.
 	import { onDestroy, type Snippet } from 'svelte';
 	import { page } from '$app/state';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
@@ -16,7 +18,7 @@
 	const locked = $derived(data.env?.access === 'none' && !page.url.pathname.includes('/settings'));
 
 	$effect(() => {
-		if (data.env && data.env.access !== 'none') envStatus.sync(data.env.id, data.status);
+		if (data.env && data.env.access !== 'none') envStatus.sync(data.env.id);
 		else envStatus.stop();
 	});
 	onDestroy(() => envStatus.stop());

@@ -9,6 +9,7 @@
 	import type { Run } from '$lib/types/runs';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { withEnv } from '$lib/urls';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import RunsSection from '$lib/components/run/RunsSection.svelte';
 	import ApplicationStoragePanel from './ApplicationStoragePanel.svelte';
@@ -80,12 +81,23 @@
 		];
 	});
 
+	// The replica and restart tiles read pods from the live status; until
+	// the stream's first document they hold their place instead of saying
+	// "0 / 0 ready".
+	const pendingStats = $derived(
+		envStatus.pending && !routed ? new Set(['REPLICAS', 'RESTARTS']) : new Set<string>()
+	);
+
 	const RECENT_RUNS = 5;
 </script>
 
 <div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
 	{#each stats as stat (stat.label)}
-		<StatCard {stat} />
+		{#if pendingStats.has(stat.label)}
+			<Skeleton variant="card" class="h-full min-h-28" />
+		{:else}
+			<StatCard {stat} />
+		{/if}
 	{/each}
 </div>
 

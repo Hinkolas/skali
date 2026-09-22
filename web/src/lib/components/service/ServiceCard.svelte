@@ -6,6 +6,7 @@
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { formatBytes } from '$lib/format';
 	import { withEnv } from '$lib/urls';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import StatusPill from '$lib/components/ui/StatusPill.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
@@ -50,12 +51,16 @@
 			<!-- Hover-only: the card is one big link, so the pill cannot take a
 			     tab stop of its own. Keyboard readers get the same diagnostics
 			     from the service header this card links to. -->
-			<StatusPill
-				status={health}
-				diagnostics={live?.diagnostics ?? []}
-				align="end"
-				focusable={false}
-			/>
+			{#if envStatus.pending}
+				<Skeleton variant="pill" class="w-20" />
+			{:else}
+				<StatusPill
+					status={health}
+					diagnostics={live?.diagnostics ?? []}
+					align="end"
+					focusable={false}
+				/>
+			{/if}
 		</span>
 	</div>
 
@@ -64,11 +69,15 @@
 			{service.config.source.image || service.config.source.build?.context || 'source'}
 		</div>
 		<div class="font-mono text-text-faint border-border-subtle flex gap-3 border-t pt-2.75 text-xs">
-			<span>
+			<span class="flex items-center gap-1">
 				replicas
-				<span class="text-text-secondary">
-					{live?.pods.filter((p) => p.ready).length ?? 0}/{service.config.scaling.maxReplicas}
-				</span>
+				{#if envStatus.pending}
+					<Skeleton variant="line" class="h-3 w-7" />
+				{:else}
+					<span class="text-text-secondary">
+						{live?.pods.filter((p) => p.ready).length ?? 0}/{service.config.scaling.maxReplicas}
+					</span>
+				{/if}
 			</span>
 			<span>
 				ports

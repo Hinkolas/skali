@@ -12,6 +12,7 @@
 	import Card from '$lib/components/ui/Card.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import StackedBar from '$lib/components/ui/StackedBar.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import ServiceCard from '$lib/components/service/ServiceCard.svelte';
@@ -19,7 +20,9 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const status = $derived(envStatus.doc ?? data.status);
+	// Live status arrives over the stream; until its first event the header
+	// shows a pending dot rather than an unknown verdict.
+	const status = $derived(envStatus.doc);
 
 	const title = $derived(data.project.display_name || data.project.name);
 
@@ -87,7 +90,11 @@
      to the environment breadcrumb. -->
 <PageHeader {title}>
 	{#snippet subtitle()}
-		<span class="size-[8px] flex-none rounded-full {subtitleDot}"></span>
+		{#if envStatus.pending}
+			<Skeleton variant="line" class="size-[8px] w-[8px] flex-none rounded-full" />
+		{:else}
+			<span class="size-[8px] flex-none rounded-full {subtitleDot}"></span>
+		{/if}
 		{subtitleText}
 	{/snippet}
 </PageHeader>

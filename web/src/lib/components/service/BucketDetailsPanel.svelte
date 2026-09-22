@@ -6,6 +6,7 @@
 	import { describeSeconds } from '$lib/cron';
 	import Card from '$lib/components/ui/Card.svelte';
 	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 
 	// What the bucket claim asked for: who may read it, whether versions are
 	// kept, the quotas that cap it, and the lifecycle rules that clean up
@@ -46,9 +47,13 @@
 <Card class="flex flex-col p-5">
 	<div class="mb-3.5 flex items-center gap-2.5">
 		<h3 class="text-text-primary text-xl font-semibold">Bucket</h3>
-		<span class="flex items-center gap-1.5 text-md {meta.text}">
-			<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
-		</span>
+		{#if envStatus.pending}
+			<Skeleton variant="pill" class="w-16" />
+		{:else}
+			<span class="flex items-center gap-1.5 text-md {meta.text}">
+				<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label.toLowerCase()}
+			</span>
+		{/if}
 	</div>
 	<div class="flex flex-col">
 		<KeyValueRow k="Visibility" v={visibility} labelWidth="w-38" />

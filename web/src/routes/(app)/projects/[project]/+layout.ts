@@ -1,13 +1,15 @@
 // Project scope: resolve the route slug (the project name) against the shell
 // load's project list, resolve `?env=` to an environment, and fetch the
-// draft definition plus the environment's status projection.
+// environments (with their cached summary) and the draft definition. The
+// environment's live status is not loaded here: the status stream the
+// layout component opens delivers the full document as its first event,
+// and consumers show a pending state until it lands (envStatus.pending).
 
 import { error } from '@sveltejs/kit';
 import { apiFetch } from '$lib/api/client';
 import { servicesFromDefinition } from '$lib/models/service';
 import type { DraftResponse } from '$lib/types/definition';
 import type { Environment } from '$lib/types/project';
-import type { EnvironmentStatus } from '$lib/types/status';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
@@ -16,9 +18,8 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 	if (!project) error(404, 'Project not found');
 
 	// Environments and the draft need only the project id, so they leave
-	// together; the status projection waits for the resolved environment.
-	// The summary rides along: each environment's state and cached health,
-	// so pages listing environments never ask for status per row.
+	// together. The summary rides along: each environment's state and cached
+	// health, so pages listing environments never ask for status per row.
 	const [envsRes, draftRes] = await Promise.all([
 		apiFetch(fetch, `/v1/projects/${project.id}/environments?include=summary`),
 		apiFetch(fetch, `/v1/projects/${project.id}/draft`)
@@ -39,12 +40,10 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 		environments[0] ??
 		null;
 
-	// A project may have no draft (404: zero services) and status may be
-	// briefly unavailable; both degrade instead of erroring the whole scope.
-	const statusRes = env ? await apiFetch(fetch, `/v1/environments/${env.id}/status`) : null;
+	// A project may have no draft (404: zero services); it degrades instead
+	// of erroring the whole scope.
 	const draft = draftRes.ok ? ((await draftRes.json()) as DraftResponse).draft : null;
 	const definition = draft?.definition ?? null;
-	const status = statusRes && statusRes.ok ? ((await statusRes.json()) as EnvironmentStatus) : null;
 
 	return {
 		project,
@@ -56,7 +55,6 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 		draft: draft
 			? { version: draft.version, format: draft.format, source: draft.source, hash: draft.hash }
 			: null,
-		services: servicesFromDefinition(definition),
-		status
+		services: servicesFromDefinition(definition)
 	};
 };
