@@ -7,8 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testManifest = `skali: v0.1.0-rc.3
-name: demo
+const testManifest = `name: demo
 applications:
   api:
     image: ghcr.io/example/api:1.0.0
@@ -213,7 +212,7 @@ func TestDraftSubmitAndConflicts(t *testing.T) {
 
 	// A manifest whose name does not match the project is rejected.
 	status, body = a.do("PUT", "/v1/projects/"+projectID+"/draft", token, map[string]any{
-		"source": "skali: v0.1.0-rc.3\nname: other\n", "expected_version": 1,
+		"source": "name: other\n", "expected_version": 1,
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, status)
 	require.Equal(t, "invalid_manifest", errorCode(t, body))

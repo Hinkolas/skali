@@ -30,7 +30,7 @@ func TestPreparseArgs(t *testing.T) {
 		{"dev dispatches", []string{"dev", "start", "--force"}, invocation{command: "dev", path: "dev start"}},
 		{"managed upgrade version", []string{"cluster", "upgrade", "--version", "v0.5.0"}, invocation{command: "cluster", path: "cluster upgrade"}},
 		{"dev remote override", []string{"dev", "--remote", "khz"}, invocation{command: "dev", path: "dev", remote: "khz"}},
-		{"skill read with since", []string{"skill", "read", "manifest", "--since", "v0.1.0-rc.2"}, invocation{command: "skill", path: "skill read"}},
+		{"skill read with since", []string{"skill", "read", "manifest", "--since", "0"}, invocation{command: "skill", path: "skill read"}},
 		{"skill install", []string{"skill", "install", "--agent", "claude"}, invocation{command: "skill", path: "skill install"}},
 		{"unknown command", []string{"frobnicate"}, invocation{command: "frobnicate", path: "frobnicate"}},
 		{"bare", nil, invocation{}},

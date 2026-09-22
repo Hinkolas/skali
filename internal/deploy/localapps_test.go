@@ -11,8 +11,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-const localBuildManifest = `skali: v0.1.0-rc.3
-name: demo
+const localBuildManifest = `name: demo
 applications:
   web:
     build:

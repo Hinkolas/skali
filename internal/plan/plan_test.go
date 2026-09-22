@@ -12,7 +12,6 @@ import (
 )
 
 const baseManifest = `
-skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -182,7 +181,6 @@ func TestPruneAddsValueRowsWithoutTouchingDestructive(t *testing.T) {
 func TestVolumeRemovalIsDestructive(t *testing.T) {
 	t.Parallel()
 	withVolume := `
-skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -193,7 +191,6 @@ applications:
         size: 1GB
 `
 	withoutVolume := `
-skali: v0.1.0-rc.3
 name: demo
 applications:
   web:
@@ -212,7 +209,6 @@ applications:
 	require.Contains(t, updated.Detail, "deletes persistent volumes: cache")
 
 	removal := Diff(active, buildRevision(t, `
-skali: v0.1.0-rc.3
 name: demo
 applications:
   other:

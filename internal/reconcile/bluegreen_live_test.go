@@ -29,7 +29,7 @@ func liveManifestImage(project string, replicas int, autoscaled bool, image stri
 		scaling += "        max: " + strconv.Itoa(replicas+3) + "\n" +
 			"      autoscaling:\n        cpu:\n          targetUtilization: 70\n"
 	}
-	return "skali: v0.1.0-rc.3\nname: " + project + "\napplications:\n  web:\n" +
+	return "name: " + project + "\napplications:\n  web:\n" +
 		"    image: " + image + "\n" +
 		"    ports:\n      http:\n        port: 80\n        protocol: http\n" +
 		"    health:\n      readiness:\n        http:\n          port: http\n          path: /health\n        interval: 10s\n" +

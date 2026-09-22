@@ -126,39 +126,48 @@ accepted one; handoffs are bounded.
 
 ## 4. Manifest review and stored document schemas
 
-The required `skali` field records the release against which an author reviewed
-a manifest. It is excluded from compiled definitions and their hashes. It does
-not select the remote or compiler. An older watermark is acceptable when no
-affected semantics changed. A watermark newer than a released compiler is
-rejected by both CLI and server, naming both releases. Targeting an older release
-requires deliberate review of that release and an explicit watermark edit.
+Manifests carry no application version or review revision. Parsing and compilation
+always validate the current grammar. Removed fields, including the old `skali`
+and `version` fields, report an explanation and an upgrade hint.
 
-The small change ledger records additions, removals and exceptional semantic
-changes. Changed entries report every affected location, including omitted
-fields whose defaults changed. It is not a general compatibility engine.
+Numbered YAML records in `internal/manifest/changes/` describe additions,
+removals and semantic/default changes. Each filename supplies a consecutive
+revision starting at 1. Add one record with the implementation, resolve numbering
+conflicts before merging, and never modify, remove or renumber merged records.
+Records are embedded directly in ordinary builds; tagging needs no ledger
+preparation, stamping or generation. Application release numbers are independent.
 
-Ledger entries are keyed by the release that shipped the change, prereleases
-included, because that is the same tag the watermark names. An entry lands
-with the sentinel `next` while its change is unreleased; nobody guesses the
-coming tag. The release process stamps pending entries with the tag about to
-be cut (`task release:stamp`), that rewrite is merged like any other change,
-and cutting a release is refused while an entry is still pending or names a
-newer release. Until stamped, a pending change counts as newer than every
-release the ledger names: a watermark past the newest shipped entry has seen
-it, an older one has not, and messages call its release "the next release".
+The local CLI stores per-manifest acknowledgements in
+`.skali/manifest-review.yaml` beside the manifest, keyed by filename. This is
+self-ignoring, disposable checkout state, separate from target bindings. Missing
+history trusts current semantics and begins tracking after successful manifest
+compilation. Later deployment or network failures do not undo that local review.
+Ordinary commands do not advance existing history. Relevant changes since the
+stored revision block local authoring/deployment commands, including changes to
+omitted defaults; unaffected manifests continue without an acknowledgement.
 
-`skali manifest upgrade` evaluates changes against the original review point.
-It proposes safe mechanical edits (including replacing legacy `version: "1"`
-and dropping removed top-level blocks such as `backups:`) and ordinary
-review-point advances, then validates and compiles before atomically
-replacing the source. Semantic changes requiring author review produce diagnostics
-and leave the file unchanged. Manual review and watermark editing acknowledge
-those changes. Comments and formatting survive supported edits; unsupported YAML
-rewrite shapes fail without touching the file.
+`skali manifest upgrade` removes supported obsolete fields, validates and compiles
+the proposed result, then updates local history. Semantic changes require review
+and an explicit `--acknowledge`; the flag never bypasses validation. State-only
+upgrades leave the manifest untouched. Comments, line endings and permissions
+survive supported edits; unsafe YAML shapes require a manual edit. If cleanup
+succeeds but saving state fails, the command reports that partial success and is
+safe to rerun. Development builds use their embedded revision without `--to`.
 
-A released compiler accepts `--to` only for its own release. Working-tree builds
-require explicit `--to` and report their development status; they do not certify
-the contents of a different published compiler.
+A local revision newer than the selected compiler produces an informational
+notice, not a compatibility rejection. Normal target validation still applies,
+and the stored revision is never lowered. `skali skill read manifest --since N`
+shows changes after revision N; 0 shows all entries.
+
+Fresh clones, copied manifests with a new filename, and server submissions have
+no inherited review history. They validate against current semantics. Local
+history is guidance, not a portable compatibility guarantee: it is neither sent
+to the server nor included in compiled definitions or hashes. Editing an existing
+manifest retains its history. Malformed local state is an error, not missing
+history; repair or explicitly delete it. Failure to save automatic first-use
+history only warns, so read-only checkouts can still be validated. Explicit
+upgrade reports persistence failures as errors. Help, completion, references and
+metadata-only operations do not read or write review history.
 
 Definitions and revisions have independent integer schema constants. API-facing
 schema values are integers. The physical database columns remain
@@ -166,7 +175,7 @@ schema values are integers. The physical database columns remain
 the legacy and current schema-1 envelopes. New stored schema-1 definitions include
 `version: "1"`; revisions include `schemaVersion: "1"` and the nested definition
 alias so the preceding daemon can read writes during rollout overlap. These
-aliases describe storage, independently of the manifest watermark. Existing
+aliases describe storage, independently of local manifest review history. Existing
 revision contents and checksums are never rewritten. No SQL rename/type-conversion
 migration is needed for this unreleased redesign.
 

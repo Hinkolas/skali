@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	versionpkg "github.com/Hinkolas/skali/internal/version"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/Hinkolas/skali/internal/compiler"
@@ -178,17 +176,14 @@ func TestLegacyDocumentsStillDecode(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "%v", body)
 }
 
-func TestServerRejectsNewerManifestReview(t *testing.T) {
+func TestServerRejectsRemovedManifestReview(t *testing.T) {
 	a := newTestAPI(t)
-	old := versionpkg.Version
-	versionpkg.Version = "v0.4.0"
-	t.Cleanup(func() { versionpkg.Version = old })
 	a.createUser("review@example.com", "hunter2hunter2")
 	token := a.login("review@example.com", "hunter2hunter2")
 	projectID, _ := a.createEnvironment(t, token)
-	source := strings.Replace(deployAPIManifest, "skali: v0.1.0-rc.3", "skali: v0.5.0", 1)
+	source := "skali: v0.5.0\n" + deployAPIManifest
 	status, body := a.do("POST", "/v1/projects/"+projectID+"/definitions", token, map[string]any{"source": source})
 	require.Equal(t, http.StatusUnprocessableEntity, status, "%v", body)
-	require.Contains(t, fmt.Sprint(body), "v0.5.0")
-	require.Contains(t, fmt.Sprint(body), "v0.4.0")
+	require.Contains(t, fmt.Sprint(body), "removed in manifest revision")
+	require.Contains(t, fmt.Sprint(body), "run skali manifest upgrade")
 }

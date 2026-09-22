@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -73,7 +74,7 @@ func newSkillInstallCommand() *cobra.Command {
 // newSkillReadCommand serves the version-bound references. Under dispatch
 // the binary that prints is the one for the project's target cluster, so
 // the reference is right by construction; --since renders the ledger for
-// a manifest whose watermark is older than that release.
+// a manifest with an older local review revision.
 func newSkillReadCommand() *cobra.Command {
 	var since string
 	command := &cobra.Command{
@@ -84,8 +85,8 @@ func newSkillReadCommand() *cobra.Command {
 			"cli (the commands used from the terminal). Without a topic the topics are " +
 			"listed. Run from the project directory the command dispatches to the " +
 			"release of the project's target cluster, so the reference matches the " +
-			"cluster that will compile the manifest. --since <release> prints the " +
-			"manifest grammar changes since that release instead of the reference " +
+			"cluster that will compile the manifest. --since <revision> prints the " +
+			"manifest grammar changes since that revision instead of the reference " +
 			"(the same ledger skali validate and skali manifest upgrade consult).",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeTopics,
@@ -94,8 +95,8 @@ func newSkillReadCommand() *cobra.Command {
 			fmt.Fprintln(out, versionDescription())
 			fmt.Fprintln(out)
 			if len(args) == 0 {
-				if since != "" {
-					return errors.New("--since applies to the manifest topic; run skali skill read manifest --since <release>")
+				if command.Flags().Changed("since") {
+					return errors.New("--since applies to the manifest topic; run skali skill read manifest --since <revision>")
 				}
 				listTopics(out)
 				return nil
@@ -105,23 +106,23 @@ func newSkillReadCommand() *cobra.Command {
 			if !ok {
 				return fmt.Errorf("unknown topic %q (valid: %s)", topic, strings.Join(skill.TopicNames(), ", "))
 			}
-			if since == "" {
+			if !command.Flags().Changed("since") {
 				_, err := out.Write(content)
 				return err
 			}
 			if topic != "manifest" {
-				return errors.New("--since applies to the manifest topic; run skali skill read manifest --since <release>")
+				return errors.New("--since applies to the manifest topic; run skali skill read manifest --since <revision>")
 			}
-			release, ok := manifest.Watermark(since)
-			if !ok {
-				return fmt.Errorf("--since %q is not a skali release; expected a tag like %s", since, manifest.ReferenceRelease())
+			revision, err := strconv.Atoi(since)
+			if err != nil || revision < 0 || revision > manifest.CurrentRevision() {
+				return fmt.Errorf("--since %q must be a revision from 0 through %d", since, manifest.CurrentRevision())
 			}
-			renderChangesSince(out, release, versionpkg.Version, manifest.ChangesSince(release))
+			renderChangesSince(out, revision, versionpkg.Version, manifest.ChangesSince(revision))
 			return nil
 		},
 	}
 	addVersionFlags(command, true)
-	command.Flags().StringVar(&since, "since", "", "print the manifest changes since this release instead of the reference")
+	command.Flags().StringVar(&since, "since", "", "print the manifest changes since this revision instead of the reference")
 	return command
 }
 
@@ -135,16 +136,16 @@ func listTopics(out io.Writer) {
 	fmt.Fprintln(out, "run skali skill read <topic> from the project directory")
 }
 
-// renderChangesSince prints the ledger entries after a watermark, oldest
+// renderChangesSince prints the ledger entries after a revision, oldest
 // first, each with its message and migration hint.
-func renderChangesSince(out io.Writer, since, current string, changes []manifest.Change) {
+func renderChangesSince(out io.Writer, since int, current string, changes []manifest.Change) {
 	if len(changes) == 0 {
-		fmt.Fprintf(out, "no manifest changes since %s; this skali is %s\n", since, current)
+		fmt.Fprintf(out, "no manifest changes since revision %d; this skali is %s\n", since, current)
 		return
 	}
-	fmt.Fprintf(out, "manifest changes since %s (this skali is %s)\n", since, current)
+	fmt.Fprintf(out, "manifest changes since revision %d (this skali is %s)\n", since, current)
 	for _, change := range changes {
-		fmt.Fprintf(out, "  %s  %s  %s\n", change.Release, change.Kind, change.Path)
+		fmt.Fprintf(out, "  %d  %s  %s\n", change.Revision, change.Kind, change.Path)
 		fmt.Fprintf(out, "    %s\n", change.Message)
 		if change.Hint != "" {
 			fmt.Fprintf(out, "    fix: %s\n", change.Hint)

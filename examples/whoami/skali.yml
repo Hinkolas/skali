@@ -1,6 +1,5 @@
 # yaml-language-server: $schema=../../schemas/skali.schema.json
 
-skali: v0.1.0-rc.3
 
 name: whoami
 description: Minimal image-based HTTP application

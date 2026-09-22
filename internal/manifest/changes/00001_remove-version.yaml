@@ -1,0 +1,4 @@
+kind: removed
+path: "version"
+message: "version is no longer part of the manifest"
+hint: "run skali manifest upgrade to remove the obsolete version field"

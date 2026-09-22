@@ -1,6 +1,5 @@
 # yaml-language-server: $schema=../../schemas/skali.schema.json
 
-skali: v0.1.0-rc.3
 
 name: hello-world
 description: Minimal build-sourced HTTP application (the local-build flagship)

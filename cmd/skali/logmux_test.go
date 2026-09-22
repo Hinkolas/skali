@@ -62,8 +62,7 @@ func TestLogMuxConcurrentWholeLines(t *testing.T) {
 
 func TestDevApplicationsExtraction(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "skali.yml", `skali: v0.1.0-rc.3
-name: devdemo
+	writeFile(t, root, "skali.yml", `name: devdemo
 applications:
   web:
     image: example.invalid/web:1

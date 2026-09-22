@@ -1,0 +1,4 @@
+kind: removed
+path: skali
+message: the skali release watermark is no longer part of the manifest
+hint: run skali manifest upgrade to remove it; review history is stored locally in .skali/

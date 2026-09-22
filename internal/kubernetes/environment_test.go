@@ -43,7 +43,6 @@ func TestRenderEnvironmentSecret(t *testing.T) {
 func TestEnvironmentSecretData(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: composed
 applications:
   web:
@@ -86,7 +85,6 @@ databases:
 func TestRenderEnvironmentBindings(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`
-skali: v0.1.0-rc.3
 name: bindings
 applications:
   web:

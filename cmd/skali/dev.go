@@ -59,7 +59,7 @@ func newDevCommand() *cobra.Command {
 		// unless --preview asks for the full in-cluster deployment.
 		// They are child processes of this session, so a detached
 		// session cannot host them.
-		project, err := loadLocalProject("")
+		project, err := loadLocalProject("", command.ErrOrStderr())
 		if err != nil {
 			return err
 		}
@@ -466,7 +466,7 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 	ctx := command.Context()
 	out := command.OutOrStdout()
 	style := clirender.StyleFor(out)
-	project, err := loadLocalProject("")
+	project, err := readLocalProject("", nil)
 	if err != nil {
 		return err
 	}
@@ -563,7 +563,7 @@ func finishInterrupted(command *cobra.Command, window string, keepRunning bool) 
 	out := command.OutOrStdout()
 	style := clirender.StyleFor(out)
 
-	project, projectErr := loadLocalProject("")
+	project, projectErr := readLocalProject("", nil)
 	cfg, cfgErr := cliconfig.Load()
 	if projectErr != nil || cfgErr != nil || cfg.Remotes[localRemoteName] == nil {
 		return errors.New("interrupted")
@@ -1051,7 +1051,7 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 // localProjectEnvironment resolves the current project's local environment
 // through the local remote.
 func localProjectEnvironment(command *cobra.Command) (*client.Client, string, error) {
-	project, err := loadLocalProject("")
+	project, err := readLocalProject("", nil)
 	if err != nil {
 		return nil, "", err
 	}

@@ -7,7 +7,6 @@ import (
 
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
-	"github.com/Hinkolas/skali/internal/version"
 	"github.com/Hinkolas/skali/internal/yamldoc"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -36,7 +35,6 @@ func Schema() (*jsonschema.Schema, error) {
 
 	yamldoc.StampSchema(schema, SchemaID, "Skali project manifest",
 		"Portable, declarative project definition consumed by the Skali compiler.")
-	schema.Properties["skali"].Pattern = "^v?" + version.ReleaseShape + "$"
 	schema.Properties["name"].Pattern = naming.KeyPattern
 	schema.AnyOf = []*jsonschema.Schema{
 		{Required: []string{"applications"}},

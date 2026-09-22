@@ -34,8 +34,7 @@ const (
 // exists.
 // ReleaseShape is the body of a release version without the leading v:
 // X.Y.Z with an optional dotted alpha, beta, or rc suffix. releasePattern
-// anchors it behind a mandatory v; the manifest schema anchors it behind
-// an optional one for the skali watermark field.
+// anchors it behind a mandatory v. Manifest review uses independent revisions.
 const ReleaseShape = `[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?`
 
 var releasePattern = regexp.MustCompile(`^v` + ReleaseShape + `$`)

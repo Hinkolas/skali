@@ -4,270 +4,219 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Hinkolas/skali/internal/checkout"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
-	versionpkg "github.com/Hinkolas/skali/internal/version"
+	"github.com/Hinkolas/skali/internal/yamldoc"
 )
 
 func newManifestCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "manifest",
-		Short: "Work on the project manifest",
-	}
+	command := &cobra.Command{Use: "manifest", Short: "Work on the project manifest"}
 	command.AddCommand(newManifestUpgradeCommand())
 	return command
 }
 
-// newManifestUpgradeCommand moves the watermark (docs/versioning.md,
-// decision 4). The command dispatches like every other, so under a binding
-// or current remote the release it writes is the cluster's.
 func newManifestUpgradeCommand() *cobra.Command {
-	var (
-		manifestPath string
-		to           string
-	)
+	var manifestPath string
+	var acknowledge bool
 	command := &cobra.Command{
 		Use:   "upgrade",
-		Short: "Move the manifest's skali watermark to this release",
-		Long: "Validates a proposed review-point advance and safe mechanical changes before " +
-			"writing the manifest. Semantic changes require author review and an explicit " +
-			"watermark edit; errors leave the file unchanged. A released CLI can certify " +
-			"only its own release. Working-tree builds require --to and identify their " +
-			"development status.",
-		Args: cobra.NoArgs,
+		Short: "Clean up obsolete fields and update local manifest review history",
+		Long:  "Validates safe manifest edits before writing. Relevant semantic changes require explicit review and --acknowledge. Review history is stored in .skali/, never in the manifest.",
+		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			target, err := watermarkTarget(to)
+			cwd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			workingDirectory, err := os.Getwd()
+			path, err := manifest.Discover(manifestPath, cwd)
 			if err != nil {
-				return fmt.Errorf("get working directory: %w", err)
+				return err
 			}
-			path, err := manifest.Discover(manifestPath, workingDirectory)
+			reviewed, known, err := checkout.Review(path)
 			if err != nil {
 				return err
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {
-				return fmt.Errorf("read manifest %s: %w", path, err)
+				return err
 			}
 			info, err := os.Stat(path)
 			if err != nil {
-				return fmt.Errorf("stat manifest %s: %w", path, err)
+				return err
 			}
-			rewritten, summary, err := upgradeManifest(data, target)
+			rewritten, summary, err := upgradeManifest(data)
 			if err != nil {
 				return fmt.Errorf("%s: %w", path, err)
 			}
-			out := command.OutOrStdout()
-			if rewritten == nil {
-				doc, err := manifest.Parse(data, path)
+			proposed := data
+			if rewritten != nil {
+				proposed = rewritten
+			}
+			document, err := manifest.Parse(proposed, path)
+			if err != nil {
+				return err
+			}
+			var acknowledged yamldoc.Diagnostics
+			if known {
+				diagnostics := manifest.ReviewChanges(document, reviewed)
+				if len(diagnostics) > 0 {
+					if !acknowledge {
+						return diagnostics
+					}
+					acknowledged = diagnostics
+				}
+			}
+			if _, err := compiler.Compile(document); err != nil {
+				return err
+			}
+			if rewritten != nil {
+				f, err := os.CreateTemp(filepath.Dir(path), ".skali-manifest-*")
 				if err != nil {
 					return err
 				}
-				if _, err := compiler.Compile(doc); err != nil {
+				defer os.Remove(f.Name())
+				defer f.Close()
+				if err = f.Chmod(info.Mode()); err != nil {
 					return err
 				}
-				fmt.Fprintf(out, "%s %s\n", path, summary)
-				return nil
+				if _, err = f.Write(rewritten); err != nil {
+					return err
+				}
+				if err = f.Sync(); err != nil {
+					return err
+				}
+				if err = f.Close(); err != nil {
+					return err
+				}
+				// Do not replace a manifest edited while this command was preparing it.
+				latest, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(latest, data) {
+					return errors.New("manifest changed during upgrade; rerun the command")
+				}
+				if err = os.Rename(f.Name(), path); err != nil {
+					return err
+				}
 			}
-			document, err := manifest.Parse(rewritten, path)
+			stored, err := checkout.SaveReview(path, manifest.CurrentRevision(), false)
 			if err != nil {
-				return err
+				if rewritten != nil {
+					return fmt.Errorf("manifest cleanup succeeded, but local acknowledgement was not saved: %w; rerun manifest upgrade", err)
+				}
+				return fmt.Errorf("local acknowledgement was not saved: %w", err)
 			}
-			var old struct {
-				Skali string `yaml:"skali"`
+			if len(acknowledged) > 0 {
+				fmt.Fprintf(command.ErrOrStderr(), "acknowledged manifest changes:\n%s\n", acknowledged.Error())
 			}
-			if err := yaml.Unmarshal(data, &old); err != nil {
-				return err
-			}
-			reviewed, ok := manifest.Watermark(old.Skali)
-			if !ok {
-				reviewed = "v0.0.0"
-			}
-			if diagnostics := manifest.ReviewChanges(document, reviewed); len(diagnostics) > 0 {
-				return diagnostics
-			}
-			if _, err = compiler.Compile(document); err != nil {
-				return err
-			}
-			f, err := os.CreateTemp(filepath.Dir(path), ".skali-manifest-*")
-			if err != nil {
-				return err
-			}
-			defer os.Remove(f.Name())
-			defer f.Close()
-			if err = f.Chmod(info.Mode().Perm()); err != nil {
-				return err
-			}
-			if _, err = f.Write(rewritten); err != nil {
-				return err
-			}
-			if err = f.Sync(); err != nil {
-				return err
-			}
-			if err = f.Close(); err != nil {
-				return err
-			}
-			if err = os.Rename(f.Name(), path); err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "upgraded %s: %s\n", path, summary)
-			if !versionpkg.IsRelease(versionpkg.Version) {
-				fmt.Fprintln(out, "reviewed with working-tree compiler "+versionpkg.Version)
+			fmt.Fprintf(command.OutOrStdout(), "upgraded %s: %s; locally reviewed through manifest revision %d\n", path, summary, stored)
+			if stored > manifest.CurrentRevision() {
+				fmt.Fprintf(command.ErrOrStderr(), "note: retaining newer local review revision %d; this compiler understands %d\n", stored, manifest.CurrentRevision())
 			}
 			return nil
 		},
 	}
 	addVersionFlags(command, false)
 	command.Flags().StringVar(&manifestPath, "manifest", "", "manifest path; defaults to skali.yml or skali.yaml")
-	command.Flags().StringVar(&to, "to", "", "release to review against; defaults to this CLI's release")
+	command.Flags().BoolVar(&acknowledge, "acknowledge", false, "confirm review of relevant semantic changes")
 	return command
 }
 
-// watermarkTarget resolves the release the watermark moves to. A development
-// build names no release and needs --to.
-func watermarkTarget(to string) (string, error) {
-	if to != "" {
-		release, ok := manifest.Watermark(to)
-		if !ok {
-			return "", fmt.Errorf("--to %q is not a skali release; expected a tag like %s", to, manifest.ReferenceRelease())
-		}
-		if versionpkg.IsRelease(versionpkg.Version) && release != versionpkg.Version {
-			return "", fmt.Errorf("--to %s differs from this compiler (%s); select the matching target instead", release, versionpkg.Version)
-		}
-		return release, nil
-	}
-	if !versionpkg.IsRelease(versionpkg.Version) {
-		return "", errors.New("this is a development build and names no release; pass --to <release>")
-	}
-	return versionpkg.Version, nil
-}
-
-// watermarkLine matches a top-level key line and keeps an inline comment.
-var watermarkLine = regexp.MustCompile(`^[A-Za-z_]+:[^#]*?(\s*#.*)?$`)
-
-// upgradeManifest rewrites the manifest text so its watermark is target:
-// the legacy version line becomes the skali line, an older skali line moves
-// forward, and a manifest with neither gets the line before its first key.
-// A top-level backups block (removed from the manifest when automatic
-// backups became an environment setting; the ledger names the release) is
-// dropped with the comment block directly above it. Edits are line-based on the original text so formatting and
-// comments elsewhere survive. A nil result means nothing changed; the
-// summary then says why.
-func upgradeManifest(data []byte, target string) (rewritten []byte, summary string, err error) {
+// upgradeManifest removes obsolete top-level fields without reformatting the
+// remaining document. Unsafe YAML shapes require an explicit manual edit.
+func upgradeManifest(data []byte) ([]byte, string, error) {
 	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil, "", fmt.Errorf("parse manifest: %w", err)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&root); err != nil {
+		return nil, "", err
+	}
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, "", errors.New("cannot safely rewrite multiple YAML documents")
 	}
 	if len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
 		return nil, "", errors.New("manifest is not a mapping")
 	}
 	mapping := root.Content[0]
-	if mapping.Style&yaml.FlowStyle != 0 {
-		return nil, "", errors.New("cannot safely rewrite a flow-style manifest; edit the watermark explicitly")
-	}
-	var versionKey, versionValue, skaliKey, skaliValue, backupsKey, backupsValue *yaml.Node
+	var keys []*yaml.Node
+	seen := map[string]bool{}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		switch mapping.Content[i].Value {
-		case "version":
-			versionKey, versionValue = mapping.Content[i], mapping.Content[i+1]
-		case "skali":
-			skaliKey, skaliValue = mapping.Content[i], mapping.Content[i+1]
-		case "backups":
-			backupsKey, backupsValue = mapping.Content[i], mapping.Content[i+1]
+		key, value := mapping.Content[i], mapping.Content[i+1]
+		if seen[key.Value] {
+			return nil, "", fmt.Errorf("duplicate manifest field %q", key.Value)
 		}
-	}
-
-	lines := strings.SplitAfter(string(data), "\n")
-	newline := "\n"
-	if bytes.Contains(data, []byte("\r\n")) {
-		newline = "\r\n"
-	}
-	var removals []string
-	if backupsKey != nil {
-		if backupsValue.Anchor != "" || backupsValue.Kind == yaml.AliasNode || backupsValue.Style&yaml.FlowStyle != 0 ||
-			!strings.HasPrefix(lines[backupsKey.Line-1], "backups:") {
-			return nil, "", errors.New("cannot safely remove this backups block; delete it explicitly")
-		}
-		start, end := blockExtent(mapping, backupsKey, lines)
-		for i := start; i < end; i++ {
-			lines[i] = ""
-		}
-		removals = append(removals, "removed backups (automatic backups are an environment setting now: skali backup schedule set)")
-	}
-	for _, pair := range [][2]*yaml.Node{{versionKey, versionValue}, {skaliKey, skaliValue}} {
-		key, value := pair[0], pair[1]
-		if key == nil {
+		seen[key.Value] = true
+		if key.Value != "skali" && key.Value != "version" && key.Value != "backups" {
 			continue
 		}
-		line := strings.TrimRight(lines[key.Line-1], "\r\n")
-		if value.Anchor != "" || value.Kind != yaml.ScalarNode || value.Line != key.Line || value.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || !strings.HasPrefix(line, key.Value+":") {
-			return nil, "", errors.New("cannot safely rewrite this watermark shape; edit it explicitly")
+		if mapping.Style&yaml.FlowStyle != 0 || value.Anchor != "" || value.Kind == yaml.AliasNode || value.Style&(yaml.FlowStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
+			return nil, "", fmt.Errorf("cannot safely remove %s in this YAML shape; remove it explicitly", key.Value)
 		}
+		if key.Value != "backups" && (value.Kind != yaml.ScalarNode || key.Line != value.Line) {
+			return nil, "", fmt.Errorf("cannot safely remove %s; remove it explicitly", key.Value)
+		}
+		keys = append(keys, key)
 	}
-	replaceLine := func(key *yaml.Node) {
-		index := key.Line - 1
-		line := strings.TrimRight(lines[index], "\r\n")
-		comment := ""
-		if match := watermarkLine.FindStringSubmatch(line); match != nil {
-			comment = match[1]
-		}
-		ending := ""
-		if strings.HasSuffix(lines[index], "\n") {
-			ending = newline
-		}
-		lines[index] = "skali: " + target + comment + ending
+	if len(keys) == 0 {
+		return nil, "no manifest edits needed", nil
 	}
-
-	switch {
-	case skaliKey != nil:
-		current, ok := manifest.Watermark(skaliValue.Value)
-		switch {
-		case ok && current == target:
-			summary = fmt.Sprintf("is already reviewed against %s", target)
-		case ok && versionpkg.Older(target, current):
-			summary = fmt.Sprintf("is reviewed against %s, newer than %s; nothing to do", current, target)
-		default:
-			replaceLine(skaliKey)
-			summary = fmt.Sprintf("skali %s -> %s", skaliValue.Value, target)
-			if versionKey != nil {
-				lines[versionKey.Line-1] = ""
-				summary = fmt.Sprintf("removed version %q, %s", versionValue.Value, summary)
+	lines := strings.SplitAfter(string(data), "\n")
+	// Compute all extents before changing lines; adjacent obsolete fields must
+	// not affect the interpretation of one another's comments or blank lines.
+	type extent struct {
+		start, end  int
+		replacement string
+	}
+	var removals []extent
+	var labels []string
+	for _, key := range keys {
+		if !strings.HasPrefix(lines[key.Line-1], key.Value+":") {
+			return nil, "", fmt.Errorf("cannot safely remove %s; remove it explicitly", key.Value)
+		}
+		if key.Value == "backups" {
+			start, end := blockExtent(mapping, key, lines)
+			removals = append(removals, extent{start: start, end: end})
+			labels = append(labels, "removed backups (configure automatic backups with skali backup schedule set)")
+		} else {
+			// Preserve an inline comment as a standalone comment on the same line.
+			value := mapping.Content[0]
+			for i := 0; i+1 < len(mapping.Content); i += 2 {
+				if mapping.Content[i] == key {
+					value = mapping.Content[i+1]
+					break
+				}
 			}
-		}
-		if ok && !versionpkg.Older(current, target) {
-			// The watermark needs no move; only a removal makes an edit.
-			if len(removals) == 0 {
-				return nil, summary, nil
+			ending := ""
+			if strings.HasSuffix(lines[key.Line-1], "\r\n") {
+				ending = "\r\n"
+			} else if strings.HasSuffix(lines[key.Line-1], "\n") {
+				ending = "\n"
 			}
-			summary = strings.Join(removals, ", ")
-			return []byte(strings.Join(lines, "")), summary, nil
+			replacement := ""
+			if value.LineComment != "" {
+				replacement = value.LineComment + ending
+			}
+			removals = append(removals, extent{start: key.Line - 1, end: key.Line, replacement: replacement})
+			labels = append(labels, "removed "+key.Value)
 		}
-	case versionKey != nil:
-		replaceLine(versionKey)
-		summary = fmt.Sprintf("version %q -> skali: %s", versionValue.Value, target)
-	default:
-		first := 0
-		if len(mapping.Content) > 0 {
-			first = mapping.Content[0].Line - 1
+	}
+	for _, removal := range removals {
+		for i := removal.start; i < removal.end; i++ {
+			lines[i] = ""
 		}
-		lines = append(lines[:first], append([]string{"skali: " + target + newline}, lines[first:]...)...)
-		summary = "added skali: " + target
+		lines[removal.start] = removal.replacement
 	}
-	if len(removals) > 0 {
-		summary = strings.Join(append(removals, summary), ", ")
-	}
-	return []byte(strings.Join(lines, "")), summary, nil
+	return []byte(strings.Join(lines, "")), strings.Join(labels, ", "), nil
 }
 
 // blockExtent is the half-open line range [start, end) a top-level key

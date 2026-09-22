@@ -1,95 +1,103 @@
 package manifest
 
 import (
+	"embed"
+	"fmt"
+	"io"
+	"io/fs"
+	"regexp"
+	"strconv"
 	"strings"
 
-	"github.com/Hinkolas/skali/internal/version"
+	"gopkg.in/yaml.v3"
 )
 
-// ChangeKind classifies one manifest grammar change for the ledger.
+// ChangeKind classifies a manifest grammar change.
 type ChangeKind string
 
 const (
-	// ChangeAdded is a new field or value. Silent: a manifest that does not
-	// use it has nothing to learn. Recorded so the skill can list what
-	// changed since a watermark.
-	ChangeAdded ChangeKind = "added"
-	// ChangeRemoved is a field that no longer exists. A manifest writing it
-	// gets the entry's message and hint instead of a bare unknown field.
+	ChangeAdded   ChangeKind = "added"
 	ChangeRemoved ChangeKind = "removed"
-	// ChangeChanged is a field whose meaning moved. A manifest writing it
-	// fails until its watermark is at or past the release, which is how an
-	// author acknowledges having read about the change.
 	ChangeChanged ChangeKind = "changed"
 )
 
-// Change is one ledger entry: what changed, where, in which release, and
-// what to do about it. Messages and hints are plain ASCII sentences.
+// Change describes a grammar change. Revision comes from its filename, not
+// from an application release. WhenOmitted matches default-only changes.
 type Change struct {
-	Release string
-	Kind    ChangeKind
-	// Path is the dotted manifest path; * stands for one collection key
-	// (applications.*.build.dockerfile).
-	Path    string
-	Message string
-	Hint    string
-	// WhenOmitted describes a default-only change: match missing fields,
-	// including omitted parent objects, but not explicit values.
-	WhenOmitted bool
+	Revision    int        `yaml:"-"`
+	Kind        ChangeKind `yaml:"kind"`
+	Path        string     `yaml:"path"`
+	Message     string     `yaml:"message"`
+	Hint        string     `yaml:"hint"`
+	WhenOmitted bool       `yaml:"whenOmitted,omitempty"`
 }
 
-// Next is the Release of an entry whose change is on main but not yet
-// released. Nobody guesses the coming tag: the entry lands as Next, and
-// task release:stamp replaces it with the tag about to be cut (through
-// cmd/skali-schema, which also refuses to cut a release while an entry is
-// still pending). Pending entries sit after every shipped one. Until
-// stamped, a pending change is newer than every release the ledger names:
-// a watermark past the newest shipped entry counts as having seen it, an
-// older one has not.
-const Next = "next"
+//go:embed changes/*
+var changeFiles embed.FS
 
-// Ledger records every manifest grammar change since the watermark exists,
-// oldest first (docs/versioning.md, decision 4). Parsing consults it for
-// removed fields, validation for changed meanings, skali manifest upgrade
-// moves watermarks past it, and the skill renders it. Changes older than
-// the first entry predate every possible watermark and are history, not
-// ledger. A new entry is written with Release: Next.
-var Ledger = []Change{
-	{
-		Release: "v0.1.0-rc.3",
-		Kind:    ChangeRemoved,
-		Path:    "version",
-		Message: "version was replaced by skali, the release the manifest was last reviewed against",
-		Hint:    "run skali manifest upgrade, or replace the line with skali: and that release, for example skali: v0.1.0-rc.3",
-	},
-	{
-		Release: "v0.1.0-rc.5",
-		Kind:    ChangeAdded,
-		Path:    "backups.*.strategy",
-		Message: "backup policies gained an optional strategy field; complete is the only value and the default, and policies are now enforced: snapshots run on the schedule and retention deletes the ones they produced",
-		Hint:    "nothing to change; write strategy: complete to make the default explicit",
-	},
-	{
-		Release: "v0.1.0-rc.7",
-		Kind:    ChangeAdded,
-		Path:    "applications.*.routes.*.compress",
-		Message: "routes gained an optional compress field; the edge now compresses text-like responses by default (gzip, br, zstd) and compress: false opts a route out",
-		Hint:    "nothing to change; write compress: false for routes that stream events or already compress their responses",
-	},
-	{
-		Release: Next,
-		Kind:    ChangeRemoved,
-		Path:    "backups",
-		Message: "backups was removed from the manifest; automatic backups are an environment setting now, one schedule per environment, set outside the manifest",
-		Hint:    "run skali manifest upgrade to drop the block, then turn automatic backups on per environment with skali backup schedule set",
-	},
+// Ledger is the embedded, append-only history, oldest first.
+var Ledger = mustLoadChanges()
+
+func mustLoadChanges() []Change {
+	ledger, err := loadChanges(changeFiles)
+	if err != nil {
+		panic(err)
+	}
+	return ledger
 }
 
-// Matches reports whether a concrete manifest path is the one the change
-// names: segment by segment, * standing for one collection key.
+var changeFilename = regexp.MustCompile(`^([0-9]{5})_[a-z0-9]+(?:[-_][a-z0-9]+)*\.yaml$`)
+var changePath = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\*))*$`)
+
+func loadChanges(files fs.FS) ([]Change, error) {
+	names, err := fs.ReadDir(files, "changes")
+	if err != nil {
+		return nil, err
+	}
+	var ledger []Change
+	for _, file := range names {
+		match := changeFilename.FindStringSubmatch(file.Name())
+		if file.IsDir() || match == nil {
+			return nil, fmt.Errorf("invalid manifest change filename %q", file.Name())
+		}
+		revision, _ := strconv.Atoi(match[1])
+		if revision != len(ledger)+1 {
+			return nil, fmt.Errorf("manifest change %s: expected revision %d", file.Name(), len(ledger)+1)
+		}
+		data, err := fs.ReadFile(files, "changes/"+file.Name())
+		if err != nil {
+			return nil, err
+		}
+		var change Change
+		decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&change); err != nil {
+			return nil, fmt.Errorf("manifest change %s: %w", file.Name(), err)
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			return nil, fmt.Errorf("manifest change %s: expected one YAML document", file.Name())
+		}
+		if (change.Kind != ChangeAdded && change.Kind != ChangeRemoved && change.Kind != ChangeChanged) ||
+			!changePath.MatchString(change.Path) || strings.TrimSpace(change.Message) == "" || strings.TrimSpace(change.Hint) == "" ||
+			(change.WhenOmitted && change.Kind != ChangeChanged) {
+			return nil, fmt.Errorf("manifest change %s: invalid kind, path, message, hint, or whenOmitted", file.Name())
+		}
+		change.Revision = revision
+		ledger = append(ledger, change)
+	}
+	if len(ledger) == 0 {
+		return nil, fmt.Errorf("manifest change history is empty")
+	}
+	return ledger, nil
+}
+
+// CurrentRevision is the latest change understood by this compiler.
+func CurrentRevision() int { return Ledger[len(Ledger)-1].Revision }
+
+// Matches compares a concrete path; * stands for one collection key.
 func (c Change) Matches(path string) bool {
-	pattern := strings.Split(c.Path, ".")
-	segments := strings.Split(path, ".")
+	pattern, segments := strings.Split(c.Path, "."), strings.Split(path, ".")
 	if len(pattern) != len(segments) {
 		return false
 	}
@@ -101,68 +109,18 @@ func (c Change) Matches(path string) bool {
 	return true
 }
 
-// Pending reports whether the entry still waits for its release tag.
-func (c Change) Pending() bool {
-	return c.Release == Next
-}
-
-// ReleaseLabel names the release in messages: the tag, or "the next
-// release" while the entry is pending.
-func (c Change) ReleaseLabel() string {
-	if c.Pending() {
-		return "the next release"
-	}
-	return c.Release
-}
-
-// after reports whether the change landed after a watermark. A shipped
-// entry did when its release is newer; a pending entry did unless the
-// watermark is already past every release the ledger names (the tag it
-// will be stamped with is newer than all of them). An unparseable
-// watermark has seen nothing.
-func (c Change) after(ledger []Change, watermark string) bool {
-	if !c.Pending() {
-		return version.Older(watermark, c.Release)
-	}
-	newest := newestShipped(ledger)
-	return newest == "" || !version.Older(newest, watermark)
-}
-
-// newestShipped is the newest release a stamped entry names; empty when
-// every entry is pending.
-func newestShipped(ledger []Change) string {
-	newest := ""
-	for _, change := range ledger {
-		if !change.Pending() && (newest == "" || version.Older(newest, change.Release)) {
-			newest = change.Release
+func ChangesSince(revision int) []Change {
+	var changes []Change
+	for _, change := range Ledger {
+		if change.Revision > revision {
+			changes = append(changes, change)
 		}
 	}
-	return newest
+	return changes
 }
 
-// ChangesSince lists the entries that landed after a watermark, oldest
-// first, pending ones included; every entry when the watermark is not a
-// release.
-func ChangesSince(watermark string) []Change {
-	return changesSince(Ledger, watermark)
-}
-
-func changesSince(ledger []Change, watermark string) []Change {
-	release, ok := Watermark(watermark)
-	var since []Change
-	for _, change := range ledger {
-		if !ok || change.after(ledger, release) {
-			since = append(since, change)
-		}
-	}
-	return since
-}
-
-// Removed finds the removal entry a written path falls under.
-func Removed(path string) (Change, bool) {
-	return removedIn(Ledger, path)
-}
-
+// Removed supplies actionable diagnostics even when no local history exists.
+func Removed(path string) (Change, bool) { return removedIn(Ledger, path) }
 func removedIn(ledger []Change, path string) (Change, bool) {
 	for _, change := range ledger {
 		if change.Kind == ChangeRemoved && change.Matches(path) {

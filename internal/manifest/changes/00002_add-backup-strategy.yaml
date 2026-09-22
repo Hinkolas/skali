@@ -1,0 +1,4 @@
+kind: added
+path: "backups.*.strategy"
+message: "backup policies gained an optional strategy field; complete is the only value and the default, and policies are now enforced: snapshots run on the schedule and retention deletes the ones they produced"
+hint: "backups has since been removed; configure automatic backups per environment with skali backup schedule set"

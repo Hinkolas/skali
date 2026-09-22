@@ -13,26 +13,28 @@ require. The same definition deploys unchanged to a local
   walks up from the working directory to find it; both names in the same
   directory is an error. `--manifest PATH` overrides discovery.
 - Parsing is strict: unknown fields are rejected with file, line, column,
-  and the field's path. A field a release removed names its replacement
+  and the field's path. A removed field names its replacement
   and the fix. Never invent fields; check this reference or run
   `skali validate` when unsure.
-- `skali` is the required review watermark (for example `v0.1.0-rc.3`).
-  It records which release's behavior the author reviewed and does not select
-  the compiler. A newer watermark is rejected by an older released compiler;
-  targeting the older release requires deliberate review and an explicit edit.
-  Older watermarks are accepted unless an affected meaning or default changed.
-  `skali manifest upgrade` validates proposed mechanical edits and ordinary
-  review-point advances before writing. Semantic changes requiring author
-  review leave the source unchanged. Watermark-only edits never change the
+- Manifests contain no version or revision field. The local CLI records review
+  history per manifest in untracked `.skali/manifest-review.yaml`. Missing history
+  trusts current semantics and starts tracking after successful compilation.
+  Relevant meaning/default changes since that revision require review; use
+  `skali manifest upgrade --acknowledge` after reading the diagnostics.
+  Ordinary validation never advances existing history. A newer local revision
+  is retained when using an older target compiler; normal validation still runs.
+  Fresh clones and server submissions have no historical review checks.
+- `skali manifest upgrade` safely removes obsolete fields and updates local
+  history after validation. No replacement version field is written. Unsupported
+  YAML rewrite shapes require a manual edit. Local state never changes the
   compiled definition or its hash.
 - Editors get completion and inline validation from the published schema
   by putting this on the first line:
-  `# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/v0.1.0-rc.3/schemas/skali.schema.json`
+  `# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/main/schemas/skali.schema.json`
 
 Top level:
 
 ```yaml
-skali: v0.1.0-rc.3  # required, the skali release this manifest was last reviewed against
 name: my-project    # required, matches ^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$
 description: ...    # optional free text
 applications: {}
@@ -481,7 +483,6 @@ place.
 ### A minimal manifest
 
 ```yaml manifest
-skali: v0.1.0-rc.3
 name: hello-world
 
 applications:
@@ -517,7 +518,6 @@ the manifest carries no environment-specific data.
 The worker has no route and holds the Stripe key:
 
 ```yaml manifest
-skali: v0.1.0-rc.3
 name: orders
 description: Order API with a background billing worker
 
@@ -569,7 +569,6 @@ Autoscaling, spread across nodes, a release command for migrations, and a
 bucket for attachments:
 
 ```yaml manifest
-skali: v0.1.0-rc.3
 name: team-wiki
 description: Wiki with file attachments in a bucket and Postgres storage
 

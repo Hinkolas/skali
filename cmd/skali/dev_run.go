@@ -40,13 +40,16 @@ func newDevRunCommand() *cobra.Command {
 }
 
 func runDevRun(command *cobra.Command, args []string) error {
-	project, err := loadLocalProject("")
+	project, err := readLocalProject("", nil)
 	if err != nil {
 		return err
 	}
 	if listApp, list := devRunListTarget(command, args, project); list {
 		renderDevCommands(command.OutOrStdout(), project, listApp, command.CommandPath())
 		return nil
+	}
+	if _, err := compileReviewed(project.Document, command.ErrOrStderr()); err != nil {
+		return err
 	}
 	appKey, argv, err := parseDevRunArgs(command, args, project)
 	if err != nil {

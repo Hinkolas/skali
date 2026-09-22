@@ -34,9 +34,10 @@ does not establish the version for the rest of an agent session.
 
 Run `skali validate` before finishing, with the same target selectors.
 Errors identify affected fields and required review or migration. Use
-`skali skill read manifest --since <release>` to inspect grammar changes.
-Do not blindly advance or lower a manifest's review watermark to suppress
-semantic warnings: review the selected release's behavior first.
+`skali skill read manifest --since <revision>` to inspect grammar changes.
+Review the selected compiler's behavior before using
+`skali manifest upgrade --acknowledge`. History is disposable local `.skali/`
+state; never add a version or revision field to a manifest.
 
 `--offline` deliberately uses the target's recorded release and an available
 matching CLI. It does not verify the cluster's current release. Use it only

@@ -4462,7 +4462,7 @@ components:
           type: integer
           description: >-
             Generation of the stored revision document, owned by the server
-            and independent of the manifest watermark. Documents from a
+            and independent of local manifest review history. Documents from a
             generation this build does not decode answer `unsupported_schema`.
         checksum:
           type: string

@@ -37,8 +37,7 @@ func TestArtifactPlatforms(t *testing.T) {
 	require.Nil(t, artifactPlatforms(compiler.ApplicationSource{Kind: "build"}, ""))
 }
 
-const declaredImageManifest = `skali: v0.1.0-rc.3
-name: demo
+const declaredImageManifest = `name: demo
 applications:
   web:
     image: ghcr.io/example/web:1.0.0
@@ -49,8 +48,7 @@ applications:
         protocol: http
 `
 
-const declaredBuildManifest = `skali: v0.1.0-rc.3
-name: demo
+const declaredBuildManifest = `name: demo
 applications:
   api:
     build:

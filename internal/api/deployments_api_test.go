@@ -38,8 +38,7 @@ func decodeTokenAccessNames(t *testing.T, body map[string]any) []string {
 
 // deployAPIManifest is the build-sourced flow manifest; the volume makes
 // its removal a destructive change for the gate tests.
-const deployAPIManifest = `skali: v0.1.0-rc.3
-name: demo
+const deployAPIManifest = `name: demo
 applications:
   web:
     build:
@@ -57,8 +56,7 @@ applications:
 `
 
 // deployAPIManifestNoVolume drops the volume: a destructive update.
-const deployAPIManifestNoVolume = `skali: v0.1.0-rc.3
-name: demo
+const deployAPIManifestNoVolume = `name: demo
 applications:
   web:
     build:
@@ -439,8 +437,7 @@ func (a *testAPI) awaitDeployment(t *testing.T, token, deploymentID string) map[
 
 // deployAPIManifestNoSecret drops the ${SESSION_SECRET} reference; the
 // stored value becomes orphaned.
-const deployAPIManifestNoSecret = `skali: v0.1.0-rc.3
-name: demo
+const deployAPIManifestNoSecret = `name: demo
 applications:
   web:
     build:

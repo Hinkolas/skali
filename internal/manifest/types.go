@@ -46,10 +46,6 @@ func (s *Scalar) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type Project struct {
-	// Skali is the watermark: the release the author last reviewed the
-	// manifest against (watermark.go). It is validated as a release tag,
-	// compared against the change ledger, and never compiled.
-	Skali        string                 `yaml:"skali" json:"skali" jsonschema:"The skali release this manifest was last reviewed against, for example v0.1.0-rc.3."`
 	Name         string                 `yaml:"name" json:"name" jsonschema:"Stable project name."`
 	Description  string                 `yaml:"description,omitempty" json:"description,omitempty" jsonschema:"Human-readable project description."`
 	Applications map[string]Application `yaml:"applications,omitempty" json:"applications,omitempty" jsonschema:"Container applications keyed by stable service name."`
