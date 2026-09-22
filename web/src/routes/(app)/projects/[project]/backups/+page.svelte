@@ -8,7 +8,7 @@
 	import Lock from '@lucide/svelte/icons/lock';
 	import { api, ApiError } from '$lib/api/client';
 	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
-	import { backupRefusal, confirmBackup } from '$lib/backups';
+	import { SCHEDULE_IDLE, SCHEDULE_IDLE_DETAIL, backupRefusal, confirmBackup } from '$lib/backups';
 	import { hasStatefulServices } from '$lib/models/service';
 	import { describeCron, describeSeconds, nextCronFire } from '$lib/cron';
 	import { formatBytes, formatDateTime, relativeTime } from '$lib/format';
@@ -71,6 +71,7 @@
 			{
 				environment,
 				environments: data.environments,
+				definition: data.definition,
 				canEdit: roleAtLeast(environment.access, 'admin'),
 				instanceAdmin: isInstanceAdmin(data.user)
 			},
@@ -89,7 +90,12 @@
 	);
 
 	const backupTitle = $derived(backupRefusal(data.env, data.definition));
+	// Nothing stateful in the draft definition: the manual button is refused
+	// and every schedule that is on skips its fires until a deploy declares
+	// a database, bucket, or volume. The rows say so instead of reading as
+	// active (#55).
 	const stateful = $derived(hasStatefulServices(data.definition));
+	const idleSchedules = $derived(!stateful && schedules.some((row) => row.backup !== null));
 
 	// Restore needs maintain on the target, delete maintain on the origin
 	// (or project admin when the origin environment is gone). The server
@@ -196,10 +202,12 @@
 							<span class="font-mono text-text-primary truncate text-md">
 								{row.environment.name}
 							</span>
-							{#if row.backup}
-								<Pill text={row.backup.strategy ?? 'complete'} />
-							{:else}
+							{#if !row.backup}
 								<Pill text="not backed up" tone="warning" />
+							{:else if !stateful}
+								<Pill text="nothing to back up" tone="warning" />
+							{:else}
+								<Pill text={row.backup.strategy ?? 'complete'} />
 							{/if}
 						</div>
 						{#if row.backup}
@@ -216,7 +224,14 @@
 									</div>
 								{/if}
 								<div>
-									{#if row.last}
+									{#if !stateful}
+										<span
+											class="text-status-warning"
+											title="{SCHEDULE_IDLE}. {SCHEDULE_IDLE_DETAIL}"
+										>
+											skips: nothing to back up yet
+										</span>
+									{:else if row.last}
 										last {relativeTime(row.last.created_at)}
 									{:else}
 										no scheduled snapshot yet
@@ -306,7 +321,8 @@
 			<EmptyState
 				icon={Archive}
 				title="Nothing to back up"
-				description="this project declares no database, bucket, or volume, so there is nothing to snapshot"
+				description={'this project declares no database, bucket, or volume, so there is nothing to snapshot' +
+					(idleSchedules ? '; schedules stay in place and start once a deploy adds one' : '')}
 			/>
 		{:else}
 			<EmptyState

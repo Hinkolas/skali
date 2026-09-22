@@ -6,8 +6,10 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import { api, ApiError } from '$lib/api/client';
 	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
+	import { SCHEDULE_IDLE } from '$lib/backups';
 	import { describeCron, describeSeconds } from '$lib/cron';
 	import { describeActor, formatDateTime, relativeTime } from '$lib/format';
+	import { hasStatefulServices } from '$lib/models/service';
 	import { HEALTH_META } from '$lib/service-types';
 	import { withEnv } from '$lib/urls';
 	import type { RevisionSummary } from '$lib/types/revisions';
@@ -63,6 +65,7 @@
 			{
 				environment,
 				environments: data.environments,
+				definition: data.definition,
 				canEdit: roleAtLeast(environment.access, 'admin'),
 				instanceAdmin
 			},
@@ -99,10 +102,15 @@
 		}
 		const backup = environment.settings?.backup;
 		if (backup) {
+			// A schedule with nothing to snapshot is on but idle (#55): amber,
+			// with the reason, same as the Backups page.
+			const idle = !hasStatefulServices(data.definition);
 			pills.push({
 				text: 'backups',
-				tone: 'neutral',
-				title: `automatic backups ${describeCron(backup.schedule)} UTC, kept ${describeSeconds(backup.retention_seconds)}`
+				tone: idle ? 'warning' : 'neutral',
+				title:
+					`automatic backups ${describeCron(backup.schedule)} UTC, kept ${describeSeconds(backup.retention_seconds)}` +
+					(idle ? ` · ${SCHEDULE_IDLE}` : '')
 			});
 		}
 		return pills;

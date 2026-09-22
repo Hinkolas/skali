@@ -3899,7 +3899,9 @@ components:
         and volume of the environment is snapshotted on the schedule;
         snapshots the schedule takes are deleted once older than the
         retention, the newest one is always kept. Manual snapshots never
-        expire.
+        expire. A schedule is accepted even when the active revision
+        declares nothing to snapshot: each fire is skipped until a deploy
+        adds a database, bucket, or volume, and snapshots start then.
       required: [schedule, retention_seconds, strategy]
       properties:
         schedule:
