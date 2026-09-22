@@ -369,6 +369,8 @@ func TestInterruptedJoinResumesWithCorrectedEndpoint(t *testing.T) {
 	fake.Handlers["journalctl"] = func(host.Command) (host.Result, error) {
 		return host.Result{Stdout: `level=fatal msg="injected start failure"`}, nil
 	}
+	legacyAdmissionOnStart(t, fake)
+
 	composite := encodeJoinTokenWithClaims(token, "pull", layout.RoleServer, "e2e",
 		"https://10.1.0.4:6443")
 

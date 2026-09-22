@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/Hinkolas/skali/internal/edge"
+	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/registrytoken"
@@ -319,6 +320,8 @@ func (p *Production) ingressClassName() string {
 type Objects struct {
 	// Namespace precedes everything.
 	Namespace []unstructured.Unstructured
+	// Ownership installs the identity admission contract before the daemon.
+	Ownership []unstructured.Unstructured
 	// Priority is the three PriorityClasses (skali-critical, skali-high,
 	// skali-normal); it precedes every pod that references one, which is
 	// every pod the bundle and skalid render.
@@ -357,6 +360,7 @@ type Objects struct {
 func stageSources(profile Profile) []string {
 	return []string{
 		namespaceYAML(),
+		ownershipYAML(),
 		priorityYAML(),
 		storageYAML(profile),
 		issuerYAML(profile),
@@ -382,6 +386,7 @@ func Render(profile Profile) (*Objects, error) {
 	objects := &Objects{}
 	targets := []*[]unstructured.Unstructured{
 		&objects.Namespace,
+		&objects.Ownership,
 		&objects.Priority,
 		&objects.Storage,
 		&objects.Issuer,
@@ -1076,6 +1081,10 @@ kind: ClusterRole
 metadata:
   name: skalid
 rules:
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
+    resourceNames: [skali-environment-ownership-v1]
+    verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
     verbs: ["*"]
@@ -1274,4 +1283,19 @@ spec:
 `, Namespace, profile.SkalidImage,
 		base64.StdEncoding.EncodeToString([]byte(profile.AdminEmail)),
 		base64.StdEncoding.EncodeToString([]byte(profile.AdminPassword)))
+}
+
+// Typed definitions are shared with the client verifier so installer and daemon
+// cannot silently disagree about the policy contract. These fixed values always
+// serialize; marshal errors are programming errors, not profile input errors.
+func ownershipYAML() string {
+	var documents []string
+	for _, object := range []any{kube.OwnershipPolicy(), kube.OwnershipPolicyBinding(), kube.OwnershipProbe()} {
+		data, err := yaml.Marshal(object)
+		if err != nil {
+			panic(err)
+		}
+		documents = append(documents, string(data))
+	}
+	return strings.Join(documents, "---\n")
 }

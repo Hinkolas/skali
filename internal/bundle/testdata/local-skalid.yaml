@@ -9,6 +9,10 @@ kind: ClusterRole
 metadata:
   name: skalid
 rules:
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
+    resourceNames: [skali-environment-ownership-v1]
+    verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
     verbs: ["*"]

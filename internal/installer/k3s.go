@@ -550,6 +550,9 @@ func waitServerJoined(ctx context.Context, runner host.Runner, cluster, nodeName
 		progress.Done("")
 		break
 	}
+	if err := waitJoinedOwnership(ctx, runner); err != nil {
+		return err
+	}
 	return waitNodeReady(ctx, runner, nodeName, capabilities, progress)
 }
 

@@ -209,6 +209,7 @@ func runServe() error {
 		if err := kubeClient.CheckNamespaceBaseline(ctx); err != nil {
 			return err
 		}
+		go kubeClient.MonitorOwnershipProtection(ctx)
 	}
 
 	// The production service modules.
