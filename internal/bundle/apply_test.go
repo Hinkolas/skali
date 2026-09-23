@@ -30,6 +30,7 @@ func TestApplyObjectsReplacesJobWithImmutableTemplate(t *testing.T) {
 	objects, err := Render(Profile{
 		SkalidImage: "ghcr.io/hinkolas/skalid:v0.1.0-alpha.8", AuthSecret: "secret",
 		AdminEmail: "admin@example.com", AdminPassword: "password", RegistryHost: "localhost:5510",
+		Local: localCA(),
 	})
 	require.NoError(t, err)
 	var job *unstructured.Unstructured

@@ -277,8 +277,10 @@ CLI-only installation and ordinary Go tests do not require a frontend build.
 A plain `go run ./cmd/skalid` without built assets keeps the API available and
 returns 503 for console requests; use `task dev:web` for hot reload.
 
-Set `SKALI_COOKIE_SECURE=false` for local HTTP development, as in `.env.example`.
-Managed HTTPS installations explicitly enable secure cookies. The static
+Set `SKALI_COOKIE_SECURE=false` only for a bare `go run ./cmd/skalid` over
+plain HTTP, as in `.env.example`; the local platform (`skali dev`) serves
+https on the default ports from a development CA and keeps cookies secure
+like a managed installation. The static
 conversion targets fresh installs; recreate disposable clusters that used the
 separate console deployment. New installations and subsequent upgrades only
 need the daemon image; there are no web-image flags or `web` init-config block.

@@ -48,6 +48,7 @@ func RequiredImages() []string {
 		bundle.RegistryImage,
 		seaweed.Image,
 	)
+	images = append(images, bundle.CertManagerImages()...)
 	// The default shared-pool image; substrate.DefaultEngine/DefaultMajor
 	// stay unimported here (a drift test in internal/substrate pins the
 	// agreement).

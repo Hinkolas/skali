@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -205,4 +207,28 @@ func TestSetTargetSendsRevisionAndDecodesRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "run-9", result.RunID)
 	require.Equal(t, "rev-1", *result.Target.TargetRevisionID)
+}
+
+// The local platform's edge serves certificates from a development CA the
+// system does not know; a client carrying that CA verifies them while a
+// client without it refuses the handshake.
+func TestCallerRootCAsVerifyThePrivateEdge(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"user":{"id":"u1","email":"dev@skali.localhost"}}`))
+	}))
+	defer srv.Close()
+	rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+
+	trusted := New(srv.URL, "tok", Caller{RootCAs: rootPEM})
+	info, err := trusted.CurrentSession(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "dev@skali.localhost", info.User.Email)
+
+	_, err = New(srv.URL, "tok", Caller{}).CurrentSession(context.Background())
+	require.Error(t, err)
+	var unknownAuthority x509.UnknownAuthorityError
+	require.ErrorAs(t, err, &unknownAuthority)
+
+	require.Nil(t, tlsConfigWithRoots(nil), "no extra roots keeps the system defaults")
+	require.Nil(t, tlsConfigWithRoots([]byte("not pem")), "garbage never yields a config that trusts nothing")
 }

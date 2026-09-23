@@ -393,7 +393,7 @@ func newDevCommand() *cobra.Command {
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
 	command.AddCommand(up, status, logs, newDevExecCommand(), newDevRunCommand(),
-		newDevValuesCommand(), down, ls, stop, start, reset)
+		newDevValuesCommand(), newDevTrustCommand(), down, ls, stop, start, reset)
 	return command
 }
 
@@ -917,6 +917,7 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 	if err := loginLocalRemote(ctx, state); err != nil {
 		return nil, err
 	}
+	maybeTrustCA(ctx, out, state)
 	return state, nil
 }
 
@@ -1021,6 +1022,10 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 	if existing != nil && existing.Token != "" {
 		probe := client.New(localdev.MasterURL(), existing.Token, caller())
 		if _, err := probe.CurrentSession(ctx); err == nil {
+			// The address is the CLI's, not the record's: a record from
+			// before the edge moved (http on 8080) follows the platform to
+			// its current URL, which reauth compares against exactly.
+			existing.Master = localdev.MasterURL()
 			if observed := probe.ObservedInstance(); observed != "" {
 				existing.Instance = observed
 			}
@@ -1181,18 +1186,10 @@ func devNodeHealth(ctx context.Context) localdev.NodeHealth {
 	return localdev.DiagnoseNode(ctx, kubeClient)
 }
 
-// routeLine renders one public route: its URL, a non-default strategy, and
-// the certificate state on TLS-capable installations. Local platforms have
-// no certificates, so the line stays a bare http URL.
+// routeLine renders one public route of the local platform: its URL on
+// the local edge, a non-default strategy, and the certificate state.
 func routeLine(style *clirender.Style, route client.RouteStatus) string {
-	scheme := "http"
-	if route.Certificate != nil {
-		scheme = "https"
-	}
-	line := scheme + "://" + route.Domain
-	if route.Path != "" && route.Path != "/" {
-		line += route.Path
-	}
+	line := routeURL(route, localEdgePorts())
 	if route.Strategy == "least-requests" {
 		line += " (least-requests)"
 	}
@@ -1300,12 +1297,19 @@ func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
 		}
 		task.Done("")
 	}
+	// The CA goes with the record; a trust store entry for it outlives the
+	// platform and signs nothing anymore, so say so once.
+	trusted, _ := localdev.LoadCA()
 	task := tasks.Start("Remove local installation record")
 	if err := localdev.RemoveState(); err != nil {
 		task.Fail()
 		return err
 	}
 	task.Done("")
+	if trusted != nil {
+		fmt.Fprintf(out, "  %s\n", clirender.StyleFor(out).Dim("the development CA \""+trusted.CommonName+
+			"\" may still sit in your trust store; it signs nothing anymore and can be removed"))
+	}
 
 	// Drop the stored local remote; its token died with the cluster.
 	return cliconfig.Remove(localRemoteName, cfg.Remotes[localRemoteName])
@@ -1318,7 +1322,7 @@ func printDevReady(command *cobra.Command, api *client.Client, environmentID str
 	devPorts map[string]map[string]int) {
 	printReadySummary(command.Context(), command.OutOrStdout(), api, environmentID, readySummary{
 		Dashboard: localdev.MasterURL(),
-		HTTPPort:  localdev.HTTPPort(),
+		Edge:      localEdgePorts(),
 		DevPorts:  devPorts,
 	})
 }

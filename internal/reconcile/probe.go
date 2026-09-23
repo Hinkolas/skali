@@ -19,8 +19,9 @@ import (
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
-// ErrNoEdgeProbe: the installation runs without cert-manager (the local
-// platform), so no route domain is ever probed.
+// ErrNoEdgeProbe: the installation runs without an edge probe (the local
+// platform, where *.localhost cannot be resolved from inside the cluster,
+// or a bare skalid without cert-manager), so no route domain is ever probed.
 var ErrNoEdgeProbe = errors.New("reconcile: this installation has no edge probe")
 
 // RouteProbe is one manual edge probe of a route domain.

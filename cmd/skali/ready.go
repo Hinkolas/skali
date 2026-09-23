@@ -21,10 +21,10 @@ type readySummary struct {
 	// Dashboard is the local console URL; empty on remotes, whose console
 	// is the master URL the user already knows.
 	Dashboard string
-	// HTTPPort is the host port plain-HTTP routes are published on; zero
-	// means the scheme default. Only the local platform maps its edge to a
-	// non-default host port.
-	HTTPPort int
+	// Edge is the host ports the edge is published on; zero ports mean
+	// the scheme defaults and stay out of the URLs. Only the local platform
+	// can map its edge to non-default host ports (the test-suite override).
+	Edge edgePorts
 	// DevPorts maps intercepted applications to their host ports by port
 	// name; nil outside bare skali dev.
 	DevPorts map[string]map[string]int
@@ -33,12 +33,23 @@ type readySummary struct {
 	ProtectionBypassed bool
 }
 
+// edgePorts are the host ports an edge is published on, for URLs.
+type edgePorts struct {
+	HTTP  int
+	HTTPS int
+}
+
+// localEdgePorts are the local platform's edge ports.
+func localEdgePorts() edgePorts {
+	return edgePorts{HTTP: localdev.HTTPPort(), HTTPS: localdev.HTTPSPort()}
+}
+
 // remoteReadySummary is the summary for a deploy, promote, or rollback
-// against a named remote: routes only, with the local platform's host port
-// when the remote is the dev-owned local one.
+// against a named remote: routes only, with the local platform's host
+// ports when the remote is the dev-owned local one.
 func remoteReadySummary(remoteName string) readySummary {
 	if remoteName == localRemoteName {
-		return readySummary{HTTPPort: localdev.HTTPPort()}
+		return readySummary{Edge: localEdgePorts()}
 	}
 	return readySummary{}
 }
@@ -111,7 +122,7 @@ func readySummaryLines(style *clirender.Style, status *client.EnvironmentStatus,
 		seen[service.Key] = true
 		var lines []string
 		for _, route := range service.Routes {
-			lines = append(lines, routeReadyLine(style, route, summary.HTTPPort))
+			lines = append(lines, routeReadyLine(style, route, summary.Edge))
 		}
 		if note := devProcessNote(style, summary.DevPorts[service.Key]); note != "" {
 			if len(lines) == 0 {
@@ -156,8 +167,8 @@ func readySummaryLines(style *clirender.Style, status *client.EnvironmentStatus,
 // is not yet active, the certificate state so an https link that will not
 // answer yet is not a surprise. A deferred route says so instead: its
 // certificate waits for the domain, not for the issuer.
-func routeReadyLine(style *clirender.Style, route client.RouteStatus, httpPort int) string {
-	line := style.Link(routeURL(route, httpPort))
+func routeReadyLine(style *clirender.Style, route client.RouteStatus, ports edgePorts) string {
+	line := style.Link(routeURL(route, ports))
 	switch {
 	case route.Deferred():
 		line += "  " + style.Dim("cert ") + style.Yellow("deferred · domain not pointing here yet")
@@ -173,15 +184,15 @@ func routeReadyLine(style *clirender.Style, route client.RouteStatus, httpPort i
 
 // routeURL builds the public URL of a route: https where a certificate
 // exists, plain http otherwise, with the host port appended when the edge
-// is published on a non-default one (the local platform).
-func routeURL(route client.RouteStatus, httpPort int) string {
-	scheme := "http"
+// is published on a non-default one.
+func routeURL(route client.RouteStatus, ports edgePorts) string {
+	scheme, port, defaultPort := "http", ports.HTTP, 80
 	if route.Certificate != nil {
-		scheme = "https"
+		scheme, port, defaultPort = "https", ports.HTTPS, 443
 	}
 	url := scheme + "://" + route.Domain
-	if scheme == "http" && httpPort != 0 && httpPort != 80 {
-		url += ":" + strconv.Itoa(httpPort)
+	if port != 0 {
+		url += localdev.HostPortSuffix(port, defaultPort)
 	}
 	if route.Path != "" && route.Path != "/" {
 		url += route.Path

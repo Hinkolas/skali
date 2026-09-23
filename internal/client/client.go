@@ -7,6 +7,8 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,6 +52,11 @@ const CodeCLIVersionMismatch = "cli_version_mismatch"
 type Caller struct {
 	UserAgent string
 	Version   string
+	// RootCAs holds PEM certificates trusted in addition to the system
+	// roots: the local platform's development CA, which signs every
+	// *.localhost certificate the loopback edge serves. Empty keeps the
+	// system roots alone.
+	RootCAs []byte
 }
 
 // Client talks to one master. Token may be empty for public endpoints.
@@ -61,6 +68,9 @@ type Client struct {
 	// streaming has no client timeout: SSE subscriptions outlive any
 	// sensible request deadline.
 	streaming *http.Client
+	// tls is the verification config every transport shares (nil for the
+	// system defaults); the exec WebSocket dialer reuses it.
+	tls *tls.Config
 
 	// Install-identity pinning and version observation state; see
 	// PinInstance and OnVersion.
@@ -76,14 +86,35 @@ type Client struct {
 func (c *Client) Master() string { return c.base }
 
 func New(master, token string, caller Caller) *Client {
-	transport := localhostTransport()
+	tlsConfig := tlsConfigWithRoots(caller.RootCAs)
+	transport := localhostTransport(tlsConfig)
 	return &Client{
 		base:      strings.TrimRight(master, "/"),
 		token:     token,
 		caller:    caller,
 		http:      &http.Client{Timeout: 15 * time.Second, Transport: transport},
 		streaming: &http.Client{Transport: transport},
+		tls:       tlsConfig,
 	}
+}
+
+// tlsConfigWithRoots trusts the given PEM roots on top of the system roots,
+// or returns nil (the system defaults) when there are none. The pool
+// starts from the system pool, which on macOS and Windows still defers to
+// the platform verifier for roots it does not hold itself, so a client
+// carrying the local development CA keeps verifying public remotes.
+func tlsConfigWithRoots(rootCAs []byte) *tls.Config {
+	if len(rootCAs) == 0 {
+		return nil
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(rootCAs) {
+		return nil
+	}
+	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 }
 
 // stamp sets the headers every request carries: the session, the caller
@@ -104,10 +135,15 @@ func (c *Client) stamp(h http.Header) {
 // localhostTransport pins *.localhost hosts to the loopback address: RFC
 // 6761 reserves the TLD for loopback, but stub resolvers on some systems
 // refuse to resolve subdomains of localhost, and the local installation
-// serves skali.localhost and every app route through the loopback edge.
-func localhostTransport() *http.Transport {
+// serves skali.localhost and every app route through the loopback TLS
+// edge. The dial keeps the URL's host as SNI, so the edge's per-host
+// certificates verify against the trusted roots.
+func localhostTransport(tlsConfig *tls.Config) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = localhostDialContext()
+	if tlsConfig != nil {
+		transport.TLSClientConfig = tlsConfig
+	}
 	return transport
 }
 

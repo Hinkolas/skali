@@ -101,6 +101,7 @@ func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOption
 	// dialer bounds only the handshake.
 	dialer := &websocket.Dialer{
 		NetDialContext:   localhostDialContext(),
+		TLSClientConfig:  c.tls,
 		HandshakeTimeout: execHandshakeTimeout,
 		Proxy:            http.ProxyFromEnvironment,
 		ReadBufferSize:   32 * 1024,

@@ -261,9 +261,13 @@ func runServe() error {
 			}
 			// The edge probe tells a route domain that is still elsewhere
 			// (a migration in progress) from one whose issuance is failing.
-			prober := edgeprobe.New(instanceID.String(), versionpkg.Version)
-			kernelDeps.ProbeDomain = prober.Probe
-			go selfProbe(ctx, prober, cfg.ReservedHosts)
+			// The local platform runs without it (see Config.EdgeProbe): a
+			// nil ProbeDomain gates rollouts on issuance alone.
+			if cfg.EdgeProbe {
+				prober := edgeprobe.New(instanceID.String(), versionpkg.Version)
+				kernelDeps.ProbeDomain = prober.Probe
+				go selfProbe(ctx, prober, cfg.ReservedHosts)
+			}
 		}
 	}
 	if !cfg.ManagedCluster {

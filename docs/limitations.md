@@ -130,8 +130,10 @@ resolved address, and counts a domain that answers here as arrived, which
 also asks for one fresh issuance of a certificate that keeps failing. Until
 then the https URL of a deferred route does not answer here. The verdict
 `unresolved` can lag public DNS by the zone's negative TTL when the name
-was looked up in the cluster before it had an address. An installation
-without certificates (local development) never probes.
+was looked up in the cluster before it had an address. The local platform
+never probes: `*.localhost` cannot resolve to its edge from inside the
+cluster, so its routes gate on issuance alone, which the private CA
+issuer completes in seconds.
 
 ## Builds run on your machine
 

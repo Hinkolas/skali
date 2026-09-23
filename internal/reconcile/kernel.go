@@ -133,8 +133,9 @@ type Config struct {
 	// carries meaning; the kernel never sorts it.
 	PlatformPreference []string
 	// Certificates renders explicit cert-manager Certificates for TLS
-	// routes and gates rollout health on their issuance. Local development
-	// leaves it false: no cert-manager, HTTP-only edge.
+	// routes and gates rollout health on their issuance. Both the
+	// production bundle (ACME) and the local platform (private CA) set it;
+	// only a bare skalid without cert-manager leaves it false.
 	Certificates bool
 	// RetireDrain is how long a Deployment that stopped serving (the
 	// previous blue-green color, a superseded pending color, a legacy

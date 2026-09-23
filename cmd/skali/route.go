@@ -52,7 +52,7 @@ func newRouteCommand() *cobra.Command {
 			style := clirender.StyleFor(out)
 			printHeader(out, style, headerRow{label: "environment", value: target.environment, note: target.remoteName})
 			fmt.Fprintln(out)
-			for _, line := range routeListLines(style, status) {
+			for _, line := range routeListLines(style, status, remoteReadySummary(target.remoteName).Edge) {
 				fmt.Fprintln(out, line)
 			}
 			return nil
@@ -96,11 +96,11 @@ func newRouteCommand() *cobra.Command {
 
 // routeListLines renders one row per route: service and key, the URL, the
 // certificate state, and the edge verdict where the reconciler has one.
-func routeListLines(style *clirender.Style, status *client.EnvironmentStatus) []string {
+func routeListLines(style *clirender.Style, status *client.EnvironmentStatus, ports edgePorts) []string {
 	var lines []string
 	for _, service := range status.Services {
 		for _, route := range service.Routes {
-			line := fmt.Sprintf("%-24s  %s", service.Key+"/"+route.Key, style.Link(routeURL(route, 0)))
+			line := fmt.Sprintf("%-24s  %s", service.Key+"/"+route.Key, style.Link(routeURL(route, ports)))
 			switch {
 			case route.Deferred():
 				line += "  " + style.Yellow("cert deferred · domain not pointing here yet")

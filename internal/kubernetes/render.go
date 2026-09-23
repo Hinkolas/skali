@@ -87,8 +87,8 @@ type Options struct {
 	// Certificates enables TLS issuance: routes not opting out render a
 	// websecure IngressRoute, an explicit cert-manager Certificate, and a
 	// plain-HTTP companion (redirecting on `automatic`). False keeps every
-	// route on the plain web entrypoint; local installations run no
-	// cert-manager, and offline rendering has no way to know.
+	// route on the plain web entrypoint: a bare skalid without
+	// cert-manager, and offline rendering, which has no way to know.
 	Certificates bool
 
 	// Intercepts marks applications served by a local dev process on the
@@ -378,8 +378,8 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 	// Every rendered route uses the managed Traefik edge, addressed through
 	// its IngressRoute CRD so the balancing strategy and the HTTP redirect
 	// are first-class. Certificates render only on installations that run
-	// cert-manager; without them every route serves plain HTTP, exactly the
-	// local dev contract.
+	// cert-manager (production through ACME, the local platform through a
+	// private CA); without them every route serves plain HTTP.
 	for _, routeKey := range utils.SortedKeys(application.Routes) {
 		route := application.Routes[routeKey]
 		domain, err := compiler.ResolveExpression(route.Domain, options.Variables)

@@ -69,3 +69,11 @@ targetRules = ["stripe-access-token"]
 paths = ["(^|/)cmd/skalid/seed\\.go$"]
 regexTarget = "secret"
 regexes = ["^sk_test_51H0000000000000000$"]
+
+[[allowlists]]
+description = "Reviewed synthetic test/development fixture"
+condition = "AND"
+targetRules = ["kubernetes-secret-yaml"]
+paths = ["(^|/)internal/bundle/testdata/local\\-issuer\\.yaml$"]
+regexTarget = "secret"
+regexes = ["^tls\\.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCmZha2UtY2EKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=$"]

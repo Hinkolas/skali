@@ -142,8 +142,12 @@ spec:
               value: "true"
             - name: SKALI_CAPABILITIES
               value: application;edge;database;object-storage
-            - name: SKALI_COOKIE_SECURE
+            - name: SKALI_CERT_MANAGER
+              value: "true"
+            - name: SKALI_EDGE_PROBE
               value: "false"
+            - name: SKALI_COOKIE_SECURE
+              value: "true"
           readinessProbe:
             httpGet:
               path: /healthz
@@ -188,18 +192,61 @@ spec:
       - application/octet-stream
 ---
 apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: skali-system
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: skalid-tls
+  namespace: skali-system
+spec:
+  secretName: skalid-tls
+  dnsNames:
+    - skali.localhost
+  issuerRef:
+    kind: ClusterIssuer
+    name: skali
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: skalid
   namespace: skali-system
 spec:
   entryPoints:
-    - web
+    - websecure
   routes:
     - match: Host(`skali.localhost`) && PathPrefix(`/`)
       kind: Rule
       middlewares:
         - name: compress
+      services:
+        - name: skalid
+          port: 80
+  tls:
+    secretName: skalid-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: skalid-http
+  namespace: skali-system
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`skali.localhost`) && PathPrefix(`/`) && !PathPrefix(`/.well-known/acme-challenge/`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
       services:
         - name: skalid
           port: 80

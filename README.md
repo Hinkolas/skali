@@ -114,7 +114,12 @@ skali dev
 
 `skali dev` creates the local platform on first run, builds the project,
 deploys it, and follows its logs. The example is then served at
-`http://hello-world.localhost:8080`. Ctrl-C pauses the project (data is kept),
+`https://hello-world.localhost`, on the same origin a cluster would serve it:
+the local edge listens on ports 80 and 443 and issues every route a
+certificate from a development CA generated for your installation. The
+first run offers to trust that CA in your browsers (macOS asks for your
+login password); `skali dev trust` repeats or checks that step. Ctrl-C
+pauses the project (data is kept),
 `skali dev` brings it back, `skali dev -d` keeps it running in the
 background. `skali dev list`, `skali dev status`, `skali dev exec`, and
 `skali dev reset` do what they say. The platform runs the same skali release

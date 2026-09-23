@@ -14,36 +14,41 @@ import (
 func TestRouteURL(t *testing.T) {
 	t.Parallel()
 	active := &client.CertificateStatus{State: "active"}
+	local := edgePorts{HTTP: 80, HTTPS: 443}
+	shifted := edgePorts{HTTP: 8082, HTTPS: 8443}
 	cases := []struct {
 		name  string
 		route client.RouteStatus
-		port  int
+		ports edgePorts
 		want  string
 	}{
-		{"local plain route on the edge port", client.RouteStatus{Domain: "app.localhost", Path: "/"}, 8080, "http://app.localhost:8080"},
-		{"local route with a path", client.RouteStatus{Domain: "app.localhost", Path: "/api"}, 8080, "http://app.localhost:8080/api"},
-		{"remote without a certificate", client.RouteStatus{Domain: "app.example.com"}, 0, "http://app.example.com"},
-		{"remote with a certificate", client.RouteStatus{Domain: "app.example.com", Certificate: active}, 0, "https://app.example.com"},
-		{"default http port stays implicit", client.RouteStatus{Domain: "app.example.com"}, 80, "http://app.example.com"},
+		{"local route serves https on the default port", client.RouteStatus{Domain: "app.localhost", Path: "/", Certificate: active}, local, "https://app.localhost"},
+		{"local route with a path", client.RouteStatus{Domain: "app.localhost", Path: "/api", Certificate: active}, local, "https://app.localhost/api"},
+		{"local route that opted out of tls", client.RouteStatus{Domain: "app.localhost", Path: "/"}, local, "http://app.localhost"},
+		{"shifted edge names the https port", client.RouteStatus{Domain: "app.localhost", Path: "/", Certificate: active}, shifted, "https://app.localhost:8443"},
+		{"shifted edge names the http port", client.RouteStatus{Domain: "app.localhost", Path: "/api"}, shifted, "http://app.localhost:8082/api"},
+		{"remote without a certificate", client.RouteStatus{Domain: "app.example.com"}, edgePorts{}, "http://app.example.com"},
+		{"remote with a certificate", client.RouteStatus{Domain: "app.example.com", Certificate: active}, edgePorts{}, "https://app.example.com"},
 		{"deferred route keeps https", client.RouteStatus{Domain: "app.example.com",
-			Certificate: &client.CertificateStatus{State: "pending"}, Edge: &client.EdgeStatus{State: "unreachable"}}, 0, "https://app.example.com"},
+			Certificate: &client.CertificateStatus{State: "pending"}, Edge: &client.EdgeStatus{State: "unreachable"}}, edgePorts{}, "https://app.example.com"},
 	}
 	for _, c := range cases {
-		require.Equal(t, c.want, routeURL(c.route, c.port), c.name)
+		require.Equal(t, c.want, routeURL(c.route, c.ports), c.name)
 	}
 }
 
 func TestReadySummaryLines(t *testing.T) {
 	t.Parallel()
 	style := clirender.StyleFor(&bytes.Buffer{})
+	active := &client.CertificateStatus{State: "active"}
 	status := &client.EnvironmentStatus{Services: []client.ServiceStatus{
 		{Key: "data", Type: "database"},
 		{Key: "api", Type: "application", Routes: []client.RouteStatus{
-			{Key: "public", Domain: "api.app.localhost", Path: "/"},
-			{Key: "graph", Domain: "api.app.localhost", Path: "/graphql"},
+			{Key: "public", Domain: "api.app.localhost", Path: "/", Certificate: active},
+			{Key: "graph", Domain: "api.app.localhost", Path: "/graphql", Certificate: active},
 		}},
 		{Key: "web", Type: "application", Routes: []client.RouteStatus{
-			{Key: "public", Domain: "app.localhost", Path: "/"},
+			{Key: "public", Domain: "app.localhost", Path: "/", Certificate: active},
 		}},
 		{Key: "worker", Type: "application"},
 	}}
@@ -51,19 +56,33 @@ func TestReadySummaryLines(t *testing.T) {
 	t.Run("dev summary", func(t *testing.T) {
 		t.Parallel()
 		lines := readySummaryLines(style, status, readySummary{
-			Dashboard: "http://skali.localhost:8080",
-			HTTPPort:  8080,
+			Dashboard: "https://skali.localhost",
+			Edge:      edgePorts{HTTP: 80, HTTPS: 443},
 			DevPorts: map[string]map[string]int{
 				"web":    {"http": 21521},
 				"worker": {"http": 21530, "metrics": 21531},
 			},
 		})
 		require.Equal(t, []string{
-			"  dashboard  http://skali.localhost:8080",
-			"  api        http://api.app.localhost:8080",
-			"             http://api.app.localhost:8080/graphql",
-			"  web        http://app.localhost:8080  -> dev process on localhost:21521",
+			"  dashboard  https://skali.localhost",
+			"  api        https://api.app.localhost",
+			"             https://api.app.localhost/graphql",
+			"  web        https://app.localhost  -> dev process on localhost:21521",
 			"  worker     -> dev process on http=localhost:21530, metrics=localhost:21531",
+		}, lines)
+	})
+
+	t.Run("dev summary on a shifted edge names the ports", func(t *testing.T) {
+		t.Parallel()
+		lines := readySummaryLines(style, status, readySummary{
+			Dashboard: "https://skali.localhost:8443",
+			Edge:      edgePorts{HTTP: 8082, HTTPS: 8443},
+		})
+		require.Equal(t, []string{
+			"  dashboard  https://skali.localhost:8443",
+			"  api        https://api.app.localhost:8443",
+			"             https://api.app.localhost:8443/graphql",
+			"  web        https://app.localhost:8443",
 		}, lines)
 	})
 
