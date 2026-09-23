@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
@@ -22,6 +24,8 @@ import (
 	"github.com/minio/minio-go/v7"
 	miniocredentials "github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/bundle"
 )
 
 // The end-to-end suite drives the built skali binary through the real
@@ -35,6 +39,7 @@ import (
 const (
 	e2eCluster      = "skali-dev-e2e"
 	e2eHTTPPort     = 8082
+	e2eHTTPSPort    = 8443
 	e2eRegistryPort = 5512
 	// e2eLoopbackBase shifts the loopback service range away from a real
 	// local platform's identity mapping (30501..30510).
@@ -47,6 +52,10 @@ type e2eHarness struct {
 	projectDir string
 	host       string
 	env        []string
+	// caPool holds the installation's development CA once the first dev
+	// run generated it; every https request verifies against it, never
+	// skipping verification, so the suite proves the chain browsers see.
+	caPool *x509.CertPool
 }
 
 func newE2EHarness(t *testing.T) *e2eHarness {
@@ -96,6 +105,7 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 		env: append(os.Environ(),
 			"SKALI_DEV_CLUSTER="+e2eCluster,
 			fmt.Sprintf("SKALI_DEV_HTTP_PORT=%d", e2eHTTPPort),
+			fmt.Sprintf("SKALI_DEV_HTTPS_PORT=%d", e2eHTTPSPort),
 			fmt.Sprintf("SKALI_DEV_REGISTRY_PORT=%d", e2eRegistryPort),
 			fmt.Sprintf("SKALI_DEV_LOOPBACK_PORT_BASE=%d", e2eLoopbackBase),
 			"XDG_STATE_HOME="+stateHome,
@@ -177,6 +187,34 @@ func (h *e2eHarness) route(path string) (int, string) {
 	return h.request(http.MethodGet, path, "")
 }
 
+// httpsClient talks to the local TLS edge on its loopback mapping with the
+// tenant host as SNI, trusting the development CA the first dev run wrote
+// into the state directory. Before that run the CA does not exist and the
+// client verifies against nothing, so requests fail like a refused
+// connection would; the wait loops treat both the same.
+func (h *e2eHarness) httpsClient() *http.Client {
+	if h.caPool == nil {
+		pemBytes, err := os.ReadFile(filepath.Join(h.stateDir(), "skali", "dev", e2eCluster, "ca.crt"))
+		if err == nil {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM(pemBytes) {
+				h.caPool = pool
+			}
+		}
+	}
+	tlsConfig := &tls.Config{ServerName: h.host, MinVersion: tls.VersionTLS12}
+	if h.caPool != nil {
+		tlsConfig.RootCAs = h.caPool
+	} else {
+		tlsConfig.RootCAs = x509.NewCertPool()
+	}
+	return &http.Client{
+		Timeout:       10 * time.Second,
+		Transport:     &http.Transport{TLSClientConfig: tlsConfig, DisableKeepAlives: true},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
 func (h *e2eHarness) request(method, path, body string) (int, string) {
 	h.t.Helper()
 	var reader io.Reader
@@ -184,11 +222,10 @@ func (h *e2eHarness) request(method, path, body string) (int, string) {
 		reader = strings.NewReader(body)
 	}
 	request, err := http.NewRequest(method,
-		fmt.Sprintf("http://127.0.0.1:%d%s", e2eHTTPPort, path), reader)
+		fmt.Sprintf("https://127.0.0.1:%d%s", e2eHTTPSPort, path), reader)
 	require.NoError(h.t, err)
 	request.Host = h.host
-	client := &http.Client{Timeout: 10 * time.Second}
-	response, err := client.Do(request)
+	response, err := h.httpsClient().Do(request)
 	if err != nil {
 		return 0, ""
 	}
@@ -209,12 +246,11 @@ func (h *e2eHarness) requestEncoded(method, path, body string) (int, http.Header
 		reader = strings.NewReader(body)
 	}
 	request, err := http.NewRequest(method,
-		fmt.Sprintf("http://127.0.0.1:%d%s", e2eHTTPPort, path), reader)
+		fmt.Sprintf("https://127.0.0.1:%d%s", e2eHTTPSPort, path), reader)
 	require.NoError(h.t, err)
 	request.Host = h.host
 	request.Header.Set("Accept-Encoding", "gzip")
-	client := &http.Client{Timeout: 10 * time.Second}
-	response, err := client.Do(request)
+	response, err := h.httpsClient().Do(request)
 	require.NoError(h.t, err)
 	defer response.Body.Close()
 	var source io.Reader = response.Body
@@ -229,8 +265,26 @@ func (h *e2eHarness) requestEncoded(method, path, body string) (int, http.Header
 	return response.StatusCode, response.Header, string(decoded)
 }
 
+// plainHTTP fetches a path through the plain-HTTP entrypoint without
+// following redirects: a tls: automatic route answers there only with the
+// redirect to its https origin.
+func (h *e2eHarness) plainHTTP(path string) (int, http.Header) {
+	h.t.Helper()
+	request, err := http.NewRequest(http.MethodGet,
+		fmt.Sprintf("http://127.0.0.1:%d%s", e2eHTTPPort, path), nil)
+	require.NoError(h.t, err)
+	request.Host = h.host
+	client := &http.Client{Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	require.NoError(h.t, err)
+	response.Body.Close()
+	return response.StatusCode, response.Header
+}
+
 // edgeIdentity fetches the platform's edge identity through the tenant
-// hostname: the platform router must outrank the application's Host rule.
+// hostname on the plain-HTTP entrypoint, where it lives regardless of TLS:
+// the platform router must outrank the application's Host rule.
 func (h *e2eHarness) edgeIdentity() (int, http.Header, string) {
 	h.t.Helper()
 	request, err := http.NewRequest(http.MethodGet,
@@ -268,9 +322,26 @@ func TestDevEndToEnd(t *testing.T) {
 		// Every public platform image lands via the host cache and one
 		// batched import; nothing pulls from the internet mid-deploy.
 		require.Contains(t, out, "Pull platform images")
+		// The local converge is production's, cert-manager and the
+		// private CA issuer included, and the ready summary names the
+		// route's https origin on the local edge.
+		require.Contains(t, out, "cert-manager "+bundle.CertManagerVersion)
+		require.Contains(t, out, "private development CA")
+		require.Contains(t, out, fmt.Sprintf("https://skali.localhost:%d", e2eHTTPSPort))
+		require.Contains(t, out, fmt.Sprintf("https://%s:%d", h.host, e2eHTTPSPort))
 		require.Contains(t, out, "run ")
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 2*time.Minute)
+		// The route is a tls: automatic one: plain HTTP only redirects to
+		// the https origin, and the platform domain does the same.
+		status, header := h.plainHTTP("/")
+		require.Equal(t, http.StatusPermanentRedirect, status)
+		require.Equal(t, "https://"+h.host+"/", header.Get("Location"))
+		// The suite runs on pipes, so the first run never touched this
+		// machine's trust store; the check says so and names the CA file.
+		trust := h.run(true, "", "dev", "trust", "--check")
+		require.Contains(t, trust, "CA certificate: "+filepath.Join(h.stateDir(), "skali", "dev", e2eCluster, "ca.crt"))
+		require.Contains(t, trust, "run skali dev trust")
 		// The local edge carries the compress Middleware like production:
 		// it negotiates on every response (Vary) and leaves a body under
 		// Traefik's minimum size alone.
@@ -528,13 +599,13 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "state retained")
 		require.Contains(t, out, "unchanged since last import")
 		require.Contains(t, out, "unchanged since last converge")
-		require.NotContains(t, out, "Bootstrap database",
+		require.NotContains(t, out, "Apply bootstrap database",
 			"a restart must not pay the full converge")
 		h.waitRoute("hello again from skali", 3*time.Minute)
 
 		// dev start --force stays the explicit full converge.
 		out = h.run(false, "", "dev", "start", "--force")
-		require.Contains(t, out, "Bootstrap database")
+		require.Contains(t, out, "Apply bootstrap database")
 	})
 
 	t.Run("ObsoleteRecordsNeedExplicitCleanup", func(t *testing.T) {
@@ -578,7 +649,7 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "state is retained")
 		require.Contains(t, out, "unchanged since last import")
 		require.Contains(t, out, "unchanged since last converge")
-		require.NotContains(t, out, "Bootstrap database",
+		require.NotContains(t, out, "Apply bootstrap database",
 			"a node reboot must not pay the full converge")
 		h.waitRoute("hello again from skali", 3*time.Minute)
 	})
@@ -1018,10 +1089,10 @@ applications:
 
 	waitForOutput("following logs", 15*time.Minute)
 	require.Contains(t, output.String(), "-> dev process on localhost:")
-	// The ready summary lists the route as a URL on the local edge port and
-	// carries the auto-allocated port; it must come from the allocation
-	// range.
-	require.Contains(t, output.String(), "http://dev-loop.localhost:")
+	// The ready summary lists the route as an https URL on the local edge
+	// port and carries the auto-allocated port; it must come from the
+	// allocation range.
+	require.Contains(t, output.String(), fmt.Sprintf("https://dev-loop.localhost:%d", e2eHTTPSPort))
 	portMatch := regexp.MustCompile(`-> dev process on localhost:(\d+)`).FindStringSubmatch(output.String())
 	require.NotNil(t, portMatch, "no allocated port in session output:\n%s", output.String())
 	devPort, err := strconv.Atoi(portMatch[1])
@@ -1069,7 +1140,7 @@ applications:
 func TestDevAccess(t *testing.T) {
 	h := newE2EHarness(t)
 	const memberEmail, memberPassword = "member@skali.localhost", "member-pass-e2e"
-	master := fmt.Sprintf("http://skali.localhost:%d", e2eHTTPPort)
+	master := fmt.Sprintf("https://skali.localhost:%d", e2eHTTPSPort)
 
 	h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
 	h.waitRoute("hello from skali", 5*time.Minute)
