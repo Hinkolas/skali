@@ -1021,6 +1021,10 @@ func loginLocalRemote(ctx context.Context, state *localdev.State) error {
 	if existing != nil && existing.Token != "" {
 		probe := client.New(localdev.MasterURL(), existing.Token, caller())
 		if _, err := probe.CurrentSession(ctx); err == nil {
+			// The address is the CLI's, not the record's: a record from
+			// before the edge moved (http on 8080) follows the platform to
+			// its current URL, which reauth compares against exactly.
+			existing.Master = localdev.MasterURL()
 			if observed := probe.ObservedInstance(); observed != "" {
 				existing.Instance = observed
 			}

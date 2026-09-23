@@ -22,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
+	"github.com/Hinkolas/skali/internal/localdev"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
 )
 
@@ -193,7 +194,17 @@ func caller() client.Caller {
 	return client.Caller{
 		UserAgent: fmt.Sprintf("skali/%s (%s)", versionpkg.Version, host),
 		Version:   versionpkg.Version,
+		RootCAs:   localCAPEM(),
 	}
+}
+
+// localCAPEM reads the local platform's development CA; every client
+// carries it so the loopback edge's certificates verify without an OS
+// trust store entry (which browsers need, the CLI does not). Absent when
+// the local platform is not installed.
+func localCAPEM() []byte {
+	pemBytes, _ := localdev.LocalCAPEM()
+	return pemBytes
 }
 
 // currentClient builds a client for the current remote; token may be empty.
