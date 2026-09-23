@@ -165,10 +165,20 @@ type API struct {
 
 	// CertManager reports that the installation runs cert-manager and the
 	// managed ClusterIssuer: routes render explicit Certificates, the
-	// kernel watches their issuance, and deploys gate on it. Local
-	// development leaves it false; the Certificate CRD does not exist
-	// there and the edge stays HTTP-only.
+	// kernel watches their issuance, and deploys gate on it. Production
+	// issues through ACME; the local platform issues through a private CA
+	// the CLI generated, so both shapes run it. A bare skalid outside any
+	// bundle (go run ./cmd/skalid) leaves it false: the Certificate CRD
+	// does not exist there and routes stay on the plain web entrypoint.
 	CertManager bool `env:"SKALI_CERT_MANAGER,default=false"`
+
+	// EdgeProbe enables the in-cluster reachability probe of route domains
+	// that tells a domain still pointing elsewhere from one whose issuance
+	// is failing. It needs public DNS to resolve the domain to this edge,
+	// so the local platform disables it: *.localhost resolves to the pod's
+	// own loopback inside the cluster and every route would read as
+	// unreachable. Without the probe, rollouts gate on issuance alone.
+	EdgeProbe bool `env:"SKALI_EDGE_PROBE,default=true"`
 
 	// Capabilities lists what this installation can run, separated by
 	// semicolons; deployments whose revisions require more are rejected
