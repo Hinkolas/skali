@@ -1185,18 +1185,10 @@ func devNodeHealth(ctx context.Context) localdev.NodeHealth {
 	return localdev.DiagnoseNode(ctx, kubeClient)
 }
 
-// routeLine renders one public route: its URL, a non-default strategy, and
-// the certificate state on TLS-capable installations. Local platforms have
-// no certificates, so the line stays a bare http URL.
+// routeLine renders one public route of the local platform: its URL on
+// the local edge, a non-default strategy, and the certificate state.
 func routeLine(style *clirender.Style, route client.RouteStatus) string {
-	scheme := "http"
-	if route.Certificate != nil {
-		scheme = "https"
-	}
-	line := scheme + "://" + route.Domain
-	if route.Path != "" && route.Path != "/" {
-		line += route.Path
-	}
+	line := routeURL(route, localEdgePorts())
 	if route.Strategy == "least-requests" {
 		line += " (least-requests)"
 	}
@@ -1322,7 +1314,7 @@ func printDevReady(command *cobra.Command, api *client.Client, environmentID str
 	devPorts map[string]map[string]int) {
 	printReadySummary(command.Context(), command.OutOrStdout(), api, environmentID, readySummary{
 		Dashboard: localdev.MasterURL(),
-		HTTPPort:  localdev.HTTPPort(),
+		Edge:      localEdgePorts(),
 		DevPorts:  devPorts,
 	})
 }
