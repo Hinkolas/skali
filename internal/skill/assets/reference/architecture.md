@@ -126,8 +126,10 @@ does everything. Each application scales and rolls out independently.
 ## Local development parity
 
 `skali dev` runs the same definition on a local cluster: same compiler,
-same provisioning. Known boundaries: routes serve plain HTTP on
-`*.localhost` domains (TLS is inert locally), databases share one
+same provisioning, same edge. Routes serve https on `*.localhost` domains
+on the default ports from a development CA the CLI generated (so
+`https://${APP_DOMAIN}` is the origin locally too, and `tls:` policies
+behave as in production). Known boundaries: databases share one
 single-instance pool regardless of isolation and availability intents,
 and bucket endpoints are in-cluster. Design for production and the dev
 cluster follows.

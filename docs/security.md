@@ -59,8 +59,9 @@ The embedded static console calls the Go API on the same origin. Login and
 follows the database session's sliding expiry. The cookie response omits the
 session token; CLI login defaults to a bearer-token response.
 
-`SKALI_COOKIE_SECURE` defaults to true and is enabled explicitly in managed
-HTTPS installations. Disable it only for local HTTP development. Browser
+`SKALI_COOKIE_SECURE` defaults to true; both the managed installation and the
+local platform terminate TLS at the edge and set it explicitly. Disable it
+only for a bare `skalid` run outside any platform bundle. Browser
 mutations and cookie-mode login/verification require `X-Requested-With: skali`
 and Go's cross-origin protection. Credentialed CORS is not enabled. Cookies
 are accepted only when Authorization is absent; a malformed or invalid header

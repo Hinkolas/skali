@@ -156,8 +156,10 @@ is fine. `tls: automatic` provisions a certificate through the platform
 edge in production and redirects plain HTTP to HTTPS; `tls: optional`
 provisions the certificate but keeps answering plain HTTP without a
 redirect (for consumers that cannot follow redirects); `tls: disabled`
-serves plain HTTP only. Local development serves every route over plain
-HTTP on `*.localhost` domains regardless of the policy. On production, a
+serves plain HTTP only. Local development applies the same policies on
+`*.localhost` domains, issuing from a development CA on ports 443 and 80,
+so an application's origin is `https://${APP_DOMAIN}` locally as well;
+`tls: disabled` stays `http://${APP_DOMAIN}`. On production, a
 deploy waits for a route's certificate only when the domain already
 reaches this installation. A domain still pointing elsewhere (a migration
 in progress) is deferred: the run stays green, the checkpoint ends skipped
