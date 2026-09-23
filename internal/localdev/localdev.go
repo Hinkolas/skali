@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,11 +53,25 @@ func PlatformVersion() string {
 // selected release. Test overrides must use an isolated state directory too.
 func ClusterName() string { return utils.EnvOr("SKALI_DEV_CLUSTER", "skali-dev") }
 
-// HTTPPort() publishes the traefik edge; the local platform is HTTP-only
-// by decision (TLS issuance is a production concern). RegistryPort()
-// publishes the managed registry for host-side pushes.
-func HTTPPort() int     { return envPortOr("SKALI_DEV_HTTP_PORT", 8080) }
+// HTTPPort() and HTTPSPort() publish the traefik edge on the default web
+// ports, so a route's local origin (https://<domain>.localhost) is exactly
+// the origin a cluster would serve it on and browsers need no port. The
+// overrides exist for the end-to-end suite: on any other ports the https
+// redirect (which carries no port) and every origin an application derives
+// from its domain stop matching. RegistryPort() publishes the managed
+// registry for host-side pushes.
+func HTTPPort() int     { return envPortOr("SKALI_DEV_HTTP_PORT", 80) }
+func HTTPSPort() int    { return envPortOr("SKALI_DEV_HTTPS_PORT", 443) }
 func RegistryPort() int { return envPortOr("SKALI_DEV_REGISTRY_PORT", 5510) }
+
+// HostPortSuffix renders the ":port" a URL needs when port is not the
+// scheme's default, and nothing otherwise.
+func HostPortSuffix(port, defaultPort int) string {
+	if port == defaultPort {
+		return ""
+	}
+	return ":" + strconv.Itoa(port)
+}
 
 // LoopbackPortBase() is the first host port of the loopback service range:
 // ten consecutive 127.0.0.1 ports mapped onto the substrate's fixed
@@ -88,7 +103,7 @@ func loopbackPortArgs() []string {
 // range k3d publishes at cluster create time. Dev port allocation must
 // never hand these out, because a stopped cluster leaves them bindable.
 func ReservedHostPorts() []int {
-	ports := []int{HTTPPort(), RegistryPort()}
+	ports := []int{HTTPPort(), HTTPSPort(), RegistryPort()}
 	base := LoopbackPortBase()
 	for offset := range loopbackNodePortCount {
 		ports = append(ports, base+offset)
@@ -101,8 +116,10 @@ func ReservedHostPorts() []int {
 // registries.yaml mirror below).
 func RegistryHost() string { return fmt.Sprintf("localhost:%d", RegistryPort()) }
 
-// MasterURL() reaches the in-cluster skalid through the edge.
-func MasterURL() string { return fmt.Sprintf("http://skali.localhost:%d", HTTPPort()) }
+// MasterURL() reaches the in-cluster skalid through the TLS edge.
+func MasterURL() string {
+	return "https://" + bundle.LocalPlatformHost + HostPortSuffix(HTTPSPort(), 443)
+}
 
 func envPortOr(name string, fallback int) int {
 	if value := os.Getenv(name); value != "" {
@@ -138,7 +155,26 @@ type State struct {
 	// presence in the record is presence in the cluster while its node
 	// volumes live.
 	ImportedImages []string `json:"imported_images,omitempty"`
+	// Edge records the host ports k3d published the edge on at cluster
+	// creation. Port mappings are fixed for the cluster's life, so a
+	// record whose ports differ from the CLI's (or that predates TLS on
+	// the edge and has none) needs a reset. Nil on records written before
+	// the edge moved to https on the default ports.
+	Edge *EdgePorts `json:"edge,omitempty"`
+	// CATrustAttempted remembers that skali dev already offered to install
+	// the development CA into the trust store, so a declined password
+	// dialog is not asked again on every run; skali dev trust retries.
+	CATrustAttempted bool `json:"ca_trust_attempted,omitempty"`
 }
+
+// EdgePorts are the host ports the edge is published on.
+type EdgePorts struct {
+	HTTP  int `json:"http"`
+	HTTPS int `json:"https"`
+}
+
+// currentEdgePorts are the ports this CLI publishes a new cluster on.
+func currentEdgePorts() *EdgePorts { return &EdgePorts{HTTP: HTTPPort(), HTTPS: HTTPSPort()} }
 
 // StateDir is $XDG_STATE_HOME/skali, defaulting to ~/.local/state/skali on
 // every OS (the deliberate cliconfig convention).
@@ -352,6 +388,15 @@ func CheckVersion(state *State) error {
 	if state.Version != "" && state.SkalidImage != version.PublishedSkalidImage(state.Version) {
 		return fmt.Errorf("local platform image and recorded release disagree; run skali dev reset")
 	}
+	// k3d fixes the port mappings when it creates the cluster, so an edge
+	// published elsewhere cannot be moved in place.
+	wanted := currentEdgePorts()
+	switch {
+	case state.Edge == nil:
+		return fmt.Errorf("local dev platform was created with a plain-HTTP edge on port 8080; this CLI serves https://*.localhost on ports %d and %d, and k3d port mappings are fixed at creation; run skali dev reset to delete the local platform and its data, then skali dev to recreate it", wanted.HTTP, wanted.HTTPS)
+	case *state.Edge != *wanted:
+		return fmt.Errorf("local dev platform publishes its edge on ports %d (http) and %d (https); this CLI expects %d and %d, and k3d port mappings are fixed at creation; run skali dev reset to delete the local platform and its data, then skali dev to recreate it", state.Edge.HTTP, state.Edge.HTTPS, wanted.HTTP, wanted.HTTPS)
+	}
 	return nil
 }
 
@@ -418,6 +463,7 @@ func NewState(skalidImage string) (*State, error) {
 		AdminPassword: password,
 		AuthSecret:    authSecret,
 		CreatedAt:     time.Now(),
+		Edge:          currentEdgePorts(),
 	}, nil
 }
 
@@ -561,19 +607,7 @@ func Create(ctx context.Context) error {
 	if err := os.WriteFile(registries, []byte(registriesConfig()), 0o600); err != nil {
 		return fmt.Errorf("localdev: write registries config: %w", err)
 	}
-	args := []string{
-		"cluster", "create", ClusterName(),
-		"--image", K3sImage,
-		"--no-lb",
-		"--kubeconfig-update-default=false",
-		"--kubeconfig-switch-context=false",
-		"--registry-config", registries,
-		"-p", fmt.Sprintf("127.0.0.1:%d:80@server:0:direct", HTTPPort()),
-		"-p", fmt.Sprintf("127.0.0.1:%d:30500@server:0:direct", RegistryPort()),
-	}
-	args = append(args, loopbackPortArgs()...)
-	args = append(args, "--wait")
-	if out, err := k3dRetryingBusyPorts(ctx, args...); err != nil {
+	if out, err := k3dRetryingBusyPorts(ctx, createArgs(registries)...); err != nil {
 		return fmt.Errorf("localdev: k3d cluster create: %w\n%s", err, out)
 	}
 	if out, err := exec.CommandContext(ctx, "docker", "rename",
@@ -590,6 +624,26 @@ func Create(ctx context.Context) error {
 		return fmt.Errorf("localdev: pin node IP: %w", err)
 	}
 	return WriteKubeconfig(ctx)
+}
+
+// createArgs renders the k3d cluster create invocation: the pinned image,
+// no load balancer, the registry mirror config, and the host port
+// mappings (both edge entrypoints, the registry NodePort, and the loopback
+// service range), all bound to the loopback address.
+func createArgs(registries string) []string {
+	args := []string{
+		"cluster", "create", ClusterName(),
+		"--image", K3sImage,
+		"--no-lb",
+		"--kubeconfig-update-default=false",
+		"--kubeconfig-switch-context=false",
+		"--registry-config", registries,
+		"-p", fmt.Sprintf("127.0.0.1:%d:80@server:0:direct", HTTPPort()),
+		"-p", fmt.Sprintf("127.0.0.1:%d:443@server:0:direct", HTTPSPort()),
+		"-p", fmt.Sprintf("127.0.0.1:%d:30500@server:0:direct", RegistryPort()),
+	}
+	args = append(args, loopbackPortArgs()...)
+	return append(args, "--wait")
 }
 
 // WriteKubeconfig refreshes the state-directory kubeconfig.

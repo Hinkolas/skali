@@ -2,6 +2,7 @@ package localdev
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -111,6 +112,13 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 			"remove it with `k3d cluster delete %s`, or pick another name via SKALI_DEV_CLUSTER",
 			ClusterName(), ClusterName())
 	}
+	// The development CA lives with the record: generated once for a
+	// fresh installation, loaded afterwards, and gone with a reset.
+	ca, err := EnsureCA(freshInstall)
+	if err != nil {
+		return nil, err
+	}
+	profile := bundleProfile(state, ca)
 
 	// Public platform images pre-pull on the host in parallel with the
 	// cluster work below and land in one batched import, so a cold cluster
@@ -139,9 +147,14 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	switch status {
 	case ClusterAbsent:
 		progress.Start("Create k3d cluster " + ClusterName())
-		// Create always uses the current pin; a recreation under retained
-		// state must not keep reporting the old cluster's k3s.
+		if err := checkEdgePortsFree(ctx); err != nil {
+			return nil, err
+		}
+		// Create always uses the current pin and the current edge ports; a
+		// recreation under retained state must not keep reporting the old
+		// cluster's k3s or mappings.
 		state.K3sImage = K3sImage
+		state.Edge = currentEdgePorts()
 		// The record precedes the cluster. A record without a cluster is a
 		// plain create on the next pass, while a cluster without a record
 		// is refused above as not ours: saving first means no failure
@@ -157,6 +170,9 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		progress.Done(K3sImage + ", pinned")
 	case ClusterStopped:
 		progress.Start("Start k3d cluster " + ClusterName())
+		if err := checkEdgePortsFree(ctx); err != nil {
+			return nil, err
+		}
 		if err := Start(ctx); err != nil {
 			return nil, err
 		}
@@ -264,11 +280,11 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	// a changed profile, a missing stamp, an unhealthy skalid) falls
 	// through to the converge.
 	if !opts.ForceConverge && status == ClusterRunning && !importNeeded &&
-		bundle.StampedHash(ctx, client) == bundle.Hash(bundleProfile(state)) {
-		healthy := probeEdge(ctx)
+		bundle.StampedHash(ctx, client) == bundle.Hash(profile) {
+		healthy := probeEdge(ctx, ca)
 		if !healthy && justStarted {
 			progress.Start("Wait for skalid")
-			if err := waitEdgeHealthy(ctx); err == nil {
+			if err := waitEdgeHealthy(ctx, ca); err == nil {
 				healthy = true
 				progress.Done("answering through the edge")
 			} else {
@@ -282,16 +298,28 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		}
 	}
 
-	if err := applyBundle(ctx, client, state, progress); err != nil {
+	// The same converge as a production cluster's, stage for stage; every
+	// pass is a full converge, so a healthy installation flies through with
+	// no-op applies. The admin account rides its own step because
+	// production never persists those credentials; locally the record
+	// holds them.
+	if err := bundle.Converge(ctx, client, profile, progress); err != nil {
+		return nil, err
+	}
+	if err := bundle.EnsureAdminUser(ctx, client, profile, progress); err != nil {
 		return nil, err
 	}
 	if err := SaveState(state); err != nil {
 		return nil, err
 	}
-	if err := waitEdgeHealthy(ctx); err != nil {
+	// The health proof goes through the TLS edge with the development CA:
+	// it proves routing, the platform certificate's issuance, and
+	// Traefik's pickup of it end to end before the hash is stamped.
+	progress.Start("Wait for skalid")
+	if err := waitEdgeHealthy(ctx, ca); err != nil {
 		return nil, err
 	}
-	if err := bundle.StampHash(ctx, client, bundleProfile(state)); err != nil {
+	if err := bundle.StampHash(ctx, client, profile); err != nil {
 		return nil, err
 	}
 	progress.Done(MasterURL())
@@ -299,7 +327,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 }
 
 // bundleProfile derives the bundle profile of this installation.
-func bundleProfile(state *State) bundle.Profile {
+func bundleProfile(state *State, ca *CA) bundle.Profile {
 	return bundle.Profile{
 		SkalidImage:   state.SkalidImage,
 		SkalidImageID: state.ImportedImageID,
@@ -307,88 +335,27 @@ func bundleProfile(state *State) bundle.Profile {
 		AdminEmail:    state.AdminEmail,
 		AdminPassword: state.AdminPassword,
 		RegistryHost:  RegistryHost(),
+		Local:         &bundle.Local{CACertPEM: string(ca.CertPEM), CAKeyPEM: string(ca.KeyPEM)},
 	}
 }
 
-// applyBundle drives the ordered stages; every pass is a full converge, so
-// a healthy installation flies through with no-op applies. The final
-// skalid stage stays open for Ensure's edge health check.
-func applyBundle(ctx context.Context, client *kube.Client, state *State, progress Progress) error {
-	applier := &bundle.Applier{Client: client}
-	objects, err := bundle.Render(bundleProfile(state))
-	if err != nil {
-		return err
-	}
-
-	progress.Start("Install blessed operators")
-	if err := applier.ApplyObjects(ctx, objects.Namespace); err != nil {
-		return err
-	}
-	if err := applier.ApplyOwnershipProtection(ctx, objects.Ownership); err != nil {
-		return err
-	}
-	if err := applier.ApplyObjects(ctx, objects.Priority); err != nil {
-		return err
-	}
-	if err := applier.ApplyManifest(ctx, bundle.CNPGManifest()); err != nil {
-		return err
-	}
-	// The Traefik metrics overlay for the edge-traffic sampler; the k3s helm
-	// controller re-renders asynchronously, nothing to wait on.
-	if err := applier.ApplyObjects(ctx, objects.EdgeMetrics); err != nil {
-		return err
-	}
-	if err := applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"); err != nil {
-		return err
-	}
-	progress.Done("CNPG " + bundle.CNPGVersion + ", Traefik (k3s)")
-
-	// Webhook-validated objects race their operator's serving certs; the
-	// retry absorbs the warm-up window.
-	progress.Start("Bootstrap database")
-	if err := applier.ApplyObjectsRetry(ctx, objects.Database, 2*time.Minute); err != nil {
-		return err
-	}
-	if err := applier.WaitClusterReady(ctx, bundle.Namespace, "skali-db", 1); err != nil {
-		return err
-	}
-	progress.Done("tier: single")
-
-	progress.Start("Start managed registry")
-	if err := applier.ApplyObjects(ctx, objects.Registry); err != nil {
-		return err
-	}
-	if err := applier.WaitDeploymentReady(ctx, bundle.Namespace, "skali-registry"); err != nil {
-		return err
-	}
-	progress.Done(RegistryHost() + " for pushes")
-
-	progress.Start("Start skalid")
-	if err := applier.ApplyObjects(ctx, objects.Skalid); err != nil {
-		return err
-	}
-	if err := applier.WaitDeploymentReady(ctx, bundle.Namespace, "skalid"); err != nil {
-		return err
-	}
-	if err := applier.ApplyObjects(ctx, objects.BootstrapUser); err != nil {
-		return err
-	}
-	if err := applier.WaitJobComplete(ctx, bundle.Namespace, "skali-bootstrap-user"); err != nil {
-		return err
-	}
-	return nil
-}
-
-// probeEdge makes one health request to skalid through the local edge,
-// proving ingress routing end to end.
-func probeEdge(ctx context.Context) bool {
+// probeEdge makes one health request to skalid through the local TLS
+// edge, dialing the loopback mapping directly and presenting the platform
+// host as SNI, verified against the development CA: it proves ingress
+// routing, certificate issuance, and Traefik's pickup end to end. (The
+// plain-HTTP router only redirects, so it proves nothing here.)
+func probeEdge(ctx context.Context, ca *CA) bool {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("http://127.0.0.1:%d/healthz", HTTPPort()), nil)
+		fmt.Sprintf("https://127.0.0.1:%d/healthz", HTTPSPort()), nil)
 	if err != nil {
 		return false
 	}
-	request.Host = "skali.localhost"
-	client := &http.Client{Timeout: 3 * time.Second}
+	request.Host = bundle.LocalPlatformHost
+	transport := &http.Transport{
+		TLSClientConfig:   &tls.Config{ServerName: bundle.LocalPlatformHost, RootCAs: ca.Pool(), MinVersion: tls.VersionTLS12},
+		DisableKeepAlives: true,
+	}
+	client := &http.Client{Timeout: 3 * time.Second, Transport: transport}
 	response, err := client.Do(request)
 	if err != nil {
 		return false
@@ -398,10 +365,10 @@ func probeEdge(ctx context.Context) bool {
 }
 
 // waitEdgeHealthy polls the edge probe until skalid answers.
-func waitEdgeHealthy(ctx context.Context) error {
+func waitEdgeHealthy(ctx context.Context, ca *CA) error {
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		if probeEdge(ctx) {
+		if probeEdge(ctx, ca) {
 			return nil
 		}
 		if time.Now().After(deadline) {

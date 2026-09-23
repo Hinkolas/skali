@@ -140,9 +140,39 @@ func TestVersionMismatchLeavesRecordUnchanged(t *testing.T) {
 	require.ErrorContains(t, CheckVersion(state), "working tree")
 }
 
+// The edge's host ports are fixed when k3d creates the cluster, so a record
+// from before the edge moved to https on the default ports, or one created
+// under other port overrides, must be refused with the reset instruction
+// even when the release matches (a working-tree build never bumps).
+func TestEdgePortChangeRequiresReset(t *testing.T) {
+	withVersion(t, "v0.0.0-dev")
+	state, err := NewState("skalid:dev")
+	require.NoError(t, err)
+	require.NoError(t, CheckVersion(state))
+
+	legacy := *state
+	legacy.Edge = nil
+	err = CheckVersion(&legacy)
+	require.ErrorContains(t, err, "plain-HTTP edge on port 8080")
+	require.ErrorContains(t, err, "skali dev reset")
+
+	moved := *state
+	moved.Edge = &EdgePorts{HTTP: 8082, HTTPS: 8443}
+	err = CheckVersion(&moved)
+	require.ErrorContains(t, err, "8082 (http) and 8443 (https)")
+	require.ErrorContains(t, err, "skali dev reset")
+
+	// The override is part of the identity: a suite running on shifted
+	// ports accepts its own record and refuses the default one.
+	t.Setenv("SKALI_DEV_HTTP_PORT", "8082")
+	t.Setenv("SKALI_DEV_HTTPS_PORT", "8443")
+	require.NoError(t, CheckVersion(&moved))
+	require.ErrorContains(t, CheckVersion(state), "skali dev reset")
+}
+
 func TestWorkingTreeRecordCannotHideAReleasedImage(t *testing.T) {
 	withVersion(t, "v0.0.0-dev")
-	state := &State{K3sImage: K3sImage, SkalidImage: "ghcr.io/hinkolas/skalid:v0.1.0-rc.3"}
+	state := &State{K3sImage: K3sImage, SkalidImage: "ghcr.io/hinkolas/skalid:v0.1.0-rc.3", Edge: currentEdgePorts()}
 	require.ErrorContains(t, CheckVersion(state), "run skali dev reset")
 	state.SkalidImage = "skalid:dev"
 	require.NoError(t, CheckVersion(state))
