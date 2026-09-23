@@ -333,9 +333,9 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 2*time.Minute)
 		// The route is a tls: automatic one: plain HTTP only redirects to
-		// the https origin, and the platform domain does the same.
+		// the https origin (Traefik's permanent redirectScheme is a 301).
 		status, header := h.plainHTTP("/")
-		require.Equal(t, http.StatusPermanentRedirect, status)
+		require.Equal(t, http.StatusMovedPermanently, status)
 		require.Equal(t, "https://"+h.host+"/", header.Get("Location"))
 		// The suite runs on pipes, so the first run never touched this
 		// machine's trust store; the check says so and names the CA file.
