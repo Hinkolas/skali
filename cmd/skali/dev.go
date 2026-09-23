@@ -393,7 +393,7 @@ func newDevCommand() *cobra.Command {
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
 	command.AddCommand(up, status, logs, newDevExecCommand(), newDevRunCommand(),
-		newDevValuesCommand(), down, ls, stop, start, reset)
+		newDevValuesCommand(), newDevTrustCommand(), down, ls, stop, start, reset)
 	return command
 }
 
@@ -917,6 +917,7 @@ func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConver
 	if err := loginLocalRemote(ctx, state); err != nil {
 		return nil, err
 	}
+	maybeTrustCA(ctx, out, state)
 	return state, nil
 }
 
@@ -1296,12 +1297,19 @@ func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
 		}
 		task.Done("")
 	}
+	// The CA goes with the record; a trust store entry for it outlives the
+	// platform and signs nothing anymore, so say so once.
+	trusted, _ := localdev.LoadCA()
 	task := tasks.Start("Remove local installation record")
 	if err := localdev.RemoveState(); err != nil {
 		task.Fail()
 		return err
 	}
 	task.Done("")
+	if trusted != nil {
+		fmt.Fprintf(out, "  %s\n", clirender.StyleFor(out).Dim("the development CA \""+trusted.CommonName+
+			"\" may still sit in your trust store; it signs nothing anymore and can be removed"))
+	}
 
 	// Drop the stored local remote; its token died with the cluster.
 	return cliconfig.Remove(localRemoteName, cfg.Remotes[localRemoteName])
