@@ -36,8 +36,8 @@ func (silentProgress) Skip(string)  {}
 func (silentProgress) Note(string)  {}
 
 // Converge applies the profile's bundle in dependency order with readiness
-// waits: namespace, blessed operators (CNPG, plus cert-manager under a
-// production profile), the skali cluster issuer and strict-SNI edge
+// waits: namespace, blessed operators (CNPG and cert-manager, plus Longhorn
+// under that storage driver), the skali cluster issuer and strict-SNI edge
 // policy, the bootstrap database sized to its tier, the managed registry,
 // and skalid with the in-cluster installation record. It never applies the
 // bootstrap-user stage (see EnsureAdminUser) and never waits on TLS
@@ -78,10 +78,8 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 		return err
 	}
 	longhorn := production != nil && production.StorageDriver == StorageDriverLonghorn
-	if production != nil {
-		if err := applier.ApplyManifest(ctx, CertManagerManifest()); err != nil {
-			return err
-		}
+	if err := applier.ApplyManifest(ctx, CertManagerManifest()); err != nil {
+		return err
 	}
 	if longhorn {
 		// Longhorn rides the operators stage. The disk labels precede the
@@ -107,17 +105,14 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 		return err
 	}
 	cnpgDetail := "CNPG " + CNPGVersion
-	operators := cnpgDetail + ", Traefik (k3s)"
-	if production != nil {
-		// The cainjector wait closes a known CRD-conversion race; the
-		// webhook wait covers issuer validation.
-		for _, name := range []string{"cert-manager", "cert-manager-webhook", "cert-manager-cainjector"} {
-			if err := applier.WaitDeploymentReady(ctx, "cert-manager", name); err != nil {
-				return err
-			}
+	// The cainjector wait closes a known CRD-conversion race; the webhook
+	// wait covers issuer validation.
+	for _, name := range []string{"cert-manager", "cert-manager-webhook", "cert-manager-cainjector"} {
+		if err := applier.WaitDeploymentReady(ctx, CertManagerNamespace, name); err != nil {
+			return err
 		}
-		operators = cnpgDetail + ", cert-manager " + CertManagerVersion + ", Traefik (k3s)"
 	}
+	operators := cnpgDetail + ", cert-manager " + CertManagerVersion + ", Traefik (k3s)"
 	if longhorn {
 		// A first install pulls over a gigabyte of Longhorn images;
 		// narrate the wait so a quiet console is not mistaken for a hang.
@@ -161,26 +156,28 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 		progress.Done(fmt.Sprintf("%s, %d replica(s)", StorageClassName, production.StorageReplicas))
 	}
 
+	progress.Start("Apply cluster issuer")
+	if err := applier.ApplyObjectsRetry(ctx, objects.Issuer, 2*time.Minute); err != nil {
+		return err
+	}
+	issuer := "private development CA"
 	if production != nil {
-		progress.Start("Apply cluster issuer")
-		if err := applier.ApplyObjectsRetry(ctx, objects.Issuer, 2*time.Minute); err != nil {
-			return err
-		}
 		server := production.ACMEServer
 		if server == "" {
 			server = ACMEProductionServer
 		}
-		progress.Done("acme " + server)
-
-		// The retry rides out a fresh cluster where the traefik-crd chart
-		// has not established the TLSOption CRD yet, mirroring the issuer
-		// retry over cert-manager's CRDs.
-		progress.Start("Apply edge TLS policy")
-		if err := applier.ApplyObjectsRetry(ctx, objects.Edge, 2*time.Minute); err != nil {
-			return err
-		}
-		progress.Done("strict SNI")
+		issuer = "acme " + server
 	}
+	progress.Done(issuer)
+
+	// The retry rides out a fresh cluster where the traefik-crd chart
+	// has not established the TLSOption CRD yet, mirroring the issuer
+	// retry over cert-manager's CRDs.
+	progress.Start("Apply edge TLS policy")
+	if err := applier.ApplyObjectsRetry(ctx, objects.Edge, 2*time.Minute); err != nil {
+		return err
+	}
+	progress.Done("strict SNI")
 
 	progress.Start("Apply bootstrap database")
 	if err := applier.ApplyObjectsRetry(ctx, objects.Database, 2*time.Minute); err != nil {

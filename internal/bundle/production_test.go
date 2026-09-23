@@ -20,6 +20,14 @@ func localProfile() Profile {
 		AdminEmail:    "dev@skali.localhost",
 		AdminPassword: "generated-password",
 		RegistryHost:  "localhost:5510",
+		Local:         localCA(),
+	}
+}
+
+func localCA() *Local {
+	return &Local{
+		CACertPEM: "-----BEGIN CERTIFICATE-----\nfake-ca\n-----END CERTIFICATE-----\n",
+		CAKeyPEM:  "-----BEGIN PRIVATE KEY-----\nfake-ca-key\n-----END PRIVATE KEY-----\n",
 	}
 }
 
@@ -61,6 +69,8 @@ func TestLocalRenderFrozen(t *testing.T) {
 		"local-ownership.yaml":    1,
 		"local-namespace.yaml":    0,
 		"local-priority.yaml":     2,
+		"local-issuer.yaml":       4,
+		"local-edge.yaml":         5,
 		"local-database.yaml":     6,
 		"local-registry.yaml":     7,
 		"local-skalid.yaml":       8,
@@ -80,12 +90,10 @@ func TestLocalRenderFrozen(t *testing.T) {
 	}
 	// Production-only stages contribute zero bytes locally.
 	require.Empty(t, sources[3], "storage stage must be empty locally")
-	require.Empty(t, sources[4], "issuer stage must be empty locally")
-	require.Empty(t, sources[5], "edge stage must be empty locally")
 	require.Empty(t, sources[9], "record stage must be empty locally")
 
-	// The full hash including the vendored operator manifests is frozen
-	// too: cert-manager must not leak into the local fingerprint.
+	// The full hash including the vendored operator manifests (CNPG and
+	// cert-manager, both applied locally) is frozen too.
 	hashPath := filepath.Join("testdata", "local-hash.txt")
 	if os.Getenv("UPDATE_GOLDEN") != "" {
 		require.NoError(t, os.WriteFile(hashPath, []byte(Hash(profile)+"\n"), 0o644))

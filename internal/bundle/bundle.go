@@ -29,9 +29,9 @@ import (
 )
 
 // Pinned component versions of this bundle release. cert-manager ships in
-// the bundle but applies only under a production profile: the local edge
-// stays HTTP-only, so TLS issuance (`tls: automatic`) only works on a
-// production installation.
+// the bundle and applies under both profiles: production issues route
+// certificates through ACME, the local platform through a private CA the
+// CLI generated, so `tls: automatic` behaves the same on both.
 const (
 	Namespace   = "skali-system"
 	CNPGVersion = "1.29.2"
@@ -43,10 +43,15 @@ const (
 	// default drift and pre-pullable. Never pin below a previously running
 	// major: CNPG refuses downgrades.
 	BootstrapPostgresImage = "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie"
-	// CertManagerVersion pins the vendored cert-manager release. The asset
-	// is embedded even though the local profile never applies it; roughly
-	// one megabyte of CLI weight buys one shared bundle package.
+	// CertManagerVersion pins the vendored cert-manager release.
 	CertManagerVersion = "1.21.1"
+	// CertManagerNamespace is the namespace the vendored manifest creates;
+	// cert-manager reads cluster-scoped issuer secrets from it.
+	CertManagerNamespace = "cert-manager"
+	// CAIssuerSecretName names the kubernetes.io/tls Secret holding the
+	// local platform's private CA, which the skali ClusterIssuer signs
+	// with under the local profile.
+	CAIssuerSecretName = "skali-ca"
 	// LonghornVersion pins the vendored Longhorn release; applied only
 	// when a production profile selects the longhorn storage driver. Dev
 	// clusters keep every claim on the k3d default local-path class.
@@ -106,8 +111,8 @@ const (
 )
 
 // OperatorNamespaces are the namespaces the vendored operator manifests
-// create; scoped uninstall removes them last. cert-manager exists only on
-// production installations; deleting an absent namespace is a no-op.
+// create; scoped uninstall removes them last. Longhorn exists only under
+// the longhorn storage driver; deleting an absent namespace is a no-op.
 var OperatorNamespaces = []string{"cnpg-system", "cert-manager", "longhorn-system"}
 
 //go:embed assets/cnpg-1.29.2.yaml
@@ -127,9 +132,19 @@ func CNPGManifest() []byte {
 //go:embed assets/cert-manager-1.21.1.yaml
 var certManagerManifest []byte
 
-// CertManagerManifest is the pinned cert-manager install manifest; applied
-// only under a production profile.
+// CertManagerManifest is the pinned cert-manager install manifest; both
+// profiles apply it. Its Deployments already pull IfNotPresent.
 func CertManagerManifest() []byte { return certManagerManifest }
+
+// CertManagerImages lists the images the vendored manifest deploys,
+// exported so local dev can pre-pull them into the cluster.
+func CertManagerImages() []string {
+	return []string{
+		"quay.io/jetstack/cert-manager-controller:v" + CertManagerVersion,
+		"quay.io/jetstack/cert-manager-webhook:v" + CertManagerVersion,
+		"quay.io/jetstack/cert-manager-cainjector:v" + CertManagerVersion,
+	}
+}
 
 //go:embed assets/longhorn-1.12.1.yaml
 var longhornManifest []byte
@@ -172,11 +187,35 @@ type Profile struct {
 	// build clients and nodes (localhost:5510 in the local profile,
 	// RegistryInternalHost in production).
 	RegistryHost string
-	// Production selects the production shape of the bundle: cert-manager
-	// with the ACME skali issuer, a tier-sized database, capability-pinned
-	// placement, a TLS edge, and the in-cluster installation record. Nil
-	// renders the local development shape.
+	// Production selects the production shape of the bundle: the ACME
+	// skali issuer, a tier-sized database, capability-pinned placement,
+	// the public registry ingress, and the in-cluster installation record.
+	// Nil renders the local development shape, which requires Local.
 	Production *Production
+	// Local parameterizes the local development shape: the private CA the
+	// skali ClusterIssuer signs route certificates with. Required when
+	// Production is nil; ignored otherwise.
+	Local *Local
+}
+
+// Local parameterizes the local-only parts of the bundle.
+type Local struct {
+	// CACertPEM and CAKeyPEM are the CLI-generated development CA. The
+	// certificate is what the developer's trust store holds; the key
+	// reaches cert-manager as the issuer secret and never leaves the
+	// machine otherwise.
+	CACertPEM string
+	CAKeyPEM  string
+}
+
+func (l *Local) validate() error {
+	if l == nil {
+		return errors.New("bundle: local profile: the development CA is required")
+	}
+	if l.CACertPEM == "" || l.CAKeyPEM == "" {
+		return errors.New("bundle: local profile: the development CA certificate and key are required")
+	}
+	return nil
 }
 
 // Production parameterizes the production-only parts of the bundle. Every
@@ -330,11 +369,11 @@ type Objects struct {
 	// Longhorn operators); empty under the local profile and the local
 	// storage driver.
 	Storage []unstructured.Unstructured
-	// Issuer is the ACME ClusterIssuer named skali (requires
-	// cert-manager); empty under the local profile.
+	// Issuer is the ClusterIssuer named skali (requires cert-manager):
+	// ACME under production, the development CA (preceded by its Secret)
+	// under the local profile.
 	Issuer []unstructured.Unstructured
-	// Edge is the strict-SNI TLS policy on the Traefik edge; empty under
-	// the local profile.
+	// Edge is the strict-SNI TLS policy on the Traefik edge. Both profiles.
 	Edge []unstructured.Unstructured
 	// Database is the CNPG cluster (requires the operator).
 	Database []unstructured.Unstructured
@@ -382,6 +421,8 @@ func Render(profile Profile) (*Objects, error) {
 		if err := profile.Production.validate(); err != nil {
 			return nil, err
 		}
+	} else if err := profile.Local.validate(); err != nil {
+		return nil, err
 	}
 	objects := &Objects{}
 	targets := []*[]unstructured.Unstructured{
@@ -421,9 +462,9 @@ func Hash(profile Profile) string {
 	// The patched manifest, exactly what ApplyManifest applies: a rewrite
 	// there must move the hash and yield a converge.
 	digest.Write(CNPGManifest())
+	digest.Write(certManagerManifest)
 	sources := stageSources(profile)
 	if profile.Production != nil {
-		digest.Write(certManagerManifest)
 		if profile.Production.StorageDriver == StorageDriverLonghorn {
 			// The patched Longhorn manifest, exactly what ApplyManifest
 			// applies under the longhorn driver.
@@ -531,11 +572,38 @@ parameters:
 `, StorageClassName, profile.Production.StorageReplicas)
 }
 
-// issuerYAML renders the ACME ClusterIssuer every `tls: automatic` route
-// binds to. Production only: the local edge is HTTP-only.
+// issuerYAML renders the ClusterIssuer every `tls: automatic` route binds
+// to. Production issues through ACME; the local platform issues from the
+// development CA, whose material precedes the issuer as a kubernetes.io/tls
+// Secret in the cert-manager namespace (the vendored manifest creates the
+// namespace, and cert-manager reads cluster-scoped issuer secrets there).
 func issuerYAML(profile Profile) string {
 	if profile.Production == nil {
-		return ""
+		local := profile.Local
+		if local == nil {
+			return ""
+		}
+		return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+type: kubernetes.io/tls
+data:
+  tls.crt: %[3]s
+  tls.key: %[4]s
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: %[5]s
+spec:
+  ca:
+    secretName: %[1]s
+`, CAIssuerSecretName, CertManagerNamespace,
+			base64.StdEncoding.EncodeToString([]byte(local.CACertPEM)),
+			base64.StdEncoding.EncodeToString([]byte(local.CAKeyPEM)),
+			IssuerName)
 	}
 	server := profile.Production.ACMEServer
 	if server == "" {
@@ -565,12 +633,10 @@ spec:
 // TLDs like .dev escalate into a non-bypassable browser error). The object
 // must be named "default" to bind as the entrypoint default, and Traefik
 // tolerates only one such object cluster-wide; it lives in skali-system so
-// uninstall removes it with the namespace. Production only: the local edge
-// is HTTP-only.
+// uninstall removes it with the namespace. Both profiles: locally a host
+// without an issued certificate gets the same closed handshake as on a
+// cluster instead of Traefik's self-signed default.
 func edgeYAML(profile Profile) string {
-	if profile.Production == nil {
-		return ""
-	}
 	return `apiVersion: traefik.io/v1alpha1
 kind: TLSOption
 metadata:
@@ -805,24 +871,32 @@ data:
 		base64.StdEncoding.EncodeToString([]byte(production.NodePullSecret)))
 }
 
-// registryIngressYAML publishes the registry on its own domain through the
-// Traefik edge. The /token route targets skalid (the realm must be
-// reachable by exactly the clients that can reach the registry); Traefik
-// prioritizes the longer match. Plain HTTP redirects through the shared
-// skali-system Middleware the skalid stage renders, and the certificate is
-// explicit like every managed route's.
-func registryIngressYAML(production *Production) string {
+// redirectMiddlewareYAML renders the shared skali-system redirectScheme
+// Middleware every platform -http router references. Production renders it
+// in the registry stage (which converges first), the local profile in the
+// skalid stage; either way it precedes the routers that name it.
+func redirectMiddlewareYAML() string {
 	return fmt.Sprintf(`---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: redirect-https
+  name: %[2]s
   namespace: %[1]s
 spec:
   redirectScheme:
     scheme: https
     permanent: true
----
+`, Namespace, edge.RedirectMiddlewareName)
+}
+
+// registryIngressYAML publishes the registry on its own domain through the
+// Traefik edge. The /token route targets skalid (the realm must be
+// reachable by exactly the clients that can reach the registry); Traefik
+// prioritizes the longer match. Plain HTTP redirects through the shared
+// skali-system Middleware this stage renders ahead of it, and the
+// certificate is explicit like every managed route's.
+func registryIngressYAML(production *Production) string {
+	return redirectMiddlewareYAML() + fmt.Sprintf(`---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -898,101 +972,17 @@ spec:
     excludedContentTypes:` + excluded.String() + "\n"
 }
 
-func skalidYAML(profile Profile) string {
-	// Pod-template annotations force a roll on changes the spec cannot
-	// see: a re-imported image under the same tag, and the secret-backed
-	// env (secretKeyRef values resolve at container start, so a rotated
-	// token key or node pull secret would otherwise stay stale in the
-	// running pod). The checksum is a truncated one-way hash; it reveals
-	// nothing about the material.
-	var annotationLines []string
-	if profile.SkalidImageID != "" {
-		annotationLines = append(annotationLines, "skali.dev/image-id: "+profile.SkalidImageID)
-	}
-	if production := profile.Production; production != nil {
-		sum := sha256.Sum256([]byte(production.TokenKeyPEM + "\x00" + production.NodePullSecret))
-		annotationLines = append(annotationLines,
-			"skali.dev/registry-token-checksum: "+hex.EncodeToString(sum[:8]))
-	}
-	podAnnotations := ""
-	if len(annotationLines) > 0 {
-		podAnnotations = "\n      annotations:"
-		for _, line := range annotationLines {
-			podAnnotations += "\n        " + line
-		}
-	}
-	cookieSecure := "false"
-	if profile.Production != nil {
-		cookieSecure = "true"
-	}
-	// Both profiles state the installation's capabilities explicitly. Local
-	// dev is one node carrying every service capability: the substrate
-	// collapses every database claim onto the single dev pool and every
-	// bucket onto the single all-in-one dev object store, so the
-	// capabilities are always present.
-	capabilitiesEnv := "\n            - name: SKALI_CAPABILITIES\n              value: application;edge;database;object-storage"
-	// Locally the daemon owns the whole host on the plain web entrypoint;
-	// production splits the platform domain on websecure, /api to skalid
-	// (which also answers root paths for in-cluster clients) and the rest
-	// to the web console (Traefik prioritizes the longer match), with a
-	// shared redirect Middleware answering plain HTTP and an explicit
-	// Certificate for the platform domain.
-	// Both profiles compress the console through the shared Middleware
-	// this stage renders ahead of its routers.
-	edgeSuffix := compressMiddlewareYAML() + fmt.Sprintf(`---
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: skalid
-  namespace: %[1]s
-spec:
-  entryPoints:
-    - web
-  routes:
-    - match: Host(`+"`skali.localhost`"+`) && PathPrefix(`+"`/`"+`)
-      kind: Rule
-      middlewares:
-        - name: %[2]s
-      services:
-        - name: skalid
-          port: 80
-`, Namespace, edge.CompressMiddlewareName)
-	if production := profile.Production; production != nil {
-		// Production states the installation's capability union. The token
-		// signing key and node pull secret ride the same production block:
-		// with them set, skalid serves the registry token realm. The push
-		// host is the public registry domain: build clients push through the
-		// edge while artifact references stay on the internal name.
-		capabilitiesEnv = "\n            - name: SKALI_RESERVED_HOSTS\n              value: " + strings.Join([]string{production.IngressHost, production.RegistryDomain, production.S3Domain}, ";") + "\n            - name: SKALI_CAPABILITIES\n              value: " +
-			strings.Join(production.Capabilities, ";") +
-			// The recorded cluster name is the installation's display name
-			// (the console's breadcrumb root).
-			"\n            - name: SKALI_INSTANCE_NAME\n              value: " + production.ClusterName +
-			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
-			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
-			"\n            - name: SKALI_REGISTRY_NODE_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: node-secret"
-		if production.S3Domain != "" {
-			capabilitiesEnv += "\n            - name: SKALI_S3_DOMAIN\n              value: " + production.S3Domain
-		}
-		capabilitiesEnv += "\n            - name: SKALI_MANAGED_CLUSTER\n              value: \"true\"" +
-			"\n            - name: SKALI_CERT_MANAGER\n              value: \"true\""
-		if production.StorageDriver == StorageDriverLonghorn {
-			// Application volume claims name the replicated class; under
-			// the local driver the variable stays unset and claims keep
-			// the cluster default.
-			capabilitiesEnv += "\n            - name: SKALI_STORAGE_CLASS\n              value: " + StorageClassName
-		}
-		if len(production.PlatformPreference) > 0 {
-			// Ordered on purpose: the first preferred platform an
-			// application supports wins its single-arch build.
-			capabilitiesEnv += "\n            - name: SKALI_PLATFORM_PREFERENCE\n              value: " +
-				strings.Join(production.PlatformPreference, ";")
-		}
-		// The shared redirect-https Middleware rides the registry stage,
-		// which converges first; both platform -http routers reference it.
-		// The compress Middleware is this stage's own: only the console
-		// router references it.
-		edgeSuffix = compressMiddlewareYAML() + fmt.Sprintf(`---
+// LocalPlatformHost is the platform domain of the local development
+// installation: the dashboard, the API, and the CLI's local remote.
+const LocalPlatformHost = "skali.localhost"
+
+// platformEdgeYAML renders the platform domain's edge: an explicit
+// Certificate from the skali issuer, the websecure router to skalid (which
+// serves both the API and the web console), and the plain-HTTP router that
+// redirects through the shared redirect Middleware, leaving the ACME
+// challenge prefix to cert-manager's solver.
+func platformEdgeYAML(host string) string {
+	return fmt.Sprintf(`---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -1038,11 +1028,94 @@ spec:
     - match: Host(`+"`%[2]s`"+`) && PathPrefix(`+"`/`"+`) && !PathPrefix(`+"`/.well-known/acme-challenge/`"+`)
       kind: Rule
       middlewares:
-        - name: redirect-https
+        - name: %[5]s
       services:
         - name: skalid
           port: 80
-`, Namespace, production.IngressHost, IssuerName, edge.CompressMiddlewareName)
+`, Namespace, host, IssuerName, edge.CompressMiddlewareName, edge.RedirectMiddlewareName)
+}
+
+func skalidYAML(profile Profile) string {
+	// Pod-template annotations force a roll on changes the spec cannot
+	// see: a re-imported image under the same tag, and the secret-backed
+	// env (secretKeyRef values resolve at container start, so a rotated
+	// token key or node pull secret would otherwise stay stale in the
+	// running pod). The checksum is a truncated one-way hash; it reveals
+	// nothing about the material.
+	var annotationLines []string
+	if profile.SkalidImageID != "" {
+		annotationLines = append(annotationLines, "skali.dev/image-id: "+profile.SkalidImageID)
+	}
+	if production := profile.Production; production != nil {
+		sum := sha256.Sum256([]byte(production.TokenKeyPEM + "\x00" + production.NodePullSecret))
+		annotationLines = append(annotationLines,
+			"skali.dev/registry-token-checksum: "+hex.EncodeToString(sum[:8]))
+	}
+	podAnnotations := ""
+	if len(annotationLines) > 0 {
+		podAnnotations = "\n      annotations:"
+		for _, line := range annotationLines {
+			podAnnotations += "\n        " + line
+		}
+	}
+	// Both profiles terminate TLS at the edge, so the session cookie is
+	// always Secure; X-Forwarded-Proto from the trusted Traefik pods
+	// carries the scheme.
+	cookieSecure := "true"
+	// Both profiles state the installation's capabilities explicitly. Local
+	// dev is one node carrying every service capability: the substrate
+	// collapses every database claim onto the single dev pool and every
+	// bucket onto the single all-in-one dev object store, so the
+	// capabilities are always present.
+	capabilitiesEnv := "\n            - name: SKALI_CAPABILITIES\n              value: application;edge;database;object-storage"
+	// Both profiles serve the platform domain on websecure with an
+	// explicit Certificate and a plain-HTTP router that redirects through
+	// the shared redirect Middleware, and compress the console through the
+	// shared compress Middleware this stage renders ahead of its routers.
+	// Locally the redirect Middleware rides this stage too (production
+	// renders it in the registry stage, which converges first), and skalid
+	// runs cert-manager against the development CA without the in-cluster
+	// edge probe (*.localhost cannot resolve to the edge from a pod).
+	edgeSuffix := compressMiddlewareYAML() + redirectMiddlewareYAML() + platformEdgeYAML(LocalPlatformHost)
+	if production := profile.Production; production != nil {
+		// Production states the installation's capability union. The token
+		// signing key and node pull secret ride the same production block:
+		// with them set, skalid serves the registry token realm. The push
+		// host is the public registry domain: build clients push through the
+		// edge while artifact references stay on the internal name.
+		capabilitiesEnv = "\n            - name: SKALI_RESERVED_HOSTS\n              value: " + strings.Join([]string{production.IngressHost, production.RegistryDomain, production.S3Domain}, ";") + "\n            - name: SKALI_CAPABILITIES\n              value: " +
+			strings.Join(production.Capabilities, ";") +
+			// The recorded cluster name is the installation's display name
+			// (the console's breadcrumb root).
+			"\n            - name: SKALI_INSTANCE_NAME\n              value: " + production.ClusterName +
+			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
+			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
+			"\n            - name: SKALI_REGISTRY_NODE_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: node-secret"
+		if production.S3Domain != "" {
+			capabilitiesEnv += "\n            - name: SKALI_S3_DOMAIN\n              value: " + production.S3Domain
+		}
+		capabilitiesEnv += "\n            - name: SKALI_MANAGED_CLUSTER\n              value: \"true\"" +
+			"\n            - name: SKALI_CERT_MANAGER\n              value: \"true\""
+		if production.StorageDriver == StorageDriverLonghorn {
+			// Application volume claims name the replicated class; under
+			// the local driver the variable stays unset and claims keep
+			// the cluster default.
+			capabilitiesEnv += "\n            - name: SKALI_STORAGE_CLASS\n              value: " + StorageClassName
+		}
+		if len(production.PlatformPreference) > 0 {
+			// Ordered on purpose: the first preferred platform an
+			// application supports wins its single-arch build.
+			capabilitiesEnv += "\n            - name: SKALI_PLATFORM_PREFERENCE\n              value: " +
+				strings.Join(production.PlatformPreference, ";")
+		}
+		// The shared redirect-https Middleware rides the registry stage,
+		// which converges first; both platform -http routers reference it.
+		// The compress Middleware is this stage's own: only the console
+		// router references it.
+		edgeSuffix = compressMiddlewareYAML() + platformEdgeYAML(production.IngressHost)
+	} else {
+		capabilitiesEnv += "\n            - name: SKALI_CERT_MANAGER\n              value: \"true\"" +
+			"\n            - name: SKALI_EDGE_PROBE\n              value: \"false\""
 	}
 	// The edge identity route answers on every hostname, on purpose: the
 	// kernel probes a tenant domain with that domain's own Host header to
