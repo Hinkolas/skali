@@ -98,6 +98,11 @@ func managedK3dPath() (string, error) {
 	return filepath.Join(dir, "k3d"), nil
 }
 
+// K3dBinary resolves the k3d the local platform execs, for callers outside
+// the package (the end-to-end suite inspects and deletes its throwaway
+// cluster with the same binary the CLI used to create it).
+func K3dBinary() string { return k3dBinary() }
+
 // k3dBinary resolves the k3d every lifecycle call execs: PATH first, the
 // managed pinned binary second, and the bare name as a fallback so exec
 // reports the usual not-found error.
