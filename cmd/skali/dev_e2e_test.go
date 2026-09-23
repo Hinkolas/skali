@@ -544,7 +544,7 @@ func TestDevEndToEnd(t *testing.T) {
 		h.waitRoute("hello from skali", 2*time.Minute)
 	})
 
-	t.Run("SkalidRestartDuringRolloutResumes", func(t *testing.T) {
+	t.Run("SkalidRestartDuringDeployLeavesEnvironmentFree", func(t *testing.T) {
 		source := filepath.Join(h.projectDir, "main.go")
 		content, err := os.ReadFile(source)
 		require.NoError(t, err)
@@ -557,13 +557,40 @@ func TestDevEndToEnd(t *testing.T) {
 		// Deploys against the dev-owned local remote are never bound.
 		require.NoFileExists(t, checkout.Path(h.projectDir))
 
-		// Kill the control plane while the rollout is in flight; the
-		// restarted skalid must resume toward the same revision.
+		// Kill the control plane right after the client handed off. The
+		// daemon that comes back must not leave the environment behind a
+		// run that stays running forever: a deployment it was still
+		// completing is failed with a journaled restart reason and the
+		// previous revision keeps serving, while one that had already
+		// reached the kernel's rollout simply finishes. Either way the
+		// environment is free and the next deploy lands.
 		kubeconfig := h.kubeconfig()
 		require.NoError(t, exec.Command("kubectl", "--kubeconfig", kubeconfig,
 			"delete", "pod", "-n", "skali-system",
 			"-l", "app.kubernetes.io/name=skalid", "--wait=false").Run())
 
+		const restartReason = "daemon restarted while the deployment was completing"
+		settled := ""
+		require.Eventually(t, func() bool {
+			if status, body := h.route("/"); status == http.StatusOK && strings.Contains(body, "hello again from skali") {
+				settled = "completed"
+				return true
+			}
+			runs, code := h.runExit("", "run", "list", "--remote", "local", "--environment", "local")
+			if code == 0 && strings.Contains(runs, restartReason) {
+				settled = "failed"
+				return true
+			}
+			return false
+		}, 5*time.Minute, 5*time.Second, "the interrupted deployment neither completed nor failed with the restart reason")
+		if settled == "failed" {
+			status, body := h.route("/")
+			require.Equal(t, http.StatusOK, status)
+			require.Contains(t, body, "hello from skali", "the previous revision keeps serving after a failed completion")
+		}
+
+		out = h.run(false, "", "dev", "-d")
+		require.Contains(t, out, "ready")
 		h.waitRoute("hello again from skali", 5*time.Minute)
 	})
 
