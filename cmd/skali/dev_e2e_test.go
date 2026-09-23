@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/bundle"
+	"github.com/Hinkolas/skali/internal/checkout"
+	"github.com/Hinkolas/skali/internal/localdev"
 )
 
 // The end-to-end suite drives the built skali binary through the real
@@ -118,7 +120,7 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 		if os.Getenv("SKALI_E2E_KEEP") != "" {
 			return
 		}
-		_ = exec.Command("k3d", "cluster", "delete", e2eCluster).Run()
+		_ = exec.Command(localdev.K3dBinary(), "cluster", "delete", e2eCluster).Run()
 	})
 	return harness
 }
@@ -356,8 +358,9 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, body)
 		require.NotEmpty(t, header.Get("Skali-Instance"), "the platform router answers the identity probe on a tenant host")
 		require.Contains(t, body, `"instance_id":"`+header.Get("Skali-Instance")+`"`)
-		// dev never writes the checkout binding.
-		require.NoDirExists(t, filepath.Join(h.projectDir, ".skali"))
+		// dev never writes the checkout binding (.skali/ itself holds the
+		// manifest review acknowledgement every compile records).
+		require.NoFileExists(t, checkout.Path(h.projectDir))
 	})
 
 	t.Run("RepeatUnchangedReusesArtifact", func(t *testing.T) {
@@ -552,7 +555,7 @@ func TestDevEndToEnd(t *testing.T) {
 			"--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
 		// Deploys against the dev-owned local remote are never bound.
-		require.NoDirExists(t, filepath.Join(h.projectDir, ".skali"))
+		require.NoFileExists(t, checkout.Path(h.projectDir))
 
 		// Kill the control plane while the rollout is in flight; the
 		// restarted skalid must resume toward the same revision.
@@ -676,7 +679,7 @@ func TestDevEndToEnd(t *testing.T) {
 		require.Contains(t, out, "Remove local installation record")
 
 		// Reset removes only this test platform.
-		clusters, err := exec.Command("k3d", "cluster", "list", "-o", "json").Output()
+		clusters, err := exec.Command(localdev.K3dBinary(), "cluster", "list", "-o", "json").Output()
 		require.NoError(t, err)
 		require.NotContains(t, string(clusters), `"name":"`+e2eCluster+`"`)
 	})
