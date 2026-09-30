@@ -91,6 +91,16 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 			if err != nil {
 				return nil, err
 			}
+			// Drift repair rides the probe like quota enforcement does: a
+			// setting an application changed behind the platform is reset
+			// within one interval and reported as the audit trail. Before
+			// the platform identity is loaded (a fresh process, the store
+			// still reconciling) there is nothing to check yet.
+			drift, err := c.deps.Seaweed.EnsureBucketConfiguration(ctx, allocation.BucketName,
+				seaweed.BucketPolicy(allocation.BucketName))
+			if err != nil && !errors.Is(err, seaweed.ErrNoPlatformCredentials) {
+				return nil, err
+			}
 			if claimRow.OwnerKind != dbstore.OwnerService || claimRow.EnvironmentID == nil {
 				continue
 			}
@@ -103,11 +113,12 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 				Service:     service,
 				SharedKey:   seaweed.SharedKey,
 				Bucket: &module.BucketStatus{
-					Exists:      exists,
-					UsedBytes:   stat.SizeBytes,
-					ObjectCount: stat.FileCount,
-					QuotaBytes:  claimRow.StorageQuotaBytes,
-					ReadOnly:    readOnly,
+					Exists:             exists,
+					UsedBytes:          stat.SizeBytes,
+					ObjectCount:        stat.FileCount,
+					QuotaBytes:         claimRow.StorageQuotaBytes,
+					ReadOnly:           readOnly,
+					ConfigurationDrift: drift,
 				},
 			})
 		}

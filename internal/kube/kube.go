@@ -72,6 +72,12 @@ type Client struct {
 
 	ownership atomic.Pointer[ownershipProtection]
 
+	// inCluster records that credentials came from the pod's service
+	// account: Service DNS is dialable directly (forward.go).
+	inCluster bool
+	forwardMu sync.Mutex
+	forwards  map[string]*portForward
+
 	// Lazily built service-proxy transport (proxy.go).
 	proxyOnce sync.Once
 	proxyHTTP *http.Client
@@ -95,7 +101,12 @@ func New(kubeconfigPath string) (*Client, error) {
 	if err != nil {
 		return nil, ErrNoCluster
 	}
-	return NewFromConfig(config)
+	client, err := NewFromConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	client.inCluster = true
+	return client, nil
 }
 
 // NewFromConfig builds the client set over an already-resolved rest.Config;

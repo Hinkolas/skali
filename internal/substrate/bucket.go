@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -129,6 +130,22 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 		Actions:     seaweed.BucketActions(allocation.BucketName),
 	}); err != nil {
 		return false, err
+	}
+	// The settings Skali owns on the bucket (the policy that keeps the
+	// identity out of bucket administration, no CORS, no lifecycle, no
+	// versioning) converge here and on every probe pass.
+	repaired, err := c.deps.Seaweed.EnsureBucketConfiguration(ctx, allocation.BucketName,
+		seaweed.BucketPolicy(allocation.BucketName))
+	if errors.Is(err, seaweed.ErrNoPlatformCredentials) {
+		// The store's reconcile loads the platform keypair; a claim that
+		// gets here first (a fresh process) visibly waits one pass.
+		return false, errWaiting{reason: "waiting for the platform identity"}
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(repaired) > 0 {
+		slog.Info("substrate: bucket configuration reset", "bucket", allocation.BucketName, "settings", repaired)
 	}
 	if err := c.ensureBucketOutputMirror(ctx, row, *allocation, accessKey, secretKey); err != nil {
 		return false, err

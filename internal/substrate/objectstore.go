@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
@@ -207,8 +208,68 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		}); err != nil {
 			return 0, fmt.Errorf("substrate: ensure bootstrap identity: %w", err)
 		}
+		if err := c.ensurePlatformIdentity(ctx); err != nil {
+			return 0, err
+		}
 	}
 	return 0, nil
+}
+
+// PlatformCredentialSecret holds the platform identity's keypair: the
+// admin principal the substrate itself speaks S3 as (bucket configuration
+// today; restore writes and authenticated readiness follow). Generated
+// once; never mirrored into an environment.
+const PlatformCredentialSecret = "seaweed-platform"
+
+// ensurePlatformIdentity creates the keypair Secret on first run, converges
+// the Admin identity onto it, and hands the keypair to the admin client.
+func (c *Controller) ensurePlatformIdentity(ctx context.Context) error {
+	accessKey, secretKey, err := c.ensureKeypairSecret(ctx, PlatformCredentialSecret, map[string]string{
+		seaweed.SystemLabel: "object-storage",
+	})
+	if err != nil {
+		return err
+	}
+	if err := c.deps.Seaweed.EnsureIdentity(ctx, seaweed.Identity{
+		Name:        seaweed.PlatformIdentityName,
+		Credentials: []seaweed.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+		Actions:     seaweed.PlatformActions(),
+	}); err != nil {
+		return fmt.Errorf("substrate: ensure platform identity: %w", err)
+	}
+	c.deps.Seaweed.SetPlatformCredentials(accessKey, secretKey)
+	return nil
+}
+
+// ensureKeypairSecret returns the S3 keypair held in a platform Secret,
+// generating it on first use. Secret keys exist only in Secrets; they are
+// never logged or persisted elsewhere.
+func (c *Controller) ensureKeypairSecret(ctx context.Context, name string, labels map[string]string) (string, string, error) {
+	existing, err := c.deps.Cluster.GetSecret(ctx, Namespace, name)
+	if err == nil {
+		return string(existing.Data["access_key"]), string(existing.Data["secret_key"]), nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return "", "", fmt.Errorf("substrate: read %s: %w", name, err)
+	}
+	accessKey, secretKey := seaweed.GenerateAccessKey(), seaweed.GenerateSecretKey()
+	secret := &corev1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: Namespace,
+			Labels:    labels,
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"access_key": accessKey,
+			"secret_key": secretKey,
+		},
+	}
+	if _, err := c.deps.Cluster.ApplyAs(ctx, secret, kube.FieldManagerPlatform, false); err != nil {
+		return "", "", fmt.Errorf("substrate: apply %s: %w", name, err)
+	}
+	return accessKey, secretKey, nil
 }
 
 // objectStoreReady reads component rollout status at reconcile time (the
@@ -270,6 +331,7 @@ func (c *Controller) releaseObjectStore(ctx context.Context, row store.ObjectSto
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, Namespace: Namespace, Name: "seaweed-master-config"},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, Namespace: Namespace, Name: "seaweed-s3-bootstrap"},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, Namespace: Namespace, Name: seaweed.FilerStoreSecret},
+		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, Namespace: Namespace, Name: PlatformCredentialSecret},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, Namespace: Namespace, Name: "seaweed-data"},
 		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3"},
 		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3-http"},

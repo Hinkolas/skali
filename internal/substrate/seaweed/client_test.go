@@ -22,6 +22,12 @@ func (f *fakeDoer) ExecInPod(context.Context, string, string, string, []string) 
 	return "", nil
 }
 
+func (f *fakeDoer) ServiceAddress(context.Context, string, string, int) (string, error) {
+	return "127.0.0.1:0", nil
+}
+
+func (f *fakeDoer) ForgetServiceAddress(string, string, int) {}
+
 // The fixture mirrors the master /vol/status shape: two volume servers, one
 // bucket volume replicated on both (same id), plus a default-collection
 // volume on one. VolumeSizesByNode must charge each replica to its server;
