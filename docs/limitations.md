@@ -145,6 +145,26 @@ lost a copy until the node returns. Moving the store to a smaller shape
 (fewer masters, a lower replication) is an operator task for now; the
 store keeps serving from the remaining copies in the meantime.
 
+## Object storage depends on the metadata database
+
+Every bucket's directory (which objects exist, where their bytes live)
+is kept by the store's filer in the shared managed Postgres pool, while
+the bytes themselves live on the volume servers with SeaweedFS's own
+replication. Replicated bytes alone do not keep buckets available: if the
+metadata database is unreachable, no object can be read or written even
+though nothing is lost, and the bucket reports `store-degraded` with the
+metadata service named. Availability of buckets is therefore bounded by
+the availability tier of the shared pool, and a restore of the system
+database restores the bucket directories with it.
+
+## Bucket snapshots are loosely consistent
+
+`skali backup` copies a bucket object by object while the application may
+still be writing: objects added or deleted during the copy may or may not
+be in the snapshot. Stop the environment first when an exact cut matters
+(a restore does). Volumes and databases have their own notes in
+[prerelease safety](prerelease-safety.md).
+
 ## Builds run on your machine
 
 Every `skali deploy` builds and pushes from the machine running the CLI;

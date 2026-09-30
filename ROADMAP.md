@@ -125,11 +125,13 @@ Ordered loosely by how often I have wanted them.
 - [ ] Push-to-deploy: git integration and a managed builder so a push
       deploys without a laptop CLI.
 - [ ] API/CI tokens (membership already exists, tokens become subjects).
-- [ ] Credential rotation for databases and buckets.
+- [ ] Credential rotation for databases and buckets (#78; the version
+      bookkeeping and consumer rollouts exist, the workflow does not).
 - [ ] Scheduled jobs (cron) and one-off commands per application.
 - [ ] Sidecars or multiple processes per application, if a real app needs
       it.
-- [ ] Bucket policies: public-read, versioning, lifecycle, object quotas.
+- [ ] Bucket policies: public-read, versioning, object quotas (per-bucket
+      CORS and abandoned-upload cleanup landed with #68).
 - [ ] Environment cloning (staging from production data).
 - [ ] Preview environments per branch.
 - [ ] External access to databases (allowlisted TCP) for tooling.
