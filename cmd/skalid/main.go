@@ -347,6 +347,7 @@ func runServe() error {
 			Deploy:  deploySvc,
 			Kube:    kubeClient,
 			Targets: backupTargets,
+			Buckets: substrateCtl,
 			Enqueue: func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
 			Version: versionpkg.Version,
 		}, backup.Config{

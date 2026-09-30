@@ -142,3 +142,34 @@ func (s *Service) BumpAllocationCredentialVersion(ctx context.Context, allocatio
 	}
 	return nil
 }
+
+// FenceAllocation raises the restore fence on a live allocation. Already
+// fenced is not an error: a re-run restore fences again.
+func (s *Service) FenceAllocation(ctx context.Context, allocationID uuid.UUID) error {
+	if _, err := s.st.FenceBucketAllocation(ctx, allocationID); err != nil {
+		return fmt.Errorf("dbstore: fence allocation: %w", err)
+	}
+	return nil
+}
+
+// UnfenceAllocation lowers the restore fence; not fenced is not an error.
+func (s *Service) UnfenceAllocation(ctx context.Context, allocationID uuid.UUID) error {
+	if _, err := s.st.UnfenceBucketAllocation(ctx, allocationID); err != nil {
+		return fmt.Errorf("dbstore: unfence allocation: %w", err)
+	}
+	return nil
+}
+
+// EnvironmentDown reports whether the environment is taken down (a restore
+// in progress, or one that failed and left it down). The substrate lifts a
+// bucket fence once its environment is no longer down.
+func (s *Service) EnvironmentDown(ctx context.Context, environmentID uuid.UUID) (bool, error) {
+	target, err := s.st.GetEnvironmentTarget(ctx, environmentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, fmt.Errorf("dbstore: environment target: %w", err)
+	}
+	return target.State == "down", nil
+}

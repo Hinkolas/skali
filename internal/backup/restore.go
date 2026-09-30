@@ -342,7 +342,19 @@ func (c *Controller) restoreDatabase(ctx context.Context, log *stepLog, bctx *ba
 // snapshot's objects back through the in-cluster gateway.
 func (c *Controller) restoreBucket(ctx context.Context, log *stepLog, bctx *backupContext, component Component) error {
 	row := bctx.row
-	destination, bucketName, err := c.openServiceBucket(ctx, row.EnvironmentID, component.ServiceKey)
+	if c.deps.Buckets == nil {
+		return errors.New("the object-storage substrate is not available")
+	}
+	// The fence: the bucket's own identity is deleted, so the mirrored
+	// keys and every presigned URL signed with them are refused while the
+	// contents change underneath; the platform identity alone writes. A
+	// failed restore leaves the fence up together with the environment
+	// down; re-running the restore is the way forward.
+	if err := c.deps.Buckets.FenceBucket(ctx, row.EnvironmentID, component.ServiceKey); err != nil {
+		return err
+	}
+	log.Info(ctx, "bucket fenced: the environment's credentials are refused until the restore completes")
+	destination, bucketName, err := c.openBucket(ctx, row.EnvironmentID, component.ServiceKey)
 	if err != nil {
 		return err
 	}
@@ -352,28 +364,16 @@ func (c *Controller) restoreBucket(ctx context.Context, log *stepLog, bctx *back
 	}); err != nil {
 		return err
 	}
-	var restored, restoredBytes int64
-	err = bctx.target.List(ctx, component.ObjectPrefix, func(info objectInfo) error {
-		reader, err := bctx.target.Get(ctx, info.Key)
-		if err != nil {
-			return err
-		}
-		defer reader.Close()
-		key := info.Key[len(component.ObjectPrefix):]
-		if err := destination.Put(ctx, key, reader, info.Size); err != nil {
-			return err
-		}
-		restored++
-		restoredBytes += info.Size
-		if component.ObjectCount > 0 && restored%16 == 0 {
-			log.Progress(ctx, restored, component.ObjectCount)
-		}
-		return nil
-	})
+	restored, restoredBytes, err := copyObjects(ctx, log, bctx.target, destination,
+		component.ObjectPrefix, "", component.ObjectCount)
 	if err != nil {
 		return err
 	}
 	log.Info(ctx, fmt.Sprintf("restored %d objects (%d bytes)", restored, restoredBytes))
+	if err := c.deps.Buckets.UnfenceBucket(ctx, row.EnvironmentID, component.ServiceKey); err != nil {
+		return err
+	}
+	log.Info(ctx, "bucket fence lifted")
 	return nil
 }
 

@@ -58,10 +58,10 @@ They converge when the bucket is provisioned and on every observation
 pass; anything found changed is reset and the service reports a
 `configuration-drift` warning naming what was reset.
 
-Skali speaks S3 to the store as its own platform identity for this (and
-for what follows in later releases: restores, readiness checks). That
-identity's keypair lives in the platform namespace and is never injected
-into an environment.
+Skali speaks S3 to the store as its own platform identity for this, for
+backups and restores (below), and for the readiness checks that follow.
+That identity's keypair lives in the platform namespace and is never
+injected into an environment.
 
 ## Quotas
 
@@ -158,6 +158,34 @@ one replica on a different node when the fleet has two or more (none on a
 single node). Local development runs one all-in-one process on a small
 volume; it stays up with the rest of the local platform, so buckets are
 warm for the next deployment and `skali dev down` keeps their data.
+
+## Backups and restores
+
+A snapshot copies every object of the bucket into the backup target, with
+the metadata that travels on an object: the content type, encoding,
+disposition, language and cache headers, the application's own user
+metadata, and its tags. A restore puts all of it back, so restored files
+download under the name and type they were stored with. Both directions
+run as the platform's own S3 identity, so a bucket that is full (read-only
+for its application) still backs up, and a restore never depends on the
+application's keys.
+
+A snapshot of a live bucket is loosely consistent: objects written or
+deleted while the copy runs may or may not be in it. Stop the environment
+first (a restore does) when an exact cut matters.
+
+A restore fences the bucket while it rewrites it. The bucket's own
+identity is deleted for the duration, so the application's mirrored keys
+and every presigned URL signed with them are refused, and no external
+writer can land an object between the clear and the last restored one.
+The quota flag is lifted for the restore's own writes and re-evaluated by
+the next probe. When the bucket is restored the identity comes back with
+its unchanged keypair: URLs signed before the restore work again from that
+moment, because the key that signed them is the same key. Only a
+credential rotation retires them for good. A restore that fails leaves the
+environment down and the bucket fenced on purpose; re-running the restore
+is the way forward, and a deploy that brings the environment back instead
+finds the fence lifted within one probe interval.
 
 ## Deleting a bucket
 

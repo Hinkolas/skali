@@ -131,6 +131,16 @@ func main() {
 				return
 			}
 			defer object.Close()
+			// The stored content type travels with the object (and through
+			// backups); a missing object surfaces here as a 404.
+			info, err := object.Stat()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			if info.ContentType != "" {
+				w.Header().Set("Content-Type", info.ContentType)
+			}
 			if _, err := io.Copy(w, object); err != nil {
 				log.Printf("read note %s: %v", name, err)
 			}

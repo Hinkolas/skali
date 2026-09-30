@@ -86,8 +86,15 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 			if err != nil {
 				return nil, err
 			}
+			// A fence outlives a failed restore only while its environment
+			// is down; a deploy that brings the environment back finds the
+			// bucket reachable within one probe interval.
+			if err := c.liftStaleFence(ctx, claimRow, allocation); err != nil {
+				return nil, err
+			}
 			stat := sizes[allocation.BucketName]
-			readOnly, err := c.enforceBucketQuota(ctx, claimRow.StorageQuotaBytes, allocation.BucketName, stat.SizeBytes)
+			readOnly, err := c.enforceBucketQuota(ctx, claimRow.StorageQuotaBytes, allocation.BucketName,
+				stat.SizeBytes, allocation.FencedAt != nil)
 			if err != nil {
 				return nil, err
 			}
@@ -130,8 +137,11 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 // usage: at or over quota the bucket path turns read-only, back under it
 // reopens. Enforcement is approximate by one poll interval plus in-flight
 // uploads (documented product behavior); filers hot-reload the document.
-func (c *Controller) enforceBucketQuota(ctx context.Context, quotaBytes int64, bucket string, usedBytes int64) (bool, error) {
-	over := quotaBytes > 0 && usedBytes >= quotaBytes
+// A fenced bucket is never read-only: the flag is path-wide and would
+// refuse the restore's own writes; it is re-evaluated once the fence
+// lifts.
+func (c *Controller) enforceBucketQuota(ctx context.Context, quotaBytes int64, bucket string, usedBytes int64, fenced bool) (bool, error) {
+	over := !fenced && quotaBytes > 0 && usedBytes >= quotaBytes
 	prefix := seaweed.BucketsPrefix + bucket + "/"
 	err := c.deps.Seaweed.UpdateConf(ctx, func(conf *seaweed.FilerConf) bool {
 		entry := conf.Find(prefix)

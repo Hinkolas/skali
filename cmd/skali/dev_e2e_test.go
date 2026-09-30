@@ -826,16 +826,10 @@ func TestDevGuestbookDatabase(t *testing.T) {
 func TestDevGuestbookBackupRestore(t *testing.T) {
 	h := newE2EHarnessFor(t, "guestbook", "guestbook.localhost")
 
-	// A MinIO container on the host is the external S3 target; pods and
+	// An S3 container on the host is the external backup target; pods and
 	// skalid reach it as host.k3d.internal.
-	const minioName = "skali-e2e-minio"
 	const minioPort = 19100
-	_ = exec.Command("docker", "rm", "-f", minioName).Run()
-	out, err := exec.Command("docker", "run", "-d", "--name", minioName,
-		"-p", fmt.Sprintf("127.0.0.1:%d:9000", minioPort),
-		"quay.io/minio/minio", "server", "/data").CombinedOutput()
-	require.NoError(t, err, "start minio: %s", out)
-	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", minioName).Run() })
+	startS3Target(t, "skali-e2e-target", minioPort)
 	makeMinioBucket(t, fmt.Sprintf("127.0.0.1:%d", minioPort), "skali-backups")
 
 	run := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
@@ -854,7 +848,7 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 	h.route("/")
 	var before int
 	_, body = h.route("/")
-	_, err = fmt.Sscanf(body, "visits: %d", &before)
+	_, err := fmt.Sscanf(body, "visits: %d", &before)
 	require.NoError(t, err, "unexpected body %q", body)
 
 	run = h.run(false, "", "backup", "target", "set", "--remote", "local",
@@ -921,11 +915,36 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 		_, body := h.route("/notes/e2e")
 		return body == "bucket note survives reinstall"
 	}, 2*time.Minute, 3*time.Second, "the bucket note must be restored")
+	// Object metadata rides along: the note comes back under the content
+	// type it was stored with, not the gateway's default.
+	_, header, _ := h.requestEncoded(http.MethodGet, "/notes/e2e", "")
+	require.Equal(t, "text/plain", header.Get("Content-Type"), "the restored note keeps its content type")
 	_, body = h.route("/disk/e2e")
 	require.Equal(t, "disk note survives reinstall", body, "the disk note must be restored")
 }
 
-// makeMinioBucket waits for the test MinIO to answer and creates the
+// startS3Target runs an external S3 target on the host for the backup
+// tests: the pinned SeaweedFS image (already present for the platform, and
+// pullable, which the MinIO image no longer is) as a single process with
+// one static identity, so the target enforces the credentials the tests
+// configure.
+func startS3Target(t *testing.T, name string, port int) {
+	t.Helper()
+	config := filepath.Join(t.TempDir(), "s3.json")
+	require.NoError(t, os.WriteFile(config, []byte(`{"identities":[{"name":"admin",`+
+		`"credentials":[{"accessKey":"minioadmin","secretKey":"minioadmin"}],`+
+		`"actions":["Admin","Read","Write","List","Tagging"]}]}`), 0o644))
+	_ = exec.Command("docker", "rm", "-f", name).Run()
+	out, err := exec.Command("docker", "run", "-d", "--name", name,
+		"-p", fmt.Sprintf("127.0.0.1:%d:8333", port),
+		"-v", config+":/etc/seaweedfs/s3.json:ro",
+		"chrislusf/seaweedfs:4.39", "server", "-dir=/data", "-ip.bind=0.0.0.0",
+		"-s3", "-s3.config=/etc/seaweedfs/s3.json").CombinedOutput()
+	require.NoError(t, err, "start s3 target: %s", out)
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+}
+
+// makeMinioBucket waits for the test S3 target to answer and creates the
 // backup bucket through its S3 API.
 func makeMinioBucket(t *testing.T, endpoint, bucket string) {
 	t.Helper()
@@ -937,7 +956,7 @@ func makeMinioBucket(t *testing.T, endpoint, bucket string) {
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		return client.MakeBucket(t.Context(), bucket, minio.MakeBucketOptions{}) == nil
-	}, time.Minute, time.Second, "minio never became ready")
+	}, 2*time.Minute, time.Second, "the s3 target never became ready")
 }
 
 // runExit executes the CLI like run but reports the exit code instead of
@@ -1372,14 +1391,8 @@ func (h *e2eHarness) waitManagedRollouts(t *testing.T, kubeconfig string) {
 func TestDevGuestbookScheduledBackupRetention(t *testing.T) {
 	h := newE2EHarnessFor(t, "guestbook", "guestbook.localhost")
 
-	const minioName = "skali-e2e-minio-scheduled"
 	const minioPort = 19101
-	_ = exec.Command("docker", "rm", "-f", minioName).Run()
-	out, err := exec.Command("docker", "run", "-d", "--name", minioName,
-		"-p", fmt.Sprintf("127.0.0.1:%d:9000", minioPort),
-		"quay.io/minio/minio", "server", "/data").CombinedOutput()
-	require.NoError(t, err, "start minio: %s", out)
-	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", minioName).Run() })
+	startS3Target(t, "skali-e2e-target-scheduled", minioPort)
 	makeMinioBucket(t, fmt.Sprintf("127.0.0.1:%d", minioPort), "skali-backups")
 
 	run := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
