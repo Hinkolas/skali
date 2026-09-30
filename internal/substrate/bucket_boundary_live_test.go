@@ -245,10 +245,16 @@ func samePolicyDocument(t *testing.T, a, b string) bool {
 func driveLiveBucket(t *testing.T, controller *Controller, dbSvc *dbstore.Service,
 	proj *store.Project, env *store.Environment, service string) *store.BucketAllocation {
 	t.Helper()
+	return driveLiveBucketWithQuota(t, controller, dbSvc, proj, env, service, 1<<30)
+}
+
+func driveLiveBucketWithQuota(t *testing.T, controller *Controller, dbSvc *dbstore.Service,
+	proj *store.Project, env *store.Environment, service string, quota int64) *store.BucketAllocation {
+	t.Helper()
 	ctx := context.Background()
 	owner := dbstore.ServiceOwner(proj.ID, env.ID, proj.Name, env.Name, service)
 	created, err := dbSvc.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
-		Visibility: "private", StorageQuotaBytes: 1 << 30, Versioning: "disabled",
+		Visibility: "private", StorageQuotaBytes: quota, Versioning: "disabled",
 	})
 	require.NoError(t, err)
 	deadline := time.Now().Add(10 * time.Minute)

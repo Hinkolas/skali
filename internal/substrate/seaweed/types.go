@@ -60,13 +60,46 @@ func (c *FilerConf) Find(prefix string) *PathConf {
 	return nil
 }
 
-// CollectionStat is one bucket's physical footprint, from the master's
-// volume listing: logical bytes (volumes deduped by id, so replicas are not
-// double-counted; quota charges the upload, not the fleet disk) including
-// tombstoned-but-unvacuumed garbage.
+// CollectionStat is one bucket's footprint from the master's volume
+// listing, volumes deduped by id so replicas are not double-counted
+// (quota charges the upload, not the fleet disk). SizeBytes is what the
+// volumes hold on disk, deleted-but-unvacuumed entries included; LiveBytes
+// subtracts the deleted bytes the volume servers already account for
+// (measured on the pin: a delete raises DeletedByteCount on the next
+// heartbeat, long before the vacuum reclaims the disk), so a quota
+// judged on it opens again as soon as space is freed. EntryCount is the
+// live needle count: large objects are chunked into several entries, so
+// it is not an object count.
 type CollectionStat struct {
-	SizeBytes int64
-	FileCount int64
+	SizeBytes    int64
+	LiveBytes    int64
+	DeletedBytes int64
+	EntryCount   int64
+}
+
+// collectionStats folds one volume listing into per-collection footprints.
+func collectionStats(vs volStatus) map[string]CollectionStat {
+	seen := map[int64]bool{}
+	stats := map[string]CollectionStat{}
+	for _, dc := range vs.Volumes.DataCenters {
+		for _, rack := range dc {
+			for _, node := range rack {
+				for _, vol := range node {
+					if vol.Collection == "" || seen[vol.ID] {
+						continue
+					}
+					seen[vol.ID] = true
+					s := stats[vol.Collection]
+					s.SizeBytes += vol.Size
+					s.DeletedBytes += vol.DeletedByteCount
+					s.LiveBytes += max(vol.Size-vol.DeletedByteCount, 0)
+					s.EntryCount += max(vol.FileCount-vol.DeleteCount, 0)
+					stats[vol.Collection] = s
+				}
+			}
+		}
+	}
+	return stats
 }
 
 // volStatus is the master /vol/status answer, reduced to what we read.
@@ -81,6 +114,8 @@ type volumeInfo struct {
 	Size             int64            `json:"Size"`
 	Collection       string           `json:"Collection"`
 	FileCount        int64            `json:"FileCount"`
+	DeleteCount      int64            `json:"DeleteCount"`
+	DeletedByteCount int64            `json:"DeletedByteCount"`
 	ReplicaPlacement replicaPlacement `json:"ReplicaPlacement"`
 }
 

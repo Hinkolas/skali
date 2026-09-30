@@ -172,7 +172,7 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 	case bucket.ReadOnly:
 		return module.Evaluation{Health: module.HealthDegraded, Diagnostics: []module.Diagnostic{{
 			Severity: "warning", Code: "quota-exceeded",
-			Message: fmt.Sprintf("storage quota reached (%d of %d bytes used); the bucket is read-only until space is freed",
+			Message: fmt.Sprintf("storage quota reached (%d of %d bytes used); uploads are refused until objects are deleted",
 				bucket.UsedBytes, bucket.QuotaBytes),
 		}}}
 	}
@@ -190,8 +190,8 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 	if bucket.QuotaBytes > 0 {
 		diagnostics = append(diagnostics, module.Diagnostic{
 			Severity: "info", Code: "usage",
-			Message: fmt.Sprintf("%d objects, %d of %d bytes used",
-				bucket.ObjectCount, bucket.UsedBytes, bucket.QuotaBytes),
+			Message: fmt.Sprintf("%d of %d bytes used; about %d stored entries",
+				bucket.UsedBytes, bucket.QuotaBytes, bucket.EntryCount),
 		})
 	}
 	health := module.HealthHealthy

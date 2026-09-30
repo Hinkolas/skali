@@ -65,11 +65,29 @@ injected into an environment.
 
 ## Quotas
 
-`quotas.storage` is enforced on the observation cadence: when usage reaches
-the quota the bucket turns read-only until space is freed, and the service
-reports degraded with its usage. Enforcement is approximate by up to one
-poll interval plus in-flight uploads, and usage counts
-deleted-but-unvacuumed bytes until SeaweedFS compacts them.
+`quotas.storage` is the one enforced quota; `quotas.objects` and
+`quotas.maxObjectSize` are refused at deploy rather than silently
+ignored. Its guarantees, exactly:
+
+- **What counts.** The live bytes of the bucket's objects as the volume
+  servers record them: an upload counts once it lands, a delete stops
+  counting on the store's next heartbeat (a few seconds), without waiting
+  for the vacuum that reclaims the disk later. Replicas do not count. The
+  parts of a multipart upload count while the upload is in progress and
+  until it completes or is aborted.
+- **When it applies.** Usage is read on the observation cadence, so an
+  overshoot of up to one interval plus whatever was in flight lands before
+  the flag takes effect.
+- **What the flag does.** At or over the quota the bucket refuses uploads
+  (PUT, multipart) from the application's identity; reads, listings and
+  deletes keep working, so space can always be freed. The service reports
+  degraded with its usage. Once usage drops under the quota the next
+  observation lifts the flag.
+- **What is reported.** The usage diagnostic carries the live bytes and an
+  approximate entry count: a large object is stored as several entries, so
+  the count is an upper bound on objects, not an object count. The store's
+  disk footprint (deleted bytes included until compaction) is tracked
+  separately and never charged.
 
 ## Endpoints
 

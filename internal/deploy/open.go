@@ -65,7 +65,7 @@ type UnsupportedBucketPolicyError struct {
 
 func (e *UnsupportedBucketPolicyError) Error() string {
 	return "deploy: buckets." + e.Bucket + ": " + e.Field +
-		" is not supported yet; it arrives with a later policy"
+		" is not enforced yet and is refused rather than silently ignored; quotas.storage is the enforced quota (see docs/buckets.md, Quotas)"
 }
 
 // validateBucketPolicies enforces the v1 bucket product surface: private

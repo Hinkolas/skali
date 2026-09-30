@@ -565,7 +565,8 @@ func (s *Sampler) collectBucketSizes(ctx context.Context, node func(string) *nod
 		if claim.OwnerKind != dbstore.OwnerService || claim.EnvironmentID == nil {
 			continue
 		}
-		used := sizes[allocation.BucketName].SizeBytes
+		// The live footprint, the same number the quota is judged on.
+		used := sizes[allocation.BucketName].LiveBytes
 		rows = append(rows, serviceStorage{
 			environment: *claim.EnvironmentID,
 			serviceKey:  "buckets." + claim.ServiceKey,

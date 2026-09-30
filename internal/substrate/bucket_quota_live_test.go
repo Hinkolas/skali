@@ -1,0 +1,152 @@
+package substrate
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/kubernetes"
+	"github.com/Hinkolas/skali/internal/kubetest"
+	"github.com/Hinkolas/skali/internal/module"
+	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate/seaweed"
+	"github.com/Hinkolas/skali/internal/testdb"
+)
+
+// TestLiveBucketQuota proves the storage quota's documented guarantees on
+// a real store: an upload past the quota flips the bucket to refuse
+// uploads (single and multipart) while deletes keep working, the usage
+// reported is the live footprint with an entry count, and deleting the
+// object reopens the bucket on the next observation without waiting for
+// a vacuum. Requires TEST_KUBECONFIG and TEST_DATABASE_URL.
+func TestLiveBucketQuota(t *testing.T) {
+	config := kubetest.Config(t)
+	pool := testdb.New(t)
+	ctx := context.Background()
+
+	client, err := kube.NewFromConfig(config)
+	require.NoError(t, err)
+	installOperator(t, client)
+
+	st := store.NewStore(pool)
+	dbSvc := dbstore.New(st)
+	projects := project.New(st)
+
+	suffix := uuid.Must(uuid.NewV7()).String()[24:]
+	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
+	require.NoError(t, err)
+	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
+	require.NoError(t, err)
+
+	controller := New(Deps{
+		DB:       dbSvc,
+		Cluster:  KubeCluster{Client: client},
+		Observed: observe.NewStore(nil),
+		Seaweed:  seaweed.NewClient(client, Namespace),
+		Enqueue:  func(uuid.UUID) {},
+	}, Config{Managed: false})
+	cleanupPlatform(t, client)
+
+	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
+	_, err = client.Apply(ctx, namespace, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
+
+	const quota = int64(256 << 10)
+	files := driveLiveBucketWithQuota(t, controller, dbSvc, proj, env, "files", quota)
+	bucket := files.BucketName
+
+	credential, err := client.Clientset.CoreV1().Secrets(Namespace).
+		Get(ctx, files.CredentialSecret, metav1.GetOptions{})
+	require.NoError(t, err)
+	endpoint := kubetest.PortForward(t, config, Namespace, "app="+seaweed.AllInOneApp, seaweed.S3Port)
+	app, err := minio.New(endpoint, &minio.Options{
+		Creds:        credentials.NewStaticV4(string(credential.Data["access_key"]), string(credential.Data["secret_key"]), ""),
+		Region:       seaweed.Region,
+		BucketLookup: minio.BucketLookupPath,
+	})
+	require.NoError(t, err)
+
+	// The probe is driven by hand: one pass reads the store, enforces the
+	// flag, and returns the bucket projection.
+	probe := controller.SeaweedProbe()
+	observeBucket := func() *module.BucketStatus {
+		objects, err := probe(ctx)
+		require.NoError(t, err)
+		for _, object := range objects {
+			if object.Kind == module.KindBucket && object.Ref.Name == bucket {
+				return object.Bucket
+			}
+		}
+		return nil
+	}
+	awaitBucket := func(what string, want func(*module.BucketStatus) bool) *module.BucketStatus {
+		t.Helper()
+		var last *module.BucketStatus
+		requireEventually(t, 2*time.Minute, func() bool {
+			last = observeBucket()
+			return last != nil && want(last)
+		}, what)
+		return last
+	}
+
+	// Under quota: open, live usage reported.
+	small := make([]byte, 16<<10)
+	_, _ = rand.Read(small)
+	_, err = app.PutObject(ctx, bucket, "small", bytes.NewReader(small), int64(len(small)), minio.PutObjectOptions{})
+	require.NoError(t, err)
+	status := awaitBucket("the small object never showed in usage", func(b *module.BucketStatus) bool {
+		return b.UsedBytes >= int64(len(small))
+	})
+	require.False(t, status.ReadOnly)
+	require.EqualValues(t, quota, status.QuotaBytes)
+	require.GreaterOrEqual(t, status.EntryCount, int64(1))
+	require.GreaterOrEqual(t, status.DiskBytes, status.UsedBytes)
+
+	// Over quota: the next observation refuses uploads, deletes stay open.
+	big := make([]byte, 300<<10)
+	_, _ = rand.Read(big)
+	_, err = app.PutObject(ctx, bucket, "big", bytes.NewReader(big), int64(len(big)), minio.PutObjectOptions{})
+	require.NoError(t, err, "the overshoot lands: enforcement is by observation, not per request")
+	status = awaitBucket("the quota flag never rose", func(b *module.BucketStatus) bool { return b.ReadOnly })
+	require.GreaterOrEqual(t, status.UsedBytes, quota)
+	requireEventually(t, time.Minute, func() bool {
+		_, err := app.PutObject(ctx, bucket, "refused", bytes.NewReader(small), int64(len(small)), minio.PutObjectOptions{})
+		return err != nil
+	}, "uploads were never refused")
+	core := &minio.Core{Client: app}
+	uploadID, err := core.NewMultipartUpload(ctx, bucket, "parts", minio.PutObjectOptions{})
+	if err == nil {
+		_, err = core.PutObjectPart(ctx, bucket, "parts", uploadID, 1, bytes.NewReader(small), int64(len(small)), minio.PutObjectPartOptions{})
+		_ = core.AbortMultipartUpload(ctx, bucket, "parts", uploadID)
+	}
+	require.Error(t, err, "multipart uploads must be refused too")
+	object, err := app.GetObject(ctx, bucket, "small", minio.GetObjectOptions{})
+	require.NoError(t, err)
+	_, err = object.Stat()
+	require.NoError(t, err, "reads keep working")
+	require.NoError(t, app.RemoveObject(ctx, bucket, "big", minio.RemoveObjectOptions{}), "deletes keep working")
+
+	// Freed: the deleted bytes stop counting on the store's next heartbeat
+	// and the flag lifts, no vacuum needed. The disk footprint may still
+	// carry the garbage.
+	status = awaitBucket("the quota flag never lifted after the delete", func(b *module.BucketStatus) bool { return !b.ReadOnly })
+	require.Less(t, status.UsedBytes, quota)
+	require.GreaterOrEqual(t, status.DiskBytes, status.UsedBytes)
+	requireEventually(t, time.Minute, func() bool {
+		_, err := app.PutObject(ctx, bucket, "again", bytes.NewReader(small), int64(len(small)), minio.PutObjectOptions{})
+		return err == nil
+	}, "uploads never reopened after space was freed")
+}
