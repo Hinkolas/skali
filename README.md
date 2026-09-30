@@ -276,7 +276,9 @@ completion and inline errors in any editor with YAML language support.
 The [`examples/`](examples/) directory has complete projects: a minimal
 build ([`hello-world`](examples/hello-world)), an imported image
 ([`whoami`](examples/whoami)), an app with a database, a bucket, and a
-volume ([`guestbook`](examples/guestbook)), and the local hot-reload loop
+volume ([`guestbook`](examples/guestbook)), the presigned-URL reference
+where browsers upload and download straight through the bucket endpoint
+([`file-sharing`](examples/file-sharing)), and the local hot-reload loop
 ([`dev-loop`](examples/dev-loop)).
 
 If you write manifests with a coding agent, `skali skill install` gives it

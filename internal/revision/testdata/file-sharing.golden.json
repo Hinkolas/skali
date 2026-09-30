@@ -3,11 +3,11 @@
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "6f8abf9f86a97a2614844ce36bab218feb92966da179b179b9b09ae5a78f6af9",
+  "definitionHash": "509e551e453fc014da7925aa4c6c9d87a101b74a30ae2b7d867f1fad3b1e17e6",
   "definition": {
     "schema": 1,
     "name": "file-sharing",
-    "description": "Reference manifest exercising most of the schema (no application source ships with it)",
+    "description": "Presigned-URL reference application with a project-isolated PostgreSQL database and an S3 bucket",
     "applications": {
       "web": {
         "source": {
@@ -23,14 +23,6 @@
           "serve"
         ],
         "environment": {
-          "NODE_ENV": {
-            "parts": [
-              {
-                "kind": "literal",
-                "value": "production"
-              }
-            ]
-          },
           "POSTGRES_DATABASE": {
             "parts": [
               {
@@ -83,6 +75,16 @@
               }
             ]
           },
+          "PRESIGN_TTL": {
+            "parts": [
+              {
+                "kind": "project_variable",
+                "name": "PRESIGN_TTL",
+                "default": "15m",
+                "hasDefault": true
+              }
+            ]
+          },
           "S3_ACCESS_KEY": {
             "parts": [
               {
@@ -114,6 +116,15 @@
               }
             ]
           },
+          "S3_PUBLIC_ENDPOINT": {
+            "parts": [
+              {
+                "kind": "project_variable",
+                "name": "S3_PUBLIC_ENDPOINT",
+                "hasDefault": true
+              }
+            ]
+          },
           "S3_REGION": {
             "parts": [
               {
@@ -135,11 +146,11 @@
               }
             ]
           },
-          "SESSION_SECRET": {
+          "UPLOAD_TOKEN": {
             "parts": [
               {
                 "kind": "project_variable",
-                "name": "SESSION_SECRET"
+                "name": "UPLOAD_TOKEN"
               }
             ]
           }
@@ -270,7 +281,18 @@
         "required": true
       },
       {
-        "name": "SESSION_SECRET",
+        "name": "PRESIGN_TTL",
+        "required": false,
+        "default": "15m",
+        "hasDefault": true
+      },
+      {
+        "name": "S3_PUBLIC_ENDPOINT",
+        "required": false,
+        "hasDefault": true
+      },
+      {
+        "name": "UPLOAD_TOKEN",
         "required": true
       }
     ],
@@ -281,12 +303,12 @@
       ]
     }
   },
-  "valuesHash": "5882e4b21146aac54fbbfb82062266c8596e2f42ccd4bbf072876e003985bc72",
+  "valuesHash": "3f49da146f90954ad8d615f085b0c03bfeb559124cedcca0ac35dd228082ac8e",
   "secrets": {
     "APP_DOMAIN": {
       "version": 1
     },
-    "SESSION_SECRET": {
+    "UPLOAD_TOKEN": {
       "version": 1
     }
   },
@@ -304,5 +326,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "80eea2712fbb665aca6c696361853aacf243f5372dc44fb8b854cfe5b125c37a"
+  "checksum": "a6a6e53473374d61ff667b8a2fed97a5ed91ee36c0a7d36cb03139eacb111699"
 }

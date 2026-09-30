@@ -2,13 +2,12 @@
 
 
 name: file-sharing
-description: Reference manifest exercising most of the schema (no application source ships with it)
+description: Presigned-URL reference application with a project-isolated PostgreSQL database and an S3 bucket
 
-# This example is a reference, not a runnable project: it shows most of the
-# manifest surface (resources, autoscaling, placement, rollout, backups) for
-# an application whose source is not included. It validates and compiles;
-# `skali dev` or `skali deploy` would fail at the build step. For runnable
-# examples see hello-world, whoami, guestbook, and dev-loop.
+# The presigned-URL reference (see README.md): the application authorizes
+# a request and signs an S3 URL, the browser moves the bytes straight to
+# the bucket endpoint. It also exercises most of the manifest surface
+# (resources, autoscaling, placement, rollout, a release command).
 
 # ${NAME} values come from the project environment and are derived from use:
 # a missing value without a default fails validation before deployment, and
@@ -23,11 +22,16 @@ applications:
       dockerfile: deploy/Dockerfile
       target: runtime
 
+    # The command replaces the image's CMD (it renders as the container's
+    # args on top of the image entrypoint, which this image leaves unset).
     command: ["/app/file-sharing", "serve"]
 
     environment:
-      NODE_ENV: production
-      SESSION_SECRET: "${SESSION_SECRET}"
+      UPLOAD_TOKEN: "${UPLOAD_TOKEN}"
+      PRESIGN_TTL: "${PRESIGN_TTL:-15m}"
+      # Where browsers reach the bucket when that differs from the endpoint
+      # the application talks to; empty means the published endpoint.
+      S3_PUBLIC_ENDPOINT: "${S3_PUBLIC_ENDPOINT:-}"
 
       # Double-brace expressions reference values produced by managed Skali
       # services. The left side remains the variable name expected by the app.
@@ -133,7 +137,8 @@ databases:
     version: 17
 
     # Project isolation gives this environment its own physical database while
-    # leaving placement and relocation under Skali's control.
+    # leaving placement and relocation under Skali's control. Local
+    # development collapses every isolation class onto its one pool.
     isolation: project
     availability: single
 
@@ -145,7 +150,9 @@ databases:
 
 # The v1 bucket surface is private visibility with a hard storage quota;
 # public-read, versioning, object-count/size quotas, and lifecycle rules
-# arrive with later policies and are rejected at deploy until then.
+# arrive with later policies and are rejected at deploy until then. A
+# private bucket is exactly what presigned URLs want: the URL carries the
+# authorization, nothing is ever readable anonymously.
 buckets:
   files:
     visibility: private

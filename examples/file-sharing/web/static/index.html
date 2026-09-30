@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>File sharing</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    input, button { font: inherit; padding: .4rem .6rem; }
+    label { display: block; margin: .5rem 0; }
+    ul { padding-left: 1.2rem; }
+    .muted { opacity: .7; font-size: .9em; }
+    #log { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .85em; }
+  </style>
+</head>
+<body>
+  <h1>File sharing</h1>
+  <p class="muted">
+    The server authorizes the request and signs a URL; the browser uploads
+    and downloads straight through the bucket's endpoint. The file bytes
+    never pass through the application.
+  </p>
+  <label>Upload token <input id="token" type="password" autocomplete="off"></label>
+  <label>File <input id="file" type="file"></label>
+  <button id="upload">Upload</button>
+  <p id="log"></p>
+  <h2>Files</h2>
+  <ul id="files"></ul>
+  <script>
+    const PART_SIZE = 8 * 1024 * 1024; // above S3's 5 MiB minimum per part
+    const MULTIPART_FROM = 16 * 1024 * 1024;
+    const log = (line) => { document.getElementById('log').textContent += line + '\n'; };
+    const token = document.getElementById('token');
+    token.value = sessionStorage.getItem('uploadToken') || '';
+    token.addEventListener('change', () => sessionStorage.setItem('uploadToken', token.value));
+    const auth = () => ({ 'Authorization': 'Bearer ' + token.value, 'Content-Type': 'application/json' });
+
+    async function api(method, path, body) {
+      const response = await fetch(path, { method, headers: auth(), body: body && JSON.stringify(body) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || response.statusText);
+      return payload;
+    }
+
+    async function refresh() {
+      const files = await (await fetch('/api/files')).json();
+      const list = document.getElementById('files');
+      list.replaceChildren(...files.map((file) => {
+        const item = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = '/files/' + file.id;
+        link.textContent = file.name;
+        item.append(link, ` (${file.size} bytes, ${file.contentType}) `);
+        const remove = document.createElement('button');
+        remove.textContent = 'delete';
+        remove.onclick = async () => { await api('DELETE', '/api/files/' + file.id); refresh(); };
+        item.append(remove);
+        return item;
+      }));
+    }
+
+    async function upload() {
+      const file = document.getElementById('file').files[0];
+      if (!file) return;
+      document.getElementById('log').textContent = '';
+      const contentType = file.type || 'application/octet-stream';
+      const parts = file.size >= MULTIPART_FROM ? Math.ceil(file.size / PART_SIZE) : 1;
+      const upload = await api('POST', '/api/uploads', { name: file.name, contentType, size: file.size, parts });
+      log(`upload ${upload.id}: ${parts} part(s), signed until ${upload.expiresAt}`);
+      let completion;
+      if (parts === 1) {
+        // The Content-Type is part of the signature: send exactly what was declared.
+        const response = await fetch(upload.url, { method: 'PUT', headers: upload.headers, body: file });
+        if (!response.ok) throw new Error('upload failed: ' + response.status);
+        log(`stored, ETag ${response.headers.get('ETag')}`);
+      } else {
+        const etags = [];
+        for (const part of upload.parts) {
+          const start = (part.partNumber - 1) * PART_SIZE;
+          const response = await fetch(part.url, { method: 'PUT', body: file.slice(start, start + PART_SIZE) });
+          if (!response.ok) throw new Error(`part ${part.partNumber} failed: ` + response.status);
+          etags.push({ partNumber: part.partNumber, etag: response.headers.get('ETag') });
+          log(`part ${part.partNumber}/${parts} stored, ETag ${etags.at(-1).etag}`);
+        }
+        completion = { parts: etags };
+      }
+      const record = await api('POST', `/api/uploads/${upload.id}/complete`, completion);
+      log(`complete: ${record.name} (${record.size} bytes)`);
+      await refresh();
+    }
+
+    document.getElementById('upload').onclick = () => upload().catch((error) => log('error: ' + error.message));
+    refresh().catch((error) => log('error: ' + error.message));
+  </script>
+</body>
+</html>
