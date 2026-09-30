@@ -8,6 +8,7 @@ package bucket
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Hinkolas/skali/internal/claim"
@@ -167,6 +168,13 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 		}}}
 	}
 	diagnostics := []module.Diagnostic{}
+	if len(bucket.ConfigurationDrift) > 0 {
+		diagnostics = append(diagnostics, module.Diagnostic{
+			Severity: "warning", Code: "configuration-drift",
+			Message: fmt.Sprintf("bucket settings changed outside skali were reset: %s",
+				strings.Join(bucket.ConfigurationDrift, ", ")),
+		})
+	}
 	if bucket.QuotaBytes > 0 {
 		diagnostics = append(diagnostics, module.Diagnostic{
 			Severity: "info", Code: "usage",

@@ -25,6 +25,13 @@ type Doer interface {
 	// the gateways over gRPC, so raw file writes are load-only and NOT a
 	// supported update path (measured on the pin).
 	ExecInPod(ctx context.Context, namespace, selector, container string, command []string) (string, error)
+	// ServiceAddress returns a host:port the process can dial for one port
+	// of an in-cluster Service, for the one protocol the proxy cannot
+	// carry: SigV4-signed S3 requests (the signature covers the Host
+	// header and the path the proxy rewrites). ForgetServiceAddress drops
+	// a cached answer after a transport failure.
+	ServiceAddress(ctx context.Context, namespace, service string, port int) (string, error)
+	ForgetServiceAddress(namespace, service string, port int)
 }
 
 // Client is the admin surface of the substrate's external ensures:
@@ -44,6 +51,8 @@ type Client struct {
 	filerContainer string
 
 	mu sync.Mutex // serializes identity / filer.conf RMW
+
+	platformCredentials
 }
 
 // Every external call is bounded: a wedged transport (a proxy that cannot
@@ -203,9 +212,12 @@ func (c *Client) identities(ctx context.Context) (IdentityConfig, error) {
 }
 
 // EnsureIdentity converges one identity onto exactly ident: create it if
-// absent, add/refresh the keypair, prune stray credentials (rotation is
-// add-new + delete-old; seaweed appends keys, it never replaces). Settled
-// identities are read-only passes. Serialized like every identity write.
+// absent, add/refresh the keypair, prune stray credentials and stray
+// actions (s3.configure only ever appends: rotation is add-new +
+// delete-old, and shrinking an action set is an explicit -delete of the
+// actions no longer wanted). Settled identities are read-only passes;
+// settled ignores the order the engine reports actions in. Serialized
+// like every identity write.
 func (c *Client) EnsureIdentity(ctx context.Context, ident Identity) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -217,7 +229,7 @@ func (c *Client) EnsureIdentity(ctx context.Context, ident Identity) error {
 
 	var lines []string
 	settled := current != nil && len(current.Credentials) == len(ident.Credentials) &&
-		slices.Equal(current.Actions, ident.Actions)
+		sameSet(current.Actions, ident.Actions)
 	if settled {
 		for i := range ident.Credentials {
 			settled = settled && current.Credentials[i] == ident.Credentials[i]
@@ -243,9 +255,31 @@ func (c *Client) EnsureIdentity(ctx context.Context, ident Identity) error {
 					"s3.configure -user=%s -access_key=%s -delete -apply", ident.Name, cred.AccessKey))
 			}
 		}
+		var stale []string
+		for _, action := range current.Actions {
+			if !slices.Contains(ident.Actions, action) {
+				stale = append(stale, action)
+			}
+		}
+		if len(stale) > 0 {
+			lines = append(lines, fmt.Sprintf(
+				"s3.configure -user=%s -actions=%s -delete -apply", ident.Name, strings.Join(stale, ",")))
+		}
 	}
 	_, err = c.shell(ctx, lines...)
 	return err
+}
+
+// sameSet reports whether two action lists hold the same members
+// regardless of order (the engine reports them in insertion order).
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x, y := slices.Clone(a), slices.Clone(b)
+	slices.Sort(x)
+	slices.Sort(y)
+	return slices.Equal(x, y)
 }
 
 // DeleteIdentity removes an identity outright. Missing is converged;

@@ -106,6 +106,18 @@ func TestEvaluate(t *testing.T) {
 	require.Equal(t, module.HealthDegraded, quota.Health)
 	require.Equal(t, "quota-exceeded", quota.Diagnostics[0].Code)
 
+	// Settings reset by the provider stay healthy but leave a warning: the
+	// audit trail of something having changed the bucket behind skali.
+	drifted := usage
+	drifted.Bucket = &module.BucketStatus{Exists: true, UsedBytes: 100, QuotaBytes: 1 << 30,
+		ConfigurationDrift: []string{"policy", "cors"}}
+	drift := service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), store, drifted})
+	require.Equal(t, module.HealthHealthy, drift.Health)
+	require.Equal(t, "configuration-drift", drift.Diagnostics[0].Code)
+	require.Equal(t, "warning", drift.Diagnostics[0].Severity)
+	require.Contains(t, drift.Diagnostics[0].Message, "policy, cors")
+
 	// A gateway outage is unhealthy.
 	down := module.ObservedResource{Kind: module.KindObjectStore,
 		ObjectStore: &module.ObjectStoreStatus{MastersReady: 1, FilerReady: false, S3Ready: false}}

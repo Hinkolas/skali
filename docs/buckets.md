@@ -36,6 +36,26 @@ Buckets are private with a hard storage quota. `visibility: public-read`,
 with later policies and are rejected at deploy with a clear error until
 then.
 
+## What Skali owns on a bucket
+
+A bucket's access identity is scoped to object access on exactly its
+bucket: reading, writing, listing, and tagging objects, and nothing on any
+other bucket. Bucket configuration is Skali's: every bucket carries a
+policy Skali writes that denies its own identity the administrative
+operations (bucket policy, CORS, lifecycle, versioning, ACLs, bucket
+tagging), so an application holding the full keypair cannot change
+settings behind the platform, and in particular cannot open the bucket to
+anonymous reads. The settings Skali currently enforces are: that policy,
+no CORS configuration, no lifecycle rules, and versioning not enabled.
+They converge when the bucket is provisioned and on every observation
+pass; anything found changed is reset and the service reports a
+`configuration-drift` warning naming what was reset.
+
+Skali speaks S3 to the store as its own platform identity for this (and
+for what follows in later releases: restores, readiness checks). That
+identity's keypair lives in the platform namespace and is never injected
+into an environment.
+
 ## Quotas
 
 `quotas.storage` is enforced on the observation cadence: when usage reaches

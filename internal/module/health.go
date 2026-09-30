@@ -307,6 +307,10 @@ type BucketStatus struct {
 	ObjectCount int64
 	QuotaBytes  int64
 	ReadOnly    bool
+	// ConfigurationDrift names the bucket settings the provider had to
+	// reset on this pass (policy, cors, lifecycle, versioning): something
+	// changed them behind the platform.
+	ConfigurationDrift []string
 }
 
 // Condition is one status condition, provider-agnostic.

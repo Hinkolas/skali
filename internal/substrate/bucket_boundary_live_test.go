@@ -3,9 +3,11 @@ package substrate
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -37,14 +39,12 @@ import (
 // (own bucket only, nothing anonymous) and records the four facts the
 // S3 hardening series (#68) builds on:
 //
-//  1. Bucket administration is NOT separated from object access on the
-//     pin: the same Write action that stores objects also sets policy,
-//     CORS, versioning, and lifecycle, and a policy granting anonymous
-//     reads takes effect. Asserted as the defect it is; the policy
-//     ownership change flips these assertions.
-//  2. The bucket policy engine evaluates granular s3:* actions for legacy
-//     identities, so an explicit Deny scoped to the identity's ARN is an
-//     enforcement lever Skali can own.
+//  1. Bucket administration is separated from object access by the
+//     policy Skali owns: the identity's Write stores objects, and its
+//     attempts at policy, CORS, versioning, and lifecycle are refused
+//     (on the pin the legacy Write action would admit them all).
+//  2. Settings changed by another principal are drift: the next
+//     configuration pass resets them and reports what it reset.
 //  3. The filer's path read-only flag (the storage-quota mechanism)
 //     blocks writes but leaves deletes open, so a bucket over quota can
 //     be freed by its own application.
@@ -173,43 +173,70 @@ func TestLiveBucketPermissionBoundary(t *testing.T) {
 		return status(t, anonymous, http.MethodPut, signed.String(), nil, payload) == http.StatusOK
 	}, "restoring the identity with its keypair never revived the presigned URL")
 
-	// Fact 1: bucket administration rides on the object Write action.
-	require.NoError(t, s3.SetBucketVersioning(ctx, bucket, minio.BucketVersioningConfiguration{Status: "Suspended"}),
-		"defect: the application identity can change versioning")
-	require.NoError(t, s3.SetBucketCors(ctx, bucket, cors.NewConfig([]cors.Rule{{
+	// Bucket administration is Skali's, not the identity's: the policy the
+	// substrate owns denies every configuration write to the bucket's own
+	// principal while the identity's Write keeps storing objects. The
+	// legacy Write action would admit all of these on the pin.
+	adminDenied := func(t *testing.T, what string, err error) {
+		t.Helper()
+		require.Equal(t, "AccessDenied", minio.ToErrorResponse(err).Code, "%s must be refused: %v", what, err)
+	}
+	adminDenied(t, "versioning", s3.SetBucketVersioning(ctx, bucket, minio.BucketVersioningConfiguration{Status: "Enabled"}))
+	adminDenied(t, "cors", s3.SetBucketCors(ctx, bucket, cors.NewConfig([]cors.Rule{{
 		AllowedOrigin: []string{"https://app.example"}, AllowedMethod: []string{"GET"},
-	}})), "defect: the application identity can set CORS")
+	}})))
 	rules := lifecycle.NewConfiguration()
 	rules.Rules = []lifecycle.Rule{{ID: "abort", Status: "Enabled",
 		AbortIncompleteMultipartUpload: lifecycle.AbortIncompleteMultipartUpload{DaysAfterInitiation: 1}}}
-	require.NoError(t, s3.SetBucketLifecycle(ctx, bucket, rules),
-		"defect: the application identity can set lifecycle rules")
+	adminDenied(t, "lifecycle", s3.SetBucketLifecycle(ctx, bucket, rules))
 	publicRead := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*",
 		"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, bucket)
-	require.NoError(t, s3.SetBucketPolicy(ctx, bucket, publicRead),
-		"defect: the application identity can set a bucket policy")
+	adminDenied(t, "policy", s3.SetBucketPolicy(ctx, bucket, publicRead))
+	require.Equal(t, http.StatusForbidden, status(t, anonymous, http.MethodGet, objectURL(bucket, "own"), nil, nil),
+		"the bucket stays private")
+	_, err = s3.PutObject(ctx, bucket, "still-mine", bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{})
+	require.NoError(t, err, "object access is untouched by the owned policy")
+	policy, err := s3.GetBucketPolicy(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, samePolicyDocument(t, policy, seaweed.BucketPolicy(bucket)), "the identity reads the policy skali owns")
+
+	// Drift repair: a setting changed by any other principal (here the
+	// platform identity itself stands in for a misbehaving operator) is
+	// reset on the next pass and reported.
+	platform, err := client.Clientset.CoreV1().Secrets(Namespace).Get(ctx, PlatformCredentialSecret, metav1.GetOptions{})
+	require.NoError(t, err)
+	admin, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(string(platform.Data["access_key"]), string(platform.Data["secret_key"]), ""),
+		Region: seaweed.Region, BucketLookup: minio.BucketLookupPath,
+	})
+	require.NoError(t, err)
+	require.NoError(t, admin.SetBucketCors(ctx, bucket, cors.NewConfig([]cors.Rule{{
+		AllowedOrigin: []string{"https://app.example"}, AllowedMethod: []string{"GET"},
+	}})))
+	require.NoError(t, admin.SetBucketPolicy(ctx, bucket, publicRead))
 	requireEventually(t, time.Minute, func() bool {
 		return status(t, anonymous, http.MethodGet, objectURL(bucket, "own"), nil, nil) == http.StatusOK
-	}, "defect: a policy set by the application never opened the bucket to anonymous reads")
-
-	// Fact 2: an explicit Deny scoped to the identity's ARN is enforced
-	// per granular action, ahead of the identity's own actions.
-	principal := "arn:aws:iam::000000000000:user/" + bucket
-	deny := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":{"AWS":%q},
-		"Action":["s3:PutBucketPolicy","s3:PutObject"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}`,
-		principal, bucket, bucket)
-	require.NoError(t, s3.SetBucketPolicy(ctx, bucket, deny))
+	}, "the drifted policy never took effect (the probe would then have nothing to repair)")
+	repaired, err := controller.deps.Seaweed.EnsureBucketConfiguration(ctx, bucket, seaweed.BucketPolicy(bucket))
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"policy", "cors"}, repaired)
 	requireEventually(t, time.Minute, func() bool {
-		_, err := s3.PutObject(ctx, bucket, "denied", bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{})
-		return minio.ToErrorResponse(err).Code == "AccessDenied"
-	}, "a Deny on s3:PutObject for the identity's ARN never took effect")
-	err = s3.SetBucketPolicy(ctx, bucket, publicRead)
-	require.Equal(t, "AccessDenied", minio.ToErrorResponse(err).Code,
-		"a Deny on s3:PutBucketPolicy must lock the policy against the identity: %v", err)
-	_, err = io.ReadAll(must(s3.GetObject(ctx, bucket, "own", minio.GetObjectOptions{})))
-	require.NoError(t, err, "actions outside the Deny keep working")
-	require.Equal(t, http.StatusForbidden, status(t, anonymous, http.MethodGet, objectURL(bucket, "own"), nil, nil),
-		"replacing the policy withdrew the anonymous grant")
+		return status(t, anonymous, http.MethodGet, objectURL(bucket, "own"), nil, nil) == http.StatusForbidden
+	}, "repairing the policy never closed the bucket again")
+	corsConfig, err := admin.GetBucketCors(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, corsConfig == nil || len(corsConfig.CORSRules) == 0, "the CORS drift was removed")
+	repaired, err = controller.deps.Seaweed.EnsureBucketConfiguration(ctx, bucket, seaweed.BucketPolicy(bucket))
+	require.NoError(t, err)
+	require.Empty(t, repaired, "a converged bucket is a read-only pass")
+}
+
+func samePolicyDocument(t *testing.T, a, b string) bool {
+	t.Helper()
+	var x, y any
+	require.NoError(t, json.Unmarshal([]byte(a), &x))
+	require.NoError(t, json.Unmarshal([]byte(b), &y))
+	return reflect.DeepEqual(x, y)
 }
 
 // driveLiveBucket creates one service bucket claim and reconciles it (with
