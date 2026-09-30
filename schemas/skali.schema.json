@@ -682,6 +682,52 @@
       "additionalProperties": {
         "type": "object",
         "properties": {
+          "cors": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "required": [
+              "allowedOrigins"
+            ],
+            "properties": {
+              "allowedHeaders": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "allowedMethods": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "allowedOrigins": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "exposeHeaders": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maxAge": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
           "lifecycle": {
             "type": "object",
             "properties": {

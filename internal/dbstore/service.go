@@ -120,6 +120,8 @@ type BucketSpec struct {
 	Versioning                   string
 	AbortUploadsAfterSeconds     int64
 	ExpireNoncurrentAfterSeconds int64
+	// CORS is the compiled cors block as JSON; nil declares none.
+	CORS []byte
 }
 
 type Service struct {

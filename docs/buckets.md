@@ -37,11 +37,14 @@ new values; nothing else restarts.
 
 ## The v1 surface
 
-Buckets are private with a hard storage quota. `visibility: public-read`,
-`versioning: enabled`, lifecycle rules, `quotas.objects`, and
-`quotas.maxObjectSize` are authored vocabulary already, but they arrive
-with later policies and are rejected at deploy with a clear error until
-then.
+Buckets are private with a hard storage quota, an optional CORS policy
+(`cors`, see [browser uploads](#browser-uploads-and-downloads)), and
+automatic cleanup of abandoned multipart uploads
+(`lifecycle.abortIncompleteUploadsAfter`, a day when unset). `visibility:
+public-read`, `versioning: enabled`, `lifecycle.expireNoncurrentVersionsAfter`,
+`quotas.objects`, and `quotas.maxObjectSize` are authored vocabulary
+already, but they arrive with later policies and are rejected at deploy
+with a clear error until then.
 
 ## What Skali owns on a bucket
 
@@ -53,7 +56,8 @@ operations (bucket policy, CORS, lifecycle, versioning, ACLs, bucket
 tagging), so an application holding the full keypair cannot change
 settings behind the platform, and in particular cannot open the bucket to
 anonymous reads. The settings Skali currently enforces are: that policy,
-no CORS configuration, no lifecycle rules, and versioning not enabled.
+the declared CORS configuration (or none), no lifecycle rules on the
+store itself (cleanup runs in the platform), and versioning not enabled.
 They converge when the bucket is provisioned and on every observation
 pass; anything found changed is reset and the service reports a
 `configuration-drift` warning naming what was reset.
@@ -156,11 +160,36 @@ Details that make signatures verify on the platform store:
   records.
 
 Browsers send a CORS preflight (`OPTIONS`) to the endpoint before a
-cross-origin `PUT`. The platform store answers preflights for any origin
-with `GET`, `PUT`, `POST`, `DELETE`, and `HEAD`, admits the request
-headers the browser names, and exposes `ETag` on the response; the
-signature, not the origin, is what authorizes a request. Declaring CORS
-per bucket is planned.
+cross-origin `PUT`. Without a declared policy the platform store answers
+preflights for any origin with `GET`, `PUT`, `POST`, `DELETE`, and
+`HEAD`, admits the request headers the browser names, and exposes `ETag`
+on the response; the signature, not the origin, is what authorizes a
+request, so the open preflight costs nothing in access control. To limit
+which pages may talk to the bucket at all, declare the policy:
+
+```yaml
+buckets:
+  files:
+    cors:
+      allowedOrigins: [https://app.example.com]
+      allowedMethods: [GET, PUT]        # default when unset
+      allowedHeaders: [content-type]
+      exposeHeaders: [ETag]
+      maxAge: 10m
+```
+
+A declared policy is reconciled onto the bucket like its other settings:
+a preflight from an origin that is not listed is refused, the listed
+methods and headers are the ones admitted, and a change behind the
+platform is reset on the next observation and reported as
+`configuration-drift`.
+
+Multipart uploads a browser started and never completed keep their parts
+on the store, and those parts count against the quota. The platform
+aborts uploads older than `lifecycle.abortIncompleteUploadsAfter` on the
+observation cadence, one day when the bucket declares nothing; an upload
+that runs longer than that is aborted mid-way, so set it above the longest
+upload the application expects.
 
 [`examples/file-sharing`](../examples/file-sharing) is a runnable
 reference for the whole flow (single and multipart uploads, share links,

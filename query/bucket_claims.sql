@@ -3,8 +3,8 @@ INSERT INTO bucket_claims (
     id, owner_kind, project_id, environment_id, service_key, system_key,
     owner_ref, visibility, storage_quota_bytes, object_quota,
     max_object_bytes, versioning, abort_uploads_after_seconds,
-    expire_noncurrent_after_seconds
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    expire_noncurrent_after_seconds, cors
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 RETURNING *;
 
 -- name: GetBucketClaim :one
@@ -54,7 +54,7 @@ WHERE id = $1 AND phase = sqlc.arg(from_phase);
 UPDATE bucket_claims
 SET storage_quota_bytes = $2, object_quota = $3, max_object_bytes = $4,
     abort_uploads_after_seconds = $5, expire_noncurrent_after_seconds = $6,
-    updated_at = now()
+    cors = $7, updated_at = now()
 WHERE id = $1;
 
 -- Live claims allocated on a store, for identity rendering and GC checks.

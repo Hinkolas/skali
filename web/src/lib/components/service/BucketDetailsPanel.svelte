@@ -33,7 +33,12 @@
 	const abortUploads = $derived(
 		config.abortIncompleteUploadsAfterSeconds
 			? `after ${describeSeconds(config.abortIncompleteUploadsAfterSeconds)}`
-			: 'never'
+			: 'after 1 day (default)'
+	);
+	const cors = $derived(
+		config.cors
+			? `${config.cors.allowedOrigins.join(', ')} · ${config.cors.allowedMethods.join(', ')}`
+			: 'any origin (store default)'
 	);
 	const expireVersions = $derived(
 		config.versioning !== 'enabled'
@@ -63,5 +68,6 @@
 		<KeyValueRow k="Max object size" v={maxObject} labelWidth="w-38" />
 		<KeyValueRow k="Abort stale uploads" v={abortUploads} labelWidth="w-38" />
 		<KeyValueRow k="Expire old versions" v={expireVersions} labelWidth="w-38" />
+		<KeyValueRow k="CORS" v={cors} labelWidth="w-38" />
 	</div>
 </Card>

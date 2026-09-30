@@ -168,6 +168,15 @@ export interface BucketClaim {
 	versioning: string;
 	abortIncompleteUploadsAfterSeconds?: number;
 	expireNoncurrentVersionsAfterSeconds?: number;
+	cors?: BucketCORS;
+}
+
+export interface BucketCORS {
+	allowedOrigins: string[];
+	allowedMethods: string[];
+	allowedHeaders?: string[];
+	exposeHeaders?: string[];
+	maxAgeSeconds?: number;
 }
 
 export interface DraftResponse {

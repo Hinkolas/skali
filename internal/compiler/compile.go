@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Hinkolas/skali/internal/edge"
+	"net/url"
 	pathpkg "path"
 	"path/filepath"
 	"slices"
@@ -447,6 +448,53 @@ func (b *builder) compileBucket(key string, source manifest.Bucket) BucketClaim 
 		Versioning:                         versioning,
 		AbortIncompleteUploadsAfterSeconds: b.duration(base+".lifecycle.abortIncompleteUploadsAfter", source.Lifecycle.AbortIncompleteUploadsAfter) / 1000,
 		ExpireNoncurrentVersionsAfterSec:   b.duration(base+".lifecycle.expireNoncurrentVersionsAfter", source.Lifecycle.ExpireNoncurrentVersionsAfter) / 1000,
+		CORS:                               b.compileBucketCORS(base+".cors", source.CORS),
+	}
+}
+
+// bucketCORSMethods are the methods a CORS rule may admit: what a browser
+// sends to an S3 endpoint.
+var bucketCORSMethods = []string{"GET", "PUT", "POST", "DELETE", "HEAD"}
+
+// compileBucketCORS validates one declared CORS block: at least one
+// origin, each a scheme and host (or "*"), methods from the S3 set
+// (GET and PUT when unset: a download and a presigned upload), and a
+// preflight lifetime as a duration.
+func (b *builder) compileBucketCORS(base string, source *manifest.BucketCORS) *BucketCORS {
+	if source == nil {
+		return nil
+	}
+	if len(source.AllowedOrigins) == 0 {
+		b.add(base+".allowedOrigins", "must list at least one origin")
+	}
+	for i, origin := range source.AllowedOrigins {
+		if origin == "*" {
+			continue
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
+			parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			b.add(fmt.Sprintf("%s.allowedOrigins[%d]", base, i), "must be an origin (scheme and host, no path) or *")
+		}
+	}
+	methods := make([]string, 0, len(source.AllowedMethods))
+	for i, method := range source.AllowedMethods {
+		upper := strings.ToUpper(method)
+		if !oneOf(upper, bucketCORSMethods...) {
+			b.add(fmt.Sprintf("%s.allowedMethods[%d]", base, i), "must be one of %s", strings.Join(bucketCORSMethods, ", "))
+			continue
+		}
+		methods = append(methods, upper)
+	}
+	if len(methods) == 0 {
+		methods = []string{"GET", "PUT"}
+	}
+	return &BucketCORS{
+		AllowedOrigins: append([]string(nil), source.AllowedOrigins...),
+		AllowedMethods: methods,
+		AllowedHeaders: append([]string(nil), source.AllowedHeaders...),
+		ExposeHeaders:  append([]string(nil), source.ExposeHeaders...),
+		MaxAgeSeconds:  b.duration(base+".maxAge", source.MaxAge) / 1000,
 	}
 }
 

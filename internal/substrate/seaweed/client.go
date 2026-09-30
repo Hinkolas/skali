@@ -2,15 +2,19 @@ package seaweed
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/minio/minio-go/v7"
 )
 
 // Doer is the transport seam: one HTTP request against an in-cluster
@@ -530,4 +534,102 @@ func (c *Client) S3Alive(ctx context.Context) bool {
 	defer cancel()
 	_, status, err := c.doer.ServiceProxyDo(ctx, http.MethodGet, c.namespace, S3Service, S3Port, "/", nil, nil)
 	return err == nil && status >= 200 && status < 500
+}
+
+// uploadEntry is one multipart upload as the filer lists it under
+// /buckets/<bucket>/.uploads/: the directory name is the upload id, the
+// creation time is when the upload was initiated, and the object key
+// rides in an extended attribute. The S3 listing on the pin carries no
+// initiation time (measured), which is why the filer is asked.
+type uploadEntry struct {
+	FullPath string            `json:"FullPath"`
+	Crtime   time.Time         `json:"Crtime"`
+	Extended map[string]string `json:"Extended"`
+}
+
+type uploadListing struct {
+	Entries               []uploadEntry `json:"Entries"`
+	LastFileName          string        `json:"LastFileName"`
+	ShouldDisplayLoadMore bool          `json:"ShouldDisplayLoadMore"`
+}
+
+// staleUpload is one upload to abort: its id and the object key it was
+// started for.
+type staleUpload struct {
+	ID  string
+	Key string
+}
+
+// staleUploads picks the entries initiated before cutoff, decoding the
+// key the S3 abort needs; entries without one are skipped (nothing to
+// abort by S3 means, the filer has no upload there).
+func staleUploads(entries []uploadEntry, cutoff time.Time) []staleUpload {
+	var stale []staleUpload
+	for _, entry := range entries {
+		if entry.Crtime.IsZero() || !entry.Crtime.Before(cutoff) {
+			continue
+		}
+		key, err := base64.StdEncoding.DecodeString(entry.Extended["key"])
+		if err != nil || len(key) == 0 {
+			continue
+		}
+		stale = append(stale, staleUpload{ID: path.Base(entry.FullPath), Key: string(key)})
+	}
+	return stale
+}
+
+// AbortStaleUploads aborts the bucket's multipart uploads initiated more
+// than olderThan ago and returns how many it removed. Parts of an upload
+// a browser never completed would otherwise count against the quota
+// forever. Ages come from the filer's listing of the upload directories;
+// the abort goes through S3 as the platform identity, so the bucket's own
+// identity is not involved.
+func (c *Client) AbortStaleUploads(ctx context.Context, bucket string, olderThan time.Duration) (int, error) {
+	client, err := c.s3(ctx)
+	if err != nil {
+		return 0, err
+	}
+	cutoff := time.Now().Add(-olderThan)
+	var stale []staleUpload
+	last := ""
+	for {
+		query := url.Values{"limit": {"1000"}}
+		if last != "" {
+			query.Set("lastFileName", last)
+		}
+		data, status, err := c.filer(ctx, http.MethodGet, BucketsPrefix+bucket+"/.uploads/", query, nil)
+		if err != nil {
+			return 0, fmt.Errorf("seaweed: list uploads of %s: %w", bucket, err)
+		}
+		if status == http.StatusNotFound {
+			return 0, nil // no upload was ever started
+		}
+		if status < 200 || status >= 300 {
+			return 0, fmt.Errorf("seaweed: list uploads of %s: status %d", bucket, status)
+		}
+		var listing uploadListing
+		if err := json.Unmarshal(data, &listing); err != nil {
+			return 0, fmt.Errorf("seaweed: parse uploads of %s: %w", bucket, err)
+		}
+		stale = append(stale, staleUploads(listing.Entries, cutoff)...)
+		if !listing.ShouldDisplayLoadMore || listing.LastFileName == "" || listing.LastFileName == last {
+			break
+		}
+		last = listing.LastFileName
+	}
+	core := &minio.Core{Client: client}
+	aborted := 0
+	for _, upload := range stale {
+		if err := core.AbortMultipartUpload(ctx, bucket, upload.Key, upload.ID); err != nil {
+			if absent(err) || minio.ToErrorResponse(err).Code == "NoSuchUpload" {
+				continue
+			}
+			if minio.ToErrorResponse(err).Code == "" {
+				c.doer.ForgetServiceAddress(c.namespace, S3Service, S3Port)
+			}
+			return aborted, fmt.Errorf("seaweed: abort upload %s of %s: %w", upload.ID, bucket, err)
+		}
+		aborted++
+	}
+	return aborted, nil
 }

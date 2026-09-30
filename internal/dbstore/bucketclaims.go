@@ -1,6 +1,7 @@
 package dbstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -44,6 +45,7 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 				Versioning:                   spec.Versioning,
 				AbortUploadsAfterSeconds:     spec.AbortUploadsAfterSeconds,
 				ExpireNoncurrentAfterSeconds: spec.ExpireNoncurrentAfterSeconds,
+				Cors:                         spec.CORS,
 			})
 			if err != nil {
 				return fmt.Errorf("dbstore: create bucket claim: %w", err)
@@ -62,7 +64,8 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 			existing.ObjectQuota != spec.ObjectQuota ||
 			existing.MaxObjectBytes != spec.MaxObjectBytes ||
 			existing.AbortUploadsAfterSeconds != spec.AbortUploadsAfterSeconds ||
-			existing.ExpireNoncurrentAfterSeconds != spec.ExpireNoncurrentAfterSeconds {
+			existing.ExpireNoncurrentAfterSeconds != spec.ExpireNoncurrentAfterSeconds ||
+			!bytes.Equal(existing.Cors, spec.CORS) {
 			if _, err := q.SetBucketClaimSpec(ctx, store.SetBucketClaimSpecParams{
 				ID:                           existing.ID,
 				StorageQuotaBytes:            spec.StorageQuotaBytes,
@@ -70,6 +73,7 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 				MaxObjectBytes:               spec.MaxObjectBytes,
 				AbortUploadsAfterSeconds:     spec.AbortUploadsAfterSeconds,
 				ExpireNoncurrentAfterSeconds: spec.ExpireNoncurrentAfterSeconds,
+				Cors:                         spec.CORS,
 			}); err != nil {
 				return fmt.Errorf("dbstore: update bucket claim spec: %w", err)
 			}
