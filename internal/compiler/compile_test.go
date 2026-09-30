@@ -29,7 +29,7 @@ func TestCompileExamples(t *testing.T) {
 	for _, requirement := range files.Definition.RequiredVariables {
 		variables[requirement.Name] = requirement
 	}
-	require.True(t, variables["SESSION_SECRET"].Required)
+	require.True(t, variables["UPLOAD_TOKEN"].Required)
 	require.Contains(t, variables, "APP_DOMAIN")
 	require.EqualValues(t, 200, files.Definition.Applications["web"].Resources.Requests.MilliCPU)
 	require.EqualValues(t, 256_000_000, files.Definition.Applications["web"].Resources.Requests.MemoryBytes)

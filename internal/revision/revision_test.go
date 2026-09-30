@@ -50,8 +50,8 @@ func fileSharingInput(t *testing.T) Input {
 		Result:      compileExample(t, "file-sharing"),
 		Environment: "production",
 		SecretVersions: map[string]int{
-			"APP_DOMAIN":     1,
-			"SESSION_SECRET": 1,
+			"APP_DOMAIN":   1,
+			"UPLOAD_TOKEN": 1,
 		},
 		Artifacts: map[string]Artifact{
 			"web": {
@@ -118,16 +118,16 @@ func TestValuePlaintextNeverEntersTheRevision(t *testing.T) {
 	// Every value is a (name, version) reference; no plaintext exists to
 	// leak, and the document never gains a values map.
 	require.NotContains(t, string(data), "\"values\":")
-	require.Equal(t, SecretRef{Version: 1}, built.Secrets["SESSION_SECRET"])
+	require.Equal(t, SecretRef{Version: 1}, built.Secrets["UPLOAD_TOKEN"])
 }
 
 func TestValueVersionsAreRecorded(t *testing.T) {
 	t.Parallel()
 	input := fileSharingInput(t)
-	input.SecretVersions["SESSION_SECRET"] = 4
+	input.SecretVersions["UPLOAD_TOKEN"] = 4
 	built, err := Build(input)
 	require.NoError(t, err)
-	require.Equal(t, SecretRef{Version: 4}, built.Secrets["SESSION_SECRET"])
+	require.Equal(t, SecretRef{Version: 4}, built.Secrets["UPLOAD_TOKEN"])
 }
 
 // A stored value the definition no longer references is intersected away:
@@ -217,9 +217,9 @@ func TestBuildRejectsInvalidInput(t *testing.T) {
 		"missing several required values": {
 			mutate: func(input *Input) {
 				delete(input.SecretVersions, "APP_DOMAIN")
-				delete(input.SecretVersions, "SESSION_SECRET")
+				delete(input.SecretVersions, "UPLOAD_TOKEN")
 			},
-			message: "missing required values: APP_DOMAIN, SESSION_SECRET",
+			message: "missing required values: APP_DOMAIN, UPLOAD_TOKEN",
 			values:  true,
 		},
 	}

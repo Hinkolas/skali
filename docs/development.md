@@ -154,8 +154,11 @@ the diff before keeping it.
 task test:db
 (cd web && npm test && npm run check && npm run lint)
 
-# Live cluster tests (observation, apply/prune, healing) against a
-# disposable pinned k3d cluster:
+# Live cluster tests (observation, apply/prune, healing, and the
+# substrate: shared Postgres and the SeaweedFS object store, driven from
+# nothing to provisioned buckets) against a disposable pinned k3d cluster;
+# the substrate suite also needs the project Postgres, which the task
+# starts:
 task k3d:up
 task test:live
 task k3d:down

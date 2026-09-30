@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
+	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
@@ -312,13 +314,29 @@ func requireEventually(t *testing.T, timeout time.Duration, condition func() boo
 }
 
 // installOperator applies the vendored CNPG manifest and waits for the
-// controller, exactly like both real install paths; idempotent across runs.
+// controller, exactly like both real install paths, plus the platform
+// PriorityClasses the bundle would carry: every substrate pod names one
+// (CNPG's initdb Job included) and admission rejects pods whose class does
+// not exist. Idempotent across runs.
 func installOperator(t *testing.T, client *kube.Client) {
 	t.Helper()
 	ctx := context.Background()
 	applier := &bundle.Applier{Client: client}
 	require.NoError(t, applier.ApplyManifest(ctx, bundle.CNPGManifest()))
 	require.NoError(t, applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"))
+	for name, value := range map[string]int32{
+		layout.PriorityClassCritical: layout.PriorityClassCriticalValue,
+		layout.PriorityClassHigh:     layout.PriorityClassHighValue,
+		layout.PriorityClassNormal:   layout.PriorityClassNormalValue,
+	} {
+		_, err := client.Clientset.SchedulingV1().PriorityClasses().Create(ctx, &schedulingv1.PriorityClass{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Value:      value,
+		}, metav1.CreateOptions{})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			require.NoError(t, err)
+		}
+	}
 }
 
 // cleanupPlatform removes the skali-platform namespace after the test and
