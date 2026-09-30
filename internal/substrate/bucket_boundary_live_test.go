@@ -136,7 +136,7 @@ func TestLiveBucketPermissionBoundary(t *testing.T) {
 	// Fact 3: the read-only path flag the quota probe sets. Writes must
 	// stop; whether deletes stop too decides how "read-only until space
 	// is freed" can be honoured.
-	readOnly, err := controller.enforceBucketQuota(ctx, 1, bucket, 2)
+	readOnly, err := controller.enforceBucketQuota(ctx, 1, bucket, 2, false)
 	require.NoError(t, err)
 	require.True(t, readOnly)
 	requireEventually(t, time.Minute, func() bool {
@@ -149,7 +149,7 @@ func TestLiveBucketPermissionBoundary(t *testing.T) {
 	require.Equal(t, "NoSuchKey", minio.ToErrorResponse(err).Code, "the delete must have landed: %v", err)
 	_, err = s3.PutObject(ctx, bucket, "own", bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{})
 	require.Error(t, err, "writes stay blocked after a delete")
-	_, err = controller.enforceBucketQuota(ctx, 0, bucket, 2)
+	_, err = controller.enforceBucketQuota(ctx, 0, bucket, 2, false)
 	require.NoError(t, err)
 	requireEventually(t, time.Minute, func() bool {
 		_, err := s3.PutObject(ctx, bucket, "own", bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{})

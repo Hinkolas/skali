@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -18,6 +19,11 @@ type objectStore interface {
 	// Put streams one object; size may be -1 when unknown (multipart).
 	Put(ctx context.Context, key string, r io.Reader, size int64) error
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	// PutWithMeta is Put carrying the object's own metadata (content
+	// headers, user metadata, tags), the copy path between buckets.
+	PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, meta objectMeta) error
+	// GetWithMeta is Get returning the object's metadata alongside it.
+	GetWithMeta(ctx context.Context, key string) (io.ReadCloser, objectMeta, error)
 	// Stat returns the object's size and recorded sha256, or errNotFound.
 	Stat(ctx context.Context, key string) (objectStat, error)
 	// List calls fn for every object under prefix; fn errors abort.
@@ -37,6 +43,21 @@ type objectStore interface {
 type objectInfo struct {
 	Key  string
 	Size int64
+}
+
+// objectMeta is everything an object carries besides its bytes that a
+// bucket copy must preserve: the content headers a browser or CDN acts
+// on, the application's own metadata, and its tags. A snapshot without
+// them would restore files that download under the wrong type or name.
+type objectMeta struct {
+	ContentType        string
+	ContentEncoding    string
+	ContentDisposition string
+	ContentLanguage    string
+	CacheControl       string
+	Expires            time.Time
+	UserMetadata       map[string]string
+	Tags               map[string]string
 }
 
 // objectStat is one object's metadata: the size and, when the writer
@@ -107,20 +128,75 @@ func (s *minioStore) Put(ctx context.Context, key string, r io.Reader, size int6
 }
 
 func (s *minioStore) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	object, _, err := s.open(ctx, key)
+	return object, err
+}
+
+func (s *minioStore) PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, meta objectMeta) error {
+	_, err := s.client.PutObject(ctx, s.bucket, key, r, size, minio.PutObjectOptions{
+		ContentType:        meta.ContentType,
+		ContentEncoding:    meta.ContentEncoding,
+		ContentDisposition: meta.ContentDisposition,
+		ContentLanguage:    meta.ContentLanguage,
+		CacheControl:       meta.CacheControl,
+		Expires:            meta.Expires,
+		UserMetadata:       meta.UserMetadata,
+		UserTags:           meta.Tags,
+	})
+	if err != nil {
+		return fmt.Errorf("backup: put %s: %w", key, err)
+	}
+	return nil
+}
+
+func (s *minioStore) GetWithMeta(ctx context.Context, key string) (io.ReadCloser, objectMeta, error) {
+	object, info, err := s.open(ctx, key)
+	if err != nil {
+		return nil, objectMeta{}, err
+	}
+	meta := objectMeta{
+		ContentType:        info.ContentType,
+		ContentEncoding:    info.Metadata.Get("Content-Encoding"),
+		ContentDisposition: info.Metadata.Get("Content-Disposition"),
+		ContentLanguage:    info.Metadata.Get("Content-Language"),
+		CacheControl:       info.Metadata.Get("Cache-Control"),
+		Expires:            info.Expires,
+	}
+	if len(info.UserMetadata) > 0 {
+		meta.UserMetadata = map[string]string(info.UserMetadata)
+	}
+	// Tags travel on their own subresource; one extra round trip only for
+	// objects that carry any.
+	if info.UserTagCount > 0 {
+		tags, err := s.client.GetObjectTagging(ctx, s.bucket, key, minio.GetObjectTaggingOptions{})
+		if err != nil {
+			_ = object.Close()
+			return nil, objectMeta{}, fmt.Errorf("backup: get tags of %s: %w", key, err)
+		}
+		if set := tags.ToMap(); len(set) > 0 {
+			meta.Tags = set
+		}
+	}
+	return object, meta, nil
+}
+
+// open starts a lazy GetObject and stats it: missing objects surface here
+// instead of as a confusing decode error downstream, and the stat carries
+// the metadata the copy path preserves.
+func (s *minioStore) open(ctx context.Context, key string) (*minio.Object, minio.ObjectInfo, error) {
 	object, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("backup: get %s: %w", key, err)
+		return nil, minio.ObjectInfo{}, fmt.Errorf("backup: get %s: %w", key, err)
 	}
-	// GetObject is lazy; surface missing objects on the first read instead
-	// of a confusing decode error downstream.
-	if _, err := object.Stat(); err != nil {
+	info, err := object.Stat()
+	if err != nil {
 		_ = object.Close()
 		if isNoSuchKey(err) {
-			return nil, errNotFound
+			return nil, minio.ObjectInfo{}, errNotFound
 		}
-		return nil, fmt.Errorf("backup: get %s: %w", key, err)
+		return nil, minio.ObjectInfo{}, fmt.Errorf("backup: get %s: %w", key, err)
 	}
-	return object, nil
+	return object, info, nil
 }
 
 func (s *minioStore) Stat(ctx context.Context, key string) (objectStat, error) {

@@ -110,6 +110,7 @@ type BucketAllocation struct {
 	Region            string
 	CreatedAt         time.Time
 	ReleasedAt        *time.Time
+	FencedAt          *time.Time
 }
 
 type BucketClaim struct {

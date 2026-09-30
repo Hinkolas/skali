@@ -15,15 +15,20 @@ import (
 type memoryStore struct {
 	mu      sync.Mutex
 	objects map[string][]byte
+	meta    map[string]objectMeta
 	// ops records Put/Remove/RemovePrefix calls in order, as "verb key".
 	ops []string
 }
 
 func newMemoryStore() *memoryStore {
-	return &memoryStore{objects: make(map[string][]byte)}
+	return &memoryStore{objects: make(map[string][]byte), meta: make(map[string]objectMeta)}
 }
 
-func (m *memoryStore) Put(_ context.Context, key string, r io.Reader, _ int64) error {
+func (m *memoryStore) Put(ctx context.Context, key string, r io.Reader, size int64) error {
+	return m.PutWithMeta(ctx, key, r, size, objectMeta{})
+}
+
+func (m *memoryStore) PutWithMeta(_ context.Context, key string, r io.Reader, _ int64, meta objectMeta) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -31,18 +36,24 @@ func (m *memoryStore) Put(_ context.Context, key string, r io.Reader, _ int64) e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.objects[key] = data
+	m.meta[key] = meta
 	m.ops = append(m.ops, "put "+key)
 	return nil
 }
 
-func (m *memoryStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
+func (m *memoryStore) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	reader, _, err := m.GetWithMeta(ctx, key)
+	return reader, err
+}
+
+func (m *memoryStore) GetWithMeta(_ context.Context, key string) (io.ReadCloser, objectMeta, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data, ok := m.objects[key]
 	if !ok {
-		return nil, errNotFound
+		return nil, objectMeta{}, errNotFound
 	}
-	return io.NopCloser(bytes.NewReader(data)), nil
+	return io.NopCloser(bytes.NewReader(data)), m.meta[key], nil
 }
 
 func (m *memoryStore) Stat(_ context.Context, key string) (objectStat, error) {
@@ -110,6 +121,7 @@ func (m *memoryStore) Remove(_ context.Context, key string) error {
 		return errNotFound
 	}
 	delete(m.objects, key)
+	delete(m.meta, key)
 	return nil
 }
 
@@ -123,6 +135,7 @@ func (m *memoryStore) RemovePrefix(_ context.Context, prefix string) (int64, err
 	var removed int64
 	for _, key := range m.keys(prefix) {
 		delete(m.objects, key)
+		delete(m.meta, key)
 		removed++
 	}
 	return removed, nil

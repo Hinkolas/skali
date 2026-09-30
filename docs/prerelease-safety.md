@@ -62,6 +62,12 @@ create`) are kept until removed with `skali backup remove`. One backup runs
 at a time per installation, so environments due in the same minute are
 snapshotted one after another.
 
+Bucket restore is destructive: the bucket is cleared and rewritten from the
+snapshot, and it is fenced for the duration (its own credentials and any
+presigned URLs are refused; see [buckets](buckets.md#backups-and-restores)).
+A failed bucket restore leaves the environment down and the bucket fenced;
+re-run the restore, or deploy to bring the environment back.
+
 Volume restore is destructive and may leave partial restored contents on failure.
 It preserves numeric ownership, permissions, and timestamps on Linux, including
 the volume root in new archives. Unsupported entries and metadata failures fail

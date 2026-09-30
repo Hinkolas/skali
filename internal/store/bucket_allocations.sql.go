@@ -44,7 +44,7 @@ INSERT INTO bucket_allocations (
     id, claim_id, store_id, bucket_name, access_key_id,
     credential_secret, endpoint, region
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at
+RETURNING id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at
 `
 
 type CreateBucketAllocationParams struct {
@@ -82,12 +82,29 @@ func (q *Queries) CreateBucketAllocation(ctx context.Context, arg CreateBucketAl
 		&i.Region,
 		&i.CreatedAt,
 		&i.ReleasedAt,
+		&i.FencedAt,
 	)
 	return i, err
 }
 
+const fenceBucketAllocation = `-- name: FenceBucketAllocation :execrows
+UPDATE bucket_allocations
+SET fenced_at = now()
+WHERE id = $1 AND released_at IS NULL AND fenced_at IS NULL
+`
+
+// The restore fence (see migration 00007): set while a restore rewrites
+// the bucket, cleared when it completes or the environment moves on.
+func (q *Queries) FenceBucketAllocation(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, fenceBucketAllocation, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getLiveBucketAllocationByClaim = `-- name: GetLiveBucketAllocationByClaim :one
-SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at FROM bucket_allocations
+SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at FROM bucket_allocations
 WHERE claim_id = $1 AND released_at IS NULL
 `
 
@@ -106,12 +123,13 @@ func (q *Queries) GetLiveBucketAllocationByClaim(ctx context.Context, claimID uu
 		&i.Region,
 		&i.CreatedAt,
 		&i.ReleasedAt,
+		&i.FencedAt,
 	)
 	return i, err
 }
 
 const listLiveBucketAllocationsByStore = `-- name: ListLiveBucketAllocationsByStore :many
-SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at FROM bucket_allocations
+SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at FROM bucket_allocations
 WHERE store_id = $1 AND released_at IS NULL
 ORDER BY bucket_name
 `
@@ -137,6 +155,7 @@ func (q *Queries) ListLiveBucketAllocationsByStore(ctx context.Context, storeID 
 			&i.Region,
 			&i.CreatedAt,
 			&i.ReleasedAt,
+			&i.FencedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -177,6 +196,20 @@ type SetBucketAllocationEndpointParams struct {
 // external S3 domain; consumers roll through the mirror Secret change.
 func (q *Queries) SetBucketAllocationEndpoint(ctx context.Context, arg SetBucketAllocationEndpointParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setBucketAllocationEndpoint, arg.ID, arg.Endpoint)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unfenceBucketAllocation = `-- name: UnfenceBucketAllocation :execrows
+UPDATE bucket_allocations
+SET fenced_at = NULL
+WHERE id = $1 AND fenced_at IS NOT NULL
+`
+
+func (q *Queries) UnfenceBucketAllocation(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, unfenceBucketAllocation, id)
 	if err != nil {
 		return 0, err
 	}

@@ -36,3 +36,15 @@ WHERE id = $1 AND released_at IS NULL;
 UPDATE bucket_allocations
 SET credential_version = credential_version + 1
 WHERE id = $1 AND released_at IS NULL;
+
+-- The restore fence (see migration 00007): set while a restore rewrites
+-- the bucket, cleared when it completes or the environment moves on.
+-- name: FenceBucketAllocation :execrows
+UPDATE bucket_allocations
+SET fenced_at = now()
+WHERE id = $1 AND released_at IS NULL AND fenced_at IS NULL;
+
+-- name: UnfenceBucketAllocation :execrows
+UPDATE bucket_allocations
+SET fenced_at = NULL
+WHERE id = $1 AND fenced_at IS NOT NULL;

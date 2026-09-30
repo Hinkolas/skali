@@ -14,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
@@ -29,11 +30,26 @@ type Deps struct {
 	Deploy  *deploy.Service
 	Kube    *kube.Client
 	Targets *TargetStore
+	// Buckets is the substrate's bucket door: platform-identity access
+	// for backups and restores, and the restore fence. Nil disables bucket
+	// components with a visible error.
+	Buckets BucketAccess
 	// Enqueue pokes the environment reconciler; restore uses it to stop and
 	// resume the environment around data movement.
 	Enqueue func(environmentID uuid.UUID)
 	// Version is stamped into snapshot manifests.
 	Version string
+}
+
+// BucketAccess is what the backup engine asks of the substrate for one
+// service's bucket; *substrate.Controller implements it.
+type BucketAccess interface {
+	// PlatformBucketAccess resolves the bucket and the platform keypair.
+	PlatformBucketAccess(ctx context.Context, environmentID uuid.UUID, serviceKey string) (substrate.BucketAccess, error)
+	// FenceBucket keeps the environment's credentials away from the
+	// bucket while a restore rewrites it; UnfenceBucket lets them back.
+	FenceBucket(ctx context.Context, environmentID uuid.UUID, serviceKey string) error
+	UnfenceBucket(ctx context.Context, environmentID uuid.UUID, serviceKey string) error
 }
 
 type Config struct {
@@ -58,6 +74,9 @@ type Controller struct {
 	// openStore opens a bucket-scoped object store for the target; tests
 	// point it at an in-memory fake.
 	openStore func(s3Location) (objectStore, error)
+	// openBucket opens a service's bucket as the platform identity; tests
+	// point it at an in-memory fake.
+	openBucket func(ctx context.Context, environmentID uuid.UUID, serviceKey string) (objectStore, string, error)
 	// revisions loads revision documents; deps.Deploy in production, a
 	// fake in tests.
 	revisions revisionLoader
@@ -81,6 +100,7 @@ func New(deps Deps, cfg Config) *Controller {
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID]()),
 		openStore: func(loc s3Location) (objectStore, error) { return newObjectStore(loc) },
 	}
+	c.openBucket = c.openServiceBucket
 	if deps.Deploy != nil {
 		c.revisions = deps.Deploy
 	}

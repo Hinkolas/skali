@@ -18,7 +18,6 @@ import (
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate"
-	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
@@ -283,13 +282,13 @@ func (c *Controller) backupComponent(ctx context.Context, scope *runScope, bctx 
 	}
 }
 
-// backupBucket copies every object of the service's bucket into the target
-// under the snapshot's bucket prefix. It runs in-process: skalid has
-// pod-network reach to the S3 gateway, and streaming Get to Put keeps
-// memory flat.
+// backupBucket copies every object of the service's bucket, metadata
+// included, into the target under the snapshot's bucket prefix. The read
+// side is the platform identity: a bucket that is full (read-only for its
+// own identity) or fenced still backs up.
 func (c *Controller) backupBucket(ctx context.Context, log *stepLog, bctx *backupContext, component *Component) error {
 	row, target := bctx.row, bctx.target
-	source, bucketName, err := c.openServiceBucket(ctx, row.EnvironmentID, component.ServiceKey)
+	source, bucketName, err := c.openBucket(ctx, row.EnvironmentID, component.ServiceKey)
 	if err != nil {
 		return err
 	}
@@ -297,10 +296,9 @@ func (c *Controller) backupBucket(ctx context.Context, log *stepLog, bctx *backu
 
 	// Metadata pre-pass for real progress totals; the bucket may drift
 	// during the copy, which is the documented loose-consistency property.
-	var total, totalBytes int64
-	if err := source.List(ctx, "", func(info objectInfo) error {
+	var total int64
+	if err := source.List(ctx, "", func(objectInfo) error {
 		total++
-		totalBytes += info.Size
 		return nil
 	}); err != nil {
 		return err
@@ -308,23 +306,7 @@ func (c *Controller) backupBucket(ctx context.Context, log *stepLog, bctx *backu
 
 	destinationPrefix := bucketPrefixKey(bctx.prefix(), row.ProjectName, row.EnvironmentName,
 		component.ServiceKey, bctx.snapshotID)
-	var copied, copiedBytes int64
-	err = source.List(ctx, "", func(info objectInfo) error {
-		reader, err := source.Get(ctx, info.Key)
-		if err != nil {
-			return err
-		}
-		defer reader.Close()
-		if err := target.Put(ctx, destinationPrefix+info.Key, reader, info.Size); err != nil {
-			return err
-		}
-		copied++
-		copiedBytes += info.Size
-		if copied%16 == 0 || copied == total {
-			log.Progress(ctx, copied, total)
-		}
-		return nil
-	})
+	copied, copiedBytes, err := copyObjects(ctx, log, source, target, "", destinationPrefix, total)
 	if err != nil {
 		return err
 	}
@@ -335,34 +317,28 @@ func (c *Controller) backupBucket(ctx context.Context, log *stepLog, bctx *backu
 	return nil
 }
 
-// openServiceBucket resolves the service's live bucket allocation and opens
-// an S3 client against the in-cluster gateway with the bucket's own
-// credentials.
+// openServiceBucket opens the service's live bucket on the in-cluster
+// gateway as the platform identity (never the bucket's own credentials,
+// which a restore deletes).
 func (c *Controller) openServiceBucket(ctx context.Context, environmentID uuid.UUID, serviceKey string) (objectStore, string, error) {
-	claim, err := c.deps.DB.LiveServiceBucketClaim(ctx, environmentID, serviceKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("resolve bucket claim for %s: %w", serviceKey, err)
+	if c.deps.Buckets == nil {
+		return nil, "", errors.New("the object-storage substrate is not available")
 	}
-	allocation, err := c.deps.DB.LiveAllocation(ctx, claim.ID)
+	access, err := c.deps.Buckets.PlatformBucketAccess(ctx, environmentID, serviceKey)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve bucket allocation for %s: %w", serviceKey, err)
-	}
-	secret, err := c.deps.Kube.Clientset.CoreV1().Secrets(substrate.Namespace).
-		Get(ctx, allocation.CredentialSecret, metav1.GetOptions{})
-	if err != nil {
-		return nil, "", fmt.Errorf("read bucket credentials for %s: %w", serviceKey, err)
+		return nil, "", err
 	}
 	source, err := newObjectStore(s3Location{
-		Endpoint:  fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", seaweed.S3Service, substrate.Namespace, seaweed.S3Port),
-		Region:    allocation.Region,
-		Bucket:    allocation.BucketName,
-		AccessKey: string(secret.Data["access_key"]),
-		SecretKey: string(secret.Data["secret_key"]),
+		Endpoint:  access.Endpoint,
+		Region:    access.Region,
+		Bucket:    access.Bucket,
+		AccessKey: access.AccessKey,
+		SecretKey: access.SecretKey,
 	})
 	if err != nil {
 		return nil, "", err
 	}
-	return source, allocation.BucketName, nil
+	return source, access.Bucket, nil
 }
 
 // backupDatabase dumps one database service through a Job in the platform

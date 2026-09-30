@@ -124,12 +124,16 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if err := c.deps.Seaweed.EnsureBucket(ctx, allocation.BucketName); err != nil {
 		return false, err
 	}
-	if err := c.deps.Seaweed.EnsureIdentity(ctx, seaweed.Identity{
-		Name:        allocation.BucketName,
-		Credentials: []seaweed.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
-		Actions:     seaweed.BucketActions(allocation.BucketName),
-	}); err != nil {
-		return false, err
+	// A fenced bucket (a restore rewriting it) keeps its identity absent
+	// until the fence is lifted; the platform identity alone writes.
+	if allocation.FencedAt == nil {
+		if err := c.deps.Seaweed.EnsureIdentity(ctx, seaweed.Identity{
+			Name:        allocation.BucketName,
+			Credentials: []seaweed.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+			Actions:     seaweed.BucketActions(allocation.BucketName),
+		}); err != nil {
+			return false, err
+		}
 	}
 	// The settings Skali owns on the bucket (the policy that keeps the
 	// identity out of bucket administration, no CORS, no lifecycle, no
