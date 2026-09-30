@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -194,4 +195,68 @@ func TestRenderStoreConfigHashRollsFilers(t *testing.T) {
 	require.Equal(t, "abc123", allInOne.Spec.Template.Annotations[AnnotationConfigHash])
 	spec.StoreConfigHash = ""
 	require.Nil(t, find(RenderDev(spec), AllInOneApp).Spec.Template.Annotations, "no hash, no annotation")
+}
+
+// TestRenderProductionOperability: every component declares resources and
+// liveness/startup probes, the filer rolls without a gap and is ready only
+// when its S3 gateway answers, disruption budgets guard the quorum and the
+// gateway, and the master maintenance loop actually applies replica
+// repair (without -apply the pin only reports).
+func TestRenderProductionOperability(t *testing.T) {
+	t.Parallel()
+	three := RenderProduction(StoreSpec{Namespace: "skali-platform", Masters: 3, Replication: "001", Managed: true})
+	var sts *appsv1.StatefulSet
+	var daemon *appsv1.DaemonSet
+	var filer *appsv1.Deployment
+	var config *corev1.ConfigMap
+	budgets := map[string]*policyv1.PodDisruptionBudget{}
+	for _, object := range three {
+		switch typed := object.(type) {
+		case *appsv1.StatefulSet:
+			sts = typed
+		case *appsv1.DaemonSet:
+			daemon = typed
+		case *appsv1.Deployment:
+			filer = typed
+		case *policyv1.PodDisruptionBudget:
+			budgets[typed.Name] = typed
+		case *corev1.ConfigMap:
+			if typed.Name == "seaweed-master-config" {
+				config = typed
+			}
+		}
+	}
+	for name, container := range map[string]corev1.Container{
+		"master": sts.Spec.Template.Spec.Containers[0],
+		"volume": daemon.Spec.Template.Spec.Containers[0],
+		"filer":  filer.Spec.Template.Spec.Containers[0],
+	} {
+		require.NotEmpty(t, container.Resources.Requests, "%s declares requests", name)
+		require.NotEmpty(t, container.Resources.Limits, "%s declares limits", name)
+		require.NotNil(t, container.LivenessProbe, "%s has a liveness probe", name)
+		require.NotNil(t, container.StartupProbe, "%s has a startup probe", name)
+		require.Equal(t, "/healthz", container.LivenessProbe.HTTPGet.Path)
+		require.NotNil(t, container.ReadinessProbe, "%s has a readiness probe", name)
+	}
+	require.EqualValues(t, S3Port, filer.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.IntValue(),
+		"the filer is ready when its S3 gateway answers")
+	require.Equal(t, appsv1.RollingUpdateDeploymentStrategyType, filer.Spec.Strategy.Type)
+	require.Equal(t, 0, filer.Spec.Strategy.RollingUpdate.MaxUnavailable.IntValue())
+	require.Equal(t, 1, filer.Spec.Strategy.RollingUpdate.MaxSurge.IntValue())
+
+	require.Len(t, budgets, 2)
+	require.Equal(t, 1, budgets[MasterService].Spec.MaxUnavailable.IntValue())
+	require.Equal(t, 1, budgets[FilerService].Spec.MinAvailable.IntValue())
+	require.Contains(t, config.Data["master.toml"], "volume.fix.replication -apply")
+
+	// A single master has no budget: zero tolerated disruptions would
+	// only block drains.
+	one := RenderProduction(StoreSpec{Namespace: "skali-platform", Masters: 1, Replication: "000", Managed: true})
+	count := 0
+	for _, object := range one {
+		if _, ok := object.(*policyv1.PodDisruptionBudget); ok {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "only the filer budget on a single-master store")
 }

@@ -295,8 +295,25 @@ type ObjectStoreStatus struct {
 	MastersReady         int32
 	VolumeServersDesired int32
 	VolumeServersReady   int32
-	FilerReady           bool
-	S3Ready              bool
+	// FilerReady: the filer answers and its metadata store serves.
+	FilerReady bool
+	// S3Ready: the gateway answers an authenticated request and refuses
+	// an anonymous one; S3Detail explains a false.
+	S3Ready  bool
+	S3Detail string
+	// UnderReplicatedVolumes counts volumes with fewer copies than their
+	// placement calls for (a node lost, or a replication change still
+	// being caught up with by the maintenance loop).
+	UnderReplicatedVolumes int32
+	// PublicEndpoint is set when the installation publishes an S3 domain:
+	// the domain and its certificate's issuance state.
+	PublicEndpoint *PublicEndpointStatus
+}
+
+// PublicEndpointStatus is the public S3 domain's edge state.
+type PublicEndpointStatus struct {
+	Domain      string
+	Certificate *CertificateStatus
 }
 
 // BucketStatus projects one bucket's existence and usage as reported by the

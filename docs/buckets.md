@@ -155,9 +155,30 @@ Production derives the store's shape from the object-storage-capable node
 count: three raft masters when three or more nodes carry the capability
 (else one), one volume server per capable node using the node's disk, and
 one replica on a different node when the fleet has two or more (none on a
-single node). Local development runs one all-in-one process on a small
-volume; it stays up with the rest of the local platform, so buckets are
-warm for the next deployment and `skali dev down` keeps their data.
+single node). The shape follows the fleet as it grows: adding a second
+capable node turns replication on and existing volumes gain their copy on
+the store's maintenance cadence (about every twenty minutes, one copy per
+volume per pass); a third node forms the master quorum. Until the copies
+exist the bucket reports how many volumes are still short. Shrinking is
+never automatic: a node that leaves keeps the recorded shape and the
+bucket reports the missing member and the missing copies until the node
+returns or an operator adjusts the store (see
+[known limitations](limitations.md#shrinking-the-object-store-is-manual)).
+Local development runs one all-in-one process on a small volume; it stays
+up with the rest of the local platform, so buckets are warm for the next
+deployment and `skali dev down` keeps their data.
+
+Every component declares resources and health probes, a filer rollout keeps
+one gateway serving throughout, and disruption budgets keep a node drain
+from taking the master quorum or the last filer with it.
+
+A bucket's health reads the store: unhealthy when the S3 gateway does not
+answer an authenticated request (or answers an anonymous one) or no volume
+server serves; degraded, with the shortfall named, when a master or volume
+server is down against the recorded shape, when volumes are missing
+copies, when the metadata service does not serve, or when the public
+endpoint's certificate is not issued yet (presigned URLs for the public
+host fail TLS until it is).
 
 ## Backups and restores
 

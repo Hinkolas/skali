@@ -3,6 +3,7 @@ package seaweed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -463,8 +464,82 @@ func (c *Client) VolumeServerCount(ctx context.Context) (int, error) {
 
 // FilerAlive reports whether the filer answers its HTTP API.
 func (c *Client) FilerAlive(ctx context.Context) bool {
+	// Listing the root touches the metadata store: a filer whose database
+	// is unreachable answers 5xx here, which is the difference between a
+	// filer that is up and one that can serve.
 	_, status, err := c.filer(ctx, http.MethodGet, "/", url.Values{"limit": {"1"}}, nil)
-	return err == nil && status >= 200 && status < 500
+	return err == nil && status >= 200 && status < 400
+}
+
+// VolumeHealth reads the master's volume listing for replica accounting.
+func (c *Client) VolumeHealth(ctx context.Context) (VolumeHealth, error) {
+	data, status, err := c.master(ctx, "/vol/status", nil)
+	if err != nil {
+		return VolumeHealth{}, err
+	}
+	if status < 200 || status >= 300 {
+		return VolumeHealth{}, fmt.Errorf("seaweed: volume status: status %d", status)
+	}
+	var vs volStatus
+	if err := json.Unmarshal(data, &vs); err != nil {
+		return VolumeHealth{}, fmt.Errorf("seaweed: parse volume status: %w", err)
+	}
+	return volumeHealth(vs), nil
+}
+
+// S3Ready is the authenticated readiness of the gateway: the platform
+// identity can list buckets (auth, the credential store and the filer
+// behind it all work) and an anonymous request is refused (auth is on: an
+// identity list that went empty would serve every bucket to anyone).
+// Before the platform keypair is loaded it falls back to S3Alive plus the
+// anonymous check, which is all that can be known then.
+func (c *Client) S3Ready(ctx context.Context) (bool, string) {
+	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
+	defer cancel()
+	_, status, err := c.doer.ServiceProxyDo(ctx, http.MethodGet, c.namespace, S3Service, S3Port, "/", nil, nil)
+	switch {
+	case err != nil:
+		return false, "the S3 gateway does not answer: " + err.Error()
+	case status == http.StatusOK:
+		return false, "the S3 gateway serves anonymous requests"
+	case status < 400 || status >= 500:
+		return false, fmt.Sprintf("the S3 gateway answered %d to an anonymous request", status)
+	}
+	client, err := c.s3(ctx)
+	if errors.Is(err, ErrNoPlatformCredentials) {
+		return true, ""
+	}
+	if err != nil {
+		return false, err.Error()
+	}
+	if _, err := client.ListBuckets(ctx); err != nil {
+		c.doer.ForgetServiceAddress(c.namespace, S3Service, S3Port)
+		return false, "the platform identity cannot list buckets: " + err.Error()
+	}
+	return true, ""
+}
+
+// ConfigureReplication moves every existing volume to the replication
+// code (the master's maintenance loop then creates the missing copies
+// with volume.fix.replication -apply, one per volume per pass) and sets
+// the bucket path's replication so new volumes are created with it.
+func (c *Client) ConfigureReplication(ctx context.Context, replication string) error {
+	if err := c.UpdateConf(ctx, func(conf *FilerConf) bool {
+		entry := conf.Find(BucketsPrefix)
+		if entry == nil {
+			conf.Locations = append(conf.Locations, PathConf{LocationPrefix: BucketsPrefix, Replication: replication})
+			return true
+		}
+		if entry.Replication == replication {
+			return false
+		}
+		entry.Replication = replication
+		return true
+	}); err != nil {
+		return err
+	}
+	_, err := c.shell(ctx, fmt.Sprintf("volume.configure.replication -replication=%s -collectionPattern=*", replication))
+	return err
 }
 
 // S3Alive reports whether the S3 gateway answers; an anonymous request is

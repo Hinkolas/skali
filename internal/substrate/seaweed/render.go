@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -88,6 +89,8 @@ func masterPeers(namespace string, masters int) string {
 	return strings.Join(peers, ",")
 }
 
+func ptrIntOrString(value intstr.IntOrString) *intstr.IntOrString { return &value }
+
 func replicas(desired int32) *int32 {
 	return &desired
 }
@@ -111,9 +114,76 @@ func RenderProduction(spec StoreSpec) []runtime.Object {
 		renderService(spec.Namespace, S3Service, MasterService, FilerService, []corev1.ServicePort{
 			{Name: "s3", Port: S3Port},
 		}),
+		renderFilerBudget(spec.Namespace),
+	}
+	if spec.Masters >= 3 {
+		objects = append(objects, renderMasterBudget(spec.Namespace))
 	}
 	return objects
 }
+
+// Disruption budgets keep a node drain from taking the store with it: a
+// raft quorum tolerates one master away at a time, and one filer must
+// keep serving the S3 gateway. A single master has no budget: a budget of
+// zero tolerated disruptions would only block drains forever.
+func renderMasterBudget(namespace string) *policyv1.PodDisruptionBudget {
+	one := intstr.FromInt32(1)
+	return &policyv1.PodDisruptionBudget{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudget"},
+		ObjectMeta: objectMeta(namespace, MasterService, MasterService),
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MaxUnavailable: &one,
+			Selector:       &metav1.LabelSelector{MatchLabels: map[string]string{"app": MasterService}},
+		},
+	}
+}
+
+func renderFilerBudget(namespace string) *policyv1.PodDisruptionBudget {
+	one := intstr.FromInt32(1)
+	return &policyv1.PodDisruptionBudget{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudget"},
+		ObjectMeta: objectMeta(namespace, FilerService, FilerService),
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MinAvailable: &one,
+			Selector:     &metav1.LabelSelector{MatchLabels: map[string]string{"app": FilerService}},
+		},
+	}
+}
+
+// componentResources are the requests and limits every store component
+// declares, so the scheduler places them honestly and a runaway process
+// cannot starve the node. Memory limits stay generous: a volume server
+// maps its index files, a filer buffers uploads.
+func componentResources(cpu, memory, memoryLimit string) corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(cpu),
+			corev1.ResourceMemory: resource.MustParse(memory),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse(memoryLimit),
+		},
+	}
+}
+
+// httpProbe is one HTTP GET probe against a component port.
+func httpProbe(path string, port int32, initialDelay, period, failures int32) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{Path: path, Port: intstr.FromInt32(port)},
+		},
+		InitialDelaySeconds: initialDelay,
+		PeriodSeconds:       period,
+		FailureThreshold:    failures,
+	}
+}
+
+// Liveness and startup probes on every component's /healthz (served by
+// master, volume server, filer and S3 gateway alike on the pin): a wedged
+// process is restarted, and a slow start (a volume server indexing a
+// large disk) gets minutes, not seconds, before it counts as failed.
+func livenessProbe(port int32) *corev1.Probe { return httpProbe("/healthz", port, 0, 15, 3) }
+func startupProbe(port int32) *corev1.Probe  { return httpProbe("/healthz", port, 0, 5, 60) }
 
 // RenderDev renders the all-in-one shape: one `weed server -filer -s3`
 // process with a single PVC, plus the same Service names selecting the
@@ -148,7 +218,7 @@ func renderMasterConfig(namespace string) *corev1.ConfigMap {
 scripts = """
   lock
   volume.deleteEmpty -quietFor=24h -force
-  volume.fix.replication
+  volume.fix.replication -apply
   volume.balance -force
   unlock
 """
@@ -287,6 +357,7 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 							{ContainerPort: MasterPort},
 							{ContainerPort: MasterGRPCPort},
 						},
+						Resources: componentResources("100m", "256Mi", "1Gi"),
 						ReadinessProbe: &corev1.Probe{
 							ProbeHandler: corev1.ProbeHandler{
 								HTTPGet: &corev1.HTTPGetAction{
@@ -297,6 +368,8 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 							InitialDelaySeconds: 3,
 							PeriodSeconds:       10,
 						},
+						LivenessProbe: livenessProbe(MasterPort),
+						StartupProbe:  startupProbe(MasterPort),
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "data", MountPath: "/data"},
 							{Name: "config", MountPath: "/etc/seaweedfs"},
@@ -362,6 +435,7 @@ func renderVolumes(spec StoreSpec) *appsv1.DaemonSet {
 							{ContainerPort: VolumePort},
 							{ContainerPort: VolumeGRPCPort},
 						},
+						Resources: componentResources("100m", "256Mi", "2Gi"),
 						ReadinessProbe: &corev1.Probe{
 							ProbeHandler: corev1.ProbeHandler{
 								HTTPGet: &corev1.HTTPGetAction{
@@ -372,7 +446,9 @@ func renderVolumes(spec StoreSpec) *appsv1.DaemonSet {
 							InitialDelaySeconds: 5,
 							PeriodSeconds:       10,
 						},
-						VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}},
+						LivenessProbe: livenessProbe(VolumePort),
+						StartupProbe:  startupProbe(VolumePort),
+						VolumeMounts:  []corev1.VolumeMount{{Name: "data", MountPath: "/data"}},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "data",
@@ -422,6 +498,15 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 		Spec: appsv1.DeploymentSpec{
 			Replicas: replicas(2),
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": FilerService}},
+			// One filer keeps serving through a rollout: the new pod must be
+			// ready before an old one goes.
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{
+					MaxUnavailable: ptrIntOrString(intstr.FromInt32(0)),
+					MaxSurge:       ptrIntOrString(intstr.FromInt32(1)),
+				},
+			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: templateMeta(spec, labels),
 				Spec: corev1.PodSpec{
@@ -453,14 +538,13 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 							{ContainerPort: FilerGRPCPort},
 							{ContainerPort: S3Port},
 						},
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(FilerPort)},
-							},
-							InitialDelaySeconds: 3,
-							PeriodSeconds:       10,
-						},
-						VolumeMounts: []corev1.VolumeMount{{Name: "s3-bootstrap", MountPath: "/etc/sw"}},
+						Resources: componentResources("200m", "512Mi", "2Gi"),
+						// Readiness is the S3 gateway answering: that is the
+						// port the Service routes tenants to.
+						ReadinessProbe: httpProbe("/healthz", S3Port, 3, 10, 3),
+						LivenessProbe:  livenessProbe(FilerPort),
+						StartupProbe:   startupProbe(FilerPort),
+						VolumeMounts:   []corev1.VolumeMount{{Name: "s3-bootstrap", MountPath: "/etc/sw"}},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "s3-bootstrap",
@@ -536,13 +620,10 @@ func renderAllInOne(spec StoreSpec) *appsv1.Deployment {
 							{ContainerPort: FilerPort},
 							{ContainerPort: S3Port},
 						},
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(FilerPort)},
-							},
-							InitialDelaySeconds: 3,
-							PeriodSeconds:       5,
-						},
+						Resources:      componentResources("100m", "256Mi", "2Gi"),
+						ReadinessProbe: httpProbe("/healthz", S3Port, 3, 5, 3),
+						LivenessProbe:  livenessProbe(FilerPort),
+						StartupProbe:   startupProbe(FilerPort),
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "data", MountPath: "/data"},
 							{Name: "s3-bootstrap", MountPath: "/etc/sw"},

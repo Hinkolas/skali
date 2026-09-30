@@ -125,6 +125,59 @@ func TestEvaluate(t *testing.T) {
 		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), down, usage})
 	require.Equal(t, module.HealthUnhealthy, unhealthy.Health)
 
+	// The gateway's own explanation travels with the outage.
+	explained := module.ObservedResource{Kind: module.KindObjectStore,
+		ObjectStore: &module.ObjectStoreStatus{MastersReady: 1, FilerReady: true, S3Ready: false,
+			S3Detail: "the S3 gateway serves anonymous requests"}}
+	unhealthy = service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), explained, usage})
+	require.Equal(t, module.HealthUnhealthy, unhealthy.Health)
+	require.Contains(t, unhealthy.Diagnostics[0].Message, "anonymous")
+	// No volume server at all: nothing can be read or written.
+	noVolumes := module.ObservedResource{Kind: module.KindObjectStore,
+		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 1, MastersReady: 1, VolumeServersDesired: 2,
+			VolumeServersReady: 0, FilerReady: true, S3Ready: true}}
+	unhealthy = service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), noVolumes, usage})
+	require.Equal(t, module.HealthUnhealthy, unhealthy.Health)
+	require.Contains(t, unhealthy.Diagnostics[0].Message, "no volume server")
+	// Below the recorded shape (a master and a volume server down, copies
+	// missing): still serving, degraded, each shortfall named.
+	short := module.ObservedResource{Kind: module.KindObjectStore,
+		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 3, MastersReady: 2, VolumeServersDesired: 3,
+			VolumeServersReady: 2, UnderReplicatedVolumes: 4, FilerReady: true, S3Ready: true}}
+	degraded = service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), short, usage})
+	require.Equal(t, module.HealthDegraded, degraded.Health)
+	codes := []string{}
+	for _, diagnostic := range degraded.Diagnostics {
+		codes = append(codes, diagnostic.Code)
+	}
+	require.Equal(t, []string{"store-degraded", "store-degraded", "store-degraded", "usage"}, codes)
+	require.Contains(t, degraded.Diagnostics[0].Message, "2 of 3 object-store masters")
+	require.Contains(t, degraded.Diagnostics[1].Message, "2 of 3 volume servers")
+	require.Contains(t, degraded.Diagnostics[2].Message, "4 volumes have fewer copies")
+	// A public endpoint whose certificate is not issued degrades and says
+	// what that means for presigned URLs; an issued one is silent.
+	certPending := module.ObservedResource{Kind: module.KindObjectStore,
+		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 1, MastersReady: 1, VolumeServersDesired: 1,
+			VolumeServersReady: 1, FilerReady: true, S3Ready: true,
+			PublicEndpoint: &module.PublicEndpointStatus{Domain: "s3.example.com",
+				Certificate: &module.CertificateStatus{Ready: false, Message: "waiting for HTTP-01"}}}}
+	degraded = service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), certPending, usage})
+	require.Equal(t, module.HealthDegraded, degraded.Health)
+	require.Equal(t, "endpoint-certificate", degraded.Diagnostics[0].Code)
+	require.Contains(t, degraded.Diagnostics[0].Message, "s3.example.com")
+	require.Contains(t, degraded.Diagnostics[0].Message, "waiting for HTTP-01")
+	certIssued := module.ObservedResource{Kind: module.KindObjectStore,
+		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 1, MastersReady: 1, VolumeServersDesired: 1,
+			VolumeServersReady: 1, FilerReady: true, S3Ready: true,
+			PublicEndpoint: &module.PublicEndpointStatus{Domain: "s3.example.com", Certificate: &module.CertificateStatus{Ready: true}}}}
+	healthy = service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), certIssued, usage})
+	require.Equal(t, module.HealthHealthy, healthy.Health)
+	require.Equal(t, "usage", healthy.Diagnostics[0].Code)
 	// Releasing reflects the persisted destructive decision.
 	releasing := service.Evaluate([]module.ObservedResource{fresh(), claimResource("releasing", "")})
 	require.Equal(t, module.HealthProgressing, releasing.Health)

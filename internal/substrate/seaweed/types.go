@@ -77,10 +77,58 @@ type volStatus struct {
 }
 
 type volumeInfo struct {
-	ID         int64  `json:"Id"`
-	Size       int64  `json:"Size"`
-	Collection string `json:"Collection"`
-	FileCount  int64  `json:"FileCount"`
+	ID               int64            `json:"Id"`
+	Size             int64            `json:"Size"`
+	Collection       string           `json:"Collection"`
+	FileCount        int64            `json:"FileCount"`
+	ReplicaPlacement replicaPlacement `json:"ReplicaPlacement"`
+}
+
+// replicaPlacement is a volume's replication code decomposed the way the
+// master reports it (measured on the pin: "001" lists as {"node":1}, one
+// extra copy on another node of the same rack; the digits are data
+// center, rack, node).
+type replicaPlacement struct {
+	SameRackCount       int `json:"node"`
+	DiffRackCount       int `json:"rack"`
+	DiffDataCenterCount int `json:"dc"`
+}
+
+// copies is the number of copies the placement calls for.
+func (p replicaPlacement) copies() int {
+	return 1 + p.SameRackCount + p.DiffRackCount + p.DiffDataCenterCount
+}
+
+// VolumeHealth is the fleet-wide replica accounting from the master's
+// volume listing: how many distinct volumes exist and how many of them
+// have fewer copies than their placement calls for (a node lost, or a
+// replication change the maintenance loop has not caught up with).
+type VolumeHealth struct {
+	Volumes         int
+	UnderReplicated int
+}
+
+// volumeHealth folds one volume listing into replica counts.
+func volumeHealth(vs volStatus) VolumeHealth {
+	copies := map[int64]int{}
+	wanted := map[int64]int{}
+	for _, dc := range vs.Volumes.DataCenters {
+		for _, rack := range dc {
+			for _, node := range rack {
+				for _, vol := range node {
+					copies[vol.ID]++
+					wanted[vol.ID] = vol.ReplicaPlacement.copies()
+				}
+			}
+		}
+	}
+	health := VolumeHealth{Volumes: len(copies)}
+	for id, have := range copies {
+		if have < wanted[id] {
+			health.UnderReplicated++
+		}
+	}
+	return health
 }
 
 // clusterStatus is the master /cluster/status answer, reduced to what the
