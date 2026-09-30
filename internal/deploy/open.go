@@ -87,8 +87,8 @@ func validateBucketPolicies(definition compiler.ProjectDefinition) error {
 			return &UnsupportedBucketPolicyError{Bucket: key, Field: "quotas.objects"}
 		case bucket.MaxObjectSizeBytes > 0:
 			return &UnsupportedBucketPolicyError{Bucket: key, Field: "quotas.maxObjectSize"}
-		case bucket.AbortIncompleteUploadsAfterSeconds > 0 || bucket.ExpireNoncurrentVersionsAfterSec > 0:
-			return &UnsupportedBucketPolicyError{Bucket: key, Field: "lifecycle"}
+		case bucket.ExpireNoncurrentVersionsAfterSec > 0:
+			return &UnsupportedBucketPolicyError{Bucket: key, Field: "lifecycle.expireNoncurrentVersionsAfter"}
 		}
 	}
 	return nil

@@ -131,6 +131,7 @@ type BucketClaim struct {
 	Phase                        string
 	CreatedAt                    time.Time
 	UpdatedAt                    time.Time
+	Cors                         []byte
 }
 
 type Build struct {

@@ -432,10 +432,15 @@ buckets:
 ```
 
 Buckets are S3 compatible. The v1 surface is private visibility with a
-hard storage quota; `visibility: public-read`, `versioning: enabled`,
-lifecycle rules, `quotas.objects`, and `quotas.maxObjectSize` are valid
-vocabulary already but are rejected at deploy until later policies land.
-When a bucket reaches its quota it turns read-only until space is freed.
+hard storage quota, an optional `cors` block (`allowedOrigins`,
+`allowedMethods`, `allowedHeaders`, `exposeHeaders`, `maxAge`) for pages
+that upload or download through presigned URLs, and
+`lifecycle.abortIncompleteUploadsAfter` (a day when unset) for abandoned
+multipart uploads; `visibility: public-read`, `versioning: enabled`,
+`lifecycle.expireNoncurrentVersionsAfter`, `quotas.objects`, and
+`quotas.maxObjectSize` are valid vocabulary already but are rejected at
+deploy until later policies land. When a bucket reaches its quota it
+refuses uploads until objects are deleted.
 
 ```yaml
 applications:

@@ -207,4 +207,17 @@ type BucketClaim struct {
 	Versioning                         string "json:\"versioning\""
 	AbortIncompleteUploadsAfterSeconds int64  "json:\"abortIncompleteUploadsAfterSeconds,omitempty\""
 	ExpireNoncurrentVersionsAfterSec   int64  "json:\"expireNoncurrentVersionsAfterSeconds,omitempty\""
+	// CORS is the declared cross-origin policy; nil keeps the store's
+	// permissive fallback.
+	CORS *BucketCORS "json:\"cors,omitempty\""
+}
+
+// BucketCORS is one compiled CORS rule: the bucket's declared origins,
+// methods, headers, exposed headers and preflight cache lifetime.
+type BucketCORS struct {
+	AllowedOrigins []string "json:\"allowedOrigins\""
+	AllowedMethods []string "json:\"allowedMethods\""
+	AllowedHeaders []string "json:\"allowedHeaders,omitempty\""
+	ExposeHeaders  []string "json:\"exposeHeaders,omitempty\""
+	MaxAgeSeconds  int64    "json:\"maxAgeSeconds,omitempty\""
 }

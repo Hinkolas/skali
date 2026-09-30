@@ -217,7 +217,7 @@ func TestLiveBucketPermissionBoundary(t *testing.T) {
 	requireEventually(t, time.Minute, func() bool {
 		return status(t, anonymous, http.MethodGet, objectURL(bucket, "own"), nil, nil) == http.StatusOK
 	}, "the drifted policy never took effect (the probe would then have nothing to repair)")
-	repaired, err := controller.deps.Seaweed.EnsureBucketConfiguration(ctx, bucket, seaweed.BucketPolicy(bucket))
+	repaired, err := controller.deps.Seaweed.EnsureBucketConfiguration(ctx, bucket, seaweed.BucketPolicy(bucket), nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"policy", "cors"}, repaired)
 	requireEventually(t, time.Minute, func() bool {
@@ -226,7 +226,7 @@ func TestLiveBucketPermissionBoundary(t *testing.T) {
 	corsConfig, err := admin.GetBucketCors(ctx, bucket)
 	require.NoError(t, err)
 	require.True(t, corsConfig == nil || len(corsConfig.CORSRules) == 0, "the CORS drift was removed")
-	repaired, err = controller.deps.Seaweed.EnsureBucketConfiguration(ctx, bucket, seaweed.BucketPolicy(bucket))
+	repaired, err = controller.deps.Seaweed.EnsureBucketConfiguration(ctx, bucket, seaweed.BucketPolicy(bucket), nil)
 	require.NoError(t, err)
 	require.Empty(t, repaired, "a converged bucket is a read-only pass")
 }

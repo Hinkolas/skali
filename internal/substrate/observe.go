@@ -5,6 +5,7 @@ import (
 	"errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"log/slog"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -16,6 +17,10 @@ import (
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
+
+// defaultAbortUploadsAfter is the sweep threshold for multipart uploads
+// of a bucket that declares no lifecycle.abortIncompleteUploadsAfter.
+const defaultAbortUploadsAfter = 24 * time.Hour
 
 var (
 	objectStoreGVK = schema.GroupVersionKind{Group: "seaweed.skali.dev", Version: "v1", Kind: "ObjectStore"}
@@ -113,10 +118,31 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 			// within one interval and reported as the audit trail. Before
 			// the platform identity is loaded (a fresh process, the store
 			// still reconciling) there is nothing to check yet.
+			desiredCORS, err := seaweed.CORSConfig(claimRow.Cors)
+			if err != nil {
+				return nil, err
+			}
 			drift, err := c.deps.Seaweed.EnsureBucketConfiguration(ctx, allocation.BucketName,
-				seaweed.BucketPolicy(allocation.BucketName))
+				seaweed.BucketPolicy(allocation.BucketName), desiredCORS)
 			if err != nil && !errors.Is(err, seaweed.ErrNoPlatformCredentials) {
 				return nil, err
+			}
+			// Stale multipart uploads are swept on the same cadence: parts
+			// a browser never completed would otherwise count against the
+			// quota forever. The threshold is the bucket's declared
+			// lifecycle.abortIncompleteUploadsAfter, a day when unset.
+			threshold := defaultAbortUploadsAfter
+			if claimRow.AbortUploadsAfterSeconds > 0 {
+				threshold = time.Duration(claimRow.AbortUploadsAfterSeconds) * time.Second
+			}
+			if err == nil {
+				aborted, sweepErr := c.deps.Seaweed.AbortStaleUploads(ctx, allocation.BucketName, threshold)
+				if sweepErr != nil {
+					slog.Warn("substrate: sweep stale uploads", "bucket", allocation.BucketName, "error", sweepErr)
+				} else if aborted > 0 {
+					slog.Info("substrate: stale multipart uploads aborted", "bucket", allocation.BucketName,
+						"count", aborted, "olderThan", threshold.String())
+				}
 			}
 			if claimRow.OwnerKind != dbstore.OwnerService || claimRow.EnvironmentID == nil {
 				continue

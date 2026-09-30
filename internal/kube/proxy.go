@@ -45,6 +45,9 @@ func (c *Client) ServiceProxyDo(ctx context.Context, method, namespace, service 
 	if err != nil {
 		return nil, 0, fmt.Errorf("kube: service proxy request: %w", err)
 	}
+	// Every caller parses answers as data; the filer in particular renders
+	// a directory listing as HTML unless JSON is asked for.
+	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("kube: service proxy %s %s/%s:%d: %w", method, namespace, service, port, err)

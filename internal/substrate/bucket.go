@@ -136,10 +136,14 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 		}
 	}
 	// The settings Skali owns on the bucket (the policy that keeps the
-	// identity out of bucket administration, no CORS, no lifecycle, no
-	// versioning) converge here and on every probe pass.
+	// identity out of bucket administration, the declared CORS or none,
+	// no lifecycle, no versioning) converge here and on every probe pass.
+	desiredCORS, err := seaweed.CORSConfig(row.Cors)
+	if err != nil {
+		return false, err
+	}
 	repaired, err := c.deps.Seaweed.EnsureBucketConfiguration(ctx, allocation.BucketName,
-		seaweed.BucketPolicy(allocation.BucketName))
+		seaweed.BucketPolicy(allocation.BucketName), desiredCORS)
 	if errors.Is(err, seaweed.ErrNoPlatformCredentials) {
 		// The store's reconcile loads the platform keypair; a claim that
 		// gets here first (a fresh process) visibly waits one pass.

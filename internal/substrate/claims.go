@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
@@ -130,6 +131,14 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 		dotted := "buckets." + key
 		owner := dbstore.ServiceOwner(in.ProjectID, in.EnvironmentID,
 			in.Revision.Project, in.Revision.Environment, key)
+		var err error
+		var corsSpec []byte
+		if bucket.CORS != nil {
+			corsSpec, err = json.Marshal(bucket.CORS)
+			if err != nil {
+				return nil, fmt.Errorf("substrate: encode cors for %s: %w", dotted, err)
+			}
+		}
 		row, err := c.deps.DB.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
 			Visibility:                   bucket.Visibility,
 			StorageQuotaBytes:            bucket.StorageQuotaBytes,
@@ -138,6 +147,7 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 			Versioning:                   bucket.Versioning,
 			AbortUploadsAfterSeconds:     bucket.AbortIncompleteUploadsAfterSeconds,
 			ExpireNoncurrentAfterSeconds: bucket.ExpireNoncurrentVersionsAfterSec,
+			CORS:                         corsSpec,
 		})
 		if errors.Is(err, dbstore.ErrSpecConflict) {
 			states = append(states, reconcile.ClaimState{Service: dotted,

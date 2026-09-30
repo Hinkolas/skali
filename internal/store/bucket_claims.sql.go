@@ -16,9 +16,9 @@ INSERT INTO bucket_claims (
     id, owner_kind, project_id, environment_id, service_key, system_key,
     owner_ref, visibility, storage_quota_bytes, object_quota,
     max_object_bytes, versioning, abort_uploads_after_seconds,
-    expire_noncurrent_after_seconds
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-RETURNING id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at
+    expire_noncurrent_after_seconds, cors
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+RETURNING id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at, cors
 `
 
 type CreateBucketClaimParams struct {
@@ -36,6 +36,7 @@ type CreateBucketClaimParams struct {
 	Versioning                   string
 	AbortUploadsAfterSeconds     int64
 	ExpireNoncurrentAfterSeconds int64
+	Cors                         []byte
 }
 
 func (q *Queries) CreateBucketClaim(ctx context.Context, arg CreateBucketClaimParams) (BucketClaim, error) {
@@ -54,6 +55,7 @@ func (q *Queries) CreateBucketClaim(ctx context.Context, arg CreateBucketClaimPa
 		arg.Versioning,
 		arg.AbortUploadsAfterSeconds,
 		arg.ExpireNoncurrentAfterSeconds,
+		arg.Cors,
 	)
 	var i BucketClaim
 	err := row.Scan(
@@ -74,12 +76,13 @@ func (q *Queries) CreateBucketClaim(ctx context.Context, arg CreateBucketClaimPa
 		&i.Phase,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cors,
 	)
 	return i, err
 }
 
 const getBucketClaim = `-- name: GetBucketClaim :one
-SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at FROM bucket_claims WHERE id = $1
+SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at, cors FROM bucket_claims WHERE id = $1
 `
 
 func (q *Queries) GetBucketClaim(ctx context.Context, id uuid.UUID) (BucketClaim, error) {
@@ -103,12 +106,13 @@ func (q *Queries) GetBucketClaim(ctx context.Context, id uuid.UUID) (BucketClaim
 		&i.Phase,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cors,
 	)
 	return i, err
 }
 
 const getBucketClaimForUpdate = `-- name: GetBucketClaimForUpdate :one
-SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at FROM bucket_claims WHERE id = $1 FOR UPDATE
+SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at, cors FROM bucket_claims WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetBucketClaimForUpdate(ctx context.Context, id uuid.UUID) (BucketClaim, error) {
@@ -132,12 +136,13 @@ func (q *Queries) GetBucketClaimForUpdate(ctx context.Context, id uuid.UUID) (Bu
 		&i.Phase,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cors,
 	)
 	return i, err
 }
 
 const getLiveServiceBucketClaim = `-- name: GetLiveServiceBucketClaim :one
-SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at FROM bucket_claims
+SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at, cors FROM bucket_claims
 WHERE environment_id = $1 AND service_key = $2
   AND owner_kind = 'service' AND phase <> 'released'
 `
@@ -168,12 +173,13 @@ func (q *Queries) GetLiveServiceBucketClaim(ctx context.Context, arg GetLiveServ
 		&i.Phase,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cors,
 	)
 	return i, err
 }
 
 const getLiveSystemBucketClaim = `-- name: GetLiveSystemBucketClaim :one
-SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at FROM bucket_claims
+SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at, cors FROM bucket_claims
 WHERE system_key = $1 AND owner_kind = 'system' AND phase <> 'released'
 `
 
@@ -198,12 +204,13 @@ func (q *Queries) GetLiveSystemBucketClaim(ctx context.Context, systemKey string
 		&i.Phase,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cors,
 	)
 	return i, err
 }
 
 const listLiveBucketClaims = `-- name: ListLiveBucketClaims :many
-SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at FROM bucket_claims
+SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at, cors FROM bucket_claims
 WHERE phase <> 'released'
 ORDER BY created_at
 `
@@ -236,6 +243,7 @@ func (q *Queries) ListLiveBucketClaims(ctx context.Context) ([]BucketClaim, erro
 			&i.Phase,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Cors,
 		); err != nil {
 			return nil, err
 		}
@@ -248,7 +256,7 @@ func (q *Queries) ListLiveBucketClaims(ctx context.Context) ([]BucketClaim, erro
 }
 
 const listLiveBucketClaimsByEnvironment = `-- name: ListLiveBucketClaimsByEnvironment :many
-SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at FROM bucket_claims
+SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at, cors FROM bucket_claims
 WHERE environment_id = $1 AND owner_kind = 'service' AND phase <> 'released'
 ORDER BY service_key
 `
@@ -280,6 +288,7 @@ func (q *Queries) ListLiveBucketClaimsByEnvironment(ctx context.Context, environ
 			&i.Phase,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Cors,
 		); err != nil {
 			return nil, err
 		}
@@ -292,7 +301,7 @@ func (q *Queries) ListLiveBucketClaimsByEnvironment(ctx context.Context, environ
 }
 
 const listLiveBucketClaimsByStore = `-- name: ListLiveBucketClaimsByStore :many
-SELECT c.id, c.owner_kind, c.project_id, c.environment_id, c.service_key, c.system_key, c.owner_ref, c.visibility, c.storage_quota_bytes, c.object_quota, c.max_object_bytes, c.versioning, c.abort_uploads_after_seconds, c.expire_noncurrent_after_seconds, c.phase, c.created_at, c.updated_at FROM bucket_claims c
+SELECT c.id, c.owner_kind, c.project_id, c.environment_id, c.service_key, c.system_key, c.owner_ref, c.visibility, c.storage_quota_bytes, c.object_quota, c.max_object_bytes, c.versioning, c.abort_uploads_after_seconds, c.expire_noncurrent_after_seconds, c.phase, c.created_at, c.updated_at, c.cors FROM bucket_claims c
 JOIN bucket_allocations a ON a.claim_id = c.id AND a.released_at IS NULL
 WHERE a.store_id = $1 AND c.phase <> 'released'
 ORDER BY c.created_at
@@ -326,6 +335,7 @@ func (q *Queries) ListLiveBucketClaimsByStore(ctx context.Context, storeID uuid.
 			&i.Phase,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Cors,
 		); err != nil {
 			return nil, err
 		}
@@ -338,7 +348,7 @@ func (q *Queries) ListLiveBucketClaimsByStore(ctx context.Context, storeID uuid.
 }
 
 const listUnsettledBucketClaims = `-- name: ListUnsettledBucketClaims :many
-SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at FROM bucket_claims
+SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, visibility, storage_quota_bytes, object_quota, max_object_bytes, versioning, abort_uploads_after_seconds, expire_noncurrent_after_seconds, phase, created_at, updated_at, cors FROM bucket_claims
 WHERE phase IN ('pending', 'bound', 'releasing')
 ORDER BY created_at
 `
@@ -372,6 +382,7 @@ func (q *Queries) ListUnsettledBucketClaims(ctx context.Context) ([]BucketClaim,
 			&i.Phase,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Cors,
 		); err != nil {
 			return nil, err
 		}
@@ -409,7 +420,7 @@ const setBucketClaimSpec = `-- name: SetBucketClaimSpec :execrows
 UPDATE bucket_claims
 SET storage_quota_bytes = $2, object_quota = $3, max_object_bytes = $4,
     abort_uploads_after_seconds = $5, expire_noncurrent_after_seconds = $6,
-    updated_at = now()
+    cors = $7, updated_at = now()
 WHERE id = $1
 `
 
@@ -420,6 +431,7 @@ type SetBucketClaimSpecParams struct {
 	MaxObjectBytes               int64
 	AbortUploadsAfterSeconds     int64
 	ExpireNoncurrentAfterSeconds int64
+	Cors                         []byte
 }
 
 // Mutable spec fields only. Visibility and versioning change the bucket's
@@ -433,6 +445,7 @@ func (q *Queries) SetBucketClaimSpec(ctx context.Context, arg SetBucketClaimSpec
 		arg.MaxObjectBytes,
 		arg.AbortUploadsAfterSeconds,
 		arg.ExpireNoncurrentAfterSeconds,
+		arg.Cors,
 	)
 	if err != nil {
 		return 0, err

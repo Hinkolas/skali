@@ -220,6 +220,19 @@ type Bucket struct {
 	Quotas     BucketQuotas    `yaml:"quotas,omitempty" json:"quotas,omitempty"`
 	Versioning string          `yaml:"versioning,omitempty" json:"versioning,omitempty"`
 	Lifecycle  BucketLifecycle `yaml:"lifecycle,omitempty" json:"lifecycle,omitempty"`
+	CORS       *BucketCORS     `yaml:"cors,omitempty" json:"cors,omitempty"`
+}
+
+// BucketCORS is the bucket's cross-origin policy for browsers that talk
+// to the S3 endpoint directly (presigned uploads and downloads). Absent,
+// the store answers preflights for any origin; declared, only the listed
+// origins and methods are admitted.
+type BucketCORS struct {
+	AllowedOrigins []string `yaml:"allowedOrigins" json:"allowedOrigins"`
+	AllowedMethods []string `yaml:"allowedMethods,omitempty" json:"allowedMethods,omitempty"`
+	AllowedHeaders []string `yaml:"allowedHeaders,omitempty" json:"allowedHeaders,omitempty"`
+	ExposeHeaders  []string `yaml:"exposeHeaders,omitempty" json:"exposeHeaders,omitempty"`
+	MaxAge         Text     `yaml:"maxAge,omitempty" json:"maxAge,omitempty"`
 }
 
 type BucketQuotas struct {

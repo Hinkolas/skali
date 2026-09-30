@@ -92,8 +92,56 @@
 			<span class="text-text-primary ml-auto font-mono text-md">
 				{c.abortIncompleteUploadsAfterSeconds
 					? `after ${describeSeconds(c.abortIncompleteUploadsAfterSeconds)}`
-					: 'never'}
+					: 'after 1 day (default)'}
 			</span>
 		</div>
+	</ConfigCard>
+
+	<ConfigCard title="CORS" hint="browsers talking to the bucket directly">
+		{#if c.cors}
+			<div class="flex flex-col gap-1.5 py-1">
+				<div class="flex items-baseline gap-3">
+					<span class="text-text-faint text-md">Origins</span>
+					<span class="text-text-primary ml-auto font-mono text-md text-right">
+						{c.cors.allowedOrigins.join(', ')}
+					</span>
+				</div>
+				<div class="flex items-baseline gap-3">
+					<span class="text-text-faint text-md">Methods</span>
+					<span class="text-text-primary ml-auto font-mono text-md">
+						{c.cors.allowedMethods.join(', ')}
+					</span>
+				</div>
+				{#if c.cors.allowedHeaders?.length}
+					<div class="flex items-baseline gap-3">
+						<span class="text-text-faint text-md">Request headers</span>
+						<span class="text-text-primary ml-auto font-mono text-md text-right">
+							{c.cors.allowedHeaders.join(', ')}
+						</span>
+					</div>
+				{/if}
+				{#if c.cors.exposeHeaders?.length}
+					<div class="flex items-baseline gap-3">
+						<span class="text-text-faint text-md">Exposed headers</span>
+						<span class="text-text-primary ml-auto font-mono text-md text-right">
+							{c.cors.exposeHeaders.join(', ')}
+						</span>
+					</div>
+				{/if}
+				{#if c.cors.maxAgeSeconds}
+					<div class="flex items-baseline gap-3">
+						<span class="text-text-faint text-md">Preflight cache</span>
+						<span class="text-text-primary ml-auto font-mono text-md">
+							{describeSeconds(c.cors.maxAgeSeconds)}
+						</span>
+					</div>
+				{/if}
+			</div>
+		{:else}
+			<div class="flex items-baseline gap-3 py-1">
+				<span class="text-text-faint text-md">Policy</span>
+				<span class="text-text-faint ml-auto font-mono text-md">any origin (store default)</span>
+			</div>
+		{/if}
 	</ConfigCard>
 </div>
