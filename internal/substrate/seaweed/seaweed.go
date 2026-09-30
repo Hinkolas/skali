@@ -25,6 +25,10 @@ const (
 	VolumeApp     = "seaweed-volume"
 	FilerService  = "seaweed-filer"
 	S3Service     = "seaweed-s3"
+	// S3ExternalService is the dev NodePort in front of the S3 gateway:
+	// the loopback endpoint host-run applications and the developer's
+	// browser reach (bundle.S3NodePort).
+	S3ExternalService = S3Service + "-external"
 	// AllInOneApp is the dev shape: one `weed server -filer -s3` process.
 	AllInOneApp = "seaweed"
 )

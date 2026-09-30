@@ -90,6 +90,16 @@ reachable; every bucket stays private and every request still needs a
 valid signature. What the public endpoint enables is the browser flow
 below, where the signature travels in the URL.
 
+The domain is reconciled like everything else the store owns. Changing
+`endpoints.s3` (re-run `skali cluster init --config` with the new value)
+replaces the route and the certificate in place: the new host serves as
+soon as its certificate is issued, and nothing of the old domain remains.
+Clearing it removes the routes and the certificate on the next pass, so the
+old host stops answering, and `endpoint` falls back to the in-cluster
+gateway. Either way the applications that reference the bucket roll to pick
+up the new `endpoint`, and URLs signed for the previous host stop working at
+that moment; bucket data is never touched by an endpoint change.
+
 Local development (`skali dev`) has no public domain: applications running
 in the cluster get the internal endpoint, while applications run on the
 host through a `dev` block get a loopback address (`http://127.0.0.1:30510`

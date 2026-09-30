@@ -187,7 +187,7 @@ func (c *Controller) ensureAllocationRecord(ctx context.Context, row store.Bucke
 // resolve publicly; the edge that serves it is only rendered on managed
 // clusters), the in-cluster service URL otherwise.
 func (c *Controller) bucketEndpoint() string {
-	if c.cfg.Managed && c.cfg.S3Domain != "" {
+	if c.publicEdgeEnabled() {
 		return "https://" + c.cfg.S3Domain
 	}
 	return InternalBucketEndpoint()

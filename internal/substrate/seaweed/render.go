@@ -703,7 +703,7 @@ func RenderAccessPolicy(namespace string, cidrs []string) *networkingv1.NetworkP
 func RenderDevS3NodePort(namespace string) *corev1.Service {
 	return &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: objectMeta(namespace, S3Service+"-external", AllInOneApp),
+		ObjectMeta: objectMeta(namespace, S3ExternalService, AllInOneApp),
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeNodePort,
 			Selector: map[string]string{"app": AllInOneApp},

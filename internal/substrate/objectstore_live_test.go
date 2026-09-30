@@ -8,10 +8,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubetest"
 	"github.com/Hinkolas/skali/internal/observe"
@@ -126,4 +132,137 @@ func TestLiveObjectStoreBoot(t *testing.T) {
 	requeue, err = controller.reconcileObjectStore(ctx)
 	require.NoError(t, err)
 	require.Zero(t, requeue)
+}
+
+// TestLiveObjectStorePublicEdge drives the public S3 edge through its
+// lifecycle against a real cluster: enabling the domain renders the routes
+// and the certificate, a hostname change replaces them in place, disabling
+// removes them (a plain Ingress left by a pre-IngressRoute store included),
+// and the whole sequence repeats. The store itself is not booted: the edge
+// pass names edge objects only, which is the point. Requires
+// TEST_KUBECONFIG; installs cert-manager into the test cluster for the
+// Certificate kind.
+func TestLiveObjectStorePublicEdge(t *testing.T) {
+	config := kubetest.Config(t)
+	ctx := context.Background()
+	client, err := kube.NewFromConfig(config)
+	require.NoError(t, err)
+	installCertManager(t, client)
+	cleanupPlatform(t, client)
+
+	controller := &Controller{
+		cfg:  Config{Managed: true, S3Domain: "s3.first.example.test"},
+		deps: Deps{Cluster: KubeCluster{Client: client}},
+	}
+	require.NoError(t, controller.ensureNamespace(ctx))
+
+	// A store published before the IngressRoute rework left a plain
+	// Ingress under the route's name.
+	pathType := networkingv1.PathTypePrefix
+	_, err = client.Clientset.NetworkingV1().Ingresses(Namespace).Create(ctx, &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: "seaweed-s3", Namespace: Namespace},
+		Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{
+			Host: "s3.legacy.example.test",
+			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
+				Paths: []networkingv1.HTTPIngressPath{{Path: "/", PathType: &pathType, Backend: networkingv1.IngressBackend{
+					Service: &networkingv1.IngressServiceBackend{Name: seaweed.S3Service, Port: networkingv1.ServiceBackendPort{Number: seaweed.S3Port}},
+				}}},
+			}},
+		}}},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	ingressRoutes := schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutes"}
+	middlewares := schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "middlewares"}
+	certificates := schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}
+	get := func(gvr schema.GroupVersionResource, name string) (*unstructured.Unstructured, bool) {
+		object, err := client.Dynamic.Resource(gvr).Namespace(Namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil, false
+		}
+		require.NoError(t, err)
+		return object, true
+	}
+	edgeHost := func(domain string) {
+		t.Helper()
+		for _, name := range []string{"seaweed-s3", "seaweed-s3-http"} {
+			route, ok := get(ingressRoutes, name)
+			require.True(t, ok, "%s must exist", name)
+			routes, _, err := unstructured.NestedSlice(route.Object, "spec", "routes")
+			require.NoError(t, err)
+			require.Len(t, routes, 1)
+			match := routes[0].(map[string]any)["match"].(string)
+			require.Contains(t, match, "Host(\""+domain+"\")", "%s serves the current domain only", name)
+		}
+		_, ok := get(middlewares, edge.RedirectMiddlewareName)
+		require.True(t, ok, "redirect middleware must exist")
+		certificate, ok := get(certificates, "seaweed-s3-tls")
+		require.True(t, ok, "certificate must exist")
+		names, _, err := unstructured.NestedStringSlice(certificate.Object, "spec", "dnsNames")
+		require.NoError(t, err)
+		require.Equal(t, []string{domain}, names)
+	}
+	edgeAbsent := func() {
+		t.Helper()
+		for _, name := range []string{"seaweed-s3", "seaweed-s3-http"} {
+			_, ok := get(ingressRoutes, name)
+			require.False(t, ok, "%s must be gone", name)
+		}
+		_, ok := get(middlewares, edge.RedirectMiddlewareName)
+		require.False(t, ok, "redirect middleware must be gone")
+		_, ok = get(certificates, "seaweed-s3-tls")
+		require.False(t, ok, "certificate must be gone")
+		_, err := client.Clientset.NetworkingV1().Ingresses(Namespace).Get(ctx, "seaweed-s3", metav1.GetOptions{})
+		require.True(t, apierrors.IsNotFound(err), "the legacy Ingress must be gone, got %v", err)
+	}
+
+	// Enable. cert-manager's webhook admits Certificates only once its CA
+	// is injected, so the first pass may need a few retries.
+	require.Eventually(t, func() bool {
+		if err := controller.reconcilePublicEdge(ctx); err != nil {
+			t.Logf("public edge (retrying): %v", err)
+			return false
+		}
+		return true
+	}, 3*time.Minute, 5*time.Second)
+	edgeHost("s3.first.example.test")
+	require.Equal(t, "https://s3.first.example.test", controller.bucketEndpoint())
+
+	// Hostname change: the same objects carry the new host, nothing of the
+	// old one remains.
+	controller.cfg.S3Domain = "s3.second.example.test"
+	require.NoError(t, controller.reconcilePublicEdge(ctx))
+	edgeHost("s3.second.example.test")
+	require.Equal(t, "https://s3.second.example.test", controller.bucketEndpoint())
+
+	// Disable: every edge object goes, the legacy Ingress with them, and
+	// the endpoint falls back to the in-cluster gateway. A repeated pass
+	// finds nothing to do.
+	controller.cfg.S3Domain = ""
+	require.NoError(t, controller.reconcilePublicEdge(ctx))
+	edgeAbsent()
+	require.Equal(t, InternalBucketEndpoint(), controller.bucketEndpoint())
+	require.NoError(t, controller.reconcilePublicEdge(ctx))
+	edgeAbsent()
+
+	// Re-enable: the sequence repeats from a clean slate.
+	controller.cfg.S3Domain = "s3.first.example.test"
+	require.NoError(t, controller.reconcilePublicEdge(ctx))
+	edgeHost("s3.first.example.test")
+	controller.cfg.S3Domain = ""
+	require.NoError(t, controller.reconcilePublicEdge(ctx))
+	edgeAbsent()
+}
+
+// installCertManager applies the pinned cert-manager bundle so the
+// Certificate kind exists in the test cluster and waits for the webhook
+// that admits it.
+func installCertManager(t *testing.T, client *kube.Client) {
+	t.Helper()
+	ctx := context.Background()
+	applier := &bundle.Applier{Client: client}
+	require.NoError(t, applier.ApplyManifest(ctx, bundle.CertManagerManifest()))
+	for _, name := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
+		require.NoError(t, applier.WaitDeploymentReady(ctx, bundle.CertManagerNamespace, name))
+	}
 }

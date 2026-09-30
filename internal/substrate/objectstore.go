@@ -13,6 +13,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -171,9 +172,6 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 	} else {
 		objects = append(objects, seaweed.RenderDevS3NodePort(Namespace))
 	}
-	if c.cfg.Managed && c.cfg.S3Domain != "" {
-		objects = append(objects, seaweed.RenderS3Edge(Namespace, c.cfg.S3Domain)...)
-	}
 	objects = append(objects, seaweed.RenderFence(Namespace)...)
 	if cidrs, err := c.deps.Cluster.ProxyCIDRs(ctx); err != nil {
 		slog.Warn("substrate: derive proxy cidrs", "error", err)
@@ -184,6 +182,9 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		if _, err := c.deps.Cluster.ApplyAs(ctx, obj, kube.FieldManagerPlatform, false); err != nil {
 			return 0, fmt.Errorf("substrate: ensure object store: %w", err)
 		}
+	}
+	if err := c.reconcilePublicEdge(ctx); err != nil {
+		return 0, err
 	}
 
 	// Point the admin channel at the current filer pods.
@@ -221,6 +222,82 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		}
 	}
 	return 0, nil
+}
+
+// publicEdgeEnabled reports whether the store publishes through the edge:
+// a managed installation with an S3 domain. Everything else keeps bucket
+// access in-cluster and owns no edge objects.
+func (c *Controller) publicEdgeEnabled() bool {
+	return c.cfg.Managed && c.cfg.S3Domain != ""
+}
+
+// s3EdgeRefs are the edge objects the public S3 endpoint owns: the TLS
+// route, the redirecting plain-HTTP route, the redirect middleware, and
+// the certificate. Stores published before the IngressRoute rework carried
+// a plain Ingress under the route's name; it stays in the list so an
+// upgrade removes it too.
+func s3EdgeRefs() []kube.ObjectRef {
+	return []kube.ObjectRef{
+		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3"},
+		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3-http"},
+		{GVK: edge.MiddlewareGVK, Namespace: Namespace, Name: edge.RedirectMiddlewareName},
+		{GVK: edge.CertificateGVK, Namespace: Namespace, Name: "seaweed-s3-tls"},
+		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"}, Namespace: Namespace, Name: "seaweed-s3"},
+	}
+}
+
+// reconcilePublicEdge is level-triggered like the rest of the store:
+// while the endpoint is configured the edge objects are applied under
+// their fixed names, so a domain change replaces the host match and the
+// certificate's name in place and nothing of the old domain lingers; once
+// endpoints.s3 is cleared they are deleted every pass, so disabling the
+// endpoint stops the domain from answering instead of leaving the routes
+// and the certificate behind. An unmanaged installation never renders the
+// edge (there is no edge to serve it), so it has nothing to sweep either:
+// looking for the Certificate kind on a cluster without cert-manager would
+// only reset the discovery cache each pass. Bucket data is untouched
+// either way: the refs name edge objects only.
+func (c *Controller) reconcilePublicEdge(ctx context.Context) error {
+	if c.publicEdgeEnabled() {
+		for _, obj := range seaweed.RenderS3Edge(Namespace, c.cfg.S3Domain) {
+			if _, err := c.deps.Cluster.ApplyAs(ctx, obj, kube.FieldManagerPlatform, false); err != nil {
+				return fmt.Errorf("substrate: ensure public S3 edge: %w", err)
+			}
+		}
+		return nil
+	}
+	if !c.cfg.Managed {
+		return nil
+	}
+	removed, err := c.deleteRefs(ctx, s3EdgeRefs())
+	if err != nil {
+		return err
+	}
+	if removed > 0 {
+		slog.Info("substrate: public S3 edge removed", "objects", removed)
+	}
+	return nil
+}
+
+// deleteRefs deletes each ref, counting what actually went away. A kind
+// the cluster does not serve (no cert-manager on a local platform, so no
+// Certificate) counts as absent: the desired state is absence and there
+// is nothing to remove.
+func (c *Controller) deleteRefs(ctx context.Context, refs []kube.ObjectRef) (int, error) {
+	removed := 0
+	for _, ref := range refs {
+		deleted, err := c.deps.Cluster.Delete(ctx, ref)
+		if meta.IsNoMatchError(err) {
+			continue
+		}
+		if err != nil {
+			return removed, fmt.Errorf("substrate: delete %s: %w", ref, err)
+		}
+		if deleted {
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 // PlatformCredentialSecret holds the platform identity's keypair: the
@@ -336,26 +413,19 @@ func (c *Controller) releaseObjectStore(ctx context.Context, row store.ObjectSto
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Service"}, Namespace: Namespace, Name: seaweed.MasterService},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Service"}, Namespace: Namespace, Name: seaweed.FilerService},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Service"}, Namespace: Namespace, Name: seaweed.S3Service},
+		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Service"}, Namespace: Namespace, Name: seaweed.S3ExternalService},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, Namespace: Namespace, Name: "seaweed-master-config"},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, Namespace: Namespace, Name: "seaweed-s3-bootstrap"},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, Namespace: Namespace, Name: seaweed.FilerStoreSecret},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, Namespace: Namespace, Name: PlatformCredentialSecret},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, Namespace: Namespace, Name: "seaweed-data"},
-		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3"},
-		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3-http"},
-		{GVK: edge.MiddlewareGVK, Namespace: Namespace, Name: edge.RedirectMiddlewareName},
-		{GVK: edge.CertificateGVK, Namespace: Namespace, Name: "seaweed-s3-tls"},
-		// Stores published before the IngressRoute rework carried a plain
-		// Ingress under the same name; deleting an absent kind is a no-op.
-		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"}, Namespace: Namespace, Name: "seaweed-s3"},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-internal"},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-s3-open"},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-skalid-access"},
 	}
-	for _, ref := range refs {
-		if _, err := c.deps.Cluster.Delete(ctx, ref); err != nil {
-			return fmt.Errorf("substrate: delete %s: %w", ref, err)
-		}
+	refs = append(refs, s3EdgeRefs()...)
+	if _, err := c.deleteRefs(ctx, refs); err != nil {
+		return err
 	}
 	if err := c.ReleaseSystemClaim(ctx, MetadataClaimKey); err != nil && !errors.Is(err, dbstore.ErrNotFound) {
 		return err
