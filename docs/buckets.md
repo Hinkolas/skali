@@ -217,7 +217,10 @@ deployment and `skali dev down` keeps their data.
 
 Every component declares resources and health probes, a filer rollout keeps
 one gateway serving throughout, and disruption budgets keep a node drain
-from taking the master quorum or the last filer with it.
+from taking the master quorum or the last filer with it. The bucket
+directories live in the shared managed Postgres pool, so bucket
+availability is bounded by that pool's (see
+[known limitations](limitations.md#object-storage-depends-on-the-metadata-database)).
 
 A bucket's health reads the store: unhealthy when the S3 gateway does not
 answer an authenticated request (or answers an anonymous one) or no volume

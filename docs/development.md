@@ -156,9 +156,11 @@ task test:db
 
 # Live cluster tests (observation, apply/prune, healing, and the
 # substrate: shared Postgres and the SeaweedFS object store, driven from
-# nothing to provisioned buckets) against a disposable pinned k3d cluster;
-# the substrate suite also needs the project Postgres, which the task
-# starts:
+# nothing to provisioned buckets, plus the bucket contracts: permission
+# boundary, quota, restore fence, CORS and upload cleanup, and the public
+# edge lifecycle, which installs cert-manager into the test cluster)
+# against a disposable pinned k3d cluster; the substrate suite also needs
+# the project Postgres, which the task starts:
 task k3d:up
 task test:live
 task k3d:down
@@ -167,7 +169,9 @@ task k3d:down
 task test:docker
 
 # The skali dev end-to-end suite drives the real paved path on its own
-# throwaway installation (cluster skali-dev-e2e); it takes minutes:
+# throwaway installation (cluster skali-dev-e2e); it takes minutes. The
+# backup tests run their external S3 target as a SeaweedFS container on
+# the host:
 task test:dev
 
 # The cluster installer suite runs in Lima VMs:

@@ -52,7 +52,7 @@ applications:
 | Application volumes | Longhorn class `skali-app` | enforced size, CSI usage stats, replication |
 | Managed registry | Longhorn class `skali-app` | frees the registry from its node pin |
 | Managed databases (CNPG) | local disk (`local-path`) | postgres replicates at its own layer |
-| Object storage (SeaweedFS) | local disk (hostPath) | seaweed replicates at its own layer |
+| Object storage (SeaweedFS) | local disk (hostPath) | seaweed replicates at its own layer; bucket directories live in the shared Postgres pool |
 
 Under the `local` driver every row reads `local-path` (the registry keeps
 its node pin), and the rest of this section does not apply.
