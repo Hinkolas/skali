@@ -135,6 +135,16 @@ never probes: `*.localhost` cannot resolve to its edge from inside the
 cluster, so its routes gate on issuance alone, which the private CA
 issuer completes in seconds.
 
+## Shrinking the object store is manual
+
+The managed object store grows with the fleet (a second object-storage
+node turns replication on, a third forms the master quorum) but never
+shrinks on its own: removing a capable node leaves the recorded shape in
+place, and every bucket reports the missing member and the volumes that
+lost a copy until the node returns. Moving the store to a smaller shape
+(fewer masters, a lower replication) is an operator task for now; the
+store keeps serving from the remaining copies in the meantime.
+
 ## Builds run on your machine
 
 Every `skali deploy` builds and pushes from the machine running the CLI;

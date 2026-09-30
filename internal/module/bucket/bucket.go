@@ -142,9 +142,18 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 	}
 
 	if objectStore != nil && !objectStore.S3Ready {
+		message := "the object store's S3 gateway is not serving"
+		if objectStore.S3Detail != "" {
+			message += ": " + objectStore.S3Detail
+		}
+		return module.Evaluation{Health: module.HealthUnhealthy, Diagnostics: []module.Diagnostic{{
+			Severity: "error", Code: "store-unavailable", Message: message,
+		}}}
+	}
+	if objectStore != nil && objectStore.VolumeServersDesired > 0 && objectStore.VolumeServersReady == 0 {
 		return module.Evaluation{Health: module.HealthUnhealthy, Diagnostics: []module.Diagnostic{{
 			Severity: "error", Code: "store-unavailable",
-			Message: "the object store's S3 gateway is not serving",
+			Message: "no volume server is serving; objects cannot be read or written",
 		}}}
 	}
 
@@ -167,7 +176,10 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 				bucket.UsedBytes, bucket.QuotaBytes),
 		}}}
 	}
-	diagnostics := []module.Diagnostic{}
+	// Store-level degradation: the bucket serves, but with less than the
+	// installation promised (a member down, a copy missing, the public
+	// certificate not issued). Each is one warning; the health is degraded.
+	diagnostics := storeDiagnostics(objectStore)
 	if len(bucket.ConfigurationDrift) > 0 {
 		diagnostics = append(diagnostics, module.Diagnostic{
 			Severity: "warning", Code: "configuration-drift",
@@ -182,7 +194,52 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 				bucket.ObjectCount, bucket.UsedBytes, bucket.QuotaBytes),
 		})
 	}
-	return module.Evaluation{Health: module.HealthHealthy, Diagnostics: diagnostics}
+	health := module.HealthHealthy
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "store-degraded" || diagnostic.Code == "endpoint-certificate" {
+			health = module.HealthDegraded
+		}
+	}
+	return module.Evaluation{Health: health, Diagnostics: diagnostics}
+}
+
+// storeDiagnostics names what the store is short of against its recorded
+// shape, and the public endpoint's certificate state when one is
+// configured.
+func storeDiagnostics(store *module.ObjectStoreStatus) []module.Diagnostic {
+	diagnostics := []module.Diagnostic{}
+	if store == nil {
+		return diagnostics
+	}
+	warn := func(code, message string) {
+		diagnostics = append(diagnostics, module.Diagnostic{Severity: "warning", Code: code, Message: message})
+	}
+	if store.MastersReady < store.MastersDesired {
+		warn("store-degraded", fmt.Sprintf("%d of %d object-store masters are serving", store.MastersReady, store.MastersDesired))
+	}
+	if store.VolumeServersReady < store.VolumeServersDesired {
+		warn("store-degraded", fmt.Sprintf("%d of %d volume servers are serving", store.VolumeServersReady, store.VolumeServersDesired))
+	}
+	if store.UnderReplicatedVolumes > 0 {
+		warn("store-degraded", fmt.Sprintf("%d volumes have fewer copies than their replication calls for; the store repairs them on its maintenance cadence",
+			store.UnderReplicatedVolumes))
+	}
+	if !store.FilerReady {
+		warn("store-degraded", "the object store's metadata service is not serving")
+	}
+	if endpoint := store.PublicEndpoint; endpoint != nil {
+		switch {
+		case endpoint.Certificate == nil:
+			warn("endpoint-certificate", fmt.Sprintf("the certificate for %s has not been requested yet", endpoint.Domain))
+		case !endpoint.Certificate.Ready:
+			message := fmt.Sprintf("the certificate for %s is not issued yet; presigned URLs for the public endpoint fail TLS until it is", endpoint.Domain)
+			if endpoint.Certificate.Message != "" {
+				message += " (" + endpoint.Certificate.Message + ")"
+			}
+			warn("endpoint-certificate", message)
+		}
+	}
+	return diagnostics
 }
 
 func progressing(code, message string) module.Evaluation {

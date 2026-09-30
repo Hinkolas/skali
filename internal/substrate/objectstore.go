@@ -73,12 +73,7 @@ func (c *Controller) ensureObjectStoreRow(ctx context.Context) (*store.ObjectSto
 		if capable == 0 {
 			return nil, errWaiting{"waiting for object-storage capable nodes"}
 		}
-		input.Masters = seaweed.MastersForNodes(capable)
-		input.VolumeServers = capable
-		input.Replication = seaweed.ReplicationForNodes(capable)
-		// Production volume servers use the node's disk directly; the
-		// desired-shape row records no PVC size.
-		input.VolumeStorageBytes = 0
+		input = desiredShape(capable)
 	}
 	row, err = c.deps.DB.CreateObjectStore(ctx, input)
 	if err != nil {
@@ -87,6 +82,91 @@ func (c *Controller) ensureObjectStoreRow(ctx context.Context) (*store.ObjectSto
 	slog.Info("substrate: object store created", "masters", input.Masters,
 		"volumeServers", input.VolumeServers, "replication", input.Replication)
 	return row, nil
+}
+
+// desiredShape derives the managed store's topology from the capable node
+// count: a raft quorum of three masters once three nodes carry the
+// capability, one volume server per capable node, and one replica on a
+// different node once there are two. Production volume servers use the
+// node's disk directly; the desired-shape row records no PVC size.
+func desiredShape(capable int) dbstore.StoreInput {
+	return dbstore.StoreInput{
+		Name:          seaweed.StoreName,
+		Masters:       seaweed.MastersForNodes(capable),
+		VolumeServers: capable,
+		Replication:   seaweed.ReplicationForNodes(capable),
+		Image:         seaweed.Image,
+	}
+}
+
+// growShape is the grow-only topology rule: the recorded shape takes every
+// dimension the desired one is larger in (more masters, more volume
+// servers, a replica) and keeps the rest. Shrinking is never automatic: a
+// smaller fleet keeps the recorded shape, reported as under-replication
+// and missing members until an operator adjusts it. The second result
+// reports whether anything grew, the third whether the fleet is below the
+// recorded shape.
+func growShape(current store.ObjectStore, desired dbstore.StoreInput) (dbstore.StoreInput, bool, bool) {
+	next := dbstore.StoreInput{
+		Name:               current.Name,
+		Masters:            int(current.Masters),
+		VolumeServers:      int(current.VolumeServers),
+		Replication:        current.Replication,
+		VolumeStorageBytes: current.VolumeStorageBytes,
+		Image:              current.Image,
+	}
+	grew, below := false, false
+	if desired.Masters > next.Masters {
+		next.Masters, grew = desired.Masters, true
+	} else if desired.Masters < next.Masters {
+		below = true
+	}
+	if desired.VolumeServers > next.VolumeServers {
+		next.VolumeServers, grew = desired.VolumeServers, true
+	} else if desired.VolumeServers < next.VolumeServers {
+		below = true
+	}
+	if desired.Replication > next.Replication {
+		next.Replication, grew = desired.Replication, true
+	} else if desired.Replication < next.Replication {
+		below = true
+	}
+	return next, grew, below
+}
+
+// reconcileShape grows the recorded topology with the fleet before the
+// components are rendered from it, and moves existing volumes to a new
+// replication code so they gain their copy. Runs on managed
+// installations only; the dev store is one process.
+func (c *Controller) reconcileShape(ctx context.Context, row *store.ObjectStore) error {
+	capable := len(c.deps.Observed.CapableNodes(layout.CapabilityObjectStorage))
+	if capable == 0 {
+		return nil
+	}
+	next, grew, below := growShape(*row, desiredShape(capable))
+	if below {
+		slog.Warn("substrate: object-storage fleet is below the recorded shape; shrinking is manual",
+			"capableNodes", capable, "masters", row.Masters, "volumeServers", row.VolumeServers,
+			"replication", row.Replication)
+	}
+	if !grew {
+		return nil
+	}
+	if err := c.deps.DB.SetObjectStoreShape(ctx, row.ID, next); err != nil {
+		return err
+	}
+	slog.Info("substrate: object store grown", "masters", next.Masters,
+		"volumeServers", next.VolumeServers, "replication", next.Replication)
+	replicationChanged := next.Replication != row.Replication
+	row.Masters, row.VolumeServers, row.Replication = int32(next.Masters), int32(next.VolumeServers), next.Replication
+	if replicationChanged && c.deps.Seaweed != nil {
+		if err := c.deps.Seaweed.ConfigureReplication(ctx, next.Replication); err != nil {
+			// The rendered masters carry the new default either way; the
+			// existing volumes are retried next pass.
+			slog.Warn("substrate: configure volume replication", "error", err)
+		}
+	}
+	return nil
 }
 
 // reconcileObjectStore drives the physical system: the metadata claim, the
@@ -156,6 +236,11 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		return 0, fmt.Errorf("substrate: ensure filer store secret: %w", err)
 	}
 
+	if c.cfg.Managed {
+		if err := c.reconcileShape(ctx, &row); err != nil {
+			return 0, err
+		}
+	}
 	spec := seaweed.StoreSpec{
 		Namespace:   Namespace,
 		Masters:     int(row.Masters),
@@ -419,6 +504,8 @@ func (c *Controller) releaseObjectStore(ctx context.Context, row store.ObjectSto
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, Namespace: Namespace, Name: seaweed.FilerStoreSecret},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, Namespace: Namespace, Name: PlatformCredentialSecret},
 		{GVK: schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, Namespace: Namespace, Name: "seaweed-data"},
+		{GVK: schema.GroupVersionKind{Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"}, Namespace: Namespace, Name: seaweed.MasterService},
+		{GVK: schema.GroupVersionKind{Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"}, Namespace: Namespace, Name: seaweed.FilerService},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-internal"},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-s3-open"},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-skalid-access"},
