@@ -33,7 +33,10 @@ to.
 `skali deploy` runs the same thing on a cluster. With a public S3 domain
 configured (`endpoints.s3`), `{{ buckets.files.endpoint }}` is that
 domain's https origin and signed URLs work for any browser; without one
-the endpoint is only reachable inside the cluster.
+the endpoint is only reachable inside the cluster. The application's own
+traffic (verification, listing, deletes) uses
+`{{ buckets.files.internal_endpoint }}`, the in-cluster gateway, so it
+never hairpins through the edge.
 
 ## The API
 
@@ -60,12 +63,11 @@ server-side `HEAD` before an upload counts.
 
 - `UPLOAD_TOKEN` (required): the bearer token that authorizes signing.
 - `PRESIGN_TTL` (optional): signed URL lifetime, a Go duration up to 24h.
-- `S3_PUBLIC_ENDPOINT` (optional): where browsers reach the bucket when
-  that differs from the endpoint the application uses. Local development
-  maps the store to a loopback port (`127.0.0.1:30510` unless
-  `SKALI_DEV_LOOPBACK_PORT_BASE` shifts the range); set it to
-  `http://127.0.0.1:30510` to try the browser flow against a local
-  cluster.
+- `S3_PUBLIC_ENDPOINT` (optional): overrides the host URLs are signed
+  for. Local development maps the store to a loopback port
+  (`127.0.0.1:30510` unless `SKALI_DEV_LOOPBACK_PORT_BASE` shifts the
+  range); set it to `http://127.0.0.1:30510` to try the browser flow
+  against a local cluster.
 
 ## Tests
 

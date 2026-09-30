@@ -47,11 +47,11 @@ const (
 
 type app struct {
 	db *sql.DB
-	// s3 talks to the endpoint the platform injected (in production the
-	// public https endpoint, in local development the in-cluster gateway);
-	// signer presigns against the endpoint browsers reach. They differ only
-	// when S3_PUBLIC_ENDPOINT overrides the published one (local dev on a
-	// loopback port, or a separate internal endpoint).
+	// s3 talks to the in-cluster gateway (S3_INTERNAL_ENDPOINT, falling
+	// back to S3_ENDPOINT); signer presigns against the endpoint browsers
+	// reach (S3_ENDPOINT, or S3_PUBLIC_ENDPOINT when local development
+	// maps the store to a loopback port). Same bucket, same credentials:
+	// only the host in the URL differs.
 	s3     *minio.Client
 	core   *minio.Core
 	signer *minio.Client
@@ -148,16 +148,21 @@ func serve() {
 		a.ttl = ttl
 	}
 	var err error
-	if a.s3, err = s3Client(os.Getenv("S3_ENDPOINT")); err != nil {
+	if a.signer, err = s3Client(os.Getenv("S3_ENDPOINT")); err != nil {
 		log.Fatal(err)
 	}
-	a.core = &minio.Core{Client: a.s3}
-	a.signer = a.s3
 	if public := os.Getenv("S3_PUBLIC_ENDPOINT"); public != "" {
 		if a.signer, err = s3Client(public); err != nil {
 			log.Fatal(err)
 		}
 	}
+	a.s3 = a.signer
+	if internal := os.Getenv("S3_INTERNAL_ENDPOINT"); internal != "" {
+		if a.s3, err = s3Client(internal); err != nil {
+			log.Fatal(err)
+		}
+	}
+	a.core = &minio.Core{Client: a.s3}
 
 	pages, err := fs.Sub(static, "static")
 	if err != nil {
@@ -183,8 +188,8 @@ func serve() {
 	mux.HandleFunc("DELETE /api/files/{id}", a.authorized(a.deleteFile))
 	mux.HandleFunc("GET /files/{id}", a.shareLink)
 
-	log.Printf("file-sharing listening on :8080 (bucket %s, signing for %s)",
-		a.bucket, a.signer.EndpointURL())
+	log.Printf("file-sharing listening on :8080 (bucket %s via %s, signing for %s)",
+		a.bucket, a.s3.EndpointURL(), a.signer.EndpointURL())
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
 

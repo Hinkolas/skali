@@ -122,6 +122,7 @@ func TestLiveBucketClaimProvisioning(t *testing.T) {
 		Get(ctx, kubernetes.OutputSecretName("buckets", "files"), metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, allocation.Endpoint, string(mirror.Data["endpoint"]))
+	require.Equal(t, InternalBucketEndpoint(), string(mirror.Data["internal_endpoint"]))
 	require.Equal(t, allocation.BucketName, string(mirror.Data["name"]))
 	require.Equal(t, seaweed.Region, string(mirror.Data["region"]))
 	require.Equal(t, accessKey, string(mirror.Data["access_key"]))

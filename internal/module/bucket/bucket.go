@@ -46,7 +46,7 @@ func (s *service) Dependencies() []string { return nil }
 
 // Outputs mirror the compiler's expression catalog for buckets.
 func (s *service) Outputs() []string {
-	return []string{"endpoint", "name", "region", "access_key", "secret_key"}
+	return []string{"endpoint", "internal_endpoint", "name", "region", "access_key", "secret_key"}
 }
 
 func (s *service) Artifacts() []module.ArtifactRequirement { return nil }

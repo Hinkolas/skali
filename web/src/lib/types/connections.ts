@@ -26,6 +26,7 @@ export interface BucketConnection {
 	visibility: string;
 	storage_quota_bytes?: number;
 	endpoint?: string;
+	internal_endpoint?: string;
 	bucket?: string;
 	region?: string;
 	credential_version?: number;

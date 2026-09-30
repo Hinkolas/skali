@@ -2,8 +2,11 @@ package substrate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"sort"
 	"strconv"
 	"strings"
@@ -199,4 +202,60 @@ func (c *Controller) publishLiveClaims(ctx context.Context) error {
 		c.publishClaim(row)
 	}
 	return nil
+}
+
+// Generations reports, per provisioned service claim of an environment
+// ("databases.data", "buckets.files"), a short non-secret identity of its
+// connection outputs: the endpoint(s) and the credential version. The
+// kernel folds it into the pod-template identity of every application
+// referencing the service, so a republished endpoint or a rotated
+// credential rolls exactly those consumers; the plaintext credentials
+// never enter it.
+func (c *Controller) Generations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
+	generations := map[string]string{}
+	databases, err := c.deps.DB.ListEnvironmentClaims(ctx, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range databases {
+		if claim.Phase(row.Phase) != claim.PhaseProvisioned {
+			continue
+		}
+		tenant, err := c.deps.DB.LiveTenant(ctx, row.ID)
+		if err != nil {
+			if errors.Is(err, dbstore.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		generations["databases."+row.ServiceKey] = outputGeneration(
+			"host="+tenant.Host, fmt.Sprintf("port=%d", tenant.Port), fmt.Sprintf("credential=v%d", tenant.CredentialVersion))
+	}
+	buckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range buckets {
+		if claim.Phase(row.Phase) != claim.PhaseProvisioned {
+			continue
+		}
+		allocation, err := c.deps.DB.LiveAllocation(ctx, row.ID)
+		if err != nil {
+			if errors.Is(err, dbstore.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		generations["buckets."+row.ServiceKey] = outputGeneration(
+			"endpoint="+allocation.Endpoint, "internal_endpoint="+InternalBucketEndpoint(),
+			fmt.Sprintf("credential=v%d", allocation.CredentialVersion))
+	}
+	return generations, nil
+}
+
+// outputGeneration hashes the non-secret facts of a service's outputs into
+// a short stable identity.
+func outputGeneration(facts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(facts, "\n")))
+	return hex.EncodeToString(sum[:8])
 }

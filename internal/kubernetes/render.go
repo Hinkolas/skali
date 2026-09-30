@@ -70,6 +70,13 @@ type Options struct {
 	// stays possible.
 	SecretVersions map[string]int
 
+	// OutputGenerations carries, per dotted service ("buckets.files"), a
+	// short non-secret identity of that service's connection outputs (its
+	// endpoints and credential version). Applications referencing the
+	// service fold it into their values identity, so a republished
+	// endpoint or a rotated credential rolls exactly its consumers.
+	OutputGenerations map[string]string
+
 	// ProgressDeadlineSeconds mirrors the kernel rollout deadline onto
 	// rendered Deployments; zero omits the field (offline rendering, the
 	// Kubernetes default applies).
@@ -958,29 +965,39 @@ func objectName(parts ...string) string {
 
 // valuesIdentity hashes the stored generations of exactly the project
 // variables this application's environment references, whole-value or
-// composed: NAME=v<version> lines, sorted, sha256[:8]. Plaintext never
-// enters the hash. Empty when the environment references no variables.
-// Excluded by design: service outputs (their Secrets rotate through their
-// own lifecycle), route domains and paths (edge-only, they resolve into
+// composed (NAME=v<version> lines), plus the output generation of every
+// service it references (collection.key=<generation> lines): sorted,
+// sha256[:8]. Plaintext never enters the hash. Empty when the environment
+// references neither. Service outputs are delivered through their own
+// Secrets, which a running pod only reads at start; the generation is what
+// rolls consumers when an endpoint is republished or a credential rotates.
+// Excluded by design: route domains and paths (edge-only, they resolve into
 // IngressRoutes; hashing them would roll pods on edge-only changes),
-// command, probe, and mount paths (they
-// resolve into the pod template, so a change rolls naturally), and build
-// arguments (they flow into the image digest).
+// command, probe, and mount paths (they resolve into the pod template, so
+// a change rolls naturally), and build arguments (they flow into the image
+// digest).
 func valuesIdentity(application compiler.Application, options Options) string {
 	referenced := map[string]bool{}
+	services := map[string]bool{}
 	for _, expression := range application.Environment {
 		for _, part := range expression.Parts {
-			if part.Kind == "project_variable" {
+			switch part.Kind {
+			case "project_variable":
 				referenced[part.Name] = true
+			case "service_output":
+				services[part.Collection+"."+part.Service] = true
 			}
 		}
 	}
-	if len(referenced) == 0 {
+	if len(referenced) == 0 && len(services) == 0 {
 		return ""
 	}
-	lines := make([]string, 0, len(referenced))
+	lines := make([]string, 0, len(referenced)+len(services))
 	for _, name := range utils.SortedKeys(referenced) {
 		lines = append(lines, fmt.Sprintf("%s=v%d", name, options.SecretVersions[name]))
+	}
+	for _, service := range utils.SortedKeys(services) {
+		lines = append(lines, service+"="+options.OutputGenerations[service])
 	}
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return hex.EncodeToString(sum[:8])

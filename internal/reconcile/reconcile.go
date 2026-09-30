@@ -89,11 +89,19 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if err != nil {
 		return 0, err
 	}
+	// Output generations read before rendering describe the claims as
+	// provisioned so far; a claim that provisions during this pass reaches
+	// its consumers' templates on the next one, which is also the first
+	// pass that lets them apply.
+	generations, err := k.claimGenerations(ctx, environmentID)
+	if err != nil {
+		return 0, err
+	}
 
 	// The traffic decision reads the live Service selectors and workload
 	// availability before rendering: blue-green applications keep their
 	// serving color until the new one is fully available.
-	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, intercepts, env.Priority,
+	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, generations, intercepts, env.Priority,
 		k.deps.Observed.Snapshot(environmentID))
 	if err != nil {
 		var gateway *hostGatewayUnavailable
@@ -628,7 +636,8 @@ func secretVersions(rev *revision.Revision) map[string]int {
 // projection needs exactly these to name each application's desired color
 // without decrypting anything.
 func (k *Kernel) renderInputs(environmentID uuid.UUID, rev *revision.Revision, restartedAt *time.Time,
-	appRestarts map[string]string, intercepts map[string]map[string]int32, priority string) (rendering.Options, error) {
+	appRestarts map[string]string, generations map[string]string, intercepts map[string]map[string]int32,
+	priority string) (rendering.Options, error) {
 	buildImages := map[string]string{}
 	appPlatforms := map[string][]string{}
 	for key, application := range rev.Definition.Applications {
@@ -672,6 +681,7 @@ func (k *Kernel) renderInputs(environmentID uuid.UUID, rev *revision.Revision, r
 		Intercepts:              intercepts,
 		PriorityClassName:       layout.PriorityClassFor(priority),
 		AppRestartedAt:          appRestarts,
+		OutputGenerations:       generations,
 	}
 	if restartedAt != nil {
 		options.RestartedAt = restartedAt.UTC().Format(time.RFC3339)
@@ -680,7 +690,7 @@ func (k *Kernel) renderInputs(environmentID uuid.UUID, rev *revision.Revision, r
 }
 
 func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
-	restartedAt *time.Time, appRestarts map[string]string,
+	restartedAt *time.Time, appRestarts map[string]string, generations map[string]string,
 	intercepts map[string]map[string]int32, priority string, snapshot observe.Snapshot) (*desiredSet, error) {
 	refs := secretVersions(rev)
 	variables, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
@@ -696,7 +706,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	secret := rendering.RenderEnvironmentSecret(rev.Project, rev.Environment,
 		environmentID.String(), rev.Checksum, data)
 
-	renderOptions, err := k.renderInputs(environmentID, rev, restartedAt, appRestarts, intercepts, priority)
+	renderOptions, err := k.renderInputs(environmentID, rev, restartedAt, appRestarts, generations, intercepts, priority)
 	if err != nil {
 		return nil, err
 	}
@@ -1010,4 +1020,17 @@ func (k *Kernel) releaseAbsentHostnames(ctx context.Context, env uuid.UUID) erro
 		return err
 	}
 	return k.deps.Deploy.ReleaseAbsentHostnames(ctx, env, live)
+}
+
+// claimGenerations reads the output generations of the environment's
+// provisioned claims; without a substrate there are none.
+func (k *Kernel) claimGenerations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
+	if k.deps.Claims == nil {
+		return nil, nil
+	}
+	generations, err := k.deps.Claims.Generations(ctx, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("reconcile: claim generations: %w", err)
+	}
+	return generations, nil
 }

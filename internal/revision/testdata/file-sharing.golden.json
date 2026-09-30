@@ -3,7 +3,7 @@
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "509e551e453fc014da7925aa4c6c9d87a101b74a30ae2b7d867f1fad3b1e17e6",
+  "definitionHash": "404546ebae4cd05bfb65bd9f80d7fdec86e449a06be2961e39b503c63708ff91",
   "definition": {
     "schema": 1,
     "name": "file-sharing",
@@ -113,6 +113,16 @@
                 "collection": "buckets",
                 "service": "files",
                 "output": "endpoint"
+              }
+            ]
+          },
+          "S3_INTERNAL_ENDPOINT": {
+            "parts": [
+              {
+                "kind": "service_output",
+                "collection": "buckets",
+                "service": "files",
+                "output": "internal_endpoint"
               }
             ]
           },
@@ -326,5 +336,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "a6a6e53473374d61ff667b8a2fed97a5ed91ee36c0a7d36cb03139eacb111699"
+  "checksum": "66d97239794a0bec7ad6f6beb6195923352e07dd85ba6d94b6093505be5a2a72"
 }

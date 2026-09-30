@@ -63,7 +63,7 @@ Available outputs:
 | Collection | Plain | Secret |
 | --- | --- | --- |
 | `databases` | `host`, `port`, `name` | `username`, `password`, `url` |
-| `buckets` | `endpoint`, `name`, `region` | `access_key`, `secret_key` |
+| `buckets` | `endpoint`, `internal_endpoint`, `name`, `region` | `access_key`, `secret_key` |
 
 The value contract is derived entirely from `${NAME}` references; there
 is no declaration block. Every value is secret: stored encrypted per

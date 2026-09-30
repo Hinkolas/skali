@@ -29,8 +29,8 @@ applications:
     environment:
       UPLOAD_TOKEN: "${UPLOAD_TOKEN}"
       PRESIGN_TTL: "${PRESIGN_TTL:-15m}"
-      # Where browsers reach the bucket when that differs from the endpoint
-      # the application talks to; empty means the published endpoint.
+      # Overrides the signing host (local development: the loopback port
+      # the local platform maps the store to); empty signs for S3_ENDPOINT.
       S3_PUBLIC_ENDPOINT: "${S3_PUBLIC_ENDPOINT:-}"
 
       # Double-brace expressions reference values produced by managed Skali
@@ -41,7 +41,10 @@ applications:
       POSTGRES_USER: "{{databases.data.username}}"
       POSTGRES_PASSWORD: "{{databases.data.password}}"
 
+      # endpoint is what browsers reach and URLs are signed for; the
+      # application's own traffic stays on the in-cluster address.
       S3_ENDPOINT: "{{buckets.files.endpoint}}"
+      S3_INTERNAL_ENDPOINT: "{{buckets.files.internal_endpoint}}"
       S3_BUCKET: "{{buckets.files.name}}"
       S3_REGION: "{{buckets.files.region}}"
       S3_ACCESS_KEY: "{{buckets.files.access_key}}"

@@ -25,7 +25,7 @@ func TestDecodeAndContract(t *testing.T) {
 	require.Equal(t, "files", service.Key())
 	require.Equal(t, "bucket", service.Type())
 	require.Nil(t, service.Dependencies())
-	require.Equal(t, []string{"endpoint", "name", "region", "access_key", "secret_key"}, service.Outputs())
+	require.Equal(t, []string{"endpoint", "internal_endpoint", "name", "region", "access_key", "secret_key"}, service.Outputs())
 	require.Nil(t, service.Artifacts())
 	require.Equal(t, "claim:buckets.files", service.Steps()[0].Key)
 	require.True(t, service.Removal().DataLoss)
