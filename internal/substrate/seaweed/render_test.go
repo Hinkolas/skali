@@ -1,6 +1,8 @@
 package seaweed
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -124,6 +126,38 @@ func TestRenderS3Edge(t *testing.T) {
 	require.Contains(t, httpRoutes[0].(map[string]any), "middlewares",
 		"plain HTTP redirects to the S3 endpoint's canonical scheme")
 	require.NotNil(t, byName["Middleware/redirect-https"])
+}
+
+// TestRenderS3EdgeDomainChange: a hostname change re-applies the same
+// object names with the new host, so server-side apply replaces the old
+// domain in place and no object of the new rendering mentions it.
+func TestRenderS3EdgeDomainChange(t *testing.T) {
+	t.Parallel()
+	names := func(objects []runtime.Object) []string {
+		var out []string
+		for _, object := range objects {
+			typed := object.(*unstructured.Unstructured)
+			out = append(out, typed.GetKind()+"/"+typed.GetName())
+		}
+		return out
+	}
+	before := RenderS3Edge("skali-platform", "s3.old.example.com")
+	after := RenderS3Edge("skali-platform", "s3.new.example.com")
+	require.Equal(t, names(before), names(after), "the same objects are replaced in place")
+	for _, object := range after {
+		encoded, err := json.Marshal(object.(*unstructured.Unstructured).Object)
+		require.NoError(t, err)
+		require.NotContains(t, string(encoded), "s3.old.example.com")
+	}
+	// The renamed host reaches every place a domain appears: both route
+	// matches and the certificate's names.
+	mentions := 0
+	for _, object := range after {
+		encoded, err := json.Marshal(object.(*unstructured.Unstructured).Object)
+		require.NoError(t, err)
+		mentions += strings.Count(string(encoded), "s3.new.example.com")
+	}
+	require.Equal(t, 3, mentions, "TLS route match, HTTP route match, certificate dnsNames")
 }
 
 func TestTopologyDerivation(t *testing.T) {
