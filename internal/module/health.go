@@ -319,11 +319,18 @@ type PublicEndpointStatus struct {
 // BucketStatus projects one bucket's existence and usage as reported by the
 // provider observer. Usage is approximate by up to one poll interval.
 type BucketStatus struct {
-	Exists      bool
-	UsedBytes   int64
-	ObjectCount int64
-	QuotaBytes  int64
-	ReadOnly    bool
+	Exists bool
+	// UsedBytes is the live footprint the quota is judged on: bytes of
+	// objects that exist, deleted ones no longer counted. DiskBytes is what
+	// the store holds until its vacuum reclaims the deleted ones.
+	UsedBytes int64
+	DiskBytes int64
+	// EntryCount is the live entry count on the store's volumes: large
+	// objects are chunked into several entries, so it approximates the
+	// object count from above.
+	EntryCount int64
+	QuotaBytes int64
+	ReadOnly   bool
 	// ConfigurationDrift names the bucket settings the provider had to
 	// reset on this pass (policy, cors, lifecycle, versioning): something
 	// changed them behind the platform.

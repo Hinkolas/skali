@@ -104,7 +104,7 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 			}
 			stat := sizes[allocation.BucketName]
 			readOnly, err := c.enforceBucketQuota(ctx, claimRow.StorageQuotaBytes, allocation.BucketName,
-				stat.SizeBytes, allocation.FencedAt != nil)
+				stat.LiveBytes, allocation.FencedAt != nil)
 			if err != nil {
 				return nil, err
 			}
@@ -131,8 +131,9 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 				SharedKey:   seaweed.SharedKey,
 				Bucket: &module.BucketStatus{
 					Exists:             exists,
-					UsedBytes:          stat.SizeBytes,
-					ObjectCount:        stat.FileCount,
+					UsedBytes:          stat.LiveBytes,
+					DiskBytes:          stat.SizeBytes,
+					EntryCount:         stat.EntryCount,
 					QuotaBytes:         claimRow.StorageQuotaBytes,
 					ReadOnly:           readOnly,
 					ConfigurationDrift: drift,

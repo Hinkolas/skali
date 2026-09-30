@@ -84,13 +84,15 @@ func TestEvaluate(t *testing.T) {
 
 	// The full provider view: healthy with a usage diagnostic.
 	usage := module.ObservedResource{Kind: module.KindBucket,
-		Bucket: &module.BucketStatus{Exists: true, UsedBytes: 100, ObjectCount: 3, QuotaBytes: 1 << 30}}
+		Bucket: &module.BucketStatus{Exists: true, UsedBytes: 100, EntryCount: 3, QuotaBytes: 1 << 30}}
 	store := module.ObservedResource{Kind: module.KindObjectStore,
 		ObjectStore: &module.ObjectStoreStatus{MastersReady: 1, FilerReady: true, S3Ready: true}}
 	healthy := service.Evaluate([]module.ObservedResource{fresh(),
 		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), store, usage})
 	require.Equal(t, module.HealthHealthy, healthy.Health)
 	require.Equal(t, "usage", healthy.Diagnostics[0].Code)
+	require.Equal(t, "100 of 1073741824 bytes used; about 3 stored entries", healthy.Diagnostics[0].Message,
+		"entries, not objects: a large object is several entries")
 
 	// A stale provider degrades without blanking.
 	degraded := service.Evaluate([]module.ObservedResource{fresh(),

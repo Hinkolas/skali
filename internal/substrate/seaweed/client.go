@@ -367,26 +367,7 @@ func (c *Client) CollectionSizes(ctx context.Context) (map[string]CollectionStat
 	if err := json.Unmarshal(data, &vs); err != nil {
 		return nil, fmt.Errorf("seaweed: parse volume status: %w", err)
 	}
-
-	seen := map[int64]bool{}
-	stats := map[string]CollectionStat{}
-	for _, dc := range vs.Volumes.DataCenters {
-		for _, rack := range dc {
-			for _, node := range rack {
-				for _, vol := range node {
-					if vol.Collection == "" || seen[vol.ID] {
-						continue
-					}
-					seen[vol.ID] = true
-					s := stats[vol.Collection]
-					s.SizeBytes += vol.Size
-					s.FileCount += vol.FileCount
-					stats[vol.Collection] = s
-				}
-			}
-		}
-	}
-	return stats, nil
+	return collectionStats(vs), nil
 }
 
 // VolumeSizesByNode reads each volume server's on-disk data footprint from

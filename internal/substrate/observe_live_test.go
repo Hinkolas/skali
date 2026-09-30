@@ -162,7 +162,7 @@ func TestLiveSeaweedObservation(t *testing.T) {
 		resources := observed.Snapshot(env.ID).ForService("buckets.files")
 		for _, resource := range resources {
 			if resource.Kind == module.KindBucket && resource.Bucket != nil {
-				return resource.Bucket.ObjectCount >= 1 && resource.Bucket.UsedBytes > 0
+				return resource.Bucket.EntryCount >= 1 && resource.Bucket.UsedBytes > 0
 			}
 		}
 		return false
