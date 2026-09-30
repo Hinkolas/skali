@@ -81,6 +81,9 @@
 	{#if connection?.endpoint}
 		<div class="flex flex-1 flex-col gap-2.25">
 			<CopyField label="Endpoint" value={connection.endpoint} />
+			{#if connection.internal_endpoint && connection.internal_endpoint !== connection.endpoint}
+				<CopyField label="Internal endpoint" value={connection.internal_endpoint} />
+			{/if}
 			<CopyField label="Bucket" value={connection.bucket ?? ''} />
 			<CopyField label="Region" value={connection.region ?? ''} />
 		</div>

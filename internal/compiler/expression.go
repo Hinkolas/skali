@@ -18,11 +18,12 @@ var outputCatalog = map[string]map[string]bool{
 		"url":      true,
 	},
 	"buckets": {
-		"endpoint":   false,
-		"name":       false,
-		"region":     false,
-		"access_key": true,
-		"secret_key": true,
+		"endpoint":          false,
+		"internal_endpoint": false,
+		"name":              false,
+		"region":            false,
+		"access_key":        true,
+		"secret_key":        true,
 	},
 }
 
@@ -33,7 +34,7 @@ var outputCatalog = map[string]map[string]bool{
 // from the catalog itself.
 var endpointBearing = map[string]map[string]bool{
 	"databases": {"host": true, "port": true, "url": true},
-	"buckets":   {"endpoint": true},
+	"buckets":   {"endpoint": true, "internal_endpoint": true},
 }
 
 // EndpointBearingOutput reports whether an output's value embeds a network

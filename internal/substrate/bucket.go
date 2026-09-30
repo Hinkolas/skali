@@ -183,12 +183,21 @@ func (c *Controller) ensureAllocationRecord(ctx context.Context, row store.Bucke
 }
 
 // bucketEndpoint is the endpoint published to consumers: the public S3
-// domain when the installation configures one (presigned URLs resolve
-// publicly), the in-cluster service URL otherwise.
+// domain when a managed installation configures one (presigned URLs
+// resolve publicly; the edge that serves it is only rendered on managed
+// clusters), the in-cluster service URL otherwise.
 func (c *Controller) bucketEndpoint() string {
-	if c.cfg.S3Domain != "" {
+	if c.cfg.Managed && c.cfg.S3Domain != "" {
 		return "https://" + c.cfg.S3Domain
 	}
+	return InternalBucketEndpoint()
+}
+
+// InternalBucketEndpoint is the in-cluster S3 gateway URL, published as the
+// internal_endpoint output beside the public one so backend traffic need
+// not hairpin through the edge while signed URLs still carry the public
+// host. With one store per installation it is a constant.
+func InternalBucketEndpoint() string {
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", seaweed.S3Service, Namespace, seaweed.S3Port)
 }
 
@@ -224,7 +233,7 @@ func (c *Controller) ensureBucketCredentialSecret(ctx context.Context, row store
 }
 
 // ensureBucketOutputMirror writes the service claim's connection outputs
-// into its environment namespace; the five keys mirror the compiler's
+// into its environment namespace; the six keys mirror the compiler's
 // bucket output catalog. System claims publish outputs through the internal
 // claim API instead.
 func (c *Controller) ensureBucketOutputMirror(ctx context.Context, row store.BucketClaim, allocation store.BucketAllocation, accessKey, secretKey string) error {
@@ -241,11 +250,12 @@ func (c *Controller) ensureBucketOutputMirror(ctx context.Context, row store.Buc
 	}
 	secret := kubernetes.RenderOutputSecret(project, environment, environmentID,
 		"buckets", service, map[string][]byte{
-			"endpoint":   []byte(allocation.Endpoint),
-			"name":       []byte(allocation.BucketName),
-			"region":     []byte(allocation.Region),
-			"access_key": []byte(accessKey),
-			"secret_key": []byte(secretKey),
+			"endpoint":          []byte(allocation.Endpoint),
+			"internal_endpoint": []byte(InternalBucketEndpoint()),
+			"name":              []byte(allocation.BucketName),
+			"region":            []byte(allocation.Region),
+			"access_key":        []byte(accessKey),
+			"secret_key":        []byte(secretKey),
 		})
 	if _, err := c.deps.Cluster.ApplyAs(ctx, secret, kube.FieldManagerPlatform, false); err != nil {
 		if apierrors.IsNotFound(err) {

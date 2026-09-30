@@ -33,8 +33,9 @@ databases:
 // fakeClaims scripts the claim manager: the kernel must consume readiness
 // without knowing claim mechanics.
 type fakeClaims struct {
-	states []ClaimState
-	calls  int
+	states      []ClaimState
+	generations map[string]string
+	calls       int
 }
 
 func (f *fakeClaims) Ensure(_ context.Context, _ ClaimEnsureInput) ([]ClaimState, error) {
@@ -44,6 +45,10 @@ func (f *fakeClaims) Ensure(_ context.Context, _ ClaimEnsureInput) ([]ClaimState
 
 func (f *fakeClaims) Release(_ context.Context, _ uuid.UUID) (bool, []string, error) {
 	return true, nil, nil
+}
+
+func (f *fakeClaims) Generations(_ context.Context, _ uuid.UUID) (map[string]string, error) {
+	return f.generations, nil
 }
 
 // A database-bearing revision: the application waits visibly on the claim,

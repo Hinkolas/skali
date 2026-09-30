@@ -14,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/substrate"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
@@ -197,16 +198,21 @@ func (h *appEnvHandlers) collectOutputs(ctx context.Context, environmentID uuid.
 				warnings = append(warnings, dotted+": reading the credential failed")
 				continue
 			}
-			endpoint := allocation.Endpoint
+			endpoint, internal := allocation.Endpoint, substrate.InternalBucketEndpoint()
 			if audience == "local" {
+				// Both endpoints collapse onto the loopback port: the host
+				// reaches the gateway only through the local platform's
+				// port map, and signs for it too.
 				endpoint = "http://127.0.0.1:" + hostPort(bundle.S3NodePort)
+				internal = endpoint
 			}
 			outputs[dotted] = map[string]string{
-				"endpoint":   endpoint,
-				"name":       allocation.BucketName,
-				"region":     allocation.Region,
-				"access_key": string(data["access_key"]),
-				"secret_key": string(data["secret_key"]),
+				"endpoint":          endpoint,
+				"internal_endpoint": internal,
+				"name":              allocation.BucketName,
+				"region":            allocation.Region,
+				"access_key":        string(data["access_key"]),
+				"secret_key":        string(data["secret_key"]),
 			}
 		}
 	}

@@ -2,9 +2,13 @@ package substrate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -156,6 +160,10 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		Masters:     int(row.Masters),
 		Replication: row.Replication,
 		Managed:     c.cfg.Managed,
+		// The filer reads its store config only at start: hashing the
+		// Secret's content into the pod template rolls the filers when the
+		// metadata connection or credential changes.
+		StoreConfigHash: secretDataHash(storeSecret),
 	}
 	objects := seaweed.RenderDev(spec)
 	if c.cfg.Managed {
@@ -357,4 +365,20 @@ func (c *Controller) releaseObjectStore(ctx context.Context, row store.ObjectSto
 	}
 	slog.Info("substrate: object store released")
 	return nil
+}
+
+// secretDataHash identifies a Secret's content (sorted key=value lines,
+// sha256, 16 hex chars) without ever exposing it: only the hash lands on a
+// pod template.
+func secretDataHash(secret *corev1.Secret) string {
+	lines := make([]string, 0, len(secret.StringData)+len(secret.Data))
+	for key, value := range secret.StringData {
+		lines = append(lines, key+"="+value)
+	}
+	for key, value := range secret.Data {
+		lines = append(lines, key+"="+string(value))
+	}
+	slices.Sort(lines)
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:8])
 }

@@ -1080,3 +1080,74 @@ func firstDeployment(t *testing.T, objects []runtime.Object) *appsv1.Deployment 
 	require.FailNow(t, "no Deployment rendered")
 	return nil
 }
+
+// Service outputs reach pods as environment variables read once at start;
+// the output generation of every referenced service is part of the values
+// identity so a republished endpoint or a rotated credential rolls exactly
+// the applications referencing it.
+func TestRenderOutputGenerations(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+name: outputs
+applications:
+  web:
+    image: example.invalid/web:1
+    environment:
+      S3_ENDPOINT: "{{ buckets.files.endpoint }}"
+      S3_KEY: "{{ buckets.files.access_key }}"
+  worker:
+    image: example.invalid/worker:1
+    environment:
+      DATABASE_URL: "{{ databases.data.url }}"
+  cron:
+    image: example.invalid/cron:1
+databases:
+  data:
+    engine: postgres
+    version: 17
+buckets:
+  files:
+    quotas:
+      storage: 1GB
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+
+	hashes := func(t *testing.T, generations map[string]string) map[string]string {
+		t.Helper()
+		objects, err := Render(result, Options{
+			Namespace:         "skali-outputs",
+			EnvironmentID:     "0198f2f4-0000-7000-8000-000000000004",
+			OutputGenerations: generations,
+		})
+		require.NoError(t, err)
+		out := map[string]string{}
+		for _, obj := range objects {
+			if deployment, ok := obj.(*appsv1.Deployment); ok {
+				out[deployment.Labels[LabelApplication]] = deployment.Spec.Template.Annotations[AnnotationValuesHash]
+			}
+		}
+		return out
+	}
+
+	base := hashes(t, map[string]string{"buckets.files": "aaaa", "databases.data": "bbbb"})
+	require.Len(t, base["web"], 16)
+	require.Len(t, base["worker"], 16)
+	require.Empty(t, base["cron"], "no references, no identity")
+
+	// The bucket's endpoint republished (or its credential rotated): only
+	// the application referencing it rolls.
+	bucket := hashes(t, map[string]string{"buckets.files": "cccc", "databases.data": "bbbb"})
+	require.NotEqual(t, base["web"], bucket["web"])
+	require.Equal(t, base["worker"], bucket["worker"])
+
+	// And the same for the database.
+	database := hashes(t, map[string]string{"buckets.files": "aaaa", "databases.data": "dddd"})
+	require.Equal(t, base["web"], database["web"])
+	require.NotEqual(t, base["worker"], database["worker"])
+
+	// Missing generations (offline rendering, a substrate not yet consulted)
+	// still render, with a stable identity.
+	require.Equal(t, hashes(t, nil), hashes(t, nil))
+}

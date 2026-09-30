@@ -54,6 +54,11 @@ type ClaimManager interface {
 	// purging environment, reporting completion and, while unfinished, what
 	// is still going.
 	Release(ctx context.Context, environmentID uuid.UUID) (released bool, detail []string, err error)
+	// Generations reports, per provisioned claim (dotted service name), a
+	// short non-secret identity of its connection outputs (endpoints and
+	// credential version). Applications referencing the service fold it
+	// into their pod-template identity, so a changed output rolls them.
+	Generations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error)
 }
 
 // ClaimEnsureInput carries the environment identity the portable revision

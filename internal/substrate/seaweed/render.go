@@ -18,9 +18,15 @@ import (
 )
 
 // FilerStoreSecret carries the filer's WEED_POSTGRES2_* store config,
-// derived from the metadata system claim's outputs. A change bounces the
-// filer pods; env only lands at container start.
+// derived from the metadata system claim's outputs. Env only lands at
+// container start and a Secret change alone restarts nothing, so the pod
+// templates carry a hash of the Secret's data (StoreSpec.StoreConfigHash,
+// AnnotationConfigHash): a changed store config rolls the filers.
 const FilerStoreSecret = "seaweed-filer-store"
+
+// AnnotationConfigHash is the pod-template annotation carrying the hash of
+// the configuration the process reads only at start.
+const AnnotationConfigHash = "skali.dev/config-hash"
 
 // VolumeHostPath is where a volume server keeps that node's objects: a
 // volume server IS the node's disk (owned-hosts doctrine), so membership is
@@ -42,6 +48,20 @@ type StoreSpec struct {
 	// Managed pins components to object-storage-capable nodes; local dev
 	// renders the all-in-one shape instead.
 	Managed bool
+	// StoreConfigHash identifies the filer store Secret's content; it is
+	// stamped on the filer pod templates so a changed metadata connection
+	// rolls the processes that only read it at start. Empty stamps nothing.
+	StoreConfigHash string
+}
+
+// templateMeta is the pod-template metadata of a component: its labels
+// plus the config-hash annotation when the spec carries one.
+func templateMeta(spec StoreSpec, labels map[string]string) metav1.ObjectMeta {
+	meta := metav1.ObjectMeta{Labels: labels}
+	if spec.StoreConfigHash != "" {
+		meta.Annotations = map[string]string{AnnotationConfigHash: spec.StoreConfigHash}
+	}
+	return meta
 }
 
 func componentLabels(app string) map[string]string {
@@ -403,7 +423,7 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 			Replicas: replicas(2),
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": FilerService}},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: templateMeta(spec, labels),
 				Spec: corev1.PodSpec{
 					PriorityClassName: layout.PriorityClassCritical,
 					Affinity: &corev1.Affinity{
@@ -499,7 +519,7 @@ func renderAllInOne(spec StoreSpec) *appsv1.Deployment {
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": AllInOneApp}},
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: templateMeta(spec, labels),
 				Spec: corev1.PodSpec{
 					PriorityClassName: layout.PriorityClassCritical,
 					Containers: []corev1.Container{{

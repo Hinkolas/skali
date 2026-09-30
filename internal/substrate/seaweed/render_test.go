@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func TestRenderProductionShape(t *testing.T) {
@@ -134,4 +135,29 @@ func TestTopologyDerivation(t *testing.T) {
 	require.Equal(t, "000", ReplicationForNodes(1))
 	require.Equal(t, "001", ReplicationForNodes(2))
 	require.Equal(t, "001", ReplicationForNodes(4))
+}
+
+// The filer store Secret reaches the process as env read at start; the
+// spec's config hash on the pod template is what rolls the filers when
+// the store config changes, in both shapes.
+func TestRenderStoreConfigHashRollsFilers(t *testing.T) {
+	t.Parallel()
+	find := func(objects []runtime.Object, name string) *appsv1.Deployment {
+		for _, obj := range objects {
+			if deployment, ok := obj.(*appsv1.Deployment); ok && deployment.Name == name {
+				return deployment
+			}
+		}
+		return nil
+	}
+	spec := StoreSpec{Namespace: "skali-platform", Masters: 1, Replication: "000", Managed: true, StoreConfigHash: "abc123"}
+	filer := find(RenderProduction(spec), FilerService)
+	require.NotNil(t, filer)
+	require.Equal(t, "abc123", filer.Spec.Template.Annotations[AnnotationConfigHash])
+	spec.Managed = false
+	allInOne := find(RenderDev(spec), AllInOneApp)
+	require.NotNil(t, allInOne)
+	require.Equal(t, "abc123", allInOne.Spec.Template.Annotations[AnnotationConfigHash])
+	spec.StoreConfigHash = ""
+	require.Nil(t, find(RenderDev(spec), AllInOneApp).Spec.Template.Annotations, "no hash, no annotation")
 }

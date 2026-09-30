@@ -9,6 +9,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/substrate"
 )
 
 // bucketsHandlers serves bucket-service connection projections, mirroring
@@ -26,6 +27,7 @@ type bucketConnectionPayload struct {
 	Visibility        string `json:"visibility"`
 	StorageQuotaBytes int64  `json:"storage_quota_bytes,omitempty"`
 	Endpoint          string `json:"endpoint,omitempty"`
+	InternalEndpoint  string `json:"internal_endpoint,omitempty"`
 	Bucket            string `json:"bucket,omitempty"`
 	Region            string `json:"region,omitempty"`
 	CredentialVersion int64  `json:"credential_version,omitempty"`
@@ -59,6 +61,7 @@ func (h *bucketsHandlers) connection(w http.ResponseWriter, r *http.Request) {
 	}
 	if allocation, err := h.db.LiveAllocation(r.Context(), row.ID); err == nil {
 		payload.Endpoint = allocation.Endpoint
+		payload.InternalEndpoint = substrate.InternalBucketEndpoint()
 		payload.Bucket = allocation.BucketName
 		payload.Region = allocation.Region
 		payload.CredentialVersion = allocation.CredentialVersion

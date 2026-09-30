@@ -22,11 +22,18 @@ buckets:
       storage: 20GB
 ```
 
-Outputs: `endpoint`, `name`, `region` (plain) and `access_key`,
-`secret_key` (secret). The application waits until the bucket is
-provisioned and starts with the outputs injected; the access identity is
-scoped to exactly its bucket, and revealing credentials never passes
-through definitions, revisions, or logs.
+Outputs: `endpoint`, `internal_endpoint`, `name`, `region` (plain) and
+`access_key`, `secret_key` (secret). The application waits until the
+bucket is provisioned and starts with the outputs injected; the access
+identity is scoped to exactly its bucket, and revealing credentials never
+passes through definitions, revisions, or logs.
+
+Outputs are delivered to pods as environment variables, which a process
+reads once at start. Skali folds a non-secret identity of each referenced
+service's outputs (its endpoints and credential version) into the pod
+template, so when an endpoint is republished or a credential rotates,
+exactly the applications referencing that service roll and start with the
+new values; nothing else restarts.
 
 ## The v1 surface
 
@@ -66,13 +73,17 @@ deleted-but-unvacuumed bytes until SeaweedFS compacts them.
 
 ## Endpoints
 
-Applications reach their buckets on the internal endpoint by default
-(`http://seaweed-s3.skali-platform.svc.cluster.local:8333`). When the
-installation configures a public S3 domain (`endpoints.s3` at
-`skali cluster init` or `upgrade`), the `endpoint` output switches to
-`https://<domain>` through the edge with automatic TLS. In-cluster traffic
-hairpins through the edge too, so every signature is computed for the one
-public host.
+Two endpoint outputs exist. `internal_endpoint` is always the in-cluster
+gateway (`http://seaweed-s3.skali-platform.svc.cluster.local:8333`): the
+address for the application's own traffic. `endpoint` is the address to
+sign URLs for: it equals the internal endpoint until the installation
+configures a public S3 domain (`endpoints.s3` at `skali cluster init` or
+`upgrade`), when it switches to `https://<domain>` through the edge with
+automatic TLS. Both carry the same credentials, so an application can talk
+to the store directly and still hand browsers URLs signed for the public
+host. Signing against `endpoint` and everything else against
+`internal_endpoint` is the intended split; using `endpoint` for both works
+too, hairpinning through the edge.
 
 A public endpoint is not a public bucket. The endpoint makes the S3 API
 reachable; every bucket stays private and every request still needs a
