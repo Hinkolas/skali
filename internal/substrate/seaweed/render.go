@@ -44,6 +44,8 @@ type StoreSpec struct {
 	Namespace string
 	// Masters is 1 or 3 (MastersForNodes).
 	Masters int
+	// Filers is 1 or 2 (FilersForNodes); zero renders one.
+	Filers int
 	// Replication is the volume replication code (ReplicationForNodes).
 	Replication string
 	// Managed pins components to object-storage-capable nodes; local dev
@@ -114,18 +116,50 @@ func RenderProduction(spec StoreSpec) []runtime.Object {
 		renderService(spec.Namespace, S3Service, MasterService, FilerService, []corev1.ServicePort{
 			{Name: "s3", Port: S3Port},
 		}),
-		renderFilerBudget(spec.Namespace),
 	}
 	if spec.Masters >= 3 {
 		objects = append(objects, renderMasterBudget(spec.Namespace))
 	}
+	if spec.filers() >= 2 {
+		objects = append(objects, renderFilerBudget(spec.Namespace))
+	}
 	return objects
+}
+
+// filers is the rendered filer count; an unset spec renders one.
+func (spec StoreSpec) filers() int {
+	if spec.Filers < 1 {
+		return 1
+	}
+	return spec.Filers
+}
+
+// spreadAcrossNodes is the placement rule for a replicated component:
+// its pods must spread across nodes (one per node once there are enough),
+// required rather than preferred, so replicas never silently share a node
+// and a node loss takes at most one of them. A topology spread with a
+// skew of one, not anti-affinity: it is satisfiable on a single node (one
+// domain has no skew), it lets a rollout surge a second pod onto a node
+// while the fleet is full (two against one is a skew of one), and with
+// taints honored a failed node stops counting, so its replacement can
+// land on a survivor instead of pending. A pod that cannot be placed
+// stays pending and shows as a ready count below the recorded shape.
+func spreadAcrossNodes(app string) []corev1.TopologySpreadConstraint {
+	honor := corev1.NodeInclusionPolicyHonor
+	return []corev1.TopologySpreadConstraint{{
+		MaxSkew:           1,
+		TopologyKey:       "kubernetes.io/hostname",
+		WhenUnsatisfiable: corev1.DoNotSchedule,
+		LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}},
+		NodeTaintsPolicy:  &honor,
+	}}
 }
 
 // Disruption budgets keep a node drain from taking the store with it: a
 // raft quorum tolerates one master away at a time, and one filer must
-// keep serving the S3 gateway. A single master has no budget: a budget of
-// zero tolerated disruptions would only block drains forever.
+// keep serving the S3 gateway. A single master or a single filer has no
+// budget: a budget of zero tolerated disruptions would only block drains
+// forever.
 func renderMasterBudget(namespace string) *policyv1.PodDisruptionBudget {
 	one := intstr.FromInt32(1)
 	return &policyv1.PodDisruptionBudget{
@@ -328,21 +362,10 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 				Spec: corev1.PodSpec{
 					NodeSelector:      capabilitySelector(),
 					PriorityClassName: layout.PriorityClassCritical,
-					Affinity: &corev1.Affinity{
-						// Quorum members apart from each other, preferred: a
-						// smaller fleet still schedules everything.
-						PodAntiAffinity: &corev1.PodAntiAffinity{
-							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
-								Weight: 100,
-								PodAffinityTerm: corev1.PodAffinityTerm{
-									TopologyKey: "kubernetes.io/hostname",
-									LabelSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{"app": MasterService},
-									},
-								},
-							}},
-						},
-					},
+					// Quorum members apart from each other: three masters
+					// exist only once three capable nodes do, so the rule
+					// is satisfiable by construction.
+					TopologySpreadConstraints: spreadAcrossNodes(MasterService),
 					Containers: []corev1.Container{{
 						Name:  "master",
 						Image: Image,
@@ -496,7 +519,7 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: objectMeta(spec.Namespace, FilerService, FilerService),
 		Spec: appsv1.DeploymentSpec{
-			Replicas: replicas(2),
+			Replicas: replicas(int32(spec.filers())),
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": FilerService}},
 			// One filer keeps serving through a rollout: the new pod must be
 			// ready before an old one goes.
@@ -511,19 +534,10 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 				ObjectMeta: templateMeta(spec, labels),
 				Spec: corev1.PodSpec{
 					PriorityClassName: layout.PriorityClassCritical,
-					Affinity: &corev1.Affinity{
-						PodAntiAffinity: &corev1.PodAntiAffinity{
-							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
-								Weight: 100,
-								PodAffinityTerm: corev1.PodAffinityTerm{
-									TopologyKey: "kubernetes.io/hostname",
-									LabelSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{"app": FilerService},
-									},
-								},
-							}},
-						},
-					},
+					// Gateways apart from each other: the second filer
+					// exists only once a second node does. Filers are
+					// stateless and not pinned to capable nodes.
+					TopologySpreadConstraints: spreadAcrossNodes(FilerService),
 					Containers: []corev1.Container{{
 						Name:  "filer",
 						Image: Image,

@@ -75,6 +75,10 @@ The goal of this block: I can put a paying workload on skali and sleep.
 - [ ] Stateful removal: reclaim PersistentVolumeClaims that disappear from
       a manifest and namespaces orphaned outside a purge, as an explicit
       destructive transition. Today both are retained forever.
+- [ ] Replicated metadata for the object store: the bucket directories sit
+      in the shared pool at the `single` tier, so a three-node fleet whose
+      store survives a node loss still loses its buckets with that one
+      Postgres pod. Raise the metadata claim's tier with the fleet.
 - [ ] Multi-node production topology on Hetzner (control-plane/edge trio,
       app nodes, db nodes) actually installed and running. Run the never-run
       live checks against it: HA server join, availability tiers,

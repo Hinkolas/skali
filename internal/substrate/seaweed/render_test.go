@@ -15,7 +15,7 @@ import (
 
 func TestRenderProductionShape(t *testing.T) {
 	t.Parallel()
-	spec := StoreSpec{Namespace: "skali-platform", Masters: 3, Replication: "001", Managed: true}
+	spec := StoreSpec{Namespace: "skali-platform", Masters: 3, Filers: 2, Replication: "001", Managed: true}
 	objects := RenderProduction(spec)
 
 	var sts *appsv1.StatefulSet
@@ -52,6 +52,7 @@ func TestRenderProductionShape(t *testing.T) {
 
 	require.NotNil(t, filer)
 	require.EqualValues(t, 2, *filer.Spec.Replicas)
+	require.Empty(t, filer.Spec.Template.Spec.NodeSelector, "filers are stateless and float across the fleet")
 	require.Contains(t, filer.Spec.Template.Spec.Containers[0].Args, "-s3")
 	require.Equal(t, FilerStoreSecret, filer.Spec.Template.Spec.Containers[0].EnvFrom[0].SecretRef.Name)
 
@@ -167,6 +168,10 @@ func TestTopologyDerivation(t *testing.T) {
 	require.Equal(t, 1, MastersForNodes(2))
 	require.Equal(t, 3, MastersForNodes(3))
 	require.Equal(t, 3, MastersForNodes(5))
+	require.Equal(t, 1, FilersForNodes(0))
+	require.Equal(t, 1, FilersForNodes(1))
+	require.Equal(t, 2, FilersForNodes(2))
+	require.Equal(t, 2, FilersForNodes(5))
 	require.Equal(t, "000", ReplicationForNodes(1))
 	require.Equal(t, "001", ReplicationForNodes(2))
 	require.Equal(t, "001", ReplicationForNodes(4))
@@ -204,7 +209,7 @@ func TestRenderStoreConfigHashRollsFilers(t *testing.T) {
 // repair (without -apply the pin only reports).
 func TestRenderProductionOperability(t *testing.T) {
 	t.Parallel()
-	three := RenderProduction(StoreSpec{Namespace: "skali-platform", Masters: 3, Replication: "001", Managed: true})
+	three := RenderProduction(StoreSpec{Namespace: "skali-platform", Masters: 3, Filers: 2, Replication: "001", Managed: true})
 	var sts *appsv1.StatefulSet
 	var daemon *appsv1.DaemonSet
 	var filer *appsv1.Deployment
@@ -250,13 +255,61 @@ func TestRenderProductionOperability(t *testing.T) {
 	require.Contains(t, config.Data["master.toml"], "volume.fix.replication -apply")
 
 	// A single master has no budget: zero tolerated disruptions would
-	// only block drains.
+	// only block drains. Two filers on two nodes keep theirs.
+	two := RenderProduction(StoreSpec{Namespace: "skali-platform", Masters: 1, Filers: 2, Replication: "001", Managed: true})
+	require.Equal(t, []string{FilerService}, budgetNames(two), "only the filer budget on a single-master store")
+
+	// A single node runs a single filer, so no filer budget either; an
+	// unset filer count renders the single-node shape.
 	one := RenderProduction(StoreSpec{Namespace: "skali-platform", Masters: 1, Replication: "000", Managed: true})
-	count := 0
+	require.Empty(t, budgetNames(one), "no budget can tolerate a disruption on a single node")
 	for _, object := range one {
-		if _, ok := object.(*policyv1.PodDisruptionBudget); ok {
-			count++
+		if deployment, ok := object.(*appsv1.Deployment); ok {
+			require.EqualValues(t, 1, *deployment.Spec.Replicas)
 		}
 	}
-	require.Equal(t, 1, count, "only the filer budget on a single-master store")
+}
+
+func budgetNames(objects []runtime.Object) []string {
+	var names []string
+	for _, object := range objects {
+		if budget, ok := object.(*policyv1.PodDisruptionBudget); ok {
+			names = append(names, budget.Name)
+		}
+	}
+	return names
+}
+
+// TestRenderPlacementIsRequired: masters and filers spread across nodes
+// by a required topology spread (skew one, hostname, taints honored), not
+// a preference, so replicas never silently share a node; a single node
+// stays schedulable because one domain has no skew, and a rollout can
+// surge on a full fleet because two against one is within the skew.
+func TestRenderPlacementIsRequired(t *testing.T) {
+	t.Parallel()
+	objects := RenderProduction(StoreSpec{Namespace: "skali-platform", Masters: 3, Filers: 2, Replication: "001", Managed: true})
+	checked := 0
+	for _, object := range objects {
+		var template corev1.PodSpec
+		var app string
+		switch typed := object.(type) {
+		case *appsv1.StatefulSet:
+			template, app = typed.Spec.Template.Spec, MasterService
+		case *appsv1.Deployment:
+			template, app = typed.Spec.Template.Spec, FilerService
+		default:
+			continue
+		}
+		checked++
+		require.Nil(t, template.Affinity, "%s: no preferred placement left", app)
+		require.Len(t, template.TopologySpreadConstraints, 1, app)
+		spread := template.TopologySpreadConstraints[0]
+		require.EqualValues(t, 1, spread.MaxSkew, app)
+		require.Equal(t, "kubernetes.io/hostname", spread.TopologyKey, app)
+		require.Equal(t, corev1.DoNotSchedule, spread.WhenUnsatisfiable, app)
+		require.Equal(t, map[string]string{"app": app}, spread.LabelSelector.MatchLabels)
+		require.NotNil(t, spread.NodeTaintsPolicy, app)
+		require.Equal(t, corev1.NodeInclusionPolicyHonor, *spread.NodeTaintsPolicy, app)
+	}
+	require.Equal(t, 2, checked, "masters and filers both carry the rule")
 }

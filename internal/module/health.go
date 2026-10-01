@@ -309,9 +309,22 @@ type ObjectStoreStatus struct {
 	// differs from the recorded replication; the substrate moves them on
 	// its next pass, and they gain no copy until it does.
 	ReplicationPendingVolumes int32
+	// Placement names the components whose replicas share a node although
+	// the fleet has room to spread them: the placement rule keeps them
+	// apart at scheduling time, but a replacement scheduled during a node
+	// outage stays where it landed when the node returns.
+	Placement []ComponentPlacement
 	// PublicEndpoint is set when the installation publishes an S3 domain:
 	// the domain and its certificate's issuance state.
 	PublicEndpoint *PublicEndpointStatus
+}
+
+// ComponentPlacement is one node carrying more of a store component's
+// pods than an even spread allows.
+type ComponentPlacement struct {
+	Component string
+	Node      string
+	Pods      int32
 }
 
 // PublicEndpointStatus is the public S3 domain's edge state.
