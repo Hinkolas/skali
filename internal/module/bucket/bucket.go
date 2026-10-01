@@ -228,6 +228,10 @@ func storeDiagnostics(store *module.ObjectStoreStatus) []module.Diagnostic {
 		warn("store-degraded", fmt.Sprintf("%d volumes still carry the previous replication setting; the store applies the recorded one on its next pass",
 			store.ReplicationPendingVolumes))
 	}
+	for _, placement := range store.Placement {
+		warn("store-degraded", fmt.Sprintf("%d of the object store's %s pods share node %s; losing that node takes them together, deleting one pod reschedules it apart",
+			placement.Pods, placement.Component, placement.Node))
+	}
 	if !store.FilerReady {
 		warn("store-degraded", "the object store's metadata service is not serving")
 	}

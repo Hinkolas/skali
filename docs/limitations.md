@@ -149,6 +149,40 @@ maintenance lock, so while the maintenance script holds it the move waits
 for the next reconcile pass; the bucket names the volumes still on the
 previous setting until it lands.
 
+## Node-failure tolerance of the object store
+
+What the managed object store survives depends on how many nodes the
+fleet has; the platform never promises more than the fleet can hold.
+
+- **One node.** No node-failure tolerance: one master, one gateway, one
+  volume server, no replication. Everything goes down with the node and
+  comes back with it; nothing is lost that the disk keeps. Rollouts are
+  still zero-downtime (the new gateway is ready before the old one goes).
+- **Two nodes.** Data survives the loss of either node: every volume keeps
+  a copy on the other node, and the two gateways run one per node, so S3
+  keeps answering. Metadata does not: two nodes cannot form a raft
+  quorum, so the store runs a single master, and losing the node that
+  carries it stops the store (reads and writes) until that node returns.
+  The master's state lives on that node's disk, so it does not move to
+  the survivor. A two-node fleet is therefore durable, not highly
+  available.
+- **Three or more nodes.** The master quorum tolerates one node away, the
+  gateways and bytes as above; the store itself survives any single node
+  failure. Replication stays at one extra copy, so two simultaneous node
+  failures can lose data.
+
+The spread rules hold these shapes: two replicas of a component are never
+placed on the same node while another eligible node exists. After a node
+failure a replacement is scheduled onto a surviving node; when the failed
+node returns the replacement is not moved back, and the bucket reports
+the node the replicas share until one pod is deleted and rescheduled
+apart. On a fleet too small for the recorded shape (a capable node
+removed from a three-master store), the extra replica stays pending and
+the bucket reports the component below its shape rather than placing two
+members on one node.
+
+In every size the buckets also depend on the metadata database below.
+
 ## Object storage depends on the metadata database
 
 Every bucket's directory (which objects exist, where their bytes live)
@@ -159,7 +193,11 @@ metadata database is unreachable, no object can be read or written even
 though nothing is lost, and the bucket reports `store-degraded` with the
 metadata service named. Availability of buckets is therefore bounded by
 the availability tier of the shared pool, and a restore of the system
-database restores the bucket directories with it.
+database restores the bucket directories with it. The store claims that
+pool at the `single` tier today, so even a three-node fleet whose masters,
+gateways and bytes all survive a node loses its buckets while the pool's
+one Postgres pod is away; moving the metadata claim to a replicated tier
+once the fleet can hold one is tracked on the roadmap.
 
 ## Bucket snapshots are loosely consistent
 

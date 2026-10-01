@@ -161,6 +161,18 @@ func TestEvaluate(t *testing.T) {
 	require.Contains(t, degraded.Diagnostics[1].Message, "2 of 3 volume servers")
 	require.Contains(t, degraded.Diagnostics[2].Message, "4 volumes have fewer copies")
 	require.Contains(t, degraded.Diagnostics[3].Message, "2 volumes still carry the previous replication")
+	// Replicas sharing a node the fleet could have spread them across:
+	// degraded, the node and the remedy named.
+	shared := module.ObservedResource{Kind: module.KindObjectStore,
+		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 3, MastersReady: 3, VolumeServersDesired: 3,
+			VolumeServersReady: 3, FilerReady: true, S3Ready: true,
+			Placement: []module.ComponentPlacement{{Component: "filer", Node: "node-a", Pods: 2}}}}
+	degraded = service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), shared, usage})
+	require.Equal(t, module.HealthDegraded, degraded.Health)
+	require.Equal(t, "store-degraded", degraded.Diagnostics[0].Code)
+	require.Contains(t, degraded.Diagnostics[0].Message, "2 of the object store's filer pods share node node-a")
+	require.Contains(t, degraded.Diagnostics[0].Message, "deleting one pod reschedules it apart")
 	// A public endpoint whose certificate is not issued degrades and says
 	// what that means for presigned URLs; an issued one is silent.
 	certPending := module.ObservedResource{Kind: module.KindObjectStore,

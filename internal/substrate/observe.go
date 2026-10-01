@@ -76,6 +76,13 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 			storeObj.ObjectStore.UnderReplicatedVolumes = int32(health.UnderReplicated)
 			storeObj.ObjectStore.ReplicationPendingVolumes = int32(health.Unconfigured)
 		}
+		if c.cfg.Managed {
+			placement, err := c.placementShortfalls(ctx, *row)
+			if err != nil {
+				return nil, err
+			}
+			storeObj.ObjectStore.Placement = placement
+		}
 		if c.publicEdgeEnabled() {
 			storeObj.ObjectStore.PublicEndpoint = c.publicEndpointStatus(ctx)
 		}

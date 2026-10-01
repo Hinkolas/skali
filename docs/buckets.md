@@ -198,12 +198,15 @@ against it.
 
 ## Topology
 
-Production derives the store's shape from the object-storage-capable node
-count: three raft masters when three or more nodes carry the capability
-(else one), one volume server per capable node using the node's disk, and
-one replica on a different node when the fleet has two or more (none on a
-single node). The shape follows the fleet as it grows: adding a second
-capable node turns replication on, and a third forms the master quorum.
+Production derives the store's shape from the fleet: three raft masters
+when three or more nodes carry the object-storage capability (else one),
+one volume server per capable node using the node's disk, one replica on
+a different node when two or more nodes carry the capability (none on a
+single node), and two filer/S3 gateways as soon as the cluster has two
+nodes (one on a single node; filers are stateless and run on any node).
+The shape follows the fleet as it grows: adding a second node brings the
+second gateway, a second capable node turns replication on, and a third
+forms the master quorum.
 The recorded shape is the desired state; on every reconcile pass the
 platform compares it with the store itself (the bucket path's replication
 setting and each volume's placement) and moves whatever still differs, so
@@ -223,8 +226,17 @@ deployment and `skali dev down` keeps their data.
 
 Every component declares resources and health probes, a filer rollout keeps
 one gateway serving throughout, and disruption budgets keep a node drain
-from taking the master quorum or the last filer with it. The bucket
-directories live in the shared managed Postgres pool, so bucket
+from taking the master quorum or the last filer with it. Masters and
+filers must spread across nodes: the rule is required, not preferred, so
+two replicas never share a node while the fleet has room to keep them
+apart, and a node loss takes at most one master and one gateway. A
+replica that cannot be placed stays pending and the bucket reports the
+component below its recorded shape; a replica scheduled onto a survivor
+during a node outage stays there when the node returns, and the bucket
+then names the node the pods share until one of them is deleted and
+rescheduled apart. What a node failure means at each fleet size is spelled
+out in [known limitations](limitations.md#node-failure-tolerance-of-the-object-store).
+The bucket directories live in the shared managed Postgres pool, so bucket
 availability is bounded by that pool's (see
 [known limitations](limitations.md#object-storage-depends-on-the-metadata-database)).
 
@@ -232,7 +244,8 @@ A bucket's health reads the store: unhealthy when the S3 gateway does not
 answer an authenticated request (or answers an anonymous one) or no volume
 server serves; degraded, with the shortfall named, when a master or volume
 server is down against the recorded shape, when volumes are missing
-copies, when the metadata service does not serve, or when the public
+copies or still carry a previous replication setting, when replicas of a
+component share a node, when the metadata service does not serve, or when the public
 endpoint's certificate is not issued yet (presigned URLs for the public
 host fail TLS until it is).
 
