@@ -38,8 +38,10 @@ func newDeployCommand() *cobra.Command {
 		Long: "Deploys the local manifest: candidate definition, staged values, plan\n" +
 			"confirmation, local builds and imports pushed to the managed registry,\n" +
 			"server-side verification, and the journaled rollout, rendered live.\n" +
-			"The environment's stored values apply unless --env-file is passed or\n" +
-			"a discovered .env/.env.* file is selected interactively.\n\n" +
+			"Values come from --env-file, else the env file (or stored values)\n" +
+			"remembered for the environment in .skali/, else a one-time pick among\n" +
+			"the checkout's .env/.env.* files that is remembered from then on;\n" +
+			"--pick-env-file asks again. Without env files the stored values apply.\n\n" +
 			"Builds and pushes need this terminal; once they are done the run\n" +
 			"continues on the server and the live view says so: d detaches and\n" +
 			"leaves it running, Ctrl-C pressed twice cancels it. --detach returns\n" +
@@ -84,7 +86,9 @@ func addDeployFlags(command *cobra.Command, opts *deployOptions) {
 		"target environment name (defaults to the checkout binding, prompted interactively otherwise)")
 	command.Flags().StringVar(&opts.Manifest, "manifest", "", "explicit manifest path (skali.yml discovered by default)")
 	command.Flags().StringVar(&opts.EnvFile, "env-file", "",
-		"dotenv file to stage as candidate values (default: the environment's stored values)")
+		"dotenv file to stage as candidate values for this run only (default: the choice remembered for the environment)")
+	command.Flags().BoolVar(&opts.PickEnvFile, "pick-env-file", false,
+		"ask which env file (or the stored values) to use and remember the answer for the environment")
 	command.Flags().StringVar(&opts.Platform, "platform", "",
 		"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
 	command.Flags().StringVar(&opts.From, "from", "",

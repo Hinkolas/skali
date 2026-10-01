@@ -69,16 +69,19 @@ type deployOptions struct {
 	// Platform overrides the build platform(s); empty follows the
 	// server-reported cluster architecture.
 	Platform string
-	// AutoEnvFile uses ./.env automatically when present and offers the
-	// discovered env files otherwise (bare dev).
+	// AutoEnvFile takes the project root's lone env file without asking
+	// (bare dev); with several the picker runs like deploy's.
 	AutoEnvFile bool
+	// PickEnvFile re-opens the env file picker although a choice is
+	// remembered for the environment, and remembers the new answer.
+	PickEnvFile bool
 	// CreateMissing provisions the project and environment through the API
 	// when absent (local dev); remote deploys create only interactively,
 	// behind explicit confirmation.
 	CreateMissing bool
 	// UseBinding reads and writes the .skali/ checkout binding; set by
 	// plan and deploy. dev targets the local remote through Remote and
-	// never touches the binding.
+	// never touches the binding (the env file memory beside it is shared).
 	UseBinding bool
 	// OnDeploymentOpened and OnDeploymentClosed observe the artifact
 	// window so a signaled dev session can fail an interrupted window on a
@@ -340,46 +343,125 @@ func printProtectionBypassed(out io.Writer, environment string) {
 		style.Yellow("bypassed: environment "+environment+" is promote-only (recorded on the run)"))
 }
 
-// selectValues decides the value source: an explicit --env-file, the bare-dev
-// automatic ./.env, an interactively selected override from the project
-// root's env files, or nil for the environment's stored values (the default).
-func selectValues(out io.Writer, project *localProject, opts *deployOptions) (*values.File, error) {
-	path := opts.EnvFile
-	if path == "" {
-		prompt := cliprompt.Interactive() && !opts.Yes
-		if opts.AutoEnvFile {
-			candidate := filepath.Join(project.Root, ".env")
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				path = candidate
-			}
-			// Without a ./.env to default to, dev offers the discovered env
-			// files like deploy does instead of silently falling back to
-			// the stored values; its implied --yes only skips confirmations.
-			prompt = path == "" && cliprompt.Interactive()
-		}
-		if path == "" {
-			if !prompt {
-				return nil, nil
-			}
-			selected, err := chooseEnvFile(out, bufio.NewReader(os.Stdin), project.Root, opts.Environment)
-			if err != nil {
-				return nil, err
-			}
-			if selected == "" {
-				return nil, nil
-			}
-			path = selected
-		}
+// valuesSource says where a deployment's values come from; the header
+// names it so a remembered choice stays visible without a prompt.
+type valuesSource int
+
+const (
+	// valuesStored is the environment's stored values with nothing
+	// remembered: no env file to choose from, or a non-interactive run.
+	valuesStored valuesSource = iota
+	// valuesStoredRemembered is the stored values by remembered choice.
+	valuesStoredRemembered
+	// valuesFlag is an explicit --env-file; one-shot, the memory is left
+	// alone like --environment leaves the binding alone.
+	valuesFlag
+	// valuesRemembered is the env file remembered for the environment.
+	valuesRemembered
+	// valuesPicked is the env file picked interactively just now, and
+	// remembered from here on.
+	valuesPicked
+	// valuesDiscovered is the lone env file of the project root, taken
+	// without asking (dev) and remembered.
+	valuesDiscovered
+)
+
+// selectedValues is what selectValues decided: the file (nil for the
+// stored values), where it came from, and the fingerprint of the value
+// set the last deployment from this checkout carried to the environment
+// (empty when none was recorded), for the changed/unchanged note.
+type selectedValues struct {
+	file         *values.File
+	source       valuesSource
+	lastDeployed string
+}
+
+// selectValues decides the value source for opts.Environment. In order: an
+// explicit --env-file; the choice remembered for the environment in
+// .skali/env-files.yaml (unless --pick-env-file); nothing when the project
+// root has no env files; the lone env file under dev (AutoEnvFile); the
+// interactive picker, whose answer is remembered, including "stored
+// values"; and the stored values when nothing can be asked. A remembered
+// file that disappeared re-opens the picker interactively and is an error
+// otherwise: the stored values are never substituted silently. interactive
+// is whether a picker may be shown (dev's implied --yes only skips
+// confirmations, so dev passes cliprompt.Interactive() alone).
+func selectValues(out io.Writer, in *bufio.Reader, project *localProject, opts *deployOptions, interactive bool) (*selectedValues, error) {
+	if opts.EnvFile != "" && opts.PickEnvFile {
+		return nil, errors.New("--env-file and --pick-env-file are mutually exclusive")
 	}
-	parsed, err := values.ParseFile(path)
+	if opts.PickEnvFile && !interactive {
+		return nil, errors.New("--pick-env-file needs an interactive terminal; pass --env-file instead")
+	}
+	memory, err := checkout.LoadEnvFiles(project.Root)
 	if err != nil {
 		return nil, err
 	}
-	return parsed, nil
+	remembered, hasMemory := memory[opts.Environment]
+	selected := &selectedValues{source: valuesStored, lastDeployed: remembered.Fingerprint}
+	if opts.EnvFile != "" {
+		if selected.file, err = values.ParseFile(opts.EnvFile); err != nil {
+			return nil, err
+		}
+		selected.source = valuesFlag
+		return selected, nil
+	}
+	style := clirender.StyleFor(out)
+	if hasMemory && !opts.PickEnvFile {
+		if remembered.Stored {
+			selected.source = valuesStoredRemembered
+			return selected, nil
+		}
+		path := remembered.Resolve(project.Root)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if selected.file, err = values.ParseFile(path); err != nil {
+				return nil, err
+			}
+			selected.source = valuesRemembered
+			return selected, nil
+		}
+		if !interactive {
+			return nil, fmt.Errorf("remembered env file %s for environment %s is missing; "+
+				"pass --env-file, or run interactively to pick again", remembered.File, opts.Environment)
+		}
+		fmt.Fprintln(out, style.Dim(fmt.Sprintf("remembered env file %s is gone; pick again", remembered.File)))
+	}
+	candidates := discoverEnvFiles(project.Root)
+	if len(candidates) == 0 {
+		return selected, nil
+	}
+	path := ""
+	if opts.AutoEnvFile && len(candidates) == 1 && !opts.PickEnvFile {
+		path, selected.source = candidates[0], valuesDiscovered
+	} else {
+		if !interactive {
+			return selected, nil
+		}
+		if path, err = chooseEnvFile(out, in, project, opts.Environment, candidates, remembered); err != nil {
+			return nil, err
+		}
+		selected.source = valuesPicked
+	}
+	choice := checkout.EnvFileChoice{File: path, Stored: path == ""}
+	if err := checkout.SaveEnvFileChoice(project.Root, opts.Environment, choice); err != nil {
+		return nil, err
+	}
+	if path == "" {
+		selected.source = valuesStoredRemembered
+		return selected, nil
+	}
+	if selected.file, err = values.ParseFile(path); err != nil {
+		return nil, err
+	}
+	return selected, nil
 }
 
+// templateSuffixes mark env files that are committed examples rather than
+// values to deploy; discovery skips them, --env-file still accepts them.
+var templateSuffixes = []string{".example", ".sample", ".template"}
+
 // discoverEnvFiles lists the project root's .env and .env.* files, .env
-// first, for the interactive override selection.
+// first, for the interactive selection; templates are left out.
 func discoverEnvFiles(root string) []string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -391,37 +473,123 @@ func discoverEnvFiles(root string) []string {
 			continue
 		}
 		name := entry.Name()
-		if name == ".env" || strings.HasPrefix(name, ".env.") {
-			files = append(files, filepath.Join(root, name))
+		if name != ".env" && !strings.HasPrefix(name, ".env.") {
+			continue
 		}
+		if slices.ContainsFunc(templateSuffixes, func(suffix string) bool { return strings.HasSuffix(name, suffix) }) {
+			continue
+		}
+		files = append(files, filepath.Join(root, name))
 	}
 	sort.Strings(files)
 	return files
 }
 
-// chooseEnvFile offers the discovered env files as an override for the
-// environment's stored values; an empty result keeps the stored values.
-func chooseEnvFile(out io.Writer, in *bufio.Reader, root, environment string) (string, error) {
-	files := discoverEnvFiles(root)
-	if len(files) == 0 {
-		return "", nil
+// chooseEnvFile asks which of the candidates deploys to environment, or
+// the stored values (empty result). The cursor starts on the file last
+// used for the environment, else .env.<environment>, else .env; each
+// candidate says whether it matches the environment, was last used, and,
+// once a deployment recorded a fingerprint, whether its values changed
+// since.
+func chooseEnvFile(out io.Writer, in *bufio.Reader, project *localProject, environment string,
+	candidates []string, remembered checkout.EnvFileChoice) (string, error) {
+	options := make([]cliprompt.Option, 0, len(candidates)+1)
+	options = append(options, cliprompt.Option{Label: "stored values", Value: ""})
+	lastUsed := remembered.Resolve(project.Root)
+	defaultValue := ""
+	for _, rank := range []string{lastUsed, filepath.Join(project.Root, ".env."+environment), filepath.Join(project.Root, ".env")} {
+		if rank != "" && slices.Contains(candidates, rank) {
+			defaultValue = rank
+			break
+		}
 	}
-	options := make([]cliprompt.Option, 0, len(files)+1)
-	options = append(options, cliprompt.Option{
-		Label: "Use stored values",
-		Value: "",
-	})
-	for _, file := range files {
+	for _, candidate := range candidates {
+		var hints []string
+		if filepath.Base(candidate) == ".env."+environment {
+			hints = append(hints, "matches environment")
+		}
+		if candidate == lastUsed {
+			hints = append(hints, "last used")
+		}
+		if remembered.Fingerprint != "" {
+			hints = append(hints, describeValuesChange(project, candidate, remembered.Fingerprint))
+		}
 		options = append(options, cliprompt.Option{
-			Label: filepath.Base(file),
-			Value: file,
+			Label:       filepath.Base(candidate),
+			Description: strings.Join(hints, ", "),
+			Value:       candidate,
 		})
 	}
 	return promptSession(out, in).Select(context.Background(), cliprompt.SelectOptions{
-		Title:       fmt.Sprintf("Override %s with a local env file?", environment),
-		Description: "Stored environment values remain the default.",
-		Options:     options,
+		Title:        fmt.Sprintf("Values for %s?", environment),
+		Description:  "Remembered for this checkout; --pick-env-file asks again.",
+		Options:      options,
+		DefaultValue: defaultValue,
 	})
+}
+
+// describeValuesChange compares an env file's deployable value set with
+// the fingerprint of the environment's last deployment from this checkout.
+func describeValuesChange(project *localProject, path, lastDeployed string) string {
+	file, err := values.ParseFile(path)
+	if err != nil {
+		return "unreadable: " + err.Error()
+	}
+	if deployableFingerprint(project, file) == lastDeployed {
+		return "unchanged since last deploy"
+	}
+	return "changed since last deploy"
+}
+
+// deployableFingerprint hashes the values of file a deployment would
+// carry: the set conformed to the definition's variables, so orphaned keys
+// do not count. Without a compiled definition (tests) the whole file does.
+func deployableFingerprint(project *localProject, file *values.File) string {
+	if project.Result == nil {
+		return values.Fingerprint(file.Values)
+	}
+	kept, _, _ := values.Conform(project.Result.Definition.RequiredVariables, file.Values)
+	return values.Fingerprint(kept)
+}
+
+// describeValuesSource is the header note for the values row: the source,
+// the change since the last deployment when known, and the staging detail.
+func describeValuesSource(selected *selectedValues, project *localProject, staging string) string {
+	var parts []string
+	switch selected.source {
+	case valuesStoredRemembered, valuesRemembered:
+		parts = append(parts, "remembered")
+	case valuesFlag:
+		parts = append(parts, "--env-file")
+	case valuesPicked:
+		parts = append(parts, "picked")
+	case valuesDiscovered:
+		parts = append(parts, "discovered")
+	}
+	if selected.file != nil && selected.lastDeployed != "" {
+		if deployableFingerprint(project, selected.file) == selected.lastDeployed {
+			parts = append(parts, "unchanged since last deploy")
+		} else {
+			parts = append(parts, "changed since last deploy")
+		}
+	}
+	note := strings.Join(parts, ", ")
+	if staging != "" {
+		if note != "" {
+			note += "; "
+		}
+		note += staging
+	}
+	return note
+}
+
+// displayPath shows an env file relative to the project root when it lives
+// under it, absolute otherwise.
+func displayPath(root, path string) string {
+	if relative, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(relative, "..") {
+		return relative
+	}
+	return path
 }
 
 // chooseEnvironment asks for one of the project's environments; a single
@@ -1547,45 +1715,67 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 
-	// Values: an explicit or discovered local file stages a candidate;
-	// otherwise the environment's stored values apply. Below maintain no
-	// file is consulted: the stored values are all this role may use.
+	// Values: an explicit, remembered, or picked local file stages a
+	// candidate; otherwise the environment's stored values apply. Below
+	// maintain no file is consulted: the stored values are all this role
+	// may use. The fingerprint of the staged set is recorded once the
+	// deployment is committed, so the next run can say whether the file
+	// changed since.
 	var file *values.File
-	if mayStage {
-		if file, err = selectValues(out, project, opts); err != nil {
-			return "", err
-		}
-	} else {
-		fmt.Fprintf(out, "%s       %s\n", style.Dim("values"),
-			style.Dim(fmt.Sprintf("stored (%s role cannot stage values)", target.access)))
-	}
 	candidateID := ""
 	var excludeFiles []string
-	if file != nil {
-		kept, missing, skipped := values.Conform(project.Result.Definition.RequiredVariables, file.Values)
-		if len(missing) > 0 {
-			return "", fmt.Errorf("%s: missing required project values: %s", file.Path, strings.Join(missing, ", "))
+	recordFingerprint := func() {}
+	if mayStage {
+		// Dev's implied --yes only skips confirmations; its picker runs
+		// whenever the terminal allows.
+		selected, err := selectValues(out, in, project, opts, cliprompt.Interactive() && (!opts.Yes || opts.AutoEnvFile))
+		if err != nil {
+			return "", err
 		}
-		if !planOnly {
-			staged, err := api.StageValues(ctx, environmentID, kept, definitionVersion.DefinitionVersionID)
-			if err != nil {
-				return "", err
-			}
-			candidateID = staged.CandidateID
-			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("values"), file.Path,
-				style.Dim(fmt.Sprintf("(%d staged)", len(staged.Staged))))
-			if len(staged.Skipped) > 0 {
-				skipped = staged.Skipped
+		file = selected.file
+		if file == nil {
+			printHeader(out, style, headerRow{"values", "stored values", describeValuesSource(selected, project, "")})
+			if !planOnly {
+				recordFingerprint = func() {
+					if err := checkout.SaveEnvFileFingerprint(project.Root, opts.Environment, ""); err != nil {
+						fmt.Fprintf(out, "  %s\n", style.Yellow("warning: "+err.Error()))
+					}
+				}
 			}
 		} else {
-			fmt.Fprintf(out, "%s       %s %s\n", style.Dim("values"), file.Path,
-				style.Dim(fmt.Sprintf("(%d values; validated, not uploaded)", len(kept))))
+			kept, missing, skipped := values.Conform(project.Result.Definition.RequiredVariables, file.Values)
+			if len(missing) > 0 {
+				return "", fmt.Errorf("%s: missing required project values: %s", file.Path, strings.Join(missing, ", "))
+			}
+			staging := fmt.Sprintf("%d values; validated, not uploaded", len(kept))
+			if !planOnly {
+				staged, err := api.StageValues(ctx, environmentID, kept, definitionVersion.DefinitionVersionID)
+				if err != nil {
+					return "", err
+				}
+				candidateID = staged.CandidateID
+				staging = fmt.Sprintf("%d staged", len(staged.Staged))
+				if len(staged.Skipped) > 0 {
+					skipped = staged.Skipped
+				}
+				fingerprint := values.Fingerprint(kept)
+				recordFingerprint = func() {
+					if err := checkout.SaveEnvFileFingerprint(project.Root, opts.Environment, fingerprint); err != nil {
+						fmt.Fprintf(out, "  %s\n", style.Yellow("warning: "+err.Error()))
+					}
+				}
+			}
+			printHeader(out, style, headerRow{"values", displayPath(project.Root, file.Path),
+				describeValuesSource(selected, project, staging)})
+			if len(skipped) > 0 {
+				fmt.Fprintf(out, "  %s\n", style.Yellow("warning: skipped keys not referenced by the manifest: "+
+					strings.Join(skipped, ", ")))
+			}
+			excludeFiles = append(excludeFiles, file.Path)
 		}
-		if len(skipped) > 0 {
-			fmt.Fprintf(out, "  %s\n", style.Yellow("warning: skipped keys not referenced by the manifest: "+
-				strings.Join(skipped, ", ")))
-		}
-		excludeFiles = append(excludeFiles, file.Path)
+	} else {
+		printHeader(out, style, headerRow{"values", style.Dim("stored"),
+			fmt.Sprintf("%s role cannot stage values", target.access)})
 	}
 
 	// The environment status is fetched before hashing because it carries
@@ -1649,6 +1839,9 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return deployOutcomePlanned, nil
 	}
 	if planned.UpToDate && !opts.Force {
+		// Up to date means the candidate values equal the active ones:
+		// what this file holds is what runs.
+		recordFingerprint()
 		fmt.Fprintln(out, "\nnothing to deploy")
 		return deployOutcomeUpToDate, nil
 	}
@@ -1669,6 +1862,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 	if opened.UpToDate {
+		recordFingerprint()
 		fmt.Fprintln(out, "\nnothing to deploy")
 		return deployOutcomeUpToDate, nil
 	}
@@ -1696,6 +1890,9 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 	if _, err := api.CompleteDeployment(ctx, opened.Deployment.ID); err != nil {
 		return "", err
 	}
+	// The run is the server's from here: the staged values promote with
+	// it, so the checkout remembers what it sent.
+	recordFingerprint()
 	if opts.OnDeploymentClosed != nil {
 		opts.OnDeploymentClosed()
 	}

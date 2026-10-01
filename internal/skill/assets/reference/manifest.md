@@ -88,10 +88,15 @@ Rules the compiler enforces:
 - Malformed `${` or `{{` inside an expression-bearing field is an error,
   so typos never pass through silently.
 
-Values are supplied per environment: stored values are the default, and a
-dotenv file can be staged at deploy (`--env-file`) or picked up
-automatically from `./.env` by `skali dev`. Keys the manifest does not
-reference are skipped with a warning, never an error. An empty value in
+Values are supplied per environment. `skali deploy` and `skali dev` ask
+once per environment which `.env`/`.env.*` file of the checkout to stage
+(or to keep the stored values), remember the answer in
+`.skali/env-files.yaml` (local, gitignored, no secrets), and show it in the
+`values` header row from then on, with whether the file changed since the
+last deployment; `--pick-env-file` asks again, `--env-file <path>` overrides
+for one run, and a lone env file under `skali dev` is taken without asking.
+`.env.example` and other templates are never offered. Keys the manifest
+does not reference are skipped with a warning, never an error. An empty value in
 a dotenv file is stored as a real empty string. Stored values the
 manifest no longer references are ignored by deployments and reported as
 orphaned; deploying with `--prune-values` (also on `skali dev`) removes

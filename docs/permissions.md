@@ -496,9 +496,9 @@ CLI (settled 2026-08-19): one ladder, one verb set, the level picked by
 - `skali deploy` / `plan` / `deploy --from` consult the environment's
   `access` and `settings` before any work: below `deploy` they refuse at
   once; below `maintain` an explicit `--env-file` or `--prune-values` is
-  refused with the required role and a discovered env file is skipped
-  ("values stored (deploy role cannot stage values)"), so a deploy-role
-  user deploys code with the stored values; under promote-only a direct
+  refused with the required role and a remembered or discovered env file is
+  skipped (`values  stored (deploy role cannot stage values)`), so a
+  deploy-role user deploys code with the stored values; under promote-only a direct
   deploy or a promotion from an unlisted source is refused with the promote
   command, and `--bypass-protection` below environment admin with the role.
   With the bypass, plan and open reauthenticate once when the login has

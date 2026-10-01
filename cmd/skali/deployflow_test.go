@@ -24,6 +24,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/values"
 )
 
 func writeFile(t *testing.T, root, name, content string) string {
@@ -223,6 +224,10 @@ func TestDiscoverEnvFiles(t *testing.T) {
 	require.Empty(t, discoverEnvFiles(root))
 	writeFile(t, root, "notes.txt", "x")
 	writeFile(t, root, "production.env", "A=1\n") // old convention, not discovered
+	// Committed templates are never offered; --env-file still takes them.
+	writeFile(t, root, ".env.example", "A=\n")
+	writeFile(t, root, ".env.staging.sample", "A=\n")
+	writeFile(t, root, ".env.template", "A=\n")
 	staging := writeFile(t, root, ".env.staging", "A=1\n")
 	generic := writeFile(t, root, ".env", "A=1\n")
 	production := writeFile(t, root, ".env.production", "A=1\n")
@@ -231,27 +236,42 @@ func TestDiscoverEnvFiles(t *testing.T) {
 
 func TestChooseEnvFile(t *testing.T) {
 	root := t.TempDir()
+	project := &localProject{Root: root}
+	generic := writeFile(t, root, ".env", "A=1\n")
+	production := writeFile(t, root, ".env.production", "A=1\n")
+	candidates := []string{generic, production}
 	var out strings.Builder
 
-	// No env files: silently keep the stored values, no prompt printed.
-	selected, err := chooseEnvFile(&out, bufio.NewReader(strings.NewReader("")), root, "production")
+	selected, err := chooseEnvFile(&out, bufio.NewReader(strings.NewReader("1\n")), project, "production",
+		candidates, checkout.EnvFileChoice{})
 	require.NoError(t, err)
 	require.Empty(t, selected)
-	require.Empty(t, out.String())
+	require.Contains(t, out.String(), "Values for production?:\n")
+	require.Contains(t, out.String(), "--pick-env-file asks again")
+	require.Contains(t, out.String(), "  1) stored values\n")
+	require.Contains(t, out.String(), "  3) .env.production (matches environment)\n")
+	// The file matching the environment is the default.
+	require.Contains(t, out.String(), "Select [1-3] (3): ")
 
-	writeFile(t, root, ".env", "A=1\n")
-	production := writeFile(t, root, ".env.production", "A=1\n")
-
-	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("3\n")), root, "production")
+	// Empty input takes the default.
+	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), project, "production",
+		candidates, checkout.EnvFileChoice{})
 	require.NoError(t, err)
 	require.Equal(t, production, selected)
-	require.Contains(t, out.String(), "Override production with a local env file?")
-	require.Contains(t, out.String(), "  1) Use stored values\n")
 
-	// Empty input takes the default: keep the stored values.
-	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), root, "production")
+	// Without a matching file .env is the default; a remembered file beats
+	// both and is marked, and a recorded fingerprint annotates every
+	// candidate with whether its values changed since the last deploy.
+	out.Reset()
+	remembered := checkout.EnvFileChoice{File: ".env", Fingerprint: values.Fingerprint(map[string]string{"A": "1"})}
+	writeFile(t, root, ".env.production", "A=2\n")
+	selected, err = chooseEnvFile(&out, bufio.NewReader(strings.NewReader("\n")), project, "staging",
+		candidates, remembered)
 	require.NoError(t, err)
-	require.Empty(t, selected)
+	require.Equal(t, generic, selected)
+	require.Contains(t, out.String(), "  2) .env (last used, unchanged since last deploy)\n")
+	require.Contains(t, out.String(), "  3) .env.production (changed since last deploy)\n")
+	require.Contains(t, out.String(), "Select [1-3] (2): ")
 }
 
 func TestChooseEnvironment(t *testing.T) {
@@ -834,27 +854,175 @@ func TestSelectValuesDefaultsToStoredValues(t *testing.T) {
 	writeFile(t, root, ".env", "A=1\n")
 	project := &localProject{Root: root}
 
-	// Under go test stdin is not a terminal, so this is the
-	// non-interactive path: no flags means the stored values, no error.
-	file, err := selectValues(io.Discard, project, &deployOptions{Environment: "production"})
+	// Non-interactive and nothing remembered: the stored values, no error,
+	// and nothing is remembered either since nothing was chosen.
+	selected, err := selectValues(io.Discard, nil, project, &deployOptions{Environment: "production"}, false)
 	require.NoError(t, err)
-	require.Nil(t, file)
+	require.Nil(t, selected.file)
+	require.Equal(t, valuesStored, selected.source)
+	require.NoFileExists(t, checkout.EnvFilesPath(root))
+
+	// No env files at all: the same, interactive or not, without a prompt.
+	empty := &localProject{Root: t.TempDir()}
+	var out strings.Builder
+	selected, err = selectValues(&out, bufio.NewReader(strings.NewReader("")), empty, &deployOptions{Environment: "production"}, true)
+	require.NoError(t, err)
+	require.Nil(t, selected.file)
+	require.Empty(t, out.String())
+	require.NoFileExists(t, checkout.EnvFilesPath(empty.Root))
 }
 
-func TestSelectValuesAutoUsesDotEnvOnly(t *testing.T) {
+func TestSelectValuesPicksAndRemembers(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, ".env.local", "A=1\n")
+	writeFile(t, root, ".env", "A=1\n")
+	production := writeFile(t, root, ".env.production", "A=2\n")
 	project := &localProject{Root: root}
+	opts := &deployOptions{Environment: "production"}
 
-	file, err := selectValues(io.Discard, project, &deployOptions{Environment: "local", AutoEnvFile: true})
+	var out strings.Builder
+	selected, err := selectValues(&out, bufio.NewReader(strings.NewReader("3\n")), project, opts, true)
 	require.NoError(t, err)
-	require.Nil(t, file)
+	require.Equal(t, valuesPicked, selected.source)
+	require.Equal(t, production, selected.file.Path)
+	require.Contains(t, out.String(), "Values for production?")
 
+	// The next run uses the remembered file without asking, interactive or not.
+	for _, interactive := range []bool{true, false} {
+		out.Reset()
+		selected, err = selectValues(&out, bufio.NewReader(strings.NewReader("")), project, opts, interactive)
+		require.NoError(t, err)
+		require.Equal(t, valuesRemembered, selected.source)
+		require.Equal(t, production, selected.file.Path)
+		require.Empty(t, out.String())
+	}
+
+	// A recorded fingerprint rides along for the header note.
+	require.NoError(t, checkout.SaveEnvFileFingerprint(root, "production", "sha256:x"))
+	selected, err = selectValues(io.Discard, nil, project, opts, false)
+	require.NoError(t, err)
+	require.Equal(t, "sha256:x", selected.lastDeployed)
+	require.Equal(t, "remembered, changed since last deploy; 2 staged", describeValuesSource(selected, project, "2 staged"))
+	selected.lastDeployed = values.Fingerprint(map[string]string{"A": "2"})
+	require.Equal(t, "remembered, unchanged since last deploy", describeValuesSource(selected, project, ""))
+
+	// --pick-env-file ignores the memory, preselects the remembered file,
+	// and remembers the new answer; "stored values" is remembered too.
+	out.Reset()
+	selected, err = selectValues(&out, bufio.NewReader(strings.NewReader("1\n")), project,
+		&deployOptions{Environment: "production", PickEnvFile: true}, true)
+	require.NoError(t, err)
+	require.Nil(t, selected.file)
+	require.Equal(t, valuesStoredRemembered, selected.source)
+	require.Contains(t, out.String(), "Select [1-3] (3): ")
+	require.Equal(t, "remembered", describeValuesSource(selected, project, ""))
+
+	out.Reset()
+	selected, err = selectValues(&out, bufio.NewReader(strings.NewReader("")), project, opts, true)
+	require.NoError(t, err)
+	require.Nil(t, selected.file)
+	require.Equal(t, valuesStoredRemembered, selected.source)
+	require.Empty(t, out.String())
+
+	memory, err := checkout.LoadEnvFiles(root)
+	require.NoError(t, err)
+	require.Equal(t, checkout.EnvFileChoice{Stored: true, Fingerprint: "sha256:x"}, memory["production"])
+
+	// --pick-env-file without a prompt available cannot ask and never
+	// falls back silently; combined with --env-file it is an error too.
+	_, err = selectValues(io.Discard, nil, project, &deployOptions{Environment: "production", PickEnvFile: true}, false)
+	require.ErrorContains(t, err, "--pick-env-file needs an interactive terminal")
+	_, err = selectValues(io.Discard, nil, project, &deployOptions{Environment: "production", PickEnvFile: true, EnvFile: production}, false)
+	require.ErrorContains(t, err, "mutually exclusive")
+}
+
+func TestSelectValuesFlagIsOneShot(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".env", "A=1\n")
+	production := writeFile(t, root, ".env.production", "A=2\n")
+	project := &localProject{Root: root}
+	require.NoError(t, checkout.SaveEnvFileChoice(root, "production", checkout.EnvFileChoice{File: ".env"}))
+
+	selected, err := selectValues(io.Discard, nil, project, &deployOptions{Environment: "production", EnvFile: production}, false)
+	require.NoError(t, err)
+	require.Equal(t, valuesFlag, selected.source)
+	require.Equal(t, production, selected.file.Path)
+	require.Equal(t, "--env-file; 1 staged", describeValuesSource(selected, project, "1 staged"))
+
+	memory, err := checkout.LoadEnvFiles(root)
+	require.NoError(t, err)
+	require.Equal(t, checkout.EnvFileChoice{File: ".env"}, memory["production"])
+}
+
+func TestSelectValuesRememberedFileMissing(t *testing.T) {
+	root := t.TempDir()
+	production := writeFile(t, root, ".env.production", "A=2\n")
+	project := &localProject{Root: root}
+	opts := &deployOptions{Environment: "production"}
+	require.NoError(t, checkout.SaveEnvFileChoice(root, "production", checkout.EnvFileChoice{File: ".env.staging"}))
+
+	// Non-interactive: never silently the stored values.
+	_, err := selectValues(io.Discard, nil, project, opts, false)
+	require.ErrorContains(t, err, "remembered env file .env.staging for environment production is missing")
+	require.ErrorContains(t, err, "--env-file")
+
+	// Interactive: a note, then the picker; the answer replaces the memory.
+	var out strings.Builder
+	selected, err := selectValues(&out, bufio.NewReader(strings.NewReader("2\n")), project, opts, true)
+	require.NoError(t, err)
+	require.Equal(t, valuesPicked, selected.source)
+	require.Equal(t, production, selected.file.Path)
+	require.Contains(t, out.String(), "remembered env file .env.staging is gone; pick again")
+	memory, err := checkout.LoadEnvFiles(root)
+	require.NoError(t, err)
+	require.Equal(t, ".env.production", memory["production"].File)
+}
+
+func TestSelectValuesAutoTakesLoneEnvFile(t *testing.T) {
+	root := t.TempDir()
+	local := writeFile(t, root, ".env.local", "A=1\n")
+	project := &localProject{Root: root}
+	opts := &deployOptions{Environment: "local", AutoEnvFile: true}
+
+	// dev: the lone env file is taken without a prompt and remembered.
+	var out strings.Builder
+	selected, err := selectValues(&out, bufio.NewReader(strings.NewReader("")), project, opts, true)
+	require.NoError(t, err)
+	require.Equal(t, valuesDiscovered, selected.source)
+	require.Equal(t, local, selected.file.Path)
+	require.Empty(t, out.String())
+	require.Equal(t, "discovered; 1 staged", describeValuesSource(selected, project, "1 staged"))
+	memory, err := checkout.LoadEnvFiles(root)
+	require.NoError(t, err)
+	require.Equal(t, ".env.local", memory["local"].File)
+
+	// A second file appears: the memory still decides, no prompt.
 	dotenv := writeFile(t, root, ".env", "A=1\n")
-	file, err = selectValues(io.Discard, project, &deployOptions{Environment: "local", AutoEnvFile: true})
+	selected, err = selectValues(&out, bufio.NewReader(strings.NewReader("")), project, opts, true)
 	require.NoError(t, err)
-	require.NotNil(t, file)
-	require.Equal(t, dotenv, file.Path)
+	require.Equal(t, valuesRemembered, selected.source)
+	require.Equal(t, local, selected.file.Path)
+	require.Empty(t, out.String())
+
+	// Without memory and with several files dev asks like deploy does;
+	// non-interactively it deploys the stored values.
+	require.NoError(t, os.Remove(checkout.EnvFilesPath(root)))
+	selected, err = selectValues(&out, bufio.NewReader(strings.NewReader("2\n")), project, opts, true)
+	require.NoError(t, err)
+	require.Equal(t, valuesPicked, selected.source)
+	require.Equal(t, dotenv, selected.file.Path)
+	require.Contains(t, out.String(), "Values for local?")
+	require.NoError(t, os.Remove(checkout.EnvFilesPath(root)))
+	selected, err = selectValues(io.Discard, nil, project, opts, false)
+	require.NoError(t, err)
+	require.Nil(t, selected.file)
+	require.Equal(t, valuesStored, selected.source)
+}
+
+func TestDisplayPath(t *testing.T) {
+	root := t.TempDir()
+	require.Equal(t, ".env.staging", displayPath(root, filepath.Join(root, ".env.staging")))
+	other := filepath.Join(filepath.Dir(root), "elsewhere", ".env")
+	require.Equal(t, other, displayPath(root, other))
 }
 
 func TestPrintPlanShape(t *testing.T) {

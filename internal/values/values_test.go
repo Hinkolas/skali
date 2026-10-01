@@ -1,6 +1,7 @@
 package values
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -78,4 +79,21 @@ func TestConformOverVersionRefs(t *testing.T) {
 	require.Equal(t, map[string]int{"APP_DOMAIN": 3, "SESSION_SECRET": 1}, kept)
 	require.Empty(t, missing)
 	require.Equal(t, []string{"REMOVED"}, orphaned)
+}
+
+func TestFingerprintIsStableAndSensitive(t *testing.T) {
+	t.Parallel()
+	a := Fingerprint(map[string]string{"APP_DOMAIN": "files.localhost", "SESSION_SECRET": "s3cret"})
+	b := Fingerprint(map[string]string{"SESSION_SECRET": "s3cret", "APP_DOMAIN": "files.localhost"})
+	require.Equal(t, a, b)
+	require.True(t, strings.HasPrefix(a, "sha256:"))
+	require.Len(t, a, len("sha256:")+64)
+
+	require.NotEqual(t, a, Fingerprint(map[string]string{"APP_DOMAIN": "files.localhost", "SESSION_SECRET": "other"}))
+	require.NotEqual(t, a, Fingerprint(map[string]string{"APP_DOMAIN": "files.localhost"}))
+	// An empty string is a value: present-but-empty differs from absent.
+	require.NotEqual(t, Fingerprint(map[string]string{"A": ""}), Fingerprint(map[string]string{}))
+	// Names and values are delimited, so shifting characters between them
+	// changes the hash.
+	require.NotEqual(t, Fingerprint(map[string]string{"AB": "C"}), Fingerprint(map[string]string{"A": "BC"}))
 }
