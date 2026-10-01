@@ -103,10 +103,12 @@ func TestDockerfileResolvesAgainstContext(t *testing.T) {
 func TestInvalidFixtures(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{
-		"image-and-build.yml": "exactly one of image or build",
-		"invalid-output.yml":  "unknown database output \"hostname\"",
-		"invalid-unit.yml":    "Skali byte unit",
-		"route-conflict.yml":  "domain and path pairs must be unique",
+		"database-unknown-extension.yml":   "unsupported extension \"postgis\" for postgres 17",
+		"database-unsupported-version.yml": "unsupported postgres version \"16\"; supported majors: 17, 18",
+		"image-and-build.yml":              "exactly one of image or build",
+		"invalid-output.yml":               "unknown database output \"hostname\"",
+		"invalid-unit.yml":                 "Skali byte unit",
+		"route-conflict.yml":               "domain and path pairs must be unique",
 	}
 	for name, message := range tests {
 		name, message := name, message
@@ -554,4 +556,57 @@ func compileFixture(t *testing.T, path string) *Result {
 	require.NoError(t, err)
 	require.Len(t, result.Hash, 64)
 	return result
+}
+
+// TestDatabaseExtensionsValidateAgainstCatalog pins the offline extension
+// check: every blessed extension (pgvector included) compiles and sorts, an
+// unknown one names the available set, and a duplicate is reported once at
+// its own index.
+func TestDatabaseExtensionsValidateAgainstCatalog(t *testing.T) {
+	t.Parallel()
+	result, err := compileManifest(t, `
+name: demo
+applications:
+  web:
+    image: ghcr.io/example/web:1
+databases:
+  data:
+    engine: postgres
+    version: 18
+    extensions: [vector, pg_trgm]
+`)
+	require.NoError(t, err)
+	require.Equal(t, []string{"pg_trgm", "vector"}, result.Definition.Databases["data"].Extensions)
+
+	_, err = compileManifest(t, `
+name: demo
+applications:
+  web:
+    image: ghcr.io/example/web:1
+databases:
+  data:
+    engine: postgres
+    version: 17
+    extensions: [pg_trgm, timescaledb, pg_trgm]
+`)
+	require.ErrorContains(t, err, "databases.data.extensions[1]")
+	require.ErrorContains(t, err, `unsupported extension "timescaledb" for postgres 17; available: btree_gin`)
+	require.ErrorContains(t, err, "databases.data.extensions[2]")
+	require.ErrorContains(t, err, `extension "pg_trgm" is listed more than once`)
+
+	// An unsupported major reports once on version; the extensions are
+	// not judged against a major that has no catalog entry.
+	_, err = compileManifest(t, `
+name: demo
+applications:
+  web:
+    image: ghcr.io/example/web:1
+databases:
+  data:
+    engine: postgres
+    version: "19"
+    extensions: [vector]
+`)
+	require.ErrorContains(t, err, `unsupported postgres version "19"; supported majors: 17, 18`)
+	require.NotContains(t, err.Error(), "extensions[0]")
 }

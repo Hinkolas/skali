@@ -830,8 +830,27 @@
           "extensions": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
+              "type": "string",
+              "enum": [
+                "btree_gin",
+                "btree_gist",
+                "citext",
+                "cube",
+                "earthdistance",
+                "fuzzystrmatch",
+                "hstore",
+                "intarray",
+                "ltree",
+                "pg_stat_statements",
+                "pg_trgm",
+                "pgcrypto",
+                "tablefunc",
+                "unaccent",
+                "uuid-ossp",
+                "vector"
+              ]
+            },
+            "uniqueItems": true
           },
           "isolation": {
             "type": "string",

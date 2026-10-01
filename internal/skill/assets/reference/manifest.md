@@ -410,11 +410,17 @@ databases:
 - `availability`: `asynchronous` needs two database-capable nodes,
   `synchronous` needs three. Local development runs one single-instance
   pool and honors isolation logically.
-- Extensions available today: `btree_gin`, `btree_gist`, `citext`,
-  `cube`, `earthdistance`, `fuzzystrmatch`, `hstore`, `intarray`,
-  `ltree`, `pg_stat_statements`, `pg_trgm`, `pgcrypto`, `tablefunc`,
-  `unaccent`, `uuid-ossp`. `pgvector` and `postgis` are not supported
-  yet.
+- Extensions available on both majors: `btree_gin`, `btree_gist`,
+  `citext`, `cube`, `earthdistance`, `fuzzystrmatch`, `hstore`,
+  `intarray`, `ltree`, `pg_stat_statements`, `pg_trgm`, `pgcrypto`,
+  `tablefunc`, `unaccent`, `uuid-ossp`, `vector`. `skali validate`
+  rejects any other name and any version other than 17 or 18. `postgis`
+  is not supported yet.
+- `vector` is pgvector. Declare it here rather than in migrations:
+  application roles are not superusers and cannot create it. A migration
+  that runs `CREATE EXTENSION IF NOT EXISTS vector` stays a harmless
+  no-op; a plain `CREATE EXTENSION vector` fails because it already
+  exists.
 
 Connect applications through outputs, never hand-written connection
 strings:

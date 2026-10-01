@@ -43,7 +43,7 @@ func (s *Service) EnsureClaim(ctx context.Context, owner Owner, spec ClaimSpec) 
 				Isolation:     spec.Isolation,
 				Availability:  spec.Availability,
 				StorageBytes:  spec.StorageBytes,
-				Extensions:    marshalExtensions(spec.Extensions),
+				Extensions:    MarshalExtensions(spec.Extensions),
 				PitrSeconds:   spec.PITRSeconds,
 			})
 			if err != nil {
@@ -60,7 +60,7 @@ func (s *Service) EnsureClaim(ctx context.Context, owner Owner, spec ClaimSpec) 
 				existing.Engine, existing.Major, existing.Isolation,
 				spec.Engine, spec.Major, spec.Isolation)
 		}
-		extensions := marshalExtensions(spec.Extensions)
+		extensions := MarshalExtensions(spec.Extensions)
 		if existing.Availability != spec.Availability ||
 			existing.StorageBytes != spec.StorageBytes ||
 			existing.PitrSeconds != spec.PITRSeconds ||

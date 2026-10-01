@@ -132,7 +132,10 @@ func New(st *store.Store) *Service {
 	return &Service{st: st}
 }
 
-func marshalExtensions(extensions []string) []byte {
+// MarshalExtensions encodes an extension list the way claim rows store it:
+// sorted JSON, "[]" when empty. Callers compare desired against stored
+// bytes with it, so the encoding must stay canonical.
+func MarshalExtensions(extensions []string) []byte {
 	sorted := slices.Clone(extensions)
 	slices.Sort(sorted)
 	if len(sorted) == 0 {

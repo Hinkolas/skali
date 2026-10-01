@@ -5,6 +5,7 @@ package manifest
 import (
 	"reflect"
 
+	"github.com/Hinkolas/skali/internal/dbcatalog"
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/yamldoc"
@@ -119,6 +120,8 @@ func Schema() (*jsonschema.Schema, error) {
 	database.Properties["isolation"].Enum = utils.AnySlice("shared", "project", "dedicated")
 	database.Properties["availability"].Enum = utils.AnySlice("single", "asynchronous", "synchronous")
 	database.Properties["storage"].Properties["size"] = quantitySchema()
+	database.Properties["extensions"].Items = &jsonschema.Schema{Type: "string", Enum: utils.AnySlice(dbcatalog.AllExtensions()...)}
+	database.Properties["extensions"].UniqueItems = true
 	setDuration(database.Properties["recovery"], "pointInTime")
 
 	bucket := schema.Properties["buckets"].AdditionalProperties

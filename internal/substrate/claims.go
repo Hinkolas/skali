@@ -1,6 +1,7 @@
 package substrate
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -43,6 +44,19 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		}
 		owner := dbstore.ServiceOwner(in.ProjectID, in.EnvironmentID,
 			in.Revision.Project, in.Revision.Environment, key)
+		// A provisioned claim whose extension list is about to change
+		// must stop reporting ready until the change is applied; the
+		// pre-image is the only place that difference is visible. The
+		// marker is set only once the fold succeeded, so a spec conflict
+		// never leaves a request behind that no pass could ever apply.
+		desiredExtensions := dbstore.MarshalExtensions(database.Extensions)
+		extensionsChanged := false
+		if live, err := c.deps.DB.LiveServiceClaim(ctx, in.EnvironmentID, key); err == nil {
+			extensionsChanged = claim.Phase(live.Phase) == claim.PhaseProvisioned &&
+				!bytes.Equal(live.Extensions, desiredExtensions)
+		} else if !errors.Is(err, dbstore.ErrNotFound) {
+			return nil, err
+		}
 		row, err := c.deps.DB.EnsureClaim(ctx, owner, dbstore.ClaimSpec{
 			Engine:       database.Engine,
 			Major:        major,
@@ -60,12 +74,19 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if err != nil {
 			return nil, err
 		}
+		if extensionsChanged {
+			c.markExtensionsPending(row.ID, desiredExtensions)
+		}
 		c.EnqueueClaim(row.ID)
 		c.publishClaim(*row)
 
 		state := reconcile.ClaimState{Service: dotted,
 			Provisioned: claim.Phase(row.Phase) == claim.PhaseProvisioned}
-		if !state.Provisioned {
+		if state.Provisioned && c.extensionsPending(row.ID) {
+			state.Provisioned = false
+			state.Waiting = extensionsPendingReason
+		}
+		if !state.Provisioned && state.Waiting == "" {
 			state.Waiting = c.WaitingReason(row.ID)
 			if state.Waiting == "" {
 				state.Waiting = defaultWait(claim.Phase(row.Phase))

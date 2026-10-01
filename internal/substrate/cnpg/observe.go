@@ -58,7 +58,12 @@ func ConvertDatabase(object *unstructured.Unstructured) (observe.Object, bool) {
 	}
 	applied, found, _ := unstructured.NestedBool(object.Object, "status", "applied")
 	message, _, _ := unstructured.NestedString(object.Object, "status", "message")
-	if !found {
+	// A status from an older generation is a stale verdict: a spec change
+	// (a newly requested extension) must read as unapplied until the
+	// operator caught up, as the substrate's own readiness check does.
+	observedGeneration, _, _ := unstructured.NestedInt64(object.Object, "status", "observedGeneration")
+	if !found || observedGeneration < object.GetGeneration() {
+		applied = false
 		message = "waiting for reconciliation"
 	}
 	databaseName, _, _ := unstructured.NestedString(object.Object, "spec", "name")
