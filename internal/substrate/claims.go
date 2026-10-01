@@ -160,6 +160,13 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 				return nil, fmt.Errorf("substrate: encode cors for %s: %w", dotted, err)
 			}
 		}
+		var routeSpec []byte
+		if route, ok := in.BucketRoutes[key]; ok {
+			routeSpec, err = json.Marshal(route)
+			if err != nil {
+				return nil, fmt.Errorf("substrate: encode route for %s: %w", dotted, err)
+			}
+		}
 		row, err := c.deps.DB.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
 			Visibility:                   bucket.Visibility,
 			StorageQuotaBytes:            bucket.StorageQuotaBytes,
@@ -169,6 +176,7 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 			AbortUploadsAfterSeconds:     bucket.AbortIncompleteUploadsAfterSeconds,
 			ExpireNoncurrentAfterSeconds: bucket.ExpireNoncurrentVersionsAfterSec,
 			CORS:                         corsSpec,
+			Route:                        routeSpec,
 		})
 		if errors.Is(err, dbstore.ErrSpecConflict) {
 			states = append(states, reconcile.ClaimState{Service: dotted,
@@ -282,6 +290,29 @@ func (c *Controller) Generations(ctx context.Context, environmentID uuid.UUID) (
 			fmt.Sprintf("credential=v%d", allocation.CredentialVersion))
 	}
 	return generations, nil
+}
+
+// BucketNames reports the store bucket name of every live bucket claim of
+// the environment that has an allocation, keyed by bucket key. Phase does
+// not matter: the name is fixed the moment the allocation is recorded, and
+// a route may render before the bucket finishes provisioning.
+func (c *Controller) BucketNames(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
+	rows, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]string, len(rows))
+	for _, row := range rows {
+		allocation, err := c.deps.DB.LiveAllocation(ctx, row.ID)
+		if err != nil {
+			if errors.Is(err, dbstore.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		names[row.ServiceKey] = allocation.BucketName
+	}
+	return names, nil
 }
 
 // outputGeneration hashes the non-secret facts of a service's outputs into

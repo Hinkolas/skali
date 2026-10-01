@@ -22,12 +22,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/platform"
 	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/values"
 )
@@ -51,6 +53,12 @@ type Options struct {
 	// CLI compile preview) stays possible without an environment.
 	EnvironmentID    string
 	RevisionChecksum string
+
+	// BucketNames maps each bucket key to the store bucket name its claim
+	// allocated. A bucket route keys the edge on that name, so it renders
+	// only once the name is known; the kernel re-renders when the claim
+	// settles.
+	BucketNames map[string]string
 
 	// RestartedAt is the environment target's restart stamp (RFC3339, UTC);
 	// non-empty values become a pod-template annotation on application
@@ -171,6 +179,11 @@ func Render(result *compiler.Result, options Options) ([]runtime.Object, error) 
 		}
 		objects = append(objects, rendered...)
 	}
+	rendered, err := renderBucketRoutes(result.Definition, options)
+	if err != nil {
+		return nil, err
+	}
+	objects = append(objects, rendered...)
 	if err := ValidateObjects(objects); err != nil {
 		return nil, err
 	}
@@ -218,7 +231,97 @@ func needsRedirect(project compiler.ProjectDefinition) bool {
 			}
 		}
 	}
+	for _, bucket := range project.Buckets {
+		if bucket.Route != nil && bucket.Route.TLS == "automatic" {
+			return true
+		}
+	}
 	return false
+}
+
+// BucketRouteTLSName names one bucket route's Certificate and the Secret it
+// issues into, composed exactly as the renderer composes it so the bucket
+// module and the kernel can match observed Certificates against the route.
+func BucketRouteTLSName(projectName, bucketKey string) string {
+	return objectName("bucket-tls", projectName, bucketKey)
+}
+
+// BucketRouteName names one bucket route's IngressRoute per variant
+// ("primary" or "http"). The part list differs from RouteName's, so bucket
+// and application route names never collide.
+func BucketRouteName(projectName, bucketKey, variant string) string {
+	return objectName("bucket-route", projectName, bucketKey, variant)
+}
+
+// bucketLabels labels the edge objects of one bucket route. The service
+// label carries the dotted bucket name like the bucket's output Secret, so
+// the objects join the bucket's observation snapshot and its apply step.
+func bucketLabels(project compiler.ProjectDefinition, key string, options Options) map[string]string {
+	labels := map[string]string{
+		LabelManaged: "true",
+		LabelProject: project.Name,
+		LabelService: "buckets." + key,
+	}
+	if options.EnvironmentID != "" {
+		labels[LabelEnvironment] = options.EnvironmentID
+	}
+	return labels
+}
+
+// renderBucketRoutes renders the edge objects of every routed bucket whose
+// store bucket name is known: the hostname serves exactly that bucket's
+// path, with the TLS policy applied like an application route's, and the
+// backend is the shared S3 gateway in the platform namespace. No compress
+// Middleware: object payloads are opaque and presigned responses must
+// reach the client byte for byte.
+func renderBucketRoutes(project compiler.ProjectDefinition, options Options) ([]runtime.Object, error) {
+	var objects []runtime.Object
+	backend := edge.Service{Name: platform.S3Service, Namespace: platform.Namespace, PortNumber: platform.S3Port}
+	for _, key := range utils.SortedKeys(project.Buckets) {
+		route := project.Buckets[key].Route
+		if route == nil {
+			continue
+		}
+		bucket := options.BucketNames[key]
+		if bucket == "" {
+			continue
+		}
+		domain, err := compiler.ResolveExpression(route.Domain, options.Variables)
+		if err != nil {
+			return nil, fmt.Errorf("render bucket %s route domain: %w", key, err)
+		}
+		domain, err = edge.CanonicalDomain(domain)
+		if err != nil {
+			return nil, fmt.Errorf("render bucket %s route domain: %w", key, err)
+		}
+		labels := bucketLabels(project, key, options)
+		// Record the canonical host for conservative, fresh-read claim
+		// retirement, like application routes.
+		annotate := func(obj *unstructured.Unstructured) *unstructured.Unstructured {
+			obj.SetAnnotations(map[string]string{"skali.dev/route-hostname": domain})
+			return obj
+		}
+		match := edge.BucketMatch(domain, bucket)
+		if options.Certificates && route.TLS != "disabled" {
+			secretName := BucketRouteTLSName(project.Name, key)
+			objects = append(objects, annotate(edge.IngressRoute(options.Namespace, BucketRouteName(project.Name, key, "primary"),
+				maps.Clone(labels), []string{edge.EntryPointWebSecure},
+				[]edge.Route{{Match: match, Service: backend}}, secretName)))
+			httpRoute := edge.Route{Match: edge.BucketHTTPMatch(domain, bucket), Service: backend}
+			if route.TLS == "automatic" {
+				httpRoute.Middlewares = []string{edge.RedirectMiddlewareName}
+			}
+			objects = append(objects, annotate(edge.IngressRoute(options.Namespace, BucketRouteName(project.Name, key, "http"),
+				maps.Clone(labels), []string{edge.EntryPointWeb},
+				[]edge.Route{httpRoute}, "")))
+			objects = append(objects, edge.Certificate(options.Namespace, secretName, domain, maps.Clone(labels)))
+		} else {
+			objects = append(objects, annotate(edge.IngressRoute(options.Namespace, BucketRouteName(project.Name, key, "primary"),
+				maps.Clone(labels), []string{edge.EntryPointWeb},
+				[]edge.Route{{Match: match, Service: backend}}, "")))
+		}
+	}
+	return objects, nil
 }
 
 // RouteTLSName names one route's Certificate and the Secret it issues into,

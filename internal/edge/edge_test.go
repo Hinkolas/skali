@@ -124,3 +124,35 @@ func mustRoutes(t *testing.T, object *unstructured.Unstructured) []any {
 	require.NoError(t, err)
 	return routes
 }
+
+// TestBucketMatchAndCrossNamespaceService: the bucket rule serves exactly
+// one bucket's path-style requests (bucket-level operations on the exact
+// path, objects under the trailing slash, never a sibling that merely
+// shares the prefix), and a Service with a namespace renders the
+// cross-namespace reference Traefik expects.
+func TestBucketMatchAndCrossNamespaceService(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, `Host("files.example.com") && (Path("/b-files-1") || PathPrefix("/b-files-1/"))`,
+		BucketMatch("files.example.com", "b-files-1"))
+	require.Equal(t, `Host("files.example.com") && (Path("/b-files-1") || PathPrefix("/b-files-1/")) && !PathPrefix("/.well-known/acme-challenge/")`,
+		BucketHTTPMatch("files.example.com", "b-files-1"))
+
+	obj := IngressRoute("skali-env", "route", nil, []string{EntryPointWebSecure}, []Route{{
+		Match:   BucketMatch("files.example.com", "b-files-1"),
+		Service: Service{Name: "seaweed-s3", Namespace: "skali-platform", PortNumber: 8333},
+	}}, "tls")
+	routes, _, err := unstructured.NestedSlice(obj.Object, "spec", "routes")
+	require.NoError(t, err)
+	service := routes[0].(map[string]any)["services"].([]any)[0].(map[string]any)
+	require.Equal(t, "seaweed-s3", service["name"])
+	require.Equal(t, "skali-platform", service["namespace"])
+	require.EqualValues(t, 8333, service["port"])
+
+	same := IngressRoute("skali-env", "route", nil, []string{EntryPointWeb}, []Route{{
+		Match: HostMatch("app.example.com", "/"), Service: Service{Name: "app", PortNumber: 80},
+	}}, "")
+	routes, _, err = unstructured.NestedSlice(same.Object, "spec", "routes")
+	require.NoError(t, err)
+	require.NotContains(t, routes[0].(map[string]any)["services"].([]any)[0].(map[string]any), "namespace",
+		"same-namespace backends keep Traefik's default")
+}

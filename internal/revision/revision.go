@@ -316,6 +316,11 @@ func requiredCapabilities(definition compiler.ProjectDefinition) []string {
 			needed[layout.CapabilityEdge] = true
 		}
 	}
+	for _, bucket := range definition.Buckets {
+		if bucket.Route != nil {
+			needed[layout.CapabilityEdge] = true
+		}
+	}
 	capabilities := make([]string, 0, len(layout.Capabilities))
 	for _, capability := range layout.Capabilities {
 		if needed[capability] {

@@ -125,3 +125,48 @@ func TestRetiredClaimSurvivesRestartAndTargetLock(t *testing.T) {
 	_, err = f.st.GetHostnameClaim(ctx, "example.com")
 	require.Error(t, err)
 }
+
+const bucketRoutedManifest = `name: demo
+applications:
+  web:
+    image: nginx:alpine
+    routes:
+      public: {domain: app.example.com, port: 80}
+buckets:
+  files:
+    route: {domain: files.example.com}
+  avatars:
+    route: {domain: files.example.com}
+`
+
+// TestBucketRouteHostnameClaims: a bucket route claims its hostname like an
+// application route (another environment cannot take it, and a reserved
+// host refuses it), and two buckets of one environment share a hostname.
+// A bucket route resolving to an application's hostname is refused by the
+// compiler (literal) or by ResolveRoutes (variables), covered in
+// internal/compiler.
+func TestBucketRouteHostnameClaims(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	env2, err := f.projects.CreateEnvironment(ctx, f.projectID, "other", project.EnvironmentOptions{})
+	require.NoError(t, err)
+	def := f.submit(t, bucketRoutedManifest, 0)
+	require.NoError(t, f.deploy.Promote(ctx, routePrepared(t, f, f.environmentID, def)))
+	claim, err := f.st.GetHostnameClaim(ctx, "files.example.com")
+	require.NoError(t, err)
+	require.Equal(t, f.environmentID, *claim.EnvironmentID)
+
+	bucketOnly := f.submit(t, "name: demo\nbuckets:\n  files:\n    route: {domain: files.example.com}\n", 1)
+	err = f.deploy.Promote(ctx, routePrepared(t, f, env2.ID, bucketOnly))
+	var conflict *HostnameConflict
+	require.ErrorAs(t, err, &conflict)
+	require.False(t, conflict.Reserved)
+	require.Equal(t, "buckets.files.route", conflict.Field)
+
+	require.NoError(t, f.deploy.ReserveHostnames(ctx, []string{"s3.example.com"}))
+	reserved := f.submit(t, strings.Replace(bucketRoutedManifest, "files.example.com", "s3.example.com", 2), 2)
+	err = f.deploy.Promote(ctx, routePrepared(t, f, f.environmentID, reserved))
+	require.ErrorAs(t, err, &conflict)
+	require.True(t, conflict.Reserved)
+
+}

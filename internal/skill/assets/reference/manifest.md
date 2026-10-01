@@ -65,6 +65,10 @@ Available outputs:
 | `databases` | `host`, `port`, `name` | `username`, `password`, `url` |
 | `buckets` | `endpoint`, `internal_endpoint`, `name`, `region` | `access_key`, `secret_key` |
 
+`buckets.<key>.endpoint` is the bucket's route origin when it declares one
+and the in-cluster gateway otherwise; `internal_endpoint` is always the
+in-cluster gateway.
+
 The value contract is derived entirely from `${NAME}` references; there
 is no declaration block. Every value is secret: stored encrypted per
 environment, write-only through the API and console, and shown in plans
@@ -445,13 +449,33 @@ buckets:
 Buckets are S3 compatible. The v1 surface is private visibility with a
 hard storage quota, an optional `cors` block (`allowedOrigins`,
 `allowedMethods`, `allowedHeaders`, `exposeHeaders`, `maxAge`) for pages
-that upload or download through presigned URLs, and
-`lifecycle.abortIncompleteUploadsAfter` (a day when unset) for abandoned
-multipart uploads; `visibility: public-read`, `versioning: enabled`,
-`lifecycle.expireNoncurrentVersionsAfter`, `quotas.objects`, and
-`quotas.maxObjectSize` are valid vocabulary already but are rejected at
-deploy until later policies land. When a bucket reaches its quota it
+that upload or download through presigned URLs, an optional `route`
+block, and `lifecycle.abortIncompleteUploadsAfter` (a day when unset) for
+abandoned multipart uploads; `visibility: public-read`, `versioning:
+enabled`, `lifecycle.expireNoncurrentVersionsAfter`, `quotas.objects`,
+and `quotas.maxObjectSize` are valid vocabulary already but are rejected
+at deploy until later policies land. When a bucket reaches its quota it
 refuses uploads until objects are deleted.
+
+```yaml
+buckets:
+  files:
+    route:
+      domain: ${STORAGE_DOMAIN}   # project variable or literal hostname
+      tls: automatic              # optional: automatic | optional | disabled
+```
+
+Without a route a bucket is reachable only inside the cluster (its
+`endpoint` output equals `internal_endpoint`), like a database. A route
+publishes the bucket on that hostname through the edge, path-style, with
+a certificate and the same DNS probing, deferral and ownership checks as
+an application route; `endpoint` becomes `https://<domain>` (`http://`
+with `tls: disabled`), the address to sign presigned URLs for. The
+hostname serves exactly this bucket. Several buckets may share a
+hostname, each on its own path; a bucket route cannot share a hostname
+with an application route. Changing or removing the route republishes
+`endpoint` and rolls the consumers; URLs signed for the old host stop
+working.
 
 ```yaml
 applications:

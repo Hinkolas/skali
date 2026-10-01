@@ -125,6 +125,18 @@ func TestEnsureBucketClaimIdempotentAndDrift(t *testing.T) {
 	require.Equal(t, int64(2<<30), updated.StorageQuotaBytes)
 	require.Equal(t, int64(86400), updated.AbortUploadsAfterSeconds)
 
+	// A route is mutable spec too: gaining, changing, and losing one all
+	// fold into the live claim.
+	routed := drifted
+	routed.Route = []byte(`{"domain":"files.example.com","tls":"automatic"}`)
+	updated, err = f.svc.EnsureBucketClaim(ctx, f.owner("files"), routed)
+	require.NoError(t, err)
+	require.Equal(t, first.ID, updated.ID)
+	require.JSONEq(t, `{"domain":"files.example.com","tls":"automatic"}`, string(updated.Route))
+	updated, err = f.svc.EnsureBucketClaim(ctx, f.owner("files"), drifted)
+	require.NoError(t, err)
+	require.Nil(t, updated.Route)
+
 	// The externally observable contract is immutable on a live claim.
 	conflicting := bucketSpec()
 	conflicting.Visibility = "public-read"

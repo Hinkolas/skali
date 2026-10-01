@@ -99,8 +99,14 @@ func newRouteCommand() *cobra.Command {
 func routeListLines(style *clirender.Style, status *client.EnvironmentStatus, ports edgePorts) []string {
 	var lines []string
 	for _, service := range status.Services {
+		// Bucket routes carry their collection so a bucket and an
+		// application sharing a key never read alike.
+		label := service.Key
+		if service.Type == "bucket" {
+			label = "buckets." + service.Key
+		}
 		for _, route := range service.Routes {
-			line := fmt.Sprintf("%-24s  %s", service.Key+"/"+route.Key, style.Link(routeURL(route, ports)))
+			line := fmt.Sprintf("%-24s  %s", label+"/"+route.Key, style.Link(routeURL(route, ports)))
 			switch {
 			case route.Deferred():
 				line += "  " + style.Yellow("cert deferred · domain not pointing here yet")

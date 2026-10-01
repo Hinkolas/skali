@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 )
 
@@ -21,21 +22,28 @@ import (
 // any other module's evaluation.
 const sourceName = "seaweedfs"
 
-type Module struct{}
+type Module struct {
+	// Certificates mirrors the installation's cert-manager capability: when
+	// set, a routed bucket's certificate issuance folds into its health
+	// exactly as an application route's does.
+	Certificates bool
+}
 
 func (Module) Type() string { return "bucket" }
 
-func (Module) Decode(definition compiler.ProjectDefinition, key string) (module.Service, error) {
+func (m Module) Decode(definition compiler.ProjectDefinition, key string) (module.Service, error) {
 	bucket, ok := definition.Buckets[key]
 	if !ok {
 		return nil, fmt.Errorf("bucket: bucket %s is not defined", key)
 	}
-	return &service{key: key, bucket: bucket}, nil
+	return &service{project: definition.Name, key: key, bucket: bucket, certificates: m.Certificates}, nil
 }
 
 type service struct {
-	key    string
-	bucket compiler.BucketClaim
+	project      string
+	key          string
+	bucket       compiler.BucketClaim
+	certificates bool
 }
 
 func (s *service) Key() string  { return s.key }
@@ -96,7 +104,14 @@ func (s *service) Evaluate(observed []module.ObservedResource) module.Evaluation
 
 	switch claim.Phase(status.Phase) {
 	case claim.PhaseProvisioned:
-		return evaluateProvisioned(observed)
+		evaluation := evaluateProvisioned(observed)
+		if s.certificates && s.bucket.Route != nil {
+			evaluation = module.CertificateGate(observed, []module.CertRoute{{
+				Name: kubernetes.BucketRouteTLSName(s.project, s.key),
+				TLS:  s.bucket.Route.TLS,
+			}}, evaluation, time.Now())
+		}
+		return evaluation
 	case claim.PhaseReleasing, claim.PhaseReleased:
 		return module.Evaluation{Health: module.HealthProgressing, Diagnostics: []module.Diagnostic{{
 			Severity: "info", Code: "claim-releasing",
@@ -238,9 +253,9 @@ func storeDiagnostics(store *module.ObjectStoreStatus) []module.Diagnostic {
 	if endpoint := store.PublicEndpoint; endpoint != nil {
 		switch {
 		case endpoint.Certificate == nil:
-			warn("endpoint-certificate", fmt.Sprintf("the certificate for %s has not been requested yet", endpoint.Domain))
+			warn("endpoint-certificate", fmt.Sprintf("the certificate for the installation-wide endpoint %s has not been requested yet", endpoint.Domain))
 		case !endpoint.Certificate.Ready:
-			message := fmt.Sprintf("the certificate for %s is not issued yet; presigned URLs for the public endpoint fail TLS until it is", endpoint.Domain)
+			message := fmt.Sprintf("the certificate for the installation-wide endpoint %s is not issued yet; presigned URLs signed against it fail TLS until it is", endpoint.Domain)
 			if endpoint.Certificate.Message != "" {
 				message += " (" + endpoint.Certificate.Message + ")"
 			}

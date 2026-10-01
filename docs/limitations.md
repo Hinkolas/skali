@@ -135,6 +135,23 @@ never probes: `*.localhost` cannot resolve to its edge from inside the
 cluster, so its routes gate on issuance alone, which the private CA
 issuer completes in seconds.
 
+## A bucket route serves one bucket, on its own hostname
+
+A bucket's `route` publishes exactly that bucket: the edge matches the
+bucket's path on the hostname and answers 404 for anything else, and a
+presigned URL for another bucket through that hostname fails. Several
+buckets of one environment may share a hostname, but a bucket cannot share
+a hostname with an application route (`example.com` for the app,
+`example.com/storage` for the bucket), and the bucket's path under the
+hostname is its store name, not a path of your choosing. Both the shared
+hostname and a configurable path are planned; until then give the bucket
+a hostname of its own. The deferral, probing and `skali route probe`
+behaviour above applies to bucket routes unchanged.
+
+The installation-wide S3 endpoint (`endpoints.s3`) remains as a fallback
+for buckets without a route on managed clusters, and is slated for
+removal: declare routes instead.
+
 ## Shrinking the object store is manual
 
 The managed object store grows with the fleet (a second object-storage

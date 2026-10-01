@@ -109,6 +109,7 @@ func TestInvalidFixtures(t *testing.T) {
 		"invalid-output.yml":               "unknown database output \"hostname\"",
 		"invalid-unit.yml":                 "Skali byte unit",
 		"route-conflict.yml":               "domain and path pairs must be unique",
+		"bucket-route-app-conflict.yml":    "a bucket cannot share a hostname with an application route",
 	}
 	for name, message := range tests {
 		name, message := name, message

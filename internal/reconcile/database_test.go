@@ -47,6 +47,10 @@ func (f *fakeClaims) Release(_ context.Context, _ uuid.UUID) (bool, []string, er
 	return true, nil, nil
 }
 
+func (f *fakeClaims) BucketNames(_ context.Context, _ uuid.UUID) (map[string]string, error) {
+	return nil, nil
+}
+
 func (f *fakeClaims) Generations(_ context.Context, _ uuid.UUID) (map[string]string, error) {
 	return f.generations, nil
 }

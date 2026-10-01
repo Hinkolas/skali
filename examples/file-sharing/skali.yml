@@ -160,6 +160,12 @@ buckets:
   files:
     visibility: private
 
+    # The hostname browsers reach: presigned URLs are signed for it, the
+    # edge serves exactly this bucket on it with automatic TLS, and the
+    # application's own traffic stays on the in-cluster address.
+    route:
+      domain: "${STORAGE_DOMAIN}"
+
     quotas:
       storage: 20GB
 

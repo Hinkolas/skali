@@ -156,6 +156,9 @@ Ordered loosely by how often I have wanted them.
 - [ ] LAN / HTTP-only installation profile for home and office clusters.
 - [ ] Notifications (deploy finished, run failed) to chat/webhook.
 - [ ] Custom domains with automatic verification and redirects.
+      Buckets gained their own hostnames (`buckets.<key>.route`, #69); a
+      bucket sharing an application's hostname under a path and the
+      installation-wide S3 endpoint's removal follow.
       Verification half done (2026-09-16): every deploy probes whether a
       route's domain reaches this installation and defers the certificate
       until it does (docs/limitations.md, "Routes whose domain does not

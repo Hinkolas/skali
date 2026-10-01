@@ -87,10 +87,14 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.EqualValues(t, 10000, probeRoute["priority"])
 	_, hasTLS, _ := unstructured.NestedMap(probe.Object, "spec", "tls")
 	require.False(t, hasTLS)
-	require.Len(t, objects.EdgeMetrics, 1)
-	require.Equal(t, "HelmChartConfig", objects.EdgeMetrics[0].GetKind())
-	require.Equal(t, "kube-system", objects.EdgeMetrics[0].GetNamespace(),
+	require.Len(t, objects.EdgeTraefik, 1)
+	require.Equal(t, "HelmChartConfig", objects.EdgeTraefik[0].GetKind())
+	require.Equal(t, "kube-system", objects.EdgeTraefik[0].GetNamespace(),
 		"the traefik chart overlay must land beside the k3s-owned HelmChart")
+	traefikValues, _, _ := unstructured.NestedString(objects.EdgeTraefik[0].Object, "spec", "valuesContent")
+	require.Contains(t, traefikValues, "addRoutersLabels: true")
+	require.Contains(t, traefikValues, "allowCrossNamespace: true",
+		"bucket routes in environment namespaces reach the platform's S3 gateway")
 	require.Len(t, objects.BootstrapUser, 2)
 
 	// Everything namespaced sits in skali-system; the admin password only

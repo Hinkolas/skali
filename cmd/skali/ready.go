@@ -116,23 +116,29 @@ func readySummaryLines(style *clirender.Style, status *client.EnvironmentStatus,
 	}
 	seen := map[string]bool{}
 	for _, service := range status.Services {
-		if service.Type != "application" {
-			continue
-		}
-		seen[service.Key] = true
 		var lines []string
 		for _, route := range service.Routes {
 			lines = append(lines, routeReadyLine(style, route, summary.Edge))
 		}
-		if note := devProcessNote(style, summary.DevPorts[service.Key]); note != "" {
-			if len(lines) == 0 {
-				lines = append(lines, note)
-			} else {
-				lines[0] += "  " + note
+		switch service.Type {
+		case "application":
+			seen[service.Key] = true
+			if note := devProcessNote(style, summary.DevPorts[service.Key]); note != "" {
+				if len(lines) == 0 {
+					lines = append(lines, note)
+				} else {
+					lines[0] += "  " + note
+				}
 			}
-		}
-		if len(lines) > 0 {
-			rows = append(rows, row{label: service.Key, lines: lines})
+			if len(lines) > 0 {
+				rows = append(rows, row{label: service.Key, lines: lines})
+			}
+		case "bucket":
+			// A routed bucket lists its public origin like an application
+			// route, under its dotted name so it never reads as an app.
+			if len(lines) > 0 {
+				rows = append(rows, row{label: "buckets." + service.Key, lines: lines})
+			}
 		}
 	}
 	// An intercepted application the status does not list yet (an

@@ -210,6 +210,16 @@ type BucketClaim struct {
 	// CORS is the declared cross-origin policy; nil keeps the store's
 	// permissive fallback.
 	CORS *BucketCORS "json:\"cors,omitempty\""
+	// Route is the bucket's public hostname; nil keeps the bucket
+	// in-cluster. It stays omitempty so existing definition hashes hold.
+	Route *BucketRoute "json:\"route,omitempty\""
+}
+
+// BucketRoute is one compiled bucket route: the hostname expression and
+// the TLS policy, with the same vocabulary as application routes.
+type BucketRoute struct {
+	Domain Expression "json:\"domain\""
+	TLS    string     "json:\"tls\""
 }
 
 // BucketCORS is one compiled CORS rule: the bucket's declared origins,

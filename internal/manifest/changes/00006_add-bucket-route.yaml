@@ -1,0 +1,4 @@
+kind: added
+path: "buckets.*.route"
+message: "buckets gained an optional route block (domain, tls); a bucket with a route is published on that hostname through the edge and its endpoint output becomes the https origin"
+hint: "nothing to change; declare route.domain on a bucket to publish it, buckets without one stay reachable in-cluster only (or on the installation-wide S3 endpoint while that still exists)"

@@ -33,7 +33,8 @@ installation. This is a manual data transfer, not an in-place upgrade or a promi
 that an old installation database can be restored into this release.
 
 Each public hostname belongs to one environment. Applications in that environment
-may share paths; other environments cannot claim any path on its hostname.
+may share paths, and its buckets may share a hostname among themselves; other
+environments cannot claim any path on its hostname.
 Platform, registry, and S3 hosts are reserved through `SKALI_RESERVED_HOSTS`
 (semicolon-separated; the managed bundle supplies these automatically).
 Configuration cannot reserve a hostname already claimed by an environment.

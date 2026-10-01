@@ -97,11 +97,15 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if err != nil {
 		return 0, err
 	}
+	bucketNames, err := k.claimBucketNames(ctx, environmentID)
+	if err != nil {
+		return 0, err
+	}
 
 	// The traffic decision reads the live Service selectors and workload
 	// availability before rendering: blue-green applications keep their
 	// serving color until the new one is fully available.
-	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, generations, intercepts, env.Priority,
+	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, generations, bucketNames, intercepts, env.Priority,
 		k.deps.Observed.Snapshot(environmentID))
 	if err != nil {
 		var gateway *hostGatewayUnavailable
@@ -140,7 +144,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// the evaluation sees are at least as fresh as this pass's intent. The
 	// substrate provisions asynchronously; states carry readiness and the
 	// visible waiting reasons.
-	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev)
+	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes)
 	if err != nil {
 		k.journalOpFailure(ctx, attachment, "claims", "Record database claims", nil, err)
 		return 0, err
@@ -197,6 +201,24 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 				} else if attachment.adopted() {
 					attachment.completeStep(ctx, stepKey, title, journal.StepSucceeded,
 						[]string{noun + " provisioned; connection outputs published"})
+				}
+				// A bucket's edge objects (its route) apply beside the claim
+				// step, keyed by the dotted name the renderer labels them
+				// with. They render only once the claim allocated a bucket
+				// name, and they point at the shared gateway, so applying
+				// them ahead of provisioning is harmless and lets the
+				// certificate issue while the bucket settles.
+				if objs, ok := desired.services[dotted]; ok && len(objs.rest) > 0 {
+					serviceChanged, err := k.executeOps(ctx, applyAll(objs.rest))
+					if err != nil {
+						k.journalOpFailure(ctx, attachment, "apply:"+dotted, "Apply "+dotted, serviceChanged, err)
+						return 0, err
+					}
+					if len(serviceChanged) > 0 {
+						attachment.ensure(ctx)
+						attachment.completeStep(ctx, "apply:"+dotted, "Apply "+dotted,
+							journal.StepSucceeded, serviceChanged)
+					}
 				}
 				continue
 			}
@@ -690,7 +712,7 @@ func (k *Kernel) renderInputs(environmentID uuid.UUID, rev *revision.Revision, r
 }
 
 func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
-	restartedAt *time.Time, appRestarts map[string]string, generations map[string]string,
+	restartedAt *time.Time, appRestarts map[string]string, generations map[string]string, bucketNames map[string]string,
 	intercepts map[string]map[string]int32, priority string, snapshot observe.Snapshot) (*desiredSet, error) {
 	refs := secretVersions(rev)
 	variables, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
@@ -711,6 +733,13 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 		return nil, err
 	}
 	renderOptions.Variables = variables
+	renderOptions.BucketNames = bucketNames
+	// Bucket routes resolve here, against the same values the render
+	// sees, so the hostname the claim records is the one the edge serves.
+	bucketRoutes, err := resolveBucketRoutes(rev.Definition, variables)
+	if err != nil {
+		return nil, err
+	}
 
 	// Intercept declarations are keyed by manifest port name; rendering
 	// needs them per rendered service port. A failure here is permanent for
@@ -775,14 +804,31 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	delete(services, "")
 	return &desiredSet{namespace: namespace, secret: secret,
 		environment: shared.rest, services: services, refs: refsList,
-		colors: colors, plans: plans, certDomains: certDomains}, nil
+		colors: colors, plans: plans, certDomains: certDomains, bucketRoutes: bucketRoutes}, nil
+}
+
+// resolveBucketRoutes projects the resolved hostname list onto the routed
+// buckets, keyed by bucket key, for the claim manager.
+func resolveBucketRoutes(definition compiler.ProjectDefinition, variables map[string]string) (map[string]BucketRoute, error) {
+	resolved, err := compiler.ResolveRoutes(definition, variables)
+	if err != nil {
+		return nil, err
+	}
+	routes := make(map[string]BucketRoute)
+	for _, route := range resolved {
+		if route.Bucket == "" {
+			continue
+		}
+		routes[route.Bucket] = BucketRoute{Domain: route.Domain, TLS: definition.Buckets[route.Bucket].Route.TLS}
+	}
+	return routes, nil
 }
 
 // ensureClaims records the revision's infrastructure claims (databases and
 // buckets) through the claim manager and returns the dotted-name waiting
 // reasons for every claim that is not provisioned. Without a substrate
 // every claim-backed service waits visibly.
-func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision) (map[string]string, error) {
+func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision, bucketRoutes map[string]BucketRoute) (map[string]string, error) {
 	total := len(rev.Definition.Databases) + len(rev.Definition.Buckets)
 	if total == 0 {
 		return nil, nil
@@ -801,6 +847,7 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Revision:      rev,
+		BucketRoutes:  bucketRoutes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reconcile: ensure claims: %w", err)
@@ -855,16 +902,31 @@ func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *rev
 // revision references.
 func routeVariableNames(rev *revision.Revision) map[string]bool {
 	names := map[string]bool{}
-	for _, application := range rev.Definition.Applications {
-		for _, route := range application.Routes {
-			for _, part := range route.Domain.Parts {
-				if part.Kind == "project_variable" {
-					names[part.Name] = true
-				}
+	for _, domain := range routeDomainExpressions(rev.Definition) {
+		for _, part := range domain.Parts {
+			if part.Kind == "project_variable" {
+				names[part.Name] = true
 			}
 		}
 	}
 	return names
+}
+
+// routeDomainExpressions lists every hostname expression the edge serves
+// for the definition: application routes and bucket routes alike.
+func routeDomainExpressions(definition compiler.ProjectDefinition) []compiler.Expression {
+	var domains []compiler.Expression
+	for _, application := range definition.Applications {
+		for _, route := range application.Routes {
+			domains = append(domains, route.Domain)
+		}
+	}
+	for _, bucket := range definition.Buckets {
+		if bucket.Route != nil {
+			domains = append(domains, bucket.Route.Domain)
+		}
+	}
+	return domains
 }
 
 // liveObjectByRef finds one observed object of a kind by namespace and
@@ -1024,6 +1086,17 @@ func (k *Kernel) releaseAbsentHostnames(ctx context.Context, env uuid.UUID) erro
 
 // claimGenerations reads the output generations of the environment's
 // provisioned claims; without a substrate there are none.
+func (k *Kernel) claimBucketNames(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
+	if k.deps.Claims == nil {
+		return nil, nil
+	}
+	names, err := k.deps.Claims.BucketNames(ctx, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("reconcile: claim bucket names: %w", err)
+	}
+	return names, nil
+}
+
 func (k *Kernel) claimGenerations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
 	if k.deps.Claims == nil {
 		return nil, nil

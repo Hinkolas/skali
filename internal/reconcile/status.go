@@ -212,15 +212,13 @@ func (k *Kernel) desiredColors(ctx context.Context, environmentID uuid.UUID, tar
 func (k *Kernel) routeVariables(ctx context.Context, environmentID uuid.UUID,
 	rev *revision.Revision) (map[string]string, error) {
 	refs := map[string]int{}
-	for _, application := range rev.Definition.Applications {
-		for _, route := range application.Routes {
-			for _, part := range route.Domain.Parts {
-				if part.Kind != "project_variable" {
-					continue
-				}
-				if secret, ok := rev.Secrets[part.Name]; ok {
-					refs[part.Name] = secret.Version
-				}
+	for _, domain := range routeDomainExpressions(rev.Definition) {
+		for _, part := range domain.Parts {
+			if part.Kind != "project_variable" {
+				continue
+			}
+			if secret, ok := rev.Secrets[part.Name]; ok {
+				refs[part.Name] = secret.Version
 			}
 		}
 	}
@@ -279,6 +277,8 @@ func (k *Kernel) evaluateServices(environmentID uuid.UUID, rev *revision.Revisio
 		if item.withPods {
 			status.Pods = podsFor(snapshot, item.key)
 			status.Routes = routesFor(rev.Definition, snapshot, item.key, variables, edgeFor)
+		} else if item.serviceType == "bucket" {
+			status.Routes = bucketRoutesFor(rev.Definition, snapshot, item.key, variables, edgeFor)
 		}
 		if _, ok := intercepts[item.key]; ok && item.serviceType == "application" {
 			// Synthesized at the kernel, not in the app module: the module
@@ -315,11 +315,14 @@ func (k *Kernel) evaluateServices(environmentID uuid.UUID, rev *revision.Revisio
 			continue
 		}
 		observed := snapshot.ForService(item.observedKey)
-		if item.serviceType == "application" {
+		switch item.serviceType {
+		case "application":
 			// The edge verdicts ride along the same way: a route domain
 			// that does not reach this edge yet relaxes the certificate
 			// gate in the module instead of parking the rollout.
 			observed = append(observed, k.edgeResources(environmentID, rev.Definition, item.key)...)
+		case "bucket":
+			observed = append(observed, k.bucketEdgeResources(environmentID, rev.Definition, item.key)...)
 		}
 		if desiredColor, blueGreen := colors[item.key]; blueGreen && item.serviceType == "application" {
 			// The kernel's intent rides along: the module judges the desired
@@ -349,13 +352,7 @@ func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot,
 	if !ok || len(application.Routes) == 0 {
 		return nil
 	}
-	certificates := map[string]*module.CertificateStatus{}
-	for index := range snapshot.Objects {
-		obj := &snapshot.Objects[index]
-		if obj.Kind == module.KindCertificate && obj.Service == key && obj.Certificate != nil {
-			certificates[obj.Name] = obj.Certificate
-		}
-	}
+	certificates := certificatesFor(snapshot, key)
 	routes := make([]RouteStatus, 0, len(application.Routes))
 	for _, routeKey := range utils.SortedKeys(application.Routes) {
 		route := application.Routes[routeKey]
@@ -367,31 +364,72 @@ func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot,
 			Strategy: route.Strategy,
 			Compress: route.Compress != compiler.RouteCompressDisabled,
 		}
-		name := rendering.RouteTLSName(definition.Name, key, routeKey)
-		if edgeFor != nil && route.TLS != "disabled" {
-			status.Edge = edgeFor(name)
-		}
-		if certificate := certificates[name]; certificate != nil {
-			if len(certificate.DNSNames) > 0 {
-				status.Domain = certificate.DNSNames[0]
-			}
-			status.Certificate = &CertificateInfo{
-				FailedAttempts:           certificate.FailedAttempts,
-				LastFailureTime:          certificate.LastFailureTime,
-				NextRetryTime:            certificate.NextRetryTime,
-				NextPrivateKeySecretName: certificate.NextPrivateKeySecretName,
-				Name:                     name,
-				SecretName:               certificate.SecretName,
-				State:                    certificateState(certificate, time.Now()),
-				Reason:                   certificate.Reason,
-				Message:                  certificate.Message,
-				NotAfter:                 certificate.NotAfter,
-				RenewalTime:              certificate.RenewalTime,
-			}
-		}
+		attachCertificate(&status, rendering.RouteTLSName(definition.Name, key, routeKey), certificates, edgeFor)
 		routes = append(routes, status)
 	}
 	return routes
+}
+
+// bucketRoutesFor projects a routed bucket's single route the way
+// routesFor projects an application's, keyed by the bucket's certificate
+// name; a bucket without a route has none.
+func bucketRoutesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot, key string,
+	variables map[string]string, edgeFor func(certName string) *EdgeStatus) []RouteStatus {
+	bucket, ok := definition.Buckets[key]
+	if !ok || bucket.Route == nil {
+		return nil
+	}
+	status := RouteStatus{
+		Key:    "route",
+		Domain: routeDomain(bucket.Route.Domain, variables),
+		Path:   "/",
+		TLS:    bucket.Route.TLS,
+	}
+	attachCertificate(&status, rendering.BucketRouteTLSName(definition.Name, key),
+		certificatesFor(snapshot, "buckets."+key), edgeFor)
+	return []RouteStatus{status}
+}
+
+// certificatesFor indexes the observed certificates of one service key
+// (bare application key, dotted bucket name) by object name.
+func certificatesFor(snapshot observe.Snapshot, serviceKey string) map[string]*module.CertificateStatus {
+	certificates := map[string]*module.CertificateStatus{}
+	for index := range snapshot.Objects {
+		obj := &snapshot.Objects[index]
+		if obj.Kind == module.KindCertificate && obj.Service == serviceKey && obj.Certificate != nil {
+			certificates[obj.Name] = obj.Certificate
+		}
+	}
+	return certificates
+}
+
+// attachCertificate fills a route status with the edge verdict and the
+// observed certificate of its certificate name, when either exists.
+func attachCertificate(status *RouteStatus, name string, certificates map[string]*module.CertificateStatus,
+	edgeFor func(certName string) *EdgeStatus) {
+	if edgeFor != nil && status.TLS != "disabled" {
+		status.Edge = edgeFor(name)
+	}
+	certificate := certificates[name]
+	if certificate == nil {
+		return
+	}
+	if len(certificate.DNSNames) > 0 {
+		status.Domain = certificate.DNSNames[0]
+	}
+	status.Certificate = &CertificateInfo{
+		FailedAttempts:           certificate.FailedAttempts,
+		LastFailureTime:          certificate.LastFailureTime,
+		NextRetryTime:            certificate.NextRetryTime,
+		NextPrivateKeySecretName: certificate.NextPrivateKeySecretName,
+		Name:                     name,
+		SecretName:               certificate.SecretName,
+		State:                    certificateState(certificate, time.Now()),
+		Reason:                   certificate.Reason,
+		Message:                  certificate.Message,
+		NotAfter:                 certificate.NotAfter,
+		RenewalTime:              certificate.RenewalTime,
+	}
 }
 
 // certificateState derives the display state of one certificate.

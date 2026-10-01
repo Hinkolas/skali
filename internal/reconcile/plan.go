@@ -250,6 +250,9 @@ type desiredSet struct {
 	// asks for (spec.dnsNames[0]): canonical, variables resolved, and known
 	// before the object is ever observed. The edge probe keys on it.
 	certDomains map[string]string
+	// bucketRoutes is each routed bucket's resolved hostname, recorded on
+	// its claim by the same pass that rendered the edge for it.
+	bucketRoutes map[string]BucketRoute
 }
 
 // groupObjects splits the flat rendered object list per service key.

@@ -169,6 +169,12 @@ export interface BucketClaim {
 	abortIncompleteUploadsAfterSeconds?: number;
 	expireNoncurrentVersionsAfterSeconds?: number;
 	cors?: BucketCORS;
+	route?: BucketRoute;
+}
+
+export interface BucketRoute {
+	domain: Expression;
+	tls: string;
 }
 
 export interface BucketCORS {

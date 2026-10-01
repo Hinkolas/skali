@@ -2,19 +2,26 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/bundle"
@@ -27,9 +34,10 @@ import (
 // its declared Content-Type, the exposed ETag, the signed GET, a range
 // read, multipart parts) plus every way a URL must fail (tampered
 // signature, other method, other key, other host, expired, unsigned,
-// other bucket, anonymous). The dev store has no public domain, so the
-// application signs for the loopback port the local platform maps the
-// gateway to; the HTTPS-edge variant lives in the cluster suite.
+// other bucket, anonymous). The application signs for the loopback port
+// the local platform maps the gateway to (a host-run browser cannot reach
+// in-cluster names); the bucket's own route is then exercised through the
+// real TLS edge in the BucketRoute subtest.
 func TestDevFileSharingPresigned(t *testing.T) {
 	h := newE2EHarnessFor(t, "file-sharing", "file-sharing.localhost")
 	const token = "e2e-upload-token"
@@ -37,12 +45,15 @@ func TestDevFileSharingPresigned(t *testing.T) {
 	envFile := filepath.Join(h.projectDir, ".env")
 	current, err := os.ReadFile(envFile)
 	require.NoError(t, err)
+	const storageHost = "storage.file-sharing.localhost"
 	require.NoError(t, os.WriteFile(envFile, append(current,
-		[]byte("UPLOAD_TOKEN="+token+"\nS3_PUBLIC_ENDPOINT="+s3Public+"\n")...), 0o644))
+		[]byte("UPLOAD_TOKEN="+token+"\nS3_PUBLIC_ENDPOINT="+s3Public+"\nSTORAGE_DOMAIN="+storageHost+"\n")...), 0o644))
 	origin := fmt.Sprintf("https://%s:%d", h.host, e2eHTTPSPort)
 
 	out := h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
 	require.Contains(t, out, "ready")
+	// The bucket's route lists in the ready summary beside the app's.
+	require.Contains(t, out, fmt.Sprintf("https://%s:%d", storageHost, e2eHTTPSPort))
 	// The release command (migrate up) ran before the rollout; the page
 	// answers once the database and the bucket are both injected.
 	h.waitRoute("File sharing", 10*time.Minute)
@@ -243,7 +254,175 @@ func TestDevFileSharingPresigned(t *testing.T) {
 	out = h.run(false, "", "dev", "status")
 	require.Contains(t, out, "bucket.files")
 	require.Contains(t, out, "healthy")
+
+	// The bucket's own hostname, through the real edge: the route renders
+	// in the environment namespace and points across namespaces at the
+	// platform's gateway, the private CA issues its certificate, and
+	// everything a browser does against a presigned URL works over HTTPS
+	// on it. The application signs for the loopback override above, so
+	// this part signs with the bucket's own keys, taken from the output
+	// mirror the platform publishes into the environment.
+	t.Run("BucketRoute", func(t *testing.T) {
+		outputs := h.bucketOutputs(t, "file-sharing", "files")
+		require.Equal(t, "https://"+storageHost, outputs["endpoint"],
+			"the endpoint output is the route's origin")
+		require.Equal(t, bucket, outputs["name"])
+		edge := h.routeClient(storageHost)
+		probe := "https://" + storageHost + "/" + bucket + "/never-there"
+		h.waitFor(t, 3*time.Minute, "the bucket route answers through the edge", func() bool {
+			response, _ := trySend(edge, http.MethodGet, probe, nil, nil)
+			return response != nil && response.StatusCode == http.StatusForbidden
+		})
+
+		// Only this bucket's path exists on the hostname: the edge has no
+		// router for anything else, so another bucket is 404, not 403.
+		response, body := send(t, edge, http.MethodGet, "https://"+storageHost+"/b-other-00000000/key", nil, nil)
+		require.Equal(t, http.StatusNotFound, response.StatusCode, "%s", body)
+		response, body = send(t, edge, http.MethodGet, "https://"+storageHost+"/", nil, nil)
+		require.Equal(t, http.StatusNotFound, response.StatusCode, "no bucket listing through a bucket route: %s", body)
+		// tls: automatic redirects plain HTTP.
+		response, body = send(t, h.plainRouteClient(), http.MethodGet, "http://"+storageHost+"/"+bucket+"/key", nil, nil)
+		require.Equal(t, http.StatusMovedPermanently, response.StatusCode, "%s", body)
+		require.True(t, strings.HasPrefix(response.Header.Get("Location"), "https://"+storageHost+"/"), response.Header.Get("Location"))
+
+		signer, err := minio.New(storageHost, &minio.Options{
+			Creds:        credentials.NewStaticV4(outputs["access_key"], outputs["secret_key"], ""),
+			Secure:       true,
+			Region:       outputs["region"],
+			BucketLookup: minio.BucketLookupPath,
+			// The signer's own calls ride the same loopback dial to the edge.
+			Transport: edge.Transport,
+		})
+		require.NoError(t, err)
+		ctx := context.Background()
+		key := "routed/report ü.txt"
+		payload := []byte("signed for the bucket's own hostname\n")
+		put, err := signer.PresignedPutObject(ctx, bucket, key, 15*time.Minute)
+		require.NoError(t, err)
+		require.Equal(t, storageHost, put.Host, "signed for the route, port-free: %s", put)
+		response, body = send(t, edge, http.MethodPut, put.String(), http.Header{"Origin": {origin}, "Content-Type": {"text/plain"}}, payload)
+		require.Equal(t, http.StatusOK, response.StatusCode, "signed upload through the route: %s", body)
+		require.NotEmpty(t, response.Header.Get("ETag"))
+		get, err := signer.PresignedGetObject(ctx, bucket, key, 15*time.Minute, nil)
+		require.NoError(t, err)
+		response, body = send(t, edge, http.MethodGet, get.String(), http.Header{"Origin": {origin}}, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, "signed download through the route: %s", body)
+		require.Equal(t, payload, body)
+		tampered := *get
+		query := tampered.Query()
+		query.Set("X-Amz-Signature", flipHex(query.Get("X-Amz-Signature")))
+		tampered.RawQuery = query.Encode()
+		response, body = send(t, edge, http.MethodGet, tampered.String(), nil, nil)
+		require.Equal(t, http.StatusForbidden, response.StatusCode, "a tampered signature through the route: %s", body)
+		// A URL signed for the loopback host is refused on the route: the
+		// host is part of the signature, the route is not an alias.
+		response, body = send(t, edge, http.MethodGet,
+			strings.Replace(download.URL, s3Public, "https://"+storageHost, 1), nil, nil)
+		require.Equal(t, http.StatusForbidden, response.StatusCode, "%s", body)
+		require.NoError(t, signer.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}))
+	})
+
 	h.run(false, "", "dev", "down")
+}
+
+// bucketOutputs reads one bucket's connection outputs from the mirror
+// Secret the platform publishes into the project's local environment,
+// the same values the application receives.
+func (h *e2eHarness) bucketOutputs(t *testing.T, project, bucket string) map[string]string {
+	t.Helper()
+	namespace, err := exec.Command("kubectl", "--kubeconfig", h.kubeconfig(), "get", "namespace",
+		"-l", "skali.dev/project="+project+",skali.dev/environment-name=local", "-o", "jsonpath={.items[0].metadata.name}").Output()
+	require.NoError(t, err, "%s", namespace)
+	raw, err := exec.Command("kubectl", "--kubeconfig", h.kubeconfig(), "get", "secret",
+		"-n", strings.TrimSpace(string(namespace)), "-l", "skali.dev/service=buckets."+bucket, "-o", "json").Output()
+	require.NoError(t, err, "%s", raw)
+	var list struct {
+		Items []struct {
+			Data map[string]string `json:"data"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &list))
+	require.Len(t, list.Items, 1, "one output mirror per bucket")
+	outputs := map[string]string{}
+	for name, value := range list.Items[0].Data {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		require.NoError(t, err)
+		outputs[name] = string(decoded)
+	}
+	return outputs
+}
+
+// routeClient reaches one route hostname on the local TLS edge: the URL
+// keeps the hostname (the signature covers it) while the connection goes
+// to the edge's loopback mapping, verified against the development CA.
+func (h *e2eHarness) routeClient(host string) *http.Client {
+	h.httpsClient() // loads the CA pool once the first dev run wrote it
+	tlsConfig := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12, RootCAs: h.caPool}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return &http.Client{
+		Timeout: 2 * time.Minute,
+		Transport: &http.Transport{
+			TLSClientConfig:   tlsConfig,
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, fmt.Sprintf("127.0.0.1:%d", e2eHTTPSPort))
+			},
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// plainRouteClient is routeClient for the plain-HTTP entrypoint.
+func (h *e2eHarness) plainRouteClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, fmt.Sprintf("127.0.0.1:%d", e2eHTTPPort))
+			},
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// waitFor polls a condition until it holds or the timeout passes.
+func (h *e2eHarness) waitFor(t *testing.T, timeout time.Duration, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if condition() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting until %s", what)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// trySend is send without assertions, for polling: a nil response means
+// the request itself failed (TLS not issued yet, connection refused).
+func trySend(client *http.Client, method, rawURL string, header http.Header, body []byte) (*http.Response, []byte) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	request, err := http.NewRequest(method, rawURL, reader)
+	if err != nil {
+		return nil, nil
+	}
+	for name, values := range header {
+		request.Header[name] = values
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, nil
+	}
+	defer response.Body.Close()
+	raw, _ := io.ReadAll(response.Body)
+	return response, raw
 }
 
 type uploadJSON struct {

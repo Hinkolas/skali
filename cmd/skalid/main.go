@@ -220,7 +220,7 @@ func runServe() error {
 	if err := registry.Register(database.Module{}); err != nil {
 		return fmt.Errorf("register database module: %w", err)
 	}
-	if err := registry.Register(bucket.Module{}); err != nil {
+	if err := registry.Register(bucket.Module{Certificates: cfg.CertManager}); err != nil {
 		return fmt.Errorf("register bucket module: %w", err)
 	}
 

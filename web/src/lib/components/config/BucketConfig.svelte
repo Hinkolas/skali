@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { BucketView } from '$lib/models/service';
+	import { renderExpression } from '$lib/types/definition';
 	import { formatBytes, formatCount } from '$lib/format';
 	import { describeSeconds } from '$lib/cron';
 	import Choice from './Choice.svelte';
@@ -95,6 +96,28 @@
 					: 'after 1 day (default)'}
 			</span>
 		</div>
+	</ConfigCard>
+
+	<ConfigCard title="Route" hint="the public hostname serving this bucket">
+		{#if c.route}
+			<div class="flex flex-col gap-1.5 py-1">
+				<div class="flex items-baseline gap-3">
+					<span class="text-text-faint text-md">Domain</span>
+					<span class="text-text-primary ml-auto font-mono text-md text-right">
+						{renderExpression(c.route.domain)}
+					</span>
+				</div>
+				<div class="flex items-baseline gap-3">
+					<span class="text-text-faint text-md">TLS</span>
+					<span class="text-text-primary ml-auto font-mono text-md">{c.route.tls}</span>
+				</div>
+			</div>
+		{:else}
+			<div class="flex items-baseline gap-3 py-1">
+				<span class="text-text-faint text-md">Hostname</span>
+				<span class="text-text-faint ml-auto font-mono text-md">none (in-cluster only)</span>
+			</div>
+		{/if}
 	</ConfigCard>
 
 	<ConfigCard title="CORS" hint="browsers talking to the bucket directly">

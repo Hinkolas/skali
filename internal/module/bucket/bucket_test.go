@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 )
 
@@ -198,4 +199,58 @@ func TestEvaluate(t *testing.T) {
 	releasing := service.Evaluate([]module.ObservedResource{fresh(), claimResource("releasing", "")})
 	require.Equal(t, module.HealthProgressing, releasing.Health)
 	require.Equal(t, "claim-releasing", releasing.Diagnostics[0].Code)
+}
+
+// TestEvaluateRouteCertificate: a routed bucket folds its route
+// certificate into health exactly like an application route (pending
+// issuance floors to progressing with the certificate leading, a deferred
+// domain only warns, an issued certificate is silent), keyed by the
+// bucket's certificate name; without cert-manager the route never gates.
+func TestEvaluateRouteCertificate(t *testing.T) {
+	t.Parallel()
+	routed := compiler.ProjectDefinition{Name: "demo", Buckets: map[string]compiler.BucketClaim{
+		"files": {Visibility: "private", Versioning: "disabled",
+			Route: &compiler.BucketRoute{Domain: compiler.Expression{}, TLS: "automatic"}},
+	}}
+	service, err := Module{Certificates: true}.Decode(routed, "files")
+	require.NoError(t, err)
+	name := kubernetes.BucketRouteTLSName("demo", "files")
+	store := module.ObservedResource{Kind: module.KindObjectStore,
+		ObjectStore: &module.ObjectStoreStatus{MastersReady: 1, FilerReady: true, S3Ready: true}}
+	usage := module.ObservedResource{Kind: module.KindBucket, Bucket: &module.BucketStatus{Exists: true}}
+	base := []module.ObservedResource{fresh(), seaweedSource(module.SourceFresh), claimResource("provisioned", ""), store, usage}
+
+	unobserved := service.Evaluate(base)
+	require.Equal(t, module.HealthProgressing, unobserved.Health)
+	require.Equal(t, "certificate-unobserved", unobserved.Diagnostics[0].Code)
+	require.Equal(t, name, unobserved.Diagnostics[0].Resource)
+
+	pending := service.Evaluate(append(append([]module.ObservedResource{}, base...), module.ObservedResource{
+		Kind: module.KindCertificate, Name: name, Certificate: &module.CertificateStatus{Issuing: true}}))
+	require.Equal(t, module.HealthProgressing, pending.Health)
+	require.Equal(t, "certificate-pending", pending.Diagnostics[0].Code)
+
+	deferred := service.Evaluate(append(append([]module.ObservedResource{}, base...),
+		module.ObservedResource{Kind: module.KindCertificate, Name: name, Certificate: &module.CertificateStatus{}},
+		module.ObservedResource{Kind: module.KindEdge, Name: name,
+			Edge: &module.EdgeReach{Domain: "files.example.com", State: "unresolved", Deferred: true}}))
+	require.Equal(t, module.HealthHealthy, deferred.Health, "a domain that does not point here yet never gates")
+	require.Equal(t, "certificate-deferred", deferred.Diagnostics[len(deferred.Diagnostics)-1].Code)
+	require.Contains(t, deferred.Diagnostics[len(deferred.Diagnostics)-1].Message, "files.example.com does not reach this installation yet")
+
+	issued := service.Evaluate(append(append([]module.ObservedResource{}, base...), module.ObservedResource{
+		Kind: module.KindCertificate, Name: name,
+		Certificate: &module.CertificateStatus{Ready: true, NotAfter: time.Now().Add(24 * time.Hour)}}))
+	require.Equal(t, module.HealthHealthy, issued.Health)
+	for _, diagnostic := range issued.Diagnostics {
+		require.NotContains(t, diagnostic.Code, "certificate")
+	}
+
+	plain, err := Module{}.Decode(routed, "files")
+	require.NoError(t, err)
+	require.Equal(t, module.HealthHealthy, plain.Evaluate(base).Health, "without cert-manager nothing gates")
+
+	unrouted, err := Module{Certificates: true}.Decode(definition(), "files")
+	require.NoError(t, err)
+	require.Equal(t, module.HealthHealthy, unrouted.Evaluate(base).Health, "a bucket without a route has no certificate to wait for")
 }

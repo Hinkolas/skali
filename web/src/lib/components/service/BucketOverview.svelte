@@ -19,6 +19,7 @@
 	import BucketConnectionPanel from './BucketConnectionPanel.svelte';
 	import BucketDetailsPanel from './BucketDetailsPanel.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
+	import RoutesPanel from './RoutesPanel.svelte';
 
 	// The bucket's overview: how full it is against its quota, how it is
 	// backed up, who holds its keys, what the claim asked for and how to
@@ -77,6 +78,12 @@
 	<BucketDetailsPanel {service} />
 	<BucketConnectionPanel {service} {connection} {envId} />
 </div>
+
+{#if service.config.route}
+	<div class="mb-6.5">
+		<RoutesPanel serviceKey={service.key} serviceType="bucket" />
+	</div>
+{/if}
 
 <div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Connected applications</h2>

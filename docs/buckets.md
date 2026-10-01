@@ -98,38 +98,73 @@ ignored. Its guarantees, exactly:
 Two endpoint outputs exist. `internal_endpoint` is always the in-cluster
 gateway (`http://seaweed-s3.skali-platform.svc.cluster.local:8333`): the
 address for the application's own traffic. `endpoint` is the address to
-sign URLs for: it equals the internal endpoint until the installation
-configures a public S3 domain (`endpoints.s3` at `skali cluster init` or
-`upgrade`), when it switches to `https://<domain>` through the edge with
-automatic TLS. Both carry the same credentials, so an application can talk
-to the store directly and still hand browsers URLs signed for the public
-host. Signing against `endpoint` and everything else against
-`internal_endpoint` is the intended split; using `endpoint` for both works
-too, hairpinning through the edge.
+sign URLs for. Without a route it equals the internal endpoint: the bucket
+is reachable only from inside the cluster, and only with its credentials,
+the way a managed database is. A bucket route publishes the bucket on a
+hostname of its own, and `endpoint` becomes that hostname's origin:
 
-A public endpoint is not a public bucket. The endpoint makes the S3 API
-reachable; every bucket stays private and every request still needs a
-valid signature. What the public endpoint enables is the browser flow
-below, where the signature travels in the URL.
+```yaml
+buckets:
+  files:
+    route:
+      domain: ${STORAGE_DOMAIN}   # or a literal hostname
+      tls: automatic              # optional, automatic | optional | disabled
+```
 
-The domain is reconciled like everything else the store owns. Changing
-`endpoints.s3` (re-run `skali cluster init --config` with the new value)
-replaces the route and the certificate in place: the new host serves as
-soon as its certificate is issued, and nothing of the old domain remains.
-Clearing it removes the routes and the certificate on the next pass, so the
-old host stops answering, and `endpoint` falls back to the in-cluster
-gateway. Either way the applications that reference the bucket roll to pick
-up the new `endpoint`, and URLs signed for the previous host stop working at
-that moment; bucket data is never touched by an endpoint change.
+The edge serves exactly this bucket on the hostname, path-style
+(`https://<domain>/<bucket>/<key>`), with a certificate issued for it and
+plain HTTP redirected (`tls: automatic`, the default), served too
+(`optional`), or no certificate at all (`disabled`, which publishes an
+`http://` endpoint). Both outputs carry the same credentials, so an
+application can talk to the store directly and still hand browsers URLs
+signed for the public host. Signing against `endpoint` and everything else
+against `internal_endpoint` is the intended split; using `endpoint` for
+both works too, hairpinning through the edge.
 
-Local development (`skali dev`) has no public domain: applications running
-in the cluster get the internal endpoint, while applications run on the
-host through a `dev` block get a loopback address (`http://127.0.0.1:30510`
-by default; `SKALI_DEV_LOOPBACK_PORT_BASE` shifts the range). Browsers on the developer
-machine can reach the loopback address, not the in-cluster one, so an
-application that signs URLs for browsers needs to sign for the loopback
-address locally; the `file-sharing` example reads an optional
-`S3_PUBLIC_ENDPOINT` for exactly that.
+A route is not a public bucket. The hostname makes the S3 API reachable
+for this one bucket; the bucket stays private and every request still
+needs a valid signature. What the route enables is the browser flow
+below, where the signature travels in the URL. Requests for any other
+bucket through the hostname are refused at the edge (404), so a hostname
+never becomes a side door to the rest of the store.
+
+The hostname goes through the same ownership and readiness checks as an
+application route: it is claimed by the environment at deploy (another
+environment cannot take it, and the installation's own hosts are refused),
+the reconciler probes whether it reaches this installation before it waits
+on a certificate, and `skali route list`, `skali route probe`, the ready
+summary, and the bucket's console page show the certificate and DNS state
+(see docs/limitations.md, "Routes whose domain does not point here yet").
+Several buckets of one environment may share a hostname, each on its own
+path; a bucket cannot share a hostname with an application route yet. The
+variables a route references are never redacted: a hostname the edge
+serves is public by construction.
+
+Changing a bucket's route domain republishes `endpoint` and rolls the
+applications that reference the bucket, and URLs signed for the previous
+host stop working at that moment; there is no grace period with both
+hosts live. Removing the route returns `endpoint` to the in-cluster
+gateway, deletes the routers and the certificate on the next pass, and
+releases the hostname once the old routers are confirmed gone. Bucket
+data is never touched by a route change.
+
+The installation-wide S3 endpoint (`endpoints.s3` at `skali cluster init`)
+still exists for one more release as the fallback `endpoint` of buckets
+without a route on managed clusters. It is deprecated: declare a route on
+each bucket that needs a public hostname (the old domain can become one
+bucket's route) and expect `endpoints.s3` to disappear next.
+
+Local development (`skali dev`) renders routes like production, with the
+local CA issuing their certificates, so `https://<route domain>` answers
+on the local edge when the domain resolves to it (`*.localhost` does).
+Applications running in the cluster get the route as `endpoint`; applications
+run on the host through a `dev` block get a loopback address instead
+(`http://127.0.0.1:30510` by default; `SKALI_DEV_LOOPBACK_PORT_BASE`
+shifts the range) because the host process cannot reach in-cluster names.
+Browsers on the developer machine can reach the loopback address, so an
+application that signs URLs for browsers signs for the loopback address
+locally; the `file-sharing` example reads an optional `S3_PUBLIC_ENDPOINT`
+for exactly that.
 
 ## Browser uploads and downloads
 

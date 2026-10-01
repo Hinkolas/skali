@@ -107,6 +107,12 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 				}
 			}
 		}
+		for bucketKey, bucket := range rev.Definition.Buckets {
+			if bucket.Route != nil && rendering.BucketRouteTLSName(rev.Definition.Name, bucketKey) == ref.Name {
+				service = "buckets." + bucketKey
+				route = "route"
+			}
+		}
 		for _, obj := range snapshot.Objects {
 			if obj.Ref.GVK == ref.GVK && obj.Ref.Namespace == ref.Namespace && obj.Ref.Name == ref.Name {
 				cert = obj.Certificate
