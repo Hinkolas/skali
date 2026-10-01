@@ -135,9 +135,11 @@ func growShape(current store.ObjectStore, desired dbstore.StoreInput) (dbstore.S
 }
 
 // reconcileShape grows the recorded topology with the fleet before the
-// components are rendered from it, and moves existing volumes to a new
-// replication code so they gain their copy. Runs on managed
-// installations only; the dev store is one process.
+// components are rendered from it. Moving existing volumes onto a grown
+// replication code is reconcileReplication's job, every pass, so a
+// failed or interrupted move is never lost behind a shape that already
+// reads as grown. Runs on managed installations only; the dev store is
+// one process.
 func (c *Controller) reconcileShape(ctx context.Context, row *store.ObjectStore) error {
 	capable := len(c.deps.Observed.CapableNodes(layout.CapabilityObjectStorage))
 	if capable == 0 {
@@ -157,14 +159,44 @@ func (c *Controller) reconcileShape(ctx context.Context, row *store.ObjectStore)
 	}
 	slog.Info("substrate: object store grown", "masters", next.Masters,
 		"volumeServers", next.VolumeServers, "replication", next.Replication)
-	replicationChanged := next.Replication != row.Replication
 	row.Masters, row.VolumeServers, row.Replication = int32(next.Masters), int32(next.VolumeServers), next.Replication
-	if replicationChanged && c.deps.Seaweed != nil {
-		if err := c.deps.Seaweed.ConfigureReplication(ctx, next.Replication); err != nil {
-			// The rendered masters carry the new default either way; the
-			// existing volumes are retried next pass.
-			slog.Warn("substrate: configure volume replication", "error", err)
-		}
+	return nil
+}
+
+// reconcileReplication converges the live store onto the recorded
+// replication code: the bucket path's filer.conf entry (new volumes) and
+// every existing volume's placement (volume.configure.replication, which
+// skips volumes already there; the master's maintenance loop then creates
+// the missing copies). Observation-based like every substrate path: the
+// recorded shape is the desired state, the filer document and the
+// master's volume listing are the observed state, and nothing runs when
+// they agree. A move that failed, stopped half way, or was interrupted by
+// a restart between growing the shape and applying it is therefore
+// simply retried on the next pass. Runs after the admin channel points at
+// the filers and the masters answer; on the dev store there is nothing
+// to move.
+func (c *Controller) reconcileReplication(ctx context.Context, row store.ObjectStore) error {
+	if c.deps.Seaweed == nil {
+		return nil
+	}
+	changed, err := c.deps.Seaweed.EnsureReplicationPath(ctx, row.Replication)
+	if err != nil {
+		return fmt.Errorf("substrate: ensure bucket path replication: %w", err)
+	}
+	if changed {
+		slog.Info("substrate: bucket path replication set", "replication", row.Replication)
+	}
+	health, err := c.deps.Seaweed.VolumeHealth(ctx, row.Replication)
+	if err != nil {
+		return fmt.Errorf("substrate: read volume replication: %w", err)
+	}
+	if health.Unconfigured == 0 {
+		return nil
+	}
+	slog.Info("substrate: moving volumes to the recorded replication",
+		"replication", row.Replication, "volumes", health.Unconfigured, "ids", health.UnconfiguredIDs)
+	if err := c.deps.Seaweed.ConfigureVolumeReplication(ctx, row.Replication); err != nil {
+		return fmt.Errorf("substrate: configure volume replication: %w", err)
 	}
 	return nil
 }
@@ -303,6 +335,14 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 			return 0, fmt.Errorf("substrate: ensure bootstrap identity: %w", err)
 		}
 		if err := c.ensurePlatformIdentity(ctx); err != nil {
+			return 0, err
+		}
+	}
+	// Last: the shell lock this takes can wait behind the master's
+	// maintenance script, and a replication hiccup must never hold up the
+	// identities bucket provisioning depends on.
+	if c.cfg.Managed {
+		if err := c.reconcileReplication(ctx, row); err != nil {
 			return 0, err
 		}
 	}

@@ -221,8 +221,12 @@ func storeDiagnostics(store *module.ObjectStoreStatus) []module.Diagnostic {
 		warn("store-degraded", fmt.Sprintf("%d of %d volume servers are serving", store.VolumeServersReady, store.VolumeServersDesired))
 	}
 	if store.UnderReplicatedVolumes > 0 {
-		warn("store-degraded", fmt.Sprintf("%d volumes have fewer copies than their replication calls for; the store repairs them on its maintenance cadence",
+		warn("store-degraded", fmt.Sprintf("%d volumes have fewer copies than the recorded replication calls for; the store creates them on its maintenance cadence",
 			store.UnderReplicatedVolumes))
+	}
+	if store.ReplicationPendingVolumes > 0 {
+		warn("store-degraded", fmt.Sprintf("%d volumes still carry the previous replication setting; the store applies the recorded one on its next pass",
+			store.ReplicationPendingVolumes))
 	}
 	if !store.FilerReady {
 		warn("store-degraded", "the object store's metadata service is not serving")

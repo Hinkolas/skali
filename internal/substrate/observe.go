@@ -72,8 +72,9 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 		}
 		storeObj.ObjectStore.FilerReady = c.deps.Seaweed.FilerAlive(ctx)
 		storeObj.ObjectStore.S3Ready, storeObj.ObjectStore.S3Detail = c.deps.Seaweed.S3Ready(ctx)
-		if health, err := c.deps.Seaweed.VolumeHealth(ctx); err == nil {
+		if health, err := c.deps.Seaweed.VolumeHealth(ctx, row.Replication); err == nil {
 			storeObj.ObjectStore.UnderReplicatedVolumes = int32(health.UnderReplicated)
+			storeObj.ObjectStore.ReplicationPendingVolumes = int32(health.Unconfigured)
 		}
 		if c.publicEdgeEnabled() {
 			storeObj.ObjectStore.PublicEndpoint = c.publicEndpointStatus(ctx)

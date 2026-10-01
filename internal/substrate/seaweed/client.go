@@ -168,9 +168,12 @@ func (c *Client) DeleteCollection(ctx context.Context, name string) error {
 	return fmt.Errorf("seaweed: delete collection %s: status %d: %s", name, status, data)
 }
 
-// shell runs s3.configure lines through `weed shell` in a filer pod, one
-// exec per call. Inputs are generated identifiers (b-<key>-<id> names,
-// alphanumeric keys); nothing user-controlled reaches the command line.
+// shell runs admin lines (s3.configure, the volume maintenance commands)
+// through `weed shell` in a filer pod, one exec per call. Inputs are
+// generated identifiers (b-<key>-<id> names, alphanumeric keys,
+// replication codes); nothing user-controlled reaches the command line.
+// A command that fails prints an "error:" line and the shell still exits
+// zero; callers that need to know read the output.
 func (c *Client) shell(ctx context.Context, lines ...string) (string, error) {
 	selector, container := c.filerTarget()
 	if selector == "" {
@@ -456,8 +459,13 @@ func (c *Client) FilerAlive(ctx context.Context) bool {
 	return err == nil && status >= 200 && status < 400
 }
 
-// VolumeHealth reads the master's volume listing for replica accounting.
-func (c *Client) VolumeHealth(ctx context.Context) (VolumeHealth, error) {
+// VolumeHealth reads the master's volume listing for replica accounting
+// against the recorded replication code.
+func (c *Client) VolumeHealth(ctx context.Context, replication string) (VolumeHealth, error) {
+	desired, err := parseReplication(replication)
+	if err != nil {
+		return VolumeHealth{}, err
+	}
 	data, status, err := c.master(ctx, "/vol/status", nil)
 	if err != nil {
 		return VolumeHealth{}, err
@@ -469,7 +477,7 @@ func (c *Client) VolumeHealth(ctx context.Context) (VolumeHealth, error) {
 	if err := json.Unmarshal(data, &vs); err != nil {
 		return VolumeHealth{}, fmt.Errorf("seaweed: parse volume status: %w", err)
 	}
-	return volumeHealth(vs), nil
+	return volumeHealth(vs, desired), nil
 }
 
 // S3Ready is the authenticated readiness of the gateway: the platform
@@ -504,27 +512,55 @@ func (c *Client) S3Ready(ctx context.Context) (bool, string) {
 	return true, ""
 }
 
-// ConfigureReplication moves every existing volume to the replication
-// code (the master's maintenance loop then creates the missing copies
-// with volume.fix.replication -apply, one per volume per pass) and sets
-// the bucket path's replication so new volumes are created with it.
-func (c *Client) ConfigureReplication(ctx context.Context, replication string) error {
-	if err := c.UpdateConf(ctx, func(conf *FilerConf) bool {
+// EnsureReplicationPath sets the bucket path's replication in filer.conf
+// so new volumes are created with it, and reports whether the document
+// changed. Idempotent: a matching entry is left alone.
+func (c *Client) EnsureReplicationPath(ctx context.Context, replication string) (bool, error) {
+	changed := false
+	err := c.UpdateConf(ctx, func(conf *FilerConf) bool {
 		entry := conf.Find(BucketsPrefix)
-		if entry == nil {
+		switch {
+		case entry == nil:
 			conf.Locations = append(conf.Locations, PathConf{LocationPrefix: BucketsPrefix, Replication: replication})
-			return true
-		}
-		if entry.Replication == replication {
+		case entry.Replication == replication:
 			return false
+		default:
+			entry.Replication = replication
 		}
-		entry.Replication = replication
+		changed = true
 		return true
-	}); err != nil {
+	})
+	return changed, err
+}
+
+// ConfigureVolumeReplication moves every existing volume on another
+// placement to the replication code; the master's maintenance loop then
+// creates the missing copies (volume.fix.replication -apply, one per
+// volume per pass). The command needs the shell's maintenance lock, skips
+// volumes already on the code, and stops at the first volume server that
+// refuses, so a partial move is left for the next call. Errors the shell
+// prints are surfaced: it exits zero regardless.
+func (c *Client) ConfigureVolumeReplication(ctx context.Context, replication string) error {
+	out, err := c.shell(ctx,
+		"lock",
+		fmt.Sprintf("volume.configure.replication -replication=%s -collectionPattern=*", replication),
+		"unlock")
+	if err != nil {
 		return err
 	}
-	_, err := c.shell(ctx, fmt.Sprintf("volume.configure.replication -replication=%s -collectionPattern=*", replication))
-	return err
+	return shellError("volume.configure.replication", out)
+}
+
+// shellError reads a `weed shell` transcript for the "error:" lines a
+// failed command leaves behind.
+func shellError(command, out string) error {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "error:") {
+			return fmt.Errorf("seaweed: %s: %s", command, line)
+		}
+	}
+	return nil
 }
 
 // S3Alive reports whether the S3 gateway answers; an anonymous request is

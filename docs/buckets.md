@@ -203,10 +203,16 @@ count: three raft masters when three or more nodes carry the capability
 (else one), one volume server per capable node using the node's disk, and
 one replica on a different node when the fleet has two or more (none on a
 single node). The shape follows the fleet as it grows: adding a second
-capable node turns replication on and existing volumes gain their copy on
-the store's maintenance cadence (about every twenty minutes, one copy per
-volume per pass); a third node forms the master quorum. Until the copies
-exist the bucket reports how many volumes are still short. Shrinking is
+capable node turns replication on, and a third forms the master quorum.
+The recorded shape is the desired state; on every reconcile pass the
+platform compares it with the store itself (the bucket path's replication
+setting and each volume's placement) and moves whatever still differs, so
+a move that failed, stopped half way, or was interrupted by a restart is
+retried until every volume carries the recorded setting. The copies
+themselves are created on the store's maintenance cadence (about every
+twenty minutes, one copy per volume per pass). Until then the bucket
+reports how many volumes still carry the previous setting and how many are
+still short of a copy. Shrinking is
 never automatic: a node that leaves keeps the recorded shape and the
 bucket reports the missing member and the missing copies until the node
 returns or an operator adjusts the store (see
