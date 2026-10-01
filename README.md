@@ -204,9 +204,11 @@ skali deploy
 ```
 
 The first deploy of a checkout asks which project and environment to target
-and remembers the answer. Configuration values come from the environment's
-stored values or a local env file (`--env-file .env.production`); every value
-is stored encrypted, write-only, and shown by name only. Each deploy shows a
+and remembers the answer. It also asks once per environment which local env
+file to deploy with (or the stored values), remembers that too, and shows the
+choice in every later deploy; `--pick-env-file` asks again and `--env-file`
+overrides for one run. Every value is stored encrypted, write-only, and shown
+by name only. Each deploy shows a
 plan, builds locally, pushes into the platform's registry, and renders the
 rollout live, ending with the URLs of your routes.
 

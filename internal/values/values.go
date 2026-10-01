@@ -7,6 +7,8 @@
 package values
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -76,4 +78,27 @@ func Conform[V any](requirements []compiler.VariableRequirement, provided map[st
 	sort.Strings(missing)
 	sort.Strings(orphaned)
 	return kept, missing, orphaned
+}
+
+// Fingerprint hashes a value set into a stable "sha256:<hex>" token: the
+// sorted NAME=VALUE lines of the set, so key order, comments, and
+// whitespace of the source file do not matter. Callers pass the conformed
+// set (Conform's kept) so the fingerprint describes what a deployment would
+// carry: a file change that only touches orphaned keys does not count, a
+// manifest change that references a new key does. The token reveals no
+// value; it lets a later run tell whether the same set would be deployed.
+func Fingerprint(set map[string]string) string {
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	digest := sha256.New()
+	for _, name := range names {
+		digest.Write([]byte(name))
+		digest.Write([]byte{'='})
+		digest.Write([]byte(set[name]))
+		digest.Write([]byte{'\n'})
+	}
+	return "sha256:" + hex.EncodeToString(digest.Sum(nil))
 }

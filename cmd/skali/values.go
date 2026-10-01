@@ -14,18 +14,19 @@ import (
 
 // newValuesCommand lists an environment's stored values. Values are
 // write-only: the listing shows names and versions only, and there is no
-// read-back. Deployments are the only writer (--env-file / .env staging)
-// and the only remover (--prune-values), so there is nothing else to do
-// here.
+// read-back. Deployments are the only writer (an explicit, remembered, or
+// picked env file is staged) and the only remover (--prune-values), so
+// there is nothing else to do here.
 func newValuesCommand() *cobra.Command {
 	var environment, remote string
 	command := &cobra.Command{
 		Use:   "values",
 		Short: "List the environment's stored values by name and version",
 		Long: "Lists the stored values of a remote environment by name and version;\n" +
-			"contents are never shown. Values are staged by deployments\n" +
-			"(--env-file or a discovered .env) and removed by deploying with\n" +
-			"--prune-values. For the local platform use skali dev values.",
+			"contents are never shown. Values are staged by deployments (--env-file,\n" +
+			"or the env file remembered for the environment) and removed by\n" +
+			"deploying with --prune-values. For the local platform use skali dev\n" +
+			"values.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			ctx := command.Context()

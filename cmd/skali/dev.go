@@ -39,7 +39,7 @@ const localEnvironmentName = "local"
 
 func newDevCommand() *cobra.Command {
 	var envFile, skalidImage, platform string
-	var detach, force, rebuild, preview, pruneValues bool
+	var detach, force, rebuild, preview, pruneValues, pickEnvFile bool
 	// runUp is the project verb: shared by bare skali dev and skali dev up,
 	// the way docker compose and compose up are the same command.
 	runUp := func(command *cobra.Command, args []string) error {
@@ -153,6 +153,7 @@ func newDevCommand() *cobra.Command {
 			Remote:             localRemoteName,
 			Environment:        localEnvironmentName,
 			EnvFile:            envFile,
+			PickEnvFile:        pickEnvFile,
 			AutoEnvFile:        true,
 			Yes:                true,
 			CreateMissing:      true,
@@ -238,7 +239,10 @@ func newDevCommand() *cobra.Command {
 			"binding, else the current remote, else this skali), using that release\n" +
 			"in one local cluster; switching releases requires skali dev reset.\n" +
 			"The platform lifecycle lives under skali dev start, stop,\n" +
-			"and reset. Local values never leave this machine.",
+			"and reset. Values come from the env file remembered for the local\n" +
+			"environment in .skali/ (a lone .env/.env.* file is taken as is, several\n" +
+			"are picked from once); --pick-env-file asks again. Local values never\n" +
+			"leave this machine.",
 		Args: cobra.NoArgs,
 		RunE: runUp,
 		// The nearest PersistentPreRun wins in cobra; the root's own hook
@@ -267,7 +271,10 @@ func newDevCommand() *cobra.Command {
 	// The project flags live on both spellings of the verb, bound to the
 	// same variables; only one of the two ever runs per invocation.
 	addProjectFlags := func(c *cobra.Command) {
-		c.Flags().StringVar(&envFile, "env-file", "", "explicit local env file (defaults to ./.env; otherwise discovered env files are offered)")
+		c.Flags().StringVar(&envFile, "env-file", "",
+			"explicit local env file for this run only (default: the choice remembered for local, else the lone .env/.env.* file, else a one-time pick)")
+		c.Flags().BoolVar(&pickEnvFile, "pick-env-file", false,
+			"ask which env file (or the stored values) to use and remember the answer")
 		c.Flags().StringVar(&platform, "platform", "",
 			"override the build platform(s), e.g. linux/amd64 or a comma list (default: the cluster architecture)")
 		c.Flags().BoolVarP(&detach, "detach", "d", false,
