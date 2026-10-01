@@ -143,7 +143,11 @@ shrinks on its own: removing a capable node leaves the recorded shape in
 place, and every bucket reports the missing member and the volumes that
 lost a copy until the node returns. Moving the store to a smaller shape
 (fewer masters, a lower replication) is an operator task for now; the
-store keeps serving from the remaining copies in the meantime.
+store keeps serving from the remaining copies in the meantime. Moving
+existing volumes to a grown replication setting runs under the store's
+maintenance lock, so while the maintenance script holds it the move waits
+for the next reconcile pass; the bucket names the volumes still on the
+previous setting until it lands.
 
 ## Object storage depends on the metadata database
 

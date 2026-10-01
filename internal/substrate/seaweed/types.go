@@ -1,5 +1,10 @@
 package seaweed
 
+import (
+	"fmt"
+	"slices"
+)
+
 // The wire shapes of the two single-writer documents the substrate
 // reconciles (proto-JSON of seaweed's iam.S3ApiConfiguration and
 // filer_pb.FilerConf, field names verified against the pin) plus the
@@ -129,40 +134,76 @@ type replicaPlacement struct {
 	DiffDataCenterCount int `json:"dc"`
 }
 
+// parseReplication decomposes a three-digit replication code (data
+// center, rack, node) into a placement; anything else is malformed.
+func parseReplication(code string) (replicaPlacement, error) {
+	if len(code) != 3 {
+		return replicaPlacement{}, fmt.Errorf("seaweed: replication code %q: want three digits", code)
+	}
+	digits := make([]int, 3)
+	for i, r := range code {
+		if r < '0' || r > '9' {
+			return replicaPlacement{}, fmt.Errorf("seaweed: replication code %q: want three digits", code)
+		}
+		digits[i] = int(r - '0')
+	}
+	return replicaPlacement{DiffDataCenterCount: digits[0], DiffRackCount: digits[1], SameRackCount: digits[2]}, nil
+}
+
+// code renders the placement back into its replication code.
+func (p replicaPlacement) code() string {
+	return fmt.Sprintf("%d%d%d", p.DiffDataCenterCount, p.DiffRackCount, p.SameRackCount)
+}
+
 // copies is the number of copies the placement calls for.
 func (p replicaPlacement) copies() int {
 	return 1 + p.SameRackCount + p.DiffRackCount + p.DiffDataCenterCount
 }
 
 // VolumeHealth is the fleet-wide replica accounting from the master's
-// volume listing: how many distinct volumes exist and how many of them
-// have fewer copies than their placement calls for (a node lost, or a
-// replication change the maintenance loop has not caught up with).
+// volume listing, measured against the store's recorded replication: how
+// many distinct volumes exist, how many have fewer copies than the
+// recorded code calls for (a node lost, or copies the maintenance loop
+// has not created yet), and how many still carry a different placement
+// (a replication change the substrate has not applied to them yet; the
+// maintenance loop only repairs a volume against its own placement, so
+// these never gain their copy until they are moved).
 type VolumeHealth struct {
 	Volumes         int
 	UnderReplicated int
+	Unconfigured    int
+	// UnconfiguredIDs lists the volumes still on another placement,
+	// ascending, for the operator log.
+	UnconfiguredIDs []int64
 }
 
-// volumeHealth folds one volume listing into replica counts.
-func volumeHealth(vs volStatus) VolumeHealth {
+// volumeHealth folds one volume listing into replica counts against the
+// desired placement.
+func volumeHealth(vs volStatus, desired replicaPlacement) VolumeHealth {
 	copies := map[int64]int{}
-	wanted := map[int64]int{}
+	placements := map[int64]replicaPlacement{}
 	for _, dc := range vs.Volumes.DataCenters {
 		for _, rack := range dc {
 			for _, node := range rack {
 				for _, vol := range node {
 					copies[vol.ID]++
-					wanted[vol.ID] = vol.ReplicaPlacement.copies()
+					placements[vol.ID] = vol.ReplicaPlacement
 				}
 			}
 		}
 	}
 	health := VolumeHealth{Volumes: len(copies)}
+	wanted := desired.copies()
 	for id, have := range copies {
-		if have < wanted[id] {
+		if have < wanted {
 			health.UnderReplicated++
 		}
+		if placements[id] != desired {
+			health.UnconfiguredIDs = append(health.UnconfiguredIDs, id)
+		}
 	}
+	slices.Sort(health.UnconfiguredIDs)
+	health.Unconfigured = len(health.UnconfiguredIDs)
 	return health
 }
 

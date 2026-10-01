@@ -301,10 +301,14 @@ type ObjectStoreStatus struct {
 	// an anonymous one; S3Detail explains a false.
 	S3Ready  bool
 	S3Detail string
-	// UnderReplicatedVolumes counts volumes with fewer copies than their
-	// placement calls for (a node lost, or a replication change still
-	// being caught up with by the maintenance loop).
+	// UnderReplicatedVolumes counts volumes with fewer copies than the
+	// recorded replication calls for (a node lost, or copies the
+	// maintenance loop has not created yet).
 	UnderReplicatedVolumes int32
+	// ReplicationPendingVolumes counts volumes whose placement still
+	// differs from the recorded replication; the substrate moves them on
+	// its next pass, and they gain no copy until it does.
+	ReplicationPendingVolumes int32
 	// PublicEndpoint is set when the installation publishes an S3 domain:
 	// the domain and its certificate's issuance state.
 	PublicEndpoint *PublicEndpointStatus

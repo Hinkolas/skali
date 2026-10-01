@@ -144,10 +144,11 @@ func TestEvaluate(t *testing.T) {
 	require.Equal(t, module.HealthUnhealthy, unhealthy.Health)
 	require.Contains(t, unhealthy.Diagnostics[0].Message, "no volume server")
 	// Below the recorded shape (a master and a volume server down, copies
-	// missing): still serving, degraded, each shortfall named.
+	// missing, volumes not yet moved to the recorded replication): still
+	// serving, degraded, each shortfall named.
 	short := module.ObservedResource{Kind: module.KindObjectStore,
 		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 3, MastersReady: 2, VolumeServersDesired: 3,
-			VolumeServersReady: 2, UnderReplicatedVolumes: 4, FilerReady: true, S3Ready: true}}
+			VolumeServersReady: 2, UnderReplicatedVolumes: 4, ReplicationPendingVolumes: 2, FilerReady: true, S3Ready: true}}
 	degraded = service.Evaluate([]module.ObservedResource{fresh(),
 		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), short, usage})
 	require.Equal(t, module.HealthDegraded, degraded.Health)
@@ -155,10 +156,11 @@ func TestEvaluate(t *testing.T) {
 	for _, diagnostic := range degraded.Diagnostics {
 		codes = append(codes, diagnostic.Code)
 	}
-	require.Equal(t, []string{"store-degraded", "store-degraded", "store-degraded", "usage"}, codes)
+	require.Equal(t, []string{"store-degraded", "store-degraded", "store-degraded", "store-degraded", "usage"}, codes)
 	require.Contains(t, degraded.Diagnostics[0].Message, "2 of 3 object-store masters")
 	require.Contains(t, degraded.Diagnostics[1].Message, "2 of 3 volume servers")
 	require.Contains(t, degraded.Diagnostics[2].Message, "4 volumes have fewer copies")
+	require.Contains(t, degraded.Diagnostics[3].Message, "2 volumes still carry the previous replication")
 	// A public endpoint whose certificate is not issued degrades and says
 	// what that means for presigned URLs; an issued one is silent.
 	certPending := module.ObservedResource{Kind: module.KindObjectStore,
