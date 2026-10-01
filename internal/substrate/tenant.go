@@ -39,6 +39,7 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 	switch claim.Phase(row.Phase) {
 	case claim.PhaseReleased:
 		c.setWaiting(id, "")
+		c.clearExtensions(id)
 		c.publishClaim(*row)
 		return 0, nil
 	case claim.PhaseReleasing:
@@ -55,6 +56,9 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 		return 0, err
 	default:
 		c.setWaiting(id, "")
+		// The pass applied the row it read at the top; only that encoding
+		// settles a pending extension change.
+		c.settleExtensions(id, row.Extensions)
 	}
 
 	// Publish the fresh phase before poking the environment so its next

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/Hinkolas/skali/internal/dbcatalog"
 	"github.com/Hinkolas/skali/internal/edge"
 	"net/url"
 	pathpkg "path"
@@ -407,7 +408,32 @@ func (b *builder) compileDatabase(key string, source manifest.Database) Database
 	if !oneOf(availability, "single", "asynchronous", "synchronous") {
 		b.add(base+".availability", "must be single, asynchronous, or synchronous")
 	}
+	// The engine catalog is the offline truth for majors and extensions:
+	// a revision never carries what no blessed image can create, so the
+	// failure surfaces in `skali validate` rather than in a waiting claim.
+	major, majorErr := strconv.Atoi(strings.TrimSpace(string(source.Version)))
+	majors := dbcatalog.Majors(source.Engine)
+	if source.Engine == "postgres" && (majorErr != nil || !slices.Contains(majors, major)) {
+		b.add(base+".version", "unsupported %s version %q; supported majors: %s",
+			source.Engine, string(source.Version), joinInts(majors))
+	}
 	extensions := append([]string(nil), source.Extensions...)
+	// Nil for an unknown engine or major, which is already reported above;
+	// the extensions are then not judged against a list that does not exist.
+	available := dbcatalog.Extensions(source.Engine, major)
+	seen := map[string]bool{}
+	for i, extension := range extensions {
+		path := fmt.Sprintf("%s.extensions[%d]", base, i)
+		if seen[extension] {
+			b.add(path, "extension %q is listed more than once", extension)
+			continue
+		}
+		seen[extension] = true
+		if available != nil && !slices.Contains(available, extension) {
+			b.add(path, "unsupported extension %q for %s %d; available: %s",
+				extension, source.Engine, major, strings.Join(available, ", "))
+		}
+	}
 	sort.Strings(extensions)
 	recoveryMillis := b.duration(base+".recovery.pointInTime", source.Recovery.PointInTime)
 	return DatabaseClaim{
@@ -608,4 +634,13 @@ func oneOf(value string, allowed ...string) bool {
 func canonicalExpression(expression Expression) string {
 	data, _ := json.Marshal(expression)
 	return string(data)
+}
+
+// joinInts renders a major list for diagnostics ("17, 18").
+func joinInts(values []int) string {
+	parts := make([]string, len(values))
+	for i, value := range values {
+		parts[i] = strconv.Itoa(value)
+	}
+	return strings.Join(parts, ", ")
 }

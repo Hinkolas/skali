@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/Hinkolas/skali/internal/dbcatalog"
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
@@ -157,15 +158,18 @@ func TestRenderCredentialSecret(t *testing.T) {
 	require.Equal(t, "0f0f", secret.Labels["skali.dev/claim"])
 }
 
+// TestCatalog pins the driver to dbcatalog: every major dbcatalog offers has
+// a blessed image here, and the image's extension list is dbcatalog's.
 func TestCatalog(t *testing.T) {
 	t.Parallel()
-	image, ok := Lookup("postgres", 17)
-	require.True(t, ok)
-	require.NotEmpty(t, image.Ref)
-	require.True(t, image.SupportsExtension("pg_trgm"))
-	require.False(t, image.SupportsExtension("postgis"), "postgis waits for a blessed image")
-	require.False(t, image.SupportsExtension("vector"))
-	_, ok = Lookup("postgres", 12)
+	require.Equal(t, dbcatalog.Majors("postgres"), SupportedMajors("postgres"))
+	for _, major := range dbcatalog.Majors("postgres") {
+		image, ok := Lookup("postgres", major)
+		require.True(t, ok, "major %d has no blessed image", major)
+		require.NotEmpty(t, image.Ref)
+		require.Equal(t, dbcatalog.Extensions("postgres", major), image.Extensions)
+		require.Contains(t, image.Extensions, "vector")
+	}
+	_, ok := Lookup("postgres", 12)
 	require.False(t, ok)
-	require.Equal(t, []int{17, 18}, SupportedMajors("postgres"))
 }

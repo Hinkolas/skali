@@ -11,6 +11,7 @@
 package substrate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -167,6 +168,10 @@ type Controller struct {
 	mu        sync.Mutex
 	waiting   map[uuid.UUID]string // claim id -> current waiting reason
 	probePoke func()               // provider observer re-poll, set by SetProbePoke
+	// pendingExtensions holds, per provisioned claim whose extension list
+	// just changed, the desired encoding until a pass applied exactly it.
+	// See markExtensionsPending.
+	pendingExtensions map[uuid.UUID][]byte
 }
 
 // SetProbePoke wires the provider observer's coalesced re-poll; the
@@ -202,7 +207,8 @@ func New(deps Deps, cfg Config) *Controller {
 		cfg:  cfg,
 		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[workKey](), requeueWait)),
-		waiting: make(map[uuid.UUID]string),
+		waiting:           make(map[uuid.UUID]string),
+		pendingExtensions: make(map[uuid.UUID][]byte),
 	}
 }
 
@@ -242,6 +248,52 @@ func (c *Controller) setWaiting(claimID uuid.UUID, reason string) {
 		return
 	}
 	c.waiting[claimID] = reason
+}
+
+// extensionsPendingReason is what a provisioned claim reports while CNPG
+// has not yet created a newly requested extension.
+const extensionsPendingReason = "applying the requested extensions"
+
+// markExtensionsPending records that a provisioned claim's extension list
+// changed to desired (the row encoding from dbstore.MarshalExtensions). A
+// provisioned claim never regresses in phase, yet an application must not
+// roll before CNPG created what its migrations rely on, so Ensure withholds
+// readiness until a pass applied exactly these bytes. The marker is keyed by
+// the encoding, not a flag: a pass that read the row before the change may
+// still finish with the old list applied, and must not clear it. It lives in
+// memory only; a skalid restart inside the seconds between the fold and the
+// apply loses it, which the next pass closes on its own.
+func (c *Controller) markExtensionsPending(claimID uuid.UUID, desired []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pendingExtensions[claimID] = bytes.Clone(desired)
+}
+
+// extensionsPending reports whether a requested extension change is still
+// unapplied for the claim.
+func (c *Controller) extensionsPending(claimID uuid.UUID) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, pending := c.pendingExtensions[claimID]
+	return pending
+}
+
+// settleExtensions clears the marker once a pass applied the encoding it
+// waits for; an older encoding leaves it in place.
+func (c *Controller) settleExtensions(claimID uuid.UUID, applied []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if desired, pending := c.pendingExtensions[claimID]; pending && bytes.Equal(desired, applied) {
+		delete(c.pendingExtensions, claimID)
+	}
+}
+
+// clearExtensions drops the marker regardless of what was applied; for
+// released claims, so ids never accumulate.
+func (c *Controller) clearExtensions(claimID uuid.UUID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.pendingExtensions, claimID)
 }
 
 // Run processes substrate work until the context ends.

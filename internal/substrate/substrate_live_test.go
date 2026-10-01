@@ -80,24 +80,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Drive the claim like the worker would: errors and waits retry until
-	// the deadline (first pool bring-up pulls the postgres image).
-	deadline := time.Now().Add(5 * time.Minute)
-	for {
-		require.False(t, time.Now().After(deadline),
-			"claim not provisioned before deadline; last wait: %s", controller.WaitingReason(created.ID))
-		requeue, err := controller.reconcileClaim(ctx, created.ID)
-		if err != nil {
-			t.Logf("reconcile (retrying): %v", err)
-		}
-		current, getErr := dbSvc.GetClaim(ctx, created.ID)
-		require.NoError(t, getErr)
-		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
-			break
-		}
-		stepClaim(t, "claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
-		time.Sleep(2 * time.Second)
-	}
+	driveClaim(t, controller, dbSvc, created.ID)
 
 	// Local dev collapse: the project-isolated claim landed on the shared
 	// dev pool anyway.
@@ -287,6 +270,30 @@ func TestLiveClaimProvisioning(t *testing.T) {
 // a pass that returns neither an error nor a requeue must have settled the
 // claim in a terminal phase, otherwise the controller abandoned live work and
 // only an external resync would ever revive it.
+// driveClaim runs claim passes like the worker would until the claim is
+// provisioned: errors and waits retry until the deadline (first pool
+// bring-up pulls the postgres image).
+func driveClaim(t *testing.T, controller *Controller, dbSvc *dbstore.Service, id uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	deadline := time.Now().Add(5 * time.Minute)
+	for {
+		require.False(t, time.Now().After(deadline),
+			"claim not provisioned before deadline; last wait: %s", controller.WaitingReason(id))
+		requeue, err := controller.reconcileClaim(ctx, id)
+		if err != nil {
+			t.Logf("reconcile (retrying): %v", err)
+		}
+		current, getErr := dbSvc.GetClaim(ctx, id)
+		require.NoError(t, getErr)
+		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
+			return
+		}
+		stepClaim(t, "claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(id))
+		time.Sleep(2 * time.Second)
+	}
+}
+
 func stepClaim(t *testing.T, name string, requeue time.Duration, err error, phase claim.Phase, waiting string) {
 	t.Helper()
 	if err != nil || requeue > 0 {

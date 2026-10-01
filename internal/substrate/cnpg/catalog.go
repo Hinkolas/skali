@@ -5,45 +5,29 @@
 package cnpg
 
 import (
-	"slices"
-	"sort"
+	"github.com/Hinkolas/skali/internal/dbcatalog"
 )
 
-// Image is one blessed engine image and the extension set it provides.
-// Extensions outside this list are rejected at deploy open, so a claim can
-// never request what the pool image cannot create.
+// Image is one blessed engine image and the extension set it provides. The
+// compiler rejects extensions outside this list (through dbcatalog) before a
+// revision exists, so a claim never requests what the pool image cannot
+// create.
 type Image struct {
 	Ref        string
 	Extensions []string
 }
 
-// catalog maps (engine, major) to its blessed image. Today it pins the
-// stock CNPG "system" images; a skali-built image with pgvector/postgis replaces an
-// entry here without any schema or claim change. The extension list is the
-// curated contrib subset those images ship.
+// catalog maps (engine, major) to its blessed image: the stock CNPG "system"
+// images, which ship the PostgreSQL contrib set plus pgvector for every
+// supported major. The extension list comes from dbcatalog so the compiler,
+// the manifest schema, and the driver agree on one record. A pool copies its
+// image at creation and keeps it; changing an entry here only affects pools
+// created afterwards.
 var catalog = map[string]map[int]Image{
 	"postgres": {
-		17: {Ref: "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie", Extensions: contribExtensions},
-		18: {Ref: "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie", Extensions: contribExtensions},
+		17: {Ref: "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie", Extensions: dbcatalog.Extensions("postgres", 17)},
+		18: {Ref: "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie", Extensions: dbcatalog.Extensions("postgres", 18)},
 	},
-}
-
-var contribExtensions = []string{
-	"btree_gin",
-	"btree_gist",
-	"citext",
-	"cube",
-	"earthdistance",
-	"fuzzystrmatch",
-	"hstore",
-	"intarray",
-	"ltree",
-	"pg_stat_statements",
-	"pg_trgm",
-	"pgcrypto",
-	"tablefunc",
-	"unaccent",
-	"uuid-ossp",
 }
 
 // Lookup returns the blessed image for an engine major.
@@ -54,15 +38,5 @@ func Lookup(engine string, major int) (Image, bool) {
 
 // SupportedMajors lists the catalog's majors for an engine, ascending.
 func SupportedMajors(engine string) []int {
-	majors := make([]int, 0, len(catalog[engine]))
-	for major := range catalog[engine] {
-		majors = append(majors, major)
-	}
-	sort.Ints(majors)
-	return majors
-}
-
-// SupportsExtension reports whether the image provides an extension.
-func (i Image) SupportsExtension(name string) bool {
-	return slices.Contains(i.Extensions, name)
+	return dbcatalog.Majors(engine)
 }

@@ -28,14 +28,56 @@ passes through definitions, revisions, or logs.
 | --- | --- | --- |
 | `postgres` | 17, 18 | stock CloudNativePG `-system` images |
 
+`skali validate` rejects a version outside this table.
+
 ## Extensions
 
-The stock images provide the PostgreSQL contrib set; request them per
-database with `extensions: [pg_trgm, ...]`. Available today: `btree_gin`,
-`btree_gist`, `citext`, `cube`, `earthdistance`, `fuzzystrmatch`,
-`hstore`, `intarray`, `ltree`, `pg_stat_statements`, `pg_trgm`,
-`pgcrypto`, `tablefunc`, `unaccent`, `uuid-ossp`. `pgvector` and
-`postgis` are not yet supported; they arrive with a skali-built image.
+Request extensions per database with `extensions: [pg_trgm, ...]`.
+Available on both majors: `btree_gin`, `btree_gist`, `citext`, `cube`,
+`earthdistance`, `fuzzystrmatch`, `hstore`, `intarray`, `ltree`,
+`pg_stat_statements`, `pg_trgm`, `pgcrypto`, `tablefunc`, `unaccent`,
+`uuid-ossp`, `vector`. `skali validate` rejects anything else, so an
+unsupported extension fails before a deployment opens. `postgis` is not
+supported yet.
+
+`vector` is pgvector (the PostgreSQL extension name, not the project name):
+
+```yaml
+databases:
+  data:
+    engine: postgres
+    version: 17
+    extensions: [vector]
+```
+
+How extensions work on a pool:
+
+- The stock pool images ship the extension files for every entry above, so
+  they are present on every instance of every pool, replicas included, and
+  on the local `skali dev` pool. No pool is restarted or rebuilt when a
+  database requests one.
+- Activation is per logical database. CloudNativePG runs `CREATE EXTENSION`
+  for the listed names when it reconciles the database; a database on the
+  same pool that does not list `vector` does not get it. A newly requested
+  extension on a running database holds the application rollout until it
+  exists, so a release command that creates a `vector` column or an
+  `hnsw` index never runs ahead of it.
+- Application roles are not superusers and pgvector is not a trusted
+  extension, so migrations cannot create it themselves: declare it in the
+  manifest. A migration that runs `CREATE EXTENSION IF NOT EXISTS vector`
+  keeps working as a no-op; a plain `CREATE EXTENSION vector` fails because
+  the extension already exists.
+- The extension version is the one packaged in the pool's image (pgvector
+  0.8.2 on the PostgreSQL 17 image and 0.8.6 on the 18 image at the time of
+  writing). A pool image upgrade rolls the pool's instances but does not
+  run `ALTER EXTENSION ... UPDATE` in existing databases; that remains a
+  manual step.
+- Removing an extension from the manifest stops declaring it and leaves the
+  extension and every dependent column, index and row in place. Dropping it
+  is a manual, destructive operation; Skali never cascades it.
+- Vector indexes are built with the pool's `maintenance_work_mem` and share
+  the pool's CPU and memory with every other database on it. A large
+  embedding workload is a reason to choose `isolation: dedicated`.
 
 ## Isolation and availability
 

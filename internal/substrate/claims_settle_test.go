@@ -15,10 +15,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/claim"
+	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
+	"github.com/Hinkolas/skali/internal/reconcile"
+	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 	"github.com/Hinkolas/skali/internal/testdb"
@@ -116,12 +119,14 @@ func (f *fakeCluster) ProxyCIDRs(context.Context) ([]string, error) {
 // settleFixture is the shared scaffolding: a real claims database, a fake
 // cluster, and a controller whose environment pokes are captured.
 type settleFixture struct {
-	db      *dbstore.Service
-	fake    *fakeCluster
-	control *Controller
-	envID   uuid.UUID
-	claim   *store.DatabaseClaim
-	poked   *[]uuid.UUID
+	db          *dbstore.Service
+	fake        *fakeCluster
+	control     *Controller
+	projectID   uuid.UUID
+	projectName string
+	envID       uuid.UUID
+	claim       *store.DatabaseClaim
+	poked       *[]uuid.UUID
 }
 
 func newSettleFixture(t *testing.T) *settleFixture {
@@ -156,6 +161,7 @@ func newSettleFixture(t *testing.T) *settleFixture {
 
 	return &settleFixture{
 		db: dbSvc, fake: fake, control: controller,
+		projectID: proj.ID, projectName: proj.Name,
 		envID: env.ID, claim: created, poked: &poked,
 	}
 }
@@ -214,4 +220,91 @@ func TestClaimWaitingKeepsRequeueAndPokes(t *testing.T) {
 	require.Equal(t, claim.PhaseProvisioned, phase)
 	require.GreaterOrEqual(t, len(*fx.poked), 2,
 		"the provisioned transition must poke the environment again")
+}
+
+// ensureInput is the kernel's view of one revision declaring the fixture's
+// database with the given extensions.
+func (fx *settleFixture) ensureInput(extensions ...string) reconcile.ClaimEnsureInput {
+	return reconcile.ClaimEnsureInput{
+		ProjectID:     fx.projectID,
+		EnvironmentID: fx.envID,
+		Revision: &revision.Revision{
+			Project:     fx.projectName,
+			Environment: "production",
+			Definition: compiler.ProjectDefinition{
+				Databases: map[string]compiler.DatabaseClaim{
+					"data": {Engine: "postgres", Version: "17", Isolation: "project",
+						Availability: "single", Extensions: extensions},
+				},
+			},
+		},
+	}
+}
+
+// TestEnsureWithholdsReadinessUntilExtensionsApply pins the rollout gate for
+// an extension requested on a running database: the claim stays provisioned
+// (phases never regress) yet Ensure reports it not ready until a pass applied
+// the new list and CNPG confirmed it, so a release command that depends on
+// the extension never runs ahead of it.
+func TestEnsureWithholdsReadinessUntilExtensionsApply(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+
+	states, err := fx.control.Ensure(ctx, fx.ensureInput())
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	require.True(t, states[0].Provisioned, "an unchanged provisioned claim is ready")
+
+	// The operator has not yet created the extension: readiness drops with
+	// the pending reason, and the claim still reports provisioned in phase.
+	fx.fake.set(clusterHealthyPhase, 1, false)
+	states, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.False(t, states[0].Provisioned)
+	require.Equal(t, extensionsPendingReason, states[0].Waiting)
+	current, err := fx.db.GetClaim(ctx, fx.claim.ID)
+	require.NoError(t, err)
+	require.Equal(t, claim.PhaseProvisioned, claim.Phase(current.Phase))
+	require.Equal(t, []string{"vector"}, dbstore.Extensions(*current))
+
+	// A pass that waits on the Database CR leaves the gate closed.
+	requeue, _ := fx.pass(t)
+	require.Equal(t, requeueWait, requeue)
+	states, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.False(t, states[0].Provisioned)
+	require.Equal(t, extensionsPendingReason, states[0].Waiting)
+
+	// Once CNPG applied it, the pass that observes it settles the marker.
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	requeue, _ = fx.pass(t)
+	require.Zero(t, requeue)
+	states, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.True(t, states[0].Provisioned)
+	require.Empty(t, states[0].Waiting)
+}
+
+// TestExtensionsPendingSettlesOnlyOnTheAppliedEncoding pins the race guard:
+// a pass that applied an older list must not clear a newer request, and a
+// released claim drops its marker outright.
+func TestExtensionsPendingSettlesOnlyOnTheAppliedEncoding(t *testing.T) {
+	fx := newSettleFixture(t)
+	id := fx.claim.ID
+	desired := dbstore.MarshalExtensions([]string{"pg_trgm", "vector"})
+	fx.control.markExtensionsPending(id, desired)
+	require.True(t, fx.control.extensionsPending(id))
+
+	fx.control.settleExtensions(id, dbstore.MarshalExtensions([]string{"pg_trgm"}))
+	require.True(t, fx.control.extensionsPending(id), "an older applied list must not settle the request")
+
+	fx.control.settleExtensions(id, dbstore.MarshalExtensions([]string{"vector", "pg_trgm"}))
+	require.False(t, fx.control.extensionsPending(id), "the encoding is canonical regardless of input order")
+
+	fx.control.markExtensionsPending(id, desired)
+	fx.control.clearExtensions(id)
+	require.False(t, fx.control.extensionsPending(id))
 }
