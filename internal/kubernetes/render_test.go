@@ -162,7 +162,7 @@ func TestRenderArchAffinityReleaseJob(t *testing.T) {
 	objects, err := Render(result, Options{
 		Namespace:      "skali-file-sharing",
 		ManagedCluster: true,
-		Variables:      map[string]string{"APP_DOMAIN": "files.localhost", "UPLOAD_TOKEN": "test-only"},
+		Variables:      map[string]string{"APP_DOMAIN": "files.localhost", "UPLOAD_TOKEN": "test-only", "STORAGE_DOMAIN": "storage.files.localhost"},
 		BuildImages:    map[string]string{"web": "registry.local/web@sha256:test"},
 		AppPlatforms:   map[string][]string{"web": {"linux/amd64"}},
 	})
@@ -188,7 +188,7 @@ func TestRenderPriorityClass(t *testing.T) {
 	render := func(class string) []runtime.Object {
 		objects, err := Render(result, Options{
 			Namespace:         "skali-file-sharing",
-			Variables:         map[string]string{"APP_DOMAIN": "files.localhost", "UPLOAD_TOKEN": "test-only"},
+			Variables:         map[string]string{"APP_DOMAIN": "files.localhost", "UPLOAD_TOKEN": "test-only", "STORAGE_DOMAIN": "storage.files.localhost"},
 			BuildImages:       map[string]string{"web": "registry.local/web@sha256:test"},
 			PriorityClassName: class,
 		})
@@ -333,8 +333,9 @@ func TestBuildApplicationRequiresPreparedArtifact(t *testing.T) {
 	_, err = Render(result, Options{
 		Namespace: "skali-file-sharing",
 		Variables: map[string]string{
-			"APP_DOMAIN":   "files.localhost",
-			"UPLOAD_TOKEN": "test-only",
+			"APP_DOMAIN":     "files.localhost",
+			"UPLOAD_TOKEN":   "test-only",
+			"STORAGE_DOMAIN": "storage.files.localhost",
 		},
 	})
 	require.ErrorContains(t, err, "build source has no prepared image")
@@ -350,8 +351,9 @@ func TestRenderBuildApplicationWithManagedOutputs(t *testing.T) {
 	objects, err := Render(result, Options{
 		Namespace: "skali-file-sharing",
 		Variables: map[string]string{
-			"APP_DOMAIN":   "files.localhost",
-			"UPLOAD_TOKEN": "test-only",
+			"APP_DOMAIN":     "files.localhost",
+			"UPLOAD_TOKEN":   "test-only",
+			"STORAGE_DOMAIN": "storage.files.localhost",
 		},
 		BuildImages: map[string]string{"web": "registry.local/web@sha256:test"},
 	})
