@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -307,8 +308,15 @@ func TestReconcileAppliesAndActivatesDeployment(t *testing.T) {
 	ops := f.cluster.recorded()
 	require.Contains(t, ops, "apply Namespace//"+f.namespace)
 	require.Contains(t, ops, "apply Secret/"+f.namespace+"/skali-environment")
+	require.Contains(t, ops, "apply NetworkPolicy/"+f.namespace+"/"+rendering.EnvironmentPolicyName)
 	require.Contains(t, ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
 	require.Contains(t, ops, "apply Service/"+f.namespace+"/"+f.webServiceName())
+	// The isolation lands with the environment-scoping objects, before any
+	// workload exists to be reached.
+	require.Less(t, slices.Index(ops, "apply Secret/"+f.namespace+"/skali-environment"),
+		slices.Index(ops, "apply NetworkPolicy/"+f.namespace+"/"+rendering.EnvironmentPolicyName))
+	require.Less(t, slices.Index(ops, "apply NetworkPolicy/"+f.namespace+"/"+rendering.EnvironmentPolicyName),
+		slices.Index(ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t)))
 
 	target := f.target(t)
 	require.Equal(t, result.RevisionID, *target.TargetRevisionID)

@@ -108,6 +108,13 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, generations, bucketNames, intercepts, env.Priority,
 		k.deps.Observed.Snapshot(environmentID))
 	if err != nil {
+		// Whatever stops this target from rendering, the pods of the active
+		// revision keep running: they stay isolated regardless.
+		if target.ActiveRevisionID != nil {
+			if applyErr := k.applyIsolation(ctx, environmentID, rev); applyErr != nil {
+				return 0, applyErr
+			}
+		}
 		var gateway *hostGatewayUnavailable
 		if errors.As(err, &gateway) {
 			return k.waitHostGateway(ctx, attachment, environmentID, target, rev, gateway.cause)
@@ -159,11 +166,13 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	rolloutInFlight := target.ActiveRevisionID == nil || *target.ActiveRevisionID != *target.TargetRevisionID
 	releaseWaiting := make(map[string]string)
 
-	// Environment-scoping objects first: namespace, the values Secret, then
-	// the shared edge objects no single service owns.
+	// Environment-scoping objects first: namespace, the values Secret, the
+	// ingress isolation, then the shared edge objects no single service
+	// owns.
 	envOps := []Op{
 		{Kind: OpApply, Object: desired.namespace},
 		{Kind: OpApply, Object: desired.secret},
+		{Kind: OpApply, Object: desired.policy},
 	}
 	envOps = append(envOps, applyAll(desired.environment)...)
 	envChanged, err := k.executeOps(ctx, envOps)
@@ -466,6 +475,25 @@ func (e *hostGatewayUnavailable) Unwrap() error { return e.cause }
 // re-picks on the health cadence instead of failing the run. An adopted
 // rollout run past its deadline fails as any stalled rollout would; the
 // target stays either way, so a late resolution still activates.
+// applyIsolation applies the namespace and its ingress isolation on a pass
+// that cannot render the target revision: an environment whose active
+// revision runs pods must not lose (or, across an upgrade, never gain) its
+// isolation because a later target is broken. Both objects render from the
+// environment's identity alone. An apply error is returned so the pass
+// retries with backoff instead of treating a transient API failure as a
+// permanent render failure.
+func (k *Kernel) applyIsolation(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision) error {
+	id := environmentID.String()
+	_, err := k.executeOps(ctx, []Op{
+		{Kind: OpApply, Object: rendering.RenderNamespace(rev.Project, rev.Environment, id)},
+		{Kind: OpApply, Object: rendering.RenderEnvironmentPolicy(rev.Project, rev.Environment, id)},
+	})
+	if err != nil {
+		return fmt.Errorf("reconcile: apply isolation: %w", err)
+	}
+	return nil
+}
+
 func (k *Kernel) waitHostGateway(ctx context.Context, attachment *runAttachment, environmentID uuid.UUID,
 	target store.EnvironmentTarget, rev *revision.Revision, cause error) (time.Duration, error) {
 	slog.Warn("reconcile: host gateway unresolved, waiting", "environment", environmentID, "error", cause)
@@ -727,6 +755,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	namespace := rendering.RenderNamespace(rev.Project, rev.Environment, environmentID.String())
 	secret := rendering.RenderEnvironmentSecret(rev.Project, rev.Environment,
 		environmentID.String(), rev.Checksum, data)
+	policy := rendering.RenderEnvironmentPolicy(rev.Project, rev.Environment, environmentID.String())
 
 	renderOptions, err := k.renderInputs(environmentID, rev, restartedAt, appRestarts, generations, intercepts, priority)
 	if err != nil {
@@ -787,7 +816,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	if err != nil {
 		return nil, err
 	}
-	if err := rendering.ValidateObjects(append([]runtime.Object{namespace, secret}, objects...)); err != nil {
+	if err := rendering.ValidateObjects(append([]runtime.Object{namespace, secret, policy}, objects...)); err != nil {
 		return nil, err
 	}
 	services, refsList, certDomains, err := groupObjects(objects)
@@ -797,12 +826,13 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	refsList = append(refsList,
 		kube.ObjectRef{GVK: namespace.GroupVersionKind(), Name: namespace.Name},
 		kube.ObjectRef{GVK: secret.GroupVersionKind(), Namespace: secret.Namespace, Name: secret.Name},
+		kube.ObjectRef{GVK: policy.GroupVersionKind(), Namespace: policy.Namespace, Name: policy.Name},
 	)
 	// Objects rendered without a service label (the shared redirect
 	// Middleware) belong to the environment pass, not to any batch.
 	shared := services[""]
 	delete(services, "")
-	return &desiredSet{namespace: namespace, secret: secret,
+	return &desiredSet{namespace: namespace, secret: secret, policy: policy,
 		environment: shared.rest, services: services, refs: refsList,
 		colors: colors, plans: plans, certDomains: certDomains, bucketRoutes: bucketRoutes}, nil
 }

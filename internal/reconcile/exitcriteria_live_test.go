@@ -107,18 +107,26 @@ func TestLiveOutOfBandDeletionHeals(t *testing.T) {
 	}
 
 	heal(t)
-	runs, err := f.journal.ListRuns(ctx, f.environmentID)
-	require.NoError(t, err)
-	foundHeal := false
-	for _, run := range runs {
-		if run.Kind == "reconcile" {
-			foundHeal = true
+	// The pass journals the heal right after it re-applies the Deployment;
+	// the watch that reported the new object can outrun that write under
+	// load, so the journal is read until it shows the run.
+	started := time.Now()
+	require.Eventually(t, func() bool {
+		runs, err := f.journal.ListRuns(ctx, f.environmentID)
+		if err != nil {
+			return false
 		}
-	}
-	require.True(t, foundHeal, "a reconcile run documents the heal")
+		for _, run := range runs {
+			if run.Kind == "reconcile" {
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second, 200*time.Millisecond, "a reconcile run documents the heal")
+	t.Logf("heal journaled after %s", time.Since(started).Round(time.Millisecond))
 
 	// The same heal with zero journal rows: behavior is identical.
-	_, err = f.st.Pool.Exec(ctx, "DELETE FROM runs")
+	_, err := f.st.Pool.Exec(ctx, "DELETE FROM runs")
 	require.NoError(t, err)
 	heal(t)
 

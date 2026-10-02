@@ -36,8 +36,10 @@ cause.
 ## Deployment trust boundary
 
 This alpha is intended for trusted operators running trusted application code.
-Project and environment roles authorize control-plane operations. They do not
-provide network or container isolation suitable for hostile tenants. Application
-pods currently share cluster networking and do not have a comprehensive
-restricted pod-security policy. See [security boundaries and encryption-key
+Project and environment roles authorize control-plane operations. Environments
+are isolated from each other on the network by default (ingress is denied
+except from the environment's own pods and the edge), but the container
+boundary is not hardened for hostile tenants: there is no restricted
+pod-security policy, egress is unrestricted, and service-account tokens are
+mounted. See [security boundaries and encryption-key
 recovery](docs/security.md) before deploying workloads.

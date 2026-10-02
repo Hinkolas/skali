@@ -15,8 +15,8 @@ namespaces. Consequences:
   you delete the claim by hand:
 
   ```sh
-  kubectl -n skali-<project>-<environment> get pvc
-  kubectl -n skali-<project>-<environment> delete pvc <name>
+  kubectl -n skali-<environment-id> get pvc
+  kubectl -n skali-<environment-id> delete pvc <name>
   ```
 
 - Renaming a volume key is a removal plus a creation: the new volume
@@ -27,6 +27,27 @@ namespaces. Consequences:
 Declared sizes are only enforced on the `longhorn` driver; on `local` the
 size is advisory and volumes pin their pods to one node. See
 [`storage.md`](storage.md).
+
+## Environments cannot talk to each other
+
+Every environment namespace carries an ingress default-deny network policy.
+A pod is reachable from the other pods of its environment (by Service name,
+`<app-service>` or `<app-service>.skali-<environment-id>.svc`) and from the
+edge for the routes it declares, and from nothing else: not another
+environment of the same project, not another project, not a process on a
+cluster node. Consequences:
+
+- Two environments that need to exchange traffic must do so through their
+  public routes; there is no manifest setting yet that widens an
+  environment's scope to its project or the cluster, and no way to limit
+  a route to source addresses. Both are tracked in #93.
+- Egress is not restricted: a pod may still open connections to the
+  internet, the cluster DNS, and every service that admits it (its own
+  database pool and the S3 gateway, which admit claim holders only).
+- Existing environments receive the policy on their first reconcile pass
+  after the upgrade that introduced it, without a redeploy; traffic between
+  environments that worked before stops then. The pass records one
+  `reconcile` run per environment with the applied policy.
 
 ## A deploy briefly needs room for two copies of an application
 
@@ -56,7 +77,7 @@ reconciler after a purge confirms the namespace is gone, and deleting them
 any other way would orphan running workloads. Run `skali env remove <name>` for
 each environment, then delete the project. A namespace that was orphaned
 before this guard existed can only be removed by hand
-(`kubectl delete namespace skali-<project>-<environment>`); skalid logs
+(`kubectl delete namespace skali-<environment-id>`); skalid logs
 `orphaned managed namespace retained` for it.
 
 ## The registry node cannot be removed

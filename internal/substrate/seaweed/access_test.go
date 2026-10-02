@@ -37,7 +37,9 @@ func TestRenderS3AccessPolicyFixedPeers(t *testing.T) {
 	require.Len(t, fixed.From, 2)
 	require.Equal(t, bundle.Namespace, fixed.From[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"])
 	require.Equal(t, "skalid", fixed.From[0].PodSelector.MatchLabels["app.kubernetes.io/name"])
-	require.Equal(t, "kube-system", fixed.From[1].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"])
+	require.Equal(t, map[string]string{"kubernetes.io/metadata.name": platform.EdgeNamespace}, fixed.From[1].NamespaceSelector.MatchLabels)
+	require.Equal(t, map[string]string{platform.EdgePodLabel: platform.EdgePodName}, fixed.From[1].PodSelector.MatchLabels)
+	require.Equal(t, "kube-system", platform.EdgeNamespace)
 	require.Equal(t, "traefik", fixed.From[1].PodSelector.MatchLabels["app.kubernetes.io/name"])
 	requireOnlyS3Port(t, policy)
 }

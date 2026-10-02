@@ -10,6 +10,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -236,6 +237,9 @@ func splitService(dotted string) (collection, key string) {
 type desiredSet struct {
 	namespace *corev1.Namespace
 	secret    *corev1.Secret
+	// policy is the environment's ingress isolation; like the namespace it
+	// renders from the environment's identity alone and is never pruned.
+	policy *networkingv1.NetworkPolicy
 	// environment holds rendered objects owned by no single service (the
 	// shared redirect Middleware): they apply with the namespace and the
 	// values Secret, ahead of every service batch.

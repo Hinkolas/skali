@@ -138,7 +138,9 @@ An application may additionally declare a `dev:` block for a fast edit
 loop: bare `skali dev` then skips building it and runs the dev command
 (vite, `bun run dev`) on the developer's machine instead, while the
 cluster's routes and sibling services are intercepted to reach the host
-process. The process receives the application's real resolved
+process. (Sibling services reach each other by Service name inside the
+environment; nothing outside the environment reaches its pods except the
+edge, in production and in the dev cluster alike.) The process receives the application's real resolved
 environment, with database and bucket addresses rewritten to loopback
 ports the dev cluster publishes, so the managed Postgres and S3 are the
 ones behind the hot reload. Two consequences to design for: the local

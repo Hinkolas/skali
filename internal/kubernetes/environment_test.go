@@ -5,9 +5,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
+	"github.com/Hinkolas/skali/internal/platform"
 )
 
 func TestRenderNamespace(t *testing.T) {
@@ -112,4 +114,40 @@ databases:
 	require.Equal(t, EnvironmentSecretName, byName["DATABASE_URL"].ValueFrom.SecretKeyRef.Name)
 	require.Equal(t, "host", byName["POSTGRES_HOST"].ValueFrom.SecretKeyRef.Key)
 	require.Equal(t, OutputSecretName("databases", "data"), byName["POSTGRES_HOST"].ValueFrom.SecretKeyRef.Name)
+}
+
+// The environment's ingress isolation denies everything but its own pods
+// and the edge, on every port, and restricts no egress.
+func TestRenderEnvironmentPolicy(t *testing.T) {
+	t.Parallel()
+	policy := RenderEnvironmentPolicy("hello-world", "production", "0198f2f4-0000-7000-8000-000000000001")
+	require.Equal(t, EnvironmentPolicyName, policy.Name)
+	require.Equal(t, "skali-0198f2f4-0000-7000-8000-000000000001", policy.Namespace)
+	require.Equal(t, map[string]string{
+		LabelManaged:         "true",
+		LabelProject:         "hello-world",
+		LabelEnvironmentName: "production",
+		LabelEnvironment:     "0198f2f4-0000-7000-8000-000000000001",
+	}, policy.Labels)
+
+	require.Empty(t, policy.Spec.PodSelector.MatchLabels, "every pod of the namespace is selected")
+	require.Equal(t, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}, policy.Spec.PolicyTypes)
+	require.Empty(t, policy.Spec.Egress)
+	require.Len(t, policy.Spec.Ingress, 2)
+
+	siblings := policy.Spec.Ingress[0]
+	require.Len(t, siblings.From, 1)
+	require.Nil(t, siblings.From[0].NamespaceSelector, "the sibling rule is scoped to the policy's own namespace")
+	require.NotNil(t, siblings.From[0].PodSelector)
+	require.Empty(t, siblings.From[0].PodSelector.MatchLabels)
+
+	edge := policy.Spec.Ingress[1]
+	require.Len(t, edge.From, 1)
+	require.Equal(t, map[string]string{"kubernetes.io/metadata.name": platform.EdgeNamespace}, edge.From[0].NamespaceSelector.MatchLabels)
+	require.Equal(t, map[string]string{platform.EdgePodLabel: platform.EdgePodName}, edge.From[0].PodSelector.MatchLabels)
+
+	for i, rule := range policy.Spec.Ingress {
+		require.NotEmpty(t, rule.From, "rule %d admits everyone", i)
+		require.Empty(t, rule.Ports, "rule %d restricts ports", i)
+	}
 }

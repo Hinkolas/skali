@@ -747,8 +747,8 @@ func RenderS3AccessPolicy(namespace string, peers platform.AccessPeers) *network
 				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "skalid"}},
 			},
 			{
-				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"}},
-				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "traefik"}},
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": platform.EdgeNamespace}},
+				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{platform.EdgePodLabel: platform.EdgePodName}},
 			},
 		},
 		Ports: ports,

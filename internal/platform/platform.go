@@ -31,6 +31,16 @@ func InternalS3Endpoint() string {
 // label contract (kubernetes.LabelEnvironment) is this constant.
 const EnvironmentLabel = "skali.dev/environment"
 
+// The edge, as every network policy admits it: the Traefik pods k3s runs
+// in kube-system, selected by their chart label. The environment policy
+// admits them for routes and certificate validation, the S3 gateway's for
+// bucket routes; the pair is decided once here.
+const (
+	EdgeNamespace = "kube-system"
+	EdgePodLabel  = "app.kubernetes.io/name"
+	EdgePodName   = "traefik"
+)
+
 // AccessPeers is what a platform port (a database pool, the S3 gateway)
 // admits besides the platform's own fixed peers. The renderers turn each
 // non-empty list into one ingress rule and render nothing for an empty
