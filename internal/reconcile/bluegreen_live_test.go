@@ -182,7 +182,11 @@ func TestLiveBlueGreenAutoscaledHandover(t *testing.T) {
 		count int32
 	}
 	seen := make(chan replicaSample, 512)
+	// The tap goroutine owns the channel: it closes it once the watch ends
+	// (the context is cancelled, or the watch could not start), so the
+	// drain below never races a late send.
 	go func() {
+		defer close(seen)
 		watcher, err := f.clientset.AppsV1().Deployments(f.namespace).Watch(tapCtx, metav1.ListOptions{
 			LabelSelector: rendering.LabelApplication + "=web",
 		})
@@ -240,7 +244,6 @@ func TestLiveBlueGreenAutoscaledHandover(t *testing.T) {
 	}, time.Minute, 200*time.Millisecond)
 
 	stopTap()
-	close(seen)
 	// The new color must never drop below the count it was sized with: a
 	// reset through the default would read 1. The previous color is left to
 	// its own autoscaler until it retires, so its samples carry no claim.
