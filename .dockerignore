@@ -5,6 +5,9 @@ bin/
 studio/node_modules/
 studio/.svelte-kit/
 studio/build/
+website/node_modules/
+website/.svelte-kit/
+website/build/
 .env
 *.log
 

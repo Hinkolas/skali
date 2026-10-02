@@ -30,6 +30,10 @@ This page is for working on skali itself. Using skali is covered by the
   `task build:studio` builds and copies assets into `internal/studio/dist`, and
   `task build` embeds them in `skalid`. There is no production Node service.
   Vite proxies `/api` to the local daemon during development.
+- **`website/`**: the public site at skali.dev, a prerendered SvelteKit build
+  deployed to GitHub Pages by `.github/workflows/pages.yml`. It also serves
+  `install.sh` and the editor schemas; see `website/README.md` for where
+  each comes from and when the site redeploys.
 
 Release operations are explicitly identified in `updates.json`, a second data
 entry in the authoritative cluster ConfigMap. It records release metadata and
@@ -262,6 +266,7 @@ internal/
   updates/       release scan, update settings, and the cluster-state bridge
   valuestore/    versioned, encrypted, write-only environment values
 studio/           the Studio (SvelteKit)
+website/          the public site at skali.dev (SvelteKit, GitHub Pages)
 ```
 
 List and overview surfaces read what the kernel already knows: every

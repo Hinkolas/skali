@@ -1,0 +1,617 @@
+{
+	"schemaVersion": 2,
+	"generatedAt": "2026-10-02T16:18:53+00:00",
+	"title": "Design System: skali.dev",
+	"extensions": {
+		"colorMeta": {
+			"surface-base": {
+				"role": "neutral",
+				"displayName": "Night Base",
+				"canonical": "#0b0b0f",
+				"tonalRamp": [
+					"oklch(15% 0.009 285.3)",
+					"oklch(26% 0.009 285.3)",
+					"oklch(37% 0.009 285.3)",
+					"oklch(48% 0.009 285.3)",
+					"oklch(60% 0.009 285.3)",
+					"oklch(71% 0.009 285.3)",
+					"oklch(83% 0.009 285.3)",
+					"oklch(95% 0.009 285.3)"
+				]
+			},
+			"surface-input": {
+				"role": "neutral",
+				"displayName": "Input Black",
+				"canonical": "#0d0d11",
+				"tonalRamp": [
+					"oklch(15% 0.008 285.4)",
+					"oklch(26% 0.008 285.4)",
+					"oklch(37% 0.008 285.4)",
+					"oklch(48% 0.008 285.4)",
+					"oklch(60% 0.008 285.4)",
+					"oklch(71% 0.008 285.4)",
+					"oklch(83% 0.008 285.4)",
+					"oklch(95% 0.008 285.4)"
+				]
+			},
+			"surface-panel": {
+				"role": "neutral",
+				"displayName": "Panel Black",
+				"canonical": "#0e0e12",
+				"tonalRamp": [
+					"oklch(15% 0.008 285.5)",
+					"oklch(26% 0.008 285.5)",
+					"oklch(37% 0.008 285.5)",
+					"oklch(48% 0.008 285.5)",
+					"oklch(60% 0.008 285.5)",
+					"oklch(71% 0.008 285.5)",
+					"oklch(83% 0.008 285.5)",
+					"oklch(95% 0.008 285.5)"
+				]
+			},
+			"surface-raised": {
+				"role": "neutral",
+				"displayName": "Raised Graphite",
+				"canonical": "#121216",
+				"tonalRamp": [
+					"oklch(15% 0.008 285.6)",
+					"oklch(26% 0.008 285.6)",
+					"oklch(37% 0.008 285.6)",
+					"oklch(48% 0.008 285.6)",
+					"oklch(60% 0.008 285.6)",
+					"oklch(71% 0.008 285.6)",
+					"oklch(83% 0.008 285.6)",
+					"oklch(95% 0.008 285.6)"
+				]
+			},
+			"surface-card": {
+				"role": "neutral",
+				"displayName": "Card Graphite",
+				"canonical": "#17171c",
+				"tonalRamp": [
+					"oklch(15% 0.010 285.5)",
+					"oklch(26% 0.010 285.5)",
+					"oklch(37% 0.010 285.5)",
+					"oklch(48% 0.010 285.5)",
+					"oklch(60% 0.010 285.5)",
+					"oklch(71% 0.010 285.5)",
+					"oklch(83% 0.010 285.5)",
+					"oklch(95% 0.010 285.5)"
+				]
+			},
+			"surface-violet": {
+				"role": "neutral",
+				"displayName": "Violet Night",
+				"canonical": "#0f0d1a",
+				"tonalRamp": [
+					"oklch(15% 0.027 290.3)",
+					"oklch(26% 0.027 290.3)",
+					"oklch(37% 0.027 290.3)",
+					"oklch(48% 0.027 290.3)",
+					"oklch(60% 0.027 290.3)",
+					"oklch(71% 0.027 290.3)",
+					"oklch(83% 0.027 290.3)",
+					"oklch(95% 0.027 290.3)"
+				]
+			},
+			"text-primary": {
+				"role": "neutral",
+				"displayName": "Primary Text",
+				"canonical": "#ececf1",
+				"tonalRamp": [
+					"oklch(15% 0.007 286.3)",
+					"oklch(26% 0.007 286.3)",
+					"oklch(37% 0.007 286.3)",
+					"oklch(48% 0.007 286.3)",
+					"oklch(60% 0.007 286.3)",
+					"oklch(71% 0.007 286.3)",
+					"oklch(83% 0.007 286.3)",
+					"oklch(95% 0.007 286.3)"
+				]
+			},
+			"text-secondary": {
+				"role": "neutral",
+				"displayName": "Secondary Text",
+				"canonical": "#c9cad4",
+				"tonalRamp": [
+					"oklch(15% 0.014 281.5)",
+					"oklch(26% 0.014 281.5)",
+					"oklch(37% 0.014 281.5)",
+					"oklch(48% 0.014 281.5)",
+					"oklch(60% 0.014 281.5)",
+					"oklch(71% 0.014 281.5)",
+					"oklch(83% 0.014 281.5)",
+					"oklch(95% 0.014 281.5)"
+				]
+			},
+			"text-tertiary": {
+				"role": "neutral",
+				"displayName": "Tertiary Text",
+				"canonical": "#a9aab6",
+				"tonalRamp": [
+					"oklch(15% 0.017 282.2)",
+					"oklch(26% 0.017 282.2)",
+					"oklch(37% 0.017 282.2)",
+					"oklch(48% 0.017 282.2)",
+					"oklch(60% 0.017 282.2)",
+					"oklch(71% 0.017 282.2)",
+					"oklch(83% 0.017 282.2)",
+					"oklch(95% 0.017 282.2)"
+				]
+			},
+			"text-muted": {
+				"role": "neutral",
+				"displayName": "Muted Text",
+				"canonical": "#9899a6",
+				"tonalRamp": [
+					"oklch(15% 0.019 282.4)",
+					"oklch(26% 0.019 282.4)",
+					"oklch(37% 0.019 282.4)",
+					"oklch(48% 0.019 282.4)",
+					"oklch(60% 0.019 282.4)",
+					"oklch(71% 0.019 282.4)",
+					"oklch(83% 0.019 282.4)",
+					"oklch(95% 0.019 282.4)"
+				]
+			},
+			"text-faint": {
+				"role": "neutral",
+				"displayName": "Faint Text",
+				"canonical": "#84858f",
+				"tonalRamp": [
+					"oklch(15% 0.015 281.4)",
+					"oklch(26% 0.015 281.4)",
+					"oklch(37% 0.015 281.4)",
+					"oklch(48% 0.015 281.4)",
+					"oklch(60% 0.015 281.4)",
+					"oklch(71% 0.015 281.4)",
+					"oklch(83% 0.015 281.4)",
+					"oklch(95% 0.015 281.4)"
+				]
+			},
+			"text-ghost": {
+				"role": "neutral",
+				"displayName": "Ghost Text",
+				"canonical": "#64656f",
+				"tonalRamp": [
+					"oklch(15% 0.016 281.3)",
+					"oklch(26% 0.016 281.3)",
+					"oklch(37% 0.016 281.3)",
+					"oklch(48% 0.016 281.3)",
+					"oklch(60% 0.016 281.3)",
+					"oklch(71% 0.016 281.3)",
+					"oklch(83% 0.016 281.3)",
+					"oklch(95% 0.016 281.3)"
+				]
+			},
+			"accent": {
+				"role": "primary",
+				"displayName": "Studio Violet",
+				"canonical": "#7c5cff",
+				"tonalRamp": [
+					"oklch(15% 0.230 286.2)",
+					"oklch(26% 0.230 286.2)",
+					"oklch(37% 0.230 286.2)",
+					"oklch(48% 0.230 286.2)",
+					"oklch(60% 0.230 286.2)",
+					"oklch(71% 0.230 286.2)",
+					"oklch(83% 0.230 286.2)",
+					"oklch(95% 0.230 286.2)"
+				]
+			},
+			"accent-light": {
+				"role": "primary",
+				"displayName": "Studio Violet Light",
+				"canonical": "#a58fff",
+				"tonalRamp": [
+					"oklch(15% 0.160 290.8)",
+					"oklch(26% 0.160 290.8)",
+					"oklch(37% 0.160 290.8)",
+					"oklch(48% 0.160 290.8)",
+					"oklch(60% 0.160 290.8)",
+					"oklch(71% 0.160 290.8)",
+					"oklch(83% 0.160 290.8)",
+					"oklch(95% 0.160 290.8)"
+				]
+			},
+			"accent-nav": {
+				"role": "primary",
+				"displayName": "Lavender Mist",
+				"canonical": "#d7cdfe",
+				"tonalRamp": [
+					"oklch(15% 0.068 294.3)",
+					"oklch(26% 0.068 294.3)",
+					"oklch(37% 0.068 294.3)",
+					"oklch(48% 0.068 294.3)",
+					"oklch(60% 0.068 294.3)",
+					"oklch(71% 0.068 294.3)",
+					"oklch(83% 0.068 294.3)",
+					"oklch(95% 0.068 294.3)"
+				]
+			},
+			"accent-from": {
+				"role": "primary",
+				"displayName": "Logo Gradient Start",
+				"canonical": "#9076ff",
+				"tonalRamp": [
+					"oklch(15% 0.195 288.6)",
+					"oklch(26% 0.195 288.6)",
+					"oklch(37% 0.195 288.6)",
+					"oklch(48% 0.195 288.6)",
+					"oklch(60% 0.195 288.6)",
+					"oklch(71% 0.195 288.6)",
+					"oklch(83% 0.195 288.6)",
+					"oklch(95% 0.195 288.6)"
+				]
+			},
+			"accent-to": {
+				"role": "primary",
+				"displayName": "Logo Gradient End",
+				"canonical": "#5b33ff",
+				"tonalRamp": [
+					"oklch(15% 0.274 280.1)",
+					"oklch(26% 0.274 280.1)",
+					"oklch(37% 0.274 280.1)",
+					"oklch(48% 0.274 280.1)",
+					"oklch(60% 0.274 280.1)",
+					"oklch(71% 0.274 280.1)",
+					"oklch(83% 0.274 280.1)",
+					"oklch(95% 0.274 280.1)"
+				]
+			},
+			"status-success": {
+				"role": "tertiary",
+				"displayName": "Healthy Green",
+				"canonical": "#4ec98c",
+				"tonalRamp": [
+					"oklch(15% 0.142 158.4)",
+					"oklch(26% 0.142 158.4)",
+					"oklch(37% 0.142 158.4)",
+					"oklch(48% 0.142 158.4)",
+					"oklch(60% 0.142 158.4)",
+					"oklch(71% 0.142 158.4)",
+					"oklch(83% 0.142 158.4)",
+					"oklch(95% 0.142 158.4)"
+				]
+			},
+			"status-warning": {
+				"role": "tertiary",
+				"displayName": "Warning Amber",
+				"canonical": "#d9a54f",
+				"tonalRamp": [
+					"oklch(15% 0.120 77.7)",
+					"oklch(26% 0.120 77.7)",
+					"oklch(37% 0.120 77.7)",
+					"oklch(48% 0.120 77.7)",
+					"oklch(60% 0.120 77.7)",
+					"oklch(71% 0.120 77.7)",
+					"oklch(83% 0.120 77.7)",
+					"oklch(95% 0.120 77.7)"
+				]
+			},
+			"status-danger": {
+				"role": "tertiary",
+				"displayName": "Danger Rose",
+				"canonical": "#e0596e",
+				"tonalRamp": [
+					"oklch(15% 0.169 13.8)",
+					"oklch(26% 0.169 13.8)",
+					"oklch(37% 0.169 13.8)",
+					"oklch(48% 0.169 13.8)",
+					"oklch(60% 0.169 13.8)",
+					"oklch(71% 0.169 13.8)",
+					"oklch(83% 0.169 13.8)",
+					"oklch(95% 0.169 13.8)"
+				]
+			},
+			"service-app": {
+				"role": "tertiary",
+				"displayName": "Application Lilac",
+				"canonical": "#a99bf8",
+				"tonalRamp": [
+					"oklch(15% 0.133 289.6)",
+					"oklch(26% 0.133 289.6)",
+					"oklch(37% 0.133 289.6)",
+					"oklch(48% 0.133 289.6)",
+					"oklch(60% 0.133 289.6)",
+					"oklch(71% 0.133 289.6)",
+					"oklch(83% 0.133 289.6)",
+					"oklch(95% 0.133 289.6)"
+				]
+			},
+			"service-db": {
+				"role": "tertiary",
+				"displayName": "Database Teal",
+				"canonical": "#68c4d8",
+				"tonalRamp": [
+					"oklch(15% 0.092 213.6)",
+					"oklch(26% 0.092 213.6)",
+					"oklch(37% 0.092 213.6)",
+					"oklch(48% 0.092 213.6)",
+					"oklch(60% 0.092 213.6)",
+					"oklch(71% 0.092 213.6)",
+					"oklch(83% 0.092 213.6)",
+					"oklch(95% 0.092 213.6)"
+				]
+			},
+			"service-storage": {
+				"role": "tertiary",
+				"displayName": "Storage Amber",
+				"canonical": "#d9a54f",
+				"tonalRamp": [
+					"oklch(15% 0.120 77.7)",
+					"oklch(26% 0.120 77.7)",
+					"oklch(37% 0.120 77.7)",
+					"oklch(48% 0.120 77.7)",
+					"oklch(60% 0.120 77.7)",
+					"oklch(71% 0.120 77.7)",
+					"oklch(83% 0.120 77.7)",
+					"oklch(95% 0.120 77.7)"
+				]
+			},
+			"chart-2": {
+				"role": "tertiary",
+				"displayName": "Chart Bronze",
+				"canonical": "#b8802c",
+				"tonalRamp": [
+					"oklch(15% 0.119 73.1)",
+					"oklch(26% 0.119 73.1)",
+					"oklch(37% 0.119 73.1)",
+					"oklch(48% 0.119 73.1)",
+					"oklch(60% 0.119 73.1)",
+					"oklch(71% 0.119 73.1)",
+					"oklch(83% 0.119 73.1)",
+					"oklch(95% 0.119 73.1)"
+				]
+			},
+			"border-subtle": {
+				"role": "neutral",
+				"displayName": "Hairline Subtle",
+				"canonical": "rgb(255 255 255 / 0.06)"
+			},
+			"border-default": {
+				"role": "neutral",
+				"displayName": "Hairline Default",
+				"canonical": "rgb(255 255 255 / 0.07)"
+			},
+			"border-section": {
+				"role": "neutral",
+				"displayName": "Hairline Section",
+				"canonical": "rgb(255 255 255 / 0.08)"
+			},
+			"border-raised": {
+				"role": "neutral",
+				"displayName": "Hairline Raised",
+				"canonical": "rgb(255 255 255 / 0.09)"
+			},
+			"border-strong": {
+				"role": "neutral",
+				"displayName": "Hairline Strong",
+				"canonical": "rgb(255 255 255 / 0.12)"
+			}
+		},
+		"typographyMeta": {
+			"display": {
+				"displayName": "Display",
+				"purpose": "The hero headline only."
+			},
+			"headline": {
+				"displayName": "Headline",
+				"purpose": "Section headings beside the numbered label."
+			},
+			"title": {
+				"displayName": "Title",
+				"purpose": "Platform row headings."
+			},
+			"statement": {
+				"displayName": "Statement",
+				"purpose": "The Under the hood paragraph: ghost text with named parts lifted to primary."
+			},
+			"lead": {
+				"displayName": "Lead",
+				"purpose": "The hero paragraph."
+			},
+			"body": {
+				"displayName": "Body",
+				"purpose": "Section leads and row copy."
+			},
+			"body-sm": {
+				"displayName": "Body small",
+				"purpose": "Workflow step text and fact lists."
+			},
+			"code": {
+				"displayName": "Code",
+				"purpose": "Commands, verbatim."
+			},
+			"label": {
+				"displayName": "Label",
+				"purpose": "Section labels, eyebrows, platform meta."
+			},
+			"label-caps": {
+				"displayName": "Label caps",
+				"purpose": "Footer column titles."
+			}
+		},
+		"shadows": [
+			{
+				"name": "floating-dark",
+				"value": "0 30px 80px rgb(0 0 0 / 0.45)",
+				"purpose": "The install command bar over the install card."
+			},
+			{
+				"name": "dialog-dark",
+				"value": "0 24px 60px rgb(0 0 0 / 0.45)",
+				"purpose": "Dialogs over other surfaces (the promote dialog)."
+			},
+			{
+				"name": "frame-glow",
+				"value": "0 -20px 80px rgb(124 92 255 / 0.10)",
+				"purpose": "The hero's Studio frame, lit from behind."
+			}
+		],
+		"motion": [
+			{
+				"name": "ease-standard",
+				"value": "cubic-bezier(0.4, 0, 0.2, 1)",
+				"purpose": "Color transitions on links and buttons."
+			},
+			{
+				"name": "duration-color",
+				"value": "150ms",
+				"purpose": "Hover color changes; color is the only animated property on the site."
+			},
+			{
+				"name": "copied-hold",
+				"value": "1600ms",
+				"purpose": "How long the copy button shows Copied."
+			},
+			{
+				"name": "smooth-scroll",
+				"value": "scroll-behavior: smooth",
+				"purpose": "In-page anchors, only under prefers-reduced-motion: no-preference."
+			}
+		],
+		"breakpoints": [
+			{
+				"name": "sm",
+				"value": "640px"
+			},
+			{
+				"name": "md",
+				"value": "768px"
+			},
+			{
+				"name": "xl",
+				"value": "1280px"
+			}
+		]
+	},
+	"components": [
+		{
+			"name": "Primary Button",
+			"kind": "button",
+			"refersTo": "button-primary",
+			"description": "The one loud control: inverted, used for the main call to action.",
+			"html": "<a class=\"ds-btn-primary\" href=\"#install\">Get started <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg></a>",
+			"css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 22px; border-radius: 10px; font-family: var(--font-sans, 'Geist Variable', ui-sans-serif, system-ui, sans-serif); font-size: 15px; font-weight: 500; text-decoration: none; cursor: pointer; transition: color 150ms cubic-bezier(0.4, 0, 0.2, 1), background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1); border: none; background: var(--color-text-primary, #ececf1); color: var(--color-surface-base, #0b0b0f); } .ds-btn-primary:hover { background: #ffffff; } .ds-btn-primary:focus-visible { outline: 2px solid var(--color-accent-light, #a58fff); outline-offset: 3px; }"
+		},
+		{
+			"name": "Ghost Button",
+			"kind": "button",
+			"refersTo": "button-ghost",
+			"description": "The quiet secondary action beside the primary button.",
+			"html": "<a class=\"ds-btn-ghost\" href=\"#\">View source</a>",
+			"css": ".ds-btn-ghost { display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 22px; border-radius: 10px; font-family: var(--font-sans, 'Geist Variable', ui-sans-serif, system-ui, sans-serif); font-size: 15px; font-weight: 500; text-decoration: none; cursor: pointer; transition: color 150ms cubic-bezier(0.4, 0, 0.2, 1), background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1); background: transparent; border: 1px solid rgb(255 255 255 / 0.14); color: var(--color-text-secondary, #c9cad4); } .ds-btn-ghost:hover { border-color: rgb(255 255 255 / 0.28); color: #ffffff; } .ds-btn-ghost:focus-visible { outline: 2px solid var(--color-accent-light, #a58fff); outline-offset: 3px; }"
+		},
+		{
+			"name": "Command Bar",
+			"kind": "input",
+			"refersTo": "command-bar",
+			"description": "The install command as a real, copyable line with a non-selectable prompt.",
+			"html": "<div class=\"ds-cmd\"><code class=\"ds-cmd-code\"><span class=\"ds-cmd-prompt\">$</span>curl -fsSL <span class=\"ds-cmd-url\">https://skali.dev/install.sh</span> | sh</code><button type=\"button\" class=\"ds-cmd-copy\" aria-label=\"Copy install command\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg> Copy</button></div>",
+			"css": ".ds-cmd { display: flex; align-items: center; gap: 16px; padding: 10px 10px 10px 24px; border-radius: 16px; border: 1px solid var(--color-border-strong, rgb(255 255 255 / 0.12)); background: rgb(11 11 15 / 0.88); box-shadow: 0 30px 80px rgb(0 0 0 / 0.45); } .ds-cmd-code { flex: 1 1 auto; min-width: 0; padding: 8px 0; font-family: var(--font-mono, 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace); font-size: 15px; line-height: 1.6; color: var(--color-text-primary, #ececf1); white-space: nowrap; overflow-x: auto; } .ds-cmd-prompt { margin-right: 1ch; color: var(--color-text-ghost, #64656f); user-select: none; } .ds-cmd-url { color: var(--color-accent-light, #a58fff); } .ds-cmd-copy { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 46px; min-width: 104px; padding: 0 16px; border: none; border-radius: 10px; background: var(--color-text-primary, #ececf1); color: var(--color-surface-base, #0b0b0f); font-family: var(--font-sans, 'Geist Variable', ui-sans-serif, system-ui, sans-serif); font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-cmd-copy:hover { background: #ffffff; } .ds-cmd-copy:focus-visible { outline: 2px solid var(--color-accent-light, #a58fff); outline-offset: 3px; }"
+		},
+		{
+			"name": "Navigation",
+			"kind": "nav",
+			"refersTo": "nav-link",
+			"description": "The 72px top bar: wordmark, text links, release tag.",
+			"html": "<nav class=\"ds-nav\" aria-label=\"Main\"><a class=\"ds-nav-brand\" href=\"#\"><span class=\"ds-logo\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect width=\"20\" height=\"8\" x=\"2\" y=\"2\" rx=\"2\" ry=\"2\"/><rect width=\"20\" height=\"8\" x=\"2\" y=\"14\" rx=\"2\" ry=\"2\"/><line x1=\"6\" x2=\"6.01\" y1=\"6\" y2=\"6\"/><line x1=\"6\" x2=\"6.01\" y1=\"18\" y2=\"18\"/></svg></span>skali</a><div class=\"ds-nav-links\"><a href=\"#\">Docs</a><a href=\"#\">Changelog</a></div><a class=\"ds-nav-version\" href=\"#\">v0.1.0-alpha.1</a></nav>",
+			"css": ".ds-nav { display: flex; align-items: center; gap: 40px; height: 72px; padding: 0 24px; font-family: var(--font-sans, 'Geist Variable', ui-sans-serif, system-ui, sans-serif); font-size: 14px; } .ds-nav-brand { display: flex; align-items: center; gap: 10px; color: var(--color-text-primary, #ececf1); font-size: 17px; font-weight: 600; letter-spacing: -0.02em; text-decoration: none; } .ds-logo { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(135deg, var(--color-accent-from, #9076ff), var(--color-accent-to, #5b33ff)); color: var(--color-surface-base, #0b0b0f); } .ds-nav-links { display: flex; gap: 28px; } .ds-nav-links a { color: var(--color-text-muted, #9899a6); text-decoration: none; transition: color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-nav-links a:hover { color: var(--color-text-primary, #ececf1); } .ds-nav-version { margin-left: auto; font-family: var(--font-mono, 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace); font-size: 12px; color: var(--color-text-faint, #84858f); text-decoration: none; transition: color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-nav-version:hover { color: var(--color-text-secondary, #c9cad4); } .ds-nav a:focus-visible { outline: 2px solid var(--color-accent-light, #a58fff); outline-offset: 3px; }"
+		},
+		{
+			"name": "Section Label",
+			"kind": "chip",
+			"refersTo": "section-label",
+			"description": "The numbered mono label that pins a section's place in the page.",
+			"html": "<div class=\"ds-label\"><span class=\"ds-label-index\">02</span><span>Platform</span></div>",
+			"css": ".ds-label { display: flex; gap: 12px; font-family: var(--font-mono, 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace); font-size: 12px; color: var(--color-text-faint, #84858f); } .ds-label-index { color: var(--color-accent-light, #a58fff); }"
+		},
+		{
+			"name": "Status Badge",
+			"kind": "chip",
+			"description": "Studio's rounded mono badge, tinted by status (here: a protected environment).",
+			"html": "<span class=\"ds-badge\">protected</span>",
+			"css": ".ds-badge { display: inline-block; padding: 2px 9px; border-radius: 9999px; background: rgb(217 165 79 / 0.10); color: var(--color-status-warning, #d9a54f); font-family: var(--font-mono, 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace); font-size: 10px; }"
+		},
+		{
+			"name": "Feature Panel",
+			"kind": "card",
+			"refersTo": "feature-panel",
+			"description": "The 22px hairline panel that frames a Studio mock, washed in its row's category hue.",
+			"html": "<div class=\"ds-panel\" role=\"img\" aria-label=\"A Studio screen\"><div class=\"ds-panel-inner\">Studio mock</div></div>",
+			"css": ".ds-panel { min-height: 200px; padding: clamp(20px, 3vw, 40px); border-radius: 22px; border: 1px solid var(--color-border-default, rgb(255 255 255 / 0.07)); background-color: var(--color-surface-panel, #0e0e12); background-image: radial-gradient(520px 320px at 80% 0%, rgb(124 92 255 / 0.14) 0%, transparent 70%); } .ds-panel-inner { padding: 20px; border-radius: 15px; border: 1px solid var(--color-border-raised, rgb(255 255 255 / 0.09)); background: var(--color-surface-card, #17171c); color: var(--color-text-tertiary, #a9aab6); font-family: var(--font-sans, 'Geist Variable', ui-sans-serif, system-ui, sans-serif); font-size: 13px; }"
+		},
+		{
+			"name": "Workflow Step",
+			"kind": "custom",
+			"description": "One timeline step: violet dot on a shared rule, mono label, command, explanation.",
+			"html": "<div class=\"ds-step\"><span class=\"ds-step-dot\" aria-hidden=\"true\"></span><span class=\"ds-step-label\">Deploy</span><code class=\"ds-step-cmd\">skali deploy</code><p class=\"ds-step-text\">Builds the image, runs release commands for migrations, and rolls out blue-green behind health checks.</p></div>",
+			"css": ".ds-step { position: relative; display: flex; flex-direction: column; gap: 14px; max-width: 300px; padding: 32px 28px 0 0; border-top: 1px solid rgb(255 255 255 / 0.10); font-family: var(--font-sans, 'Geist Variable', ui-sans-serif, system-ui, sans-serif); } .ds-step-dot { position: absolute; top: -4px; left: 0; width: 7px; height: 7px; border-radius: 9999px; background: var(--color-accent-light, #a58fff); } .ds-step-label { font-family: var(--font-mono, 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace); font-size: 12px; color: var(--color-text-faint, #84858f); } .ds-step-cmd { font-family: var(--font-mono, 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace); font-size: 17px; color: var(--color-text-primary, #ececf1); } .ds-step-text { margin: 0; font-size: 15px; line-height: 1.6; color: var(--color-text-muted, #9899a6); }"
+		}
+	],
+	"narrative": {
+		"northStar": "The Honest Console",
+		"overview": "The site is a quiet frame for the real product. Real Studio screens, real commands, real manifest behavior: everything that carries weight on the page is something skali actually does, rendered faithfully. The chrome around it stays low-lit and restrained so the product pictures and the commands read as the evidence they are. This is the visual form of the product's honest-alpha stance: credibility comes from showing, not from adjectives, logos or borrowed proof.\n\nThe mood is precise, calm and candid. A single dark theme of near-black surfaces separated by hairline white-alpha borders, a long graded text ramp that does most of the hierarchy work, and one violet accent (Studio Violet) that appears sparingly enough to act as a signal. Type is Geist throughout: large, tightly tracked medium-weight headlines against muted, comfortably leaded body copy, with Geist Mono carrying labels, commands and versions. Density is generous at the section level (140px of vertical air) and tight inside the product pictures, which reproduce Studio at its own scale.\n\nThe theme mirrors `studio/src/routes/layout.css` on purpose (it also defines `surface-node` and `service-temp`, unused on the site so far), so a visitor who installs skali recognizes the Studio they then open.",
+		"keyCharacteristics": [
+			"One dark theme only (`color-scheme: dark`); no light mode.",
+			"Depth from tonal surface steps and hairline borders, not shadows.",
+			"Studio Violet is rare: section indices, the hero halo, the install card, focus rings, the logo tile.",
+			"Product pictures are hand-built Studio mocks, labelled as images, faded out at their lower edge.",
+			"Mono type marks everything machine-real: commands, versions, labels, environment names."
+		],
+		"rules": [
+			{
+				"name": "The Signal Rule",
+				"body": "Studio Violet is an indicator, not a paint. If a screen's violet would read as a fill rather than a light, it is too much.",
+				"section": "colors"
+			},
+			{
+				"name": "The Borrowed Meaning Rule",
+				"body": "Category hues mean what they mean in Studio (lilac is apps, teal is databases, amber is storage). Never use them decoratively or swap their meaning.",
+				"section": "colors"
+			},
+			{
+				"name": "The Ramp Does the Work Rule",
+				"body": "Hierarchy comes from stepping along the text ramp before it comes from size or weight. Emphasis inside a muted paragraph is a step up to `text-primary`, not bold.",
+				"section": "colors"
+			},
+			{
+				"name": "The Literal Is Mono Rule",
+				"body": "Anything a user could type or read back from the product (commands, versions, environment names, `skali.yaml`) is set in Geist Mono. Nothing else is.",
+				"section": "typography"
+			},
+			{
+				"name": "The Medium Ceiling Rule",
+				"body": "Headlines top out at weight 500 and get their presence from size and negative tracking. Semibold is reserved for the wordmark.",
+				"section": "typography"
+			},
+			{
+				"name": "The Flat Until It Floats Rule",
+				"body": "A surface earns a shadow only when it overlaps another surface. Panels, cards and rows at rest have borders, not shadows.",
+				"section": "elevation"
+			},
+			{
+				"name": "The Light Is Atmosphere Rule",
+				"body": "Violet washes and halos sit behind content at low alpha (10–24%) and fade out by mask. They never outline, fill or replace a border.",
+				"section": "elevation"
+			}
+		],
+		"dos": [
+			"**Do** show the product: real commands, real Studio screens, real manifest behavior, rendered at Studio's own fidelity.",
+			"**Do** keep Studio Violet to indices, focus, the hero glow, the install card and the logo tile.",
+			"**Do** separate surfaces with the hairline ramp (6–12% white) and tonal steps before reaching for a shadow.",
+			"**Do** set commands, versions, environment names and labels in Geist Mono.",
+			"**Do** keep headings at weight 500 with negative tracking (−0.03 to −0.055em) and body at 1.6 line-height in `text-muted`.",
+			"**Do** mirror `studio/src/routes/layout.css` when a theme token changes, so the site and Studio stay one palette."
+		],
+		"donts": [
+			"**Don't** add a light theme, white sections or full-bleed violet fills.",
+			"**Don't** use category hues (lilac, teal, amber) for anything but the service kind they stand for.",
+			"**Don't** put shadows on resting panels, cards or rows.",
+			"**Don't** replace Studio mocks with abstract illustration, stock imagery or invented dashboards showing features skali lacks.",
+			"**Don't** use bold or semibold for emphasis in running text; step up the text ramp instead.",
+			"**Don't** let violet light outline or fill a container; washes stay behind content at low alpha."
+		]
+	}
+}

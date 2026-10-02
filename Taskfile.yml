@@ -78,6 +78,12 @@ tasks:
     cmds:
       - npm run dev
 
+  dev:website:
+    desc: Run the website dev server (copies install.sh and the release schemas first)
+    dir: website
+    cmds:
+      - npm run dev
+
   dev:image:
     desc: Build the skalid image from the working tree; the next skali dev imports and rolls it
     cmds:
@@ -120,8 +126,9 @@ tasks:
   test:
     desc: Run the Go test suite (DB tests need TEST_DATABASE_URL, see .env.example)
     cmds:
-      # studio/ is excluded: node_modules occasionally ships stray Go packages.
-      - go test $(go list ./... | grep -v '/studio/')
+      # studio/ and website/ are excluded: node_modules occasionally ships
+      # stray Go packages.
+      - go test $(go list ./... | grep -vE '/(studio|website)/')
 
   test:db:
     desc: Run Go tests including DB-backed tests on the project Postgres
@@ -129,7 +136,7 @@ tasks:
     env:
       TEST_DATABASE_URL: 'postgres://dev:dev@127.0.0.1:{{.SKALI_DEV_DB_PORT | default "55432"}}/skali?sslmode=disable'
     cmds:
-      - go test $(go list ./... | grep -v '/studio/')
+      - go test $(go list ./... | grep -vE '/(studio|website)/')
 
   test:live:
     desc: Run the live cluster tests against the k3d test cluster (the substrate suite also needs the project Postgres)

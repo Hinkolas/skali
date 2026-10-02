@@ -1,0 +1,23 @@
+node_modules
+
+# Output
+.output
+/.svelte-kit
+/build
+
+# Copied in by scripts/assets.mjs before every build
+/static/install.sh
+/static/schemas/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
