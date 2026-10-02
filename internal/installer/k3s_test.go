@@ -159,6 +159,31 @@ node-label:
 		"tls-san is a server-only flag and fatal on agents")
 }
 
+// Every rendered config keeps the embedded network policy controller at its
+// default: the object-store fence and per-environment isolation are
+// NetworkPolicies, and flannel alone enforces none of them.
+func TestK3sConfigYAMLKeepsNetworkPolicy(t *testing.T) {
+	t.Parallel()
+	for name, node := range map[string]k3sNode{
+		"first server": {Name: "cp-1", Cluster: "production", Capabilities: layout.Capabilities},
+		"joining server": {
+			Name: "cp-2", Cluster: "production", Role: layout.RoleServer,
+			Capabilities: []string{layout.CapabilityApplication},
+			ServerURL:    "https://192.168.64.5:6443", Token: "secret",
+		},
+		"agent": {
+			Name: "db-1", Cluster: "production", Role: layout.RoleAgent,
+			Capabilities: []string{layout.CapabilityDatabase},
+			ServerURL:    "https://192.168.64.5:6443", Token: "secret",
+		},
+	} {
+		rendered := k3sConfigYAML(node)
+		require.NotContains(t, rendered, "disable-network-policy", name)
+		require.NotContains(t, rendered, "flannel-backend", name)
+		require.NotContains(t, rendered, "disable:", name)
+	}
+}
+
 func TestK3sRegistriesYAML(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, `mirrors:
@@ -212,6 +237,10 @@ func TestInstallK3sInvocation(t *testing.T) {
 	require.Equal(t, []string{k3sInstallScriptPath}, command.Args)
 	require.Contains(t, command.Env, "INSTALL_K3S_VERSION="+K3sVersion)
 	require.Contains(t, command.Env, "INSTALL_K3S_SKIP_START=true")
+	for _, env := range command.Env {
+		require.False(t, strings.HasPrefix(env, "INSTALL_K3S_EXEC"),
+			"server flags live in config.yaml, where the network policy guard checks them, got %s", env)
+	}
 
 	// The vendored script itself was staged executable.
 	require.NotEmpty(t, fake.FS[k3sInstallScriptPath])

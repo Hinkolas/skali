@@ -112,7 +112,10 @@ func (n k3sNode) role() string {
 // embedded etcd cluster (cluster-init) so additional servers can join
 // later without a datastore migration; joining nodes reference the server
 // and the token file. embedded-registry and tls-san are server-only flags
-// and would be fatal on an agent.
+// and would be fatal on an agent. disable-network-policy and
+// flannel-backend stay unset: flannel itself enforces nothing, and the
+// object-store fence and environment isolation rely on k3s's embedded
+// network policy controller, which only the defaults keep running.
 func k3sConfigYAML(node k3sNode) string {
 	var builder strings.Builder
 	builder.WriteString("node-name: " + node.Name + "\n")
