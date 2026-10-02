@@ -73,9 +73,9 @@ type InitOptions struct {
 
 // InitResult reports where the initialized installation answers.
 type InitResult struct {
-	// ConsoleURL is the web console at the platform domain root; APIURL is
+	// StudioURL is the Studio at the platform domain root; APIURL is
 	// the daemon behind the /api path on the same domain.
-	ConsoleURL  string
+	StudioURL   string
 	APIURL      string
 	RegistryURL string
 	LogPath     string
@@ -298,7 +298,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		return nil, err
 	}
 	return &InitResult{
-		ConsoleURL:  "https://" + opts.Endpoints.API,
+		StudioURL:   "https://" + opts.Endpoints.API,
 		APIURL:      "https://" + opts.Endpoints.API + "/api",
 		RegistryURL: "https://" + opts.Endpoints.Registry,
 		LogPath:     log.path,

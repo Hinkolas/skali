@@ -212,7 +212,7 @@ func TestLiveProfileRefusals(t *testing.T) {
 	require.ErrorContains(t, err, "skalid deployment is missing")
 	require.ErrorContains(t, err, "skali cluster upgrade")
 
-	// The full profile reconstructs without a separate console deployment.
+	// The full profile reconstructs without a separate Studio deployment.
 	_, _, err = LiveProfile(ctx, fakeClientWith(liveProfileObjects()...), fake, liveProfileRecord())
 	require.NoError(t, err)
 

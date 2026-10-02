@@ -38,7 +38,7 @@ const maxBinaryBytes = 256 << 20
 // ReleaseMetadata is the release.json asset a release publishes next to
 // its binaries: the k3s pin the release's installer carries, so the
 // coordinator can judge the k3s move before any host changes and the
-// console can name it.
+// Studio can name it.
 type ReleaseMetadata struct {
 	Version string `json:"version"`
 	K3s     string `json:"k3s"`

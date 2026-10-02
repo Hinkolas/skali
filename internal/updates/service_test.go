@@ -260,7 +260,7 @@ func TestServiceFinishesPlatformAheadWithoutFeedAndDoesNotRepairAutomatically(t 
 	require.Equal(t, "v0.2.0", status.Operation.TargetVersion)
 }
 
-// The console's update indicator is memoized: writers on the service drop
+// The Studio's update indicator is memoized: writers on the service drop
 // the memo so a user's own action shows at once, while a change that
 // reaches the settings row from elsewhere waits for the TTL.
 func TestUpdateHintMemoizesUntilWritersOrTTL(t *testing.T) {

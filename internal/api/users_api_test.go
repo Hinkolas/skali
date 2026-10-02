@@ -26,7 +26,7 @@ func TestUsersRequireAdmin(t *testing.T) {
 }
 
 // The user directory: readable by everyone authenticated, trimmed for
-// non-admins, filtered by q. It backs the console's add-member picker and
+// non-admins, filtered by q. It backs the Studio's add-member picker and
 // the admin user search.
 func TestUsersDirectory(t *testing.T) {
 	a := newTestAPI(t)

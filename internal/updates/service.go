@@ -37,7 +37,7 @@ type Settings struct {
 	LastCheckedAt *time.Time `json:"last_checked_at"`
 	// LastError says why the last scan did not complete, LastErrorKind
 	// classifies it (offline, not_found, rate_limited, unavailable,
-	// invalid) so the console can word the notice; both empty when it did.
+	// invalid) so the Studio can word the notice; both empty when it did.
 	LastError     string        `json:"last_error,omitempty"`
 	LastErrorKind FeedErrorKind `json:"last_error_kind,omitempty"`
 	// Latest is the newest release the last scan found on the channel,
@@ -45,7 +45,7 @@ type Settings struct {
 	Latest *Release `json:"latest"`
 }
 
-// Status is the whole document the console renders.
+// Status is the whole document the Studio renders.
 type Status struct {
 	Summary   Summary   `json:"summary"`
 	Installed Installed `json:"installed"`
@@ -91,7 +91,7 @@ type Service struct {
 	Logger       *slog.Logger
 	now          func() time.Time
 
-	// hint memoizes the console's update indicator, which every shell load
+	// hint memoizes the Studio's update indicator, which every shell load
 	// asks for: Status costs a settings read plus a cluster state read, and
 	// the badge tolerates a minute of lag. Writers on this service drop the
 	// memo so a user's own action shows at once.
@@ -129,7 +129,7 @@ func (s *Service) log() *slog.Logger {
 	return slog.Default()
 }
 
-// UpdateHint is the release the console's update indicator points at: nil
+// UpdateHint is the release the Studio's update indicator points at: nil
 // when nothing is available. It is memoized for hintTTL and dropped by
 // every writer on this service, so list surfaces read it for free while
 // the Updates page keeps reading Status on demand.
@@ -201,7 +201,7 @@ func (s *Service) status(ctx context.Context, row store.UpdateSetting) (*Status,
 	snapshot, err := s.Cluster.Snapshot(ctx)
 	switch {
 	case errors.Is(err, ErrNotManaged):
-		status.Reason = "updates from the console need a coordinator-managed cluster; " +
+		status.Reason = "updates from the Studio need a coordinator-managed cluster; " +
 			"run skali cluster upgrade on each host (the local platform follows the skali release that runs it)"
 	case err != nil:
 		status.Reason = "cluster state unavailable: " + err.Error()
@@ -334,7 +334,7 @@ func (s *Service) Apply(ctx context.Context, target string) (*Status, error) {
 	}
 	snapshot, err := s.Cluster.Snapshot(ctx)
 	if errors.Is(err, ErrNotManaged) {
-		return nil, &BlockedError{Reason: "updates from the console need a coordinator-managed cluster"}
+		return nil, &BlockedError{Reason: "updates from the Studio need a coordinator-managed cluster"}
 	}
 	if err != nil {
 		return nil, err
@@ -375,7 +375,7 @@ func (s *Service) Apply(ctx context.Context, target string) (*Status, error) {
 func (s *Service) Resume(ctx context.Context) (*Status, error) {
 	defer s.forgetHint()
 	if s.Cluster == nil || s.Cluster.Client == nil {
-		return nil, &BlockedError{Reason: "updates from the console need a coordinator-managed cluster"}
+		return nil, &BlockedError{Reason: "updates from the Studio need a coordinator-managed cluster"}
 	}
 	store := &clusterstate.Store{Client: s.Cluster.Client}
 	running, err := s.Store.CountRunningRuns(ctx)

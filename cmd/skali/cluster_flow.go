@@ -524,7 +524,7 @@ func promptAdmin(reader *bufio.Reader) (string, string, error) {
 func printInitReady(out *os.File, result *installer.InitResult) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Skali is ready:")
-	fmt.Fprintf(out, "  %-32s web console\n", result.ConsoleURL)
+	fmt.Fprintf(out, "  %-32s Studio\n", result.StudioURL)
 	fmt.Fprintf(out, "  %-32s api\n", result.APIURL)
 	fmt.Fprintf(out, "  %-32s managed registry\n", result.RegistryURL)
 	fmt.Fprintln(out)

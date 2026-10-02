@@ -516,7 +516,7 @@ metadata:
   name: %[1]s
 value: %[2]d
 globalDefault: false
-description: Skali itself (skalid, registry, console, object storage, managed databases); preempts application pods.
+description: Skali itself (skalid, registry, studio, object storage, managed databases); preempts application pods.
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -956,7 +956,7 @@ spec:
 
 // compressMiddlewareYAML renders the platform namespace's compress
 // Middleware, the same object the renderer emits per environment: the
-// console and API compress like every application route. Registry and S3
+// Studio and API compress like every application route. Registry and S3
 // routers never reference it (blobs and objects are already compressed).
 func compressMiddlewareYAML() string {
 	var excluded strings.Builder
@@ -980,7 +980,7 @@ const LocalPlatformHost = "skali.localhost"
 
 // platformEdgeYAML renders the platform domain's edge: an explicit
 // Certificate from the skali issuer, the websecure router to skalid (which
-// serves both the API and the web console), and the plain-HTTP router that
+// serves both the API and the Studio), and the plain-HTTP router that
 // redirects through the shared redirect Middleware, leaving the ACME
 // challenge prefix to cert-manager's solver.
 func platformEdgeYAML(host string) string {
@@ -1072,7 +1072,7 @@ func skalidYAML(profile Profile) string {
 	capabilitiesEnv := "\n            - name: SKALI_CAPABILITIES\n              value: application;edge;database;object-storage"
 	// Both profiles serve the platform domain on websecure with an
 	// explicit Certificate and a plain-HTTP router that redirects through
-	// the shared redirect Middleware, and compress the console through the
+	// the shared redirect Middleware, and compress the Studio through the
 	// shared compress Middleware this stage renders ahead of its routers.
 	// Locally the redirect Middleware rides this stage too (production
 	// renders it in the registry stage, which converges first), and skalid
@@ -1088,7 +1088,7 @@ func skalidYAML(profile Profile) string {
 		capabilitiesEnv = "\n            - name: SKALI_RESERVED_HOSTS\n              value: " + strings.Join([]string{production.IngressHost, production.RegistryDomain}, ";") + "\n            - name: SKALI_CAPABILITIES\n              value: " +
 			strings.Join(production.Capabilities, ";") +
 			// The recorded cluster name is the installation's display name
-			// (the console's breadcrumb root).
+			// (the Studio's breadcrumb root).
 			"\n            - name: SKALI_INSTANCE_NAME\n              value: " + production.ClusterName +
 			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
 			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
@@ -1109,7 +1109,7 @@ func skalidYAML(profile Profile) string {
 		}
 		// The shared redirect-https Middleware rides the registry stage,
 		// which converges first; both platform -http routers reference it.
-		// The compress Middleware is this stage's own: only the console
+		// The compress Middleware is this stage's own: only the Studio
 		// router references it.
 		edgeSuffix = compressMiddlewareYAML() + platformEdgeYAML(production.IngressHost)
 	} else {

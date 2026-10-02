@@ -11,7 +11,7 @@ import (
 // /v1/auth/device routes.
 
 // DeviceRequest is a pending authorization the CLI polls with DeviceCode
-// while the person confirms UserCode in the console.
+// while the person confirms UserCode in the Studio.
 type DeviceRequest struct {
 	DeviceCode string    `json:"device_code"`
 	UserCode   string    `json:"user_code"`

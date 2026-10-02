@@ -18,7 +18,7 @@ import (
 // local platform by the dashboard and annotated with the host dev process
 // serving an intercepted application.
 type readySummary struct {
-	// Dashboard is the local console URL; empty on remotes, whose console
+	// Dashboard is the local Studio URL; empty on remotes, whose Studio
 	// is the master URL the user already knows.
 	Dashboard string
 	// Edge is the host ports the edge is published on; zero ports mean

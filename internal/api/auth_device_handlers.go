@@ -10,9 +10,9 @@ import (
 )
 
 // Browser device authorization (docs/permissions.md, "sudo mode"): the CLI
-// creates a request and polls it; the signed-in console looks it up by user
+// creates a request and polls it; the signed-in Studio looks it up by user
 // code and approves or denies. The request and token routes are CLI-only
-// (the poll answer carries a CLI bearer token); the code routes are the console's.
+// (the poll answer carries a CLI bearer token); the code routes are the Studio's.
 
 // --- payloads (shapes mirror api/openapi.yaml exactly) ---
 

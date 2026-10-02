@@ -467,7 +467,7 @@ const HeartbeatWindow = 2 * time.Minute
 // release, no staged topology edits that would ride along unreviewed, and
 // every node active and recently heard from.
 // Updatable reports why a version change cannot start right now, or nil:
-// the console shows the reason and disables the button before anyone asks.
+// the Studio shows the reason and disables the button before anyone asks.
 func Updatable(state *State, now time.Time) error {
 	if state.CurrentOperation != "" {
 		return ErrOperationActive

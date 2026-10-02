@@ -45,7 +45,7 @@ func TestRedeployFlow(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	require.Equal(t, true, body["up_to_date"])
 
-	// The console flow: save a value applied immediately, so stored values
+	// The Studio flow: save a value applied immediately, so stored values
 	// are what the next deployment resolves.
 	status, body = a.do("PUT", "/v1/environments/"+envID+"/values", token, map[string]any{
 		"values": map[string]string{"SESSION_SECRET": "redeploy-two"},

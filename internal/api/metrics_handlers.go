@@ -16,7 +16,7 @@ type metricsHandlers struct {
 }
 
 // Every series in a response shares the timestamps array, and value arrays
-// carry null for buckets without samples; the console chart contract
+// carry null for buckets without samples; the Studio chart contract
 // requires exactly that alignment.
 type environmentMetricsPayload struct {
 	Window      string             `json:"window"`

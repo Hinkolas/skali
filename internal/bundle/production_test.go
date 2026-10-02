@@ -212,7 +212,7 @@ func TestRenderProductionObjects(t *testing.T) {
 
 	// The platform edge: an explicit Certificate for the api domain and a
 	// websecure IngressRoute splitting the platform domain by path, /api to
-	// the daemon and everything else to the web console (Traefik prioritizes
+	// the daemon and everything else to the Studio (Traefik prioritizes
 	// the longer match), plus the plain-HTTP redirect router.
 	compress := objects.Skalid[6]
 	require.Equal(t, "Middleware", compress.GetKind())
@@ -233,7 +233,7 @@ func TestRenderProductionObjects(t *testing.T) {
 	routeJSON, err := route.MarshalJSON()
 	require.NoError(t, err)
 	require.Contains(t, string(routeJSON), `"middlewares":[{"name":"compress"}]`,
-		"the console compresses like every application route")
+		"the Studio compresses like every application route")
 	points, _, _ := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
 	require.Equal(t, []string{"websecure"}, points)
 	routeSecret, _, _ := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
@@ -358,7 +358,7 @@ func TestRenderProductionObjects(t *testing.T) {
 	text, _, _ := unstructured.NestedString(record.Object, "data", RecordKey)
 	require.Equal(t, profile.Production.InstallationRecord, text)
 
-	// The console shares the daemon and its HTTPS cookie policy.
+	// The Studio shares the daemon and its HTTPS cookie policy.
 	require.Contains(t, string(raw), `"SKALI_COOKIE_SECURE"`)
 	require.NotContains(t, strings.Join(stageSources(profile), "\n"), "skali-web")
 

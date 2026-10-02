@@ -167,7 +167,7 @@ func stepKeys(steps map[string]NodeStep) []string {
 }
 
 // upgradeReadyState is a converged, initialized two-server one-agent
-// cluster whose nodes all polled recently, the shape a console update
+// cluster whose nodes all polled recently, the shape a Studio update
 // starts from.
 func upgradeReadyState(t *testing.T, now time.Time) *State {
 	t.Helper()

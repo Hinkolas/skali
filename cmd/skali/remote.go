@@ -51,7 +51,7 @@ func newRemoteAddCommand() *cobra.Command {
 			"is used verbatim. On success the new remote becomes the current one; on\n" +
 			"failure nothing is stored. The login runs in the cluster's own skali\n" +
 			"release, fetched from the release feed on first contact.\n\n" +
-			"In a terminal the login opens the web console in your browser and waits\n" +
+			"In a terminal the login opens the Studio in your browser and waits\n" +
 			"for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and\n" +
 			"non-interactive runs ask for email and password on the terminal instead.",
 		Args: cobra.ExactArgs(2),
@@ -134,7 +134,7 @@ func newRemoteLoginCommand() *cobra.Command {
 		Long: "Re-authenticate an existing remote and store the fresh session token.\n" +
 			"Without a name the current remote is used; with one, that remote becomes\n" +
 			"current when the login succeeds. Remotes are created with skali remote add.\n\n" +
-			"In a terminal the login opens the web console in your browser and waits\n" +
+			"In a terminal the login opens the Studio in your browser and waits\n" +
 			"for you to approve it there; --no-browser (or SKALI_NO_BROWSER=1) and\n" +
 			"non-interactive runs ask for email and password on the terminal instead.",
 		Args:              cobra.MaximumNArgs(1),

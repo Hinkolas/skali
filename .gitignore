@@ -1,6 +1,6 @@
 # ==============================================================================
 # Root-level ignores. Framework-specific rules live in subdirectory .gitignore
-# files (e.g. web/.gitignore for SvelteKit).
+# files (e.g. studio/.gitignore for SvelteKit).
 # ==============================================================================
 
 # --- OS ---

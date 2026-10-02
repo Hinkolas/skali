@@ -115,7 +115,7 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	operators := cnpgDetail + ", cert-manager " + CertManagerVersion + ", Traefik (k3s)"
 	if longhorn {
 		// A first install pulls over a gigabyte of Longhorn images;
-		// narrate the wait so a quiet console is not mistaken for a hang.
+		// narrate the wait so a quiet Studio is not mistaken for a hang.
 		progress.Note("waiting for Longhorn (a first install pulls its images)")
 		if err := applier.WaitDaemonSetReady(ctx, "longhorn-system", "longhorn-manager"); err != nil {
 			return err

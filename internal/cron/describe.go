@@ -10,8 +10,8 @@ var dayNames = [...]string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday
 
 // Describe words a five-field expression for people: every N minutes or
 // hours, hourly, daily, weekly, or monthly. Anything else comes back as the
-// expression itself so the reader still sees the truth. The console words
-// schedules the same way (web/src/lib/cron.ts).
+// expression itself so the reader still sees the truth. The Studio words
+// schedules the same way (studio/src/lib/cron.ts).
 func Describe(expr string) string {
 	fields := strings.Fields(expr)
 	if len(fields) != 5 {

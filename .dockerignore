@@ -2,12 +2,12 @@
 # from the repo root). Frontend assets are generated inside the build.
 .git
 bin/
-web/node_modules/
-web/.svelte-kit/
-web/build/
+studio/node_modules/
+studio/.svelte-kit/
+studio/build/
 .env
 *.log
 
-internal/webui/dist/
+internal/studio/dist/
 dist/
 .cache/

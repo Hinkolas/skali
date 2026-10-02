@@ -119,7 +119,7 @@ type Deps struct {
 }
 
 // StripAPIPrefix serves the router both at the root and under /api: the
-// embedded console uses /api and in-cluster clients keep root paths.
+// embedded Studio uses /api and in-cluster clients keep root paths.
 // Only a whole /api path segment is stripped, so lookalike
 // paths like /apifoo pass through untouched.
 func StripAPIPrefix(next http.Handler) http.Handler {
@@ -274,7 +274,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				ac.route(r, "POST", "/auth/2fa/confirm", classSelf, h.confirmTwoFactor)
 				// Device authorization: a reauth request is bound to the
 				// calling (stale) session, so it cannot sit behind the gate;
-				// the console looks requests up and denies them freely.
+				// the Studio looks requests up and denies them freely.
 				ac.route(r, "POST", "/auth/device/requests/reauth", classSelf, h.startDeviceReauth)
 				ac.route(r, "GET", "/auth/device/codes/{user_code}", classSelf, h.lookupDevice)
 				ac.route(r, "POST", "/auth/device/codes/{user_code}/deny", classSelf, h.denyDevice)
@@ -284,7 +284,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 					r.Use(RequireFresh(d.Auth))
 
 					// Approving hands a terminal a session or a fresh sudo
-					// window; the browser proves identity first (the console
+					// window; the browser proves identity first (the Studio
 					// answers the gate with its reauth checkpoint).
 					ac.route(r, "POST", "/auth/device/codes/{user_code}/approve", classSelf, h.approveDevice)
 					ac.route(r, "POST", "/auth/password", classSelf, h.changePassword)
@@ -439,7 +439,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				})
 
 				// The user directory: any authenticated user may read it (it
-				// backs the console's add-member picker); the handler trims
+				// backs the Studio's add-member picker); the handler trims
 				// the payload to id, email, name, and role for non-admins.
 				uh := &usersHandlers{st: d.Store}
 				ac.route(r, "GET", "/users", classSelf, uh.list)

@@ -71,7 +71,7 @@ in-cluster gateway.
 
 The value contract is derived entirely from `${NAME}` references; there
 is no declaration block. Every value is secret: stored encrypted per
-environment, write-only through the API and console, and shown in plans
+environment, write-only through the API and Studio, and shown in plans
 and logs by name only.
 
 Rules the compiler enforces:
@@ -174,7 +174,7 @@ reaches this installation. A domain still pointing elsewhere (a migration
 in progress) is deferred: the run stays green, the checkpoint ends skipped
 with a `TLS deferred` warning naming the domain, the ready summary prints
 `cert deferred · domain not pointing here yet` plus a `warning:` line, the
-console marks the run (`N routes deferred`, `succeeded · with warnings`)
+Studio marks the run (`N routes deferred`, `succeeded · with warnings`)
 and the service (`DNS pending`), and the certificate is issued
 automatically once the A and AAAA records point here (one record left
 behind reads as `partial` and still defers). Changing a route's domain on
@@ -194,7 +194,7 @@ issuance attempt, consecutive failure count, last failure, estimated next retry,
 and the current CertificateRequest, ACME Order and validation challenge details.
 The CLI shows the checkpoint as one row per issuance attempt with its
 failure reason or current wait and the retry countdown; `skali --verbose`
-prints every recorded field instead. The console follows waiting
+prints every recorded field instead. The Studio follows waiting
 checkpoints live and shows a retry countdown. Retry times use the bundled
 cert-manager backoff (1 hour, doubling up to 32 hours); controller scheduling
 and CA rate limits can delay an attempt further.
@@ -496,7 +496,7 @@ block). Manual snapshots come from `skali backup create`. Automatic backups
 are a per-environment setting an environment admin turns on with
 `skali backup schedule set --environment <name> --every "0 3 * * *" --keep 7d`
 (five-field cron evaluated in UTC, retention as a duration) or in the
-environment's settings in the console; `skali backup schedule show` and
+environment's settings in the Studio; `skali backup schedule show` and
 `skali backup schedule remove` read and turn it off. Every database,
 bucket, and volume of the environment is snapshotted at each fire, and
 snapshots the schedule took are deleted once older than the retention,

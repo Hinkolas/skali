@@ -31,7 +31,7 @@ import (
 )
 
 // runSeed fabricates a data-rich development installation for exercising
-// the console: users with different instance roles, projects with several
+// the Studio: users with different instance roles, projects with several
 // environments, memberships and environment cells, deployment history
 // (successes, a failure, a rollback, restarts, backups, one deployment in
 // flight), promoted revisions with provisioned database and bucket claims,
@@ -511,7 +511,7 @@ func (s *seeder) user(email string) uuid.UUID {
 }
 
 // actorID records what production records for a person who ran something:
-// the user id (the console resolves it to a name). Schedule actors and
+// the user id (the Studio resolves it to a name). Schedule actors and
 // anything else stay as written.
 func (s *seeder) actorID(actor string) string {
 	if u, ok := s.users[actor]; ok {
@@ -1225,7 +1225,7 @@ func (s *seeder) seedClaims(ctx context.Context, proj *store.Project, env *store
 // --- Telemetry ---
 
 // ticks yields sample times over the span: dense for the last hours, sparse
-// further back, matching what each console window needs.
+// further back, matching what each Studio window needs.
 func (s *seeder) ticks() []time.Time {
 	var out []time.Time
 	for t := s.now.Add(-s.span); !t.After(s.now); {
@@ -1295,7 +1295,7 @@ func (s *seeder) seedEnvironmentTelemetry(ctx context.Context, envID uuid.UUID, 
 	}
 
 	// Storage footprints: the newest sample per service is what the
-	// console reads; a few hours of history keeps the cutoff comfortable.
+	// Studio reads; a few hours of history keeps the cutoff comfortable.
 	for i := 0; i < 6; i++ {
 		at := s.now.Add(-time.Duration(i) * time.Hour)
 		params := store.InsertStorageSamplesParams{SampledAt: at}

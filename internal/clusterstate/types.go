@@ -95,7 +95,7 @@ type PlatformState struct {
 	// Version is the released skali version the platform runs: the hostd
 	// binary on every node, that binary's k3s pin, and the skalid and web
 	// images the bundle deploys. Empty on clusters initialized by a dev
-	// build, which keeps whatever images init named; a console-driven
+	// build, which keeps whatever images init named; a Studio-driven
 	// update sets it, and the coordinator moves every node and the bundle
 	// to it. Only tagged releases are accepted, because only those have
 	// published binaries and images to download.
