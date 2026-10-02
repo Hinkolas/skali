@@ -61,7 +61,7 @@ jobs:
               [ -n "$f" ] || continue
               case "$f" in
                 .github/workflows/ci.yml) go=true; studio=true; website=true; release=true ;;
-                README.md|ROADMAP.md|RELEASE_CHECKLIST.md|SECURITY.md|LICENSE|docs/*|.github/*|.claude/*|.gitignore|.gitleaks.toml|.env.example|Taskfile.yml|compose.yaml) ;;
+                README.md|ROADMAP.md|SECURITY.md|LICENSE|docs/*|.github/*|.claude/*|.gitignore|.gitleaks.toml|.env.example|Taskfile.yml|compose.yaml) ;;
                 studio/*) studio=true; release=true ;;
                 website/*) website=true ;;
                 install.sh) website=true; release=true ;;

@@ -30,7 +30,7 @@ require. The same definition deploys unchanged to a local
   compiled definition or its hash.
 - Editors get completion and inline validation from the published schema
   by putting this on the first line:
-  `# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/main/schemas/skali.schema.json`
+  `# yaml-language-server: $schema=https://skali.dev/schemas/v1/skali.schema.json`
 
 Top level:
 

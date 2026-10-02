@@ -40,10 +40,11 @@ Working and used daily:
 - Agent skill (`skali skill install`, references served at the target's
   release by `skali skill read`), kept in step with the compiler by tests.
 - Release plumbing: goreleaser, `install.sh`, published images, prerelease
-  handling, CI gating the tag.
+  handling, CI gating the tag. [skali.dev](https://skali.dev) serves the
+  installer and the editor schemas.
 
-No release has been tagged yet; `RELEASE_CHECKLIST.md` tracks what is left
-before 0.1.0. Known gaps are written down in
+v0.1.0 is in release candidates (`v0.1.0-rc.10` as of 2026-10-02); no
+stable release exists yet. Known gaps are written down in
 [`docs/limitations.md`](docs/limitations.md).
 
 ## 1. Production confidence
@@ -57,9 +58,16 @@ The goal of this block: I can put a paying workload on skali and sleep.
       (`normal | high`, instance admins only) rendered as PriorityClasses.
       Model and route classification in
       [`docs/permissions.md`](docs/permissions.md).
-- [ ] Tag a first release. The plumbing is in place; what remains is the
-      rehearsal on a prerelease tag: `install.sh` on clean machines,
-      published images, `skali cluster upgrade` from a released binary.
+- [ ] Release v0.1.0 as the first stable version. Prereleases are
+      published; before the stable tag (`task release:tag`, never `git tag`
+      by hand), rehearse the release end to end from released binaries:
+      `install.sh` on a clean Linux server and a clean Mac, `sudo skali
+      cluster` through init, `skali dev` outside the repo, `skali upgrade`
+      and `skali cluster upgrade` from the previous release, a `skali
+      cluster join` with no local `skali-hostd`, `skali cluster
+      reset-password`, and a Studio software update between two releases.
+      Once v0.1.0 exists, the README's install commands drop
+      `SKALI_CHANNEL=beta`.
 - [ ] Skali's own state is backed up off-cluster (system database, values
       keys, installer inputs) and a full restore into a fresh install has been
       done at least once. `skali cluster restore` exists as a hidden stub
@@ -197,10 +205,18 @@ Ordered loosely by how often I have wanted them.
 - [ ] Multi-edge traffic distribution and DNS guidance.
 - [ ] Management-plane HA (skalid itself) once a second cluster or a real
       outage motivates it.
-- [ ] Security pass: trusted-proxy handling for client IPs, session and
-      login-challenge expiry sweeps, backup archive path validation,
-      checksum signing and SBOM for releases, dependency review. (Redaction
-      and exec/logs authorization were reviewed in the pre-release audit.)
+- [ ] Security pass: checksum signing (cosign or gpg), an SBOM, and
+      reproducible builds (`mod_timestamp`) for releases; only load `.env`
+      in `skalid serve` for dev builds (`internal/config/config.go`); a
+      conscious password policy beyond the 8-character minimum; dependency
+      review. (Trusted-proxy handling, expiry sweeps, backup archive path
+      validation, redaction, and exec/logs authorization are done.)
+- [ ] Bump the `alpine:3.21` base of the skalid images (EOL around
+      November 2026) and pin it by digest.
+- [ ] Release downloads without github.com: Studio updates fetch
+      `skali-hostd` and k3s from github.com on every node and scan
+      api.github.com. Document the egress requirement and the mirror
+      settings (`SKALI_RELEASE_BASE`, `SKALI_UPDATE_FEED_URL`).
 - [ ] Log retention and shipping story beyond kubelet defaults.
 
 ## 5. Developer experience and housekeeping
@@ -217,6 +233,17 @@ Ordered loosely by how often I have wanted them.
       used.
 - [ ] Reduce e2e wall-clock and flakes; keep unit, live, dev, and cluster
       suites runnable on a laptop.
+- [ ] Prebaked dev node image for a faster first `skali dev`: a
+      `skali-dev-node` image built from the pinned `rancher/k3s` with an
+      airgap tarball of the k3s built-ins, platform images, and released
+      skalid, auto-imported on first boot. Images only, never booted
+      cluster state; needs multi-arch builds, a CI rebuild per release, and
+      a seam for the `localdev.K3sImage == installer.K3sVersion` drift test.
+- [ ] Small cleanups: add `/token` and `/openapi.yaml` to
+      `api/openapi.yaml`; replace personal fixtures (`skali.khz.dev`, the
+      `nhinke` user) in tests with example.com-style values; drop the
+      private-repository `GITHUB_TOKEN` wording from `install.sh`; align the
+      `studio/package.json` version with the release tag.
 
 ## Explicitly not planned
 
