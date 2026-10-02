@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import LogoMark from '$lib/components/LogoMark.svelte';
 	import { links } from '$lib/links';
 
@@ -63,9 +64,12 @@
 			class="flex flex-wrap justify-between gap-3 border-t border-border-subtle pt-6 text-[13px] text-text-faint"
 		>
 			<span>© {new Date().getFullYear()} skali. Apache License 2.0.</span>
-			<a href={links.repo} rel="external" class="transition-colors hover:text-text-primary"
-				>github.com/Hinkolas/skali</a
-			>
+			<div class="flex flex-wrap gap-6">
+				<a href={resolve('/imprint')} class="transition-colors hover:text-text-primary">Imprint</a>
+				<a href={links.repo} rel="external" class="transition-colors hover:text-text-primary"
+					>github.com/Hinkolas/skali</a
+				>
+			</div>
 		</div>
 	</div>
 </footer>
