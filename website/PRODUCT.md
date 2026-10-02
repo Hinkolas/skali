@@ -67,8 +67,9 @@ All four are confirmed and should be stressed together; no single competitor
   commands, routes with automatic TLS, environments with encrypted values,
   promotion, rollbacks, backups to your own S3, cluster upgrades, diagnose
   and repair.
-- Status: preparing v0.1.0-alpha.1. Nothing is guaranteed before v1.0.0; the
-  site must say it is early alpha and link the known limitations. Never imply
+- Status: v0.1.0 prereleases, no stable release yet. Nothing is guaranteed
+  before v1.0.0; the site must say it is early alpha and link the known
+  limitations. Never imply
   production readiness, stability guarantees or hostile-workload isolation.
 - Technical: SvelteKit + Tailwind v4, fully prerendered with
   `adapter-static` to GitHub Pages. No server code; anything a page needs is

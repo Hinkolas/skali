@@ -6,7 +6,7 @@
 # deploys never carries the host daemon.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Hinkolas/skali/main/install.sh | SKALI_CHANNEL=beta sh
+#   curl -fsSL https://skali.dev/install.sh | SKALI_CHANNEL=beta sh
 #
 # Environment:
 #   SKALI_CHANNEL   stable (default), or beta to include alpha/beta/rc releases

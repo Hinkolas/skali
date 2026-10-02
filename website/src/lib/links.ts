@@ -6,7 +6,7 @@ export const links = {
 	repo,
 	releases: `${repo}/releases`,
 	docs: `${repo}#documentation`,
-	gettingStarted: `${repo}#set-up-a-server`,
+	gettingStarted: `${repo}#getting-started`,
 	manifest: `${repo}#the-manifest`,
 	limitations: `${repo}/blob/main/docs/limitations.md`,
 	roadmap: `${repo}/blob/main/ROADMAP.md`,

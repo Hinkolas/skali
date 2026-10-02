@@ -1,108 +1,124 @@
+<div align="center">
+
+<img src="website/static/favicon.svg" alt="" width="72" height="72">
+
 # skali
 
-Run your applications on your own servers, without running a platform team.
+**Run your applications on your own servers, without running a platform team.**
 
-skali is a self-hosted hosting platform. You describe an application, its
-Postgres databases, and its S3 buckets in one `skali.yaml`; skali builds it,
-runs it with TLS routes, health checks, and rollouts, and hands you the
-credentials. The same manifest runs on a disposable local cluster on your
-laptop (`skali dev`) and on the servers you install skali on (`skali
-deploy`). Under the hood it is Kubernetes (k3s), but you never have to touch
-it.
+[Website](https://skali.dev) ·
+[Releases](https://github.com/Hinkolas/skali/releases) ·
+[Documentation](#documentation) ·
+[Roadmap](ROADMAP.md)
 
-- **Applications** from a Dockerfile or a prebuilt image, replicated, with
-  readiness and liveness probes, release commands for migrations, and
-  blue-green rollouts by default (rolling and recreate selectable).
-- **Managed PostgreSQL** (CloudNativePG) and **S3 buckets** (SeaweedFS),
-  provisioned from the manifest with credentials injected as environment
-  variables.
-- **Routes with automatic TLS** (Traefik, Let's Encrypt), custom domains,
-  load-balancing strategies.
-- **Environments** per project (staging, production, ...), promotion between
-  them, rollbacks, encrypted per-environment values.
-- **Local development** on the real platform: hot reload for the app you are
-  working on while its databases and buckets run in the local cluster.
-- **Skali Studio** (a web UI) and a CLI, users with 2FA, and per-project roles.
-- **Backups** of environment data to your own S3 target, on a per-environment
-  schedule or by hand, cluster upgrades, diagnosis and repair, single node or
-  many.
+[![Release](https://img.shields.io/github/v/release/Hinkolas/skali?include_prereleases&sort=semver&label=release)](https://github.com/Hinkolas/skali/releases)
+[![CI](https://github.com/Hinkolas/skali/actions/workflows/ci.yml/badge.svg)](https://github.com/Hinkolas/skali/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Hinkolas/skali)](LICENSE)
 
-**Status: preparing v0.1.0-alpha.1.** skali is used daily for development
-and staging, and production hardening is tracked in [`ROADMAP.md`](ROADMAP.md).
-Until v1.0.0 nothing is guaranteed: the manifest schema, CLI, API, and
-on-disk formats may change in breaking ways between minor versions, upgrades
-may require manual steps, and we do not recommend it for production workloads
-you cannot afford to lose. The first alpha is an early testing release; read
-the release notes and [known limitations](docs/limitations.md) before deploying.
-Use trusted operators and workloads: project roles do not provide hostile
-workload isolation (see [security boundaries](docs/security.md)).
+</div>
 
-## Install the CLI
-
-Install the newest release, including prereleases while skali is in alpha:
+skali is a self-hosted application platform. You describe an application, its
+Postgres databases, and its S3 buckets in one `skali.yaml`. skali builds it,
+runs it behind TLS routes with health checks and safe rollouts, and hands it
+its credentials. The same manifest runs in a disposable local cluster on your
+laptop (`skali dev`) and on the servers you install skali on (`skali deploy`).
+Underneath it is Kubernetes (k3s), but you never have to touch it.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Hinkolas/skali/main/install.sh | SKALI_CHANNEL=beta sh
+curl -fsSL https://skali.dev/install.sh | sh
 ```
 
-`SKALI_CHANNEL=beta` selects the highest published version, including alpha,
-beta, RC, and stable releases. Use `SKALI_CHANNEL=stable` (the default when
-omitted) for stable releases only; it fails if none has been published yet.
-This selects the installed version; cluster update preferences are configured
-separately. To build from source, use `task install:cli`; see
-[contributor setup](docs/development.md) for prerequisites.
+> [!WARNING]
+> **skali is early alpha.** Until v1.0.0 the manifest schema, CLI, API, and
+> on-disk formats may change in breaking ways, and upgrades may need manual
+> steps. Do not use it for workloads you cannot afford to lose. Read the
+> [known limitations](docs/limitations.md) and the
+> [prerelease safety notes](docs/prerelease-safety.md) first. Project roles do
+> not isolate hostile workloads; see [security boundaries](docs/security.md).
 
-To install a specific version instead, set `SKALI_VERSION`, which overrides
-channel selection. For example:
+## Features
+
+- **Applications** from a Dockerfile or a prebuilt image: replicas, readiness
+  and liveness probes, release commands for migrations, and blue-green
+  rollouts by default (rolling and recreate selectable).
+- **Managed PostgreSQL** (CloudNativePG, with pgvector) and **S3 buckets**
+  (SeaweedFS), provisioned from the manifest, with their credentials injected
+  as environment variables.
+- **Routes with automatic TLS** (Traefik, Let's Encrypt), custom domains, and
+  load-balancing strategies. Buckets get their own hostnames.
+- **Environments** per project (staging, production, ...), with promotion
+  between them, rollbacks, and encrypted per-environment values.
+- **Local development on the real platform**: the app you are working on
+  hot-reloads on your machine while its databases and buckets run in the local
+  cluster.
+- **Skali Studio**, a web UI for projects, deployments, runs, metrics, and
+  users, next to a full CLI. Users have 2FA and per-project roles.
+- **Operations** built in: backups to your own S3 target, cluster updates from
+  the Studio or the CLI, diagnosis and repair, single node or many.
+
+## Getting started
+
+### 1. Install the CLI
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Hinkolas/skali/main/install.sh | SKALI_VERSION=v0.1.0-alpha.1 sh
+curl -fsSL https://skali.dev/install.sh | sh
 ```
 
-The script picks the binary for your OS and architecture (macOS and Linux,
-amd64 and arm64), verifies its checksum, and installs it: `/usr/local/bin`
-on Linux (asks for sudo), `~/.local/bin` on macOS. Run it on your laptop to develop
-and deploy, and on every server that should become a skali node.
+The installer picks the binary for your OS and architecture (macOS and Linux,
+amd64 and arm64), verifies its checksum, and installs it to `/usr/local/bin`
+on Linux (asking for sudo) or `~/.local/bin` on macOS. It also installs shell
+completions for your login shell. Run it on your laptop to develop and
+deploy, and on every server that should become a skali node.
 
-On macOS, if `skali` reports `command not found`, add the install directory to
-your PATH. For the default zsh shell, run:
+The default channel installs the newest stable release. Set
+`SKALI_CHANNEL=beta` to include alpha, beta, and RC releases, or
+`SKALI_VERSION` to install an exact version:
+
+```sh
+curl -fsSL https://skali.dev/install.sh | SKALI_CHANNEL=beta sh
+curl -fsSL https://skali.dev/install.sh | SKALI_VERSION=v0.1.0 sh
+```
+
+<details>
+<summary>macOS: <code>skali: command not found</code></summary>
+
+Add `~/.local/bin` to your PATH. For the default zsh shell:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 printf '\n%s\n' 'export PATH="$HOME/.local/bin:$PATH"' >> "${ZDOTDIR:-$HOME}/.zshrc"
 ```
 
-The first command activates it in this terminal; run the second once to save
-the setting for future terminals. The installer prints shell-specific setup
-instructions when needed; it does not edit your shell startup files. You can
-also run `~/.local/bin/skali` directly before configuring PATH.
+The first line applies to the current terminal, the second to future ones.
+The installer prints the right instructions for your shell and never edits
+your startup files itself.
 
-To update an installed CLI later, let it replace itself:
+</details>
+
+<details>
+<summary>Upgrading and shell completions</summary>
 
 ```sh
 skali upgrade                        # newest release on your channel
 skali upgrade --channel beta         # include alpha, beta, and RC releases
-skali upgrade --version v0.1.0-rc.2  # exact release, may also downgrade
+skali upgrade --version v0.1.0      # exact release, may also downgrade
 ```
 
 The channel defaults to stable, or to beta when the installed CLI is itself a
-prerelease. Downloads are verified against the release checksums. A system
-install on Linux needs `sudo skali upgrade`. This updates the CLI only; a
-cluster moves with `skali cluster upgrade`, and the `skali-hostd` host daemon
-is fetched by `skali cluster` on the node that needs it, so a laptop that only
-deploys never carries it.
+prerelease. Downloads are verified against the release checksums; a system
+install on Linux needs `sudo skali upgrade`. This updates the CLI only.
+Clusters update through the Studio or `skali cluster upgrade` (see
+[cluster updates](docs/updates.md)).
 
-The installer also installs shell completions for your login shell, so
-`skali <TAB>` completes commands, flags, and values such as environments,
-remotes, run ids, and the manifest's applications. `skali completion install
---shell fish` adds another shell, `SKALI_COMPLETIONS=none` skips the step, and
-`skali upgrade` keeps an installed script current. Zsh picks the script up from
-Homebrew's `site-functions` directory when there is one; otherwise the command
-prints the one `fpath` line to add to `~/.zshrc`.
+`skali completion install --shell fish` adds completions for another shell,
+and `SKALI_COMPLETIONS=none` skips them during installation. To build from
+source instead, see [contributor setup](docs/development.md).
 
-## Run a project locally
+</details>
 
-Requirements: Docker. skali installs a pinned copy of
+### 2. Run a project locally
+
+All you need is Docker. skali installs a pinned copy of
 [k3d](https://k3d.io) for the local cluster if none is on your PATH.
 
 ```sh
@@ -113,72 +129,64 @@ skali dev
 ```
 
 `skali dev` creates the local platform on first run, builds the project,
-deploys it, and follows its logs. The example is then served at
-`https://hello-world.localhost`, on the same origin a cluster would serve it:
-the local edge listens on ports 80 and 443 and issues every route a
-certificate from a development CA generated for your installation. The
-first run offers to trust that CA in your browsers (macOS asks for your
-login password); `skali dev trust` repeats or checks that step. Ctrl-C
-pauses the project (data is kept),
-`skali dev` brings it back, `skali dev -d` keeps it running in the
-background. `skali dev list`, `skali dev status`, `skali dev exec`, and
-`skali dev reset` do what they say. The platform runs the same skali release
-as the project's target cluster in one fixed `skali-dev` cluster. Switching
-releases requires `skali dev reset`, which asks before deleting local data.
-`skali dev stop` and `skali dev start` retain data. Use `--offline` deliberately
-when working against a recorded target release without remote discovery.
+deploys it, and follows its logs. The example is served at
+`https://hello-world.localhost`, with a certificate from a development CA
+generated for your machine. The first run offers to trust that CA
+(`skali dev trust` repeats the step).
 
-Add a `dev:` block to an application and bare `skali dev` runs that app as a
-process on your machine with hot reload, behind the cluster's routes and with
-its real database and bucket credentials.
+Ctrl-C pauses the project and keeps its data, `skali dev` brings it back, and
+`skali dev -d` runs it in the background. `skali dev status`, `exec`, `list`,
+and `reset` do what they say. Add a `dev:` block to an application and
+`skali dev` runs that app as a process on your machine with hot reload,
+behind the cluster's routes and with its real database and bucket
+credentials.
 
-## Set up a server
+### 3. Set up a server
 
-Use a Debian-family Linux server (Debian or Ubuntu) with `apt`, systemd,
-and an amd64 or arm64 CPU; the managed host installer does not support
-arbitrary Linux distributions. A Mac runs skali inside a managed Lima VM.
-Point DNS at the server first: an A record for the platform domain
-(for example `skali.example.com`), one for the registry
-(`cr.skali.example.com`), and one per application domain. Ports 80 and 443
-must be reachable.
+You need a Debian or Ubuntu server (amd64 or arm64) with ports 80 and 443
+reachable. A Mac runs skali inside a managed Lima VM. Point DNS at the server
+first: an A record for the platform domain (for example `skali.example.com`),
+one for the registry (`cr.skali.example.com`), and one per application
+domain.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Hinkolas/skali/main/install.sh | SKALI_CHANNEL=beta sh
+curl -fsSL https://skali.dev/install.sh | sh
 sudo skali cluster
 ```
 
-`skali cluster` on a fresh host walks you through it: create a new cluster,
-initialize skali on it with your domains, a Let's Encrypt account email, and
-the first admin account. When it finishes it prints the Studio URL. The
-whole thing takes a few minutes and is repeatable: run `sudo skali cluster`
-again at any time to see status or open the maintenance menu.
+`skali cluster` walks you through creating the cluster and initializing skali
+on it with your domains, a Let's Encrypt account email, and the first admin
+account. It takes a few minutes and prints the Studio URL at the end. Run
+`sudo skali cluster` again at any time for status and the maintenance menu.
 
-Non-interactive installs pass `--config` files instead
-(`skali cluster install --config node.yaml`, `skali cluster init --config
-init.yaml`); the schemas for both are in [`schemas/`](schemas/).
+For unattended installs, pass config files instead (`skali cluster install
+--config node.yaml`, `skali cluster init --config init.yaml`). Their schemas
+are published under `https://skali.dev/schemas/v1/` and live in
+[`schemas/`](schemas/).
 
-### More nodes
+<details>
+<summary>Adding nodes</summary>
 
 ```sh
-# on the server: print a one-use join command with capability defaults
+# on the server: print a one-use join command
 sudo skali cluster token --role agent --capabilities application
 
 # on each new host, after installing the CLI
 sudo skali cluster join --token 'skali.…'
 
-# back on the server: review and converge the topology in one step
+# back on the server: review and converge the topology
 sudo skali cluster plan
 sudo skali cluster apply --wait
 ```
 
-Nodes declare capabilities (`application`, `database`, `edge`, ...) and
-skali places workloads accordingly. Servers can be joined the same way for a
-highly available control plane. Enrollment retries temporary connection failures;
-after an interruption, run `sudo skali cluster join` to resume the saved attempt.
-See [enrollment and recovery](docs/enrollment.md) for token inputs, pending-node
-removal, and upgrading an existing alpha cluster.
+Nodes declare capabilities (`application`, `database`, `edge`, ...) and skali
+places workloads accordingly. Join servers the same way for a highly
+available control plane. See [enrollment and recovery](docs/enrollment.md).
 
-### Day two
+</details>
+
+<details>
+<summary>Day-two operations</summary>
 
 ```sh
 sudo skali cluster status          # health of this node and the platform
@@ -188,14 +196,15 @@ sudo skali cluster upgrade --wait  # whole cluster, latest release on its channe
 sudo skali cluster reset-password  # recover a locked-out admin account
 ```
 
-Managed cluster updates use the authenticated Skali remote and continue after
-the CLI disconnects. See [cluster updates](docs/updates.md) for exact versions,
-incomplete updates, and controller recovery when the API is unavailable.
+Cluster updates also run from the Studio (System → Software update) and
+continue after the CLI disconnects. See [cluster updates](docs/updates.md).
 
-## Deploy
+</details>
+
+### 4. Deploy
 
 Connect the CLI to your installation once, then deploy from any project
-directory that has a `skali.yaml`:
+directory with a `skali.yaml`:
 
 ```sh
 skali remote add prod skali.example.com   # logs you in
@@ -203,32 +212,26 @@ cd my-project
 skali deploy
 ```
 
-The first deploy of a checkout asks which project and environment to target
-and remembers the answer. It also asks once per environment which local env
-file to deploy with (or the stored values), remembers that too, and shows the
-choice in every later deploy; `--pick-env-file` asks again and `--env-file`
-overrides for one run. Every value is stored encrypted, write-only, and shown
-by name only. Each deploy shows a
-plan, builds locally, pushes into the platform's registry, and renders the
-rollout live, ending with the URLs of your routes.
+The first deploy of a checkout asks which project and environment to target,
+and which local env file to deploy with, and remembers both. Every value is
+stored encrypted and write-only. Each deploy shows a plan, builds locally,
+pushes to the platform's registry, renders the rollout live, and ends with the
+URLs of your routes.
 
 ```sh
-skali plan                        # what a deploy would change, without doing it
+skali plan                        # what a deploy would change
 skali logs web                    # live logs of an application
 skali exec web -- sh              # a shell in a running container
 skali rollback                    # back to the previous revision
-skali deploy --from staging       # promote staging's revision to this environment
+skali deploy --from staging       # promote staging's revision here
 skali backup create               # snapshot databases, buckets, and volumes
 skali access set alice@example.com deploy   # roles: read, deploy, maintain, admin
 ```
 
-The Studio shows the same projects, deployments, logs, and settings in
-the browser, and manages users.
-
 ## The manifest
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Hinkolas/skali/main/schemas/skali.schema.json
+# yaml-language-server: $schema=https://skali.dev/schemas/v1/skali.schema.json
 name: guestbook
 
 applications:
@@ -270,57 +273,61 @@ buckets:
       storage: 1GB
 ```
 
-`${NAME}` references are per-environment values you provide; `{{ ... }}`
+`${NAME}` references are per-environment values you provide. `{{ ... }}`
 references are outputs of the databases and buckets skali provisions.
-`skali validate` checks a manifest, and the schema line above gives you
+`skali validate` checks a manifest, and the schema line at the top gives you
 completion and inline errors in any editor with YAML language support.
 
-The [`examples/`](examples/) directory has complete projects: a minimal
-build ([`hello-world`](examples/hello-world)), an imported image
-([`whoami`](examples/whoami)), an app with a database, a bucket, and a
-volume ([`guestbook`](examples/guestbook)), the presigned-URL reference
-where browsers upload and download straight through the bucket endpoint
-([`file-sharing`](examples/file-sharing)), and the local hot-reload loop
-([`dev-loop`](examples/dev-loop)).
+[`examples/`](examples/) has complete projects:
 
-If you write manifests with a coding agent, `skali skill install` gives it
-the platform's rules, and the skill reads the manifest, CLI and architecture references
-through `skali skill read`, which answers at the release of the project's
-target cluster.
+| Example | Shows |
+| --- | --- |
+| [`hello-world`](examples/hello-world) | A minimal build |
+| [`whoami`](examples/whoami) | Deploying a prebuilt image |
+| [`guestbook`](examples/guestbook) | An app with a database, a bucket, and a volume |
+| [`file-sharing`](examples/file-sharing) | Browsers uploading and downloading through presigned bucket URLs |
+| [`dev-loop`](examples/dev-loop) | The local hot-reload loop |
+
+### With a coding agent
+
+`skali skill install` gives your coding agent the platform's rules for writing
+manifests and porting apps. The skill reads the manifest, CLI, and
+architecture references through `skali skill read`, which always answers for
+the release your project's cluster runs.
 
 ## Documentation
 
-- [`docs/databases.md`](docs/databases.md): managed PostgreSQL, engines and
-  versions, extensions, isolation and availability.
-- [`docs/buckets.md`](docs/buckets.md): S3 buckets, quotas, endpoints, and
-  topology.
-- [`docs/storage.md`](docs/storage.md): persistent volumes and the storage
-  drivers.
-- [`docs/permissions.md`](docs/permissions.md): users, roles, environments,
-  and protection.
-- [`docs/build-matrix.md`](docs/build-matrix.md): supported Dockerfile and
-  BuildKit features.
-- [`docs/limitations.md`](docs/limitations.md): what skali does not do
-  yet, and how to work around it.
-- [`docs/development.md`](docs/development.md): working on skali itself.
-- [`ROADMAP.md`](ROADMAP.md): what exists and what comes next.
+| Topic | |
+| --- | --- |
+| [Databases](docs/databases.md) | Managed PostgreSQL: versions, extensions, isolation, availability |
+| [Buckets](docs/buckets.md) | S3 buckets: quotas, hostnames, browser uploads, topology |
+| [Storage](docs/storage.md) | Persistent volumes and storage drivers |
+| [Permissions](docs/permissions.md) | Users, roles, environments, and protection |
+| [Build matrix](docs/build-matrix.md) | Supported Dockerfile and BuildKit features |
+| [Enrollment](docs/enrollment.md) | Joining nodes and recovering interrupted joins |
+| [Cluster updates](docs/updates.md) | Software updates, exact versions, recovery |
+| [Versioning](docs/versioning.md) | How the CLI matches the release of each cluster |
+| [Security](docs/security.md) | Trust boundaries and key recovery |
+| [Limitations](docs/limitations.md) | What skali does not do yet, and workarounds |
+| [Roadmap](ROADMAP.md) | What exists and what comes next |
 
 ## How it fits together
 
-`skali` is the CLI: it builds on your machine, talks to the platform's API,
-and installs and maintains the servers. `skalid` is the control plane that
-runs on the cluster: it stores what you declared, compiles it into
-Kubernetes objects, and reports status back. The Studio is a web app served
-on the platform domain. k3s and a small set of operators (CloudNativePG,
-Traefik, cert-manager, SeaweedFS, optionally Longhorn) do the generic
-orchestration; skali owns the hosts it runs on and never adopts a cluster it
-did not install.
+`skali` is the CLI. It builds on your machine, talks to the platform's API,
+and installs and maintains the servers. `skalid` is the control plane on the
+cluster: it stores what you declared, compiles it into Kubernetes objects, and
+reports status back. Skali Studio is a web app served on the platform domain.
+k3s and a small set of operators (CloudNativePG, Traefik, cert-manager,
+SeaweedFS, optionally Longhorn) do the generic orchestration. skali owns the
+hosts it runs on and never adopts a cluster it did not install.
+
+## Contributing
+
+Issues and pull requests are welcome. [`docs/development.md`](docs/development.md)
+covers the components, local setup, and the test suites. Please report
+security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-skali is released under the [Apache License 2.0](LICENSE). You can run it
-for yourself, for your company, or for your own customers, modify it, and
-redistribute it; see the license for the full terms. Security reports go
-through [SECURITY.md](SECURITY.md).
-
-Before installing this prerelease, read the [compatibility and backup limitations](docs/prerelease-safety.md).
+skali is released under the [Apache License 2.0](LICENSE). You can run it for
+yourself, your company, or your customers, modify it, and redistribute it.
