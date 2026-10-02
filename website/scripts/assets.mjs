@@ -22,7 +22,7 @@ const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8'
 
 copyFileSync(join(root, 'install.sh'), join(output, 'install.sh'));
 
-const ref = process.env.SCHEMA_REF || newestRelease(git('tag', '--list', 'v*').split('\n'))?.tag;
+const ref = process.env.SCHEMA_REF || newestRelease(git('tag', '--list', 'v*').split('\n'));
 if (!ref) {
 	throw new Error('No release tag found (shallow clone?). Fetch tags or set SCHEMA_REF=HEAD.');
 }

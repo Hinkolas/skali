@@ -6,7 +6,7 @@
  * prerelease while there is none, ordered by semver precedence.
  *
  * @param {string[]} tags
- * @returns {{ tag: string, stable: boolean } | undefined}
+ * @returns {string | undefined}
  */
 export function newestRelease(tags) {
 	const versions = tags
@@ -16,8 +16,7 @@ export function newestRelease(tags) {
 		);
 	const stable = versions.filter((version) => version.pre.length === 0);
 	const candidates = stable.length > 0 ? stable : versions;
-	const newest = candidates.sort(compare).at(-1);
-	return newest && { tag: newest.tag, stable: newest.pre.length === 0 };
+	return candidates.sort(compare).at(-1)?.tag;
 }
 
 /**

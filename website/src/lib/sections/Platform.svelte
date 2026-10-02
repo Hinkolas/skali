@@ -9,31 +9,35 @@
 
 {#snippet facts(items: string[])}
 	<ul
-		class="m-0 flex list-none flex-col border-t border-border-section p-0 text-sm text-text-tertiary"
+		class="m-0 flex list-none flex-col border-t border-border-section p-0 text-[15px] text-text-tertiary"
 	>
 		{#each items as item (item)}
-			<li class="border-b border-border-section py-3">{item}</li>
+			<li class="border-b border-border-section py-3.5">{item}</li>
 		{/each}
 	</ul>
 {/snippet}
 
 {#snippet copy(eyebrow: string, color: string, title: string, text: string, items: string[])}
-	<div class="flex max-w-110 flex-[1_1_360px] flex-col gap-4.5">
-		<span class="font-mono text-xs {color}">{eyebrow}</span>
-		<h3 class="m-0 text-[clamp(24px,2.6vw,32px)] leading-[1.15] font-medium tracking-[-0.03em]">
+	<div class="flex max-w-125 flex-[1_1_400px] flex-col gap-5">
+		<span class="font-mono text-[13px] {color}">{eyebrow}</span>
+		<h3 class="m-0 text-[clamp(28px,3.2vw,40px)] leading-[1.1] font-medium tracking-[-0.03em]">
 			{title}
 		</h3>
-		<p class="m-0 text-base leading-[1.65] text-text-muted">{text}</p>
+		<p class="m-0 text-lg leading-[1.65] text-text-muted">{text}</p>
 		{@render facts(items)}
 	</div>
 {/snippet}
 
-<section id="platform" class="mx-auto flex max-w-300 scroll-mt-6 flex-col gap-30 px-6 py-35">
-	<SectionHeader
-		index="02"
-		label="Platform"
-		title="Everything you would otherwise script yourself."
-	/>
+<section id="platform" class="mx-auto flex max-w-330 scroll-mt-6 flex-col gap-30 px-6 py-35">
+	<!-- The rows run wider than the other sections; the header keeps their
+	     measure so its label lines up with theirs. -->
+	<div class="mx-auto w-full max-w-288">
+		<SectionHeader
+			index="02"
+			label="Platform"
+			title="Everything you would otherwise script yourself."
+		/>
+	</div>
 
 	<div class="flex flex-wrap items-center gap-x-20 gap-y-12">
 		{@render copy(

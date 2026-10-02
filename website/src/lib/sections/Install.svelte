@@ -3,7 +3,8 @@
 	import Copy from '@lucide/svelte/icons/copy';
 	import { links } from '$lib/links';
 
-	let { command }: { command: string } = $props();
+	const url = 'https://skali.dev/install.sh';
+	const command = `curl -fsSL ${url} | sh`;
 
 	let copied = $state(false);
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -18,15 +19,11 @@
 		clearTimeout(timer);
 		timer = setTimeout(() => (copied = false), 1600);
 	}
-
-	// The URL is highlighted inside the displayed command.
-	const url = 'https://skali.dev/install.sh';
-	const [before, after] = $derived(command.split(url));
 </script>
 
 <section id="install" class="scroll-mt-6 px-6 pt-6 pb-35">
 	<div
-		class="relative mx-auto max-w-300 overflow-hidden rounded-[28px] border border-accent/26 bg-surface-violet p-[clamp(28px,6vw,80px)]"
+		class="relative mx-auto max-w-330 overflow-hidden rounded-[28px] border border-accent/26 bg-surface-violet p-[clamp(28px,6vw,80px)]"
 		style="background-image: radial-gradient(760px 460px at 0% 0%, rgb(124 92 255 / 0.24) 0%, rgb(124 92 255 / 0.06) 55%, transparent 100%)"
 	>
 		<div
@@ -45,17 +42,17 @@
 					On your laptop to develop and deploy, and on every server that should become a node.
 				</p>
 			</div>
-			<div class="flex min-w-0 flex-[1_1_480px] flex-col gap-4.5">
-				<!-- The command wraps at its spaces rather than scrolling: while
-				     prereleases need SKALI_CHANNEL it is too long for one line. -->
+			<div class="flex min-w-0 flex-[1.4_1_580px] flex-col gap-4.5">
+				<!-- One line from md up; a phone is too narrow for it, so there the
+				     command wraps at its spaces instead of scrolling. -->
 				<div
-					class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-border-strong bg-surface-base/88 py-2.5 pr-2.5 pl-6 shadow-[0_30px_80px_rgb(0_0_0/0.45)]"
+					class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-border-strong bg-surface-base/88 py-2.5 pr-2.5 pl-6 shadow-[0_30px_80px_rgb(0_0_0/0.45)] md:flex-nowrap"
 				>
 					<code
-						class="min-w-0 flex-[1_1_16rem] py-2 font-mono text-[clamp(13px,1.4vw,15px)] leading-relaxed break-words text-text-primary"
-						><span class="mr-[1ch] text-text-ghost select-none">$</span>{before}<span
-							class="text-accent-light">{url}</span
-						> <span class="whitespace-nowrap">{after.trim()}</span></code
+						class="min-w-0 flex-[1_1_16rem] py-2 font-mono text-[13px] leading-relaxed break-words text-text-primary md:overflow-x-auto md:text-[15px] md:whitespace-nowrap"
+						><span class="mr-[1ch] text-text-ghost select-none">$</span>curl -fsSL
+						<span class="text-accent-light">{url}</span>
+						<span class="whitespace-nowrap">| sh</span></code
 					>
 					<button
 						type="button"

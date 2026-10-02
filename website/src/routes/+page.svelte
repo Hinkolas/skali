@@ -24,10 +24,10 @@
 </svelte:head>
 
 <main>
-	<Hero version={data.release.tag} />
+	<Hero version={data.release} />
 	<Workflow />
 	<Platform />
 	<UnderTheHood />
-	<Install command={data.release.install} />
+	<Install />
 </main>
 <Footer />

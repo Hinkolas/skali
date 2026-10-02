@@ -37,9 +37,7 @@ The build needs the release tags. A shallow clone fails with a hint; fetch
 the tags or set `SCHEMA_REF`.
 
 The home page reads the tags too (`src/lib/server/release.ts`): the version
-in the navigation is the newest release, and the install command adds
-`SKALI_CHANNEL=beta` while there is no stable release yet, because
-`install.sh` installs stable releases only by default.
+in the navigation is the newest release.
 
 ## Layout
 
