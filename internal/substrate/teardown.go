@@ -186,6 +186,12 @@ func (c *Controller) releasePool(ctx context.Context, pool store.DatabaseCluster
 	}); err != nil {
 		return fmt.Errorf("substrate: delete pool metrics service: %w", err)
 	}
+	if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
+		GVK:       schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"},
+		Namespace: Namespace, Name: cnpg.AccessPolicyName(pool.Name),
+	}); err != nil {
+		return fmt.Errorf("substrate: delete pool access policy: %w", err)
+	}
 	if _, err := c.deps.DB.TransitionCluster(ctx, pool.ID, dbstore.StateReleased); err != nil {
 		return err
 	}

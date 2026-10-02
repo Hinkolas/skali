@@ -20,7 +20,10 @@ databases:
 Outputs: `host`, `port`, `name` (plain) and `username`, `password`, `url`
 (secret). The application waits until the database is provisioned and
 starts with the outputs injected; rotating or revealing credentials never
-passes through definitions, revisions, or logs.
+passes through definitions, revisions, or logs. The pool's port admits
+only the environments holding a database on that pool: a pod in an
+environment without one cannot open a connection, whatever credentials it
+holds.
 
 ## Engines and versions
 
@@ -91,8 +94,10 @@ How extensions work on a pool:
 
 Local development (`skali dev`) runs exactly one single-instance pool:
 isolation intents are honored logically but share it, and higher
-availability stays pending. The pool comes up with the platform and stays
-running; `skali dev stop` stops the whole platform with data retained.
+availability stays pending. The pool's port still admits only the
+environments holding a database, plus the host behind the loopback
+NodePort. The pool comes up with the platform and stays running;
+`skali dev stop` stops the whole platform with data retained.
 
 ## Pools and memory
 

@@ -8,8 +8,12 @@ provide a security boundary between hostile application containers.
 
 Application pods share cluster networking. skali does not yet generate default
 deny network policies for every environment, enforce a restricted pod-security
-profile, or disable service-account token mounting across all workloads. Selected
-platform services have network policies, but those do not isolate every tenant.
+profile, or disable service-account token mounting across all workloads. The
+platform ports are fenced: database pools and the S3 gateway admit only the
+environments holding a claim on them, skalid, the edge, and the operators, so a
+workload cannot reach another environment's database or bucket even with its
+credentials. Environment namespaces themselves carry no policy yet, so pods of
+different environments can still reach each other.
 Enforcement itself is in place: the live test suite verifies that the embedded
 network policy controller of the pinned k3s blocks traffic the way those policies
 say, on managed installs and in `skali dev` alike, so per-environment isolation

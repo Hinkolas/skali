@@ -99,8 +99,10 @@ Two endpoint outputs exist. `internal_endpoint` is always the in-cluster
 gateway (`http://seaweed-s3.skali-platform.svc.cluster.local:8333`): the
 address for the application's own traffic. `endpoint` is the address to
 sign URLs for. Without a route it equals the internal endpoint: the bucket
-is reachable only from inside the cluster, and only with its credentials,
-the way a managed database is. A bucket route publishes the bucket on a
+is reachable only from the environments that hold a bucket (a network
+policy on the gateway port admits exactly those namespaces, the platform
+itself, and the edge), and only with its credentials, the way a managed
+database is. A bucket route publishes the bucket on a
 hostname of its own, and `endpoint` becomes that hostname's origin:
 
 ```yaml
@@ -165,7 +167,8 @@ on the local edge when the domain resolves to it (`*.localhost` does).
 Applications running in the cluster get the route as `endpoint`; applications
 run on the host through a `dev` block get a loopback address instead
 (`http://127.0.0.1:30510` by default; `SKALI_DEV_LOOPBACK_PORT_BASE`
-shifts the range) because the host process cannot reach in-cluster names.
+shifts the range) because the host process cannot reach in-cluster names;
+the local platform admits the host on the gateway port for that reason.
 Browsers on the developer machine can reach the loopback address, so an
 application that signs URLs for browsers signs for the loopback address
 locally; the `file-sharing` example reads an optional `S3_PUBLIC_ENDPOINT`

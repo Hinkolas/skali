@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,6 +34,9 @@ import (
 type fakeCluster struct {
 	mu      sync.Mutex
 	secrets map[string]*corev1.Secret
+	// policies retains the last applied NetworkPolicy per namespace/name,
+	// so tests can read what a pass admitted.
+	policies map[string]*networkingv1.NetworkPolicy
 
 	// poolPhase and poolReady shape the ClusterGVR read; an empty phase
 	// reads as not created yet.
@@ -49,6 +53,15 @@ func (f *fakeCluster) set(phase string, ready int64, applied bool) {
 }
 
 func (f *fakeCluster) ApplyAs(_ context.Context, obj runtime.Object, _ string, _ bool) (kube.ApplyResult, error) {
+	if policy, ok := obj.(*networkingv1.NetworkPolicy); ok {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.policies == nil {
+			f.policies = map[string]*networkingv1.NetworkPolicy{}
+		}
+		f.policies[policy.Namespace+"/"+policy.Name] = policy.DeepCopy()
+		return kube.ApplyResult{Changed: true}, nil
+	}
 	if secret, ok := obj.(*corev1.Secret); ok {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -114,6 +127,18 @@ func (f *fakeCluster) GetObject(_ context.Context, gvr schema.GroupVersionResour
 
 func (f *fakeCluster) ProxyCIDRs(context.Context) ([]string, error) {
 	return nil, nil
+}
+
+func (f *fakeCluster) PodCIDRs(context.Context) ([]string, error) {
+	return nil, nil
+}
+
+// policy returns the last applied NetworkPolicy of that name in the
+// platform namespace, nil when none was applied.
+func (f *fakeCluster) policy(name string) *networkingv1.NetworkPolicy {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.policies[Namespace+"/"+name]
 }
 
 // settleFixture is the shared scaffolding: a real claims database, a fake

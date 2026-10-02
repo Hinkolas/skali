@@ -1,5 +1,7 @@
 package kubernetes
 
+import "github.com/Hinkolas/skali/internal/platform"
+
 // The stable label contract that indexes every managed object back to its
 // installation, project, environment, service, and revision. Selector labels
 // (managed, project, application, app.kubernetes.io/name) are baked into
@@ -13,7 +15,7 @@ const (
 	LabelManaged         = "skali.dev/managed"
 	LabelProject         = "skali.dev/project"
 	LabelApplication     = "skali.dev/application"
-	LabelEnvironment     = "skali.dev/environment"
+	LabelEnvironment     = platform.EnvironmentLabel
 	LabelEnvironmentName = "skali.dev/environment-name"
 	LabelService         = "skali.dev/service"
 	LabelRevision        = "skali.dev/revision"

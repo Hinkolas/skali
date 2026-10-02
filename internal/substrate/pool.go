@@ -28,6 +28,12 @@ const clusterHealthyPhase = "Cluster in healthy state"
 // until a database node's memory is observed: applying an untuned spec
 // first and the tuned one a minute later would restart the pool twice.
 func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster) (time.Duration, error) {
+	// The access policy converges first: it does not depend on the memory
+	// budget below, and a released environment must not stay admitted (nor
+	// a new holder stay blocked) while the pool waits for node memory.
+	if err := c.ensurePoolAccess(ctx, pool); err != nil {
+		return 0, err
+	}
 	tenants, err := c.deps.DB.ListClusterTenants(ctx, pool.ID)
 	if err != nil {
 		return 0, err
@@ -79,6 +85,24 @@ func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster)
 		}
 	}
 	return 0, nil
+}
+
+// ensurePoolAccess applies the policy admitting the pool's instance pods to
+// the environments holding a claim placed on it (plus the operator, the
+// platform namespace, and skalid's probe sources). Serialised with the S3
+// policy: see accessMu.
+func (c *Controller) ensurePoolAccess(ctx context.Context, pool store.DatabaseCluster) error {
+	c.accessMu.Lock()
+	defer c.accessMu.Unlock()
+	claims, err := c.deps.DB.ListClusterClaims(ctx, pool.ID)
+	if err != nil {
+		return fmt.Errorf("substrate: list holders of pool %s: %w", pool.Name, err)
+	}
+	policy := cnpg.RenderAccessPolicy(Namespace, pool.Name, c.accessPeers(ctx, holderEnvironments(claims, nil)))
+	if _, err := c.deps.Cluster.ApplyAs(ctx, policy, kube.FieldManagerPlatform, false); err != nil {
+		return fmt.Errorf("substrate: apply pool %s access policy: %w", pool.Name, err)
+	}
+	return nil
 }
 
 // ensurePoolNodePort gives a dev pool its loopback NodePort Service. An
