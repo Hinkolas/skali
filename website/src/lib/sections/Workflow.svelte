@@ -25,17 +25,21 @@
 	];
 </script>
 
-<section id="workflow" class="mx-auto flex max-w-300 scroll-mt-6 flex-col gap-16 px-6 py-35">
-	<SectionHeader
-		index="01"
-		label="Workflow"
-		title="The same manifest, on your laptop and on your servers."
-	>
-		<p class="m-0 max-w-140 text-[17px] leading-[1.6] text-text-muted">
-			Develop against the real platform, not an approximation of it. What works locally is what
-			ships.
-		</p>
-	</SectionHeader>
+<section id="workflow" class="mx-auto flex max-w-330 scroll-mt-6 flex-col gap-16 px-6 py-35">
+	<!-- As in Platform: the timeline runs wider so each command fits on one
+	     line, while the header keeps the measure of the other sections. -->
+	<div class="mx-auto w-full max-w-288">
+		<SectionHeader
+			index="01"
+			label="Workflow"
+			title="The same manifest, on your laptop and on your servers."
+		>
+			<p class="m-0 max-w-140 text-[17px] leading-[1.6] text-text-muted">
+				Develop against the real platform, not an approximation of it. What works locally is what
+				ships.
+			</p>
+		</SectionHeader>
+	</div>
 	<ol
 		class="m-0 grid list-none grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-y-10 border-t border-white/10 p-0"
 	>
