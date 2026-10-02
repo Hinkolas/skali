@@ -14,12 +14,6 @@
 			<span class="text-[17px] font-semibold tracking-[-0.02em]">skali</span>
 		</a>
 		<div class="hidden gap-7 sm:flex">
-			<a href="#workflow" class="text-text-muted transition-colors hover:text-text-primary">
-				Workflow
-			</a>
-			<a href="#platform" class="text-text-muted transition-colors hover:text-text-primary">
-				Platform
-			</a>
 			<a
 				href={links.docs}
 				rel="external"
