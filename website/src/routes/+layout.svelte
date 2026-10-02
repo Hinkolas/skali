@@ -4,4 +4,8 @@
 	let { children } = $props();
 </script>
 
-{@render children()}
+<!-- At least one window tall, so a short page's footer sits at the bottom
+     rather than in the middle of the screen; pages let their <main> grow. -->
+<div class="flex min-h-dvh flex-col">
+	{@render children()}
+</div>
