@@ -650,7 +650,7 @@ mapping.
 
 ## Workload trust boundary
 
-These roles govern skali API operations. They do not isolate application network
-traffic or sandbox hostile containers. Deploy access lets someone run code on
-the shared cluster; grant it only to trusted people. See
-[security boundaries](security.md) for the alpha's isolation limits.
+These roles govern skali API operations. Network isolation between environments
+is automatic and not role-based (see [security boundaries](security.md)); the
+roles do not sandbox hostile containers. Deploy access lets someone run code on
+the shared cluster; grant it only to trusted people.

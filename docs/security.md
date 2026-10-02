@@ -6,18 +6,23 @@ The alpha is intended for a team running code it trusts. Project and environment
 roles control API actions, including deploys and credential access. They do not
 provide a security boundary between hostile application containers.
 
-Application pods share cluster networking. skali does not yet generate default
-deny network policies for every environment, enforce a restricted pod-security
-profile, or disable service-account token mounting across all workloads. The
-platform ports are fenced: database pools and the S3 gateway admit only the
-environments holding a claim on them, skalid, the edge, and the operators, so a
-workload cannot reach another environment's database or bucket even with its
-credentials. Environment namespaces themselves carry no policy yet, so pods of
-different environments can still reach each other.
-Enforcement itself is in place: the live test suite verifies that the embedded
-network policy controller of the pinned k3s blocks traffic the way those policies
-say, on managed installs and in `skali dev` alike, so per-environment isolation
-is a matter of rendering the policies.
+Environments are isolated on the network by default. Every environment
+namespace carries an ingress default-deny policy: a pod admits connections
+only from the pods of its own environment and from the edge (which serves the
+declared routes and validates certificates), on any port. Another environment
+of the same project, another project, and the platform namespace are denied.
+The platform ports are fenced the same way: database pools and the S3 gateway
+admit only the environments holding a claim on them, skalid, the edge, and the
+operators, so a workload cannot reach another environment's database or bucket
+even with its credentials. The live test suite verifies that the embedded
+network policy controller of the pinned k3s enforces these policies, on managed
+installs and in `skali dev` alike.
+
+Not covered yet: egress is unrestricted (a pod may open connections to the
+internet, the cluster DNS, and any service that admits it), there is no manifest
+surface to widen an environment's scope or to restrict a route to source
+addresses (tracked in #93), no restricted pod-security profile is enforced, and
+service-account tokens are still mounted into every workload.
 Treat permission to deploy as permission to run code on the shared cluster.
 Do not offer arbitrary untrusted tenants access to this alpha.
 

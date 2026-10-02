@@ -4,9 +4,11 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/platform"
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
@@ -64,6 +66,50 @@ func RenderNamespace(project, environment, environmentID string) *corev1.Namespa
 				LabelProject:         project,
 				LabelEnvironmentName: environment,
 				LabelEnvironment:     environmentID,
+			},
+		},
+	}
+}
+
+// EnvironmentPolicyName is the fixed name of the per-environment ingress
+// policy: the pods of an environment admit only each other and the edge.
+// The name is reserved in environment namespaces the way the values
+// Secret's is; a foreign object of that name fails the environment pass.
+const EnvironmentPolicyName = "environment-isolation"
+
+// RenderEnvironmentPolicy renders the ingress default-deny of one
+// environment namespace with the two allowances a working environment
+// needs: every pod of the namespace (a default-deny blocks same-namespace
+// traffic too, so sibling services need this rule) and the edge, which
+// serves declared routes and reaches cert-manager's HTTP-01 solver pods.
+// Neither rule names ports: application ports are the manifest's to
+// choose and solver pods listen on their own. Egress is not restricted.
+// Kubelet probes come from the node and are exempt from the policy;
+// everything else (another environment, another project, the platform
+// namespace) is denied. It is applied with the namespace on every pass
+// and goes with the namespace on purge; nothing prunes it.
+func RenderEnvironmentPolicy(project, environment, environmentID string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      EnvironmentPolicyName,
+			Namespace: NamespaceName(environmentID),
+			Labels: map[string]string{
+				LabelManaged:         "true",
+				LabelProject:         project,
+				LabelEnvironmentName: environment,
+				LabelEnvironment:     environmentID,
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}},
+				{From: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": platform.EdgeNamespace}},
+					PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{platform.EdgePodLabel: platform.EdgePodName}},
+				}}},
 			},
 		},
 	}

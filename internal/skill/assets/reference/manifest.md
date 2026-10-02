@@ -465,8 +465,8 @@ buckets:
       tls: automatic              # optional: automatic | optional | disabled
 ```
 
-Without a route a bucket is reachable only inside the cluster (its
-`endpoint` output equals `internal_endpoint`), like a database. A route
+Without a route a bucket is reachable only from the environments that hold
+it (its `endpoint` output equals `internal_endpoint`), like a database. A route
 publishes the bucket on that hostname through the edge, path-style, with
 a certificate and the same DNS probing, deferral and ownership checks as
 an application route; `endpoint` becomes `https://<domain>` (`http://`

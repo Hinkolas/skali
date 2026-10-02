@@ -33,7 +33,7 @@ to.
 `skali deploy` runs the same thing on a cluster. The bucket declares a
 route (`STORAGE_DOMAIN`), so `{{ buckets.files.endpoint }}` is that
 hostname's https origin and signed URLs work for any browser; a bucket
-without a route is only reachable inside the cluster. The application's
+without a route is only reachable from the environments that hold it. The application's
 own traffic (verification, listing, deletes) uses
 `{{ buckets.files.internal_endpoint }}`, the in-cluster gateway, so it
 never hairpins through the edge.

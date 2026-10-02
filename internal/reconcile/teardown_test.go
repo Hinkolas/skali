@@ -97,6 +97,7 @@ func TestTeardownDownRemovesWorkloadsAndKeepsData(t *testing.T) {
 	for _, op := range ops {
 		require.NotContains(t, op, "PersistentVolumeClaim", "down never touches volumes")
 		require.NotContains(t, op, "Namespace/", "down never touches the namespace")
+		require.NotContains(t, op, "NetworkPolicy/", "down keeps the isolation with the namespace")
 	}
 
 	// The watch delete events arrive; the next pass settles and concludes
