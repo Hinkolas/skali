@@ -34,6 +34,7 @@ import (
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/platform"
+	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
 
@@ -72,8 +73,13 @@ type Cluster interface {
 	GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error)
 	GetObject(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error)
 	// ProxyCIDRs derives the /32 source addresses skalid's service-proxy
-	// traffic presents to pods, the object-store fence's admit list.
+	// traffic presents to pods, the platform access policies' admit list
+	// for probes and scrapes.
 	ProxyCIDRs(ctx context.Context) ([]string, error)
+	// PodCIDRs lists every node's pod CIDR; a local platform's access
+	// policies admit the host's loopback NodePort traffic as every source
+	// outside them.
+	PodCIDRs(ctx context.Context) ([]string, error)
 	// ListPods lists a namespace's pods by label selector; pool members
 	// are read live because instance pods carry no managed label and so
 	// never enter the observed store.
@@ -103,6 +109,10 @@ func (k KubeCluster) GetObject(ctx context.Context, gvr schema.GroupVersionResou
 
 func (k KubeCluster) ProxyCIDRs(ctx context.Context) ([]string, error) {
 	return k.Client.NodeProxyCIDRs(ctx)
+}
+
+func (k KubeCluster) PodCIDRs(ctx context.Context) ([]string, error) {
+	return k.Client.PodCIDRs(ctx)
 }
 
 func (k KubeCluster) ListPods(ctx context.Context, namespace, selector string) ([]corev1.Pod, error) {
@@ -172,6 +182,55 @@ type Controller struct {
 	// legacyEdgeSwept records that this process already deleted the
 	// removed installation-wide S3 edge objects; see sweepLegacyS3Edge.
 	legacyEdgeSwept bool
+	// legacyS3OpenSwept records that this process already deleted the
+	// policy that opened the S3 port to every pod; see sweepLegacyS3Open.
+	legacyS3OpenSwept bool
+	// accessMu serialises every list-render-apply of a platform access
+	// policy (ensureS3Access, ensurePoolAccess): claim, pool and store
+	// passes run on separate workers, and a listing applied after a newer
+	// one would re-admit a released environment or drop a fresh holder.
+	accessMu sync.Mutex
+}
+
+// accessPeers completes the peers a platform port admits beyond its claim
+// holders: skalid's service-proxy sources, and on a local platform the host
+// behind the loopback NodePorts. Either derivation failing is logged and
+// leaves that peer out: the holders still converge, and the next pass
+// retries.
+func (c *Controller) accessPeers(ctx context.Context, environmentIDs []string) platform.AccessPeers {
+	peers := platform.AccessPeers{Environments: environmentIDs}
+	if cidrs, err := c.deps.Cluster.ProxyCIDRs(ctx); err != nil {
+		slog.Warn("substrate: derive proxy cidrs", "error", err)
+	} else {
+		peers.ProxyCIDRs = cidrs
+	}
+	if !c.cfg.Managed {
+		if cidrs, err := c.deps.Cluster.PodCIDRs(ctx); err != nil {
+			slog.Warn("substrate: derive pod cidrs", "error", err)
+		} else {
+			// Non-nil even without nodes: a local platform always admits
+			// the host.
+			peers.HostExcept = append([]string{}, cidrs...)
+		}
+	}
+	return peers
+}
+
+// holderEnvironments collects the distinct environment ids of claim rows;
+// system claims (no environment) hold nothing to admit.
+func holderEnvironments(rows []store.DatabaseClaim, buckets []store.BucketClaim) []string {
+	var ids []string
+	for _, row := range rows {
+		if row.EnvironmentID != nil {
+			ids = append(ids, row.EnvironmentID.String())
+		}
+	}
+	for _, row := range buckets {
+		if row.EnvironmentID != nil {
+			ids = append(ids, row.EnvironmentID.String())
+		}
+	}
+	return ids
 }
 
 // SetProbePoke wires the provider observer's coalesced re-poll; the

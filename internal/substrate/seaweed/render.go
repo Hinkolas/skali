@@ -2,6 +2,7 @@ package seaweed
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/platform"
 )
 
 // FilerStoreSecret carries the filer's WEED_POSTGRES2_* store config,
@@ -695,8 +697,9 @@ func RenderFilerStoreSecret(namespace, host string, port int, username, password
 // RenderFence is the network fence (a security invariant, not tuning):
 // seaweed's filer/master/volume HTTP APIs are unauthenticated by design and
 // tenant workloads share the cluster network. Every seaweed pod
-// default-denies ingress except from other seaweed pods; the S3 port and
-// skalid's admin path are opened separately. Policies union.
+// default-denies ingress except from other seaweed pods; the S3 port
+// (RenderS3AccessPolicy) and skalid's admin path (RenderAccessPolicy) are
+// opened separately. Policies union.
 func RenderFence(namespace string) []runtime.Object {
 	seaweedPods := metav1.LabelSelector{
 		MatchLabels: map[string]string{SystemLabel: "object-storage"},
@@ -712,20 +715,91 @@ func RenderFence(namespace string) []runtime.Object {
 			}},
 		},
 	}
+	return []runtime.Object{internal}
+}
+
+// S3AccessPolicy names the policy that opens the S3 port to claim holders.
+const S3AccessPolicy = "seaweed-s3-access"
+
+// LegacyS3OpenPolicy named the policy that opened the S3 port to every pod
+// in the cluster before claim holders were admitted by name. Nothing
+// renders it; the substrate deletes it once per process so an upgraded
+// installation does not keep the port open beside the new policy (policies
+// union). Drop with the first stable release.
+const LegacyS3OpenPolicy = "seaweed-s3-open"
+
+// RenderS3AccessPolicy admits the S3 port to exactly the namespaces holding
+// a bucket claim plus the platform's fixed peers: the skalid pod (the
+// platform S3 client, backups) and the edge (bucket routes proxy to the
+// gateway). The readiness probe rides the service proxy (peers.ProxyCIDRs),
+// and a local platform's host processes the loopback NodePort
+// (peers.HostExcept). The fixed peers keep the first rule non-empty; every
+// other rule is rendered only with peers, because a rule without any
+// admits everyone.
+func RenderS3AccessPolicy(namespace string, peers platform.AccessPeers) *networkingv1.NetworkPolicy {
 	s3Port := intstr.FromInt32(S3Port)
 	tcp := corev1.ProtocolTCP
-	open := &networkingv1.NetworkPolicy{
+	ports := []networkingv1.NetworkPolicyPort{{Port: &s3Port, Protocol: &tcp}}
+	rules := []networkingv1.NetworkPolicyIngressRule{{
+		From: []networkingv1.NetworkPolicyPeer{
+			{
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": bundle.Namespace}},
+				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "skalid"}},
+			},
+			{
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"}},
+				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "traefik"}},
+			},
+		},
+		Ports: ports,
+	}}
+	if from := environmentPeers(peers); len(from) > 0 {
+		rules = append(rules, networkingv1.NetworkPolicyIngressRule{From: from, Ports: ports})
+	}
+	if from := cidrPeers(peers.ProxyCIDRs); len(from) > 0 {
+		rules = append(rules, networkingv1.NetworkPolicyIngressRule{From: from, Ports: ports})
+	}
+	if peers.HostExcept != nil {
+		rules = append(rules, networkingv1.NetworkPolicyIngressRule{From: hostPeers(peers.HostExcept), Ports: ports})
+	}
+	return &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
-		ObjectMeta: objectMeta(namespace, "seaweed-s3-open", MasterService),
+		ObjectMeta: objectMeta(namespace, S3AccessPolicy, MasterService),
 		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: seaweedPods,
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{SystemLabel: "object-storage"}},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
-			Ingress: []networkingv1.NetworkPolicyIngressRule{{
-				Ports: []networkingv1.NetworkPolicyPort{{Port: &s3Port, Protocol: &tcp}},
-			}},
+			Ingress:     rules,
 		},
 	}
-	return []runtime.Object{internal, open}
+}
+
+// environmentPeers selects each holder's namespace by its environment
+// label, in a stable order.
+func environmentPeers(peers platform.AccessPeers) []networkingv1.NetworkPolicyPeer {
+	var from []networkingv1.NetworkPolicyPeer
+	for _, id := range peers.EnvironmentIDs() {
+		from = append(from, networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{platform.EnvironmentLabel: id},
+		}})
+	}
+	return from
+}
+
+func cidrPeers(cidrs []string) []networkingv1.NetworkPolicyPeer {
+	var from []networkingv1.NetworkPolicyPeer
+	for _, cidr := range cidrs {
+		from = append(from, networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: cidr}})
+	}
+	return from
+}
+
+// hostPeers admits every source outside the pod CIDRs: on a local platform
+// that is the host behind the loopback NodePorts (and the node itself).
+func hostPeers(podCIDRs []string) []networkingv1.NetworkPolicyPeer {
+	return []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{
+		CIDR:   "0.0.0.0/0",
+		Except: slices.Clone(podCIDRs),
+	}}}
 }
 
 // RenderAccessPolicy admits skalid's traffic (via the API server's service

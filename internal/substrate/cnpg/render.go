@@ -2,15 +2,19 @@ package cnpg
 
 import (
 	"maps"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/platform"
 )
 
 // HibernationAnnotation is CNPG's declarative hibernation switch. Pools no
@@ -251,6 +255,80 @@ func RenderMetricsService(namespace, poolName string) *corev1.Service {
 				Name: "metrics",
 				Port: MetricsPort,
 			}},
+		},
+	}
+}
+
+// OperatorNamespace is where the vendored CNPG operator runs
+// (bundle.OperatorNamespaces lists it with the other blessed operators).
+// The operator reaches every instance's manager port directly, so pool
+// access policies admit the namespace whole.
+const OperatorNamespace = "cnpg-system"
+
+// AccessPolicyName names a pool's ingress policy.
+func AccessPolicyName(poolName string) string { return poolName + "-access" }
+
+// RenderAccessPolicy closes a pool's instance pods to everything but what
+// a pool needs: its own pods (replication, join Jobs, the instance manager)
+// and the operator on every port; the platform namespace (the object
+// store's filer keeps its metadata here, backup and restore Jobs run here)
+// and each namespace holding a claim on the pool on the postgres port;
+// skalid's service-proxy sources on the postgres and exporter ports; and on
+// a local platform every non-pod source on the postgres port, which is the
+// host behind the loopback NodePort. Rules with no peers are not rendered:
+// an ingress rule without any admits everyone.
+func RenderAccessPolicy(namespace, poolName string, peers platform.AccessPeers) *networkingv1.NetworkPolicy {
+	tcp := corev1.ProtocolTCP
+	postgres := intstr.FromInt32(5432)
+	metrics := intstr.FromInt32(MetricsPort)
+	postgresPort := []networkingv1.NetworkPolicyPort{{Port: &postgres, Protocol: &tcp}}
+	rules := []networkingv1.NetworkPolicyIngressRule{
+		{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{LabelCluster: poolName},
+		}}}},
+		{From: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"kubernetes.io/metadata.name": OperatorNamespace},
+		}}}},
+		{From: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"kubernetes.io/metadata.name": namespace},
+		}}}, Ports: postgresPort},
+	}
+	var holders []networkingv1.NetworkPolicyPeer
+	for _, id := range peers.EnvironmentIDs() {
+		holders = append(holders, networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{kubernetes.LabelEnvironment: id},
+		}})
+	}
+	if len(holders) > 0 {
+		rules = append(rules, networkingv1.NetworkPolicyIngressRule{From: holders, Ports: postgresPort})
+	}
+	var proxies []networkingv1.NetworkPolicyPeer
+	for _, cidr := range peers.ProxyCIDRs {
+		proxies = append(proxies, networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: cidr}})
+	}
+	if len(proxies) > 0 {
+		rules = append(rules, networkingv1.NetworkPolicyIngressRule{From: proxies, Ports: []networkingv1.NetworkPolicyPort{
+			{Port: &postgres, Protocol: &tcp},
+			{Port: &metrics, Protocol: &tcp},
+		}})
+	}
+	if peers.HostExcept != nil {
+		rules = append(rules, networkingv1.NetworkPolicyIngressRule{
+			From:  []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: slices.Clone(peers.HostExcept)}}},
+			Ports: postgresPort,
+		})
+	}
+	return &networkingv1.NetworkPolicy{
+		TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      AccessPolicyName(poolName),
+			Namespace: namespace,
+			Labels:    map[string]string{kubernetes.LabelPool: poolName},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{LabelCluster: poolName}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress:     rules,
 		},
 	}
 }

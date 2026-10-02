@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -301,7 +302,15 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 			return 0, fmt.Errorf("substrate: ensure object store: %w", err)
 		}
 	}
+	// The store pass is the backstop for the S3 access policy; claim
+	// passes apply it the moment a holder appears or leaves.
+	if err := c.ensureS3Access(ctx, row.ID); err != nil {
+		return 0, err
+	}
 	if err := c.sweepLegacyS3Edge(ctx); err != nil {
+		return 0, err
+	}
+	if err := c.sweepLegacyS3Open(ctx); err != nil {
 		return 0, err
 	}
 
@@ -386,6 +395,58 @@ func (c *Controller) sweepLegacyS3Edge(ctx context.Context) error {
 	c.legacyEdgeSwept = true
 	if removed > 0 {
 		slog.Info("substrate: legacy public S3 edge removed", "objects", removed)
+	}
+	return nil
+}
+
+// ensureS3Access applies the policy admitting the S3 port to the
+// environments holding a bucket on the store (plus the platform's fixed
+// peers). Serialised with the pool policies: see accessMu.
+func (c *Controller) ensureS3Access(ctx context.Context, storeID uuid.UUID) error {
+	c.accessMu.Lock()
+	defer c.accessMu.Unlock()
+	claims, err := c.deps.DB.ListStoreBucketClaims(ctx, storeID)
+	if err != nil {
+		return fmt.Errorf("substrate: list bucket holders: %w", err)
+	}
+	policy := seaweed.RenderS3AccessPolicy(Namespace, c.accessPeers(ctx, holderEnvironments(nil, claims)))
+	if _, err := c.deps.Cluster.ApplyAs(ctx, policy, kube.FieldManagerPlatform, false); err != nil {
+		return fmt.Errorf("substrate: ensure S3 access policy: %w", err)
+	}
+	return nil
+}
+
+// ensureS3AccessForLiveStore narrows or widens the S3 policy after a claim
+// moved; without a live store there is no port to guard.
+func (c *Controller) ensureS3AccessForLiveStore(ctx context.Context) error {
+	sw, err := c.deps.DB.LiveObjectStore(ctx)
+	if errors.Is(err, dbstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return c.ensureS3Access(ctx, sw.ID)
+}
+
+// sweepLegacyS3Open deletes, once per process and on every platform shape,
+// the policy that opened the S3 port to every pod before claim holders
+// were admitted by name (seaweed.LegacyS3OpenPolicy). Policies union, so
+// an upgraded installation would otherwise keep the port open beside the
+// new policy. Drop with the first stable release, like legacyS3EdgeRefs.
+func (c *Controller) sweepLegacyS3Open(ctx context.Context) error {
+	if c.legacyS3OpenSwept {
+		return nil
+	}
+	removed, err := c.deleteRefs(ctx, []kube.ObjectRef{{
+		GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: seaweed.LegacyS3OpenPolicy,
+	}})
+	if err != nil {
+		return err
+	}
+	c.legacyS3OpenSwept = true
+	if removed > 0 {
+		slog.Info("substrate: legacy open S3 policy removed")
 	}
 	return nil
 }
@@ -533,7 +594,8 @@ func (c *Controller) releaseObjectStore(ctx context.Context, row store.ObjectSto
 		{GVK: schema.GroupVersionKind{Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"}, Namespace: Namespace, Name: seaweed.MasterService},
 		{GVK: schema.GroupVersionKind{Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"}, Namespace: Namespace, Name: seaweed.FilerService},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-internal"},
-		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-s3-open"},
+		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: seaweed.S3AccessPolicy},
+		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: seaweed.LegacyS3OpenPolicy},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-skalid-access"},
 	}
 	refs = append(refs, legacyS3EdgeRefs()...)

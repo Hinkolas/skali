@@ -8,13 +8,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
 
 // edgeCluster records what a pass applies and deletes; unknown kinds on
@@ -27,8 +27,11 @@ type edgeCluster struct {
 }
 
 func (e *edgeCluster) ApplyAs(_ context.Context, obj runtime.Object, _ string, _ bool) (kube.ApplyResult, error) {
-	typed := obj.(*unstructured.Unstructured)
-	e.applied = append(e.applied, typed.GetKind()+"/"+typed.GetName())
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return kube.ApplyResult{}, err
+	}
+	e.applied = append(e.applied, obj.GetObjectKind().GroupVersionKind().Kind+"/"+accessor.GetName())
 	return kube.ApplyResult{Changed: true}, nil
 }
 
@@ -101,6 +104,27 @@ func TestSweepLegacyS3EdgeToleratesMissingKinds(t *testing.T) {
 	require.NotContains(t, cluster.deleted, "Certificate/seaweed-s3-tls")
 	require.Contains(t, cluster.deleted, "IngressRoute/seaweed-s3")
 	require.True(t, c.legacyEdgeSwept)
+}
+
+// TestSweepLegacyS3OpenBothShapes: the policy that opened the S3 port to
+// every pod is deleted on the first store pass of a local and a managed
+// installation alike (a dev cluster persists across upgrades too), once
+// per process, and a failed sweep is retried.
+func TestSweepLegacyS3OpenBothShapes(t *testing.T) {
+	t.Parallel()
+	for _, managed := range []bool{false, true} {
+		cluster := &edgeCluster{}
+		c := &Controller{cfg: Config{Managed: managed}, deps: Deps{Cluster: cluster}}
+		require.NoError(t, c.sweepLegacyS3Open(context.Background()))
+		require.Equal(t, []string{"NetworkPolicy/" + seaweed.LegacyS3OpenPolicy}, cluster.deleted, "managed=%v", managed)
+		require.NoError(t, c.sweepLegacyS3Open(context.Background()))
+		require.Len(t, cluster.deleted, 1, "the sweep runs once per process")
+	}
+
+	failing := &failingCluster{edgeCluster: edgeCluster{}, err: errors.New("boom")}
+	c := &Controller{deps: Deps{Cluster: failing}}
+	require.ErrorContains(t, c.sweepLegacyS3Open(context.Background()), "boom")
+	require.False(t, c.legacyS3OpenSwept, "a failed sweep is not recorded as done")
 }
 
 type failingCluster struct {

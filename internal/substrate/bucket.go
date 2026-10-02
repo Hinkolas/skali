@@ -111,6 +111,12 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if err != nil {
 		return false, err
 	}
+	// The allocation makes the environment a holder: admit its namespace to
+	// the S3 port before any output tells a workload to connect. (The store
+	// pass enqueued above listed holders before this allocation existed.)
+	if err := c.ensureS3Access(ctx, sw.ID); err != nil {
+		return false, err
+	}
 	// The published endpoint follows the claim's route and the
 	// installation: gaining, changing, or losing either republishes it,
 	// and consumers roll through the mirror change.
@@ -360,6 +366,10 @@ func (c *Controller) teardownBucketClaim(ctx context.Context, row store.BucketCl
 
 func (c *Controller) finishBucketClaimRelease(ctx context.Context, row store.BucketClaim) error {
 	if err := c.deps.DB.CompleteBucketClaimRelease(ctx, row.ID); err != nil {
+		return err
+	}
+	// The environment stops being a holder: close the S3 port to it.
+	if err := c.ensureS3AccessForLiveStore(ctx); err != nil {
 		return err
 	}
 	c.pokeProbe()
