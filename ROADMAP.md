@@ -66,8 +66,6 @@ The goal of this block: I can put a paying workload on skali and sleep.
       and `skali cluster upgrade` from the previous release, a `skali
       cluster join` with no local `skali-hostd`, `skali cluster
       reset-password`, and a Studio software update between two releases.
-      Once v0.1.0 exists, the README's install commands drop
-      `SKALI_CHANNEL=beta`.
 - [ ] Skali's own state is backed up off-cluster (system database, values
       keys, installer inputs) and a full restore into a fresh install has been
       done at least once. `skali cluster restore` exists as a hidden stub

@@ -25,14 +25,13 @@ laptop (`skali dev`) and on the servers you install skali on (`skali deploy`).
 Underneath it is Kubernetes (k3s), but you never have to touch it.
 
 ```sh
-curl -fsSL https://skali.dev/install.sh | SKALI_CHANNEL=beta sh
+curl -fsSL https://skali.dev/install.sh | sh
 ```
 
 > [!WARNING]
-> **skali is early alpha.** No stable release exists yet; current builds are
-> v0.1.0 prereleases. Until v1.0.0 the manifest schema, CLI, API, and on-disk
-> formats may change in breaking ways, and upgrades may need manual steps. Do
-> not use it for workloads you cannot afford to lose. Read the
+> **skali is early alpha.** Until v1.0.0 the manifest schema, CLI, API, and
+> on-disk formats may change in breaking ways, and upgrades may need manual
+> steps. Do not use it for workloads you cannot afford to lose. Read the
 > [known limitations](docs/limitations.md) and the
 > [prerelease safety notes](docs/prerelease-safety.md) first. Project roles do
 > not isolate hostile workloads; see [security boundaries](docs/security.md).
@@ -62,7 +61,7 @@ curl -fsSL https://skali.dev/install.sh | SKALI_CHANNEL=beta sh
 ### 1. Install the CLI
 
 ```sh
-curl -fsSL https://skali.dev/install.sh | SKALI_CHANNEL=beta sh
+curl -fsSL https://skali.dev/install.sh | sh
 ```
 
 The installer picks the binary for your OS and architecture (macOS and Linux,
@@ -71,12 +70,13 @@ on Linux (asking for sudo) or `~/.local/bin` on macOS. It also installs shell
 completions for your login shell. Run it on your laptop to develop and
 deploy, and on every server that should become a skali node.
 
-`SKALI_CHANNEL=beta` includes alpha, beta, and RC releases. It is required
-until v0.1.0 ships, because the default `stable` channel only installs stable
-releases. To install an exact version, set `SKALI_VERSION` instead:
+The default channel installs the newest stable release. Set
+`SKALI_CHANNEL=beta` to include alpha, beta, and RC releases, or
+`SKALI_VERSION` to install an exact version:
 
 ```sh
-curl -fsSL https://skali.dev/install.sh | SKALI_VERSION=v0.1.0-rc.10 sh
+curl -fsSL https://skali.dev/install.sh | SKALI_CHANNEL=beta sh
+curl -fsSL https://skali.dev/install.sh | SKALI_VERSION=v0.1.0 sh
 ```
 
 <details>
@@ -101,7 +101,7 @@ your startup files itself.
 ```sh
 skali upgrade                        # newest release on your channel
 skali upgrade --channel beta         # include alpha, beta, and RC releases
-skali upgrade --version v0.1.0-rc.10 # exact release, may also downgrade
+skali upgrade --version v0.1.0      # exact release, may also downgrade
 ```
 
 The channel defaults to stable, or to beta when the installed CLI is itself a
@@ -150,7 +150,7 @@ one for the registry (`cr.skali.example.com`), and one per application
 domain.
 
 ```sh
-curl -fsSL https://skali.dev/install.sh | SKALI_CHANNEL=beta sh
+curl -fsSL https://skali.dev/install.sh | sh
 sudo skali cluster
 ```
 
