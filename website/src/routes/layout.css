@@ -89,8 +89,19 @@ html {
 	background-color: var(--color-surface-base);
 	color: var(--color-text-primary);
 	font-family: var(--font-sans);
-	scroll-behavior: smooth;
 	-webkit-font-smoothing: antialiased;
+	scrollbar-color: var(--color-border-strong) var(--color-surface-base);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	html {
+		scroll-behavior: smooth;
+	}
+}
+
+:focus-visible {
+	outline: 2px solid var(--color-accent-light);
+	outline-offset: 3px;
 }
 
 ::selection {

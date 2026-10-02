@@ -44,7 +44,7 @@
 			</div>
 			{#each columns as column (column.title)}
 				<nav aria-label={column.title} class="flex flex-col gap-3 text-sm">
-					<span class="font-mono text-[11px] tracking-[0.08em] text-text-ghost uppercase">
+					<span class="font-mono text-[11px] tracking-[0.08em] text-text-faint uppercase">
 						{column.title}
 					</span>
 					{#each column.links as link (link.label)}

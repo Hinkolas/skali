@@ -58,7 +58,7 @@
 			class="h-165 overflow-hidden rounded-t-[22px] border border-b-0 border-white/10 bg-white/2.5 fade-bottom px-2 pt-2 shadow-[0_-20px_80px_rgb(124_92_255/0.10)]"
 		>
 			<!-- Phones show the main surface rather than the sidebar. -->
-			<div class="max-sm:-ml-[286px]"><StudioOverview /></div>
+			<div class="max-sm:-ml-[292px]"><StudioOverview /></div>
 		</div>
 	</div>
 </section>

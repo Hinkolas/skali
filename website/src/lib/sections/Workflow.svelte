@@ -40,11 +40,12 @@
 			</p>
 		</SectionHeader>
 	</div>
-	<ol
-		class="m-0 grid list-none grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-y-10 border-t border-white/10 p-0"
-	>
+	<!-- Two columns until four fit with each command on one line, so no row
+	     is left with a single step. Every step draws its own stretch of the
+	     rule, which keeps a wrapped row on a line of its own. -->
+	<ol class="m-0 grid list-none gap-y-10 p-0 md:grid-cols-2 xl:grid-cols-4">
 		{#each steps as step (step.label)}
-			<li class="relative flex flex-col gap-3.5 pt-8 pr-7">
+			<li class="relative flex flex-col gap-3.5 border-t border-white/10 pt-8 pr-7">
 				<span
 					aria-hidden="true"
 					class="absolute -top-1 left-0 size-[7px] rounded-full bg-accent-light"

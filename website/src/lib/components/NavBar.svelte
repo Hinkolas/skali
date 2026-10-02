@@ -31,7 +31,7 @@
 			<a
 				href={links.releases}
 				rel="external"
-				class="hidden font-mono text-xs text-text-ghost transition-colors hover:text-text-tertiary sm:block"
+				class="hidden font-mono text-xs text-text-faint transition-colors hover:text-text-secondary sm:block"
 			>
 				{version}
 			</a>

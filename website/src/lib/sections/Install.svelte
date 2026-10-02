@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import Check from '@lucide/svelte/icons/check';
 	import Copy from '@lucide/svelte/icons/copy';
 	import { links } from '$lib/links';
@@ -8,12 +9,16 @@
 
 	let copied = $state(false);
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let code: HTMLElement;
 
 	async function copy() {
 		try {
 			await navigator.clipboard.writeText(command);
 		} catch {
-			return; // no clipboard access (insecure context, denied): leave the label alone
+			// No clipboard access (insecure context, denied): select the command
+			// so it can be copied by hand, and leave the label alone.
+			getSelection()?.selectAllChildren(code);
+			return;
 		}
 		copied = true;
 		clearTimeout(timer);
@@ -49,6 +54,7 @@
 					class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-border-strong bg-surface-base/88 py-2.5 pr-2.5 pl-6 shadow-[0_30px_80px_rgb(0_0_0/0.45)] md:flex-nowrap"
 				>
 					<code
+						bind:this={code}
 						class="min-w-0 flex-[1_1_16rem] py-2 font-mono text-[13px] leading-relaxed break-words text-text-primary md:overflow-x-auto md:text-[15px] md:whitespace-nowrap"
 						><span class="mr-[1ch] text-text-ghost select-none">$</span>curl -fsSL
 						<span class="text-accent-light">{url}</span>
@@ -62,6 +68,7 @@
 					>
 						{#if copied}<Check size={15} /> Copied{:else}<Copy size={15} /> Copy{/if}
 					</button>
+					<span class="sr-only" aria-live="polite">{copied ? 'Install command copied' : ''}</span>
 				</div>
 				<div class="flex flex-wrap gap-x-6 gap-y-2 pl-1 font-mono text-xs text-text-muted">
 					<span>macOS · Linux</span><span>amd64 · arm64</span><span>checksum verified</span>
@@ -86,9 +93,13 @@
 						>Known limitations</a
 					>
 				</span>
-				<a href={links.gettingStarted} rel="external" class="text-text-primary hover:text-white"
-					>Getting started →</a
+				<a
+					href={links.gettingStarted}
+					rel="external"
+					class="flex items-center gap-1.5 text-text-primary transition-colors hover:text-white"
 				>
+					Getting started <ArrowRight size={14} />
+				</a>
 			</span>
 		</div>
 	</div>

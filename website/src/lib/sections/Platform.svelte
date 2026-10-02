@@ -101,11 +101,13 @@
 		<div
 			role="img"
 			aria-label="A backup schedule with recent snapshots and the promote dialog in Skali Studio"
-			class="relative flex flex-[1_1_480px] flex-col gap-4 overflow-hidden rounded-[22px] border border-border-default bg-surface-panel p-[clamp(20px,3vw,40px)] sm:block sm:h-115 xl:mr-16"
+			class="relative flex flex-[1_1_480px] flex-col gap-4 overflow-hidden rounded-[22px] border border-border-default bg-surface-panel p-[clamp(20px,3vw,40px)] sm:block sm:h-120 xl:mr-16"
 			style="background-image: radial-gradient(520px 320px at 80% 100%, rgb(217 165 79 / 0.10) 0%, transparent 70%)"
 		>
+			<!-- The dialog sits below the table's header row and starts left of its
+			     origin column, so it covers whole columns rather than clipping them. -->
 			<div class="sm:w-[78%]"><Backups /></div>
-			<div class="sm:absolute sm:right-8 sm:bottom-8 sm:w-[62%]"><Promote /></div>
+			<div class="sm:absolute sm:right-8 sm:bottom-8 sm:left-[28%]"><Promote /></div>
 		</div>
 	</div>
 </section>
