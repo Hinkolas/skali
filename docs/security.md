@@ -10,6 +10,10 @@ Application pods share cluster networking. skali does not yet generate default
 deny network policies for every environment, enforce a restricted pod-security
 profile, or disable service-account token mounting across all workloads. Selected
 platform services have network policies, but those do not isolate every tenant.
+Enforcement itself is in place: the live test suite verifies that the embedded
+network policy controller of the pinned k3s blocks traffic the way those policies
+say, on managed installs and in `skali dev` alike, so per-environment isolation
+is a matter of rendering the policies.
 Treat permission to deploy as permission to run code on the shared cluster.
 Do not offer arbitrary untrusted tenants access to this alpha.
 

@@ -27,6 +27,10 @@ func TestCreateArgsPublishBothEdgeEntrypoints(t *testing.T) {
 	require.Contains(t, args, "127.0.0.1:443:443@server:0:direct")
 	require.Contains(t, args, "127.0.0.1:5510:30500@server:0:direct")
 	require.Equal(t, "--wait", args[len(args)-1])
+	// No k3s flags: the local cluster keeps k3s's embedded network policy
+	// controller, like a managed install, so NetworkPolicies are enforced
+	// in development too.
+	require.NotContains(t, args, "--k3s-arg")
 
 	t.Setenv("SKALI_DEV_HTTP_PORT", "8082")
 	t.Setenv("SKALI_DEV_HTTPS_PORT", "8443")
