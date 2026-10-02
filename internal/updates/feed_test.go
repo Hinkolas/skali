@@ -77,7 +77,7 @@ func TestGitHubFeedPicksNewestByVersionPerChannel(t *testing.T) {
 }
 
 // Every way the feed can fail lands as a classified FeedError, so the
-// console can tell "the update servers are offline" from "the feed URL is
+// Studio can tell "the update servers are offline" from "the feed URL is
 // wrong" without parsing error text.
 func TestGitHubFeedClassifiesFailures(t *testing.T) {
 	t.Parallel()

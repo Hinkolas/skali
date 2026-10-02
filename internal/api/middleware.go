@@ -145,7 +145,7 @@ const InstanceHeader = edge.InstanceHeader
 const VersionHeader = "Skali-Version"
 
 // ClientVersionHeader is the request header the CLI stamps with its own
-// build version on every request. Browsers never send it, so the console is
+// build version on every request. Browsers never send it, so the Studio is
 // never gated; a third-party client that omits it is not gated either.
 const ClientVersionHeader = "Skali-Client-Version"
 

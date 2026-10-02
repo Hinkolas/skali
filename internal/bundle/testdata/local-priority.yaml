@@ -4,7 +4,7 @@ metadata:
   name: skali-critical
 value: 100000000
 globalDefault: false
-description: Skali itself (skalid, registry, console, object storage, managed databases); preempts application pods.
+description: Skali itself (skalid, registry, studio, object storage, managed databases); preempts application pods.
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass

@@ -38,7 +38,7 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Equal(t, "Cluster", objects.Database[0].GetKind())
 	require.Len(t, objects.Registry, 4)
 	require.Len(t, objects.Skalid, 12)
-	// The console compresses locally too, through the stage's own
+	// The Studio compresses locally too, through the stage's own
 	// Middleware ahead of its router, and the redirect Middleware rides
 	// this stage locally (production renders it in the registry stage).
 	compress := objects.Skalid[6]
@@ -50,23 +50,23 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Equal(t, "Middleware", redirect.GetKind())
 	require.Equal(t, edge.RedirectMiddlewareName, redirect.GetName())
 	// The platform domain serves TLS locally exactly like production: an
-	// explicit Certificate, the websecure console router, and a redirecting
+	// explicit Certificate, the websecure Studio router, and a redirecting
 	// plain-HTTP router.
 	certificate := objects.Skalid[8]
 	require.Equal(t, "Certificate", certificate.GetKind())
 	require.Equal(t, "skalid-tls", certificate.GetName())
 	dnsNames, _, _ := unstructured.NestedStringSlice(certificate.Object, "spec", "dnsNames")
 	require.Equal(t, []string{LocalPlatformHost}, dnsNames)
-	console := objects.Skalid[9]
-	require.Equal(t, "IngressRoute", console.GetKind())
-	require.Equal(t, "skalid", console.GetName())
-	consoleEntryPoints, _, _ := unstructured.NestedStringSlice(console.Object, "spec", "entryPoints")
-	require.Equal(t, []string{edge.EntryPointWebSecure}, consoleEntryPoints)
-	consoleSecret, _, _ := unstructured.NestedString(console.Object, "spec", "tls", "secretName")
-	require.Equal(t, "skalid-tls", consoleSecret)
-	consoleJSON, err := console.MarshalJSON()
+	studio := objects.Skalid[9]
+	require.Equal(t, "IngressRoute", studio.GetKind())
+	require.Equal(t, "skalid", studio.GetName())
+	studioEntryPoints, _, _ := unstructured.NestedStringSlice(studio.Object, "spec", "entryPoints")
+	require.Equal(t, []string{edge.EntryPointWebSecure}, studioEntryPoints)
+	studioSecret, _, _ := unstructured.NestedString(studio.Object, "spec", "tls", "secretName")
+	require.Equal(t, "skalid-tls", studioSecret)
+	studioJSON, err := studio.MarshalJSON()
 	require.NoError(t, err)
-	require.Contains(t, string(consoleJSON), `"middlewares":[{"name":"compress"}]`)
+	require.Contains(t, string(studioJSON), `"middlewares":[{"name":"compress"}]`)
 	consoleHTTP := objects.Skalid[10]
 	require.Equal(t, "IngressRoute", consoleHTTP.GetKind())
 	require.Equal(t, "skalid-http", consoleHTTP.GetName())

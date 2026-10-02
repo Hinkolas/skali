@@ -198,7 +198,7 @@ func (k *Kernel) issuedNames(ctx context.Context, key routeKey, namespace, secre
 }
 
 // noteRoute records the pass's conclusion about one route certificate. A
-// verdict that flipped nudges the status stream, so the console repaints
+// verdict that flipped nudges the status stream, so the Studio repaints
 // without waiting for the next observation event.
 func (k *Kernel) noteRoute(key routeKey, domain string, usable, deferred, mismatch bool) routeRecord {
 	k.domainMu.Lock()

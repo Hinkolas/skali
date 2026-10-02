@@ -21,17 +21,17 @@ jobs:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
 
-  web:
+  studio:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: web
+        working-directory: studio
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: studio/package-lock.json
       - run: npm ci
       - run: npm audit

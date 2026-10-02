@@ -238,7 +238,7 @@ cluster test:
 ```sh
 TEST_DATABASE_URL=postgres://... go test -count=1 ./...
 go test -race ./cmd/skali ./internal/cliconfig ./internal/client ./internal/localdev ./internal/filelock
-npm run check --prefix web
+npm run check --prefix studio
 TEST_SKALI_DEV=1 go test -count=1 -timeout 40m -run '^TestDevSingleReleaseEndToEnd$' ./cmd/skali
 ```
 

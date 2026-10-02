@@ -10,7 +10,7 @@ package layout
 // means delete and recreate during converge), so they are final.
 const (
 	// PriorityClassCritical is skali itself: skalid, the registry, the
-	// console, object storage, and the managed databases.
+	// Studio, object storage, and the managed databases.
 	PriorityClassCritical = "skali-critical"
 	// PriorityClassHigh is applications of environments with priority high.
 	PriorityClassHigh = "skali-high"

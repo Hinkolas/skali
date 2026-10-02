@@ -582,7 +582,7 @@ func prepareReconciledInit(ctx context.Context, record *installer.Record,
 			return err
 		}
 		// A released CLI records the platform version it initializes, so
-		// the coordinator and the console know what runs and console
+		// the coordinator and the Studio know what runs and Studio
 		// updates have a baseline; a dev build leaves it unset.
 		wantVersion := ""
 		if versionpkg.IsRelease(versionpkg.Version) && candidate.Platform.Version == "" {

@@ -77,7 +77,7 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   every database, bucket, and volume of the environment; the run streams
   like a deploy. Manual snapshots are kept until removed. An environment
   whose manifest declares no database, bucket, or volume has nothing to
-  snapshot and is refused (`nothing_to_back_up`); the console disables
+  snapshot and is refused (`nothing_to_back_up`); the Studio disables
   the button there.
 - `skali backup schedule set --environment <name> --every "<cron>" --keep
   <duration>` turns automatic backups on for one environment (environment

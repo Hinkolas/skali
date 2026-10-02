@@ -15,7 +15,7 @@ import (
 // reauthSession refreshes the sudo window of the current session for a
 // gated call: the local platform reuses its recorded bootstrap password,
 // every other remote asks for the second factor when one is enrolled, opens
-// the browser to confirm when the terminal is interactive (the console's
+// the browser to confirm when the terminal is interactive (the Studio's
 // checkpoint takes a password manager), and asks for the account password
 // otherwise. On a pipe the prompt reads one line from stdin (the same
 // plain prompt skali remote add uses), so scripts can confirm without a

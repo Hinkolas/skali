@@ -53,7 +53,7 @@ first untrusted hop. Invalid addresses fall back to the socket peer.
 
 ## Browser sessions
 
-The embedded static console calls the Go API on the same origin. Login and
+The embedded static Studio calls the Go API on the same origin. Login and
 2FA verification accept `session_transport: cookie`, setting a host-only
 `skali_session` cookie with HttpOnly, SameSite=Lax, and Path=/. Its expiry
 follows the database session's sliding expiry. The cookie response omits the

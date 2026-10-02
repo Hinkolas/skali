@@ -304,7 +304,7 @@ func (h *poolsHandlers) get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Every series shares the timestamps array and value arrays carry null
-// for buckets without samples (the console chart contract). CPU and
+// for buckets without samples (the Studio chart contract). CPU and
 // memory sum the instances; the rest is the primary's exporter view.
 type poolMetricsPayload struct {
 	Pool           string                     `json:"pool"`
@@ -325,7 +325,7 @@ type poolMetricsPayload struct {
 }
 
 // poolMetricsCurrentPayload is the newest sample plus the denominators the
-// console draws against; null when the sampler has not seen the pool in
+// Studio draws against; null when the sampler has not seen the pool in
 // the last minutes.
 type poolMetricsCurrentPayload struct {
 	SampledAt         time.Time `json:"sampled_at"`

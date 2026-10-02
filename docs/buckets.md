@@ -133,7 +133,7 @@ application route: it is claimed by the environment at deploy (another
 environment cannot take it, and the installation's own hosts are refused),
 the reconciler probes whether it reaches this installation before it waits
 on a certificate, and `skali route list`, `skali route probe`, the ready
-summary, and the bucket's console page show the certificate and DNS state
+summary, and the bucket's Studio page show the certificate and DNS state
 (see docs/limitations.md, "Routes whose domain does not point here yet").
 Several buckets of one environment may share a hostname, each on its own
 path; a bucket cannot share a hostname with an application route yet. The

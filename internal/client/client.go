@@ -1,5 +1,5 @@
 // Package client is the typed REST client of the skali API, used by cmd/skali.
-// It speaks the same one-shape API as every other client (web console, native
+// It speaks the same one-shape API as every other client (Studio, native
 // apps): bearer tokens, JSON bodies, the error envelope. Payload shapes mirror
 // api/openapi.yaml.
 package client
@@ -376,7 +376,7 @@ func (c *Client) RevokeSession(ctx context.Context, id string) error {
 }
 
 // Health probes the daemon and requires its JSON answer. On a
-// single-surface cluster the domain root serves the web console, whose
+// single-surface cluster the domain root serves the Studio, whose
 // /healthz is plain text, so a base URL missing the /api path must fail
 // here with guidance instead of passing and confusing the login after it.
 func (c *Client) Health(ctx context.Context) error {

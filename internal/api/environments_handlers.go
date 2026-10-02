@@ -46,7 +46,7 @@ type environmentPayload struct {
 	CreatedAt *time.Time                  `json:"created_at,omitempty"`
 	Settings  *environmentSettingsPayload `json:"settings,omitempty"`
 	// LastPromotionTarget names the environment this one was last promoted
-	// to, derived from the recorded promotions; the console preselects it.
+	// to, derived from the recorded promotions; the Studio preselects it.
 	// Only on the project listing, and only for unlocked environments.
 	LastPromotionTarget string `json:"last_promotion_target,omitempty"`
 	// State, Health and HealthEvaluatedAt are the listing's summary

@@ -17,7 +17,7 @@ import (
 )
 
 // Browser device authorization from the terminal: the CLI opens a request,
-// shows the code, opens the console, and polls until the person approves.
+// shows the code, opens the Studio, and polls until the person approves.
 // Used for login (skali remote add/login) and for confirming sudo mode on
 // an aged session, so nobody types a password into the terminal on a
 // machine with a browser. Non-interactive runs never come here; they keep
@@ -38,7 +38,7 @@ func deviceLabel() string {
 	return "skali CLI on " + host
 }
 
-// verificationURL is the console page for a code. The console is served
+// verificationURL is the Studio page for a code. The Studio is served
 // at the master's root and the API under /api (single surface), so the
 // page is the master URL without its API suffix.
 func verificationURL(master, userCode string) string {

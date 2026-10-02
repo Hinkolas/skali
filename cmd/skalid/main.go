@@ -1,5 +1,5 @@
-// Command skalid is the skali control plane: the client-facing REST API (web
-// console, skali CLI, future native clients) plus the controller that compiles
+// Command skalid is the skali control plane: the client-facing REST API
+// (Studio, skali CLI, future native clients) plus the controller that compiles
 // services into Kubernetes objects and reads status back.
 //
 // Besides serving (the default), the binary carries the operator commands —
@@ -8,7 +8,7 @@
 //	skalid [serve]                          run the control plane (REST API + controller)
 //	skalid user create|list|set-role|delete manage app users (there is no signup endpoint)
 //	skalid migrate up|status                apply / inspect database migrations
-//	skalid seed [--reset]                   fabricate development data for the console
+//	skalid seed [--reset]                   fabricate development data for the Studio
 package main
 
 import (
@@ -54,13 +54,13 @@ import (
 	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/studio"
 	"github.com/Hinkolas/skali/internal/substrate"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
-	"github.com/Hinkolas/skali/internal/webui"
 )
 
 const serviceName = "skalid"
@@ -412,7 +412,7 @@ func runServe() error {
 	}
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: webui.Handler(api.StripAPIPrefix(api.NewRouter(api.Deps{
+		Handler: studio.Handler(api.StripAPIPrefix(api.NewRouter(api.Deps{
 			Auth:               authSvc,
 			CookieSecure:       cfg.CookieSecure,
 			TrustProxy:         trustedProxies.Contains,

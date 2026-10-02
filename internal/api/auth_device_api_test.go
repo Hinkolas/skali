@@ -42,7 +42,7 @@ func TestDeviceLoginRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, status)
 	require.Equal(t, "slow_down", errorCode(t, body))
 
-	// The console looks the code up in the form a person types it.
+	// The Studio looks the code up in the form a person types it.
 	status, body = a.do("GET", "/v1/auth/device/codes/"+req.UserCode, "", nil)
 	require.Equal(t, http.StatusUnauthorized, status)
 	status, body = a.do("GET", "/v1/auth/device/codes/"+req.UserCode, browser, nil)

@@ -4,7 +4,7 @@ Status: design agreed and implemented 2026-08-19, in three slices: the
 server side (schema, resolver, every route classified and enforced,
 registry scope, members/cells/settings API, payload additions), the
 management surfaces (`skali access`, `skali env`, the deploy flow
-consulting `access`, the console's members grid, environment settings,
+consulting `access`, the Studio's members grid, environment settings,
 locked environments, gated controls, the `create_projects` toggle), and the
 protection policy with its recorded bypass plus the PriorityClasses. This
 file is the description of how access works; every decision it once listed
@@ -33,7 +33,7 @@ Principles:
 - Access (who may act) and policy (which kind of act is allowed for anyone)
   are separate axes. Protection applies to admins too; admins bypass it only
   explicitly and it is recorded.
-- Deny by default, enforced server-side in one place. The console and CLI
+- Deny by default, enforced server-side in one place. The Studio and CLI
   hide, disable, and explain; they never enforce.
 - Roles are code, not data: the database stores which role a user has,
   never what a role means.
@@ -185,14 +185,14 @@ Server-side, edited by environment admins unless noted:
   how long snapshots the schedule takes are kept (the newest is always
   kept), `strategy` is `complete`. Manual snapshots never expire. Set with
   `skali backup schedule set|remove` or the environment's settings in the
-  console; `null` in a PATCH turns it off, an absent key leaves it alone.
+  Studio; `null` in a PATCH turns it off, an absent key leaves it alone.
 
 Creation: project `maintain` and up create environments; the creator gets an
 explicit `admin` cell. Implicit creation on first deploy (`skali deploy
 --environment feat-x`) follows the same rule and is always `normal`
 priority. Creation defaults by priority: `normal` starts with `max_role:
 admin` (open, a shared scratch environment); `high` starts with `max_role:
-read` and the CLI and console suggest `promote-only`. Creation-time
+read` and the CLI and Studio suggest `promote-only`. Creation-time
 defaults only; the settings are independent afterwards.
 
 Deletion and teardown: environment `admin`, behind sudo mode and
@@ -212,7 +212,7 @@ environment only changes through:
   no sudo). That includes revisions created before the environment became
   promote-only and revisions whose rollout failed and fell back; rollback
   re-targets what the environment already holds and is not policy-gated;
-- a redeploy (`redeploy: true` on plan and open; the console's Redeploy
+- a redeploy (`redeploy: true` on plan and open; the Studio's Redeploy
   button). It re-runs the environment's own active definition and
   artifacts with the current values, so like rollback it introduces no
   new code and is not policy-gated. The values it picks up were gated by
@@ -248,7 +248,7 @@ is checked, nothing is recorded. A consumed bypass requires environment
 (sudo mode, `403 reauth_required` otherwise, the CLI reauths and retries
 plan and open). It is recorded on the deployment and its run
 (`bypass_protection`), shown under the plan and in the ready summary, by
-`skali run list`, and by the console's run list and run panel.
+`skali run list`, and by the Studio's run list and run panel.
 
 ## Priority
 
@@ -262,7 +262,7 @@ global default, all with the default preemption policy:
 
 | class | value | who carries it |
 |---|---|---|
-| `skali-critical` | 100000000 | skali itself: skalid, the registry, the console, seaweed, the bootstrap database, and every managed CNPG cluster; preempts application pods |
+| `skali-critical` | 100000000 | skali itself: skalid, the registry, the Studio, seaweed, the bootstrap database, and every managed CNPG cluster; preempts application pods |
 | `skali-high` | 1000000 | application pods (Deployments and release Jobs) of `priority: high` environments |
 | `skali-normal` | 0 | application pods of `priority: normal` environments; the rank of an unclassed pod, so introducing it changed nothing for existing workloads |
 
@@ -275,12 +275,12 @@ controller, cert-manager) and the backup and restore Jobs stay unclassed.
 The application class renders live from the environment row (like the
 restart stamp, not part of the revision): `skali env set --priority`
 re-renders the environment at once, the Deployments move onto the new
-class, and their pods roll; the CLI and console say so. Priority also
+class, and their pods roll; the CLI and Studio say so. Priority also
 selects the creation defaults above. Introducing the classes moved the
 bundle hash, so every installation re-converges once at the upgrade (`skali
 dev` by itself, production with `skali cluster upgrade`), and every pod
 template that gained a class rolled once: all application Deployments,
-skalid, registry, console, seaweed, and the CNPG clusters (rolling update;
+skalid, registry, Studio, seaweed, and the CNPG clusters (rolling update;
 a single-instance database sees a brief outage, the dev all-in-one seaweed
 Deployment is `Recreate` and blinks).
 
@@ -334,7 +334,7 @@ hostname ahead of tenant routes), `GET /openapi.yaml`, `GET /token`
 (registry realm, Basic auth per request as today), `POST /auth/login`,
 `POST /auth/2fa/verify`, `POST /auth/device/requests` and
 `POST /auth/device/token` (the CLI side of browser device authorization;
-the poll answer carries the bearer token, so the console never proxies
+the poll answer carries the bearer token, so the Studio never proxies
 them). Public is not the same as version-free: every route under `/v1`,
 these included, refuses a released CLI of another version with
 `cli_version_mismatch` (docs/versioning.md); only `GET /healthz` and
@@ -358,17 +358,17 @@ Browser device authorization is how the CLI logs in and confirms sudo
 without typing a password into the terminal: `skali remote add` (and any
 sudo-gated command whose session has aged) opens a request, prints the
 user code, opens `/auth/device?code=...` in the browser, and polls with
-the device code. The signed-in console shows who is asking and approves
+the device code. The signed-in Studio shows who is asking and approves
 or denies; approval of a login request mints a session for the approver on
 the CLI's next poll, approval of a reauth request re-stamps the CLI
 session it is bound to (only that session's owner may approve, and the
-console's own reauth checkpoint runs first). Requests live ten minutes,
+Studio's own reauth checkpoint runs first). Requests live ten minutes,
 answer once, and are swept afterwards. Non-interactive runs, `--no-browser`,
 and `SKALI_NO_BROWSER=1` keep the typed prompts; two-factor accounts keep
 the six-digit code prompt as the direct path.
 
 Instance admin: `GET /nodes`, `GET /system/observation` (both member-readable
-today, the console only hides them), `GET /users`; sudo: `POST /users`,
+today, the Studio only hides them), `GET /users`; sudo: `POST /users`,
 `PATCH /users/{id}` (gains `create_projects`), `DELETE /users/{id}`,
 `POST /users/{id}/password`, `GET|PUT|DELETE /system/backup-target`,
 `PUT /system/database-pools/{name}/settings` (`GET /system/database-pools`,
@@ -434,7 +434,7 @@ push and pull to anyone who is a deployer somewhere, nothing otherwise. The
 
 ## What the API tells clients
 
-So the CLI and console can hint, disable, and explain without extra calls,
+So the CLI and Studio can hint, disable, and explain without extra calls,
 and so `skali` can refuse before doing work:
 
 - `GET /auth/session` gains `create_projects`.
@@ -459,16 +459,16 @@ and so `skali` can refuse before doing work:
   the request consumed the bypass). The policy verdict itself is the `403
   environment_protected` message naming the allowed sources and the
   bypass; clients already hold the environment's `settings` and `access`,
-  so `skali deploy` refuses before submitting anything and the console
+  so `skali deploy` refuses before submitting anything and the Studio
   explains without a call.
 - Runs and deployments carry the actor and `bypass_protection`.
 - Environment `settings` carry `backup` (`null` or the schedule), so the
-  console's Backups tab and `skali env list` show which environments are
+  Studio's Backups tab and `skali env list` show which environments are
   backed up automatically without another call.
 
 ## Management surfaces
 
-API first; then CLI and console, both thin over the same routes.
+API first; then CLI and Studio, both thin over the same routes.
 
 CLI (settled 2026-08-19): one ladder, one verb set, the level picked by
 `--environment`:
@@ -513,7 +513,7 @@ CLI (settled 2026-08-19): one ladder, one verb set, the level picked by
 - `skali dev` is unaffected: the local platform's admin is an instance
   admin.
 
-Console (settled 2026-08-19): the users page's create and edit modals carry
+Studio (settled 2026-08-19): the users page's create and edit modals carry
 the `create_projects` toggle (members only; the list marks them); project
 settings gain a Members tab with the grid, editable inline by project admins
 (role pickers per membership and per cell, "inherit" drops a cell, add by
@@ -617,8 +617,8 @@ disallowed sources, the empty list, the bypass needing admin and a fresh
 session and landing on deployment and run, the flag ignored where the
 policy would not refuse, rollback open), bundle goldens pin the classes
 and the critical class on every bundle pod, and render goldens pin the
-application class. Console checks are svelte-check, build, and SSR smoke
-(403 on nodes/system/users for members); there is no console test harness.
+application class. Studio checks are svelte-check, build, and SSR smoke
+(403 on nodes/system/users for members); there is no Studio test harness.
 
 ## Deferred on purpose
 

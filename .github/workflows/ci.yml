@@ -4,7 +4,7 @@ name: ci
 # (via workflow_call) every release tag. Advisory scans
 # live in audit.yml so a new upstream CVE cannot turn an unrelated push red.
 #
-# On pull requests the `changes` job classifies the diff and the go, web and
+# On pull requests the `changes` job classifies the diff and the go, studio and
 # release-config jobs only run for the areas that changed; a docs-only PR
 # runs the secret scan and nothing else. A job skipped by its `if` reports
 # as passing for branch protection, so the required-check names stay stable.
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.classify.outputs.go }}
-      web: ${{ steps.classify.outputs.web }}
+      studio: ${{ steps.classify.outputs.studio }}
       release: ${{ steps.classify.outputs.release }}
     steps:
       - uses: actions/checkout@v5
@@ -43,13 +43,13 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          go=false; web=false; release=false
+          go=false; studio=false; release=false
           if [ "$EVENT" != pull_request ]; then
             # Tags (via release.yml) and manual runs check everything.
-            go=true; web=true; release=true
+            go=true; studio=true; release=true
           elif ! files=$(git diff --name-only "$BASE...$HEAD"); then
             echo "::warning::could not diff $BASE...$HEAD; running every check"
-            go=true; web=true; release=true
+            go=true; studio=true; release=true
           else
             # First match wins. Anything not listed is treated as source and
             # runs the Go checks plus the release rehearsal, so a new
@@ -58,9 +58,9 @@ jobs:
             while IFS= read -r f; do
               [ -n "$f" ] || continue
               case "$f" in
-                .github/workflows/ci.yml) go=true; web=true; release=true ;;
+                .github/workflows/ci.yml) go=true; studio=true; release=true ;;
                 README.md|ROADMAP.md|RELEASE_CHECKLIST.md|SECURITY.md|LICENSE|docs/*|.github/*|.claude/*|.gitignore|.gitleaks.toml|.env.example|Taskfile.yml|compose.yaml) ;;
-                web/*) web=true; release=true ;;
+                studio/*) studio=true; release=true ;;
                 .goreleaser.yaml|.dockerignore|scripts/*|build/*|install.sh) release=true ;;
                 *) go=true; release=true ;;
               esac
@@ -68,10 +68,10 @@ jobs:
           $files
           EOT
           fi
-          echo "go=$go web=$web release=$release"
+          echo "go=$go studio=$studio release=$release"
           {
             echo "go=$go"
-            echo "web=$web"
+            echo "studio=$studio"
             echo "release=$release"
           } >>"$GITHUB_OUTPUT"
 
@@ -129,7 +129,7 @@ jobs:
       # produce. Each prints the offending diff before failing.
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^web/'))
+          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^studio/'))
           if [ -n "$unformatted" ]; then
             echo "gofmt -w these files:"; echo "$unformatted"; exit 1
           fi
@@ -141,37 +141,37 @@ jobs:
           sqlc generate
           git diff --exit-code
 
-      # web/ is excluded like task test: node_modules occasionally ships
+      # studio/ is excluded like task test: node_modules occasionally ships
       # stray Go packages.
-      - run: go vet $(go list ./... | grep -v '/web/')
-      - run: go test $(go list ./... | grep -v '/web/')
+      - run: go vet $(go list ./... | grep -v '/studio/')
+      - run: go test $(go list ./... | grep -v '/studio/')
       - name: Linux restore ownership
         run: |
           go test -c -o /tmp/skali-backup-tests ./internal/backup
           sudo /tmp/skali-backup-tests -test.run 'TestArchive|TestLinuxNonRoot|TestTarUntar'
 
-  web:
+  studio:
     needs: changes
-    if: needs.changes.outputs.web == 'true'
+    if: needs.changes.outputs.studio == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: web
+        working-directory: studio
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: studio/package-lock.json
       - run: npm ci
       - run: npm run check
       - run: npm test
       - run: npm run lint
       - run: npm run build
 
-  # The snapshot rehearsal builds the console and every binary, so it runs
-  # for Go and web changes as well as for release tooling itself.
+  # The snapshot rehearsal builds the Studio and every binary, so it runs
+  # for Go and studio changes as well as for release tooling itself.
   release-config:
     needs: changes
     if: needs.changes.outputs.release == 'true'
@@ -185,7 +185,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: studio/package-lock.json
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser

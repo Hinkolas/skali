@@ -47,7 +47,7 @@ type StepState struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// OperationState projects a cluster operation for the console: the phases
+// OperationState projects a cluster operation for the Studio: the phases
 // and per-node steps the coordinator journals, plus the version it moves to.
 type OperationState struct {
 	ID            string      `json:"id"`
@@ -66,7 +66,7 @@ func (o *OperationState) Settled() bool {
 	return o == nil || o.Phase == clusterstate.OperationComplete || o.Phase == clusterstate.OperationFailed
 }
 
-// Snapshot is what the console needs from the cluster state.
+// Snapshot is what the Studio needs from the cluster state.
 type Snapshot struct {
 	ExpectedK3s string
 	// PlatformVersion is the release the converged revision names; empty

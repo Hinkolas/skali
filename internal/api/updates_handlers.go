@@ -9,7 +9,7 @@ import (
 )
 
 // updatesHandlers serves the platform update surface: one status document
-// the console renders, a manual scan, the settings, and the two mutations
+// the Studio renders, a manual scan, the settings, and the two mutations
 // that hand work to the cluster coordinator (apply, resume). Reads are
 // admin-only; mutations additionally sit behind sudo mode.
 type updatesHandlers struct {

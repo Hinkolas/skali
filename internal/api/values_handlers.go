@@ -70,7 +70,7 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 		// values for the exact manifest it is about to promote.
 		DefinitionVersionID string `json:"definition_version_id"`
 		// Apply promotes the batch to current immediately instead of leaving
-		// it staged for a deployment to promote. The console saves values
+		// it staged for a deployment to promote. The Studio saves values
 		// this way: stored values are what the next deployment or redeploy
 		// resolves, matching how DELETE already removes them immediately.
 		// Running revisions keep the versions they pinned either way.

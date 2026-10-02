@@ -41,7 +41,7 @@ type directoryUserPayload struct {
 }
 
 // GET /v1/users?q=: the user directory. Any authenticated user may read it
-// (it backs the console's member picker and admin search); `q` filters by a
+// (it backs the Studio's member picker and admin search); `q` filters by a
 // case-insensitive substring of email or name. Admins get the full account
 // payload, everyone else the directory subset.
 func (h *usersHandlers) list(w http.ResponseWriter, r *http.Request) {

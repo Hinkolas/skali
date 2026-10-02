@@ -2,7 +2,7 @@
 // skalid reads instantaneous usage from metrics.k8s.io (metrics-server, part
 // of every skali cluster) and appends per-application and per-node samples
 // to the platform database; the Service reads them back as fixed-step
-// bucketed series for the console charts. Samples are observability data
+// bucketed series for the Studio charts. Samples are observability data
 // only: nothing in reconciliation ever reads them.
 package metrics
 

@@ -32,7 +32,7 @@ const (
 	storageTimeout  = 60 * time.Second
 )
 
-// Storage sample kinds; the console groups the per-service breakdown on
+// Storage sample kinds; the Studio groups the per-service breakdown on
 // them.
 const (
 	kindVolume    = "volume"

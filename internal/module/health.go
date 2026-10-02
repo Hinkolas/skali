@@ -16,8 +16,8 @@ const (
 
 // healthRank orders healths for the rollup: anything mixed with healthy
 // pulls the verdict toward the worse state, and unknown outranks healthy so
-// a half-observed environment never reads as fine. The console mirrors this
-// ladder in web/src/lib/models/project.ts (HEALTH_RANK); app.floorHealth
+// a half-observed environment never reads as fine. The Studio mirrors this
+// ladder in studio/src/lib/models/project.ts (HEALTH_RANK); app.floorHealth
 // ranks in the other direction for a different purpose and is not this.
 var healthRank = map[Health]int{
 	HealthHealthy:     1,

@@ -11,9 +11,9 @@ private vulnerability reporting instead: open the repository's
 **Security** tab and choose **Report a vulnerability**. You will get an
 acknowledgement within a few days and updates as the report is handled.
 
-Include what you can: the affected component (CLI, `skalid`, the web
-console, the installer, the host agent), the version (`skali --version`,
-or the version shown on the console's sign-in page), reproduction steps,
+Include what you can: the affected component (CLI, `skalid`,
+Studio, the installer, the host agent), the version (`skali --version`,
+or the version shown on the Studio's sign-in page), reproduction steps,
 and the impact you believe it has.
 
 ## Supported versions

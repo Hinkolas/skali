@@ -5,7 +5,7 @@ A managed cluster has one Skali release. **System → Software update** and
 on controllers serially, then agents serially, reconcile the shared platform,
 and verify every component. You do not SSH into each node to update it.
 
-`skalid` runs inside Kubernetes and serves the API and console. Each node also
+`skalid` runs inside Kubernetes and serves the API and Studio. Each node also
 runs `skali-agent.service` from the `skali-hostd` binary. Controllers run
 `skali-coordinator.service` from that binary too. Those host services manage
 installation, enrollment, and updates even when the platform is restarting.
@@ -42,7 +42,7 @@ not cancel an accepted operation. Repeating the command attaches to a running
 update or offers to retry a failed one. A different target is refused while
 an operation is running or waiting for retry.
 
-The console shows **Preparing**, **Updating nodes**, **Updating platform**, and
+The Studio shows **Preparing**, **Updating nodes**, **Updating platform**, and
 **Verifying**. **Update details** contains node identities, host agent and
 coordinator versions, Kubernetes versions, heartbeats, and step errors.
 
@@ -50,7 +50,7 @@ The displayed **Skali version** remains the last converged release until fresh
 host and coordinator reports, Kubernetes readiness and versions, and the
 completed `skalid` rollout all match the target exactly. Different versions
 during a rolling update are expected. An interrupted update is never considered
-complete merely because the console has already moved to the target.
+complete merely because the Studio has already moved to the target.
 
 ## Finish or retry an update
 

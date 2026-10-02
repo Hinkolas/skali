@@ -22,7 +22,7 @@ it.
   them, rollbacks, encrypted per-environment values.
 - **Local development** on the real platform: hot reload for the app you are
   working on while its databases and buckets run in the local cluster.
-- **A web console** and a CLI, users with 2FA, and per-project roles.
+- **Skali Studio** (a web UI) and a CLI, users with 2FA, and per-project roles.
 - **Backups** of environment data to your own S3 target, on a per-environment
   schedule or by hand, cluster upgrades, diagnosis and repair, single node or
   many.
@@ -149,7 +149,7 @@ sudo skali cluster
 
 `skali cluster` on a fresh host walks you through it: create a new cluster,
 initialize skali on it with your domains, a Let's Encrypt account email, and
-the first admin account. When it finishes it prints the console URL. The
+the first admin account. When it finishes it prints the Studio URL. The
 whole thing takes a few minutes and is repeatable: run `sudo skali cluster`
 again at any time to see status or open the maintenance menu.
 
@@ -222,7 +222,7 @@ skali backup create               # snapshot databases, buckets, and volumes
 skali access set alice@example.com deploy   # roles: read, deploy, maintain, admin
 ```
 
-The web console shows the same projects, deployments, logs, and settings in
+The Studio shows the same projects, deployments, logs, and settings in
 the browser, and manages users.
 
 ## The manifest
@@ -310,7 +310,7 @@ target cluster.
 `skali` is the CLI: it builds on your machine, talks to the platform's API,
 and installs and maintains the servers. `skalid` is the control plane that
 runs on the cluster: it stores what you declared, compiles it into
-Kubernetes objects, and reports status back. The console is a web app served
+Kubernetes objects, and reports status back. The Studio is a web app served
 on the platform domain. k3s and a small set of operators (CloudNativePG,
 Traefik, cert-manager, SeaweedFS, optionally Longhorn) do the generic
 orchestration; skali owns the hosts it runs on and never adopts a cluster it

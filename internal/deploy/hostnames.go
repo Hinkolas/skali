@@ -28,7 +28,7 @@ func (e *HostnameConflict) Error() string {
 	return e.Field + ": hostname is already claimed by another environment"
 }
 
-// ReserveHostnames makes the installation's own hosts (console, registry)
+// ReserveHostnames makes the installation's own hosts (Studio, registry)
 // unclaimable by environments and releases reservations the configuration
 // no longer names, so a host the installation stops using (a removed
 // endpoint, a changed registry domain) becomes claimable as a route.

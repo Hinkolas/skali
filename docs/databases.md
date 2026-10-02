@@ -127,10 +127,10 @@ Parameters that reload live take effect without interruption.
 first and then the primary, so a single-instance pool is briefly
 unavailable, and a budget change moves `shared_buffers`.
 
-Admins see and change all of this on the console's System > Databases
+Admins see and change all of this on the Studio's System > Databases
 pages and with `skali database list`, `skali database show <name>` and
 `skali database set <name> --memory 4Gi | --auto-memory --set key=value
---unset key`. Every pool has its own console page: the overview shows
+--unset key`. Every pool has its own Studio page: the overview shows
 the pool's usage over time (CPU and memory of its instances, client
 connections, transactions, cache hit ratio and the size of its
 databases), its instances with their roles and nodes, and the databases

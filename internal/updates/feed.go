@@ -18,7 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/version"
 )
 
-// FeedErrorKind classifies why a scan could not complete, so the console
+// FeedErrorKind classifies why a scan could not complete, so the Studio
 // can say "the update servers are offline" instead of quoting a dial error.
 type FeedErrorKind string
 
@@ -38,7 +38,7 @@ const (
 	FeedInvalid FeedErrorKind = "invalid"
 )
 
-// FeedError is what every feed failure surfaces as: a kind the console
+// FeedError is what every feed failure surfaces as: a kind the Studio
 // renders and a detail an operator can chase in the logs.
 type FeedError struct {
 	Kind   FeedErrorKind

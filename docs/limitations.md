@@ -92,7 +92,7 @@ green and the application serves on every route that does point here; the
 run's "Issue TLS certificate" checkpoint ends skipped with a warning naming
 the domain; the ready summary prints `cert deferred · domain not pointing
 here yet` and a `warning:` line; the environment status carries the verdict
-per route (`edge.state`, `edge.deferred`); and the console marks the run
+per route (`edge.state`, `edge.deferred`); and the Studio marks the run
 (`1 route deferred` on the run card, `succeeded · with warnings` in the run
 panel) and the service (`DNS pending` beside its health, and on the route).
 The Certificate object stays rendered, and cert-manager holds off
@@ -105,7 +105,7 @@ domain comes with a later deploy while it still points at the old host).
 The certificate on hand was issued for the old domain, so for the new one it
 counts as unissued: the deploy defers the same way, and the old certificate
 keeps serving the old domain until the new one arrives. The checkpoint and
-the console name the domain it still serves (`issued for`). Once the new
+the Studio name the domain it still serves (`issued for`). Once the new
 domain reaches this edge but its issuance fails, the deploy gates and fails
 exactly like a first issuance would.
 
@@ -125,7 +125,7 @@ arrival as a `reconcile` run ("Domain arrived"). A second `reconcile` run
 closes the story once the certificate is issued, or fails with
 cert-manager's reason when the attempt after the arrival fails. No redeploy
 is needed. `skali route probe` (or "Probe now" beside the `DNS pending`
-badge in the console) checks the domains right now, prints the verdict per
+badge in the Studio) checks the domains right now, prints the verdict per
 resolved address, and counts a domain that answers here as arrived, which
 also asks for one fresh issuance of a certificate that keeps failing. Until
 then the https URL of a deferred route does not answer here. The verdict
@@ -229,10 +229,10 @@ to `local` today.
 ## Single management plane
 
 `skalid` runs as one deployment. The applications it manages keep running
-if it is down, but deploys, the console, and the API are unavailable until
+if it is down, but deploys, the Studio, and the API are unavailable until
 it is back.
 
-## Console updates need a coordinator-managed cluster and internet egress
+## Studio updates need a coordinator-managed cluster and internet egress
 
 The System / Software update page can move a reconciled (coordinator-managed)
 cluster to a newer release. The daemon's daily scan reads the GitHub releases
@@ -250,4 +250,4 @@ requires `skali dev reset` and deletes its local data after confirmation. Releas
 verified against `checksums.txt`
 over TLS; there is no signature yet (see the release checklist).
 
-Automatic backups are a per-environment setting with one schedule per environment; the cron expression is evaluated in UTC and there is no time zone setting yet. Retention only removes snapshots the schedule took and always keeps the newest; manual snapshots stay until deleted. A schedule on an environment whose revision declares no database, bucket, or volume is kept but skips every fire (the console marks it as having nothing to back up); snapshots start once a deploy adds one. One backup runs at a time per installation. See [prerelease safety](prerelease-safety.md) for hostname ownership, restore behavior, and the fresh-install requirement.
+Automatic backups are a per-environment setting with one schedule per environment; the cron expression is evaluated in UTC and there is no time zone setting yet. Retention only removes snapshots the schedule took and always keeps the newest; manual snapshots stay until deleted. A schedule on an environment whose revision declares no database, bucket, or volume is kept but skips every fire (the Studio marks it as having nothing to back up); snapshots start once a deploy adds one. One backup runs at a time per installation. See [prerelease safety](prerelease-safety.md) for hostname ownership, restore behavior, and the fresh-install requirement.

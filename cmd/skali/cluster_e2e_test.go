@@ -259,7 +259,7 @@ skalid:
 storage:
   driver: longhorn
 `, passwordFile))
-	// The tar imports the daemon, including its console, into containerd.
+	// The tar imports the daemon, including its Studio, into containerd.
 	initOut, code := h.vm("sudo", "/tmp/skali-a", "cluster", "init", "--config", initConfig,
 		"--image-tar", "/tmp/skalid-dev.tar")
 	require.Equal(t, 0, code, initOut)
@@ -278,7 +278,7 @@ storage:
 	// entrypoint answers a permanent redirect to HTTPS preserving host and
 	// path. Certificates stay pending by design (strict SNI refuses the
 	// TLS side), so content proofs go through the service proxy instead:
-	// the console owns the domain root and the daemon answers behind /api.
+	// the Studio owns the domain root and the daemon answers behind /api.
 	edgeRedirect := h.vmOK("curl", "-s", "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}",
 		"--resolve", "skali.e2e.test:80:127.0.0.1", "http://skali.e2e.test/api/healthz")
 	require.Regexp(t, `^30[18] https://skali\.e2e\.test/api/healthz`, edgeRedirect)

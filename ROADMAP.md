@@ -5,7 +5,7 @@ in the order it matters, without prescribing how. The code and its comments
 describe what exists; anything below may be reworked freely, and nothing
 that exists is sacred.
 
-Rule of thumb: production confidence first, then make the console honest,
+Rule of thumb: production confidence first, then make the Studio honest,
 then features. Everything is dogfooded on a real cluster before it counts.
 
 ## Where we are (2026-08-26)
@@ -33,8 +33,8 @@ Working and used daily:
   with per-environment schedules and retention, cross-env restore,
   project-wide listing, and snapshot deletion.
 - Metrics: cpu/mem per node and per service, storage per node and per
-  project (volumes, databases, objects, temporary), in the API and console.
-- Web console on real APIs: projects, services, deployments, runs (cancel,
+  project (volumes, databases, objects, temporary), in the API and Studio.
+- Studio on real APIs: projects, services, deployments, runs (cancel,
   redeploy, promote), metrics, values, users, nodes, account/2FA; every
   other tab is an honest placeholder.
 - Agent skill (`skali skill install`, references served at the target's
@@ -83,13 +83,13 @@ The goal of this block: I can put a paying workload on skali and sleep.
       app nodes, db nodes) actually installed and running. Run the never-run
       live checks against it: HA server join, availability tiers,
       diagnose/repair, seaweed replication, edge failover.
-- [ ] Rolling `skalid` and the web console on a live cluster without
+- [ ] Rolling `skalid` and the Studio on a live cluster without
       dropping in-flight runs or user traffic. Old daemon versions must not
-      quietly serve after an upgrade. (Console updates refuse to start
+      quietly serve after an upgrade. (Studio updates refuse to start
       while runs are in flight, which covers the common case, not a roll
       that begins mid-run.)
 - [x] Basic metrics (cpu/mem/disk per node and per service, database and
-      bucket usage) exposed in API and console.
+      bucket usage) exposed in API and Studio.
 - [ ] Minimal alerting: node down, workload crashlooping, disk or quota near
       full, backup failed, certificate not renewing. Delivery can start as
       email or webhook.
@@ -101,9 +101,9 @@ The goal of this block: I can put a paying workload on skali and sleep.
       lost skalid database. Each path tried once.
 - [ ] Move a real production workload onto skali and leave it there.
 
-## 2. Console catch-up
+## 2. Studio catch-up
 
-Make the web console honest: every tab is real or gone.
+Make the Studio honest: every tab is real or gone.
 
 - [ ] Service logs, environment (resolved values), domains, and deployments
       detail on the existing APIs. Deployments are real; logs, environment,
@@ -117,9 +117,9 @@ Make the web console honest: every tab is real or gone.
 - [x] Remove or hide until real: the service graph mock and the access
       tokens control are gone; scaling, alerts, and the rest are honest
       placeholders. Left: the sidebar collapse toast.
-- [ ] Web terminal (exec) and rollback from the console. Run cancel,
+- [ ] Web terminal (exec) and rollback from the Studio. Run cancel,
       redeploy, and promote are done.
-- [x] Decided: the console is a status and operations surface; `skali.yaml`
+- [x] Decided: the Studio is a status and operations surface; `skali.yaml`
       stays the only source of truth for definitions.
 
 ## 3. Product features
@@ -182,7 +182,7 @@ Ordered loosely by how often I have wanted them.
       user, preserves existing accounts/passwords and unrelated settings,
       and affects subsequent deployments; fresh installs still bootstrap
       their first admin.
-- [x] Console-driven platform updates: a daily release scan (GitHub
+- [x] Studio-driven platform updates: a daily release scan (GitHub
       releases, stable or beta channel), the System / Software update page
       with per-node progress, automatic updates, and the coordinator moving
       every node's hostd and k3s plus the bundle in one operation.
@@ -213,7 +213,7 @@ Ordered loosely by how often I have wanted them.
       every manifest fence in the skill's served references compiles under
       test, and the schema is generated from the Go types.
 - [ ] Simplify what grew crooked: revisit CLI command grouping, flag names,
-      and error wording once the console catch-up shows what is actually
+      and error wording once the Studio catch-up shows what is actually
       used.
 - [ ] Reduce e2e wall-clock and flakes; keep unit, live, dev, and cluster
       suites runnable on a laptop.

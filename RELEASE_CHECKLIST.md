@@ -45,7 +45,7 @@ collected at the end.
       example.com-style values.
 - [ ] `install.sh` private-repo language (GITHUB_TOKEN branch, lines
       11, 46-49, 76) becomes dead code once public; simplify.
-- [ ] Align `web/package.json` version (`0.0.1`) with the release tag.
+- [ ] Align `studio/package.json` version (`0.0.1`) with the release tag.
 - [ ] **Prebaked dev node image** (cold-start follow-up to the built-in
       image imports in `internal/localdev/images.go`): publish a
       `skali-dev-node` image built FROM the pinned `rancher/k3s`, with an
@@ -93,10 +93,10 @@ but these settings must be applied on GitHub.
       (`sudo` on the Linux server, plain on the Mac), a `skali cluster join`
       from a released CLI with no local `skali-hostd` (it downloads the
       release's asset and caches it), and `skali cluster reset-password`
-      (never run on a live cluster yet). Then tag `v0.1.0-alpha.2` and update to it from the console
+      (never run on a live cluster yet). Then tag `v0.1.0-alpha.2` and update to it from the Studio
       (System / Software update on the beta channel): every node's hostd
-      and k3s move, the bundle rolls, and the console reconnects.
-- [ ] **Cluster nodes reach GitHub.** Console updates download
+      and k3s move, the bundle rolls, and the Studio reconnects.
+- [ ] **Cluster nodes reach GitHub.** Studio updates download
       `skali-hostd` and k3s from github.com on every node and the daemon
       scans api.github.com; confirm egress or set `SKALI_RELEASE_BASE`
       in `/etc/skali/hostd.env` and `SKALI_UPDATE_FEED_URL` to a mirror.
@@ -130,7 +130,7 @@ but these settings must be applied on GitHub.
 
 - [x] **Public-readiness fixes (2026-09-09).** Token config saves repair file
       permissions atomically. Forwarded client addresses require trusted peers;
-      platform proxy discovery uses exact pod IPs and the console has a Traefik
+      platform proxy discovery uses exact pod IPs and the Studio has a Traefik
       ingress policy. Regression tests cover spoofed headers, discovery failure,
       and existing loose token files. Documented encryption-key preservation and
       the trusted-workload boundary; removed the unsupported install domain and
@@ -144,8 +144,8 @@ but these settings must be applied on GitHub.
       changing it. Future releases append migrations and preserve this baseline;
       no further history squash after `v0.1.0-alpha.1`.
 - [x] **ROADMAP.md reconciled** (2026-08-26): status section refreshed,
-      permission system, metrics, bucket backup, console cleanup, the
-      console-scope decision, and skill/schema lockstep checked off; new
+      permission system, metrics, bucket backup, Studio cleanup, the
+      Studio-scope decision, and skill/schema lockstep checked off; new
       items for stateful removal and the registry-node move; the security
       pass item now lists the audit's open findings.
 - [x] **Project deletion guard** (2026-08-26): `project.Delete` refuses

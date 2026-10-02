@@ -22,12 +22,12 @@ This page is for working on skali itself. Using skali is covered by the
   `checksums.txt`), swaps itself, restarts, and the new binary moves k3s to
   its own pin; the leader then converges the bundle to the release's images.
   `skalid` only writes the desired version into the cluster state (the
-  console's Updates page, `internal/updates`); it never executes on a host.
+  Studio's Updates page, `internal/updates`); it never executes on a host.
   Both units read `/etc/skali/hostd.env`, where `SKALI_RELEASE_BASE` can
   point downloads at a mirror or a test server.
-- **`web/`**: the console, a static SvelteKit SPA. Browser requests go
+- **`studio/`**: the Studio, a static SvelteKit SPA. Browser requests go
   directly to the Go API at `/api/v1/*`; Go owns the HttpOnly session cookie.
-  `task build:web` builds and copies assets into `internal/webui/dist`, and
+  `task build:studio` builds and copies assets into `internal/studio/dist`, and
   `task build` embeds them in `skalid`. There is no production Node service.
   Vite proxies `/api` to the local daemon during development.
 
@@ -37,7 +37,7 @@ fresh coordinator reports independently of `state.json`; alpha.4 writers
 preserve the sidecar when re-encoding their older state schema. Both entries
 share the ConfigMap's compare-and-swap transaction. Same-release repairs use
 the existing resumable node-step journal and do not become topology changes.
-The aggregate update status is shared by API validation, the console, and the
+The aggregate update status is shared by API validation, the Studio, and the
 authenticated CLI. Convergence additionally requires exact host/coordinator
 versions, the release's Kubernetes pin, and a completed exact platform rollout.
 See [operator update guidance](updates.md), including bootstrap and recovery.
@@ -74,14 +74,14 @@ task dev
 go run ./cmd/skali remote add dev http://localhost:7070
 go run ./cmd/skali remote status
 
-# 6. The console (Vite on :5173, /api proxied to the local daemon)
-(cd web && npm ci)
-task dev:web
+# 6. The Studio (Vite on :5173, /api proxied to the local daemon)
+(cd studio && npm ci)
+task dev:studio
 ```
 
 An API-only daemon has nothing to show until something is deployed. `task
 seed` (`skalid seed`) fabricates a data-rich installation for working on the
-console: seven users under `@seed.skali.local` (password `seed-password`,
+Studio: seven users under `@seed.skali.local` (password `seed-password`,
 `ada@` is an instance admin), five projects with several environments each,
 memberships and environment cells, a week of deployment history (successes,
 a failed rollout, a rollback, restarts, backups, one deployment still in
@@ -152,7 +152,7 @@ the diff before keeping it.
 ```sh
 # Start the project Postgres and run all Go tests, including DB-backed tests:
 task test:db
-(cd web && npm test && npm run check && npm run lint)
+(cd studio && npm test && npm run check && npm run lint)
 
 # Live cluster tests (observation, apply/prune, healing, and the
 # substrate: shared Postgres and the SeaweedFS object store, driven from
@@ -195,14 +195,14 @@ task install:server # source install: build everything and run the installer
 ```
 
 Releases are cut by tagging `v*`: goreleaser builds the binaries and
-`install.sh`, and the workflow publishes the multi-architecture `skalid` image with its embedded console.
+`install.sh`, and the workflow publishes the multi-architecture `skalid` image with its embedded Studio.
 The bootstrap script defaults to `SKALI_CHANNEL=stable`; `SKALI_CHANNEL=beta`
 includes alpha, beta, RC, and stable releases, selecting the highest version.
 `SKALI_VERSION=vX.Y.Z` pins an exact tag and overrides channel selection.
 It resolves the release once before fetching the CLI, host daemon, and checksums.
 `skali upgrade` is the same selection in Go (`--channel`, `--version`) for a CLI
 that is already installed; `internal/updates.GitHubFeed` ranks releases for it
-and for the console's update scan alike.
+and for the Studio's update scan alike.
 Tag with `task release:tag V=v0.1.0` rather than `git tag` by hand: it
 validates the goreleaser config, refuses a dirty tree, a branch other than
 main, a HEAD that is not origin/main, a malformed version, or a tag that
@@ -261,7 +261,7 @@ internal/
   substrate/     shared Postgres (CNPG) and S3 (SeaweedFS) provisioning
   updates/       release scan, update settings, and the cluster-state bridge
   valuestore/    versioned, encrypted, write-only environment values
-web/           the console (SvelteKit)
+studio/           the Studio (SvelteKit)
 ```
 
 List and overview surfaces read what the kernel already knows: every
@@ -269,25 +269,25 @@ reconcile pass records the environment's worst service health in memory
 (`internal/reconcile/health.go`), and `GET /v1/projects?include=summary`
 serves that verdict in one batch read. No list endpoint runs the status
 projection or a per-item database read in a loop; detail endpoints such as
-`GET /v1/environments/{id}/status` project on demand. The console follows
+`GET /v1/environments/{id}/status` project on demand. The Studio follows
 the same rule: the shell loads only what every page needs, and each page
 fetches its own data.
 
 Run `scripts/check-release-snapshot.sh` to rehearse a clean, nonpublishing release and verify its metadata against the built CLI.
 
-### Static console builds
+### Static Studio builds
 
-`task build` and the source Dockerfile build the console before compiling
+`task build` and the source Dockerfile build the Studio before compiling
 `skalid`. GoReleaser does the same for releases and `task release:snapshot`
 (including snapshots with Docker skipped), so these commands require Node 22.
 CLI-only installation and ordinary Go tests do not require a frontend build.
 A plain `go run ./cmd/skalid` without built assets keeps the API available and
-returns 503 for console requests; use `task dev:web` for hot reload.
+returns 503 for Studio requests; use `task dev:studio` for hot reload.
 
 Set `SKALI_COOKIE_SECURE=false` only for a bare `go run ./cmd/skalid` over
 plain HTTP, as in `.env.example`; the local platform (`skali dev`) serves
 https on the default ports from a development CA and keeps cookies secure
 like a managed installation. The static
 conversion targets fresh installs; recreate disposable clusters that used the
-separate console deployment. New installations and subsequent upgrades only
+separate Studio deployment. New installations and subsequent upgrades only
 need the daemon image; there are no web-image flags or `web` init-config block.

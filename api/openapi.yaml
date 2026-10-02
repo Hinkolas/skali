@@ -4,7 +4,7 @@ info:
   description: |
     Client-facing API of skali. Authentication is email+password with
     optional TOTP two-factor; sessions are opaque bearer tokens. The same
-    API serves every client: the web console, the `skali` CLI, and future
+    API serves every client: the Studio, the `skali` CLI, and future
     native apps.
 
     There is no registration endpoint: users are created by an instance
@@ -29,10 +29,10 @@ info:
     `403 reauth_required`; clients recover by confirming identity at
     `/v1/auth/reauth` and retrying the original request. A terminal can
     instead confirm in the browser through device authorization
-    (`/v1/auth/device/*`): the CLI opens a request, the signed-in console
+    (`/v1/auth/device/*`): the CLI opens a request, the signed-in Studio
     approves it, and the CLI's session is fresh again.
 
-    The embedded console uses the same API with an HttpOnly `skali_session`
+    The embedded Studio uses the same API with an HttpOnly `skali_session`
     cookie. Login and 2FA verification accept `session_transport: cookie` to
     set that cookie without returning the session token in JSON; the default
     `bearer` mode and CLI device-token flow retain their token responses.
@@ -76,7 +76,7 @@ servers:
   - url: /
     description: Same host the spec is served from.
   - url: /api
-    description: The public path on a production cluster, where the domain root serves the web console.
+    description: The public path on a production cluster, where the domain root serves the Studio.
 
 security:
   - bearerAuth: []
@@ -340,7 +340,7 @@ paths:
       description: |
         CLI side of browser login. Answers a device code to poll with and
         a user code the person confirms at `/auth/device?code=...` in the
-        console. The caller's address and user agent become the minted
+        Studio. The caller's address and user agent become the minted
         session's. Public; rate limited per address.
       tags: [auth]
       security: []
@@ -369,7 +369,7 @@ paths:
       summary: Open a browser device authorization for sudo mode
       description: |
         Like `startDeviceLogin`, but bound to the calling session: approval
-        by that session's owner (behind the console's own reauth checkpoint)
+        by that session's owner (behind the Studio's own reauth checkpoint)
         re-stamps the session's sudo window instead of minting a token, so
         a stale terminal session confirms identity in the browser. Not
         behind the reauth gate, since the caller is stale by definition.
@@ -435,7 +435,7 @@ paths:
       operationId: lookupDevice
       summary: Describe a pending device authorization
       description: |
-        Console side: what the person sees before approving. Accepts the
+        Studio side: what the person sees before approving. Accepts the
         code in any case, with or without the dash. Only pending, unexpired
         requests answer; everything else is `404`.
       tags: [auth]
@@ -881,7 +881,7 @@ paths:
       description: |
         Updates the display name and/or the draft source mode. Switching
         the source mode is an explicit action with product consequences:
-        `managed` documents are edited through the web/API, `file`
+        `managed` documents are edited through the Studio/API, `file`
         documents are replaced by CLI/Git submissions.
       tags: [projects]
       requestBody:
@@ -1083,7 +1083,7 @@ paths:
       description: >-
         Project read. Memberships with the user's email and name, sorted by
         email. Each entry also carries the member's effective role on every
-        environment the caller may read (the grid the CLI and console show),
+        environment the caller may read (the grid the CLI and Studio show),
         with the explicit per-environment role when one exists.
       tags: [access]
       responses:
@@ -2369,7 +2369,7 @@ paths:
         buffer hits and reads with the derived cache hit ratio, the
         logical size of every database). Replica-side activity is not
         observed. `current` is the newest sample with the denominators
-        the console draws against, null when the sampler has not seen the
+        the Studio draws against, null when the sampler has not seen the
         pool in the last minutes. Served from stored samples; empty series
         before the sampler has written any.
       tags: [system]
@@ -4070,7 +4070,7 @@ components:
       description: |
         A pending browser device authorization. The device code is the
         polling secret, shown to nobody; the user code is what the person
-        confirms in the console, rendered XXXX-XXXX.
+        confirms in the Studio, rendered XXXX-XXXX.
       required: [device_code, user_code, expires_at, interval]
       properties:
         device_code:
@@ -5577,7 +5577,7 @@ components:
           items: { type: integer, nullable: true }
         current:
           type: [object, "null"]
-          description: The newest sample within the last minutes, with the denominators the console draws against.
+          description: The newest sample within the last minutes, with the denominators the Studio draws against.
           required: [sampled_at, cpu_millicores, memory_bytes, instances, instances_ready, connections, database_bytes, memory_budget_bytes, max_connections]
           properties:
             sampled_at: { type: string, format: date-time }
