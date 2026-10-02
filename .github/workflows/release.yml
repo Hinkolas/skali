@@ -58,3 +58,15 @@ jobs:
           mkdir -p .cache/published-release
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern release.json --dir .cache/published-release --clobber
           go run ./cmd/skali-schema --schema release --version "$RELEASE_TAG" --output .cache/published-release/release.json --verify
+
+  # The site serves the newest release's schemas; rebuild it on main once
+  # this release is published (pages.yml explains why not from the tag).
+  website:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

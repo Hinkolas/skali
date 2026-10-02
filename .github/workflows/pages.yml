@@ -1,0 +1,61 @@
+name: pages
+
+# Builds website/ and deploys it to GitHub Pages (skali.dev). The site serves
+# install.sh from main and the editor schemas from the newest release tag
+# (website/scripts/assets.mjs), so it redeploys when either moves: on pushes
+# to main that touch the site or install.sh, and from release.yml after every
+# published release. Releases dispatch this workflow on main instead of
+# deploying from the tag, so the github-pages environment only ever accepts
+# main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - website/**
+      - install.sh
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; a queued run waits instead of cancelling a
+# deployment halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # assets.mjs reads the schemas from the newest tag
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - uses: actions/configure-pages@v6
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: website/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

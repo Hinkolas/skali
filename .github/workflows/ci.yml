@@ -4,10 +4,11 @@ name: ci
 # (via workflow_call) every release tag. Advisory scans
 # live in audit.yml so a new upstream CVE cannot turn an unrelated push red.
 #
-# On pull requests the `changes` job classifies the diff and the go, studio and
-# release-config jobs only run for the areas that changed; a docs-only PR
-# runs the secret scan and nothing else. A job skipped by its `if` reports
-# as passing for branch protection, so the required-check names stay stable.
+# On pull requests the `changes` job classifies the diff and the go, studio,
+# website, and release-config jobs only run for the areas that changed; a
+# docs-only PR runs the secret scan and nothing else. A job skipped by its
+# `if` reports as passing for branch protection, so the required-check names
+# stay stable.
 # Release tags run everything.
 on:
   pull_request:
@@ -29,6 +30,7 @@ jobs:
     outputs:
       go: ${{ steps.classify.outputs.go }}
       studio: ${{ steps.classify.outputs.studio }}
+      website: ${{ steps.classify.outputs.website }}
       release: ${{ steps.classify.outputs.release }}
     steps:
       - uses: actions/checkout@v5
@@ -43,13 +45,13 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          go=false; studio=false; release=false
+          go=false; studio=false; website=false; release=false
           if [ "$EVENT" != pull_request ]; then
             # Tags (via release.yml) and manual runs check everything.
-            go=true; studio=true; release=true
+            go=true; studio=true; website=true; release=true
           elif ! files=$(git diff --name-only "$BASE...$HEAD"); then
             echo "::warning::could not diff $BASE...$HEAD; running every check"
-            go=true; studio=true; release=true
+            go=true; studio=true; website=true; release=true
           else
             # First match wins. Anything not listed is treated as source and
             # runs the Go checks plus the release rehearsal, so a new
@@ -58,20 +60,23 @@ jobs:
             while IFS= read -r f; do
               [ -n "$f" ] || continue
               case "$f" in
-                .github/workflows/ci.yml) go=true; studio=true; release=true ;;
+                .github/workflows/ci.yml) go=true; studio=true; website=true; release=true ;;
                 README.md|ROADMAP.md|RELEASE_CHECKLIST.md|SECURITY.md|LICENSE|docs/*|.github/*|.claude/*|.gitignore|.gitleaks.toml|.env.example|Taskfile.yml|compose.yaml) ;;
                 studio/*) studio=true; release=true ;;
-                .goreleaser.yaml|.dockerignore|scripts/*|build/*|install.sh) release=true ;;
+                website/*) website=true ;;
+                install.sh) website=true; release=true ;;
+                .goreleaser.yaml|.dockerignore|scripts/*|build/*) release=true ;;
                 *) go=true; release=true ;;
               esac
             done <<EOT
           $files
           EOT
           fi
-          echo "go=$go studio=$studio release=$release"
+          echo "go=$go studio=$studio website=$website release=$release"
           {
             echo "go=$go"
             echo "studio=$studio"
+            echo "website=$website"
             echo "release=$release"
           } >>"$GITHUB_OUTPUT"
 
@@ -141,10 +146,10 @@ jobs:
           sqlc generate
           git diff --exit-code
 
-      # studio/ is excluded like task test: node_modules occasionally ships
-      # stray Go packages.
-      - run: go vet $(go list ./... | grep -v '/studio/')
-      - run: go test $(go list ./... | grep -v '/studio/')
+      # studio/ and website/ are excluded like task test: node_modules
+      # occasionally ships stray Go packages.
+      - run: go vet $(go list ./... | grep -vE '/(studio|website)/')
+      - run: go test $(go list ./... | grep -vE '/(studio|website)/')
       - name: Linux restore ownership
         run: |
           go test -c -o /tmp/skali-backup-tests ./internal/backup
@@ -167,6 +172,27 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - run: npm run lint
+      - run: npm run build
+
+  website:
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the build copies the schemas from the newest tag
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npm run check
       - run: npm run lint
       - run: npm run build
 
