@@ -226,14 +226,14 @@ func TestLiveObjectStorePublicEdge(t *testing.T) {
 		return true
 	}, 3*time.Minute, 5*time.Second)
 	edgeHost("s3.first.example.test")
-	require.Equal(t, "https://s3.first.example.test", controller.bucketEndpoint())
+	require.Equal(t, "https://s3.first.example.test", mustEndpoint(t, controller, store.BucketClaim{}))
 
 	// Hostname change: the same objects carry the new host, nothing of the
 	// old one remains.
 	controller.cfg.S3Domain = "s3.second.example.test"
 	require.NoError(t, controller.reconcilePublicEdge(ctx))
 	edgeHost("s3.second.example.test")
-	require.Equal(t, "https://s3.second.example.test", controller.bucketEndpoint())
+	require.Equal(t, "https://s3.second.example.test", mustEndpoint(t, controller, store.BucketClaim{}))
 
 	// Disable: every edge object goes, the legacy Ingress with them, and
 	// the endpoint falls back to the in-cluster gateway. A repeated pass
@@ -241,7 +241,7 @@ func TestLiveObjectStorePublicEdge(t *testing.T) {
 	controller.cfg.S3Domain = ""
 	require.NoError(t, controller.reconcilePublicEdge(ctx))
 	edgeAbsent()
-	require.Equal(t, InternalBucketEndpoint(), controller.bucketEndpoint())
+	require.Equal(t, InternalBucketEndpoint(), mustEndpoint(t, controller, store.BucketClaim{}))
 	require.NoError(t, controller.reconcilePublicEdge(ctx))
 	edgeAbsent()
 

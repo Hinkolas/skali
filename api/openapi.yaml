@@ -1955,8 +1955,10 @@ paths:
       summary: Get a bucket service's non-secret connection projection
       description: |
         Claim phase, visibility, storage quota, and, once provisioned, the
-        endpoint, bucket name, region, and credential version. Served from
-        durable substrate rows; credential values never appear here.
+        endpoint (the bucket's route origin, or the in-cluster gateway),
+        the in-cluster endpoint, bucket name, region, and credential
+        version. Served from durable substrate rows; credential values
+        never appear here.
       responses:
         "200":
           description: The connection projection.
@@ -1971,6 +1973,7 @@ paths:
                   visibility: { type: string }
                   storage_quota_bytes: { type: integer }
                   endpoint: { type: string }
+                  internal_endpoint: { type: string }
                   bucket: { type: string }
                   region: { type: string }
                   credential_version: { type: integer }

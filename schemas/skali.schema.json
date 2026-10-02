@@ -781,6 +781,32 @@
             },
             "additionalProperties": false
           },
+          "route": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "required": [
+              "domain"
+            ],
+            "properties": {
+              "domain": {
+                "type": "string",
+                "description": "Public hostname serving this bucket. Project variable expressions are allowed.",
+                "minLength": 1
+              },
+              "tls": {
+                "type": "string",
+                "description": "TLS policy: automatic (certificate plus HTTP-to-HTTPS redirect), optional (certificate, plain HTTP still served), or disabled.",
+                "enum": [
+                  "automatic",
+                  "optional",
+                  "disabled"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
           "versioning": {
             "type": "string",
             "enum": [

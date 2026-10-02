@@ -122,6 +122,9 @@ type BucketSpec struct {
 	ExpireNoncurrentAfterSeconds int64
 	// CORS is the compiled cors block as JSON; nil declares none.
 	CORS []byte
+	// Route is the bucket's public hostname as JSON ({"domain","tls"},
+	// domain resolved and canonical); nil keeps the bucket in-cluster.
+	Route []byte
 }
 
 type Service struct {

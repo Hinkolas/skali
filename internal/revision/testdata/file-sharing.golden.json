@@ -3,7 +3,7 @@
   "project": "file-sharing",
   "environment": "production",
   "compilerVersion": "test",
-  "definitionHash": "00eb2847e7a5f9fea25cd384b3818b25e48eafacf25cf7f663a0f6179de2bed0",
+  "definitionHash": "2680dfa05d2bcf656544291a735e0cacae2ce8363afa6746639b6eb0b63d5c1f",
   "definition": {
     "schema": 1,
     "name": "file-sharing",
@@ -283,7 +283,18 @@
         "visibility": "private",
         "storageQuotaBytes": 20000000000,
         "versioning": "disabled",
-        "abortIncompleteUploadsAfterSeconds": 21600
+        "abortIncompleteUploadsAfterSeconds": 21600,
+        "route": {
+          "domain": {
+            "parts": [
+              {
+                "kind": "project_variable",
+                "name": "STORAGE_DOMAIN"
+              }
+            ]
+          },
+          "tls": "automatic"
+        }
       }
     },
     "requiredVariables": [
@@ -303,6 +314,10 @@
         "hasDefault": true
       },
       {
+        "name": "STORAGE_DOMAIN",
+        "required": true
+      },
+      {
         "name": "UPLOAD_TOKEN",
         "required": true
       }
@@ -314,9 +329,12 @@
       ]
     }
   },
-  "valuesHash": "3f49da146f90954ad8d615f085b0c03bfeb559124cedcca0ac35dd228082ac8e",
+  "valuesHash": "765447b6565f7347f699024e9ffc7ad728bb1da4d076fcb1446c3395eda3a605",
   "secrets": {
     "APP_DOMAIN": {
+      "version": 1
+    },
+    "STORAGE_DOMAIN": {
       "version": 1
     },
     "UPLOAD_TOKEN": {
@@ -337,5 +355,5 @@
     "object-storage",
     "edge"
   ],
-  "checksum": "76e835a8d76af32dec56a1d20a3d6c918afccd508680a6428deafd5185d2d7c0"
+  "checksum": "18348dbc0ce99391c4c2635a66eb5d14584ab4dbf18f91cf89e4140285596bf7"
 }

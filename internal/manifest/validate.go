@@ -111,6 +111,9 @@ func Validate(document *Document) yamldoc.Diagnostics {
 
 	for _, key := range utils.SortedKeys(project.Buckets) {
 		validateStableKey(&diagnostics, document, "buckets."+key, key)
+		if route := project.Buckets[key].Route; route != nil && route.Domain == "" {
+			add("buckets."+key+".route.domain", "is required")
+		}
 	}
 
 	return diagnostics

@@ -285,6 +285,36 @@ func (k *Kernel) edgeResources(environmentID uuid.UUID, definition compiler.Proj
 	return resources
 }
 
+// bucketEdgeResources is edgeResources for one bucket's route: at most one
+// KindEdge resource, named by the bucket's certificate.
+func (k *Kernel) bucketEdgeResources(environmentID uuid.UUID, definition compiler.ProjectDefinition, key string) []module.ObservedResource {
+	bucket, ok := definition.Buckets[key]
+	if !ok || bucket.Route == nil || bucket.Route.TLS == "disabled" {
+		return nil
+	}
+	k.domainMu.Lock()
+	defer k.domainMu.Unlock()
+	name := rendering.BucketRouteTLSName(definition.Name, key)
+	record, ok := k.routes[routeKeyOf(environmentID, name)]
+	if !ok {
+		return nil
+	}
+	state := ""
+	if entry, ok := k.domains[record.domain]; ok {
+		state = string(entry.result.State)
+	}
+	return []module.ObservedResource{{
+		Kind: module.KindEdge, Name: name,
+		Edge: &module.EdgeReach{
+			Domain:   record.domain,
+			State:    state,
+			Deferred: record.deferred,
+			Mismatch: record.mismatch,
+			Issued:   record.issued,
+		},
+	}}
+}
+
 func routeKeyOf(environmentID uuid.UUID, certName string) routeKey {
 	return routeKey{environment: environmentID, certificate: certName}
 }

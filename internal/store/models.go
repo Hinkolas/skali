@@ -132,6 +132,7 @@ type BucketClaim struct {
 	CreatedAt                    time.Time
 	UpdatedAt                    time.Time
 	Cors                         []byte
+	Route                        []byte
 }
 
 type Build struct {

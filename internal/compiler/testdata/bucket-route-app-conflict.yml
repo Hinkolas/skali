@@ -1,0 +1,16 @@
+name: bucket-route-conflict
+applications:
+  web:
+    image: example.invalid/web:1
+    ports:
+      http:
+        port: 8080
+    routes:
+      public:
+        domain: files.example.com
+        path: /app
+        port: http
+buckets:
+  files:
+    route:
+      domain: files.example.com

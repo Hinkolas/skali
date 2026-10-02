@@ -59,14 +59,38 @@ type ClaimManager interface {
 	// credential version). Applications referencing the service fold it
 	// into their pod-template identity, so a changed output rolls them.
 	Generations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error)
+	// BucketNames reports, per bucket key, the store bucket name its live
+	// claim allocated. Bucket routes key the edge on it, so the renderer
+	// needs it before the claim is provisioned.
+	BucketNames(ctx context.Context, environmentID uuid.UUID) (map[string]string, error)
 }
 
 // ClaimEnsureInput carries the environment identity the portable revision
-// deliberately does not.
+// deliberately does not, and the per-environment facts the claims record.
 type ClaimEnsureInput struct {
 	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
 	Revision      *revision.Revision
+	// BucketRoutes carries each routed bucket's hostname, resolved against
+	// the environment's values and canonical, keyed by bucket key. The
+	// substrate records it on the claim and publishes it as the endpoint.
+	BucketRoutes map[string]BucketRoute
+}
+
+// BucketRoute is one bucket's resolved public hostname and TLS policy; its
+// JSON form is what the claim row stores.
+type BucketRoute struct {
+	Domain string `json:"domain"`
+	TLS    string `json:"tls"`
+}
+
+// Endpoint is the origin consumers sign against: https unless TLS is
+// disabled on the route.
+func (r BucketRoute) Endpoint() string {
+	if r.TLS == "disabled" {
+		return "http://" + r.Domain
+	}
+	return "https://" + r.Domain
 }
 
 // ClaimState is one claim's readiness for batch gating and wait steps.

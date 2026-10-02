@@ -73,10 +73,11 @@ applications:
 }
 
 func TestEmbeddedChanges(t *testing.T) {
-	require.Equal(t, 5, CurrentRevision())
-	require.Len(t, ChangesSince(0), 5)
-	require.Empty(t, ChangesSince(5))
+	require.Equal(t, 6, CurrentRevision())
+	require.Len(t, ChangesSince(0), 6)
+	require.Empty(t, ChangesSince(6))
 	require.Equal(t, "skali", ChangesSince(4)[0].Path)
+	require.Equal(t, "buckets.*.route", ChangesSince(5)[0].Path)
 }
 
 func TestLoadChangesValidatesFiles(t *testing.T) {

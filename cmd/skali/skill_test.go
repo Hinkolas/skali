@@ -102,13 +102,14 @@ func TestSkillReadSince(t *testing.T) {
 	require.Contains(t, out, "manifest changes since revision 0")
 	require.Contains(t, out, "  1  removed  version")
 	require.Contains(t, out, "  5  removed  skali")
-	for _, value := range []string{"-1", "6", "v0.1.0-rc.3", "latest", ""} {
+	require.Contains(t, out, "  6  added  buckets.*.route")
+	for _, value := range []string{"-1", "7", "v0.1.0-rc.3", "latest", ""} {
 		_, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", value) })
 		require.ErrorContains(t, err, "must be a revision")
 	}
-	out, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", "5") })
+	out, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", "6") })
 	require.NoError(t, err)
-	require.Contains(t, out, "no manifest changes since revision 5")
+	require.Contains(t, out, "no manifest changes since revision 6")
 	for _, args := range [][]string{{"skill", "read", "cli", "--since", "0"}, {"skill", "read", "--since", "0"}} {
 		_, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), args...) })
 		require.ErrorContains(t, err, "--since applies to the manifest topic")

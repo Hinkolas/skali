@@ -28,6 +28,10 @@ type builder struct {
 	variablePath map[string]string
 	dependencies map[string]map[string]struct{}
 	routes       map[string]string
+	// routeDomains maps each application route's canonical domain
+	// expression to the first route declaring it, any path: a bucket route
+	// cannot share a hostname with an application yet.
+	routeDomains map[string]string
 }
 
 func Compile(document *manifest.Document) (*Result, error) {
@@ -40,6 +44,7 @@ func Compile(document *manifest.Document) (*Result, error) {
 		variablePath: make(map[string]string),
 		dependencies: make(map[string]map[string]struct{}),
 		routes:       make(map[string]string),
+		routeDomains: make(map[string]string),
 	}
 	source := document.Project
 	definition := ProjectDefinition{
@@ -216,6 +221,9 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			b.add(path, "conflicts with route %s; domain and path pairs must be unique", previous)
 		} else {
 			b.routes[conflictKey] = path
+		}
+		if _, exists := b.routeDomains[canonicalExpression(domain)]; !exists {
+			b.routeDomains[canonicalExpression(domain)] = path
 		}
 		result.Routes[name] = compiled
 	}
@@ -475,7 +483,42 @@ func (b *builder) compileBucket(key string, source manifest.Bucket) BucketClaim 
 		AbortIncompleteUploadsAfterSeconds: b.duration(base+".lifecycle.abortIncompleteUploadsAfter", source.Lifecycle.AbortIncompleteUploadsAfter) / 1000,
 		ExpireNoncurrentVersionsAfterSec:   b.duration(base+".lifecycle.expireNoncurrentVersionsAfter", source.Lifecycle.ExpireNoncurrentVersionsAfter) / 1000,
 		CORS:                               b.compileBucketCORS(base+".cors", source.CORS),
+		Route:                              b.compileBucketRoute(base+".route", source.Route),
 	}
+}
+
+// compileBucketRoute validates one declared bucket route the way an
+// application route's domain is validated: a project-variable expression
+// or a canonical hostname, and a TLS policy from the shared vocabulary.
+// The hostname may be shared by other buckets (each serves its own path)
+// but not by an application route: the edge would have to split one host
+// by path, which bucket routes do not support yet.
+func (b *builder) compileBucketRoute(base string, source *manifest.BucketRoute) *BucketRoute {
+	if source == nil {
+		return nil
+	}
+	domain, err := parseExpression(source.Domain, b.document.Project, false)
+	if err != nil {
+		b.add(base+".domain", "%s", err)
+		return nil
+	}
+	if !domain.HasProjectVariables() {
+		if _, err := edge.CanonicalDomain(domain.Literal()); err != nil {
+			b.add(base+".domain", "%s", err)
+		}
+	}
+	b.collectVariables(base+".domain", domain)
+	if previous, exists := b.routeDomains[canonicalExpression(domain)]; exists {
+		b.add(base+".domain", "conflicts with route %s; a bucket cannot share a hostname with an application route", previous)
+	}
+	tls := source.TLS
+	if tls == "" {
+		tls = "automatic"
+	}
+	if !oneOf(tls, "automatic", "optional", "disabled") {
+		b.add(base+".tls", "must be automatic, optional, or disabled")
+	}
+	return &BucketRoute{Domain: domain, TLS: tls}
 }
 
 // bucketCORSMethods are the methods a CORS rule may admit: what a browser

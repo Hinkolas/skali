@@ -12,3 +12,6 @@ spec:
       metrics:
         expose:
           default: true
+    providers:
+      kubernetesCRD:
+        allowCrossNamespace: true

@@ -12,14 +12,15 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 
-	// Live public routes of one application: domain, balancing policy, and
-	// the certificate lifecycle on TLS-capable installations. The panel
-	// renders nothing on services without routes.
-	let { serviceKey }: { serviceKey: string } = $props();
+	// Live public routes of one application or bucket: domain, balancing
+	// policy, and the certificate lifecycle on TLS-capable installations.
+	// The panel renders nothing on services without routes.
+	let { serviceKey, serviceType = 'application' }: { serviceKey: string; serviceType?: string } =
+		$props();
 
-	const routes = $derived<RouteStatus[]>(
-		envStatus.service('application', serviceKey)?.routes ?? []
-	);
+	const routes = $derived<RouteStatus[]>(envStatus.service(serviceType, serviceKey)?.routes ?? []);
+	// Probe results name buckets by their dotted service name.
+	const probeService = $derived(serviceType === 'bucket' ? `buckets.${serviceKey}` : serviceKey);
 
 	// A manual probe re-checks every route domain of the environment right
 	// now and lets the reconciler act on the result; deploy on the
@@ -41,7 +42,7 @@
 			const res = await api.post<{ routes: RouteProbe[] }>(
 				`/v1/environments/${target.id}/routes/probe`
 			);
-			const mine = res.routes.filter((r) => r.service === serviceKey);
+			const mine = res.routes.filter((r) => r.service === probeService);
 			const arrived = mine.filter((r) => r.edge.state === 'reachable').length;
 			if (mine.length === 0) toast.success('No TLS routes to probe');
 			else if (arrived === mine.length) toast.success('Every domain reaches this installation');

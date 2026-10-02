@@ -14,6 +14,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/edge"
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/store"
 )
 
 // edgeCluster records what a pass applies and deletes; unknown kinds on
@@ -52,7 +53,7 @@ func TestReconcilePublicEdgeApplies(t *testing.T) {
 		"IngressRoute/seaweed-s3-http",
 	}, cluster.applied)
 	require.Empty(t, cluster.deleted)
-	require.Equal(t, "https://s3.example.com", c.bucketEndpoint())
+	require.Equal(t, "https://s3.example.com", mustEndpoint(t, c, store.BucketClaim{}))
 }
 
 // TestReconcilePublicEdgeRemoves: with the domain cleared every pass
@@ -71,7 +72,7 @@ func TestReconcilePublicEdgeRemoves(t *testing.T) {
 		"Certificate/seaweed-s3-tls",
 		"Ingress/seaweed-s3",
 	}, cluster.deleted)
-	require.Equal(t, InternalBucketEndpoint(), c.bucketEndpoint())
+	require.Equal(t, InternalBucketEndpoint(), mustEndpoint(t, c, store.BucketClaim{}))
 }
 
 // TestReconcilePublicEdgeUnmanaged: an unmanaged installation neither
@@ -84,7 +85,7 @@ func TestReconcilePublicEdgeUnmanaged(t *testing.T) {
 	require.NoError(t, c.reconcilePublicEdge(context.Background()))
 	require.Empty(t, cluster.applied)
 	require.Empty(t, cluster.deleted)
-	require.Equal(t, InternalBucketEndpoint(), c.bucketEndpoint())
+	require.Equal(t, InternalBucketEndpoint(), mustEndpoint(t, c, store.BucketClaim{}))
 }
 
 // TestReconcilePublicEdgeToleratesMissingKinds: a kind the cluster does
@@ -111,4 +112,33 @@ type failingCluster struct {
 
 func (f *failingCluster) Delete(context.Context, kube.ObjectRef) (bool, error) {
 	return false, f.err
+}
+
+func mustEndpoint(t *testing.T, c *Controller, row store.BucketClaim) string {
+	t.Helper()
+	endpoint, err := c.bucketEndpoint(row)
+	require.NoError(t, err)
+	return endpoint
+}
+
+// TestBucketEndpointPrecedence: a claim's own route wins over the
+// installation-wide S3 domain, which wins over the in-cluster URL; a route
+// with TLS disabled publishes a plain-HTTP origin; a malformed stored
+// route is an error, never a silent fallback.
+func TestBucketEndpointPrecedence(t *testing.T) {
+	t.Parallel()
+	managed := &Controller{cfg: Config{Managed: true, S3Domain: "s3.example.com"}}
+	unmanaged := &Controller{cfg: Config{}}
+	routed := store.BucketClaim{Route: []byte(`{"domain":"files.example.com","tls":"automatic"}`)}
+	plain := store.BucketClaim{Route: []byte(`{"domain":"files.example.com","tls":"disabled"}`)}
+
+	require.Equal(t, "https://files.example.com", mustEndpoint(t, managed, routed))
+	require.Equal(t, "https://files.example.com", mustEndpoint(t, unmanaged, routed))
+	require.Equal(t, "http://files.example.com", mustEndpoint(t, unmanaged, plain))
+	require.Equal(t, "https://s3.example.com", mustEndpoint(t, managed, store.BucketClaim{}))
+	require.Equal(t, InternalBucketEndpoint(), mustEndpoint(t, unmanaged, store.BucketClaim{}))
+	require.Equal(t, InternalBucketEndpoint(), mustEndpoint(t, unmanaged, store.BucketClaim{Route: []byte(`{"domain":""}`)}))
+
+	_, err := unmanaged.bucketEndpoint(store.BucketClaim{Route: []byte(`not json`)})
+	require.Error(t, err)
 }

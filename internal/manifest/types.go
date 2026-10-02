@@ -221,6 +221,17 @@ type Bucket struct {
 	Versioning string          `yaml:"versioning,omitempty" json:"versioning,omitempty"`
 	Lifecycle  BucketLifecycle `yaml:"lifecycle,omitempty" json:"lifecycle,omitempty"`
 	CORS       *BucketCORS     `yaml:"cors,omitempty" json:"cors,omitempty"`
+	// Route publishes the bucket on a hostname of its own through the
+	// edge. Absent, the bucket is reachable in-cluster only.
+	Route *BucketRoute `yaml:"route,omitempty" json:"route,omitempty"`
+}
+
+// BucketRoute is the bucket's public hostname. The edge serves exactly this
+// bucket's path-style requests on it (presigned URLs included) and the
+// bucket's endpoint output becomes the hostname's origin.
+type BucketRoute struct {
+	Domain string `yaml:"domain" json:"domain" jsonschema:"Public hostname serving this bucket. Project variable expressions are allowed."`
+	TLS    string `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"TLS policy: automatic (certificate plus HTTP-to-HTTPS redirect), optional (certificate, plain HTTP still served), or disabled."`
 }
 
 // BucketCORS is the bucket's cross-origin policy for browsers that talk

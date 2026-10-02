@@ -2,6 +2,7 @@ package substrate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 	"github.com/Hinkolas/skali/internal/utils"
@@ -108,10 +110,14 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if err != nil {
 		return false, err
 	}
-	// The published endpoint follows the installation: gaining or losing
-	// the public S3 domain republishes it, and consumers roll through the
-	// mirror change.
-	if endpoint := c.bucketEndpoint(); allocation.Endpoint != endpoint {
+	// The published endpoint follows the claim's route and the
+	// installation: gaining, changing, or losing either republishes it,
+	// and consumers roll through the mirror change.
+	endpoint, err := c.bucketEndpoint(row)
+	if err != nil {
+		return false, err
+	}
+	if allocation.Endpoint != endpoint {
 		if err := c.deps.DB.SetAllocationEndpoint(ctx, allocation.ID, endpoint); err != nil {
 			return false, err
 		}
@@ -179,26 +185,39 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 // ensureAllocationRecord generates and durably records the bucket identity
 // once; the allocation binds the claim (it is the placement).
 func (c *Controller) ensureAllocationRecord(ctx context.Context, row store.BucketClaim, sw *store.ObjectStore) (*store.BucketAllocation, error) {
+	endpoint, err := c.bucketEndpoint(row)
+	if err != nil {
+		return nil, err
+	}
 	return c.deps.DB.RecordAllocation(ctx, dbstore.AllocationInput{
 		ClaimID:          row.ID,
 		StoreID:          sw.ID,
 		BucketName:       "b-" + dnsName(bucketOwnerBase(row)) + "-" + utils.ShortID(row.ID),
 		AccessKeyID:      seaweed.GenerateAccessKey(),
 		CredentialSecret: "s3cred-" + utils.ShortID(row.ID),
-		Endpoint:         c.bucketEndpoint(),
+		Endpoint:         endpoint,
 		Region:           seaweed.Region,
 	})
 }
 
-// bucketEndpoint is the endpoint published to consumers: the public S3
-// domain when a managed installation configures one (presigned URLs
-// resolve publicly; the edge that serves it is only rendered on managed
-// clusters), the in-cluster service URL otherwise.
-func (c *Controller) bucketEndpoint() string {
-	if c.publicEdgeEnabled() {
-		return "https://" + c.cfg.S3Domain
+// bucketEndpoint is the endpoint published to consumers: the bucket's own
+// route when the claim records one (the environment renders the edge for
+// it), else the installation-wide public S3 domain when a managed
+// installation still configures one, else the in-cluster service URL.
+func (c *Controller) bucketEndpoint(row store.BucketClaim) (string, error) {
+	if len(row.Route) > 0 {
+		var route reconcile.BucketRoute
+		if err := json.Unmarshal(row.Route, &route); err != nil {
+			return "", fmt.Errorf("substrate: decode route of bucket claim %s: %w", row.ID, err)
+		}
+		if route.Domain != "" {
+			return route.Endpoint(), nil
+		}
 	}
-	return InternalBucketEndpoint()
+	if c.publicEdgeEnabled() {
+		return "https://" + c.cfg.S3Domain, nil
+	}
+	return InternalBucketEndpoint(), nil
 }
 
 // InternalBucketEndpoint is the in-cluster S3 gateway URL, published as the

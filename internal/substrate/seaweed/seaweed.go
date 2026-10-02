@@ -3,9 +3,11 @@
 // databases, it owns the engine facts (image pin, ports, filer paths), the
 // identity generators, pure rendering, and the admin client behind the
 // substrate's external ensures. It deliberately imports nothing
-// substrate-facing: the HTTP transport (the API server's service proxy) is
+// substrate-facing (only the dependency-free platform coordinates): the HTTP transport (the API server's service proxy) is
 // injected by the caller.
 package seaweed
+
+import "github.com/Hinkolas/skali/internal/platform"
 
 // Image is the single SeaweedFS pin. Every rendered component uses exactly
 // this image; the measured behaviors below (identity channel, deletion
@@ -24,7 +26,7 @@ const (
 	MasterService = "seaweed-master"
 	VolumeApp     = "seaweed-volume"
 	FilerService  = "seaweed-filer"
-	S3Service     = "seaweed-s3"
+	S3Service     = platform.S3Service
 	// S3ExternalService is the dev NodePort in front of the S3 gateway:
 	// the loopback endpoint host-run applications and the developer's
 	// browser reach (bundle.S3NodePort).
@@ -41,7 +43,7 @@ const (
 	VolumeGRPCPort = 18080
 	FilerPort      = 8888
 	FilerGRPCPort  = 18888
-	S3Port         = 8333
+	S3Port         = platform.S3Port
 )
 
 // Region is the advertised S3 region. SeaweedFS accepts any; a stable

@@ -131,5 +131,24 @@ func (k *Kernel) routeDomains(ctx context.Context, environmentID uuid.UUID, rev 
 				certificate: rendering.RouteTLSName(rev.Definition.Name, appKey, routeKey)})
 		}
 	}
+	// Bucket routes probe like application routes; the service is the
+	// dotted bucket name so a bucket and an application sharing a key
+	// stay apart in the report.
+	for _, bucketKey := range utils.SortedKeys(rev.Definition.Buckets) {
+		route := rev.Definition.Buckets[bucketKey].Route
+		if route == nil || route.TLS == "disabled" {
+			continue
+		}
+		domain, err := compiler.ResolveExpression(route.Domain, variables)
+		if err != nil {
+			return nil, fmt.Errorf("reconcile: bucket %s route domain: %w", bucketKey, err)
+		}
+		domain, err = edge.CanonicalDomain(domain)
+		if err != nil {
+			return nil, fmt.Errorf("reconcile: bucket %s route domain: %w", bucketKey, err)
+		}
+		probes = append(probes, RouteProbe{Service: "buckets." + bucketKey, Key: "route", Domain: domain,
+			certificate: rendering.BucketRouteTLSName(rev.Definition.Name, bucketKey)})
+	}
 	return probes, nil
 }

@@ -53,7 +53,12 @@ const (
 // Service is one IngressRoute backend: a Kubernetes Service port addressed
 // by name or number, with an optional non-default balancing strategy.
 type Service struct {
-	Name       string
+	Name string
+	// Namespace addresses a Service outside the IngressRoute's own
+	// namespace (the shared S3 gateway in the platform namespace); empty
+	// keeps Traefik's same-namespace default. Cross-namespace references
+	// need the provider's allowCrossNamespace, which the bundle enables.
+	Namespace  string
 	PortName   string
 	PortNumber int
 	// Strategy is a Traefik balancer name such as StrategyP2C; empty keeps
@@ -75,6 +80,20 @@ func HostMatch(domain, path string) string {
 	return "Host(" + strconv.Quote(domain) + ") && PathPrefix(" + strconv.Quote(path) + ")"
 }
 
+// BucketMatch builds the router rule for one bucket route: the hostname
+// serves exactly one bucket's path-style requests. The exact-path clause
+// covers bucket-level operations (/<bucket>?location) and the prefix
+// clause carries the trailing slash so a bucket named like a prefix of
+// another (b-x, b-x-other) never matches its sibling.
+func BucketMatch(domain, bucket string) string {
+	return "Host(" + strconv.Quote(domain) + ") && (Path(" + strconv.Quote("/"+bucket) + ") || PathPrefix(" + strconv.Quote("/"+bucket+"/") + "))"
+}
+
+// BucketHTTPMatch is BucketMatch with HTTP-01 reserved for the solver.
+func BucketHTTPMatch(domain, bucket string) string {
+	return BucketMatch(domain, bucket) + ` && !PathPrefix("/.well-known/acme-challenge/")`
+}
+
 // HTTPMatch reserves HTTP-01 for the solver, independently of router
 // priority and whether a usable HTTPS certificate exists yet.
 func HTTPMatch(domain, path string) string {
@@ -87,6 +106,9 @@ func IngressRoute(namespace, name string, labels map[string]string, entryPoints 
 	specRoutes := make([]any, 0, len(routes))
 	for _, route := range routes {
 		service := map[string]any{"name": route.Service.Name}
+		if route.Service.Namespace != "" {
+			service["namespace"] = route.Service.Namespace
+		}
 		if route.Service.PortName != "" {
 			service["port"] = route.Service.PortName
 		} else {

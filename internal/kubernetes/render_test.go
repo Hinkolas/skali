@@ -162,7 +162,7 @@ func TestRenderArchAffinityReleaseJob(t *testing.T) {
 	objects, err := Render(result, Options{
 		Namespace:      "skali-file-sharing",
 		ManagedCluster: true,
-		Variables:      map[string]string{"APP_DOMAIN": "files.localhost", "UPLOAD_TOKEN": "test-only"},
+		Variables:      map[string]string{"APP_DOMAIN": "files.localhost", "UPLOAD_TOKEN": "test-only", "STORAGE_DOMAIN": "storage.files.localhost"},
 		BuildImages:    map[string]string{"web": "registry.local/web@sha256:test"},
 		AppPlatforms:   map[string][]string{"web": {"linux/amd64"}},
 	})
@@ -188,7 +188,7 @@ func TestRenderPriorityClass(t *testing.T) {
 	render := func(class string) []runtime.Object {
 		objects, err := Render(result, Options{
 			Namespace:         "skali-file-sharing",
-			Variables:         map[string]string{"APP_DOMAIN": "files.localhost", "UPLOAD_TOKEN": "test-only"},
+			Variables:         map[string]string{"APP_DOMAIN": "files.localhost", "UPLOAD_TOKEN": "test-only", "STORAGE_DOMAIN": "storage.files.localhost"},
 			BuildImages:       map[string]string{"web": "registry.local/web@sha256:test"},
 			PriorityClassName: class,
 		})
@@ -333,8 +333,9 @@ func TestBuildApplicationRequiresPreparedArtifact(t *testing.T) {
 	_, err = Render(result, Options{
 		Namespace: "skali-file-sharing",
 		Variables: map[string]string{
-			"APP_DOMAIN":   "files.localhost",
-			"UPLOAD_TOKEN": "test-only",
+			"APP_DOMAIN":     "files.localhost",
+			"UPLOAD_TOKEN":   "test-only",
+			"STORAGE_DOMAIN": "storage.files.localhost",
 		},
 	})
 	require.ErrorContains(t, err, "build source has no prepared image")
@@ -350,8 +351,9 @@ func TestRenderBuildApplicationWithManagedOutputs(t *testing.T) {
 	objects, err := Render(result, Options{
 		Namespace: "skali-file-sharing",
 		Variables: map[string]string{
-			"APP_DOMAIN":   "files.localhost",
-			"UPLOAD_TOKEN": "test-only",
+			"APP_DOMAIN":     "files.localhost",
+			"UPLOAD_TOKEN":   "test-only",
+			"STORAGE_DOMAIN": "storage.files.localhost",
 		},
 		BuildImages: map[string]string{"web": "registry.local/web@sha256:test"},
 	})
@@ -1150,4 +1152,126 @@ buckets:
 	// Missing generations (offline rendering, a substrate not yet consulted)
 	// still render, with a stable identity.
 	require.Equal(t, hashes(t, nil), hashes(t, nil))
+}
+
+// TestRenderBucketRoute: a routed bucket renders the edge objects of its
+// hostname (websecure router with the certificate, redirecting http
+// companion, Certificate) keyed on the bucket's own path at the shared S3
+// gateway in the platform namespace, labelled and annotated so the bucket
+// snapshot, pruning and claim release all see them; the TLS vocabulary
+// follows application routes; nothing renders before the claim allocated
+// a bucket name, and a bucket without a route renders nothing at all.
+func TestRenderBucketRoute(t *testing.T) {
+	t.Parallel()
+	document, err := manifest.Parse([]byte(`
+name: storage
+buckets:
+  files:
+    route:
+      domain: ${STORAGE_DOMAIN}
+  avatars:
+    route:
+      domain: ${STORAGE_DOMAIN}
+      tls: optional
+  logs:
+    route:
+      domain: logs.example.com
+      tls: disabled
+  scratch: {}
+`), "skali.yml")
+	require.NoError(t, err)
+	result, err := compiler.Compile(document)
+	require.NoError(t, err)
+	options := Options{
+		Namespace: "skali-storage", Certificates: true, EnvironmentID: "env-1",
+		Variables:   map[string]string{"STORAGE_DOMAIN": "Files.Example.com"},
+		BucketNames: map[string]string{"files": "b-files-1234abcd", "avatars": "b-avatars-1234abcd", "logs": "b-logs-1234abcd", "scratch": "b-scratch-1234abcd"},
+	}
+	objects, err := Render(result, options)
+	require.NoError(t, err)
+	byName := map[string]*unstructured.Unstructured{}
+	for _, object := range objects {
+		if typed, ok := object.(*unstructured.Unstructured); ok {
+			byName[typed.GetKind()+"/"+typed.GetName()] = typed
+		}
+	}
+
+	primary := byName["IngressRoute/"+BucketRouteName("storage", "files", "primary")]
+	require.NotNil(t, primary)
+	routes, _, err := unstructured.NestedSlice(primary.Object, "spec", "routes")
+	require.NoError(t, err)
+	route := routes[0].(map[string]any)
+	require.Equal(t, `Host("files.example.com") && (Path("/b-files-1234abcd") || PathPrefix("/b-files-1234abcd/"))`, route["match"],
+		"the hostname serves exactly this bucket, canonicalized")
+	service := route["services"].([]any)[0].(map[string]any)
+	require.Equal(t, "seaweed-s3", service["name"])
+	require.Equal(t, "skali-platform", service["namespace"], "the backend is the platform's gateway, cross-namespace")
+	require.EqualValues(t, 8333, service["port"])
+	require.Empty(t, routeMiddlewares(t, primary), "object payloads are never compressed")
+	points, _, err := unstructured.NestedStringSlice(primary.Object, "spec", "entryPoints")
+	require.NoError(t, err)
+	require.Equal(t, []string{edge.EntryPointWebSecure}, points)
+	secret, _, err := unstructured.NestedString(primary.Object, "spec", "tls", "secretName")
+	require.NoError(t, err)
+	require.Equal(t, BucketRouteTLSName("storage", "files"), secret)
+	require.Equal(t, map[string]string{
+		LabelManaged: "true", LabelProject: "storage", LabelEnvironment: "env-1", LabelService: "buckets.files",
+	}, primary.GetLabels(), "the service label is the dotted bucket name, like its output Secret")
+	require.Equal(t, "files.example.com", primary.GetAnnotations()["skali.dev/route-hostname"])
+
+	httpRoute := byName["IngressRoute/"+BucketRouteName("storage", "files", "http")]
+	require.NotNil(t, httpRoute)
+	httpRoutes, _, err := unstructured.NestedSlice(httpRoute.Object, "spec", "routes")
+	require.NoError(t, err)
+	require.Contains(t, httpRoutes[0].(map[string]any)["match"], `!PathPrefix("/.well-known/acme-challenge/")`)
+	require.Equal(t, []string{edge.RedirectMiddlewareName}, routeMiddlewares(t, httpRoute))
+	require.Equal(t, "files.example.com", httpRoute.GetAnnotations()["skali.dev/route-hostname"],
+		"both routers carry the hostname annotation claim release keys on")
+	certificate := byName["Certificate/"+BucketRouteTLSName("storage", "files")]
+	require.NotNil(t, certificate)
+	names, _, err := unstructured.NestedStringSlice(certificate.Object, "spec", "dnsNames")
+	require.NoError(t, err)
+	require.Equal(t, []string{"files.example.com"}, names)
+	require.Equal(t, "buckets.files", certificate.GetLabels()[LabelService])
+	require.NotNil(t, byName["Middleware/redirect-https"], "an automatic bucket route alone brings the redirect Middleware")
+
+	// Two buckets share the hostname with distinct paths and certificates.
+	avatars := byName["IngressRoute/"+BucketRouteName("storage", "avatars", "primary")]
+	require.NotNil(t, avatars)
+	avatarRoutes, _, err := unstructured.NestedSlice(avatars.Object, "spec", "routes")
+	require.NoError(t, err)
+	require.Contains(t, avatarRoutes[0].(map[string]any)["match"], `Path("/b-avatars-1234abcd")`)
+	avatarsHTTP := byName["IngressRoute/"+BucketRouteName("storage", "avatars", "http")]
+	require.NotNil(t, avatarsHTTP)
+	require.Empty(t, routeMiddlewares(t, avatarsHTTP), "optional keeps serving plain HTTP")
+	require.NotNil(t, byName["Certificate/"+BucketRouteTLSName("storage", "avatars")])
+
+	// tls disabled: one web router, no certificate.
+	logs := byName["IngressRoute/"+BucketRouteName("storage", "logs", "primary")]
+	require.NotNil(t, logs)
+	logPoints, _, err := unstructured.NestedStringSlice(logs.Object, "spec", "entryPoints")
+	require.NoError(t, err)
+	require.Equal(t, []string{edge.EntryPointWeb}, logPoints)
+	require.Nil(t, byName["IngressRoute/"+BucketRouteName("storage", "logs", "http")])
+	require.Nil(t, byName["Certificate/"+BucketRouteTLSName("storage", "logs")])
+
+	// No route, no objects; and names never collide with application routes.
+	require.Nil(t, byName["IngressRoute/"+BucketRouteName("storage", "scratch", "primary")])
+	require.NotEqual(t, RouteName("storage", "files", "route", "primary"), BucketRouteName("storage", "files", "primary"))
+	require.NotEqual(t, RouteTLSName("storage", "files", "route"), BucketRouteTLSName("storage", "files"))
+
+	// Before the claim allocated a name the route waits; nothing else does.
+	early, err := Render(result, Options{Namespace: "skali-storage", Certificates: true, Variables: options.Variables})
+	require.NoError(t, err)
+	for _, object := range early {
+		require.NotEqual(t, "IngressRoute", object.GetObjectKind().GroupVersionKind().Kind)
+		require.NotEqual(t, "Certificate", object.GetObjectKind().GroupVersionKind().Kind)
+	}
+
+	// Without certificates (no cert-manager) every route is a web router.
+	plain, err := Render(result, Options{Namespace: "skali-storage", Variables: options.Variables, BucketNames: options.BucketNames})
+	require.NoError(t, err)
+	for _, object := range plain {
+		require.NotEqual(t, "Certificate", object.GetObjectKind().GroupVersionKind().Kind)
+	}
 }

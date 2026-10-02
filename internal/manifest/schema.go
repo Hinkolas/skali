@@ -131,6 +131,9 @@ func Schema() (*jsonschema.Schema, error) {
 	bucket.Properties["quotas"].Properties["maxObjectSize"] = quantitySchema()
 	setDuration(bucket.Properties["lifecycle"], "abortIncompleteUploadsAfter")
 	setDuration(bucket.Properties["lifecycle"], "expireNoncurrentVersionsAfter")
+	bucketRoute := bucket.Properties["route"]
+	bucketRoute.Properties["domain"].MinLength = new(1)
+	bucketRoute.Properties["tls"].Enum = utils.AnySlice("automatic", "optional", "disabled")
 
 	return schema, nil
 }

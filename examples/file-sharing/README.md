@@ -30,11 +30,11 @@ the bucket endpoint, the signed `PUT` with the declared `Content-Type`,
 the `ETag` the bucket exposes, and the signed `GET` a share link redirects
 to.
 
-`skali deploy` runs the same thing on a cluster. With a public S3 domain
-configured (`endpoints.s3`), `{{ buckets.files.endpoint }}` is that
-domain's https origin and signed URLs work for any browser; without one
-the endpoint is only reachable inside the cluster. The application's own
-traffic (verification, listing, deletes) uses
+`skali deploy` runs the same thing on a cluster. The bucket declares a
+route (`STORAGE_DOMAIN`), so `{{ buckets.files.endpoint }}` is that
+hostname's https origin and signed URLs work for any browser; a bucket
+without a route is only reachable inside the cluster. The application's
+own traffic (verification, listing, deletes) uses
 `{{ buckets.files.internal_endpoint }}`, the in-cluster gateway, so it
 never hairpins through the edge.
 
@@ -63,15 +63,17 @@ server-side `HEAD` before an upload counts.
 
 - `UPLOAD_TOKEN` (required): the bearer token that authorizes signing.
 - `PRESIGN_TTL` (optional): signed URL lifetime, a Go duration up to 24h.
+- `STORAGE_DOMAIN` (required): the bucket's public hostname (the `route`
+  of the `files` bucket); on a cluster, point its DNS at the installation.
 - `S3_PUBLIC_ENDPOINT` (optional): overrides the host URLs are signed
   for. Local development maps the store to a loopback port
   (`127.0.0.1:30510` unless `SKALI_DEV_LOOPBACK_PORT_BASE` shifts the
   range); set it to `http://127.0.0.1:30510` to try the browser flow
-  against a local cluster.
+  against a local cluster without the route's hostname.
 
 ## Tests
 
-`cmd/skali/dev_e2e_test.go` (`task test:dev`) deploys this example and
+`cmd/skali/dev_e2e_presigned_test.go` (`task test:dev`) deploys this example and
 replays the browser's requests in Go: preflight, signed upload, download,
 range read, multipart, and the ways a URL must fail (tampered signature,
 other method, other key, other host, expired, unsigned, other bucket).

@@ -46,6 +46,7 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 				AbortUploadsAfterSeconds:     spec.AbortUploadsAfterSeconds,
 				ExpireNoncurrentAfterSeconds: spec.ExpireNoncurrentAfterSeconds,
 				Cors:                         spec.CORS,
+				Route:                        spec.Route,
 			})
 			if err != nil {
 				return fmt.Errorf("dbstore: create bucket claim: %w", err)
@@ -65,7 +66,8 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 			existing.MaxObjectBytes != spec.MaxObjectBytes ||
 			existing.AbortUploadsAfterSeconds != spec.AbortUploadsAfterSeconds ||
 			existing.ExpireNoncurrentAfterSeconds != spec.ExpireNoncurrentAfterSeconds ||
-			!bytes.Equal(existing.Cors, spec.CORS) {
+			!bytes.Equal(existing.Cors, spec.CORS) ||
+			!bytes.Equal(existing.Route, spec.Route) {
 			if _, err := q.SetBucketClaimSpec(ctx, store.SetBucketClaimSpecParams{
 				ID:                           existing.ID,
 				StorageQuotaBytes:            spec.StorageQuotaBytes,
@@ -74,6 +76,7 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 				AbortUploadsAfterSeconds:     spec.AbortUploadsAfterSeconds,
 				ExpireNoncurrentAfterSeconds: spec.ExpireNoncurrentAfterSeconds,
 				Cors:                         spec.CORS,
+				Route:                        spec.Route,
 			}); err != nil {
 				return fmt.Errorf("dbstore: update bucket claim spec: %w", err)
 			}

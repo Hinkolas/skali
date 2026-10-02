@@ -384,10 +384,11 @@ type Objects struct {
 	// Record is the in-cluster installation record; empty under the local
 	// profile.
 	Record []unstructured.Unstructured
-	// EdgeMetrics opts the k3s Traefik chart into per-router Prometheus
-	// series and exposes the metrics port, feeding the skalid edge-traffic
-	// sampler. Both profiles.
-	EdgeMetrics []unstructured.Unstructured
+	// EdgeTraefik configures the k3s Traefik chart: per-router Prometheus
+	// series and the exposed metrics port for the skalid edge-traffic
+	// sampler, and cross-namespace backends so an environment's bucket
+	// routes can reach the platform's S3 gateway. Both profiles.
+	EdgeTraefik []unstructured.Unstructured
 	// BootstrapUser creates the first operator user.
 	BootstrapUser []unstructured.Unstructured
 }
@@ -408,7 +409,7 @@ func stageSources(profile Profile) []string {
 		registryYAML(profile),
 		skalidYAML(profile),
 		recordYAML(profile),
-		edgeMetricsYAML(),
+		edgeTraefikYAML(),
 		// Bootstrap must stay last: Hash blanks the final source under
 		// production because the generated password never reproduces.
 		bootstrapYAML(profile),
@@ -436,7 +437,7 @@ func Render(profile Profile) (*Objects, error) {
 		&objects.Registry,
 		&objects.Skalid,
 		&objects.Record,
-		&objects.EdgeMetrics,
+		&objects.EdgeTraefik,
 		&objects.BootstrapUser,
 	}
 	for index, source := range stageSources(profile) {
@@ -647,14 +648,17 @@ spec:
 `
 }
 
-// edgeMetricsYAML overlays the k3s Traefik chart (helm-controller merges a
-// HelmChartConfig into the HelmChart's values): per-router Prometheus labels
-// on the metrics endpoint the chart already runs on :9100, plus that port on
-// the traefik Service so skalid can scrape it through the API server's
-// service proxy. Applying a changed overlay rolls the Traefik pod once.
-// skali owns this object; operator-authored traefik HelmChartConfigs are
-// unsupported. Both profiles: the local k3d edge is the same Traefik.
-func edgeMetricsYAML() string {
+// edgeTraefikYAML overlays the k3s Traefik chart (helm-controller merges a
+// HelmChartConfig's values into the chart it ships). Metrics: per-router
+// Prometheus series and the metrics port exposed, for the skalid edge
+// sampler. Cross-namespace backends: an environment's bucket routes point
+// at the S3 gateway Service in the platform namespace, which the
+// Kubernetes CRD provider refuses by default. Only skalid renders
+// IngressRoutes (tenants hold no cluster access), so the global toggle
+// widens nothing a manifest can reach. skali owns this object;
+// operator-authored traefik HelmChartConfigs are unsupported. Both
+// profiles: the local k3d edge is the same Traefik.
+func edgeTraefikYAML() string {
 	return `apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -669,6 +673,9 @@ spec:
       metrics:
         expose:
           default: true
+    providers:
+      kubernetesCRD:
+        allowCrossNamespace: true
 `
 }
 

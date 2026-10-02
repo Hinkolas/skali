@@ -50,8 +50,9 @@ func fileSharingInput(t *testing.T) Input {
 		Result:      compileExample(t, "file-sharing"),
 		Environment: "production",
 		SecretVersions: map[string]int{
-			"APP_DOMAIN":   1,
-			"UPLOAD_TOKEN": 1,
+			"APP_DOMAIN":     1,
+			"STORAGE_DOMAIN": 1,
+			"UPLOAD_TOKEN":   1,
 		},
 		Artifacts: map[string]Artifact{
 			"web": {

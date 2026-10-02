@@ -33,13 +33,14 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/platform"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
 
 // Namespace is the skalid-owned platform namespace holding every substrate
 // pool, tenant object, and credential Secret. The installer's uninstall
 // waves already delete it between project namespaces and skali-system.
-const Namespace = "skali-platform"
+const Namespace = platform.Namespace
 
 // The loopback NodePort range for pools and the dev S3 gateway lives in
 // the bundle package (bundle.PoolNodePortMin..Max, bundle.S3NodePort) so
