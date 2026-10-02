@@ -174,27 +174,6 @@ func TestEvaluate(t *testing.T) {
 	require.Equal(t, "store-degraded", degraded.Diagnostics[0].Code)
 	require.Contains(t, degraded.Diagnostics[0].Message, "2 of the object store's filer pods share node node-a")
 	require.Contains(t, degraded.Diagnostics[0].Message, "deleting one pod reschedules it apart")
-	// A public endpoint whose certificate is not issued degrades and says
-	// what that means for presigned URLs; an issued one is silent.
-	certPending := module.ObservedResource{Kind: module.KindObjectStore,
-		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 1, MastersReady: 1, VolumeServersDesired: 1,
-			VolumeServersReady: 1, FilerReady: true, S3Ready: true,
-			PublicEndpoint: &module.PublicEndpointStatus{Domain: "s3.example.com",
-				Certificate: &module.CertificateStatus{Ready: false, Message: "waiting for HTTP-01"}}}}
-	degraded = service.Evaluate([]module.ObservedResource{fresh(),
-		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), certPending, usage})
-	require.Equal(t, module.HealthDegraded, degraded.Health)
-	require.Equal(t, "endpoint-certificate", degraded.Diagnostics[0].Code)
-	require.Contains(t, degraded.Diagnostics[0].Message, "s3.example.com")
-	require.Contains(t, degraded.Diagnostics[0].Message, "waiting for HTTP-01")
-	certIssued := module.ObservedResource{Kind: module.KindObjectStore,
-		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 1, MastersReady: 1, VolumeServersDesired: 1,
-			VolumeServersReady: 1, FilerReady: true, S3Ready: true,
-			PublicEndpoint: &module.PublicEndpointStatus{Domain: "s3.example.com", Certificate: &module.CertificateStatus{Ready: true}}}}
-	healthy = service.Evaluate([]module.ObservedResource{fresh(),
-		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), certIssued, usage})
-	require.Equal(t, module.HealthHealthy, healthy.Health)
-	require.Equal(t, "usage", healthy.Diagnostics[0].Code)
 	// Releasing reflects the persisted destructive decision.
 	releasing := service.Evaluate([]module.ObservedResource{fresh(), claimResource("releasing", "")})
 	require.Equal(t, module.HealthProgressing, releasing.Health)

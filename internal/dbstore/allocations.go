@@ -114,8 +114,8 @@ func (s *Service) CountStoreAllocations(ctx context.Context, storeID uuid.UUID) 
 	return count, nil
 }
 
-// SetAllocationEndpoint republishes the endpoint after the installation
-// gains or loses an external S3 domain.
+// SetAllocationEndpoint republishes the endpoint after the bucket gains,
+// changes, or loses its route.
 func (s *Service) SetAllocationEndpoint(ctx context.Context, allocationID uuid.UUID, endpoint string) error {
 	rows, err := s.st.SetBucketAllocationEndpoint(ctx, store.SetBucketAllocationEndpointParams{
 		ID:       allocationID,

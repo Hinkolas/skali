@@ -234,11 +234,6 @@ type Production struct {
 	// certificate subject, and the host of the token realm the registry
 	// advertises in its 401 challenge.
 	RegistryDomain string
-	// S3Domain is the optional public S3 endpoint domain (endpoints.s3 in
-	// init.yaml). When set, the substrate publishes bucket endpoints on it
-	// and renders the S3 ingress in skali-platform; empty keeps bucket
-	// access in-cluster.
-	S3Domain string
 	// TokenKeyPEM and TokenCertPEM are the registry token signing keypair
 	// the installer generated (or reused) at init: skalid signs with the
 	// key, the registry trusts the certificate offline.
@@ -1090,7 +1085,7 @@ func skalidYAML(profile Profile) string {
 		// with them set, skalid serves the registry token realm. The push
 		// host is the public registry domain: build clients push through the
 		// edge while artifact references stay on the internal name.
-		capabilitiesEnv = "\n            - name: SKALI_RESERVED_HOSTS\n              value: " + strings.Join([]string{production.IngressHost, production.RegistryDomain, production.S3Domain}, ";") + "\n            - name: SKALI_CAPABILITIES\n              value: " +
+		capabilitiesEnv = "\n            - name: SKALI_RESERVED_HOSTS\n              value: " + strings.Join([]string{production.IngressHost, production.RegistryDomain}, ";") + "\n            - name: SKALI_CAPABILITIES\n              value: " +
 			strings.Join(production.Capabilities, ";") +
 			// The recorded cluster name is the installation's display name
 			// (the console's breadcrumb root).
@@ -1098,9 +1093,6 @@ func skalidYAML(profile Profile) string {
 			"\n            - name: SKALI_REGISTRY_PUSH_HOST\n              value: " + production.RegistryDomain +
 			"\n            - name: SKALI_REGISTRY_TOKEN_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: key.pem" +
 			"\n            - name: SKALI_REGISTRY_NODE_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: skali-registry-token\n                  key: node-secret"
-		if production.S3Domain != "" {
-			capabilitiesEnv += "\n            - name: SKALI_S3_DOMAIN\n              value: " + production.S3Domain
-		}
 		capabilitiesEnv += "\n            - name: SKALI_MANAGED_CLUSTER\n              value: \"true\"" +
 			"\n            - name: SKALI_CERT_MANAGER\n              value: \"true\""
 		if production.StorageDriver == StorageDriverLonghorn {

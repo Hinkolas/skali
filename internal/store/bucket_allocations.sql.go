@@ -192,8 +192,8 @@ type SetBucketAllocationEndpointParams struct {
 	Endpoint string
 }
 
-// The endpoint is republished when the installation gains or loses an
-// external S3 domain; consumers roll through the mirror Secret change.
+// The endpoint is republished when the bucket gains, changes, or loses
+// its route; consumers roll through the mirror Secret change.
 func (q *Queries) SetBucketAllocationEndpoint(ctx context.Context, arg SetBucketAllocationEndpointParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setBucketAllocationEndpoint, arg.ID, arg.Endpoint)
 	if err != nil {

@@ -32,6 +32,11 @@ not bypass administrator authorization, reauthentication, cluster health,
 deployment, or backup checks. Run with the same user's authenticated CLI
 configuration; using `sudo` may select root's separate configuration.
 
+Before the confirmation the CLI also lists any bucket still published on the
+installation-wide S3 endpoint that older releases offered. Those buckets
+become reachable in-cluster only once the update lands; declare `route` on
+them and deploy first to keep a public hostname (see `docs/buckets.md`).
+
 `--wait` follows progress. Closing the terminal or losing the connection does
 not cancel an accepted operation. Repeating the command attaches to a running
 update or offers to retry a failed one. A different target is refused while

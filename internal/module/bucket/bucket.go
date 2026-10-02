@@ -211,7 +211,7 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 	}
 	health := module.HealthHealthy
 	for _, diagnostic := range diagnostics {
-		if diagnostic.Code == "store-degraded" || diagnostic.Code == "endpoint-certificate" {
+		if diagnostic.Code == "store-degraded" {
 			health = module.HealthDegraded
 		}
 	}
@@ -249,18 +249,6 @@ func storeDiagnostics(store *module.ObjectStoreStatus) []module.Diagnostic {
 	}
 	if !store.FilerReady {
 		warn("store-degraded", "the object store's metadata service is not serving")
-	}
-	if endpoint := store.PublicEndpoint; endpoint != nil {
-		switch {
-		case endpoint.Certificate == nil:
-			warn("endpoint-certificate", fmt.Sprintf("the certificate for the installation-wide endpoint %s has not been requested yet", endpoint.Domain))
-		case !endpoint.Certificate.Ready:
-			message := fmt.Sprintf("the certificate for the installation-wide endpoint %s is not issued yet; presigned URLs signed against it fail TLS until it is", endpoint.Domain)
-			if endpoint.Certificate.Message != "" {
-				message += " (" + endpoint.Certificate.Message + ")"
-			}
-			warn("endpoint-certificate", message)
-		}
 	}
 	return diagnostics
 }

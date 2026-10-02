@@ -139,7 +139,7 @@ type StorageInitConfig struct {
 type EndpointsConfig struct {
 	API      string `yaml:"api" json:"api" jsonschema:"Public api/ui domain, for example skali.example.com."`
 	Registry string `yaml:"registry" json:"registry" jsonschema:"Public managed-registry domain, for example cr.skali.example.com."`
-	S3       string `yaml:"s3,omitempty" json:"s3,omitempty" jsonschema:"Optional public S3 endpoint domain, for example s3.skali.example.com; empty keeps bucket access in-cluster."`
+	S3       string `yaml:"s3,omitempty" json:"s3,omitempty" jsonschema:"Deprecated and ignored: buckets publish through route.domain in the manifest."`
 }
 
 // TLSInitConfig parameterizes the ACME cluster issuer.

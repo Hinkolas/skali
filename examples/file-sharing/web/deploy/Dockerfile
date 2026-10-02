@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /file-sharing .
 
 # The manifest builds this stage (build.target). Alpine rather than scratch:
-# the application reaches the public S3 endpoint over https in production,
+# the application reaches the bucket's route over https in production,
 # which needs the system CA roots.
 FROM alpine:3.22 AS runtime
 RUN apk add --no-cache ca-certificates

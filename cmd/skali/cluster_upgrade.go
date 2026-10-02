@@ -192,6 +192,9 @@ func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes
 		if err := seedInitInputs(reader, promptAllowed, record, &opts); err != nil {
 			return err
 		}
+		if record.Endpoints != nil && record.Endpoints.LegacyS3 != "" {
+			fmt.Fprintf(out, "note: the installation-wide S3 endpoint %s is no longer supported; buckets without a route.domain become reachable in-cluster only after this upgrade\n", record.Endpoints.LegacyS3)
+		}
 		if imageTarFlag != "" {
 			tarData, opts.SkalidImage, opts.SkalidImageID, err = loadImageTar(ctx, imageTarFlag)
 			if err != nil {

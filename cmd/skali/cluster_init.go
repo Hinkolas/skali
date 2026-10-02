@@ -85,10 +85,13 @@ func newClusterInitCommand() *cobra.Command {
 				return fmt.Errorf("admin password file %s is empty", config.Admin.PasswordFile)
 			}
 
+			if config.Endpoints.S3 != "" {
+				fmt.Fprintln(out, "warning: endpoints.s3 is no longer used and was ignored; declare route.domain on each bucket that needs a public hostname")
+			}
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
 			opts := installer.InitOptions{
-				Endpoints:     installer.Endpoints{API: config.Endpoints.API, Registry: config.Endpoints.Registry, S3: config.Endpoints.S3},
+				Endpoints:     installer.Endpoints{API: config.Endpoints.API, Registry: config.Endpoints.Registry},
 				TLS:           installer.TLSConfig{IssuerEmail: config.TLS.IssuerEmail, ACMEServer: config.TLS.ACMEServer},
 				SkalidImage:   config.Skalid.Image,
 				SkalidImageID: config.Skalid.ImageID,

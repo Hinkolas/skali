@@ -141,7 +141,7 @@ func runServe() error {
 	artifactSvc := artifactstore.New(st)
 	buildSvc := buildstore.New(st)
 	deploySvc := deploy.New(st, valueSvc, artifactSvc, versionpkg.Version)
-	if err := deploySvc.ReserveHostnames(ctx, append(cfg.ReservedHosts, cfg.S3Domain)); err != nil {
+	if err := deploySvc.ReserveHostnames(ctx, cfg.ReservedHosts); err != nil {
 		return err
 	}
 	backupTargets, err := backup.NewTargetStore(st, cfg.AuthSecret)
@@ -309,7 +309,6 @@ func runServe() error {
 		}, substrate.Config{
 			Managed:      cfg.ManagedCluster,
 			Capabilities: cfg.Capabilities,
-			S3Domain:     cfg.S3Domain,
 			Resync:       cfg.ReconcileResync,
 		})
 		kernelDeps.Claims = substrateCtl

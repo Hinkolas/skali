@@ -23,8 +23,8 @@ UPDATE bucket_allocations
 SET released_at = now()
 WHERE id = $1 AND released_at IS NULL;
 
--- The endpoint is republished when the installation gains or loses an
--- external S3 domain; consumers roll through the mirror Secret change.
+-- The endpoint is republished when the bucket gains, changes, or loses
+-- its route; consumers roll through the mirror Secret change.
 -- name: SetBucketAllocationEndpoint :execrows
 UPDATE bucket_allocations
 SET endpoint = $2

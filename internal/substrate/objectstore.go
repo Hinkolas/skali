@@ -301,7 +301,7 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 			return 0, fmt.Errorf("substrate: ensure object store: %w", err)
 		}
 	}
-	if err := c.reconcilePublicEdge(ctx); err != nil {
+	if err := c.sweepLegacyS3Edge(ctx); err != nil {
 		return 0, err
 	}
 
@@ -350,19 +350,15 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 	return 0, nil
 }
 
-// publicEdgeEnabled reports whether the store publishes through the edge:
-// a managed installation with an S3 domain. Everything else keeps bucket
-// access in-cluster and owns no edge objects.
-func (c *Controller) publicEdgeEnabled() bool {
-	return c.cfg.Managed && c.cfg.S3Domain != ""
-}
-
-// s3EdgeRefs are the edge objects the public S3 endpoint owns: the TLS
-// route, the redirecting plain-HTTP route, the redirect middleware, and
-// the certificate. Stores published before the IngressRoute rework carried
-// a plain Ingress under the route's name; it stays in the list so an
-// upgrade removes it too.
-func s3EdgeRefs() []kube.ObjectRef {
+// legacyS3EdgeRefs are the edge objects the installation-wide S3 endpoint
+// owned before buckets published through their own routes (endpoints.s3,
+// removed with issue #69): the TLS route, the redirecting plain-HTTP route,
+// the redirect middleware, the certificate, and the plain Ingress a store
+// published before the IngressRoute rework carried under the route's
+// name. Nothing renders them any more; the list exists so an upgrade
+// removes what an earlier release left behind. Drop it once no supported
+// release can still carry the objects (first stable release).
+func legacyS3EdgeRefs() []kube.ObjectRef {
 	return []kube.ObjectRef{
 		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3"},
 		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3-http"},
@@ -372,35 +368,24 @@ func s3EdgeRefs() []kube.ObjectRef {
 	}
 }
 
-// reconcilePublicEdge is level-triggered like the rest of the store:
-// while the endpoint is configured the edge objects are applied under
-// their fixed names, so a domain change replaces the host match and the
-// certificate's name in place and nothing of the old domain lingers; once
-// endpoints.s3 is cleared they are deleted every pass, so disabling the
-// endpoint stops the domain from answering instead of leaving the routes
-// and the certificate behind. An unmanaged installation never renders the
-// edge (there is no edge to serve it), so it has nothing to sweep either:
-// looking for the Certificate kind on a cluster without cert-manager would
-// only reset the discovery cache each pass. Bucket data is untouched
-// either way: the refs name edge objects only.
-func (c *Controller) reconcilePublicEdge(ctx context.Context) error {
-	if c.publicEdgeEnabled() {
-		for _, obj := range seaweed.RenderS3Edge(Namespace, c.cfg.S3Domain) {
-			if _, err := c.deps.Cluster.ApplyAs(ctx, obj, kube.FieldManagerPlatform, false); err != nil {
-				return fmt.Errorf("substrate: ensure public S3 edge: %w", err)
-			}
-		}
+// sweepLegacyS3Edge deletes the objects of the removed installation-wide
+// S3 endpoint once per process, on the first store pass. One sweep is
+// enough: nothing can recreate the objects, and deleting by name every
+// pass would only cost API calls. An unmanaged installation never rendered
+// the edge, so it has nothing to sweep either: looking for the Certificate
+// kind on a cluster without cert-manager would only reset the discovery
+// cache. Bucket data is untouched: the refs name edge objects only.
+func (c *Controller) sweepLegacyS3Edge(ctx context.Context) error {
+	if !c.cfg.Managed || c.legacyEdgeSwept {
 		return nil
 	}
-	if !c.cfg.Managed {
-		return nil
-	}
-	removed, err := c.deleteRefs(ctx, s3EdgeRefs())
+	removed, err := c.deleteRefs(ctx, legacyS3EdgeRefs())
 	if err != nil {
 		return err
 	}
+	c.legacyEdgeSwept = true
 	if removed > 0 {
-		slog.Info("substrate: public S3 edge removed", "objects", removed)
+		slog.Info("substrate: legacy public S3 edge removed", "objects", removed)
 	}
 	return nil
 }
@@ -551,7 +536,7 @@ func (c *Controller) releaseObjectStore(ctx context.Context, row store.ObjectSto
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-s3-open"},
 		{GVK: schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, Namespace: Namespace, Name: "seaweed-skalid-access"},
 	}
-	refs = append(refs, s3EdgeRefs()...)
+	refs = append(refs, legacyS3EdgeRefs()...)
 	if _, err := c.deleteRefs(ctx, refs); err != nil {
 		return err
 	}

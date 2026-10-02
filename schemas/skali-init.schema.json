@@ -46,7 +46,7 @@
         },
         "s3": {
           "type": "string",
-          "description": "Optional public S3 endpoint domain, for example s3.skali.example.com; empty keeps bucket access in-cluster."
+          "description": "Deprecated and ignored: buckets publish through route.domain in the manifest."
         }
       },
       "additionalProperties": false
