@@ -1,15 +1,12 @@
 package seaweed
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -84,82 +81,6 @@ func TestRenderDevServicesSelectAllInOne(t *testing.T) {
 		}
 	}
 	require.True(t, names[MasterService] && names[FilerService] && names[S3Service])
-}
-
-func TestRenderS3Edge(t *testing.T) {
-	t.Parallel()
-	objects := RenderS3Edge("skali-platform", "s3.example.com")
-	byName := map[string]*unstructured.Unstructured{}
-	for _, object := range objects {
-		typed := object.(*unstructured.Unstructured)
-		byName[typed.GetKind()+"/"+typed.GetName()] = typed
-	}
-	require.Len(t, byName, 4)
-
-	route := byName["IngressRoute/seaweed-s3"]
-	require.NotNil(t, route)
-	points, _, err := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
-	require.NoError(t, err)
-	require.Equal(t, []string{"websecure"}, points)
-	secret, _, err := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
-	require.NoError(t, err)
-	require.Equal(t, "seaweed-s3-tls", secret)
-	routes, _, err := unstructured.NestedSlice(route.Object, "spec", "routes")
-	require.NoError(t, err)
-	rule := routes[0].(map[string]any)
-	require.Equal(t, `Host("s3.example.com") && PathPrefix("/")`, rule["match"])
-	backend := rule["services"].([]any)[0].(map[string]any)
-	require.Equal(t, S3Service, backend["name"])
-	require.EqualValues(t, S3Port, backend["port"])
-
-	certificate := byName["Certificate/seaweed-s3-tls"]
-	require.NotNil(t, certificate)
-	issuer, _, err := unstructured.NestedString(certificate.Object, "spec", "issuerRef", "name")
-	require.NoError(t, err)
-	require.Equal(t, "skali", issuer)
-	names, _, err := unstructured.NestedStringSlice(certificate.Object, "spec", "dnsNames")
-	require.NoError(t, err)
-	require.Equal(t, []string{"s3.example.com"}, names)
-
-	httpRoute := byName["IngressRoute/seaweed-s3-http"]
-	require.NotNil(t, httpRoute)
-	httpRoutes, _, err := unstructured.NestedSlice(httpRoute.Object, "spec", "routes")
-	require.NoError(t, err)
-	require.Contains(t, httpRoutes[0].(map[string]any), "middlewares",
-		"plain HTTP redirects to the S3 endpoint's canonical scheme")
-	require.NotNil(t, byName["Middleware/redirect-https"])
-}
-
-// TestRenderS3EdgeDomainChange: a hostname change re-applies the same
-// object names with the new host, so server-side apply replaces the old
-// domain in place and no object of the new rendering mentions it.
-func TestRenderS3EdgeDomainChange(t *testing.T) {
-	t.Parallel()
-	names := func(objects []runtime.Object) []string {
-		var out []string
-		for _, object := range objects {
-			typed := object.(*unstructured.Unstructured)
-			out = append(out, typed.GetKind()+"/"+typed.GetName())
-		}
-		return out
-	}
-	before := RenderS3Edge("skali-platform", "s3.old.example.com")
-	after := RenderS3Edge("skali-platform", "s3.new.example.com")
-	require.Equal(t, names(before), names(after), "the same objects are replaced in place")
-	for _, object := range after {
-		encoded, err := json.Marshal(object.(*unstructured.Unstructured).Object)
-		require.NoError(t, err)
-		require.NotContains(t, string(encoded), "s3.old.example.com")
-	}
-	// The renamed host reaches every place a domain appears: both route
-	// matches and the certificate's names.
-	mentions := 0
-	for _, object := range after {
-		encoded, err := json.Marshal(object.(*unstructured.Unstructured).Object)
-		require.NoError(t, err)
-		mentions += strings.Count(string(encoded), "s3.new.example.com")
-	}
-	require.Equal(t, 3, mentions, "TLS route match, HTTP route match, certificate dnsNames")
 }
 
 func TestTopologyDerivation(t *testing.T) {

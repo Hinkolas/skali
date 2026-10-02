@@ -19,3 +19,8 @@ DELETE FROM hostname_claims WHERE hostname = $1 AND environment_id = $2 AND targ
 -- name: ReserveHostname :execrows
 INSERT INTO hostname_claims (hostname, reserved) VALUES ($1, true)
 ON CONFLICT (hostname) DO UPDATE SET reserved = true WHERE hostname_claims.reserved;
+
+-- name: ReleaseReservedHostnamesExcept :many
+DELETE FROM hostname_claims
+WHERE reserved AND NOT (hostname = ANY($1::text[]))
+RETURNING hostname;

@@ -314,9 +314,6 @@ type ObjectStoreStatus struct {
 	// apart at scheduling time, but a replacement scheduled during a node
 	// outage stays where it landed when the node returns.
 	Placement []ComponentPlacement
-	// PublicEndpoint is set when the installation publishes an S3 domain:
-	// the domain and its certificate's issuance state.
-	PublicEndpoint *PublicEndpointStatus
 }
 
 // ComponentPlacement is one node carrying more of a store component's
@@ -325,12 +322,6 @@ type ComponentPlacement struct {
 	Component string
 	Node      string
 	Pods      int32
-}
-
-// PublicEndpointStatus is the public S3 domain's edge state.
-type PublicEndpointStatus struct {
-	Domain      string
-	Certificate *CertificateStatus
 }
 
 // BucketStatus projects one bucket's existence and usage as reported by the

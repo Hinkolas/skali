@@ -170,3 +170,24 @@ func TestBucketRouteHostnameClaims(t *testing.T) {
 	require.True(t, conflict.Reserved)
 
 }
+
+// TestReservedHostnameReleasedWhenUnconfigured: a reservation the
+// configuration no longer names is released on the next sync, so an
+// environment can claim the host the installation stopped using; the
+// hosts still named stay reserved.
+func TestReservedHostnameReleasedWhenUnconfigured(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	require.NoError(t, f.deploy.ReserveHostnames(ctx, []string{"example.com", "cr.example.com"}))
+	require.NoError(t, f.deploy.ReserveHostnames(ctx, []string{"cr.example.com"}))
+
+	def := f.submit(t, routedManifest, 0)
+	require.NoError(t, f.deploy.Promote(ctx, routePrepared(t, f, f.environmentID, def)))
+
+	// The surviving reservation still refuses, and a sync cannot take a
+	// host an environment holds.
+	claim, err := f.st.Queries.GetHostnameClaim(ctx, "cr.example.com")
+	require.NoError(t, err)
+	require.True(t, claim.Reserved)
+	require.Error(t, f.deploy.ReserveHostnames(ctx, []string{"example.com"}))
+}

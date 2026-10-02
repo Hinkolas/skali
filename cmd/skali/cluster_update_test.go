@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/platform"
 	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/stretchr/testify/require"
 )
@@ -213,4 +214,65 @@ func TestUpdateObservationRefusesReleaseAboveHome(t *testing.T) {
 	require.EqualError(t, err, "update accepted-once moved the cluster to skali v0.5.0, newer than this CLI v0.4.0; run skali upgrade --version v0.5.0, then skali cluster upgrade --wait --remote target to keep observing")
 	require.Empty(t, f.spawns)
 	require.Empty(t, f.stderr.String(), "no fetch is attempted")
+}
+
+// TestManagedCLIReportsLegacyBucketEndpoints: before confirming, the
+// update names every bucket still published on the installation-wide S3
+// endpoint (no route of its own, an endpoint that is not the in-cluster
+// gateway); routed and in-cluster buckets and applications are not
+// listed, and a caller who cannot see every project gets a note instead.
+func TestManagedCLIReportsLegacyBucketEndpoints(t *testing.T) {
+	for _, role := range []string{"admin", "member"} {
+		t.Run(role, func(t *testing.T) {
+			status := updates.Status{Installed: updates.Installed{Version: "v0.1.0-alpha.4", PlatformVersion: "v0.1.0-alpha.3"}, Managed: true, Manageable: true,
+				Summary: updates.Summary{State: "available", Action: "update", TargetVersion: "v0.1.0-alpha.4", ConvergedVersion: "v0.1.0-alpha.3"}}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				var payload any
+				switch {
+				case r.URL.Path == "/v1/auth/session":
+					payload = map[string]any{"user": map[string]any{"id": "u1", "role": role}}
+				case r.URL.Path == "/v1/projects":
+					payload = map[string]any{"projects": []map[string]any{{"id": "p1", "name": "demo"}}}
+				case r.URL.Path == "/v1/projects/p1/environments":
+					payload = map[string]any{"environments": []map[string]any{{"id": "e1", "project_id": "p1", "name": "prod"}}}
+				case r.URL.Path == "/v1/environments/e1/status":
+					payload = map[string]any{"services": []map[string]any{
+						{"key": "web", "type": "application", "routes": []map[string]any{{"key": "public", "domain": "demo.example.com"}}},
+						{"key": "legacy", "type": "bucket"},
+						{"key": "routed", "type": "bucket", "routes": []map[string]any{{"key": "route", "domain": "files.example.com"}}},
+						{"key": "internal", "type": "bucket"},
+					}}
+				case r.URL.Path == "/v1/environments/e1/buckets/legacy/connection":
+					payload = map[string]any{"service": "buckets.legacy", "endpoint": "https://s3.example.com"}
+				case r.URL.Path == "/v1/environments/e1/buckets/internal/connection":
+					payload = map[string]any{"service": "buckets.internal", "endpoint": platform.InternalS3Endpoint()}
+				case strings.HasPrefix(r.URL.Path, "/v1/environments/e1/buckets/"):
+					t.Errorf("unexpected connection lookup %s", r.URL.Path)
+					payload = map[string]any{}
+				default:
+					if strings.HasSuffix(r.URL.Path, "/apply") {
+						status.Operation = &updates.OperationState{ID: "op", Phase: "pending"}
+					}
+					payload = status
+				}
+				require.NoError(t, json.NewEncoder(w).Encode(payload))
+			}))
+			defer server.Close()
+			var out bytes.Buffer
+			err := runManagedUpdate(context.Background(), &out, bufio.NewReader(strings.NewReader("")), client.New(server.URL, "token", client.Caller{UserAgent: "test"}), "", true, false)
+			require.NoError(t, err)
+			if role == "admin" {
+				require.Contains(t, out.String(), "1 bucket(s) still publish it")
+				require.Contains(t, out.String(), "demo/prod  buckets.legacy  https://s3.example.com")
+				require.NotContains(t, out.String(), "buckets.routed")
+				require.NotContains(t, out.String(), "buckets.internal")
+				require.Contains(t, out.String(), "declare route.domain")
+			} else {
+				require.Contains(t, out.String(), "only an instance admin can check")
+				require.NotContains(t, out.String(), "buckets.legacy")
+			}
+			require.Contains(t, out.String(), "Work continues")
+		})
+	}
 }

@@ -3,15 +3,12 @@ package substrate
 import (
 	"context"
 	"errors"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"log/slog"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
-	"github.com/Hinkolas/skali/internal/edge"
-	"github.com/Hinkolas/skali/internal/edge/edgeobserve"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
@@ -82,9 +79,6 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 				return nil, err
 			}
 			storeObj.ObjectStore.Placement = placement
-		}
-		if c.publicEdgeEnabled() {
-			storeObj.ObjectStore.PublicEndpoint = c.publicEndpointStatus(ctx)
 		}
 
 		sizes, err := c.deps.Seaweed.CollectionSizes(ctx)
@@ -204,23 +198,4 @@ func (c *Controller) enforceBucketQuota(ctx context.Context, quotaBytes int64, b
 		return false
 	})
 	return over, err
-}
-
-// publicEndpointStatus reads the S3 domain's certificate: issued, issuing,
-// or failing, with cert-manager's own reason. The domain is served only
-// once the certificate is; until then presigned URLs for the public host
-// fail TLS, which is what the bucket's health should say.
-func (c *Controller) publicEndpointStatus(ctx context.Context) *module.PublicEndpointStatus {
-	status := &module.PublicEndpointStatus{Domain: c.cfg.S3Domain}
-	object, err := c.deps.Cluster.GetObject(ctx, edge.CertificateGVR, Namespace, "seaweed-s3-tls")
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			slog.Debug("substrate: read S3 certificate", "error", err)
-		}
-		return status
-	}
-	if projected, ok := edgeobserve.ConvertCertificate(object); ok {
-		status.Certificate = projected.Certificate
-	}
-	return status
 }

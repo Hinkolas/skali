@@ -213,9 +213,12 @@ type Endpoints struct {
 	// Registry is the public managed-registry domain; empty on records
 	// written before initialization gathered it.
 	Registry string `yaml:"registry,omitempty"`
-	// S3 is the optional public S3 endpoint domain; empty keeps bucket
-	// access in-cluster.
-	S3 string `yaml:"s3,omitempty"`
+	// LegacyS3 is the installation-wide S3 endpoint domain releases before
+	// the per-bucket routes recorded as endpoints.s3. It is read so an
+	// upgrade can say what happens to buckets that published it, never
+	// written: Init records the endpoints afresh without it. Remove with
+	// the first stable release.
+	LegacyS3 string `yaml:"s3,omitempty"`
 }
 
 // TLSConfig parameterizes certificate issuance.

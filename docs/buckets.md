@@ -148,11 +148,16 @@ gateway, deletes the routers and the certificate on the next pass, and
 releases the hostname once the old routers are confirmed gone. Bucket
 data is never touched by a route change.
 
-The installation-wide S3 endpoint (`endpoints.s3` at `skali cluster init`)
-still exists for one more release as the fallback `endpoint` of buckets
-without a route on managed clusters. It is deprecated: declare a route on
-each bucket that needs a public hostname (the old domain can become one
-bucket's route) and expect `endpoints.s3` to disappear next.
+Upgrading from a release that had an installation-wide S3 endpoint
+(`endpoints.s3` at `skali cluster init`): that endpoint no longer exists.
+The first store pass of the new release deletes its routers and
+certificate, skalid releases the hostname's reservation at start so an
+environment can claim it as a bucket route, and every bucket without a
+route publishes the in-cluster gateway from then on. Declare `route` on
+each bucket that needs a public hostname and deploy before upgrading;
+`skali cluster upgrade` lists the buckets still published on the old host
+before it asks for confirmation. A stale `endpoints.s3` in an init config
+is ignored with a warning.
 
 Local development (`skali dev`) renders routes like production, with the
 local CA issuing their certificates, so `https://<route domain>` answers

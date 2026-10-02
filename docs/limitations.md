@@ -148,10 +148,6 @@ hostname and a configurable path are planned; until then give the bucket
 a hostname of its own. The deferral, probing and `skali route probe`
 behaviour above applies to bucket routes unchanged.
 
-The installation-wide S3 endpoint (`endpoints.s3`) remains as a fallback
-for buckets without a route on managed clusters, and is slated for
-removal: declare routes instead.
-
 ## Shrinking the object store is manual
 
 The managed object store grows with the fleet (a second object-storage

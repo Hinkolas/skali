@@ -1201,3 +1201,25 @@ func (c *Client) PutDatabasePoolSettings(ctx context.Context, name string, input
 	}
 	return &res.Pool, nil
 }
+
+// BucketConnection is a bucket's published connection data: the endpoint
+// consumers sign against (its route's origin, or the in-cluster gateway),
+// the allocated bucket name, and the region.
+type BucketConnection struct {
+	Service           string `json:"service"`
+	Phase             string `json:"phase"`
+	Visibility        string `json:"visibility"`
+	Endpoint          string `json:"endpoint,omitempty"`
+	InternalEndpoint  string `json:"internal_endpoint,omitempty"`
+	Bucket            string `json:"bucket,omitempty"`
+	Region            string `json:"region,omitempty"`
+	CredentialVersion int64  `json:"credential_version,omitempty"`
+}
+
+func (c *Client) BucketConnection(ctx context.Context, environmentID, key string) (*BucketConnection, error) {
+	var res BucketConnection
+	if err := c.do(ctx, http.MethodGet, "/v1/environments/"+environmentID+"/buckets/"+url.PathEscape(key)+"/connection", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}

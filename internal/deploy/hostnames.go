@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/Hinkolas/skali/internal/compiler"
@@ -27,6 +28,12 @@ func (e *HostnameConflict) Error() string {
 	return e.Field + ": hostname is already claimed by another environment"
 }
 
+// ReserveHostnames makes the installation's own hosts (console, registry)
+// unclaimable by environments and releases reservations the configuration
+// no longer names, so a host the installation stops using (a removed
+// endpoint, a changed registry domain) becomes claimable as a route.
+// Reserving a host an environment already holds fails: the configuration
+// is not applied over a tenant.
 func (s *Service) ReserveHostnames(ctx context.Context, hosts []string) error {
 	canonical := map[string]bool{}
 	for _, host := range hosts {
@@ -53,6 +60,13 @@ func (s *Service) ReserveHostnames(ctx context.Context, hosts []string) error {
 			if n == 0 {
 				return fmt.Errorf("reserved hostname overlaps an environment claim; configuration was not applied")
 			}
+		}
+		released, err := q.ReleaseReservedHostnamesExcept(ctx, names)
+		if err != nil {
+			return err
+		}
+		if len(released) > 0 {
+			slog.Info("deploy: released hostname reservations", "hostnames", released)
 		}
 		return nil
 	})

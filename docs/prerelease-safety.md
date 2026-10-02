@@ -35,10 +35,11 @@ that an old installation database can be restored into this release.
 Each public hostname belongs to one environment. Applications in that environment
 may share paths, and its buckets may share a hostname among themselves; other
 environments cannot claim any path on its hostname.
-Platform, registry, and S3 hosts are reserved through `SKALI_RESERVED_HOSTS`
+Platform and registry hosts are reserved through `SKALI_RESERVED_HOSTS`
 (semicolon-separated; the managed bundle supplies these automatically).
 Configuration cannot reserve a hostname already claimed by an environment.
-Reservations persist conservatively after configuration changes.
+Reservations follow the configuration: a host it stops naming is released
+at the next skalid start and becomes claimable by an environment.
 
 Removing a route does not immediately transfer its hostname. Claims are retained
 until reconciliation confirms that the old routers are absent. Failed removal

@@ -91,6 +91,32 @@ func (q *Queries) ListEnvironmentHostnames(ctx context.Context, environmentID *u
 	return items, nil
 }
 
+const releaseReservedHostnamesExcept = `-- name: ReleaseReservedHostnamesExcept :many
+DELETE FROM hostname_claims
+WHERE reserved AND NOT (hostname = ANY($1::text[]))
+RETURNING hostname
+`
+
+func (q *Queries) ReleaseReservedHostnamesExcept(ctx context.Context, dollar_1 []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, releaseReservedHostnamesExcept, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var hostname string
+		if err := rows.Scan(&hostname); err != nil {
+			return nil, err
+		}
+		items = append(items, hostname)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reserveHostname = `-- name: ReserveHostname :execrows
 INSERT INTO hostname_claims (hostname, reserved) VALUES ($1, true)
 ON CONFLICT (hostname) DO UPDATE SET reserved = true WHERE hostname_claims.reserved

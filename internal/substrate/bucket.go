@@ -20,6 +20,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/platform"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
@@ -202,8 +203,8 @@ func (c *Controller) ensureAllocationRecord(ctx context.Context, row store.Bucke
 
 // bucketEndpoint is the endpoint published to consumers: the bucket's own
 // route when the claim records one (the environment renders the edge for
-// it), else the installation-wide public S3 domain when a managed
-// installation still configures one, else the in-cluster service URL.
+// it), else the in-cluster service URL. A bucket without a route is
+// reachable from inside the cluster only, like a database.
 func (c *Controller) bucketEndpoint(row store.BucketClaim) (string, error) {
 	if len(row.Route) > 0 {
 		var route reconcile.BucketRoute
@@ -214,18 +215,14 @@ func (c *Controller) bucketEndpoint(row store.BucketClaim) (string, error) {
 			return route.Endpoint(), nil
 		}
 	}
-	if c.publicEdgeEnabled() {
-		return "https://" + c.cfg.S3Domain, nil
-	}
 	return InternalBucketEndpoint(), nil
 }
 
 // InternalBucketEndpoint is the in-cluster S3 gateway URL, published as the
-// internal_endpoint output beside the public one so backend traffic need
-// not hairpin through the edge while signed URLs still carry the public
-// host. With one store per installation it is a constant.
+// internal_endpoint output beside endpoint so backend traffic need not
+// hairpin through the edge while signed URLs carry the route's host. With one store per installation it is a constant.
 func InternalBucketEndpoint() string {
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", seaweed.S3Service, Namespace, seaweed.S3Port)
+	return platform.InternalS3Endpoint()
 }
 
 // ensureBucketCredentialSecret creates the claim's keypair Secret on first

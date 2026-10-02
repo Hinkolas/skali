@@ -15,3 +15,10 @@ const (
 	S3Service = "seaweed-s3"
 	S3Port    = 8333
 )
+
+// InternalS3Endpoint is the in-cluster S3 gateway URL every bucket
+// publishes as internal_endpoint, and the endpoint of a bucket without a
+// route. With one store per installation it is a constant.
+func InternalS3Endpoint() string {
+	return "http://" + S3Service + "." + Namespace + ".svc.cluster.local:8333"
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clusterstate"
+	"github.com/Hinkolas/skali/internal/platform"
 	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/version"
 )
@@ -88,6 +89,7 @@ func runManagedUpdate(ctx context.Context, out io.Writer, reader *bufio.Reader, 
 		}
 	}
 	fmt.Fprintf(out, "Cluster: %s\nRelease: %s -> %s\nUpdates the platform and host services on all %d nodes, one node at a time.\n", api.Master(), status.Summary.ConvergedVersion, target, len(status.Nodes))
+	reportLegacyBuckets(ctx, out, api)
 	if err := confirmClusterUpdate(ctx, out, reader, yes, target); err != nil {
 		return err
 	}
@@ -229,4 +231,85 @@ func runRecoveryUpdate(ctx context.Context, out io.Writer, reader *bufio.Reader,
 		return waitClusterOperation(ctx, store, op.ID)
 	}
 	return nil
+}
+
+// legacyBucket is a bucket still published on the installation-wide S3
+// endpoint that releases before this CLI served; the target release
+// publishes a bucket without a route in-cluster only.
+type legacyBucket struct {
+	Project     string
+	Environment string
+	Key         string
+	Endpoint    string
+}
+
+// legacyBucketEndpoints finds the buckets whose published endpoint is
+// neither a route of their own nor the in-cluster gateway: the ones that
+// lose their public endpoint when the installation-wide S3 host goes
+// away. The walk needs every project, which only an instance admin sees;
+// anyone else gets an empty list and ok=false.
+func legacyBucketEndpoints(ctx context.Context, api *client.Client) (found []legacyBucket, ok bool, err error) {
+	session, err := api.CurrentSession(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if session.User.Role != "admin" {
+		return nil, false, nil
+	}
+	projects, err := api.ListProjects(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	internal := platform.InternalS3Endpoint()
+	for _, project := range projects {
+		environments, err := api.ListEnvironments(ctx, project.ID)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, environment := range environments {
+			status, err := api.EnvironmentStatus(ctx, environment.ID)
+			if err != nil {
+				return nil, false, err
+			}
+			for _, service := range status.Services {
+				if service.Type != "bucket" || len(service.Routes) > 0 {
+					continue
+				}
+				connection, err := api.BucketConnection(ctx, environment.ID, service.Key)
+				if err != nil {
+					return nil, false, err
+				}
+				if connection.Endpoint == "" || connection.Endpoint == internal {
+					continue
+				}
+				found = append(found, legacyBucket{Project: project.Name, Environment: environment.Name,
+					Key: service.Key, Endpoint: connection.Endpoint})
+			}
+		}
+	}
+	return found, true, nil
+}
+
+// reportLegacyBuckets prints what the update does to buckets still on the
+// installation-wide S3 endpoint, so the operator can declare routes and
+// deploy first. A failed check is reported and does not stop the update:
+// the check is advice about the target release, not a precondition of it.
+func reportLegacyBuckets(ctx context.Context, out io.Writer, api *client.Client) {
+	found, ok, err := legacyBucketEndpoints(ctx, api)
+	if err != nil {
+		fmt.Fprintf(out, "note: could not check for buckets on the installation-wide S3 endpoint: %v\n", err)
+		return
+	}
+	if !ok {
+		fmt.Fprintln(out, "note: only an instance admin can check for buckets on the installation-wide S3 endpoint; buckets without a route become in-cluster only after this update")
+		return
+	}
+	if len(found) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "This release removes the installation-wide S3 endpoint. %d bucket(s) still publish it and become reachable in-cluster only:\n", len(found))
+	for _, bucket := range found {
+		fmt.Fprintf(out, "  %s/%s  buckets.%s  %s\n", bucket.Project, bucket.Environment, bucket.Key, bucket.Endpoint)
+	}
+	fmt.Fprintln(out, "To keep a public hostname, declare route.domain on the bucket and deploy before updating; presigned URLs signed against the old host stop working either way.")
 }

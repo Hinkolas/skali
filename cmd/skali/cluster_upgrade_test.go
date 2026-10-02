@@ -55,16 +55,14 @@ func TestSeedInitInputsMissingRegistryNonInteractive(t *testing.T) {
 
 func TestSeedInitInputsNilEndpointsPromptsAll(t *testing.T) {
 	// The oldest records carry no endpoints or tls blocks at all; every
-	// field is prompted in order, including the optional s3 domain (empty
-	// keeps buckets in-cluster) and the storage driver (empty keeps
-	// local).
+	// field is prompted in order, including the storage driver (empty
+	// keeps local).
 	record := &installer.Record{}
 	opts := installer.InitOptions{}
-	input := "skali.example.com\n\ns3.skali.example.com\nops@example.com\nlonghorn\n"
+	input := "skali.example.com\n\nops@example.com\nlonghorn\n"
 	require.NoError(t, seedInitInputs(inputReader(input), true, record, &opts))
 	require.Equal(t, "skali.example.com", opts.Endpoints.API)
 	require.Equal(t, "cr.skali.example.com", opts.Endpoints.Registry)
-	require.Equal(t, "s3.skali.example.com", opts.Endpoints.S3)
 	require.Equal(t, "ops@example.com", opts.TLS.IssuerEmail)
 	require.Equal(t, "longhorn", opts.StorageDriver)
 }
@@ -73,13 +71,13 @@ func TestSeedInitInputsStorageDriver(t *testing.T) {
 	// Fresh initialization, empty answer: the default is local.
 	fresh := &installer.Record{}
 	opts := installer.InitOptions{}
-	input := "skali.example.com\n\n\nops@example.com\n\n"
+	input := "skali.example.com\n\nops@example.com\n\n"
 	require.NoError(t, seedInitInputs(inputReader(input), true, fresh, &opts))
 	require.Equal(t, "local", opts.StorageDriver)
 
 	// An invalid answer is refused.
 	opts = installer.InitOptions{}
-	input = "skali.example.com\n\n\nops@example.com\nzfs\n"
+	input = "skali.example.com\n\nops@example.com\nzfs\n"
 	err := seedInitInputs(inputReader(input), true, fresh, &opts)
 	require.ErrorContains(t, err, "storage driver must be local or longhorn")
 

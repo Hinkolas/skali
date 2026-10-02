@@ -135,10 +135,6 @@ type Config struct {
 	// Capabilities is the installation's declared capability set; the eager
 	// boot ensure runs only when it includes the database capability.
 	Capabilities []string
-	// S3Domain is the optional public S3 endpoint domain: bucket endpoints
-	// publish on it and the substrate renders the S3 ingress. Empty keeps
-	// bucket access in-cluster.
-	S3Domain string
 	// Resync re-enqueues unsettled claims and live pools periodically as the
 	// audit backstop.
 	Resync  time.Duration
@@ -173,6 +169,9 @@ type Controller struct {
 	// just changed, the desired encoding until a pass applied exactly it.
 	// See markExtensionsPending.
 	pendingExtensions map[uuid.UUID][]byte
+	// legacyEdgeSwept records that this process already deleted the
+	// removed installation-wide S3 edge objects; see sweepLegacyS3Edge.
+	legacyEdgeSwept bool
 }
 
 // SetProbePoke wires the provider observer's coalesced re-poll; the
