@@ -36,6 +36,19 @@ repository. `scripts/assets.mjs` copies them into `static/` before every
 The build needs the release tags. A shallow clone fails with a hint; fetch
 the tags or set `SCHEMA_REF`.
 
+The home page reads the tags too (`src/lib/server/release.ts`): the version
+in the navigation is the newest release, and the install command adds
+`SKALI_CHANNEL=beta` while there is no stable release yet, because
+`install.sh` installs stable releases only by default.
+
+## Layout
+
+- `src/lib/sections/`: the home page's sections, in page order in
+  `src/routes/+page.svelte`.
+- `src/lib/mock/`: static renderings of Skali Studio screens used as
+  product pictures. They copy the Studio's sizes and colors by hand; the
+  theme tokens in `src/routes/layout.css` mirror `studio/src/routes/layout.css`.
+
 ## Deployment
 
 `.github/workflows/pages.yml` builds this directory and deploys `build/` to

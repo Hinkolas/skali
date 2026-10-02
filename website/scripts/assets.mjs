@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { newestRelease } from './releases.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = fileURLToPath(new URL('../static/', import.meta.url));
@@ -21,7 +22,7 @@ const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8'
 
 copyFileSync(join(root, 'install.sh'), join(output, 'install.sh'));
 
-const ref = process.env.SCHEMA_REF || newestRelease(git('tag', '--list', 'v*').split('\n'));
+const ref = process.env.SCHEMA_REF || newestRelease(git('tag', '--list', 'v*').split('\n'))?.tag;
 if (!ref) {
 	throw new Error('No release tag found (shallow clone?). Fetch tags or set SCHEMA_REF=HEAD.');
 }
@@ -41,33 +42,3 @@ for (const path of schemas) {
 	writeFileSync(join(destination, basename(path)), source);
 }
 console.log(`Copied install.sh and ${schemas.length} schemas from ${ref}`);
-
-// newestRelease prefers the newest stable tag and falls back to the newest
-// prerelease while there is none, ordered by semver precedence.
-function newestRelease(tags) {
-	const versions = tags
-		.map((tag) => ({ tag, match: /^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(tag) }))
-		.filter(({ match }) => match)
-		.map(({ tag, match }) => ({
-			tag,
-			core: match.slice(1, 4).map(Number),
-			pre: match[4] ? match[4].split('.') : []
-		}));
-	const stable = versions.filter((version) => version.pre.length === 0);
-	const candidates = stable.length > 0 ? stable : versions;
-	return candidates.sort(compare).at(-1)?.tag;
-}
-
-function compare(a, b) {
-	for (let i = 0; i < 3; i++) if (a.core[i] !== b.core[i]) return a.core[i] - b.core[i];
-	if (a.pre.length === 0 || b.pre.length === 0) return b.pre.length - a.pre.length;
-	for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
-		const [x, y] = [a.pre[i], b.pre[i]];
-		if (x === y) continue;
-		const [nx, ny] = [/^\d+$/.test(x), /^\d+$/.test(y)];
-		if (nx && ny) return Number(x) - Number(y);
-		if (nx !== ny) return nx ? -1 : 1;
-		return x < y ? -1 : 1;
-	}
-	return a.pre.length - b.pre.length;
-}
