@@ -28,6 +28,8 @@
 	</div>
 {/snippet}
 
+<!-- Each preview stops short of the outer edge on its side (xl and up, where
+     the rows sit side by side), so it does not line up with the text column. -->
 <section id="platform" class="mx-auto flex max-w-330 scroll-mt-6 flex-col gap-30 px-6 py-35">
 	<!-- The rows run wider than the other sections; the header keeps their
 	     measure so its label lines up with theirs. -->
@@ -54,7 +56,7 @@
 		<div
 			role="img"
 			aria-label="A deployment run in Skali Studio, rolling out the web application"
-			class="relative h-110 flex-[1_1_480px] overflow-hidden rounded-[22px] border border-border-default bg-surface-panel px-[clamp(20px,3vw,40px)] pt-[clamp(20px,3vw,40px)]"
+			class="relative h-110 flex-[1_1_480px] overflow-hidden rounded-[22px] border border-border-default bg-surface-panel px-[clamp(20px,3vw,40px)] pt-[clamp(20px,3vw,40px)] xl:mr-16"
 			style="background-image: radial-gradient(520px 320px at 80% 0%, rgb(124 92 255 / 0.14) 0%, transparent 70%)"
 		>
 			<div class="fade-bottom"><RunSteps /></div>
@@ -65,7 +67,7 @@
 		<div
 			role="img"
 			aria-label="A PostgreSQL instance with the vector extension and a bucket's S3 connection in Skali Studio"
-			class="grid min-w-0 flex-[1_1_480px] grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] items-start gap-4 rounded-[22px] border border-border-default bg-surface-panel p-[clamp(20px,3vw,40px)] *:min-w-0"
+			class="grid min-w-0 flex-[1_1_480px] grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] items-start gap-4 rounded-[22px] border border-border-default bg-surface-panel p-[clamp(20px,3vw,40px)] *:min-w-0 xl:ml-16"
 			style="background-image: radial-gradient(520px 320px at 20% 100%, rgb(104 196 216 / 0.10) 0%, transparent 70%)"
 		>
 			<DatabaseInstance />
@@ -99,7 +101,7 @@
 		<div
 			role="img"
 			aria-label="A backup schedule with recent snapshots and the promote dialog in Skali Studio"
-			class="relative flex flex-[1_1_480px] flex-col gap-4 overflow-hidden rounded-[22px] border border-border-default bg-surface-panel p-[clamp(20px,3vw,40px)] sm:block sm:h-115"
+			class="relative flex flex-[1_1_480px] flex-col gap-4 overflow-hidden rounded-[22px] border border-border-default bg-surface-panel p-[clamp(20px,3vw,40px)] sm:block sm:h-115 xl:mr-16"
 			style="background-image: radial-gradient(520px 320px at 80% 100%, rgb(217 165 79 / 0.10) 0%, transparent 70%)"
 		>
 			<div class="sm:w-[78%]"><Backups /></div>
