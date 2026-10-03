@@ -470,6 +470,14 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 						ac.route(r, "POST", "/system/updates/scan", classInstanceAdmin, uph.scan)
 					}
 
+					// The backup target read returns no secret, so it is a
+					// plain admin read; writes stay behind sudo mode below.
+					var bth *backupTargetHandlers
+					if d.BackupTargets != nil {
+						bth = &backupTargetHandlers{targets: d.BackupTargets}
+						ac.route(r, "GET", "/system/backup-target", classInstanceAdmin, bth.get)
+					}
+
 					// Database pools: budgets and effective parameters are a
 					// plain admin read; retuning is a write below.
 					var plh *poolsHandlers
@@ -494,10 +502,8 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 						ac.route(r, "POST", "/users/{id}/password", classInstanceAdmin, uh.resetPassword)
 
 						// The backup target holds external S3 credentials;
-						// reads and writes both stay behind sudo mode.
-						if d.BackupTargets != nil {
-							bth := &backupTargetHandlers{targets: d.BackupTargets}
-							ac.route(r, "GET", "/system/backup-target", classInstanceAdmin, bth.get)
+						// replacing or removing it needs sudo mode.
+						if bth != nil {
 							ac.route(r, "PUT", "/system/backup-target", classInstanceAdmin, bth.put)
 							ac.route(r, "DELETE", "/system/backup-target", classInstanceAdmin, bth.delete)
 						}

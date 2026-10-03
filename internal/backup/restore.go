@@ -59,6 +59,13 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 	if target.State != "active" || target.TargetRevisionID == nil {
 		return nil, ErrEnvironmentNotActive
 	}
+	revisionDoc, err := c.revisions.GetRevision(ctx, *target.TargetRevisionID)
+	if err != nil {
+		return nil, fmt.Errorf("backup: load revision: %w", err)
+	}
+	if err := c.bucketsReady(ctx, &revisionDoc.Definition); err != nil {
+		return nil, err
+	}
 
 	// The snapshot may come from any environment of the project: a
 	// production snapshot restores into staging just as well, since
@@ -345,6 +352,13 @@ func (c *Controller) restoreBucket(ctx context.Context, log copyLog, bctx *backu
 	if c.deps.Buckets == nil {
 		return errors.New("the object-storage substrate is not available")
 	}
+	// Platform access first: it does not depend on the bucket's own
+	// identity, and a restore that cannot write must not fence a bucket it
+	// will never reopen.
+	destination, bucketName, err := c.openBucket(ctx, row.EnvironmentID, component.ServiceKey)
+	if err != nil {
+		return err
+	}
 	// The fence: the bucket's own identity is deleted, so the mirrored
 	// keys and every presigned URL signed with them are refused while the
 	// contents change underneath; the platform identity alone writes. A
@@ -354,10 +368,6 @@ func (c *Controller) restoreBucket(ctx context.Context, log copyLog, bctx *backu
 		return err
 	}
 	log.Info(ctx, "bucket fenced: the environment's credentials are refused until the restore completes")
-	destination, bucketName, err := c.openBucket(ctx, row.EnvironmentID, component.ServiceKey)
-	if err != nil {
-		return err
-	}
 	log.Info(ctx, "clearing bucket "+bucketName)
 	cleared, err := destination.RemoveAll(ctx)
 	if err != nil {
