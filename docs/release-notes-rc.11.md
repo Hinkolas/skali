@@ -26,8 +26,9 @@ has been published from this branch.
   from inheriting a deleted environment's snapshots. Migration `00012` preserves
   existing directories and accepted operations.
 - Studio dependencies resolve the outstanding `brace-expansion` and `devalue`
-  advisories. The console is named Studio, and installation and editor-schema
-  URLs use `skali.dev`.
+  advisories. The file-sharing example's Go dependencies are patched, and the
+  daily audit now scans example modules too. The console is named Studio, and
+  installation and editor-schema URLs use `skali.dev`.
 
 ## Upgrade notes
 
