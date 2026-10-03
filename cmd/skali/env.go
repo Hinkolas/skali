@@ -14,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/naming"
 )
 
 // newEnvCommand lists and configures a project's environments: access
@@ -30,7 +31,44 @@ func newEnvCommand() *cobra.Command {
 			"admin and a recent login. Automatic backups are configured with\n" +
 			"skali backup schedule.",
 	}
-	command.AddCommand(newEnvLsCommand(), newEnvCreateCommand(), newEnvSetCommand(), newEnvRmCommand())
+	command.AddCommand(newEnvLsCommand(), newEnvCreateCommand(), newEnvRenameCommand(), newEnvSetCommand(), newEnvRmCommand())
+	return command
+}
+
+func newEnvRenameCommand() *cobra.Command {
+	var project, remote string
+	command := &cobra.Command{
+		Use:   "rename <environment> <new-name>",
+		Short: "Rename an environment without changing its data or identity",
+		Args:  cobra.ExactArgs(2),
+		ValidArgsFunction: func(command *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			if len(args) == 0 {
+				return completeEnvironmentArg(command, args, toComplete)
+			}
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
+		RunE: func(command *cobra.Command, args []string) error {
+			if err := naming.CheckKey(args[1]); err != nil {
+				return fmt.Errorf("environment name %v", err)
+			}
+			ctx := command.Context()
+			scope, err := resolveEnvScope(ctx, project, args[0], remote)
+			if err != nil {
+				return err
+			}
+			var updated *client.Environment
+			err = withReauth(ctx, command.OutOrStdout(), bufio.NewReader(command.InOrStdin()), scope.api, func() (err error) {
+				updated, err = scope.api.UpdateEnvironmentSettings(ctx, scope.environment.ID, client.EnvironmentSettingsPatch{Name: &args[1]})
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(command.OutOrStdout(), "renamed environment %s to %s\n", scope.environment.Name, updated.Name)
+			return nil
+		},
+	}
+	addAccessScopeFlags(command, &project, &remote)
 	return command
 }
 
@@ -69,7 +107,7 @@ func renderEnvironmentTable(out io.Writer, scope *accessScope) {
 	for i := range scope.environments {
 		environment := &scope.environments[i]
 		name := environment.Name
-		if name == bound {
+		if name == bound || slices.Contains(environment.PreviousNames, bound) {
 			name += " (bound)"
 		}
 		if environment.Locked() || environment.Settings == nil {

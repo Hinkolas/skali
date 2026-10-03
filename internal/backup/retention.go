@@ -24,7 +24,7 @@ func (c *Controller) applyRetention(ctx context.Context, log *journal.StepLog, b
 		return nil
 	}
 	row, target := bctx.row, bctx.target
-	prefix := snapshotPrefix(bctx.prefix(), row.ProjectName, row.EnvironmentName)
+	prefix := snapshotPrefix(bctx.prefix(), row.ProjectName, backupNamespace(row))
 	var keys []string
 	if err := target.List(ctx, prefix, func(info objectInfo) error {
 		keys = append(keys, info.Key)
@@ -32,7 +32,7 @@ func (c *Controller) applyRetention(ctx context.Context, log *journal.StepLog, b
 	}); err != nil {
 		return fmt.Errorf("list snapshots: %w", err)
 	}
-	manifests := make(map[string]*Manifest, len(keys))
+	manifestKeys := make(map[string]string, len(keys))
 	var listed []*Manifest
 	for _, key := range keys {
 		manifest, err := c.readManifest(ctx, target, key)
@@ -44,7 +44,7 @@ func (c *Controller) applyRetention(ctx context.Context, log *journal.StepLog, b
 			}
 			return fmt.Errorf("read manifest %s: %w", key, err)
 		}
-		manifests[manifest.SnapshotID] = manifest
+		manifestKeys[manifest.SnapshotID] = key
 		listed = append(listed, manifest)
 	}
 	protected, err := c.snapshotsBeingRestored(ctx)
@@ -59,7 +59,7 @@ func (c *Controller) applyRetention(ctx context.Context, log *journal.StepLog, b
 	var deleted int
 	var freed int64
 	for _, manifest := range candidates {
-		key := manifestKey(bctx.prefix(), row.ProjectName, manifest.Environment, manifest.SnapshotID)
+		key := manifestKeys[manifest.SnapshotID]
 		var bytes int64
 		for _, component := range manifest.Components {
 			bytes += component.Bytes

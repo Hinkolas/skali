@@ -725,7 +725,7 @@ const S3AccessPolicy = "seaweed-s3-access"
 // in the cluster before claim holders were admitted by name. Nothing
 // renders it; the substrate deletes it once per process so an upgraded
 // installation does not keep the port open beside the new policy (policies
-// union). Drop with the first stable release.
+// union). Retain while upgrades from releases carrying it are supported.
 const LegacyS3OpenPolicy = "seaweed-s3-open"
 
 // RenderS3AccessPolicy admits the S3 port to exactly the namespaces holding

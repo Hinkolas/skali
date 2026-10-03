@@ -56,9 +56,10 @@ type ProjectAccess struct {
 }
 
 type Environment struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
+	ID            string   `json:"id"`
+	ProjectID     string   `json:"project_id"`
+	Name          string   `json:"name"`
+	PreviousNames []string `json:"previous_names,omitempty"`
 	// Access is the caller's effective role; "none" marks a locked
 	// environment, which carries nothing else.
 	Access    string               `json:"access"`
@@ -93,6 +94,7 @@ type BackupSchedule struct {
 // as it is, null turns automatic backups off, an object sets them; build
 // it with BackupPatch.
 type EnvironmentSettingsPatch struct {
+	Name         *string         `json:"name,omitempty"`
 	MaxRole      *string         `json:"max_role,omitempty"`
 	DeployPolicy *string         `json:"deploy_policy,omitempty"`
 	PromoteFrom  *[]string       `json:"promote_from,omitempty"`
@@ -983,6 +985,8 @@ func (c *Client) DeleteBackupTarget(ctx context.Context) error {
 type BackupSnapshot struct {
 	ID               string `json:"id"`
 	Environment      string `json:"environment"`
+	EnvironmentID    string `json:"environment_id,omitempty"`
+	Orphaned         bool   `json:"orphaned,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	RevisionChecksum string `json:"revision_checksum"`
 	Encryption       string `json:"encryption"`

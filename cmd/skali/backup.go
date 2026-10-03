@@ -303,7 +303,7 @@ func restoreEnvironment(scope *queryProject, snapshot *client.BackupSnapshot, ex
 		return nil, fmt.Errorf("environment %s does not exist in project %s on %s",
 			explicit, scope.project.Name, scope.api.Master())
 	}
-	if resolved := findEnvironment(scope.environments, snapshot.Environment); resolved != nil {
+	if resolved := findEnvironment(scope.environments, snapshot.Environment); resolved != nil && !snapshot.Orphaned {
 		return resolved, nil
 	}
 	return nil, fmt.Errorf("environment %s, which the snapshot was taken from, does not exist in project %s on %s; "+

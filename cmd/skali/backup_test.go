@@ -212,6 +212,14 @@ func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "staging", target.Name)
 	require.Equal(t, "p1-e2", target.ID)
+	// Reusing a display name must not select a different identity implicitly.
+	snapshot.Orphaned = true
+	_, err = restoreEnvironment(scope, snapshot, "")
+	require.ErrorContains(t, err, "--environment")
+	target, err = restoreEnvironment(scope, snapshot, "production")
+	require.NoError(t, err)
+	require.Equal(t, "p1-e1", target.ID)
+	snapshot.Orphaned = false
 
 	// An explicit environment redirects it within the project.
 	target, err = restoreEnvironment(scope, snapshot, "production")

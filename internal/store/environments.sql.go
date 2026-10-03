@@ -12,9 +12,9 @@ import (
 )
 
 const createEnvironment = `-- name: CreateEnvironment :one
-INSERT INTO environments (id, project_id, name, max_role, priority)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy
+INSERT INTO environments (id, project_id, name, max_role, priority, backup_namespace)
+VALUES ($1::uuid, $2, $3, $4, $5, $1::uuid::text)
+RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy, previous_names, backup_namespace
 `
 
 type CreateEnvironmentParams struct {
@@ -47,6 +47,8 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		&i.BackupSchedule,
 		&i.BackupRetentionSeconds,
 		&i.BackupStrategy,
+		&i.PreviousNames,
+		&i.BackupNamespace,
 	)
 	return i, err
 }
@@ -64,7 +66,7 @@ func (q *Queries) DeleteEnvironmentByID(ctx context.Context, id uuid.UUID) (int6
 }
 
 const getEnvironmentByID = `-- name: GetEnvironmentByID :one
-SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy FROM environments WHERE id = $1
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy, previous_names, backup_namespace FROM environments WHERE id = $1
 `
 
 func (q *Queries) GetEnvironmentByID(ctx context.Context, id uuid.UUID) (Environment, error) {
@@ -83,6 +85,40 @@ func (q *Queries) GetEnvironmentByID(ctx context.Context, id uuid.UUID) (Environ
 		&i.BackupSchedule,
 		&i.BackupRetentionSeconds,
 		&i.BackupStrategy,
+		&i.PreviousNames,
+		&i.BackupNamespace,
+	)
+	return i, err
+}
+
+const getEnvironmentNameOwner = `-- name: GetEnvironmentNameOwner :one
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy, previous_names, backup_namespace FROM environments
+WHERE project_id = $1 AND (name = $2 OR $2 = ANY(previous_names))
+`
+
+type GetEnvironmentNameOwnerParams struct {
+	ProjectID uuid.UUID
+	Name      string
+}
+
+func (q *Queries) GetEnvironmentNameOwner(ctx context.Context, arg GetEnvironmentNameOwnerParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, getEnvironmentNameOwner, arg.ProjectID, arg.Name)
+	var i Environment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.MaxRole,
+		&i.DeployPolicy,
+		&i.PromoteFrom,
+		&i.Priority,
+		&i.BackupSchedule,
+		&i.BackupRetentionSeconds,
+		&i.BackupStrategy,
+		&i.PreviousNames,
+		&i.BackupNamespace,
 	)
 	return i, err
 }
@@ -137,7 +173,7 @@ func (q *Queries) ListActiveEnvironmentRevisions(ctx context.Context) ([]ListAct
 }
 
 const listEnvironments = `-- name: ListEnvironments :many
-SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy FROM environments WHERE project_id = $1 ORDER BY name
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy, previous_names, backup_namespace FROM environments WHERE project_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]Environment, error) {
@@ -162,6 +198,8 @@ func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]
 			&i.BackupSchedule,
 			&i.BackupRetentionSeconds,
 			&i.BackupStrategy,
+			&i.PreviousNames,
+			&i.BackupNamespace,
 		); err != nil {
 			return nil, err
 		}
@@ -174,7 +212,7 @@ func (q *Queries) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]
 }
 
 const listEnvironmentsForProjects = `-- name: ListEnvironmentsForProjects :many
-SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy FROM environments WHERE project_id = ANY($1::uuid[]) ORDER BY project_id, name
+SELECT id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy, previous_names, backup_namespace FROM environments WHERE project_id = ANY($1::uuid[]) ORDER BY project_id, name
 `
 
 // Environments of several projects at once, for the per-user access grant.
@@ -200,6 +238,8 @@ func (q *Queries) ListEnvironmentsForProjects(ctx context.Context, projectIds []
 			&i.BackupSchedule,
 			&i.BackupRetentionSeconds,
 			&i.BackupStrategy,
+			&i.PreviousNames,
+			&i.BackupNamespace,
 		); err != nil {
 			return nil, err
 		}
@@ -302,13 +342,66 @@ func (q *Queries) ListProjectEnvironmentStates(ctx context.Context, projectID uu
 	return items, nil
 }
 
+const renameEnvironment = `-- name: RenameEnvironment :one
+UPDATE environments
+SET previous_names = array_remove(array_append(previous_names, name), $2),
+    name = $2,
+    backup_namespace = CASE WHEN backup_namespace = '' THEN name ELSE backup_namespace END,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy, previous_names, backup_namespace
+`
+
+type RenameEnvironmentParams struct {
+	ID   uuid.UUID
+	Name string
+}
+
+func (q *Queries) RenameEnvironment(ctx context.Context, arg RenameEnvironmentParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, renameEnvironment, arg.ID, arg.Name)
+	var i Environment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.MaxRole,
+		&i.DeployPolicy,
+		&i.PromoteFrom,
+		&i.Priority,
+		&i.BackupSchedule,
+		&i.BackupRetentionSeconds,
+		&i.BackupStrategy,
+		&i.PreviousNames,
+		&i.BackupNamespace,
+	)
+	return i, err
+}
+
+const renamePromotionSources = `-- name: RenamePromotionSources :exec
+UPDATE environments SET promote_from = array_replace(promote_from, $2::text, $3::text), updated_at = now()
+WHERE project_id = $1 AND $2::text = ANY(promote_from)
+`
+
+type RenamePromotionSourcesParams struct {
+	ProjectID uuid.UUID
+	Column2   string
+	Column3   string
+}
+
+func (q *Queries) RenamePromotionSources(ctx context.Context, arg RenamePromotionSourcesParams) error {
+	_, err := q.db.Exec(ctx, renamePromotionSources, arg.ProjectID, arg.Column2, arg.Column3)
+	return err
+}
+
 const updateEnvironmentSettings = `-- name: UpdateEnvironmentSettings :one
 UPDATE environments
 SET max_role = $2, deploy_policy = $3, promote_from = $4, priority = $5,
     backup_schedule = $6, backup_retention_seconds = $7, backup_strategy = $8,
     updated_at = now()
 WHERE id = $1
-RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy
+RETURNING id, project_id, name, created_at, updated_at, max_role, deploy_policy, promote_from, priority, backup_schedule, backup_retention_seconds, backup_strategy, previous_names, backup_namespace
 `
 
 type UpdateEnvironmentSettingsParams struct {
@@ -347,6 +440,8 @@ func (q *Queries) UpdateEnvironmentSettings(ctx context.Context, arg UpdateEnvir
 		&i.BackupSchedule,
 		&i.BackupRetentionSeconds,
 		&i.BackupStrategy,
+		&i.PreviousNames,
+		&i.BackupNamespace,
 	)
 	return i, err
 }

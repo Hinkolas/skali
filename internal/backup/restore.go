@@ -340,7 +340,7 @@ func (c *Controller) restoreDatabase(ctx context.Context, log *journal.StepLog, 
 
 // restoreBucket clears the service's current bucket and copies the
 // snapshot's objects back through the in-cluster gateway.
-func (c *Controller) restoreBucket(ctx context.Context, log *journal.StepLog, bctx *backupContext, component Component) error {
+func (c *Controller) restoreBucket(ctx context.Context, log copyLog, bctx *backupContext, component Component) error {
 	row := bctx.row
 	if c.deps.Buckets == nil {
 		return errors.New("the object-storage substrate is not available")
@@ -368,6 +368,9 @@ func (c *Controller) restoreBucket(ctx context.Context, log *journal.StepLog, bc
 		component.ObjectPrefix, "", component.ObjectCount, c.copyOptions())
 	if err != nil {
 		return err
+	}
+	if restored != component.ObjectCount {
+		return fmt.Errorf("bucket snapshot is incomplete: expected %d objects, restored %d; the bucket remains fenced", component.ObjectCount, restored)
 	}
 	log.Info(ctx, fmt.Sprintf("restored %d objects (%d bytes)", restored, restoredBytes))
 	if err := c.deps.Buckets.UnfenceBucket(ctx, row.EnvironmentID, component.ServiceKey); err != nil {

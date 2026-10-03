@@ -52,21 +52,22 @@ type Attempt struct {
 }
 
 type Backup struct {
-	ID               uuid.UUID
-	Kind             string
-	EnvironmentID    uuid.UUID
-	ProjectName      string
-	EnvironmentName  string
-	Status           string
-	SnapshotKey      string
-	RevisionID       *uuid.UUID
-	RunID            *uuid.UUID
-	Error            *string
-	CreatedAt        time.Time
-	FinishedAt       *time.Time
-	Trigger          string
-	Strategy         string
-	RetentionSeconds int64
+	ID                   uuid.UUID
+	Kind                 string
+	EnvironmentID        uuid.UUID
+	ProjectName          string
+	EnvironmentName      string
+	Status               string
+	SnapshotKey          string
+	RevisionID           *uuid.UUID
+	RunID                *uuid.UUID
+	Error                *string
+	CreatedAt            time.Time
+	FinishedAt           *time.Time
+	Trigger              string
+	Strategy             string
+	RetentionSeconds     int64
+	EnvironmentNamespace string
 }
 
 type BackupCode struct {
@@ -289,6 +290,8 @@ type Environment struct {
 	BackupSchedule         string
 	BackupRetentionSeconds int64
 	BackupStrategy         string
+	PreviousNames          []string
+	BackupNamespace        string
 }
 
 type EnvironmentAccess struct {

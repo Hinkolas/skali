@@ -2770,11 +2770,14 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateEnvironmentSettings
-      summary: Update environment settings
+      summary: Rename an environment or update its settings
       description: |
         Environment admin, sudo mode. Partial: absent properties keep
         their value. Raising `priority` to `high` needs an instance admin;
         `promote_from` must name other environments of the project.
+        Send `name` alone to rename, preserving identity, data and backup paths.
+        Previous names stay reserved aliases while the environment exists;
+        promotion rules are updated atomically.
         `backup` set to null turns automatic backups off; an object sets
         the schedule (400 for an invalid cron expression, a retention
         under 60 seconds, or an unknown strategy).
@@ -2787,6 +2790,10 @@ paths:
               type: object
               description: At least one property must be present.
               properties:
+                name:
+                  type: string
+                  description: New environment name. Send this property alone.
+                  pattern: "^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
                 max_role: { $ref: "#/components/schemas/AccessRole" }
                 deploy_policy:
                   type: string
@@ -4438,6 +4445,10 @@ components:
           format: uuid
         name:
           type: string
+        previous_names:
+          type: array
+          items: { type: string }
+          description: Reserved aliases for the same environment identity.
         access: { $ref: "#/components/schemas/AccessRole" }
         created_at:
           type: string
@@ -5240,6 +5251,12 @@ components:
         environment:
           type: string
           description: Name of the environment the snapshot was taken from.
+        environment_id:
+          type: string
+          description: The live environment identity, when the source still exists.
+        orphaned:
+          type: boolean
+          description: The snapshot has no live owner; project admin access is required.
         created_at:
           type: string
           format: date-time

@@ -182,7 +182,7 @@ func findProject(ctx context.Context, api *client.Client, name string) (*client.
 // findEnvironment returns the named environment among the given, or nil.
 func findEnvironment(environments []client.Environment, name string) *client.Environment {
 	for i := range environments {
-		if environments[i].Name == name {
+		if environments[i].Name == name || slices.Contains(environments[i].PreviousNames, name) {
 			return &environments[i]
 		}
 	}

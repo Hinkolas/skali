@@ -91,6 +91,24 @@ func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, e
 	return i, err
 }
 
+const getProjectForUpdate = `-- name: GetProjectForUpdate :one
+SELECT id, name, display_name, source_mode, created_at, updated_at FROM projects WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) GetProjectForUpdate(ctx context.Context, id uuid.UUID) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectForUpdate, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.DisplayName,
+		&i.SourceMode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listProjects = `-- name: ListProjects :many
 SELECT id, name, display_name, source_mode, created_at, updated_at FROM projects ORDER BY name
 `

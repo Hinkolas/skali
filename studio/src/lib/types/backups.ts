@@ -7,6 +7,8 @@ export interface BackupSnapshot {
 	id: string;
 	/** Name of the environment the snapshot was taken from. */
 	environment: string;
+	environment_id?: string;
+	orphaned?: boolean;
 	created_at: string;
 	revision_checksum: string;
 	encryption: string;

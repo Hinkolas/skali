@@ -6,6 +6,9 @@ RETURNING *;
 -- name: GetProjectByID :one
 SELECT * FROM projects WHERE id = $1;
 
+-- name: GetProjectForUpdate :one
+SELECT * FROM projects WHERE id = $1 FOR UPDATE;
+
 -- name: GetProjectByName :one
 SELECT * FROM projects WHERE name = $1;
 
