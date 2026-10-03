@@ -131,33 +131,56 @@ func TestLiveDatabaseCredentialRotation(t *testing.T) {
 		}
 	}
 
-	// SQL through a port-forward to the primary, as the tenant's roles.
-	address := kubetest.PortForward(t, config, Namespace, cnpg.PrimarySelector(devPool.Name), 5432)
+	// SQL through a port-forward to the primary, as the tenant's roles. A
+	// terminated session resets the forwarded stream and takes the local
+	// listener with it, so a refused dial reopens the forward once.
+	forward := func() string {
+		return kubetest.PortForward(t, config, Namespace, cnpg.PrimarySelector(devPool.Name), 5432)
+	}
+	address := forward()
 	dsn := func(username, password string) string {
 		return (&url.URL{
 			Scheme: "postgresql", User: url.UserPassword(username, password),
 			Host: address, Path: "/" + tenant().DatabaseName, RawQuery: "sslmode=prefer",
 		}).String()
 	}
+	dial := func(username, password string) (*pgx.Conn, error) {
+		for attempt := 0; ; attempt++ {
+			dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			conn, err := pgx.Connect(dialCtx, dsn(username, password))
+			cancel()
+			if err != nil && attempt == 0 && strings.Contains(err.Error(), "connection refused") {
+				address = forward()
+				continue
+			}
+			return conn, err
+		}
+	}
 	connect := func(username, password string) *pgx.Conn {
 		t.Helper()
-		dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		conn, err := pgx.Connect(dialCtx, dsn(username, password))
+		conn, err := dial(username, password)
 		require.NoError(t, err, "connect as %s", username)
 		t.Cleanup(func() { _ = conn.Close(context.Background()) })
 		return conn
 	}
-	refused := func(username, password string) bool {
-		dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		conn, err := pgx.Connect(dialCtx, dsn(username, password))
+	// refused reports whether the server turns the credentials away (a
+	// closed login or a wrong password), and explains any other answer.
+	refused := func(username, password string) (bool, string) {
+		conn, err := dial(username, password)
 		if err == nil {
 			_ = conn.Close(ctx)
-			return false
+			return false, "connected"
 		}
-		return strings.Contains(err.Error(), "password authentication failed") ||
-			strings.Contains(err.Error(), "not permitted to log in")
+		if strings.Contains(err.Error(), "password authentication failed") ||
+			strings.Contains(err.Error(), "not permitted to log in") {
+			return true, err.Error()
+		}
+		return false, err.Error()
+	}
+	roleState := func(role string) string {
+		out, err := client.ExecInPod(ctx, Namespace, cnpg.PrimarySelector(devPool.Name), cnpg.PostgresContainer,
+			cnpg.PSQLQuery("postgres", "SELECT rolcanlogin, rolpassword IS NOT NULL FROM pg_catalog.pg_authid WHERE rolname = '"+role+"'"))
+		return fmt.Sprintf("%q (err %v)", strings.TrimSpace(out), err)
 	}
 	currentUser := func(conn *pgx.Conn) string {
 		t.Helper()
@@ -245,13 +268,18 @@ func TestLiveDatabaseCredentialRotation(t *testing.T) {
 	require.NoError(t, controller.RetireDatabaseCredentials(ctx, env.ID, "data"))
 	drive("retire the owner's login", 2*time.Minute, func(row *store.DatabaseTenant) bool { return row.PreviousLoginRole == nil })
 	require.Error(t, ownerConn.QueryRow(ctx, "SELECT 1").Scan(&one), "the retired role's session is terminated")
-	require.True(t, refused(v1.RoleName, ownerPassword), "the owner no longer logs in")
+	closed, detail := refused(v1.RoleName, ownerPassword)
+	require.True(t, closed, "the owner no longer logs in: %s; role state (login, has password): %s", detail, roleState(v1.RoleName))
+	// The termination took the port-forward's listener and every stream
+	// through it with it, the test's current-role session included; the
+	// current role itself still logs in and acts as the owner.
+	v2Conn = connect(result.LoginRole, v2Password)
 	login, exists = canLogin(v2Conn, v1.RoleName)
 	require.True(t, exists)
 	require.False(t, login)
 	require.True(t, secretGone(ownerSecret.Name))
 	require.Nil(t, tenant().CredentialRetireAt)
-	require.Equal(t, v1.RoleName, currentUser(v2Conn), "the current session is untouched")
+	require.Equal(t, v1.RoleName, currentUser(v2Conn), "the current role is untouched")
 	require.Equal(t, podsBefore, instanceUIDs())
 
 	// The second rotation retires a login role: dropped for good, the
@@ -266,7 +294,9 @@ func TestLiveDatabaseCredentialRotation(t *testing.T) {
 	require.NoError(t, controller.RetireDatabaseCredentials(ctx, env.ID, "data"))
 	drive("drop v2", 3*time.Minute, func(row *store.DatabaseTenant) bool { return row.PreviousLoginRole == nil })
 	require.Error(t, v2Conn.QueryRow(ctx, "SELECT 1").Scan(&one))
-	require.True(t, refused(result.LoginRole, v2Password))
+	closed, detail = refused(result.LoginRole, v2Password)
+	require.True(t, closed, "a dropped login role is refused: %s; role state: %s", detail, roleState(result.LoginRole))
+	v3Conn = connect(result3.LoginRole, string(v3Secret.Data["password"]))
 	_, exists = canLogin(v3Conn, result.LoginRole)
 	require.False(t, exists, "a retired login role is dropped")
 	require.Equal(t, v1.RoleName, tableOwner(v3Conn, "t2"))
@@ -286,7 +316,9 @@ func TestLiveDatabaseCredentialRotation(t *testing.T) {
 	require.NotContains(t, names, result.LoginRole)
 
 	// Release: database, Secrets and every role gone, checked through the
-	// same exec channel the worker uses.
+	// same exec channel the worker uses. The test's own sessions close
+	// first, as the consumers' would be gone.
+	_ = v3Conn.Close(ctx)
 	released, err := dbSvc.ReleaseClaim(ctx, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, string(claim.PhaseReleasing), released.Phase)

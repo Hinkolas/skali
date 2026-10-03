@@ -91,6 +91,17 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 	if _, err := c.deps.Cluster.ApplyAs(ctx, object, kube.FieldManagerPlatform, false); err != nil {
 		return 0, fmt.Errorf("substrate: apply database removal: %w", err)
 	}
+	// A session still open on the database (a host process holding
+	// revealed credentials; the consumers are gone) would keep the drop
+	// failing; the tenant's roles are done for, so their sessions end.
+	if err := c.execPrimarySQL(ctx, *pool, "postgres", cnpg.TerminateSessionsSQL(tenantRoleNames(*tenant))); err != nil {
+		var waiting errWaiting
+		if errors.As(err, &waiting) {
+			c.setWaiting(row.ID, waiting.reason)
+			return requeueWait, nil
+		}
+		return 0, err
+	}
 	dropped, reason, err := c.databaseApplied(ctx, *tenant)
 	if err != nil {
 		return 0, err

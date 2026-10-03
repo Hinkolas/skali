@@ -64,6 +64,10 @@ func TestRoleScripts(t *testing.T) {
 	require.Less(t, first, strings.Index(login, "pg_terminate_backend"), "no new session may slip in after the terminate")
 	require.Less(t, strings.Index(login, "REASSIGN"), strings.Index(login, "DROP ROLE"))
 
+	terminate := TerminateSessionsSQL([]string{"u_data_v3", "u_data"})
+	require.Contains(t, terminate, "usename IN ('u_data_v3', 'u_data')")
+	require.NotContains(t, terminate, "DROP")
+
 	drop := DropTenantRolesSQL([]string{"u_data_v3", "u_data"})
 	require.Less(t, strings.Index(drop, `DROP ROLE "u_data_v3"`), strings.Index(drop, `DROP ROLE "u_data"`),
 		"login roles go before the owner they are members of")

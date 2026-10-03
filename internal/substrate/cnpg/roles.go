@@ -130,6 +130,18 @@ func RetireLoginRoleSQL(login, owner string) string {
 		execute("DROP ROLE "+quoteIdentifier(login)))
 }
 
+// TerminateSessionsSQL ends every session the roles hold, so a database
+// being dropped is not kept alive by a stray connection (a host process
+// still holding revealed credentials).
+func TerminateSessionsSQL(roles []string) string {
+	literals := make([]string, 0, len(roles))
+	for _, role := range roles {
+		literals = append(literals, quoteLiteral(role))
+	}
+	return "SELECT pg_catalog.pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity " +
+		"WHERE usename IN (" + strings.Join(literals, ", ") + ") AND pid <> pg_catalog.pg_backend_pid();"
+}
+
 // DropTenantRolesSQL removes every role of a released tenant after its
 // database is gone: login roles first, the owner last. Run in the
 // postgres database; DROP OWNED there releases what the roles still hold
