@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,7 +27,16 @@ const envVar = "TEST_DATABASE_URL"
 // is skipped when TEST_DATABASE_URL is unset.
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	ctx := context.Background()
+	return NewScoped(t, t)
+}
+
+// NewScoped reports setup failures on t but keeps the database alive until
+// scope finishes. It allows a selected subtest to lazily initialize a shared
+// fixture without making unselected suites provision a database.
+func NewScoped(t, scope *testing.T) *pgxpool.Pool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 
 	adminDSN := os.Getenv(envVar)
 	if adminDSN == "" {
@@ -40,10 +50,24 @@ func New(t *testing.T) *pgxpool.Pool {
 	// Hex-only name, safe to interpolate as an identifier.
 	name := "skali_test_" + hex.EncodeToString(suffix[:])
 
-	adminExec(t, ctx, adminDSN, "CREATE DATABASE "+name)
-	t.Cleanup(func() {
+	start := time.Now()
+	defer func() {
+		t.Logf("phase=%q elapsed=%s", "control database setup", time.Since(start).Round(time.Millisecond))
+	}()
+	if err := adminExec(ctx, adminDSN, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("testdb: create database: %v", err)
+	}
+	scope.Cleanup(func() {
+		start := time.Now()
+		defer func() {
+			scope.Logf("phase=%q elapsed=%s", "control database cleanup", time.Since(start).Round(time.Millisecond))
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		// FORCE (PG13+) terminates any straggler connections.
-		adminExec(t, ctx, adminDSN, fmt.Sprintf("DROP DATABASE %s WITH (FORCE)", name))
+		if err := adminExec(ctx, adminDSN, fmt.Sprintf("DROP DATABASE %s WITH (FORCE)", name)); err != nil {
+			scope.Errorf("testdb: cleanup %s: %v", name, err)
+		}
 	})
 
 	// Migrate over database/sql, which goose requires.
@@ -53,6 +77,7 @@ func New(t *testing.T) *pgxpool.Pool {
 	}
 	connCfg.Database = name
 	sqlDB := stdlib.OpenDB(*connCfg)
+	defer sqlDB.Close()
 	if _, err := migrations.Up(ctx, sqlDB); err != nil {
 		t.Fatalf("testdb: migrate: %v", err)
 	}
@@ -72,21 +97,21 @@ func New(t *testing.T) *pgxpool.Pool {
 	}
 	// Registered after the DROP cleanup, so it runs first (LIFO): the pool is
 	// closed before the database is dropped.
-	t.Cleanup(pool.Close)
+	scope.Cleanup(pool.Close)
 
 	return pool
 }
 
 // adminExec runs a single statement over a short-lived connection to the admin
 // database (the one named in TEST_DATABASE_URL).
-func adminExec(t *testing.T, ctx context.Context, dsn, stmt string) {
-	t.Helper()
+func adminExec(ctx context.Context, dsn, stmt string) error {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
-		t.Fatalf("testdb: connect admin: %v", err)
+		return fmt.Errorf("connect admin: %w", err)
 	}
 	defer conn.Close(ctx)
 	if _, err := conn.Exec(ctx, stmt); err != nil {
-		t.Fatalf("testdb: %s: %v", stmt, err)
+		return fmt.Errorf("%s: %w", stmt, err)
 	}
+	return nil
 }

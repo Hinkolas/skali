@@ -10,17 +10,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
-	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
@@ -35,12 +32,14 @@ import (
 // Database objects, the credential Secret, and the output mirror in the
 // environment namespace. Requires TEST_KUBECONFIG and TEST_DATABASE_URL.
 func TestLiveClaimProvisioning(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
 	ctx := context.Background()
 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
+	cleanupPlatform(t, client)
 	installOperator(t, client)
 
 	st := store.NewStore(pool)
@@ -63,14 +62,12 @@ func TestLiveClaimProvisioning(t *testing.T) {
 		Enqueue:  func(id uuid.UUID) { poked = append(poked, id) },
 	}, Config{Managed: false})
 
-	cleanupPlatform(t, client)
-
 	// The environment namespace normally comes from the environment
 	// reconciler; the mirror write depends on it.
 	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
+	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 	_, err = client.Apply(ctx, namespace, false)
 	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 
 	owner := dbstore.ServiceOwner(proj.ID, env.ID, proj.Name, "production", "data")
 	created, err := dbSvc.EnsureClaim(ctx, owner, dbstore.ClaimSpec{
@@ -127,6 +124,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 		WHERE table_schema = 'public'
 		  AND data_type IN ('text', 'jsonb', 'character varying')`)
 	require.NoError(t, err)
+	defer columns.Close() // Also release the reader if an assertion aborts the audit.
 	type column struct{ table, name string }
 	var scan []column
 	for columns.Next() {
@@ -226,22 +224,9 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	phased, err := dbSvc.ReleaseClaim(ctx, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, string(claim.PhaseReleasing), phased.Phase)
-	teardownDeadline := time.Now().Add(3 * time.Minute)
-	for {
-		require.False(t, time.Now().After(teardownDeadline),
-			"claim not released before deadline; last wait: %s", controller.WaitingReason(created.ID))
-		requeue, err := controller.reconcileClaim(ctx, created.ID)
-		if err != nil {
-			t.Logf("teardown (retrying): %v", err)
-		}
-		current, getErr := dbSvc.GetClaim(ctx, created.ID)
-		require.NoError(t, getErr)
-		if claim.Phase(current.Phase) == claim.PhaseReleased {
-			break
-		}
-		stepClaim(t, "teardown", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
-		time.Sleep(2 * time.Second)
-	}
+	driveLive(t, "database release", 3*time.Minute, func(ctx context.Context) (bool, error) {
+		return databaseClaimPass(ctx, controller, dbSvc, created.ID, claim.PhaseReleased)
+	})
 	_, err = client.Dynamic.Resource(cnpg.DatabaseGVR).Namespace(Namespace).
 		Get(ctx, "db-"+utils.ShortID(created.ID), metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "the Database object must be gone")
@@ -266,44 +251,14 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	require.Equal(t, "off", cluster.GetAnnotations()[cnpg.HibernationAnnotation])
 }
 
-// stepClaim enforces the worker-queue invariant on one live reconcile pass:
-// a pass that returns neither an error nor a requeue must have settled the
-// claim in a terminal phase, otherwise the controller abandoned live work and
-// only an external resync would ever revive it.
 // driveClaim runs claim passes like the worker would until the claim is
 // provisioned: errors and waits retry until the deadline (first pool
 // bring-up pulls the postgres image).
 func driveClaim(t *testing.T, controller *Controller, dbSvc *dbstore.Service, id uuid.UUID) {
 	t.Helper()
-	ctx := context.Background()
-	deadline := time.Now().Add(5 * time.Minute)
-	for {
-		require.False(t, time.Now().After(deadline),
-			"claim not provisioned before deadline; last wait: %s", controller.WaitingReason(id))
-		requeue, err := controller.reconcileClaim(ctx, id)
-		if err != nil {
-			t.Logf("reconcile (retrying): %v", err)
-		}
-		current, getErr := dbSvc.GetClaim(ctx, id)
-		require.NoError(t, getErr)
-		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
-			return
-		}
-		stepClaim(t, "claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(id))
-		time.Sleep(2 * time.Second)
-	}
-}
-
-func stepClaim(t *testing.T, name string, requeue time.Duration, err error, phase claim.Phase, waiting string) {
-	t.Helper()
-	if err != nil || requeue > 0 {
-		return
-	}
-	switch phase {
-	case claim.PhaseProvisioned, claim.PhaseReleased:
-	default:
-		t.Fatalf("%s abandoned unsettled claim: phase=%s wait=%q", name, phase, waiting)
-	}
+	driveLive(t, "database provisioning", 5*time.Minute, func(ctx context.Context) (bool, error) {
+		return databaseClaimPass(ctx, controller, dbSvc, id, claim.PhaseProvisioned)
+	})
 }
 
 func requireEventually(t *testing.T, timeout time.Duration, condition func() bool, message string) {
@@ -317,75 +272,5 @@ func requireEventually(t *testing.T, timeout time.Duration, condition func() boo
 			t.Fatal(message)
 		}
 		time.Sleep(500 * time.Millisecond)
-	}
-}
-
-// installOperator applies the vendored CNPG manifest and waits for the
-// controller, exactly like both real install paths, plus the platform
-// PriorityClasses the bundle would carry: every substrate pod names one
-// (CNPG's initdb Job included) and admission rejects pods whose class does
-// not exist. Idempotent across runs.
-func installOperator(t *testing.T, client *kube.Client) {
-	t.Helper()
-	ctx := context.Background()
-	applier := &bundle.Applier{Client: client}
-	require.NoError(t, applier.ApplyManifest(ctx, bundle.CNPGManifest()))
-	require.NoError(t, applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"))
-	for name, value := range map[string]int32{
-		layout.PriorityClassCritical: layout.PriorityClassCriticalValue,
-		layout.PriorityClassHigh:     layout.PriorityClassHighValue,
-		layout.PriorityClassNormal:   layout.PriorityClassNormalValue,
-	} {
-		_, err := client.Clientset.SchedulingV1().PriorityClasses().Create(ctx, &schedulingv1.PriorityClass{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Value:      value,
-		}, metav1.CreateOptions{})
-		if err != nil && !apierrors.IsAlreadyExists(err) {
-			require.NoError(t, err)
-		}
-	}
-}
-
-// cleanupPlatform removes the skali-platform namespace after the test and
-// verifies it is absent before it, so runs never inherit substrate state.
-func cleanupPlatform(t *testing.T, client *kube.Client) {
-	t.Helper()
-	waitNamespaceGone(t, client, Namespace)
-	t.Cleanup(func() { deleteNamespace(t, client, Namespace) })
-}
-
-func deleteNamespace(t *testing.T, client *kube.Client, name string) {
-	t.Helper()
-	ctx := context.Background()
-	err := client.Clientset.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
-	if apierrors.IsNotFound(err) {
-		return
-	}
-	require.NoError(t, err)
-	waitNamespaceGone(t, client, name)
-}
-
-func waitNamespaceGone(t *testing.T, client *kube.Client, name string) {
-	t.Helper()
-	ctx := context.Background()
-	// The platform namespace drains CNPG finalizers plus the seaweed
-	// workloads and their volumes, and a preceding suite's teardown may
-	// still be finalizing on a loaded machine; ten minutes buys out the
-	// slowest observed sequence.
-	deadline := time.Now().Add(10 * time.Minute)
-	for {
-		_, err := client.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("namespace %s still present", name)
-		}
-		if err == nil {
-			// A leftover namespace from an aborted run: delete and keep
-			// waiting.
-			_ = client.Clientset.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
-		}
-		time.Sleep(2 * time.Second)
 	}
 }

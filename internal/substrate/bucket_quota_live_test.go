@@ -7,62 +7,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/Hinkolas/skali/internal/dbstore"
-	"github.com/Hinkolas/skali/internal/kube"
-	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
 	"github.com/Hinkolas/skali/internal/module"
-	"github.com/Hinkolas/skali/internal/observe"
-	"github.com/Hinkolas/skali/internal/project"
-	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
-	"github.com/Hinkolas/skali/internal/testdb"
 )
 
-// TestLiveBucketQuota proves the storage quota's documented guarantees on
+// runBucketQuota proves the storage quota's documented guarantees on
 // a real store: an upload past the quota flips the bucket to refuse
 // uploads (single and multipart) while deletes keep working, the usage
 // reported is the live footprint with an entry count, and deleting the
 // object reopens the bucket on the next observation without waiting for
 // a vacuum. Requires TEST_KUBECONFIG and TEST_DATABASE_URL.
-func TestLiveBucketQuota(t *testing.T) {
-	config := kubetest.Config(t)
-	pool := testdb.New(t)
+func runBucketQuota(t *testing.T, fixture *bucketLiveFixture) {
 	ctx := context.Background()
-
-	client, err := kube.NewFromConfig(config)
-	require.NoError(t, err)
-	installOperator(t, client)
-
-	st := store.NewStore(pool)
-	dbSvc := dbstore.New(st)
-	projects := project.New(st)
-
-	suffix := uuid.Must(uuid.NewV7()).String()[24:]
-	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
-	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
-	require.NoError(t, err)
-
-	controller := New(Deps{
-		DB:       dbSvc,
-		Cluster:  KubeCluster{Client: client},
-		Observed: observe.NewStore(nil),
-		Seaweed:  seaweed.NewClient(client, Namespace),
-		Enqueue:  func(uuid.UUID) {},
-	}, Config{Managed: false})
-	cleanupPlatform(t, client)
-
-	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
-	_, err = client.Apply(ctx, namespace, false)
-	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
+	config, client, dbSvc := fixture.config, fixture.client, fixture.db
+	controller := fixture.controller(nil)
+	proj, env := fixture.newEnvironment(t, controller)
 
 	const quota = int64(256 << 10)
 	files := driveLiveBucketWithQuota(t, controller, dbSvc, proj, env, "files", quota)
@@ -73,6 +38,7 @@ func TestLiveBucketQuota(t *testing.T) {
 	require.NoError(t, err)
 	endpoint := kubetest.PortForward(t, config, Namespace, "app="+seaweed.AllInOneApp, seaweed.S3Port)
 	app, err := minio.New(endpoint, &minio.Options{
+		Transport:    liveS3Transport(t),
 		Creds:        credentials.NewStaticV4(string(credential.Data["access_key"]), string(credential.Data["secret_key"]), ""),
 		Region:       seaweed.Region,
 		BucketLookup: minio.BucketLookupPath,
@@ -135,6 +101,7 @@ func TestLiveBucketQuota(t *testing.T) {
 	require.Error(t, err, "multipart uploads must be refused too")
 	object, err := app.GetObject(ctx, bucket, "small", minio.GetObjectOptions{})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = object.Close() })
 	_, err = object.Stat()
 	require.NoError(t, err, "reads keep working")
 	require.NoError(t, app.RemoveObject(ctx, bucket, "big", minio.RemoveObjectOptions{}), "deletes keep working")

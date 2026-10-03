@@ -14,18 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/Hinkolas/skali/internal/dbstore"
-	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
-	"github.com/Hinkolas/skali/internal/observe"
-	"github.com/Hinkolas/skali/internal/project"
-	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
-	"github.com/Hinkolas/skali/internal/testdb"
 )
 
-// TestLiveBucketCredentialRotation drives one rotation through the real
+// runBucketCredentialRotation drives one rotation through the real
 // store on k3d: the commit lands in the credential Secret, the claim
 // worker adds the new key beside the old one, mirrors it, and bumps the
 // version; both keypairs sign inside the window and drift repair keeps
@@ -34,39 +28,14 @@ import (
 // refused while the new keypair keeps working; a window that expires
 // while fenced retires on the fence lift. Requires TEST_KUBECONFIG and
 // TEST_DATABASE_URL.
-func TestLiveBucketCredentialRotation(t *testing.T) {
-	config := kubetest.Config(t)
-	pool := testdb.New(t)
+func runBucketCredentialRotation(t *testing.T, fixture *bucketLiveFixture) {
 	ctx := context.Background()
-
-	client, err := kube.NewFromConfig(config)
-	require.NoError(t, err)
-	installOperator(t, client)
-
-	st := store.NewStore(pool)
-	dbSvc := dbstore.New(st)
-	projects := project.New(st)
-
-	suffix := uuid.Must(uuid.NewV7()).String()[24:]
-	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
-	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
-	require.NoError(t, err)
-
+	pool := fixture.pool
+	config, client, dbSvc := fixture.config, fixture.client, fixture.db
 	poked := make(chan uuid.UUID, 16)
-	controller := New(Deps{
-		DB:       dbSvc,
-		Cluster:  KubeCluster{Client: client},
-		Observed: observe.NewStore(nil),
-		Seaweed:  seaweed.NewClient(client, Namespace),
-		Enqueue:  func(id uuid.UUID) { poked <- id },
-	}, Config{Managed: false})
-	cleanupPlatform(t, client)
-
-	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
-	_, err = client.Apply(ctx, namespace, false)
-	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
+	controller := fixture.controller(func(id uuid.UUID) { poked <- id })
+	proj, env := fixture.newEnvironment(t, controller)
+	namespace := kubernetes.RenderNamespace(proj.Name, env.Name, env.ID.String())
 
 	files := driveLiveBucket(t, controller, dbSvc, proj, env, "files")
 	bucket := files.BucketName
@@ -119,6 +88,7 @@ func TestLiveBucketCredentialRotation(t *testing.T) {
 	endpoint := kubetest.PortForward(t, config, Namespace, "app="+seaweed.AllInOneApp, seaweed.S3Port)
 	newClient := func(accessKey, secretKey string) *minio.Client {
 		s3, err := minio.New(endpoint, &minio.Options{
+			Transport:    liveS3Transport(t),
 			Creds:        credentials.NewStaticV4(accessKey, secretKey, ""),
 			Region:       seaweed.Region,
 			BucketLookup: minio.BucketLookupPath,
@@ -127,6 +97,7 @@ func TestLiveBucketCredentialRotation(t *testing.T) {
 		return s3
 	}
 	web := &http.Client{Timeout: 30 * time.Second}
+	t.Cleanup(web.CloseIdleConnections)
 	writes := func(s3 *minio.Client, key string) bool {
 		_, err := s3.PutObject(ctx, bucket, key, strings.NewReader("x"), 1, minio.PutObjectOptions{})
 		return err == nil
@@ -188,6 +159,7 @@ func TestLiveBucketCredentialRotation(t *testing.T) {
 		WHERE table_schema = 'public'
 		  AND data_type IN ('text', 'jsonb', 'character varying')`)
 	require.NoError(t, err)
+	defer columns.Close() // Also release the reader if an assertion aborts the audit.
 	type column struct{ table, name string }
 	var scan []column
 	for columns.Next() {

@@ -23,12 +23,14 @@ import (
 // paths as user claims, and the installer-owned skali-system namespace is
 // never touched.
 func TestLiveSystemClaimSameSubstrate(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
 	ctx := context.Background()
 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
+	cleanupPlatform(t, client)
 	installOperator(t, client)
 
 	st := store.NewStore(pool)
@@ -38,7 +40,6 @@ func TestLiveSystemClaimSameSubstrate(t *testing.T) {
 		Cluster:  KubeCluster{Client: client},
 		Observed: observe.NewStore(nil),
 	}, Config{Managed: false})
-	cleanupPlatform(t, client)
 
 	spec := dbstore.ClaimSpec{
 		Engine: "postgres", Major: 17,
@@ -53,21 +54,10 @@ func TestLiveSystemClaimSameSubstrate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "system/synthetic/exit-criteria", row.OwnerRef)
 
-	deadline := time.Now().Add(5 * time.Minute)
-	for !outputs.Provisioned {
-		require.False(t, time.Now().After(deadline),
-			"system claim not provisioned; last wait: %s", outputs.Waiting)
-		requeue, err := controller.reconcileClaim(ctx, row.ID)
-		if err != nil {
-			t.Logf("reconcile (retrying): %v", err)
-		} else if fresh, freshErr := dbSvc.GetClaim(ctx, row.ID); freshErr == nil {
-			stepClaim(t, "system claim", requeue, err,
-				claim.Phase(fresh.Phase), controller.WaitingReason(row.ID))
-		}
-		outputs, err = controller.EnsureSystemClaim(ctx, "synthetic/exit-criteria", spec)
-		require.NoError(t, err)
-		time.Sleep(2 * time.Second)
-	}
+	driveClaim(t, controller, dbSvc, row.ID)
+	outputs, err = controller.EnsureSystemClaim(ctx, "synthetic/exit-criteria", spec)
+	require.NoError(t, err)
+	require.True(t, outputs.Provisioned)
 
 	// Same substrate, same shapes: the dev collapse lands the system claim
 	// on the shared dev pool exactly like a user claim; the credential is a
@@ -91,23 +81,9 @@ func TestLiveSystemClaimSameSubstrate(t *testing.T) {
 
 	// System claims release through their own path.
 	require.NoError(t, controller.ReleaseSystemClaim(ctx, "synthetic/exit-criteria"))
-	releaseDeadline := time.Now().Add(3 * time.Minute)
-	for {
-		require.False(t, time.Now().After(releaseDeadline), "system claim never released")
-		requeue, err := controller.reconcileClaim(ctx, row.ID)
-		if err != nil {
-			t.Logf("teardown (retrying): %v", err)
-		}
-		if _, liveErr := dbSvc.LiveSystemClaim(ctx, "synthetic/exit-criteria"); liveErr != nil {
-			require.ErrorIs(t, liveErr, dbstore.ErrNotFound)
-			break
-		}
-		if err == nil {
-			if fresh, freshErr := dbSvc.GetClaim(ctx, row.ID); freshErr == nil {
-				stepClaim(t, "system teardown", requeue, err,
-					claim.Phase(fresh.Phase), controller.WaitingReason(row.ID))
-			}
-		}
-		time.Sleep(2 * time.Second)
-	}
+	driveLive(t, "system claim release", 3*time.Minute, func(ctx context.Context) (bool, error) {
+		return databaseClaimPass(ctx, controller, dbSvc, row.ID, claim.PhaseReleased)
+	})
+	_, err = dbSvc.LiveSystemClaim(ctx, "synthetic/exit-criteria")
+	require.ErrorIs(t, err, dbstore.ErrNotFound)
 }

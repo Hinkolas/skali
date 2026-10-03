@@ -153,42 +153,22 @@ the diff before keeping it.
 
 ## Tests
 
+Start with the smallest relevant suite, then run broader integration coverage:
+
 ```sh
-# Start the project Postgres and run all Go tests, including DB-backed tests:
-task test:db
+task test:db                    # all Go tests with project Postgres
+task test:substrate             # substrate unit/DB tests; no live cluster
+task k3d:up                    # explicit disposable live-test cluster setup
+task test:live:substrate:buckets -- -v -run '^TestLiveBucketContracts$/^Quota$'
+task test:live                  # complete live coverage
 (cd studio && npm test && npm run check && npm run lint)
-
-# Live cluster tests (observation, apply/prune, healing, and the
-# substrate: shared Postgres and the SeaweedFS object store, driven from
-# nothing to provisioned buckets, plus the bucket contracts: permission
-# boundary, quota, restore fence, CORS and upload cleanup, and the public
-# edge lifecycle, which installs cert-manager into the test cluster)
-# against a disposable pinned k3d cluster; the substrate suite also needs
-# the project Postgres, which the task starts:
-task k3d:up
-task test:live
-task k3d:down
-
-# Build-engine tests exec docker (buildx plus a throwaway registry):
-task test:docker
-
-# The skali dev end-to-end suite drives the real paved path on its own
-# throwaway installation (cluster skali-dev-e2e); it takes minutes. The
-# backup tests run their external S3 target as a SeaweedFS container on
-# the host:
-task test:dev
-
-# The cluster installer suite runs in Lima VMs:
-task test:cluster
 ```
 
-Bare `go test ./...` skips DB-backed tests when `TEST_DATABASE_URL` is
-unset. `task test` also skips them unless you set `TEST_DATABASE_URL`; use
-`task test:db` to start the project database and run them automatically.
-Each test creates and drops its own database. `task db:stop` preserves the
-development database; do not delete the Compose volume to fix a migration
-error without first exporting any data you need. An external Postgres is
-also supported: set `DATABASE_URL` and `TEST_DATABASE_URL` yourself.
+See [Testing Skali](testing.md) for prerequisites, every named suite, the
+change-to-test matrix, fixture ownership, selector migration, profiling, and
+recovery from interrupted runs. `task test:live` retains full coverage; focused
+commands are the iteration loop. Never run simultaneous substrate invocations
+against the same cluster.
 
 ## Building
 

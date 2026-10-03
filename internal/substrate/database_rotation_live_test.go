@@ -35,12 +35,14 @@ import (
 // login role (second), ownership never moves, and teardown leaves no role
 // behind. The claim worker is driven by hand, as the other live tests do.
 func TestLiveDatabaseCredentialRotation(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
 	ctx := context.Background()
 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
+	cleanupPlatform(t, client)
 	installOperator(t, client)
 
 	st := store.NewStore(pool)
@@ -61,12 +63,10 @@ func TestLiveDatabaseCredentialRotation(t *testing.T) {
 		Enqueue:  func(id uuid.UUID) { poked = append(poked, id) },
 	}, Config{Managed: false})
 
-	cleanupPlatform(t, client)
-
 	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
+	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 	_, err = client.Apply(ctx, namespace, false)
 	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 
 	owner := dbstore.ServiceOwner(proj.ID, env.ID, proj.Name, "production", "data")
 	created, err := dbSvc.EnsureClaim(ctx, owner, dbstore.ClaimSpec{
@@ -119,16 +119,16 @@ func TestLiveDatabaseCredentialRotation(t *testing.T) {
 	// drive runs worker passes until the predicate holds, bounded.
 	drive := func(what string, timeout time.Duration, done func(*store.DatabaseTenant) bool) {
 		t.Helper()
-		deadline := time.Now().Add(timeout)
-		for {
-			_, err := controller.reconcileClaim(ctx, created.ID)
+		driveLive(t, what, timeout, func(passCtx context.Context) (bool, error) {
+			_, err := controller.reconcileClaim(passCtx, created.ID)
 			require.NoError(t, err)
-			if done(tenant()) {
-				return
+			row, err := dbSvc.LiveTenant(passCtx, created.ID)
+			require.NoError(t, err)
+			if done(row) {
+				return true, nil
 			}
-			require.True(t, time.Now().Before(deadline), "%s: timed out (waiting: %q)", what, controller.WaitingReason(created.ID))
-			time.Sleep(2 * time.Second)
-		}
+			return false, fmt.Errorf("waiting: %s", controller.WaitingReason(created.ID))
+		})
 	}
 
 	// SQL through a port-forward to the primary, as the tenant's roles. A
@@ -322,18 +322,16 @@ func TestLiveDatabaseCredentialRotation(t *testing.T) {
 	released, err := dbSvc.ReleaseClaim(ctx, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, string(claim.PhaseReleasing), released.Phase)
-	deadline := time.Now().Add(4 * time.Minute)
-	for {
-		_, err := controller.reconcileClaim(ctx, created.ID)
+	driveLive(t, "rotated database release", 4*time.Minute, func(passCtx context.Context) (bool, error) {
+		_, err := controller.reconcileClaim(passCtx, created.ID)
 		require.NoError(t, err)
-		row, err := dbSvc.GetClaim(ctx, created.ID)
+		row, err := dbSvc.GetClaim(passCtx, created.ID)
 		require.NoError(t, err)
 		if claim.Phase(row.Phase) == claim.PhaseReleased {
-			break
+			return true, nil
 		}
-		require.True(t, time.Now().Before(deadline), "release timed out (waiting: %q)", controller.WaitingReason(created.ID))
-		time.Sleep(2 * time.Second)
-	}
+		return false, fmt.Errorf("phase=%s wait=%q", row.Phase, controller.WaitingReason(created.ID))
+	})
 	out, err := client.ExecInPod(ctx, Namespace, cnpg.PrimarySelector(devPool.Name), cnpg.PostgresContainer,
 		cnpg.PSQLQuery("postgres", fmt.Sprintf("SELECT count(*) FROM pg_roles WHERE rolname LIKE '%s%%'", v1.RoleName)))
 	require.NoError(t, err)
@@ -350,6 +348,7 @@ func auditPasswordLeak(t *testing.T, ctx context.Context, pool *pgxpool.Pool, pa
 		WHERE table_schema = 'public'
 		  AND data_type IN ('text', 'jsonb', 'character varying')`)
 	require.NoError(t, err)
+	defer columns.Close() // Also release the reader if an assertion aborts the audit.
 	type column struct{ table, name string }
 	var scan []column
 	for columns.Next() {
