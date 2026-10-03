@@ -33,12 +33,14 @@ import (
 // shape, and an answering S3 port through the network fence. Requires
 // TEST_KUBECONFIG and TEST_DATABASE_URL.
 func TestLiveObjectStoreBoot(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
 	ctx := context.Background()
 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
+	cleanupPlatform(t, client)
 	installOperator(t, client)
 
 	st := store.NewStore(pool)
@@ -50,8 +52,6 @@ func TestLiveObjectStoreBoot(t *testing.T) {
 		Observed: observe.NewStore(nil),
 		Seaweed:  seaweed.NewClient(client, Namespace),
 	}, Config{Managed: false})
-
-	cleanupPlatform(t, client)
 
 	// One pending bucket claim exists alongside the store (it is never
 	// driven; the store alone is under test).
@@ -82,25 +82,9 @@ func TestLiveObjectStoreBoot(t *testing.T) {
 	require.NotEqual(t, string(claim.PhaseProvisioned), metadata.Phase)
 
 	// Drive the store and its metadata claim like the workers would.
-	deadline := time.Now().Add(8 * time.Minute)
-	for {
-		require.False(t, time.Now().After(deadline),
-			"object store not ready before deadline; metadata wait: %s", controller.WaitingReason(metadata.ID))
-		mRequeue, mErr := controller.reconcileClaim(ctx, metadata.ID)
-		if mErr != nil {
-			t.Logf("metadata claim (retrying): %v", mErr)
-		} else if fresh, freshErr := dbSvc.GetClaim(ctx, metadata.ID); freshErr == nil {
-			stepClaim(t, "metadata claim", mRequeue, mErr,
-				claim.Phase(fresh.Phase), controller.WaitingReason(metadata.ID))
-		}
-		requeue, err := controller.reconcileObjectStore(ctx)
-		if err != nil {
-			t.Logf("object store (retrying): %v", err)
-		} else if requeue == 0 {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	driveLive(t, "object store provisioning", 8*time.Minute, func(ctx context.Context) (bool, error) {
+		return objectStorePass(ctx, controller, dbSvc)
+	})
 
 	// The metadata database provisioned through the ordinary system-claim
 	// path; the filer store Secret carries its outputs, password included,
@@ -144,12 +128,13 @@ func TestLiveObjectStoreBoot(t *testing.T) {
 // point. Requires TEST_KUBECONFIG; installs cert-manager into the test
 // cluster for the Certificate kind.
 func TestLiveObjectStoreLegacyEdgeSwept(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	ctx := context.Background()
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
-	installCertManager(t, client)
 	cleanupPlatform(t, client)
+	installCertManager(t, client)
 
 	controller := &Controller{
 		cfg:  Config{Managed: true},
@@ -231,7 +216,9 @@ func TestLiveObjectStoreLegacyEdgeSwept(t *testing.T) {
 // that admits it.
 func installCertManager(t *testing.T, client *kube.Client) {
 	t.Helper()
-	ctx := context.Background()
+	defer livePhase(t, "cert-manager setup")()
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
 	applier := &bundle.Applier{Client: client}
 	require.NoError(t, applier.ApplyManifest(ctx, bundle.CertManagerManifest()))
 	for _, name := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {

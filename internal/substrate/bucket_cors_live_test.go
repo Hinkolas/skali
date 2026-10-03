@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
@@ -15,56 +14,23 @@ import (
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
-	"github.com/Hinkolas/skali/internal/kube"
-	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
 	"github.com/Hinkolas/skali/internal/module"
-	"github.com/Hinkolas/skali/internal/observe"
-	"github.com/Hinkolas/skali/internal/project"
-	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
-	"github.com/Hinkolas/skali/internal/testdb"
 )
 
-// TestLiveBucketCORSAndUploadCleanup proves the two declarative additions
+// runBucketCORSAndUploads proves the two declarative additions
 // on a real store: a bucket declaring CORS answers a preflight from a
 // listed origin with the declared policy and refuses a foreign origin,
 // changing the declaration re-converges the bucket, and a multipart
 // upload older than the bucket's abort threshold is swept by the probe
 // while a fresh one survives. Requires TEST_KUBECONFIG and
 // TEST_DATABASE_URL.
-func TestLiveBucketCORSAndUploadCleanup(t *testing.T) {
-	config := kubetest.Config(t)
-	pool := testdb.New(t)
+func runBucketCORSAndUploads(t *testing.T, fixture *bucketLiveFixture) {
 	ctx := context.Background()
-
-	client, err := kube.NewFromConfig(config)
-	require.NoError(t, err)
-	installOperator(t, client)
-
-	st := store.NewStore(pool)
-	dbSvc := dbstore.New(st)
-	projects := project.New(st)
-
-	suffix := uuid.Must(uuid.NewV7()).String()[24:]
-	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
-	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
-	require.NoError(t, err)
-
-	controller := New(Deps{
-		DB:       dbSvc,
-		Cluster:  KubeCluster{Client: client},
-		Observed: observe.NewStore(nil),
-		Seaweed:  seaweed.NewClient(client, Namespace),
-		Enqueue:  func(uuid.UUID) {},
-	}, Config{Managed: false})
-	cleanupPlatform(t, client)
-
-	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
-	_, err = client.Apply(ctx, namespace, false)
-	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
+	config, client, dbSvc := fixture.config, fixture.client, fixture.db
+	controller := fixture.controller(nil)
+	proj, env := fixture.newEnvironment(t, controller)
 
 	// The claim declares CORS for one origin and a three-second abort
 	// threshold for abandoned uploads.
@@ -77,25 +43,9 @@ func TestLiveBucketCORSAndUploadCleanup(t *testing.T) {
 	}
 	created, err := dbSvc.EnsureBucketClaim(ctx, owner, spec)
 	require.NoError(t, err)
-	deadline := time.Now().Add(10 * time.Minute)
-	for {
-		require.False(t, time.Now().After(deadline), "bucket claim not provisioned; last wait: %s", controller.WaitingReason(created.ID))
-		if _, err := controller.reconcileBucketClaim(ctx, created.ID); err != nil {
-			t.Logf("bucket claim (retrying): %v", err)
-		}
-		if _, err := controller.reconcileObjectStore(ctx); err != nil {
-			t.Logf("object store (retrying): %v", err)
-		}
-		if metadata, err := dbSvc.LiveSystemClaim(ctx, MetadataClaimKey); err == nil {
-			_, _ = controller.reconcileClaim(ctx, metadata.ID)
-		}
-		current, err := dbSvc.GetBucketClaim(ctx, created.ID)
-		require.NoError(t, err)
-		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	driveLive(t, "bucket provisioning", 10*time.Minute, func(ctx context.Context) (bool, error) {
+		return bucketClaimPass(ctx, controller, dbSvc, created.ID, claim.PhaseProvisioned, true)
+	})
 	allocation, err := dbSvc.LiveAllocation(ctx, created.ID)
 	require.NoError(t, err)
 	bucket := allocation.BucketName
@@ -104,6 +54,7 @@ func TestLiveBucketCORSAndUploadCleanup(t *testing.T) {
 	require.NoError(t, err)
 	endpoint := kubetest.PortForward(t, config, Namespace, "app="+seaweed.AllInOneApp, seaweed.S3Port)
 	app, err := minio.New(endpoint, &minio.Options{
+		Transport:    liveS3Transport(t),
 		Creds:        credentials.NewStaticV4(string(credential.Data["access_key"]), string(credential.Data["secret_key"]), ""),
 		Region:       seaweed.Region,
 		BucketLookup: minio.BucketLookupPath,
@@ -117,6 +68,7 @@ func TestLiveBucketCORSAndUploadCleanup(t *testing.T) {
 	signed, err := app.PresignedPutObject(ctx, bucket, "hello", 10*time.Minute)
 	require.NoError(t, err)
 	web := &http.Client{Timeout: 30 * time.Second}
+	t.Cleanup(web.CloseIdleConnections)
 	preflight := func(origin string) *http.Response {
 		t.Helper()
 		request, err := http.NewRequestWithContext(ctx, http.MethodOptions, signed.String(), nil)

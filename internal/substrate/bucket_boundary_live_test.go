@@ -8,11 +8,9 @@ import (
 	"io"
 	"net/http"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/cors"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -22,17 +20,12 @@ import (
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
-	"github.com/Hinkolas/skali/internal/kube"
-	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
-	"github.com/Hinkolas/skali/internal/observe"
-	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
-	"github.com/Hinkolas/skali/internal/testdb"
 )
 
-// TestLiveBucketPermissionBoundary measures what a bucket's generated
+// runBucketPermissions measures what a bucket's generated
 // identity can do on the pinned engine, through signed S3 requests over a
 // port-forward (the API server's proxy rewrites Host and path, which a
 // SigV4 signature covers). It establishes the object-access boundary
@@ -52,40 +45,11 @@ import (
 //     re-creating it with the same keypair revives them.
 //
 // Requires TEST_KUBECONFIG and TEST_DATABASE_URL.
-func TestLiveBucketPermissionBoundary(t *testing.T) {
-	config := kubetest.Config(t)
-	pool := testdb.New(t)
+func runBucketPermissions(t *testing.T, fixture *bucketLiveFixture) {
 	ctx := context.Background()
-
-	client, err := kube.NewFromConfig(config)
-	require.NoError(t, err)
-	installOperator(t, client)
-
-	st := store.NewStore(pool)
-	dbSvc := dbstore.New(st)
-	projects := project.New(st)
-
-	suffix := uuid.Must(uuid.NewV7()).String()[24:]
-	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
-	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
-	require.NoError(t, err)
-
-	controller := New(Deps{
-		DB:       dbSvc,
-		Cluster:  KubeCluster{Client: client},
-		Observed: observe.NewStore(nil),
-		Seaweed:  seaweed.NewClient(client, Namespace),
-		Enqueue:  func(uuid.UUID) {},
-	}, Config{Managed: false})
-	cleanupPlatform(t, client)
-
-	// The output mirrors land in the environment namespace, which the
-	// environment reconciler would create; here the test does.
-	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
-	_, err = client.Apply(ctx, namespace, false)
-	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
+	config, client, dbSvc := fixture.config, fixture.client, fixture.db
+	controller := fixture.controller(nil)
+	proj, env := fixture.newEnvironment(t, controller)
 
 	// Two buckets in one environment: the boundary under test is between
 	// them.
@@ -99,12 +63,14 @@ func TestLiveBucketPermissionBoundary(t *testing.T) {
 
 	endpoint := kubetest.PortForward(t, config, Namespace, "app="+seaweed.AllInOneApp, seaweed.S3Port)
 	s3, err := minio.New(endpoint, &minio.Options{
+		Transport:    liveS3Transport(t),
 		Creds:        credentials.NewStaticV4(accessKey, secretKey, ""),
 		Region:       seaweed.Region,
 		BucketLookup: minio.BucketLookupPath,
 	})
 	require.NoError(t, err)
 	anonymous := &http.Client{Timeout: 30 * time.Second}
+	t.Cleanup(anonymous.CloseIdleConnections)
 	objectURL := func(bucket, key string) string {
 		return "http://" + endpoint + "/" + bucket + "/" + key
 	}
@@ -117,15 +83,17 @@ func TestLiveBucketPermissionBoundary(t *testing.T) {
 	require.NoError(t, err)
 	object, err := s3.GetObject(ctx, bucket, "own", minio.GetObjectOptions{})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = object.Close() })
 	read, err := io.ReadAll(object)
 	require.NoError(t, err)
 	require.Equal(t, payload, read)
 	_, err = s3.PutObject(ctx, foreign, "own", bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{})
 	require.Equal(t, "AccessDenied", minio.ToErrorResponse(err).Code, "cross-bucket write: %v", err)
-	_, err = s3.GetObject(ctx, foreign, "own", minio.GetObjectOptions{})
+	foreignObject, err := s3.GetObject(ctx, foreign, "own", minio.GetObjectOptions{})
 	if err == nil {
 		// GetObject is lazy; the first read carries the verdict.
-		_, err = io.ReadAll(must(s3.GetObject(ctx, foreign, "own", minio.GetObjectOptions{})))
+		t.Cleanup(func() { _ = foreignObject.Close() })
+		_, err = io.ReadAll(foreignObject)
 	}
 	require.Equal(t, "AccessDenied", minio.ToErrorResponse(err).Code, "cross-bucket read: %v", err)
 	require.Equal(t, http.StatusForbidden, status(t, anonymous, http.MethodGet, objectURL(bucket, "own"), nil, nil),
@@ -206,8 +174,9 @@ func TestLiveBucketPermissionBoundary(t *testing.T) {
 	platform, err := client.Clientset.CoreV1().Secrets(Namespace).Get(ctx, PlatformCredentialSecret, metav1.GetOptions{})
 	require.NoError(t, err)
 	admin, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(string(platform.Data["access_key"]), string(platform.Data["secret_key"]), ""),
-		Region: seaweed.Region, BucketLookup: minio.BucketLookupPath,
+		Transport: liveS3Transport(t),
+		Creds:     credentials.NewStaticV4(string(platform.Data["access_key"]), string(platform.Data["secret_key"]), ""),
+		Region:    seaweed.Region, BucketLookup: minio.BucketLookupPath,
 	})
 	require.NoError(t, err)
 	require.NoError(t, admin.SetBucketCors(ctx, bucket, cors.NewConfig([]cors.Rule{{
@@ -257,28 +226,9 @@ func driveLiveBucketWithQuota(t *testing.T, controller *Controller, dbSvc *dbsto
 		Visibility: "private", StorageQuotaBytes: quota, Versioning: "disabled",
 	})
 	require.NoError(t, err)
-	deadline := time.Now().Add(10 * time.Minute)
-	for {
-		require.False(t, time.Now().After(deadline),
-			"bucket claim %s not provisioned before deadline; last wait: %s", service, controller.WaitingReason(created.ID))
-		if _, err := controller.reconcileBucketClaim(ctx, created.ID); err != nil {
-			t.Logf("bucket claim %s (retrying): %v", service, err)
-		}
-		if _, err := controller.reconcileObjectStore(ctx); err != nil {
-			t.Logf("object store (retrying): %v", err)
-		}
-		if metadata, err := dbSvc.LiveSystemClaim(ctx, MetadataClaimKey); err == nil {
-			if _, err := controller.reconcileClaim(ctx, metadata.ID); err != nil {
-				t.Logf("metadata claim (retrying): %v", err)
-			}
-		}
-		current, err := dbSvc.GetBucketClaim(ctx, created.ID)
-		require.NoError(t, err)
-		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	driveLive(t, "bucket provisioning "+service, 10*time.Minute, func(ctx context.Context) (bool, error) {
+		return bucketClaimPass(ctx, controller, dbSvc, created.ID, claim.PhaseProvisioned, true)
+	})
 	allocation, err := dbSvc.LiveAllocation(ctx, created.ID)
 	require.NoError(t, err)
 	return allocation
@@ -302,11 +252,4 @@ func status(t *testing.T, client *http.Client, method, rawURL string, header htt
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, response.Body)
 	return response.StatusCode
-}
-
-func must(object *minio.Object, err error) io.Reader {
-	if err != nil {
-		return strings.NewReader("")
-	}
-	return object
 }

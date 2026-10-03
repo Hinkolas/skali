@@ -59,12 +59,14 @@ func writeFilerObject(t *testing.T, client *kube.Client, bucket, name, content s
 // degrades, cluster observation keeps its meaning), and recovery restores
 // freshness. Requires TEST_KUBECONFIG and TEST_DATABASE_URL.
 func TestLiveSeaweedObservation(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
 	ctx := context.Background()
 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
+	cleanupPlatform(t, client)
 	installOperator(t, client)
 
 	st := store.NewStore(pool)
@@ -85,12 +87,10 @@ func TestLiveSeaweedObservation(t *testing.T) {
 		Seaweed:  seaweed.NewClient(client, Namespace),
 	}, Config{Managed: false})
 
-	cleanupPlatform(t, client)
-
 	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
+	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 	_, err = client.Apply(ctx, namespace, false)
 	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 
 	// Provision one bucket end to end (the store comes up on the way).
 	owner := dbstore.ServiceOwner(proj.ID, env.ID, proj.Name, "production", "files")
@@ -98,23 +98,9 @@ func TestLiveSeaweedObservation(t *testing.T) {
 		Visibility: "private", StorageQuotaBytes: 1 << 30, Versioning: "disabled",
 	})
 	require.NoError(t, err)
-	deadline := time.Now().Add(10 * time.Minute)
-	for {
-		require.False(t, time.Now().After(deadline), "bucket not provisioned; last wait: %s",
-			controller.WaitingReason(created.ID))
-		requeue, err := controller.reconcileBucketClaim(ctx, created.ID)
-		_, _ = controller.reconcileObjectStore(ctx)
-		if metadata, err := dbSvc.LiveSystemClaim(ctx, MetadataClaimKey); err == nil {
-			_, _ = controller.reconcileClaim(ctx, metadata.ID)
-		}
-		current, getErr := dbSvc.GetBucketClaim(ctx, created.ID)
-		require.NoError(t, getErr)
-		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
-			break
-		}
-		stepClaim(t, "bucket claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
-		time.Sleep(2 * time.Second)
-	}
+	driveLive(t, "bucket provisioning", 10*time.Minute, func(ctx context.Context) (bool, error) {
+		return bucketClaimPass(ctx, controller, dbSvc, created.ID, claim.PhaseProvisioned, true)
+	})
 
 	// The cluster watch is simulated fresh; the provider observer runs for
 	// real at a tight cadence.

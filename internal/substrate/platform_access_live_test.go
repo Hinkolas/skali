@@ -43,12 +43,14 @@ const probeImage = "busybox:1.37"
 // holder. The policy that once opened the S3 port to every pod is swept.
 // Requires TEST_KUBECONFIG and TEST_DATABASE_URL.
 func TestLivePlatformPortsAdmitClaimHolders(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
 	ctx := context.Background()
 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
+	cleanupPlatform(t, client)
 	installOperator(t, client)
 
 	st := store.NewStore(pool)
@@ -70,13 +72,12 @@ func TestLivePlatformPortsAdmitClaimHolders(t *testing.T) {
 		Seaweed:  seaweed.NewClient(client, Namespace),
 		Enqueue:  func(uuid.UUID) {},
 	}, Config{Managed: false})
-	cleanupPlatform(t, client)
 
 	for _, env := range []*store.Environment{holder, bystander} {
 		namespace := kubernetes.RenderNamespace(proj.Name, env.Name, env.ID.String())
+		t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 		_, err = client.Apply(ctx, namespace, false)
 		require.NoError(t, err)
-		t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 	}
 	holderNS := kubernetes.NamespaceName(holder.ID.String())
 	bystanderNS := kubernetes.NamespaceName(bystander.ID.String())
@@ -166,24 +167,16 @@ func TestLivePlatformPortsAdmitClaimHolders(t *testing.T) {
 	// 6: releasing the claims closes the ports to the former holder.
 	_, err = dbSvc.ReleaseClaim(ctx, created.ID)
 	require.NoError(t, err)
-	requireEventually(t, 3*time.Minute, func() bool {
-		if _, err := controller.reconcileClaim(ctx, created.ID); err != nil {
-			t.Logf("release database claim (retrying): %v", err)
-		}
-		current, err := dbSvc.GetClaim(ctx, created.ID)
-		return err == nil && claim.Phase(current.Phase) == claim.PhaseReleased
-	}, "the database claim must release")
+	driveLive(t, "database release", 3*time.Minute, func(ctx context.Context) (bool, error) {
+		return databaseClaimPass(ctx, controller, dbSvc, created.ID, claim.PhaseReleased)
+	})
 	bucketClaim, err := dbSvc.LiveServiceBucketClaim(ctx, holder.ID, "files")
 	require.NoError(t, err)
 	_, err = dbSvc.ReleaseBucketClaim(ctx, bucketClaim.ID)
 	require.NoError(t, err)
-	requireEventually(t, 3*time.Minute, func() bool {
-		if _, err := controller.reconcileBucketClaim(ctx, bucketClaim.ID); err != nil {
-			t.Logf("release bucket claim (retrying): %v", err)
-		}
-		current, err := dbSvc.GetBucketClaim(ctx, bucketClaim.ID)
-		return err == nil && claim.Phase(current.Phase) == claim.PhaseReleased
-	}, "the bucket claim must release")
+	driveLive(t, "bucket release", 3*time.Minute, func(ctx context.Context) (bool, error) {
+		return bucketClaimPass(ctx, controller, dbSvc, bucketClaim.ID, claim.PhaseReleased, false)
+	})
 	eventuallyReach(t, client, holderNS, nil, s3, false, "a released bucket closes the S3 gateway to its environment")
 	eventuallyReach(t, client, holderNS, nil, postgres, false, "a released database closes the pool to its environment")
 }
@@ -213,7 +206,13 @@ func reach(t *testing.T, client *kube.Client, namespace string, labels map[strin
 		},
 	}, metav1.CreateOptions{})
 	require.NoError(t, err, "create probe pod in %s", namespace)
-	defer func() { _ = pods.Delete(ctx, name, metav1.DeleteOptions{}) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := pods.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			t.Errorf("cleanup probe %s/%s: %v", namespace, name, err)
+		}
+	}()
 
 	deadline := time.Now().Add(90 * time.Second)
 	for {

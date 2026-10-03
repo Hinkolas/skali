@@ -29,12 +29,14 @@ import (
 // the output mirror in the environment namespace. Requires TEST_KUBECONFIG
 // and TEST_DATABASE_URL.
 func TestLiveBucketClaimProvisioning(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
 	ctx := context.Background()
 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
+	cleanupPlatform(t, client)
 	installOperator(t, client)
 
 	st := store.NewStore(pool)
@@ -56,12 +58,10 @@ func TestLiveBucketClaimProvisioning(t *testing.T) {
 		Enqueue:  func(id uuid.UUID) { poked = append(poked, id) },
 	}, Config{Managed: false})
 
-	cleanupPlatform(t, client)
-
 	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
+	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 	_, err = client.Apply(ctx, namespace, false)
 	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 
 	owner := dbstore.ServiceOwner(proj.ID, env.ID, proj.Name, "production", "files")
 	created, err := dbSvc.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
@@ -72,34 +72,9 @@ func TestLiveBucketClaimProvisioning(t *testing.T) {
 	// Drive the claim, the store, and the metadata claim like the workers
 	// would; the store's whole dependency chain (metadata tenant -> filer ->
 	// s3 -> bucket) is exercised on the way.
-	deadline := time.Now().Add(10 * time.Minute)
-	for {
-		require.False(t, time.Now().After(deadline),
-			"bucket claim not provisioned before deadline; last wait: %s", controller.WaitingReason(created.ID))
-		requeue, err := controller.reconcileBucketClaim(ctx, created.ID)
-		if err != nil {
-			t.Logf("bucket claim (retrying): %v", err)
-		}
-		if _, err := controller.reconcileObjectStore(ctx); err != nil {
-			t.Logf("object store (retrying): %v", err)
-		}
-		if metadata, err := dbSvc.LiveSystemClaim(ctx, MetadataClaimKey); err == nil {
-			mRequeue, mErr := controller.reconcileClaim(ctx, metadata.ID)
-			if mErr != nil {
-				t.Logf("metadata claim (retrying): %v", mErr)
-			} else if fresh, freshErr := dbSvc.GetClaim(ctx, metadata.ID); freshErr == nil {
-				stepClaim(t, "metadata claim", mRequeue, mErr,
-					claim.Phase(fresh.Phase), controller.WaitingReason(metadata.ID))
-			}
-		}
-		current, getErr := dbSvc.GetBucketClaim(ctx, created.ID)
-		require.NoError(t, getErr)
-		if claim.Phase(current.Phase) == claim.PhaseProvisioned {
-			break
-		}
-		stepClaim(t, "bucket claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
-		time.Sleep(2 * time.Second)
-	}
+	driveLive(t, "bucket provisioning", 10*time.Minute, func(ctx context.Context) (bool, error) {
+		return bucketClaimPass(ctx, controller, dbSvc, created.ID, claim.PhaseProvisioned, true)
+	})
 
 	// The allocation carries the generated identity and the in-cluster
 	// endpoint.
@@ -150,6 +125,7 @@ func TestLiveBucketClaimProvisioning(t *testing.T) {
 		WHERE table_schema = 'public'
 		  AND data_type IN ('text', 'jsonb', 'character varying')`)
 	require.NoError(t, err)
+	defer columns.Close() // Also release the reader if an assertion aborts the audit.
 	type column struct{ table, name string }
 	var scan []column
 	for columns.Next() {

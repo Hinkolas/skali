@@ -5,60 +5,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
-	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubernetes"
-	"github.com/Hinkolas/skali/internal/kubetest"
-	"github.com/Hinkolas/skali/internal/observe"
-	"github.com/Hinkolas/skali/internal/project"
-	"github.com/Hinkolas/skali/internal/store"
-	"github.com/Hinkolas/skali/internal/substrate/seaweed"
-	"github.com/Hinkolas/skali/internal/testdb"
 )
 
-// TestLiveBucketDestructiveRemoval executes the persisted destructive
+// runBucketDestructiveRemoval executes the persisted destructive
 // decision against a real cluster: identity gone, bucket metadata gone,
 // collection data freed, Secrets deleted, claim released; the store itself
 // survives and keeps running (the always-on dev substrate). Requires
 // TEST_KUBECONFIG and TEST_DATABASE_URL.
-func TestLiveBucketDestructiveRemoval(t *testing.T) {
-	config := kubetest.Config(t)
-	pool := testdb.New(t)
+func runBucketDestructiveRemoval(t *testing.T, fixture *bucketLiveFixture) {
 	ctx := context.Background()
-
-	client, err := kube.NewFromConfig(config)
-	require.NoError(t, err)
-	installOperator(t, client)
-
-	st := store.NewStore(pool)
-	dbSvc := dbstore.New(st)
-	projects := project.New(st)
-
-	suffix := uuid.Must(uuid.NewV7()).String()[24:]
-	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
-	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
-	require.NoError(t, err)
-
-	controller := New(Deps{
-		DB:       dbSvc,
-		Cluster:  KubeCluster{Client: client},
-		Observed: observe.NewStore(nil),
-		Seaweed:  seaweed.NewClient(client, Namespace),
-	}, Config{Managed: false})
-
-	cleanupPlatform(t, client)
-
-	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
-	_, err = client.Apply(ctx, namespace, false)
-	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
+	client, dbSvc := fixture.client, fixture.db
+	controller := fixture.controller(nil)
+	proj, env := fixture.newEnvironment(t, controller)
+	namespace := kubernetes.RenderNamespace(proj.Name, env.Name, env.ID.String())
 
 	owner := dbstore.ServiceOwner(proj.ID, env.ID, proj.Name, "production", "files")
 	created, err := dbSvc.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
@@ -68,25 +34,9 @@ func TestLiveBucketDestructiveRemoval(t *testing.T) {
 
 	drive := func(target claim.Phase, deadline time.Duration, withStore bool) {
 		t.Helper()
-		limit := time.Now().Add(deadline)
-		for {
-			require.False(t, time.Now().After(limit),
-				"claim never reached %s; last wait: %s", target, controller.WaitingReason(created.ID))
-			requeue, err := controller.reconcileBucketClaim(ctx, created.ID)
-			if withStore {
-				_, _ = controller.reconcileObjectStore(ctx)
-			}
-			if metadata, err := dbSvc.LiveSystemClaim(ctx, MetadataClaimKey); err == nil {
-				_, _ = controller.reconcileClaim(ctx, metadata.ID)
-			}
-			current, getErr := dbSvc.GetBucketClaim(ctx, created.ID)
-			require.NoError(t, getErr)
-			if claim.Phase(current.Phase) == target {
-				return
-			}
-			stepClaim(t, "bucket claim", requeue, err, claim.Phase(current.Phase), controller.WaitingReason(created.ID))
-			time.Sleep(2 * time.Second)
-		}
+		driveLive(t, "bucket "+string(target), deadline, func(ctx context.Context) (bool, error) {
+			return bucketClaimPass(ctx, controller, dbSvc, created.ID, target, withStore)
+		})
 	}
 	drive(claim.PhaseProvisioned, 10*time.Minute, true)
 

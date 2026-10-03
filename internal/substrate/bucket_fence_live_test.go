@@ -8,24 +8,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/Hinkolas/skali/internal/dbstore"
-	"github.com/Hinkolas/skali/internal/kube"
-	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/kubetest"
-	"github.com/Hinkolas/skali/internal/observe"
-	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
-	"github.com/Hinkolas/skali/internal/testdb"
 )
 
-// TestLiveBucketRestoreFence proves the restore fence against a real
+// runBucketRestoreFence proves the restore fence against a real
 // store: fencing deletes the bucket's identity (its keys and an already
 // issued presigned URL are refused), lifts the quota flag, and leaves the
 // platform identity writing; provisioning keeps the identity absent while
@@ -33,38 +26,12 @@ import (
 // lifts it once the environment moves on; unfencing brings the keypair
 // back (which revives the presigned URL: the same key signs it). Requires
 // TEST_KUBECONFIG and TEST_DATABASE_URL.
-func TestLiveBucketRestoreFence(t *testing.T) {
-	config := kubetest.Config(t)
-	pool := testdb.New(t)
+func runBucketRestoreFence(t *testing.T, fixture *bucketLiveFixture) {
 	ctx := context.Background()
-
-	client, err := kube.NewFromConfig(config)
-	require.NoError(t, err)
-	installOperator(t, client)
-
-	st := store.NewStore(pool)
-	dbSvc := dbstore.New(st)
-	projects := project.New(st)
-
-	suffix := uuid.Must(uuid.NewV7()).String()[24:]
-	proj, err := projects.Create(ctx, "demo"+suffix, "", uuid.Nil)
-	require.NoError(t, err)
-	env, err := projects.CreateEnvironment(ctx, proj.ID, "production", project.EnvironmentOptions{})
-	require.NoError(t, err)
-
-	controller := New(Deps{
-		DB:       dbSvc,
-		Cluster:  KubeCluster{Client: client},
-		Observed: observe.NewStore(nil),
-		Seaweed:  seaweed.NewClient(client, Namespace),
-		Enqueue:  func(uuid.UUID) {},
-	}, Config{Managed: false})
-	cleanupPlatform(t, client)
-
-	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
-	_, err = client.Apply(ctx, namespace, false)
-	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
+	config, client, dbSvc := fixture.config, fixture.client, fixture.db
+	controller := fixture.controller(nil)
+	proj, env := fixture.newEnvironment(t, controller)
+	st := fixture.st
 
 	files := driveLiveBucket(t, controller, dbSvc, proj, env, "files")
 	bucket := files.BucketName
@@ -77,6 +44,7 @@ func TestLiveBucketRestoreFence(t *testing.T) {
 	endpoint := kubetest.PortForward(t, config, Namespace, "app="+seaweed.AllInOneApp, seaweed.S3Port)
 	newClient := func(accessKey, secretKey string) *minio.Client {
 		s3, err := minio.New(endpoint, &minio.Options{
+			Transport:    liveS3Transport(t),
 			Creds:        credentials.NewStaticV4(accessKey, secretKey, ""),
 			Region:       seaweed.Region,
 			BucketLookup: minio.BucketLookupPath,
@@ -86,6 +54,7 @@ func TestLiveBucketRestoreFence(t *testing.T) {
 	}
 	app := newClient(string(credential.Data["access_key"]), string(credential.Data["secret_key"]))
 	web := &http.Client{Timeout: 30 * time.Second}
+	t.Cleanup(web.CloseIdleConnections)
 
 	// The application wrote before the restore and holds a presigned URL.
 	_, err = app.PutObject(ctx, bucket, "before", strings.NewReader("before"), 6, minio.PutObjectOptions{})
@@ -156,6 +125,7 @@ func TestLiveBucketRestoreFence(t *testing.T) {
 	require.NotNil(t, identities.Find(bucket))
 	object, err := app.GetObject(ctx, bucket, "restored", minio.GetObjectOptions{})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = object.Close() })
 	info, err := object.Stat()
 	require.NoError(t, err)
 	require.Equal(t, "text/plain", info.ContentType)

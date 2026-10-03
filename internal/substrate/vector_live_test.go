@@ -32,12 +32,14 @@ import (
 // is stated rather than exercised here. Requires TEST_KUBECONFIG and
 // TEST_DATABASE_URL.
 func TestLiveVectorExtension(t *testing.T) {
+	defer livePhase(t, "scenario")()
 	config := kubetest.Config(t)
 	pool := testdb.New(t)
 	ctx := context.Background()
 
 	client, err := kube.NewFromConfig(config)
 	require.NoError(t, err)
+	cleanupPlatform(t, client)
 	installOperator(t, client)
 
 	st := store.NewStore(pool)
@@ -57,12 +59,10 @@ func TestLiveVectorExtension(t *testing.T) {
 		Enqueue:  func(uuid.UUID) {},
 	}, Config{Managed: false})
 
-	cleanupPlatform(t, client)
-
 	namespace := kubernetes.RenderNamespace(proj.Name, "production", env.ID.String())
+	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 	_, err = client.Apply(ctx, namespace, false)
 	require.NoError(t, err)
-	t.Cleanup(func() { deleteNamespace(t, client, namespace.Name) })
 
 	// Two claims on the same pool: "search" asks for vector, "plain" does not.
 	searchOwner := dbstore.ServiceOwner(proj.ID, env.ID, proj.Name, "production", "search")
