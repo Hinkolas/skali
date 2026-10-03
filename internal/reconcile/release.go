@@ -117,6 +117,33 @@ func (k *Kernel) releaseFailureLines(ctx context.Context, namespace, name string
 	return append(lines, tail...)
 }
 
+// releaseWaitImage resolves the image of the release Jobs' reachability
+// wait, and only for a definition that has release commands. A failed
+// lookup renders the Jobs without the wait rather than blocking the pass:
+// the wait only bridges the network policy registration window, and the
+// release command still reports a service it cannot reach.
+func (k *Kernel) releaseWaitImage(ctx context.Context, definition compiler.ProjectDefinition) string {
+	if k.deps.WaitImage == nil {
+		return ""
+	}
+	hasRelease := false
+	for _, application := range definition.Applications {
+		if len(application.Deployment.ReleaseCommand.Command) > 0 {
+			hasRelease = true
+			break
+		}
+	}
+	if !hasRelease {
+		return ""
+	}
+	image, err := k.deps.WaitImage(ctx)
+	if err != nil {
+		slog.Warn("reconcile: resolve the release wait image; release Jobs render without the wait", "error", err)
+		return ""
+	}
+	return image
+}
+
 func liveReleaseJob(snapshot observe.Snapshot, namespace, name string) *observe.Object {
 	for index := range snapshot.Objects {
 		obj := &snapshot.Objects[index]

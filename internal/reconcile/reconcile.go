@@ -763,6 +763,7 @@ func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *r
 	}
 	renderOptions.Variables = variables
 	renderOptions.BucketNames = bucketNames
+	renderOptions.WaitImage = k.releaseWaitImage(ctx, rev.Definition)
 	// Bucket routes resolve here, against the same values the render
 	// sees, so the hostname the claim records is the one the edge serves.
 	bucketRoutes, err := resolveBucketRoutes(rev.Definition, variables)

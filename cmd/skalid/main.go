@@ -32,6 +32,7 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/backup"
 	"github.com/Hinkolas/skali/internal/buildstore"
+	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/config"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
@@ -44,6 +45,7 @@ import (
 	"github.com/Hinkolas/skali/internal/module/app"
 	"github.com/Hinkolas/skali/internal/module/bucket"
 	"github.com/Hinkolas/skali/internal/module/database"
+	"github.com/Hinkolas/skali/internal/netwait"
 	"github.com/Hinkolas/skali/internal/obs"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/podexec"
@@ -89,6 +91,10 @@ func run() error {
 		// The in-Job data mover; never invoked by operators directly, so it
 		// stays out of the unknown-command listing.
 		return backup.RunWorker(args[1:])
+	case "net-wait":
+		// The release Job's reachability wait (an init container); internal
+		// like backup-worker.
+		return netwait.Run(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (available: serve, user, migrate, seed)", args[0])
 	}
@@ -250,6 +256,25 @@ func runServe() error {
 		kernelDeps.LiveRouteHosts = kubeClient.LiveRouteHosts
 		kernelDeps.JobLogs = kubeClient.TailJobLogs
 		kernelDeps.RefreshObservation = source.Refresh
+		// Release Jobs wait for their services in the daemon's own image
+		// (skalid net-wait). The image only changes with a rollout of
+		// skalid itself, which restarts this process, so one successful
+		// lookup is cached.
+		var waitImageMu sync.Mutex
+		waitImage := ""
+		kernelDeps.WaitImage = func(ctx context.Context) (string, error) {
+			waitImageMu.Lock()
+			defer waitImageMu.Unlock()
+			if waitImage != "" {
+				return waitImage, nil
+			}
+			image, err := bundle.SkalidImage(ctx, kubeClient.Clientset, cfg.BackupWorkerImage)
+			if err != nil {
+				return "", err
+			}
+			waitImage = image
+			return waitImage, nil
+		}
 		if cfg.CertManager {
 			kernelDeps.RetryCertificate = func(ctx context.Context, ref kube.ObjectRef, promoted time.Time) (bool, error) {
 				return edgeobserve.RetryFailedCertificate(ctx, kubeClient.Dynamic, kubeClient.Metadata, ref, promoted)
