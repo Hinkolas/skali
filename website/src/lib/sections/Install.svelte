@@ -3,6 +3,7 @@
 	import Check from '@lucide/svelte/icons/check';
 	import Copy from '@lucide/svelte/icons/copy';
 	import { links } from '$lib/links';
+	import { reveal } from '$lib/motion';
 
 	const url = 'https://skali.dev/install.sh';
 	const command = `curl -fsSL ${url} | sh`;
@@ -28,6 +29,7 @@
 
 <section id="install" class="scroll-mt-6 px-6 pt-6 pb-35">
 	<div
+		use:reveal
 		class="relative mx-auto max-w-330 overflow-hidden rounded-[28px] border border-accent/26 bg-surface-violet p-[clamp(28px,6vw,80px)]"
 		style="background-image: radial-gradient(760px 460px at 0% 0%, rgb(124 92 255 / 0.24) 0%, rgb(124 92 255 / 0.06) 55%, transparent 100%)"
 	>
@@ -58,7 +60,9 @@
 						class="min-w-0 flex-[1_1_16rem] py-2 font-mono text-[13px] leading-relaxed break-words text-text-primary md:overflow-x-auto md:text-[15px] md:whitespace-nowrap"
 						><span class="mr-[1ch] text-text-ghost select-none">$</span>curl -fsSL
 						<span class="text-accent-light">{url}</span>
-						<span class="whitespace-nowrap">| sh</span></code
+						<span class="whitespace-nowrap"
+							>| sh<span aria-hidden="true" class="caret select-none"></span></span
+						></code
 					>
 					<button
 						type="button"
@@ -96,11 +100,42 @@
 				<a
 					href={links.gettingStarted}
 					rel="external"
-					class="flex items-center gap-1.5 text-text-primary transition-colors hover:text-white"
+					class="group flex items-center gap-1.5 text-text-primary transition-colors hover:text-white"
 				>
-					Getting started <ArrowRight size={14} />
+					Getting started
+					<ArrowRight
+						size={14}
+						class="transition-transform duration-200 ease-out group-hover:translate-x-0.5"
+					/>
 				</a>
 			</span>
 		</div>
 	</div>
 </section>
+
+<style>
+	/* A terminal's block cursor after the command. It blinks a few times
+	   once the card is in view, then rests. */
+	.caret {
+		display: inline-block;
+		width: 0.6em;
+		height: 1.15em;
+		margin-left: 0.35ch;
+		vertical-align: -0.2em;
+		background: var(--color-text-primary);
+		opacity: 0.7;
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		.caret {
+			animation: blink 1.1s steps(1) 0.9s 6;
+		}
+		:global([data-reveal='pending']) .caret {
+			animation-play-state: paused;
+		}
+	}
+	@keyframes blink {
+		50% {
+			opacity: 0;
+		}
+	}
+</style>
