@@ -335,10 +335,9 @@ func TestLiveDatabaseCredentialRotation(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 	out, err := client.ExecInPod(ctx, Namespace, cnpg.PrimarySelector(devPool.Name), cnpg.PostgresContainer,
-		cnpg.PSQLCommand("postgres", fmt.Sprintf("SELECT count(*) FROM pg_roles WHERE rolname LIKE '%s%%'", v1.RoleName)))
+		cnpg.PSQLQuery("postgres", fmt.Sprintf("SELECT count(*) FROM pg_roles WHERE rolname LIKE '%s%%'", v1.RoleName)))
 	require.NoError(t, err)
-	require.Equal(t, "0", strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[len(strings.Split(strings.TrimSpace(out), "\n"))-1]),
-		"no role of the released tenant remains: %q", out)
+	require.Equal(t, "0", strings.TrimSpace(out), "no role of the released tenant remains")
 	require.True(t, secretGone(v3Secret.Name))
 }
 
