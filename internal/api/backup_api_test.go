@@ -111,13 +111,32 @@ func TestBackupTargetRequireAdmin(t *testing.T) {
 	}
 }
 
+// Writes need sudo mode; the read returns no secret and stays a plain
+// admin read, so a stale session still sees the stored target.
 func TestBackupTargetRequiresFreshAuth(t *testing.T) {
 	a := newTestAPI(t)
 	a.createAdmin("admin@example.com", "hunter2hunter2")
 	admin := a.login("admin@example.com", "hunter2hunter2")
 	a.staleAllSessions()
 
-	status, body := a.do("PUT", "/v1/system/backup-target", admin, validBackupTarget())
+	status, body := a.do("GET", "/v1/system/backup-target", admin, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errorCode(t, body))
+
+	status, body = a.do("PUT", "/v1/system/backup-target", admin, validBackupTarget())
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "reauth_required", errorCode(t, body))
+
+	fresh := a.login("admin@example.com", "hunter2hunter2")
+	status, body = a.do("PUT", "/v1/system/backup-target", fresh, validBackupTarget())
+	require.Equal(t, http.StatusOK, status, "body: %v", body)
+	a.staleAllSessions()
+
+	status, body = a.do("GET", "/v1/system/backup-target", fresh, nil)
+	require.Equal(t, http.StatusOK, status, "body: %v", body)
+	require.Equal(t, "skali-backups", body["target"].(map[string]any)["bucket"])
+
+	status, body = a.do("DELETE", "/v1/system/backup-target", fresh, nil)
 	require.Equal(t, http.StatusForbidden, status)
 	require.Equal(t, "reauth_required", errorCode(t, body))
 }

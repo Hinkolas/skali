@@ -36,7 +36,9 @@
 	const backupSummary = $derived(
 		data.backupTarget
 			? { text: data.backupTarget.bucket, tone: 'success' as const }
-			: { text: 'not set', tone: 'neutral' as const }
+			: data.backupTarget === null
+				? { text: 'not set', tone: 'neutral' as const }
+				: { text: 'unavailable', tone: 'neutral' as const }
 	);
 
 	// One line about the pools: how many there are, or that they are unknown.

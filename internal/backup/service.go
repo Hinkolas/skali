@@ -12,8 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/authz"
+	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate"
 )
 
 // Backup row kinds, statuses, and triggers (mirrors the CHECK constraints
@@ -57,6 +59,12 @@ var (
 	// exists, so the reason reaches the caller instead of an empty failed
 	// run.
 	ErrNothingToBackUp = errors.New("backup: the active revision declares no database, bucket, or application volume to snapshot")
+	// ErrObjectStorageNotReady: the environment declares buckets but the
+	// platform identity that reads and writes them does not exist yet
+	// (the object store is still converging, typically after an upgrade).
+	// Refused before a run exists; a restore would otherwise fence the
+	// bucket and then fail.
+	ErrObjectStorageNotReady = errors.New("backup: object storage is not ready")
 )
 
 // TargetUnreachableError wraps a synchronous S3 failure so the API can
@@ -124,6 +132,9 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 	}
 	if len(planComponents(&revisionDoc.Definition)) == 0 {
 		return nil, ErrNothingToBackUp
+	}
+	if err := c.bucketsReady(ctx, &revisionDoc.Definition); err != nil {
+		return nil, err
 	}
 	// A configured target is a precondition; reachability is proven inside
 	// the run where the failure has a visible step.
@@ -490,4 +501,18 @@ func (c *Controller) environmentNames(ctx context.Context, environmentID uuid.UU
 		backupRetentionSeconds: environment.BackupRetentionSeconds,
 		backupStrategy:         environment.BackupStrategy,
 	}, nil
+}
+
+// bucketsReady refuses an operation on an environment with buckets while
+// the platform identity the copies run as is still missing. Environments
+// without buckets never wait on object storage.
+func (c *Controller) bucketsReady(ctx context.Context, definition *compiler.ProjectDefinition) error {
+	if len(definition.Buckets) == 0 || c.deps.Buckets == nil {
+		return nil
+	}
+	err := c.deps.Buckets.PlatformIdentityReady(ctx)
+	if errors.Is(err, substrate.ErrPlatformIdentityPending) {
+		return fmt.Errorf("%w: %w", ErrObjectStorageNotReady, err)
+	}
+	return err
 }
