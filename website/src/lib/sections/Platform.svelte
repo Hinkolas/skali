@@ -1,5 +1,6 @@
 <script lang="ts">
 	import SectionHeader from '$lib/components/SectionHeader.svelte';
+	import { reveal } from '$lib/motion';
 	import Backups from '$lib/mock/Backups.svelte';
 	import BucketConnection from '$lib/mock/BucketConnection.svelte';
 	import DatabaseInstance from '$lib/mock/DatabaseInstance.svelte';
@@ -18,7 +19,7 @@
 {/snippet}
 
 {#snippet copy(eyebrow: string, color: string, title: string, text: string, items: string[])}
-	<div class="flex max-w-125 flex-[1_1_400px] flex-col gap-5">
+	<div use:reveal class="flex max-w-125 flex-[1_1_400px] flex-col gap-5">
 		<span class="font-mono text-[13px] {color}">{eyebrow}</span>
 		<h3 class="m-0 text-[clamp(28px,3.2vw,40px)] leading-[1.1] font-medium tracking-[-0.03em]">
 			{title}
@@ -33,7 +34,7 @@
 <section id="platform" class="mx-auto flex max-w-330 scroll-mt-6 flex-col gap-30 px-6 py-35">
 	<!-- The rows run wider than the other sections; the header keeps their
 	     measure so its label lines up with theirs. -->
-	<div class="mx-auto w-full max-w-288">
+	<div use:reveal class="mx-auto w-full max-w-288">
 		<SectionHeader
 			index="02"
 			label="Platform"
@@ -54,6 +55,7 @@
 			]
 		)}
 		<div
+			use:reveal={{ delay: 120 }}
 			role="img"
 			aria-label="A deployment run in Skali Studio, rolling out the web application"
 			class="relative h-110 flex-[1_1_480px] overflow-hidden rounded-[22px] border border-border-default bg-surface-panel px-[clamp(20px,3vw,40px)] pt-[clamp(20px,3vw,40px)] xl:mr-16"
@@ -65,6 +67,7 @@
 
 	<div class="flex flex-wrap-reverse items-center gap-x-20 gap-y-12">
 		<div
+			use:reveal={{ delay: 120 }}
 			role="img"
 			aria-label="A PostgreSQL instance with the vector extension and a bucket's S3 connection in Skali Studio"
 			class="grid min-w-0 flex-[1_1_480px] grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] items-start gap-4 rounded-[22px] border border-border-default bg-surface-panel p-[clamp(20px,3vw,40px)] *:min-w-0 xl:ml-16"
@@ -99,6 +102,7 @@
 			]
 		)}
 		<div
+			use:reveal={{ delay: 120 }}
 			role="img"
 			aria-label="A backup schedule with recent snapshots and the promote dialog in Skali Studio"
 			class="relative flex flex-[1_1_480px] flex-col gap-4 overflow-hidden rounded-[22px] border border-border-default bg-surface-panel p-[clamp(20px,3vw,40px)] sm:block sm:h-120 xl:mr-16"
@@ -107,7 +111,12 @@
 			<!-- The dialog sits below the table's header row and starts left of its
 			     origin column, so it covers whole columns rather than clipping them. -->
 			<div class="sm:w-[78%]"><Backups /></div>
-			<div class="sm:absolute sm:right-8 sm:bottom-8 sm:left-[28%]"><Promote /></div>
+			<div
+				use:reveal={{ delay: 650 }}
+				class="reveal-dialog sm:absolute sm:right-8 sm:bottom-8 sm:left-[28%]"
+			>
+				<Promote />
+			</div>
 		</div>
 	</div>
 </section>
