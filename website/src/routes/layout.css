@@ -58,6 +58,17 @@
 	--color-service-temp: #d69ccd;
 
 	--color-chart-2: #b8802c;
+
+	/* Studio's highlight sweeping across an active progress fill. */
+	--animate-progress-sheen: progress-sheen 1.8s ease-in-out infinite;
+	@keyframes progress-sheen {
+		from {
+			transform: translateX(-100%);
+		}
+		to {
+			transform: translateX(100%);
+		}
+	}
 }
 
 /* The faint 72px grid behind the hero, fading out from the top center. */

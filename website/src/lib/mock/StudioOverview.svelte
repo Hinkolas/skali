@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
-	 * A static rendering of the Studio's project overview at 1280×820, built
-	 * from the real shell, stat tiles, storage bar and service cards. It is a
-	 * picture, not UI: the caller crops it and hides it from assistive tech.
+	 * A rendering of the Studio's project overview at 1280×820, built from the
+	 * real shell, stat tiles, storage bar and service cards. Its charts draw in
+	 * on load and then stream new samples while in view. It is a picture, not
+	 * UI: the caller crops it and hides it from assistive tech.
 	 */
 	import Activity from '@lucide/svelte/icons/activity';
 	import Archive from '@lucide/svelte/icons/archive';
@@ -12,6 +13,7 @@
 	import ScrollText from '@lucide/svelte/icons/scroll-text';
 	import Search from '@lucide/svelte/icons/search';
 	import Settings2 from '@lucide/svelte/icons/settings-2';
+	import { onMount } from 'svelte';
 	import LogoMark from '$lib/components/LogoMark.svelte';
 	import ServiceTile, { type Kind } from './ServiceTile.svelte';
 
@@ -23,12 +25,19 @@
 		{ label: 'Settings', icon: Settings2 }
 	];
 
+	// Each chart is a window of 15 samples plus one waiting past the right
+	// edge. While the page streams, the window slides left and a new sample
+	// arrives every couple of seconds; `next` keeps it near its usual level.
 	const stats = [
 		{
 			label: 'Requests',
 			value: '1.2k',
 			unit: '/min',
-			line: 'M0 20 L14 18 L28 21 L42 15 L56 17 L70 12 L84 14 L98 9 L112 13 L126 10 L140 6 L154 9 L168 5 L182 8 L200 4',
+			ys: [20, 18, 21, 15, 17, 12, 14, 9, 13, 10, 6, 9, 5, 8, 4],
+			level: 7,
+			spread: 6,
+			range: [3, 13],
+			read: (y: number) => `${(1.2 + (5 - y) * 0.03).toFixed(1)}k`,
 			meta: [
 				['total', '1.4M / 24h'],
 				['peak', '2.1k /min']
@@ -38,7 +47,11 @@
 			label: 'CPU',
 			value: '0.4',
 			unit: '/ 2 cores',
-			line: 'M0 16 L14 17 L28 14 L42 18 L56 15 L70 16 L84 9 L98 14 L112 16 L126 13 L140 15 L154 11 L168 14 L182 12 L200 14',
+			ys: [16, 17, 14, 18, 15, 16, 9, 14, 16, 13, 15, 11, 14, 12, 14],
+			level: 14,
+			spread: 5,
+			range: [9, 19],
+			read: (y: number) => (0.4 + (14 - y) * 0.04).toFixed(1),
 			meta: [
 				['avg', '0.3'],
 				['peak', '0.9']
@@ -48,7 +61,11 @@
 			label: 'Memory',
 			value: '412',
 			unit: 'MiB / 1.5 GiB',
-			line: 'M0 14 L14 13 L28 13 L42 12 L56 12 L70 11 L84 12 L98 11 L112 10 L126 11 L140 10 L154 10 L168 9 L182 10 L200 9',
+			ys: [14, 13, 13, 12, 12, 11, 12, 11, 10, 11, 10, 10, 9, 10, 9],
+			level: 10,
+			spread: 2.5,
+			range: [7, 13],
+			read: (y: number) => String(Math.round(412 + (9 - y) * 5)),
 			meta: [
 				['avg', '380 MiB'],
 				['peak', '455 MiB']
@@ -58,13 +75,118 @@
 			label: 'Traffic',
 			value: '3.8',
 			unit: 'GiB / 24h',
-			line: 'M0 22 L14 20 L28 16 L42 12 L56 10 L70 13 L84 18 L98 21 L112 19 L126 14 L140 9 L154 7 L168 11 L182 16 L200 19',
+			ys: [22, 20, 16, 12, 10, 13, 18, 21, 19, 14, 9, 7, 11, 16, 19],
+			level: 15,
+			spread: 8,
+			range: [5, 24],
+			// A day's total barely moves from one sample to the next.
+			read: () => '3.8',
 			meta: [
 				['in', '412 MiB'],
 				['out', '3.4 GiB']
 			]
 		}
 	];
+
+	const step = 200 / 14;
+	const period = 2200; // ms per sample
+
+	let series = $state(stats.map((stat) => [...stat.ys, stat.ys[stat.ys.length - 1]]));
+	let values = $state(stats.map((stat) => stat.value));
+	let shift = $state(0);
+
+	function next(stat: (typeof stats)[number], ys: number[]) {
+		const last = ys[ys.length - 1];
+		const y = last + (stat.level - last) * 0.35 + (Math.random() - 0.5) * stat.spread;
+		return Math.min(stat.range[1], Math.max(stat.range[0], y));
+	}
+
+	function line(ys: number[]) {
+		return ys.map((y, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(2)} ${y.toFixed(2)}`).join(' ');
+	}
+
+	let root: HTMLDivElement;
+	let charts: HTMLDivElement;
+
+	onMount(() => {
+		if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+		let visible = false;
+		let frame = 0;
+		let last = 0;
+
+		// The charts draw themselves in (see the styles below) before they
+		// stream. The drawing starts on load; when the charts are still below
+		// the fold, it is held back until they scroll into view.
+		const drawing = [...root.querySelectorAll('.chart, .storage')].flatMap((el) =>
+			el.getAnimations()
+		);
+		const drawn = 2000;
+		let streamFrom = performance.now() + drawn;
+		if (charts.getBoundingClientRect().bottom > innerHeight) {
+			streamFrom = Infinity;
+			for (const animation of drawing) {
+				animation.pause();
+				animation.currentTime = 0;
+			}
+		}
+		const draw = () => {
+			if (streamFrom !== Infinity) return;
+			for (const animation of drawing) {
+				animation.currentTime = 250;
+				animation.play();
+			}
+			streamFrom = performance.now() + drawn - 250;
+		};
+
+		const tick = (now: number) => {
+			if (now > streamFrom) {
+				shift += (now - Math.max(last, streamFrom)) / period;
+				if (shift >= 1) {
+					shift -= 1;
+					series = series.map((ys, i) => {
+						const moved = [...ys.slice(1), next(stats[i], ys)];
+						values[i] = stats[i].read(moved[moved.length - 2]);
+						return moved;
+					});
+				}
+			}
+			last = now;
+			frame = requestAnimationFrame(tick);
+		};
+
+		// Only stream while someone can see it.
+		const update = () => {
+			const play = visible && !document.hidden;
+			if (play && !frame) {
+				last = performance.now();
+				frame = requestAnimationFrame(tick);
+			} else if (!play && frame) {
+				cancelAnimationFrame(frame);
+				frame = 0;
+			}
+		};
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (entry.target === charts && entry.intersectionRatio >= 0.6) draw();
+					if (entry.target === root) visible = entry.isIntersecting;
+				}
+				update();
+			},
+			{ threshold: [0, 0.6] }
+		);
+		observer.observe(root);
+		observer.observe(charts);
+		document.addEventListener('visibilitychange', update);
+
+		return () => {
+			observer.disconnect();
+			document.removeEventListener('visibilitychange', update);
+			cancelAnimationFrame(frame);
+		};
+	});
 
 	const storage = [
 		{ label: 'Volumes 2.0 GiB', width: '2.5%', color: 'bg-service-app' },
@@ -126,6 +248,7 @@
 </script>
 
 <div
+	bind:this={root}
 	class="flex h-205 w-320 flex-col overflow-hidden rounded-[14px] bg-surface-base leading-normal text-text-primary"
 	style="background-image: radial-gradient(990px 660px at 30px 31px, rgb(124 92 255 / 0.09) 0%, rgb(124 92 255 / 0.055) 20%, rgb(124 92 255 / 0.029) 40%, rgb(124 92 255 / 0.012) 60%, rgb(124 92 255 / 0.003) 80%, transparent 100%)"
 >
@@ -244,8 +367,8 @@
 				</div>
 			</div>
 
-			<div class="mb-[28.6px] grid grid-cols-4 gap-[15.4px]">
-				{#each stats as stat (stat.label)}
+			<div bind:this={charts} class="mb-[28.6px] grid grid-cols-4 gap-[15.4px]">
+				{#each stats as stat, i (stat.label)}
 					<div
 						class="rounded-[15px] border border-border-raised bg-surface-card px-[19.8px] py-[17.6px]"
 					>
@@ -255,25 +378,31 @@
 							{stat.label}
 						</div>
 						<div class="text-[26px] leading-[1.1] font-semibold tracking-[-0.02em]">
-							{stat.value}<span class="ml-[4.4px] text-[14px] font-medium text-text-muted"
-								>{stat.unit}</span
+							<span class="tabular-nums">{values[i]}</span><span
+								class="ml-[4.4px] text-[14px] font-medium text-text-muted">{stat.unit}</span
 							>
 						</div>
 						<svg
-							class="mt-[13.2px] block h-7 w-full"
+							class="chart mt-[13.2px] block h-7 w-full"
+							style:--i={i}
 							viewBox="0 0 200 28"
 							preserveAspectRatio="none"
 						>
-							<path d="{stat.line} L200 28 L0 28 Z" fill="rgb(124 92 255 / 0.14)" />
-							<path
-								d={stat.line}
-								fill="none"
-								stroke="#7c5cff"
-								stroke-width="1.5"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								vector-effect="non-scaling-stroke"
-							/>
+							<g transform="translate({(-shift * step).toFixed(2)} 0)">
+								<path
+									d="{line(series[i])} L{(15 * step).toFixed(2)} 28 L0 28 Z"
+									fill="rgb(124 92 255 / 0.14)"
+								/>
+								<path
+									d={line(series[i])}
+									fill="none"
+									stroke="#7c5cff"
+									stroke-width="1.5"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									vector-effect="non-scaling-stroke"
+								/>
+							</g>
 						</svg>
 						<div
 							class="mt-[11px] flex flex-wrap gap-x-[13.2px] gap-y-[4.4px] font-mono text-[11px] text-text-muted"
@@ -300,10 +429,12 @@
 				class="mb-[28.6px] flex items-center gap-[17.6px] rounded-[15px] border border-border-raised bg-surface-card px-[19.8px] py-[17.6px]"
 			>
 				<div class="grow">
-					<div class="flex h-[11px] gap-px overflow-hidden rounded-full bg-white/6">
-						{#each storage as segment (segment.label)}
-							<span class={segment.color} style:width={segment.width}></span>
-						{/each}
+					<div class="h-[11px] overflow-hidden rounded-full bg-white/6">
+						<div class="storage flex h-full gap-px">
+							{#each storage as segment (segment.label)}
+								<span class={segment.color} style:width={segment.width}></span>
+							{/each}
+						</div>
 					</div>
 					<div class="mt-[11px] flex gap-[17.6px] font-mono text-[11px] text-text-faint">
 						{#each storage as segment (segment.label)}
@@ -360,3 +491,30 @@
 		</div>
 	</div>
 </div>
+
+<style>
+	/* The draw-in: each chart from left to right, then the storage bar.
+	   Plain CSS, so a page that never hydrates still ends up whole. */
+	@media (prefers-reduced-motion: no-preference) {
+		.chart,
+		.storage {
+			animation: reveal 1.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+		}
+		.chart {
+			animation-delay: calc(450ms + var(--i) * 110ms);
+		}
+		.storage {
+			animation-duration: 1.1s;
+			animation-delay: 900ms;
+		}
+	}
+
+	@keyframes reveal {
+		from {
+			clip-path: inset(0 100% 0 0);
+		}
+		to {
+			clip-path: inset(0 0 0 0);
+		}
+	}
+</style>

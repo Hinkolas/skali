@@ -291,11 +291,11 @@ The numbered mono label (`01 Workflow`, `03 Under the hood`): index in `accent-l
 
 ### Workflow timeline
 
-An ordered list of steps on a shared 10% white rule, each with a 7px violet dot on the rule, a Mono label in faint, the command in Mono 17px primary, and a 15px muted explanation.
+An ordered list of steps on a shared 10% white rule, each with a 7px violet dot on the rule, a Mono label in faint, the command in Mono 17px primary, and a 15px muted explanation. Where scroll-driven animation is supported, a violet trace with a lit tip runs along the rule as the list scrolls up the screen, lighting each dot as it arrives (one stretch per step; on phones each step follows its own scroll). Without support or with reduced motion, the dots are simply lit.
 
 ### Studio mocks
 
-Static, hand-built renderings of Studio screens (`src/lib/mock/`). They copy Studio's sizes, radii and colors exactly, including arbitrary pixel values, and are never simplified into generic illustration. Each is wrapped by a container with `role="img"` and an `aria-label` describing what the screen shows, and is faded at its lower edge where it runs off the panel.
+Hand-built renderings of Studio screens (`src/lib/mock/`). They copy Studio's sizes, radii and colors exactly, including arbitrary pixel values, and are never simplified into generic illustration. Two of them move the way Studio does: the deployment run plays on from its prerendered frame once it is in view (Studio's spinner, progress sheen and step clocks), succeeds, and loops to a new commit; the overview's charts draw in when they come into view and then stream samples. Motion pauses offscreen and in hidden tabs, and with reduced motion the prerendered frame stays as it is. Each is wrapped by a container with `role="img"` and an `aria-label` describing what the screen shows, and is faded at its lower edge where it runs off the panel.
 
 ## Do's and Don'ts
 
