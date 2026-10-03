@@ -16,6 +16,7 @@ type fenceProbe struct{ fenced, unfenced bool }
 func (*fenceProbe) PlatformBucketAccess(context.Context, uuid.UUID, string) (substrate.BucketAccess, error) {
 	return substrate.BucketAccess{}, nil
 }
+func (*fenceProbe) PlatformIdentityReady(context.Context) error { return nil }
 func (f *fenceProbe) FenceBucket(context.Context, uuid.UUID, string) error {
 	f.fenced = true
 	return nil

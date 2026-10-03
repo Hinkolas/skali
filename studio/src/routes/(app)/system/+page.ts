@@ -7,7 +7,9 @@ import type { PageLoad } from './$types';
 
 // The System hub is instance-admin territory: the API refuses
 // members too, and the page refuses so the sidebar's hiding is not the only
-// line. The update status and the backup target feed the card summaries.
+// line. The update status and the backup target feed the card summaries; a
+// target that could not be read is undefined, kept apart from the 404 that
+// means none is set.
 export const load: PageLoad = async ({ fetch, parent }) => {
 	const { user } = await parent();
 	if (user?.role !== 'admin') {
@@ -22,7 +24,9 @@ export const load: PageLoad = async ({ fetch, parent }) => {
 		updates: res.ok ? ((await res.json()) as UpdateStatus) : null,
 		backupTarget: targetRes.ok
 			? ((await targetRes.json()) as { target: BackupTarget }).target
-			: null,
+			: targetRes.status === 404
+				? null
+				: undefined,
 		pools: poolsRes.ok ? ((await poolsRes.json()) as DatabasePoolsResponse).pools : null
 	};
 };

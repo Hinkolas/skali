@@ -202,6 +202,9 @@ func writeBackupError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.As(err, &unreachable):
 		writeError(w, http.StatusServiceUnavailable, codeBackupTargetUnreachable,
 			"the backup target did not answer: "+unreachable.Err.Error())
+	case errors.Is(err, backup.ErrObjectStorageNotReady):
+		writeError(w, http.StatusServiceUnavailable, codeObjectStorageNotReady,
+			"object storage is still converging (usually right after an upgrade); retry in a few minutes")
 	default:
 		writeInternalError(ctx, w, "backup", err)
 	}

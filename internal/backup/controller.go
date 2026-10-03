@@ -46,6 +46,9 @@ type Deps struct {
 type BucketAccess interface {
 	// PlatformBucketAccess resolves the bucket and the platform keypair.
 	PlatformBucketAccess(ctx context.Context, environmentID uuid.UUID, serviceKey string) (substrate.BucketAccess, error)
+	// PlatformIdentityReady reports substrate.ErrPlatformIdentityPending
+	// while the platform keypair does not exist yet.
+	PlatformIdentityReady(ctx context.Context) error
 	// FenceBucket keeps the environment's credentials away from the
 	// bucket while a restore rewrites it; UnfenceBucket lets them back.
 	FenceBucket(ctx context.Context, environmentID uuid.UUID, serviceKey string) error

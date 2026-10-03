@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/store"
@@ -26,6 +27,13 @@ type BucketAccess struct {
 	SecretKey string
 }
 
+// ErrPlatformIdentityPending reports that the platform identity's keypair
+// does not exist yet: the object-store pass creates it only once the store
+// is ready, so an upgrade from a release without it, or a store still
+// rolling, has none for a few minutes.
+var ErrPlatformIdentityPending = errors.New("object storage is still provisioning its platform identity; " +
+	"this clears once the object store has converged, usually within minutes of an upgrade")
+
 // PlatformBucketAccess resolves the service's live bucket and the platform
 // keypair. Backups read and restores write through it, so neither depends
 // on the bucket identity (fenced during a restore) or on the quota flag
@@ -35,17 +43,36 @@ func (c *Controller) PlatformBucketAccess(ctx context.Context, environmentID uui
 	if err != nil {
 		return BucketAccess{}, err
 	}
-	secret, err := c.deps.Cluster.GetSecret(ctx, Namespace, PlatformCredentialSecret)
+	accessKey, secretKey, err := c.platformCredentials(ctx)
 	if err != nil {
-		return BucketAccess{}, fmt.Errorf("substrate: read platform credentials: %w", err)
+		return BucketAccess{}, err
 	}
 	return BucketAccess{
 		Endpoint:  InternalBucketEndpoint(),
 		Region:    allocation.Region,
 		Bucket:    allocation.BucketName,
-		AccessKey: string(secret.Data["access_key"]),
-		SecretKey: string(secret.Data["secret_key"]),
+		AccessKey: accessKey,
+		SecretKey: secretKey,
 	}, nil
+}
+
+// PlatformIdentityReady reports whether the platform keypair exists, so a
+// backup or restore touching buckets is refused before it starts instead
+// of failing partway.
+func (c *Controller) PlatformIdentityReady(ctx context.Context) error {
+	_, _, err := c.platformCredentials(ctx)
+	return err
+}
+
+func (c *Controller) platformCredentials(ctx context.Context) (string, string, error) {
+	secret, err := c.deps.Cluster.GetSecret(ctx, Namespace, PlatformCredentialSecret)
+	if apierrors.IsNotFound(err) {
+		return "", "", fmt.Errorf("substrate: %w", ErrPlatformIdentityPending)
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("substrate: read platform credentials: %w", err)
+	}
+	return string(secret.Data["access_key"]), string(secret.Data["secret_key"]), nil
 }
 
 // FenceBucket keeps every credential the environment holds away from the

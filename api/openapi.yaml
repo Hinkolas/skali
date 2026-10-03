@@ -2353,7 +2353,7 @@ paths:
       operationId: getBackupTarget
       summary: Get the configured backup target
       description: |
-        Admin only, sudo mode. The external S3 location backups are written
+        Admin only. The external S3 location backups are written
         to, without its secret access key: the secret is write-only and
         never leaves the daemon after it is set.
       tags: [backups]
@@ -2928,7 +2928,9 @@ paths:
         "503":
           description: |
             No backup target is configured (`backup_target_unconfigured`)
-            or it did not answer (`backup_target_unreachable`).
+            or it did not answer (`backup_target_unreachable`),
+            or the environment declares buckets while object storage is still
+            converging, typically right after an upgrade (`object_storage_not_ready`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3114,7 +3116,9 @@ paths:
         "503":
           description: |
             No backup target is configured (`backup_target_unconfigured`)
-            or it did not answer (`backup_target_unreachable`).
+            or it did not answer (`backup_target_unreachable`),
+            or the environment declares buckets while object storage is still
+            converging, typically right after an upgrade (`object_storage_not_ready`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
