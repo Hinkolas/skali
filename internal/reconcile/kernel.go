@@ -141,6 +141,10 @@ type Deps struct {
 	// intercepts are rejected at deploy time and any stale intercept row
 	// fails the desired set visibly instead of routing nowhere.
 	HostGateway func(ctx context.Context) (string, error)
+	// WaitImage resolves the image release Jobs run their reachability
+	// wait in (the skalid image). Nil renders release Jobs without the
+	// wait.
+	WaitImage func(ctx context.Context) (string, error)
 }
 
 type Config struct {

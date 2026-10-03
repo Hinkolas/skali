@@ -312,9 +312,11 @@ spreading lets the same manifest run on a single-node dev cluster.
 ```
 
 The release command runs once with the new image and resolved service
-outputs before the new version goes live; it is the migration hook. Its
-`timeout` (default 10m) bounds the run; a failed or timed-out release
-command fails the deployment before users see anything change.
+outputs before the new version goes live; it is the migration hook. It
+starts once the databases and buckets the application references accept
+connections (waiting up to a minute), so it needs no connect-retry loop of
+its own. Its `timeout` (default 10m) bounds the run; a failed or timed-out
+release command fails the deployment before users see anything change.
 
 `strategy` decides how the new version replaces the old one:
 

@@ -40,27 +40,13 @@ const (
 )
 
 // resolveWorkerImage picks the image backup Jobs run the data mover in:
-// the configured override, else the daemon's own Deployment image, which
-// exists everywhere the bundle deployed skalid (production and local dev
-// alike).
+// the configured override, else the daemon's own image.
 func (c *Controller) resolveWorkerImage(ctx context.Context) (string, error) {
-	if c.cfg.WorkerImage != "" {
-		return c.cfg.WorkerImage, nil
-	}
-	deployment, err := c.deps.Kube.Clientset.AppsV1().Deployments(bundle.Namespace).
-		Get(ctx, "skalid", metav1.GetOptions{})
+	image, err := bundle.SkalidImage(ctx, c.deps.Kube.Clientset, c.cfg.WorkerImage)
 	if err != nil {
-		return "", fmt.Errorf("backup: resolve worker image from the skalid deployment: %w", err)
+		return "", fmt.Errorf("backup: worker image: %w", err)
 	}
-	for _, container := range deployment.Spec.Template.Spec.Containers {
-		if container.Name == "skalid" {
-			return container.Image, nil
-		}
-	}
-	if len(deployment.Spec.Template.Spec.Containers) > 0 {
-		return deployment.Spec.Template.Spec.Containers[0].Image, nil
-	}
-	return "", errors.New("backup: the skalid deployment has no containers")
+	return image, nil
 }
 
 // ensureTargetSecret writes the operation's S3 credentials into the Job
@@ -191,10 +177,9 @@ func renderDatabaseBackupJob(name, namespace, backupID string, identity database
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 				InitContainers: []corev1.Container{{
-					Name:  "dump",
-					Image: identity.PostgresImage,
-					Command: []string{"pg_dump", "-Fc", "--no-owner", "--no-privileges",
-						"-f", "/work/db.dump"},
+					Name:         "dump",
+					Image:        identity.PostgresImage,
+					Command:      []string{"/bin/sh", "-c", databaseBackupScript},
 					Env:          databaseClientEnv(identity),
 					VolumeMounts: []corev1.VolumeMount{workMount()},
 				}},
@@ -213,12 +198,24 @@ func renderDatabaseBackupJob(name, namespace, backupID string, identity database
 	}
 }
 
+// databaseReadyWait waits briefly for the pool to accept connections
+// before the client runs. A fresh pod's first connection can be rejected
+// ("connection refused") while the CNI's network policy enforcement still
+// registers the pod's address, and Jobs never retry. The loop falls
+// through after its budget so a pool that is really down fails with the
+// client's own error.
+const databaseReadyWait = `for i in $(seq 1 30); do pg_isready -q && break; sleep 1; done
+`
+
+const databaseBackupScript = databaseReadyWait + `exec pg_dump -Fc --no-owner --no-privileges -f /work/db.dump
+`
+
 // databaseRestoreScript replays a dump into the tenant's database as its
 // owning role. The list filter drops EXTENSION and COMMENT entries: CNPG
 // declares extensions on the cluster and the tenant role can neither drop
 // nor recreate them, while --clean plus --if-exists resets everything the
 // role owns.
-const databaseRestoreScript = `set -e
+const databaseRestoreScript = databaseReadyWait + `set -e
 pg_restore -l /work/db.dump | grep -vE ' (EXTENSION|COMMENT) ' > /work/list
 exec pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error -L /work/list -d "$PGDATABASE" /work/db.dump
 `
