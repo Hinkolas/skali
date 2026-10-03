@@ -107,7 +107,7 @@ func (h *backupsHandlers) listProject(w http.ResponseWriter, r *http.Request) {
 	grant := grantFrom(r.Context())
 	visible := make([]backup.SnapshotSummary, 0, len(snapshots))
 	for _, snapshot := range snapshots {
-		if envGrant, ok := grant.EnvironmentByName(snapshot.Environment); ok {
+		if envGrant, ok := grant.EnvironmentByName(snapshot.Environment); ok && !snapshot.Orphaned {
 			if envGrant.Role.AtLeast(authz.Read) {
 				visible = append(visible, snapshot)
 			}
@@ -142,8 +142,8 @@ func (h *backupsHandlers) restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The snapshot may come from any environment of the project; reading
-	// its data into this one needs read on the source. A source the control
-	// plane no longer has is nobody's to protect.
+	// its data into this one needs read on the source. Orphaned snapshots
+	// require project admin, even if a new environment reuses the old name.
 	grant := grantFrom(r.Context())
 	user := UserFrom(r.Context())
 	var forbidden *authz.ErrForbidden
@@ -152,6 +152,10 @@ func (h *backupsHandlers) restore(w http.ResponseWriter, r *http.Request) {
 		SnapshotID:    req.SnapshotID,
 		Actor:         user.ID.String(),
 		SourceAllowed: func(source string) error {
+			if source == "" && !grant.ProjectRole.AtLeast(authz.Admin) {
+				forbidden = &authz.ErrForbidden{Required: authz.Admin, Scope: "project", Name: grant.ProjectName, Reason: "the snapshot's environment no longer exists"}
+				return forbidden
+			}
 			if sourceGrant, ok := grant.EnvironmentByName(source); ok && !sourceGrant.Role.AtLeast(authz.Read) {
 				forbidden = &authz.ErrForbidden{Required: authz.Read, Scope: "environment", Name: source, Reason: "it holds the snapshot"}
 				return forbidden
@@ -241,7 +245,7 @@ func (h *backupsHandlers) deleteSnapshot(w http.ResponseWriter, r *http.Request)
 				return nil
 			}
 			if !grant.ProjectRole.AtLeast(authz.Admin) {
-				forbidden = &authz.ErrForbidden{Required: authz.Admin, Scope: "project", Name: project.Name, Reason: "the snapshot's environment no longer exists"}
+				forbidden = &authz.ErrForbidden{Required: authz.Admin, Scope: "project", Name: grant.ProjectName, Reason: "the snapshot's environment no longer exists"}
 				return forbidden
 			}
 			return nil

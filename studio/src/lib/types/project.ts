@@ -100,6 +100,7 @@ export interface Environment {
 	id: string;
 	project_id: string;
 	name: string;
+	previous_names?: string[];
 	/** The caller's effective role; `none` marks a locked environment, which carries nothing else. */
 	access: AccessRole;
 	created_at?: string;

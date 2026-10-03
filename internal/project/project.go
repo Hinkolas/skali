@@ -180,6 +180,14 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, na
 	var env store.Environment
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		var err error
+		if _, err := q.GetProjectForUpdate(ctx, projectID); err != nil {
+			return fmt.Errorf("project: lock environment names: %w", err)
+		}
+		if _, err := q.GetEnvironmentNameOwner(ctx, store.GetEnvironmentNameOwnerParams{ProjectID: projectID, Name: name}); err == nil {
+			return ErrEnvironmentNameTaken
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("project: check environment name: %w", err)
+		}
 		env, err = q.CreateEnvironment(ctx, store.CreateEnvironmentParams{
 			ID:        id,
 			ProjectID: projectID,
@@ -222,6 +230,49 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, na
 		return nil, err
 	}
 	return &env, nil
+}
+
+// RenameEnvironment keeps runtime identities and backup namespaces intact.
+// Project locking serializes creation, rename and promotion-rule edits;
+// historical names remain reserved aliases for existing checkout bindings.
+func (s *Service) RenameEnvironment(ctx context.Context, id uuid.UUID, name string) (*store.Environment, error) {
+	if err := naming.CheckKey(name); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
+	}
+	env, err := s.GetEnvironment(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var renamed store.Environment
+	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+		if _, err := q.GetProjectForUpdate(ctx, env.ProjectID); err != nil {
+			return fmt.Errorf("project: lock environment names: %w", err)
+		}
+		current, err := q.GetEnvironmentByID(ctx, id)
+		if err != nil {
+			return fmt.Errorf("project: get environment to rename: %w", err)
+		}
+		if current.Name == name {
+			renamed = current
+			return nil
+		}
+		owner, err := q.GetEnvironmentNameOwner(ctx, store.GetEnvironmentNameOwnerParams{ProjectID: env.ProjectID, Name: name})
+		if err == nil && owner.ID != id {
+			return ErrEnvironmentNameTaken
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("project: check environment name: %w", err)
+		}
+		renamed, err = q.RenameEnvironment(ctx, store.RenameEnvironmentParams{ID: id, Name: name})
+		if err != nil {
+			return fmt.Errorf("project: rename environment: %w", err)
+		}
+		return q.RenamePromotionSources(ctx, store.RenamePromotionSourcesParams{ProjectID: env.ProjectID, Column2: current.Name, Column3: name})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &renamed, nil
 }
 
 func (s *Service) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]store.Environment, error) {

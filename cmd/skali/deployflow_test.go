@@ -514,6 +514,10 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			}
 			var patch client.EnvironmentSettingsPatch
 			_ = json.NewDecoder(r.Body).Decode(&patch)
+			if patch.Name != nil {
+				env.PreviousNames = append(env.PreviousNames, env.Name)
+				env.Name = *patch.Name
+			}
 			if patch.MaxRole != nil {
 				env.Settings.MaxRole = *patch.MaxRole
 			}

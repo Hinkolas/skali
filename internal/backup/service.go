@@ -211,6 +211,8 @@ func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 type SnapshotSummary struct {
 	ID               string    `json:"id"`
 	Environment      string    `json:"environment"`
+	EnvironmentID    string    `json:"environment_id,omitempty"`
+	Orphaned         bool      `json:"orphaned,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	RevisionChecksum string    `json:"revision_checksum"`
 	Encryption       string    `json:"encryption"`
@@ -228,6 +230,7 @@ func summarize(m *Manifest) SnapshotSummary {
 	summary := SnapshotSummary{
 		ID:               m.SnapshotID,
 		Environment:      m.Environment,
+		EnvironmentID:    m.EnvironmentID,
 		CreatedAt:        m.CreatedAt,
 		RevisionChecksum: m.RevisionChecksum,
 		Encryption:       m.Encryption,
@@ -265,17 +268,31 @@ func (c *Controller) openTarget(ctx context.Context) (*Credentials, objectStore,
 }
 
 // ListSnapshots enumerates one environment's snapshots from S3, newest
-// first. The control-plane database is deliberately not consulted: after a
-// reinstall it knows nothing, and the bucket is the truth.
+// first. The database resolves a live name to its immutable backup namespace;
+// manifests in S3 remain the source of truth for snapshot contents.
 func (c *Controller) ListSnapshots(ctx context.Context, project, environment string) ([]SnapshotSummary, error) {
+	owners, err := c.backupOwners(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	namespace := environment
+	var owner *store.Environment
+	for key, candidate := range owners {
+		if candidate.Name == environment {
+			namespace = key
+			owner = &candidate
+			break
+		}
+	}
 	credentials, target, err := c.openTarget(ctx)
 	if err != nil {
 		return nil, err
 	}
-	summaries, err := c.listSnapshotsUnder(ctx, target, snapshotPrefix(credentials.Prefix, project, environment))
+	summaries, err := c.listSnapshotsUnder(ctx, target, snapshotPrefix(credentials.Prefix, project, namespace))
 	if err != nil {
 		return nil, err
 	}
+	labelSnapshots(summaries, owner)
 	sortNewestFirst(summaries)
 	return summaries, nil
 }
@@ -285,6 +302,10 @@ func (c *Controller) ListSnapshots(ctx context.Context, project, environment str
 // from the key layout, so snapshots of environments the control plane no
 // longer knows are listed too.
 func (c *Controller) ListProjectSnapshots(ctx context.Context, project string) ([]SnapshotSummary, error) {
+	owners, err := c.backupOwners(ctx, project)
+	if err != nil {
+		return nil, err
+	}
 	credentials, target, err := c.openTarget(ctx)
 	if err != nil {
 		return nil, err
@@ -298,6 +319,11 @@ func (c *Controller) ListProjectSnapshots(ctx context.Context, project string) (
 		found, err := c.listSnapshotsUnder(ctx, target, snapshotPrefix(credentials.Prefix, project, environment))
 		if err != nil {
 			return nil, err
+		}
+		if owner, ok := owners[environment]; ok {
+			labelSnapshots(found, &owner)
+		} else {
+			labelSnapshots(found, nil)
 		}
 		summaries = append(summaries, found...)
 	}
@@ -325,6 +351,10 @@ func (c *Controller) projectEnvironments(ctx context.Context, target objectStore
 // it. Returns the key and the environment holding it, or ErrSnapshotNotFound
 // when no environment does.
 func (c *Controller) findSnapshot(ctx context.Context, target objectStore, prefix, project, snapshotID string) (key, environment string, err error) {
+	owners, err := c.backupOwners(ctx, project)
+	if err != nil {
+		return "", "", err
+	}
 	environments, err := c.projectEnvironments(ctx, target, prefix, project)
 	if err != nil {
 		return "", "", err
@@ -337,9 +367,51 @@ func (c *Controller) findSnapshot(ctx context.Context, target objectStore, prefi
 			}
 			return "", "", &TargetUnreachableError{Err: err}
 		}
-		return key, environment, nil
+		if owner, ok := owners[environment]; ok {
+			return key, owner.Name, nil
+		}
+		return key, "", nil
 	}
 	return "", "", ErrSnapshotNotFound
+}
+
+// backupOwners associates immutable S3 directories with live environment
+// identities. Display-name reuse must never grant access to old snapshots.
+func (c *Controller) backupOwners(ctx context.Context, projectName string) (map[string]store.Environment, error) {
+	owners := make(map[string]store.Environment)
+	if c.deps.Store == nil {
+		return owners, nil
+	}
+	project, err := c.deps.Store.GetProjectByName(ctx, projectName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return owners, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	environments, err := c.deps.Store.ListEnvironments(ctx, project.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, env := range environments {
+		namespace := env.BackupNamespace
+		if namespace == "" {
+			namespace = env.Name
+		}
+		owners[namespace] = env
+	}
+	return owners, nil
+}
+
+func labelSnapshots(snapshots []SnapshotSummary, owner *store.Environment) {
+	for i := range snapshots {
+		if owner == nil {
+			snapshots[i].Orphaned = true
+			continue
+		}
+		snapshots[i].Environment = owner.Name
+		snapshots[i].EnvironmentID = owner.ID.String()
+	}
 }
 
 func (c *Controller) listSnapshotsUnder(ctx context.Context, target objectStore, prefix string) ([]SnapshotSummary, error) {

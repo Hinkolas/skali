@@ -319,6 +319,10 @@ named that is gone by the time the copy reaches it is skipped, and the run
 notes how many were skipped. Stop the environment first (a restore does)
 when an exact cut matters.
 
+Restoring an immutable snapshot is stricter: a missing object or an object count
+that differs from its manifest fails the restore and keeps the bucket fenced.
+Only live backups skip objects that disappear during copying.
+
 A restore fences the bucket while it rewrites it. The bucket's own
 identity is deleted for the duration, so the application's mirrored keys
 and every presigned URL signed with them are refused, and no external

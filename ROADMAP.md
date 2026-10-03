@@ -43,8 +43,9 @@ Working and used daily:
   handling, CI gating the tag. [skali.dev](https://skali.dev) serves the
   installer and the editor schemas.
 
-v0.1.0 is in release candidates (`v0.1.0-rc.10` as of 2026-10-02); no
-stable release exists yet. Known gaps are written down in
+v0.1.0 is in release candidates (latest published: `v0.1.0-rc.10`);
+[`v0.1.0-rc.11`](docs/release-notes-rc.11.md) is prepared as the final RC.
+No stable release exists yet. Known gaps are written down in
 [`docs/limitations.md`](docs/limitations.md).
 
 ## 1. Production confidence

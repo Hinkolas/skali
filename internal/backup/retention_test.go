@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -132,6 +133,21 @@ func TestApplyRetentionSweepsOnlyExpiredScheduledSnapshots(t *testing.T) {
 	for _, m := range manifests {
 		writeSnapshot(t, target, m)
 	}
+	// After a rename, new manifests use the current display name but stay in
+	// the old directory. Retention must delete the key it actually listed.
+	_, err := f.st.Pool.Exec(ctx, "UPDATE environments SET backup_namespace = 'production' WHERE id = $1", f.environmentID)
+	require.NoError(t, err)
+	_, err = project.New(f.st).RenameEnvironment(ctx, f.environmentID, "kilohertz")
+	require.NoError(t, err)
+	for _, m := range manifests {
+		if m.Environment != "production" {
+			continue
+		}
+		m.Environment = "kilohertz"
+		data, err := encodeManifest(m)
+		require.NoError(t, err)
+		require.NoError(t, target.Put(ctx, manifestKey("", "demo", "production", m.SnapshotID), bytes.NewReader(data), int64(len(data))))
+	}
 
 	run, err := f.journal.CreateRun(ctx, journal.RunInput{
 		Kind: KindBackup, ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: ScheduleActor,
@@ -141,7 +157,7 @@ func TestApplyRetentionSweepsOnlyExpiredScheduledSnapshots(t *testing.T) {
 	redactor, err := f.controller.deps.Values.Redactor(ctx, f.environmentID, uuid.Nil)
 	require.NoError(t, err)
 	scope := journal.NewScope(f.journal, redactor, run.ID)
-	row := &store.Backup{ProjectName: "demo", EnvironmentName: "production", Trigger: TriggerScheduled, RetentionSeconds: 7 * 86400}
+	row := &store.Backup{ProjectName: "demo", EnvironmentName: "kilohertz", EnvironmentNamespace: "production", Trigger: TriggerScheduled, RetentionSeconds: 7 * 86400}
 	bctx := &backupContext{row: row, credentials: &Credentials{}, target: target}
 
 	require.NoError(t, scope.Step(ctx, "retention", "Apply retention", func(ctx context.Context, log *journal.StepLog) error {

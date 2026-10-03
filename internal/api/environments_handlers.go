@@ -37,9 +37,10 @@ type environmentsHandlers struct {
 }
 
 type environmentPayload struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
+	ID            string   `json:"id"`
+	ProjectID     string   `json:"project_id"`
+	Name          string   `json:"name"`
+	PreviousNames []string `json:"previous_names,omitempty"`
 	// Access is the caller's effective role; none marks a locked
 	// environment, which carries nothing below this line.
 	Access    string                      `json:"access"`
@@ -126,10 +127,11 @@ func newEnvironmentSettingsPayload(settings authz.Settings) *environmentSettings
 // effective role; a locked one keeps only id, project, name, and access.
 func newEnvironmentPayload(e *store.Environment, role authz.Role) environmentPayload {
 	payload := environmentPayload{
-		ID:        e.ID.String(),
-		ProjectID: e.ProjectID.String(),
-		Name:      e.Name,
-		Access:    role.String(),
+		ID:            e.ID.String(),
+		ProjectID:     e.ProjectID.String(),
+		Name:          e.Name,
+		PreviousNames: e.PreviousNames,
+		Access:        role.String(),
 	}
 	if role == authz.None {
 		return payload
@@ -285,6 +287,7 @@ func (h *environmentsHandlers) get(w http.ResponseWriter, r *http.Request) {
 func (h *environmentsHandlers) update(w http.ResponseWriter, r *http.Request) {
 	env := environmentFrom(r.Context())
 	var req struct {
+		Name         *string   `json:"name"`
 		MaxRole      *string   `json:"max_role"`
 		DeployPolicy *string   `json:"deploy_policy"`
 		PromoteFrom  *[]string `json:"promote_from"`
@@ -295,6 +298,22 @@ func (h *environmentsHandlers) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+		return
+	}
+	if req.Name != nil {
+		if req.MaxRole != nil || req.DeployPolicy != nil || req.PromoteFrom != nil || req.Priority != nil || req.Backup.set {
+			writeError(w, http.StatusBadRequest, codeBadRequest, "rename separately from settings changes")
+			return
+		}
+		updated, err := h.projects.RenameEnvironment(r.Context(), env.ID, *req.Name)
+		if err != nil {
+			writeProjectError(r.Context(), w, err)
+			return
+		}
+		logAccessChange(r, "environment renamed", "environment", env.ID.String(), map[string]any{"name": env.Name}, map[string]any{"name": updated.Name})
+		writeJSON(w, http.StatusOK, struct {
+			Environment environmentPayload `json:"environment"`
+		}{newEnvironmentPayload(updated, environmentGrantFrom(r.Context()).Role)})
 		return
 	}
 	if req.MaxRole == nil && req.DeployPolicy == nil && req.PromoteFrom == nil && req.Priority == nil && !req.Backup.set {

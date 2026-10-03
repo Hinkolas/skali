@@ -1,11 +1,87 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/Hinkolas/skali/internal/backup"
 	"github.com/stretchr/testify/require"
 )
+
+// A recreated name cannot inherit snapshot access from its previous owner.
+// Exercise the real S3 adapter and API authorization, without a running store.
+func TestOrphanedSnapshotRequiresProjectAdmin(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("owner@example.com", "hunter2hunter2")
+	a.createMember("member@example.com", "hunter2hunter2")
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	owner := a.login("owner@example.com", "hunter2hunter2")
+	member := a.login("member@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, owner)
+	status, body := a.do("PUT", "/v1/projects/"+projectID+"/members/member@example.com", owner, map[string]string{"role": "maintain"})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	definition := a.submitDefinition(t, owner, projectID, deployAPIManifestNoVolume)
+	candidate := a.stageValues(t, owner, envID, definition, "orphan-test-value")
+	a.deployAndActivate(t, owner, envID, definition, candidate)
+
+	const snapshotID = "0198f2f4-0000-7000-8000-000000000001"
+	// This legacy directory predates the current production environment's UUID.
+	const directory = "skali/v1/demo/production/"
+	const key = directory + "snapshots/" + snapshotID + ".json"
+	manifest, err := json.Marshal(backup.Manifest{FormatVersion: "1", SnapshotID: snapshotID, Project: "demo", Environment: "production", CreatedAt: time.Now(), Encryption: "none"})
+	require.NoError(t, err)
+	var deletes atomic.Int32
+	s3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		object := strings.TrimPrefix(r.URL.Path, "/backups/")
+		switch {
+		case r.Method == http.MethodHead && r.URL.Path == "/backups/":
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Query().Has("list-type"):
+			w.Header().Set("Content-Type", "application/xml")
+			if r.URL.Query().Get("delimiter") == "/" {
+				fmt.Fprintf(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>%s</Prefix></CommonPrefixes></ListBucketResult>`, directory)
+			} else {
+				fmt.Fprintf(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated><Contents><Key>%s</Key><Size>%d</Size></Contents></ListBucketResult>`, key, len(manifest))
+			}
+		case object == key && r.Method == http.MethodDelete:
+			deletes.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		case object == key:
+			w.Header().Set("Content-Length", fmt.Sprint(len(manifest)))
+			w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(manifest)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(s3.Close)
+	target := validBackupTarget()
+	target["endpoint"], target["bucket"], target["prefix"] = s3.URL, "backups", ""
+	status, body = a.do("PUT", "/v1/system/backup-target", admin, target)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/backups", member, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Empty(t, body["snapshots"])
+	status, body = a.do("GET", "/v1/projects/"+projectID+"/backups", owner, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	snapshots := body["snapshots"].([]any)
+	require.Len(t, snapshots, 1)
+	require.Equal(t, true, snapshots[0].(map[string]any)["orphaned"])
+	status, body = a.do("POST", "/v1/environments/"+envID+"/restore", member, map[string]string{"snapshot_id": snapshotID})
+	require.Equal(t, http.StatusForbidden, status, "%v", body)
+	status, body = a.do("DELETE", "/v1/projects/"+projectID+"/backups/"+snapshotID, member, nil)
+	require.Equal(t, http.StatusForbidden, status, "%v", body)
+	require.Zero(t, deletes.Load(), "denied operations must leave the snapshot intact")
+}
 
 func validBackupTarget() map[string]string {
 	return map[string]string{

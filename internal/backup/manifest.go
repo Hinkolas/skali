@@ -38,6 +38,7 @@ type Manifest struct {
 	SkaliVersion     string          `json:"skali_version"`
 	Project          string          `json:"project"`
 	Environment      string          `json:"environment"`
+	EnvironmentID    string          `json:"environment_id,omitempty"`
 	RevisionChecksum string          `json:"revision_checksum"`
 	Revision         json.RawMessage `json:"revision"`
 	// Trigger and Strategy mark the snapshot's origin: manual snapshots are

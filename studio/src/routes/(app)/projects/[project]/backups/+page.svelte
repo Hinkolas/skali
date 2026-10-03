@@ -55,7 +55,9 @@
 					backup,
 					next: backup ? nextCronFire(backup.schedule) : null,
 					last:
-						snapshots.find((s) => s.trigger === 'scheduled' && s.environment === e.name) ?? null,
+						snapshots.find(
+							(s) => s.trigger === 'scheduled' && !s.orphaned && s.environment === e.name
+						) ?? null,
 					configureTitle: roleAtLeast(e.access, 'admin')
 						? undefined
 						: requiredTitle('admin', 'environment', e.name)
@@ -83,10 +85,12 @@
 	// selected environment, which is also where "Back up now" goes.
 	let scope = $state<'all' | 'env'>('all');
 	const shown = $derived(
-		scope === 'env' && envName ? snapshots.filter((s) => s.environment === envName) : snapshots
+		scope === 'env' && envName
+			? snapshots.filter((s) => !s.orphaned && s.environment === envName)
+			: snapshots
 	);
 	const envCount = $derived(
-		envName ? snapshots.filter((s) => s.environment === envName).length : 0
+		envName ? snapshots.filter((s) => !s.orphaned && s.environment === envName).length : 0
 	);
 
 	const backupTitle = $derived(backupRefusal(data.env, data.definition));
@@ -102,7 +106,7 @@
 	// enforces both; the menu explains what it would say.
 	const envAccess = $derived(new Map(data.environments.map((e) => [e.name, e.access])));
 	function deleteRefusal(s: BackupSnapshot): string | undefined {
-		const access = envAccess.get(s.environment);
+		const access = s.orphaned ? undefined : envAccess.get(s.environment);
 		if (access === undefined) {
 			return roleAtLeast(data.project.access.role, 'admin') || isInstanceAdmin(data.user)
 				? undefined

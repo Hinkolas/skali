@@ -18,7 +18,8 @@
 	// the sudo reauth prompt layers above this modal on the stack.
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import Plus from '@lucide/svelte/icons/plus';
 	import X from '@lucide/svelte/icons/x';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
@@ -85,6 +86,39 @@
 	let schedule = $state(settings.backup?.schedule ?? '0 3 * * *');
 	let retention = $state(settings.backup?.retention_seconds ?? 604800);
 	let saving = $state(false);
+	// svelte-ignore state_referenced_locally
+	let newName = $state(environment.name);
+	const nameValid = $derived(/^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(newName));
+	const nameTaken = $derived(
+		environments.some(
+			(e) => e.id !== environment.id && (e.name === newName || e.previous_names?.includes(newName))
+		)
+	);
+	async function rename() {
+		if (!canEdit || saving || dirty || !nameValid || nameTaken || newName === environment.name)
+			return;
+		saving = true;
+		try {
+			await api.patch(`/v1/environments/${environment.id}`, { name: newName });
+			toast.success(`Renamed ${environment.name} to ${newName}`);
+			const url = new URL(page.url);
+			if (
+				url.searchParams.get('env') === environment.name ||
+				environment.previous_names?.includes(url.searchParams.get('env') ?? '')
+			) {
+				url.searchParams.set('env', newName);
+				// eslint-disable-next-line svelte/no-navigation-without-resolve -- only changes the current URL's environment query
+				await goto(url, { replaceState: true, invalidateAll: true });
+			} else {
+				await invalidateAll();
+			}
+			close(true);
+		} catch (err) {
+			toast.error(err instanceof ApiError ? err.message : 'Could not rename the environment');
+		} finally {
+			saving = false;
+		}
+	}
 
 	// Retention is a coarse policy knob: presets cover the sensible windows
 	// and a value set elsewhere (the CLI takes any duration) stays selectable.
@@ -227,6 +261,43 @@
 </ModalHeader>
 
 <div class="divide-border-subtle flex flex-col divide-y overflow-y-auto">
+	<form
+		class="flex flex-col gap-2.5 px-5.5 py-4"
+		onsubmit={(event) => {
+			event.preventDefault();
+			void rename();
+		}}
+	>
+		<div class="flex items-end gap-2">
+			<label class="text-text-primary min-w-0 flex-1 text-base font-medium">
+				Environment name
+				<div class="mt-2">
+					<TextInput
+						bind:value={newName}
+						mono
+						disabled={!canEdit || saving}
+						invalid={!nameValid || nameTaken}
+					/>
+				</div>
+			</label>
+			<Button
+				type="submit"
+				disabled={!canEdit ||
+					saving ||
+					dirty ||
+					!nameValid ||
+					nameTaken ||
+					newName === environment.name}>Rename</Button
+			>
+		</div>
+		<p class="text-text-muted text-md leading-relaxed">
+			{#if nameTaken}This name belongs to another environment, including its previous names.
+			{:else if !nameValid}Use up to 63 lowercase letters, numbers and hyphens, starting with a
+				letter and ending with a letter or number.
+			{:else if dirty}Save or discard your other settings changes before renaming.
+			{:else}Data and backups stay in place. Existing checkout bindings keep working.{/if}
+		</p>
+	</form>
 	<!-- Ceiling: the ladder itself is the control; rungs at or below the
 	     ceiling read as reachable, rungs above sit outside it. -->
 	<div class="flex flex-col gap-2.5 px-5.5 py-4">
