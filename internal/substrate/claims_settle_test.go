@@ -2,6 +2,8 @@ package substrate
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -34,6 +36,8 @@ import (
 type fakeCluster struct {
 	mu      sync.Mutex
 	secrets map[string]*corev1.Secret
+	// secretVersion is the counter behind Secret resource versions.
+	secretVersion int
 	// policies retains the last applied NetworkPolicy per namespace/name,
 	// so tests can read what a pass admitted.
 	policies map[string]*networkingv1.NetworkPolicy
@@ -72,12 +76,45 @@ func (f *fakeCluster) ApplyAs(_ context.Context, obj runtime.Object, _ string, _
 		for key, value := range copied.StringData {
 			copied.Data[key] = []byte(value)
 		}
-		if f.secrets == nil {
-			f.secrets = map[string]*corev1.Secret{}
-		}
-		f.secrets[secret.Namespace+"/"+secret.Name] = copied
+		copied.StringData = nil
+		f.storeSecret(copied)
 	}
 	return kube.ApplyResult{Changed: true}, nil
+}
+
+// storeSecret retains a Secret under a fresh resource version, the
+// optimistic-concurrency token UpdateSecret checks like the API server.
+func (f *fakeCluster) storeSecret(secret *corev1.Secret) {
+	if f.secrets == nil {
+		f.secrets = map[string]*corev1.Secret{}
+	}
+	f.secretVersion++
+	secret.ResourceVersion = strconv.Itoa(f.secretVersion)
+	f.secrets[secret.Namespace+"/"+secret.Name] = secret
+}
+
+func (f *fakeCluster) UpdateSecret(_ context.Context, secret *corev1.Secret) (*corev1.Secret, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := secret.Namespace + "/" + secret.Name
+	stored, ok := f.secrets[key]
+	if !ok {
+		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, secret.Name)
+	}
+	if secret.ResourceVersion != stored.ResourceVersion {
+		return nil, apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, secret.Name,
+			errors.New("the object has been modified"))
+	}
+	copied := secret.DeepCopy()
+	if copied.Data == nil {
+		copied.Data = map[string][]byte{}
+	}
+	for k, value := range copied.StringData {
+		copied.Data[k] = []byte(value)
+	}
+	copied.StringData = nil
+	f.storeSecret(copied)
+	return copied.DeepCopy(), nil
 }
 
 func (f *fakeCluster) Delete(context.Context, kube.ObjectRef) (bool, error) {
@@ -92,7 +129,7 @@ func (f *fakeCluster) GetSecret(_ context.Context, namespace, name string) (*cor
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if secret, ok := f.secrets[namespace+"/"+name]; ok {
-		return secret, nil
+		return secret.DeepCopy(), nil
 	}
 	return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, name)
 }

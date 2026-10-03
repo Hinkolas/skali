@@ -30,12 +30,23 @@ UPDATE bucket_allocations
 SET endpoint = $2
 WHERE id = $1 AND released_at IS NULL;
 
--- Rotation bookkeeping: the version is the consumer-visible change signal;
--- the new secret key itself lives only in the credential Secret.
--- name: BumpBucketAllocationCredentialVersion :execrows
+-- Rotation bookkeeping. Begin commits the keypair the credential Secret
+-- already holds: the new access key id, the consumer-visible version bump,
+-- and the instant the previous keypair retires, in one statement and
+-- exactly once per key (the guard makes a repeated pass a no-op). Secret
+-- keys never enter rows.
+-- name: BeginBucketAllocationCredentialRotation :execrows
 UPDATE bucket_allocations
-SET credential_version = credential_version + 1
-WHERE id = $1 AND released_at IS NULL;
+SET access_key_id = $2,
+    credential_version = credential_version + 1,
+    credential_retire_at = $3
+WHERE id = $1 AND released_at IS NULL AND access_key_id <> $2;
+
+-- Finish clears the overlap once the previous keypair is retired.
+-- name: FinishBucketAllocationCredentialRotation :execrows
+UPDATE bucket_allocations
+SET credential_retire_at = NULL
+WHERE id = $1 AND credential_retire_at IS NOT NULL;
 
 -- The restore fence (see migration 00007): set while a restore rewrites
 -- the bucket, cleared when it completes or the environment moves on.

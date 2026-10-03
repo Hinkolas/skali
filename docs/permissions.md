@@ -52,7 +52,7 @@ smallest thing this person needs to change?
 | `none` | locked. The environment still appears in the project's environment list (id, name, the fact that it is locked) so names and their collisions are visible, but everything inside it answers 403: no status, runs, deployments, values, settings. |
 | `read` | everything visible: status and health, deployments, revisions, runs and run logs (redacted), runtime logs, value names and versions, routes, database and bucket connection info without secrets, backups list, environment settings, who has access to it. |
 | `deploy` | change only what code runs: promote into this environment, rollback, restart, redeploy, run cancel, route probe, backup create, and direct deploys whose definition is unchanged (the manifest compiles to the environment's currently active definition version, so only image digests differ). |
-| `maintain` | the full blast radius of `skali.yml`: direct deploys that change the definition (services, routes, databases, buckets, including `--allow-destructive`), set and prune values, restore, and the secret-bearing reads: exec, resolved application environment, credential reveal. |
+| `maintain` | the full blast radius of `skali.yml`: direct deploys that change the definition (services, routes, databases, buckets, including `--allow-destructive`), set and prune values, restore, credential rotation, and the secret-bearing reads: exec, resolved application environment, credential reveal. |
 | `admin` | management outside the yaml: this environment's protection policy, role ceiling, and automatic backup schedule, other users' roles on this environment, lowering priority, delete and teardown, bypassing protection. |
 
 Notes on the placement:
@@ -312,7 +312,7 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | status, deployments, revisions, runs, run logs, runtime logs, value names, connection info, backups list, settings, access list | E:read |
 | promote into, rollback, restart, redeploy, run cancel, route probe, backup create, direct deploy with unchanged definition | E:deploy |
 | direct deploy with definition changes, values set/prune, restore (S), snapshot delete (S; project admin for snapshots of environments that no longer exist) | E:maintain |
-| exec (S on promote-only environments), resolved application environment (S), credential reveal (S) | E:maintain |
+| exec (S on promote-only environments), resolved application environment (S), credential reveal (S), credential rotation (S) | E:maintain |
 | bypass protection (S) | E:admin |
 | user management writes, nodes, system observation, backup target (S for writes) | IA |
 | user directory (trimmed for non-admins), own account, sessions, 2FA, `/system/meta`, `/auth/session` | any authenticated user |
@@ -419,6 +419,7 @@ their environment first):
 | `GET .../exec` (S when promote-only) | E:maintain |
 | `GET .../databases/{key}/connection`, `.../buckets/{key}/connection` | E:read |
 | `POST .../credentials/reveal` (S) | E:maintain |
+| `POST .../buckets/{key}/credentials/rotate` (S) | E:maintain |
 | `GET .../applications/{key}/environment` (S) | E:maintain |
 | `POST .../backups` | E:deploy |
 | `GET .../backups` | E:read |
@@ -527,8 +528,8 @@ environments disabled with a lock icon and marks protected and high ones;
 the default environment prefers an unlocked one; a locked environment's
 operational pages show a lock state while settings stay reachable; New
 project, New environment, display name, delete, teardown, purge, rollback,
-values, and credential reveal follow `access` (disabled with the required
-role as title); nodes, system, and users answer 403 to members server-side.
+values, credential reveal, and credential rotation follow `access`
+(disabled with the required role as title); nodes, system, and users answer 403 to members server-side.
 Sudo-gated writes run from pages, never from inside a modal, because the
 reauth prompt needs the single modal slot.
 

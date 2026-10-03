@@ -52,6 +52,7 @@ import (
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
 	"github.com/Hinkolas/skali/internal/registrytoken"
+	"github.com/Hinkolas/skali/internal/rotation"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/studio"
@@ -357,6 +358,23 @@ func runServe() error {
 			return fmt.Errorf("recover backups: %w", err)
 		}
 	}
+	// Credential rotations are journaled runs of their own: the substrate
+	// commits and converges the keypair, the controller explains it and
+	// waits for the consumers to roll.
+	var rotationCtl *rotation.Controller
+	if kubeClient != nil && substrateCtl != nil {
+		rotationCtl = rotation.New(rotation.Deps{
+			Store:     st,
+			Journal:   journalSvc,
+			DB:        dbstore.New(st),
+			Revisions: deploySvc,
+			Buckets:   substrateCtl,
+			Status:    kernel.Status,
+		}, rotation.Config{})
+		if err := rotationCtl.RecoverOnBoot(ctx); err != nil {
+			return fmt.Errorf("recover rotations: %w", err)
+		}
+	}
 	// The scheduler turns environment backup schedules into backup runs.
 	// It stays quiet without a configured target, so the local dev
 	// platform runs it too.
@@ -441,6 +459,7 @@ func runServe() error {
 			InstanceID:         instanceID.String(),
 			BackupTargets:      backupTargets,
 			Backups:            backupCtl,
+			Rotation:           rotationCtl,
 			Metrics:            metricsSvc,
 			Updates:            updatesSvc,
 		}))),
@@ -464,6 +483,9 @@ func runServe() error {
 	}()
 	if backupCtl != nil {
 		go backupCtl.Run(loopCtx)
+	}
+	if rotationCtl != nil {
+		go rotationCtl.Run(loopCtx)
 	}
 	if backupScheduler != nil {
 		go backupScheduler.Run(loopCtx)

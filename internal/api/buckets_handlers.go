@@ -4,12 +4,23 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/rotation"
 	"github.com/Hinkolas/skali/internal/substrate"
+)
+
+// Bounds of a rotation's overlap window: below a minute the previous key
+// would be revoked before any consumer rolled; above seven days nothing
+// legitimately holds it (the SigV4 presign maximum).
+const (
+	defaultRetireAfter = time.Hour
+	minRetireAfter     = time.Minute
+	maxRetireAfter     = 7 * 24 * time.Hour
 )
 
 // bucketsHandlers serves bucket-service connection projections, mirroring
@@ -19,6 +30,8 @@ import (
 type bucketsHandlers struct {
 	db      *dbstore.Service
 	secrets func(ctx context.Context, namespace, name string) (map[string][]byte, error)
+	// rotation accepts credential rotations; nil hides the route.
+	rotation *rotation.Controller
 }
 
 type bucketConnectionPayload struct {
@@ -31,6 +44,9 @@ type bucketConnectionPayload struct {
 	Bucket            string `json:"bucket,omitempty"`
 	Region            string `json:"region,omitempty"`
 	CredentialVersion int64  `json:"credential_version,omitempty"`
+	// CredentialRetireAt is set while a rotation's previous keypair is
+	// still accepted: the instant it retires.
+	CredentialRetireAt *time.Time `json:"credential_retire_at,omitempty"`
 }
 
 type bucketCredentialsPayload struct {
@@ -65,6 +81,7 @@ func (h *bucketsHandlers) connection(w http.ResponseWriter, r *http.Request) {
 		payload.Bucket = allocation.BucketName
 		payload.Region = allocation.Region
 		payload.CredentialVersion = allocation.CredentialVersion
+		payload.CredentialRetireAt = allocation.CredentialRetireAt
 	}
 	writeJSON(w, http.StatusOK, payload)
 }
@@ -106,4 +123,65 @@ func (h *bucketsHandlers) reveal(w http.ResponseWriter, r *http.Request) {
 		AccessKey: string(data["access_key"]),
 		SecretKey: string(data["secret_key"]),
 	})
+}
+
+// POST /v1/environments/{id}/buckets/{key}/credentials/rotate: issue a new
+// keypair as a journaled run of kind rotation. The consumers roll onto it
+// and the previous keypair retires after the overlap window; URLs signed
+// with it fail from then on, so the route sits behind sudo mode.
+func (h *bucketsHandlers) rotate(w http.ResponseWriter, r *http.Request) {
+	environmentID, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		RetireAfterSeconds *int64 `json:"retire_after_seconds"`
+	}
+	if r.ContentLength != 0 {
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+			return
+		}
+	}
+	retireAfter := defaultRetireAfter
+	if req.RetireAfterSeconds != nil {
+		retireAfter = time.Duration(*req.RetireAfterSeconds) * time.Second
+		if retireAfter < minRetireAfter || retireAfter > maxRetireAfter {
+			writeError(w, http.StatusBadRequest, codeBadRequest,
+				"retire_after_seconds must be between 60 (one minute) and 604800 (seven days)")
+			return
+		}
+	}
+	runID, err := h.rotation.Create(r.Context(), rotation.Input{
+		EnvironmentID: environmentID,
+		ServiceKey:    chi.URLParam(r, "key"),
+		RetireAfter:   retireAfter,
+		Actor:         UserFrom(r.Context()).ID.String(),
+	})
+	if err != nil {
+		writeRotationError(w, chi.URLParam(r, "key"), err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, struct {
+		RunID string `json:"run_id"`
+	}{runID.String()})
+}
+
+func writeRotationError(w http.ResponseWriter, key string, err error) {
+	switch {
+	case errors.Is(err, rotation.ErrEnvironmentNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "environment not found")
+	case errors.Is(err, rotation.ErrBucketNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "no live bucket claim for "+key)
+	case errors.Is(err, substrate.ErrBucketNotProvisioned):
+		writeError(w, http.StatusConflict, codeBucketNotProvisioned, "the bucket is not provisioned yet")
+	case errors.Is(err, substrate.ErrBucketFenced):
+		writeError(w, http.StatusConflict, codeBucketFenced,
+			"a restore holds the bucket; rotate once it has finished")
+	case errors.Is(err, rotation.ErrRunInFlight):
+		writeError(w, http.StatusConflict, codeRunInFlight,
+			"another run is in flight for this environment; wait for it or cancel it")
+	default:
+		writeError(w, http.StatusInternalServerError, codeInternal, "starting the rotation failed")
+	}
 }

@@ -30,6 +30,8 @@ export interface BucketConnection {
 	bucket?: string;
 	region?: string;
 	credential_version?: number;
+	/** Set while a rotation's previous keypair is still accepted: the instant it retires. */
+	credential_retire_at?: string;
 }
 
 export interface BucketCredentials {

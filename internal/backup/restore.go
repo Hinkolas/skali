@@ -134,13 +134,13 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 // environment deliberately stays down: resuming applications over
 // half-restored data is worse than visible downtime, and re-running the
 // restore is idempotent.
-func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *store.Backup) error {
+func (c *Controller) executeRestore(ctx context.Context, scope *journal.Scope, row *store.Backup) error {
 	credentials, err := c.deps.Targets.credentials(ctx, DefaultTargetName)
 	if err != nil {
 		return err
 	}
 	bctx := &backupContext{row: row, credentials: credentials}
-	if err := scope.step(ctx, "target", "Check backup target", func(ctx context.Context, log *stepLog) error {
+	if err := scope.Step(ctx, "target", "Check backup target", func(ctx context.Context, log *journal.StepLog) error {
 		bctx.target, err = newObjectStore(targetLocation(credentials))
 		if err != nil {
 			return err
@@ -155,7 +155,7 @@ func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *s
 	}
 
 	var manifest *Manifest
-	if err := scope.step(ctx, "snapshot", "Load snapshot manifest", func(ctx context.Context, log *stepLog) error {
+	if err := scope.Step(ctx, "snapshot", "Load snapshot manifest", func(ctx context.Context, log *journal.StepLog) error {
 		manifest, err = c.readManifest(ctx, bctx.target, row.SnapshotKey)
 		if err != nil {
 			return err
@@ -177,14 +177,14 @@ func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *s
 		return fmt.Errorf("backup: load revision: %w", err)
 	}
 
-	if err := scope.step(ctx, "stop", "Stop environment workloads", func(ctx context.Context, log *stepLog) error {
+	if err := scope.Step(ctx, "stop", "Stop environment workloads", func(ctx context.Context, log *journal.StepLog) error {
 		return c.stopEnvironment(ctx, log, row)
 	}); err != nil {
 		return err
 	}
 
 	for _, component := range manifest.Components {
-		if scope.cancelled(ctx) {
+		if scope.Cancelled(ctx) {
 			return errCancelled
 		}
 		if err := c.restoreComponent(ctx, scope, bctx, &revisionDoc.Definition, component); err != nil {
@@ -192,7 +192,7 @@ func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *s
 		}
 	}
 
-	if err := scope.step(ctx, "start", "Resume environment", func(ctx context.Context, log *stepLog) error {
+	if err := scope.Step(ctx, "start", "Resume environment", func(ctx context.Context, log *journal.StepLog) error {
 		if row.RevisionID == nil {
 			return errors.New("restore has no resume revision")
 		}
@@ -209,7 +209,7 @@ func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *s
 		return err
 	}
 
-	return scope.step(ctx, "reconverge", "Wait for environment health", func(ctx context.Context, log *stepLog) error {
+	return scope.Step(ctx, "reconverge", "Wait for environment health", func(ctx context.Context, log *journal.StepLog) error {
 		return c.awaitReconverge(ctx, log, row)
 	})
 }
@@ -218,7 +218,7 @@ func (c *Controller) executeRestore(ctx context.Context, scope *runScope, row *s
 // environment's workloads are gone. The kernel does the actual teardown;
 // with the adoption guard it journals nothing into this run, so the wait
 // here is the user-visible narration.
-func (c *Controller) stopEnvironment(ctx context.Context, log *stepLog, row *store.Backup) error {
+func (c *Controller) stopEnvironment(ctx context.Context, log *journal.StepLog, row *store.Backup) error {
 	// Capture-then-down: MarkEnvironmentDown NULLs both revision pointers,
 	// which is why the resume revision was captured at accept time.
 	unlock, err := c.deps.Store.LockEnvironment(ctx, row.EnvironmentID)
@@ -274,26 +274,26 @@ func (c *Controller) stopEnvironment(ctx context.Context, log *stepLog, row *sto
 // restoreComponent restores one snapshot component into the environment,
 // or records a visible skip when the captured revision no longer declares
 // the matching service.
-func (c *Controller) restoreComponent(ctx context.Context, scope *runScope, bctx *backupContext,
+func (c *Controller) restoreComponent(ctx context.Context, scope *journal.Scope, bctx *backupContext,
 	definition *compiler.ProjectDefinition, component Component) error {
 	label := componentLabel(component)
 	switch component.Kind {
 	case ComponentDatabase:
 		if _, exists := definition.Databases[component.ServiceKey]; !exists {
-			scope.skip(ctx, label, fmt.Sprintf("Restore database %s (no matching service)", component.ServiceKey))
+			scope.Skip(ctx, label, fmt.Sprintf("Restore database %s (no matching service)", component.ServiceKey))
 			return nil
 		}
-		return scope.step(ctx, label, "Restore database "+component.ServiceKey,
-			func(ctx context.Context, log *stepLog) error {
+		return scope.Step(ctx, label, "Restore database "+component.ServiceKey,
+			func(ctx context.Context, log *journal.StepLog) error {
 				return c.restoreDatabase(ctx, log, bctx, component)
 			})
 	case ComponentBucket:
 		if _, exists := definition.Buckets[component.ServiceKey]; !exists {
-			scope.skip(ctx, label, fmt.Sprintf("Restore bucket %s (no matching service)", component.ServiceKey))
+			scope.Skip(ctx, label, fmt.Sprintf("Restore bucket %s (no matching service)", component.ServiceKey))
 			return nil
 		}
-		return scope.step(ctx, label, "Restore bucket "+component.ServiceKey,
-			func(ctx context.Context, log *stepLog) error {
+		return scope.Step(ctx, label, "Restore bucket "+component.ServiceKey,
+			func(ctx context.Context, log *journal.StepLog) error {
 				return c.restoreBucket(ctx, log, bctx, component)
 			})
 	default:
@@ -302,12 +302,12 @@ func (c *Controller) restoreComponent(ctx context.Context, scope *runScope, bctx
 			_, exists = application.Volumes[component.Volume]
 		}
 		if !exists {
-			scope.skip(ctx, label, fmt.Sprintf("Restore volume %s of %s (no matching service)",
+			scope.Skip(ctx, label, fmt.Sprintf("Restore volume %s of %s (no matching service)",
 				component.Volume, component.Application))
 			return nil
 		}
-		return scope.step(ctx, label, fmt.Sprintf("Restore volume %s of %s", component.Volume, component.Application),
-			func(ctx context.Context, log *stepLog) error {
+		return scope.Step(ctx, label, fmt.Sprintf("Restore volume %s of %s", component.Volume, component.Application),
+			func(ctx context.Context, log *journal.StepLog) error {
 				return c.restoreVolume(ctx, log, bctx, component)
 			})
 	}
@@ -317,7 +317,7 @@ func (c *Controller) restoreComponent(ctx context.Context, scope *runScope, bctx
 // current tenant identity: the worker container fetches, the pool's own
 // postgres image restores as the owning role with extension entries
 // filtered (CNPG owns extensions; the tenant role cannot recreate them).
-func (c *Controller) restoreDatabase(ctx context.Context, log *stepLog, bctx *backupContext, component Component) error {
+func (c *Controller) restoreDatabase(ctx context.Context, log *journal.StepLog, bctx *backupContext, component Component) error {
 	row := bctx.row
 	identity, err := c.databaseIdentity(ctx, row.EnvironmentID, component.ServiceKey)
 	if err != nil {
@@ -340,7 +340,7 @@ func (c *Controller) restoreDatabase(ctx context.Context, log *stepLog, bctx *ba
 
 // restoreBucket clears the service's current bucket and copies the
 // snapshot's objects back through the in-cluster gateway.
-func (c *Controller) restoreBucket(ctx context.Context, log *stepLog, bctx *backupContext, component Component) error {
+func (c *Controller) restoreBucket(ctx context.Context, log *journal.StepLog, bctx *backupContext, component Component) error {
 	row := bctx.row
 	if c.deps.Buckets == nil {
 		return errors.New("the object-storage substrate is not available")
@@ -379,7 +379,7 @@ func (c *Controller) restoreBucket(ctx context.Context, log *stepLog, bctx *back
 
 // restoreVolume replays the archive into the service's PVC while the
 // application is stopped; the worker clears previous contents first.
-func (c *Controller) restoreVolume(ctx context.Context, log *stepLog, bctx *backupContext, component Component) error {
+func (c *Controller) restoreVolume(ctx context.Context, log *journal.StepLog, bctx *backupContext, component Component) error {
 	row := bctx.row
 	workerImage, err := c.workerImageFor(ctx, bctx)
 	if err != nil {
@@ -401,7 +401,7 @@ func (c *Controller) restoreVolume(ctx context.Context, log *stepLog, bctx *back
 // timeout the run fails but the target stays: level-triggered
 // reconciliation keeps working toward it, the same policy as a first
 // deployment.
-func (c *Controller) awaitReconverge(ctx context.Context, log *stepLog, row *store.Backup) error {
+func (c *Controller) awaitReconverge(ctx context.Context, log *journal.StepLog, row *store.Backup) error {
 	deadline := time.Now().Add(c.cfg.ReconvergeTimeout)
 	for time.Now().Before(deadline) {
 		target, err := c.deps.Store.GetEnvironmentTarget(ctx, row.EnvironmentID)

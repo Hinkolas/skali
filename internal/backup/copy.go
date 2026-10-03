@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// copyLog is the narration a copy emits; *stepLog in production.
+// copyLog is the narration a copy emits; *journal.StepLog in production.
 type copyLog interface {
 	Info(ctx context.Context, message string)
 	Progress(ctx context.Context, current, total int64)

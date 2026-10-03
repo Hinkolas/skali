@@ -71,6 +71,10 @@ type Cluster interface {
 	ApplyAs(ctx context.Context, obj runtime.Object, manager string, force bool) (kube.ApplyResult, error)
 	Delete(ctx context.Context, ref kube.ObjectRef) (bool, error)
 	GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error)
+	// UpdateSecret replaces a Secret as read, a compare-and-swap on its
+	// resource version (a stale read answers a conflict). Credential
+	// rotation commits through it so two writers never interleave.
+	UpdateSecret(ctx context.Context, secret *corev1.Secret) (*corev1.Secret, error)
 	GetObject(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error)
 	// ProxyCIDRs derives the /32 source addresses skalid's service-proxy
 	// traffic presents to pods, the platform access policies' admit list
@@ -101,6 +105,10 @@ func (k KubeCluster) Delete(ctx context.Context, ref kube.ObjectRef) (bool, erro
 
 func (k KubeCluster) GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error) {
 	return k.Client.Clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func (k KubeCluster) UpdateSecret(ctx context.Context, secret *corev1.Secret) (*corev1.Secret, error) {
+	return k.Client.Clientset.CoreV1().Secrets(secret.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
 }
 
 func (k KubeCluster) GetObject(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error) {

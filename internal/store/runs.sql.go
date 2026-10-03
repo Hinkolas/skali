@@ -193,6 +193,46 @@ func (q *Queries) GetRunningRunByEnvironment(ctx context.Context, environmentID 
 	return i, err
 }
 
+const listRunningRunsByKind = `-- name: ListRunningRunsByKind :many
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE kind = $1 AND status = 'running' ORDER BY created_at
+`
+
+// Boot recovery for controllers that own runs of one kind without a
+// durable row of their own (credential rotations): a running run whose
+// worker died with the previous process would hold the environment's
+// one-running-run slot forever.
+func (q *Queries) ListRunningRunsByKind(ctx context.Context, kind string) ([]Run, error) {
+	rows, err := q.db.Query(ctx, listRunningRunsByKind, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.Actor,
+			&i.Status,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.BypassProtection,
+			&i.Failure,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunsByEnvironment = `-- name: ListRunsByEnvironment :many
 SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
 `

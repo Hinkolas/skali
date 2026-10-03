@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/utils"
 )
 
@@ -17,7 +18,7 @@ import (
 // snapshots are never candidates. Nothing is deleted unless the listing
 // completed and every manifest decoded: a partial view must not drive
 // deletions.
-func (c *Controller) applyRetention(ctx context.Context, log *stepLog, bctx *backupContext, retention time.Duration, now time.Time) error {
+func (c *Controller) applyRetention(ctx context.Context, log *journal.StepLog, bctx *backupContext, retention time.Duration, now time.Time) error {
 	if retention <= 0 {
 		log.Info(ctx, "retention is not set; keeping every snapshot")
 		return nil

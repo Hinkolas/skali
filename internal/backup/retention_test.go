@@ -140,11 +140,11 @@ func TestApplyRetentionSweepsOnlyExpiredScheduledSnapshots(t *testing.T) {
 	require.NoError(t, f.journal.StartRun(ctx, run.ID))
 	redactor, err := f.controller.deps.Values.Redactor(ctx, f.environmentID, uuid.Nil)
 	require.NoError(t, err)
-	scope := &runScope{journal: f.journal, redactor: redactor, runID: run.ID}
+	scope := journal.NewScope(f.journal, redactor, run.ID)
 	row := &store.Backup{ProjectName: "demo", EnvironmentName: "production", Trigger: TriggerScheduled, RetentionSeconds: 7 * 86400}
 	bctx := &backupContext{row: row, credentials: &Credentials{}, target: target}
 
-	require.NoError(t, scope.step(ctx, "retention", "Apply retention", func(ctx context.Context, log *stepLog) error {
+	require.NoError(t, scope.Step(ctx, "retention", "Apply retention", func(ctx context.Context, log *journal.StepLog) error {
 		return f.controller.applyRetention(ctx, log, bctx, 7*day, now)
 	}))
 

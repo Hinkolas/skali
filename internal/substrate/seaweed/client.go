@@ -220,12 +220,13 @@ func (c *Client) identities(ctx context.Context) (IdentityConfig, error) {
 }
 
 // EnsureIdentity converges one identity onto exactly ident: create it if
-// absent, add/refresh the keypair, prune stray credentials and stray
-// actions (s3.configure only ever appends: rotation is add-new +
-// delete-old, and shrinking an action set is an explicit -delete of the
-// actions no longer wanted). Settled identities are read-only passes;
-// settled ignores the order the engine reports actions in. Serialized
-// like every identity write.
+// absent, add/refresh every keypair, prune stray credentials and stray
+// actions (s3.configure only ever appends: a rotation's overlap lists two
+// keypairs and retiring one is an explicit -delete of its access key, and
+// shrinking an action set is an explicit -delete of the actions no longer
+// wanted). Settled identities are read-only passes; settled ignores the
+// order the engine reports actions and keypairs in. Serialized like every
+// identity write.
 func (c *Client) EnsureIdentity(ctx context.Context, ident Identity) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -236,14 +237,8 @@ func (c *Client) EnsureIdentity(ctx context.Context, ident Identity) error {
 	current := cfg.Find(ident.Name)
 
 	var lines []string
-	settled := current != nil && len(current.Credentials) == len(ident.Credentials) &&
-		sameSet(current.Actions, ident.Actions)
-	if settled {
-		for i := range ident.Credentials {
-			settled = settled && current.Credentials[i] == ident.Credentials[i]
-		}
-	}
-	if settled {
+	if current != nil && sameSet(current.Actions, ident.Actions) &&
+		sameCredentials(current.Credentials, ident.Credentials) {
 		return nil
 	}
 
@@ -276,6 +271,20 @@ func (c *Client) EnsureIdentity(ctx context.Context, ident Identity) error {
 	}
 	_, err = c.shell(ctx, lines...)
 	return err
+}
+
+// sameCredentials reports whether two keypair lists hold the same pairs
+// regardless of order (the engine appends; a rotation lists the current
+// pair first).
+func sameCredentials(a, b []Credential) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	byKey := func(x, y Credential) int { return strings.Compare(x.AccessKey, y.AccessKey) }
+	x, y := slices.Clone(a), slices.Clone(b)
+	slices.SortFunc(x, byKey)
+	slices.SortFunc(y, byKey)
+	return slices.Equal(x, y)
 }
 
 // sameSet reports whether two action lists hold the same members

@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/bundle"
+	"github.com/Hinkolas/skali/internal/journal"
 )
 
 // Backup Jobs are deliberately invisible to the reconcile kernel: they
@@ -281,7 +282,7 @@ func renderVolumeJob(name, namespace, backupID, workerImage, targetSecret, claim
 // runJob creates the Job, waits for it to finish, folds its useful output
 // into the step log, and deletes it. A leftover Job of the same name (a
 // previous failed attempt) is removed first so the run is idempotent.
-func (c *Controller) runJob(ctx context.Context, log *stepLog, job *batchv1.Job) error {
+func (c *Controller) runJob(ctx context.Context, log *journal.StepLog, job *batchv1.Job) error {
 	spec := c.jobSpec(job.Spec.Template.Spec)
 	job.Spec.BackoffLimit = spec.BackoffLimit
 	job.Spec.ActiveDeadlineSeconds = spec.ActiveDeadlineSeconds
@@ -339,7 +340,7 @@ func jobFailureReason(job *batchv1.Job) string {
 
 // tailJobInto copies the tail of the Job pod's most relevant container log
 // into the step: on failure the failed container, otherwise the last one.
-func (c *Controller) tailJobInto(ctx context.Context, log *stepLog, namespace, name string, failed bool) {
+func (c *Controller) tailJobInto(ctx context.Context, log *journal.StepLog, namespace, name string, failed bool) {
 	pods, err := c.deps.Kube.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "batch.kubernetes.io/job-name=" + name,
 	})
