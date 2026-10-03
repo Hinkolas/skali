@@ -13,8 +13,8 @@ func TestPreparseArgs(t *testing.T) {
 		args []string
 		want invocation
 	}{
-		{"remote flag", []string{"deploy", "--remote", "khz"}, invocation{command: "deploy", path: "deploy", remote: "khz"}},
-		{"remote equals", []string{"deploy", "--remote=khz"}, invocation{command: "deploy", path: "deploy", remote: "khz"}},
+		{"remote flag", []string{"deploy", "--remote", "acme"}, invocation{command: "deploy", path: "deploy", remote: "acme"}},
+		{"remote equals", []string{"deploy", "--remote=acme"}, invocation{command: "deploy", path: "deploy", remote: "acme"}},
 		{"trailing remote", []string{"deploy", "--remote"}, invocation{command: "deploy", path: "deploy"}},
 		{"short help", []string{"-h"}, invocation{help: true}},
 		{"long help", []string{"deploy", "--help"}, invocation{command: "deploy", path: "deploy", help: true}},
@@ -25,11 +25,11 @@ func TestPreparseArgs(t *testing.T) {
 		{"manifest", []string{"deploy", "--manifest", "app/skali.yml"}, invocation{command: "deploy", path: "deploy", manifest: "app/skali.yml"}},
 		{"manifest equals", []string{"validate", "--manifest=app/skali.yml"}, invocation{command: "validate", path: "validate", manifest: "app/skali.yml"}},
 		{"verbose before the command", []string{"--verbose", "deploy"}, invocation{command: "deploy", path: "deploy", verbose: true}},
-		{"persistent remote on a group", []string{"run", "list", "--remote", "khz"}, invocation{command: "run", path: "run list", remote: "khz"}},
+		{"persistent remote on a group", []string{"run", "list", "--remote", "acme"}, invocation{command: "run", path: "run list", remote: "acme"}},
 		{"nested command", []string{"cluster", "status"}, invocation{command: "cluster", path: "cluster status"}},
 		{"dev dispatches", []string{"dev", "start", "--force"}, invocation{command: "dev", path: "dev start"}},
 		{"managed upgrade version", []string{"cluster", "upgrade", "--version", "v0.5.0"}, invocation{command: "cluster", path: "cluster upgrade"}},
-		{"dev remote override", []string{"dev", "--remote", "khz"}, invocation{command: "dev", path: "dev", remote: "khz"}},
+		{"dev remote override", []string{"dev", "--remote", "acme"}, invocation{command: "dev", path: "dev", remote: "acme"}},
 		{"skill read with since", []string{"skill", "read", "manifest", "--since", "0"}, invocation{command: "skill", path: "skill read"}},
 		{"skill install", []string{"skill", "install", "--agent", "claude"}, invocation{command: "skill", path: "skill install"}},
 		{"unknown command", []string{"frobnicate"}, invocation{command: "frobnicate", path: "frobnicate"}},

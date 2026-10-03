@@ -82,7 +82,7 @@ func readOnlyInvocation(inv invocation) bool {
 // without executing anything. Flags are scanned up to a literal --; the
 // command word is resolved with cobra's own Find, which strips flags using
 // the real definitions (so `skali --verbose deploy` and `skali run list
-// --remote khz` resolve correctly). The help and completion commands cobra
+// --remote acme` resolve correctly). The help and completion commands cobra
 // adds only inside Execute are recognized by name.
 func preparseArgs(args []string, root func() *cobra.Command) invocation {
 	var inv invocation

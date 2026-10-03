@@ -30,8 +30,8 @@ func TestPruneCLICache(t *testing.T) {
 	notes := filepath.Join(installer.CLICacheDir(cacheDir), "notes.txt")
 	require.NoError(t, os.WriteFile(notes, []byte("keep"), 0o644))
 	cfg := &cliconfig.Config{Remotes: map[string]*cliconfig.Remote{
-		"khz": {Master: "https://khz.example/api", Version: "v0.4.0"},
-		"dev": {Master: "https://dev.example/api", Version: "v0.0.0-dev"},
+		"acme": {Master: "https://acme.example/api", Version: "v0.4.0"},
+		"dev":  {Master: "https://dev.example/api", Version: "v0.0.0-dev"},
 	}}
 
 	pruneCLICache(cfg, "v0.3.2", cacheDir)

@@ -127,19 +127,19 @@ func TestParseMasterURL(t *testing.T) {
 		master string
 		fails  bool
 	}{
-		{raw: "https://skali.khz.dev", master: "https://skali.khz.dev"},
-		{raw: "https://skali.khz.dev/", master: "https://skali.khz.dev"},
+		{raw: "https://skali.example.com", master: "https://skali.example.com"},
+		{raw: "https://skali.example.com/", master: "https://skali.example.com"},
 		// The single-surface cluster API lives behind a path prefix; the
 		// path survives round-tripping.
-		{raw: "https://skali.khz.dev/api", master: "https://skali.khz.dev/api"},
-		{raw: "https://skali.khz.dev/api/", master: "https://skali.khz.dev/api"},
+		{raw: "https://skali.example.com/api", master: "https://skali.example.com/api"},
+		{raw: "https://skali.example.com/api/", master: "https://skali.example.com/api"},
 		{raw: "http://localhost:7070", master: "http://localhost:7070"},
 		{raw: "https://SKALI.Example.Com", master: "https://SKALI.Example.Com"},
-		{raw: "skali.khz.dev", fails: true},
+		{raw: "skali.example.com", fails: true},
 		{raw: "", fails: true},
 		{raw: "https://", fails: true},
-		{raw: "ftp://skali.khz.dev", fails: true},
-		{raw: "https://user:pw@skali.khz.dev", fails: true},
+		{raw: "ftp://skali.example.com", fails: true},
+		{raw: "https://user:pw@skali.example.com", fails: true},
 	}
 	for _, tc := range cases {
 		master, err := parseMasterURL(tc.raw)
@@ -159,24 +159,24 @@ func TestMasterCandidates(t *testing.T) {
 		fails      bool
 	}{
 		// Bare hostnames get https-then-http and the cluster's /api path.
-		{raw: "skali.khz.dev",
-			candidates: []string{"https://skali.khz.dev/api", "http://skali.khz.dev/api"}},
-		{raw: "skali.khz.dev/",
-			candidates: []string{"https://skali.khz.dev/api", "http://skali.khz.dev/api"}},
+		{raw: "skali.example.com",
+			candidates: []string{"https://skali.example.com/api", "http://skali.example.com/api"}},
+		{raw: "skali.example.com/",
+			candidates: []string{"https://skali.example.com/api", "http://skali.example.com/api"}},
 		{raw: "localhost:7070",
 			candidates: []string{"https://localhost:7070/api", "http://localhost:7070/api"}},
 		// A schemeless input carrying a path keeps that path.
-		{raw: "skali.khz.dev/custom",
-			candidates: []string{"https://skali.khz.dev/custom", "http://skali.khz.dev/custom"}},
+		{raw: "skali.example.com/custom",
+			candidates: []string{"https://skali.example.com/custom", "http://skali.example.com/custom"}},
 		// Explicit URLs are verbatim, single candidate.
-		{raw: "https://skali.khz.dev/api",
-			candidates: []string{"https://skali.khz.dev/api"}},
+		{raw: "https://skali.example.com/api",
+			candidates: []string{"https://skali.example.com/api"}},
 		{raw: "http://localhost:7070",
 			candidates: []string{"http://localhost:7070"}},
 		{raw: "", fails: true},
-		{raw: "user:pw@skali.khz.dev", fails: true},
-		{raw: "skali.khz.dev?x=1", fails: true},
-		{raw: "ftp://skali.khz.dev", fails: true},
+		{raw: "user:pw@skali.example.com", fails: true},
+		{raw: "skali.example.com?x=1", fails: true},
+		{raw: "ftp://skali.example.com", fails: true},
 	}
 	for _, tc := range cases {
 		candidates, err := masterCandidates(tc.raw)
@@ -613,8 +613,8 @@ func TestRemoteStatusExpiredSession(t *testing.T) {
 }
 
 func TestRemoteListTable(t *testing.T) {
-	stageRemotes(t, "khz", map[string]*cliconfig.Remote{
-		"khz":   {Master: "https://skali.khz.dev/api", Token: "tok"},
+	stageRemotes(t, "acme", map[string]*cliconfig.Remote{
+		"acme":  {Master: "https://skali.example.com/api", Token: "tok"},
 		"lab":   {Master: "https://lab.example/api"},
 		"local": {Master: "http://127.0.0.1:7070", Token: "tok"},
 	})
@@ -624,9 +624,9 @@ func TestRemoteListTable(t *testing.T) {
 	require.NoError(t, execute(command))
 	text := out.String()
 	require.Regexp(t, `^remotes  \S+config\.yaml\n\n`, text)
-	require.Contains(t, text, "NAME           MASTER                     SESSION\n")
-	require.Contains(t, text, "khz (current)  https://skali.khz.dev/api  logged in\n")
-	require.Contains(t, text, "lab            https://lab.example/api    not logged in\n")
+	require.Contains(t, text, "NAME            MASTER                         SESSION\n")
+	require.Contains(t, text, "acme (current)  https://skali.example.com/api  logged in\n")
+	require.Contains(t, text, "lab             https://lab.example/api        not logged in\n")
 	require.NotContains(t, text, "local", "the dev-owned remote is not offered")
 
 	stageRemotes(t, "", nil)
@@ -638,9 +638,9 @@ func TestRemoteListTable(t *testing.T) {
 }
 
 func TestRemoteUseWithoutNameNeedsTerminal(t *testing.T) {
-	stageRemotes(t, "khz", map[string]*cliconfig.Remote{
-		"khz": {Master: "https://skali.khz.dev/api"},
-		"lab": {Master: "https://lab.example/api"},
+	stageRemotes(t, "acme", map[string]*cliconfig.Remote{
+		"acme": {Master: "https://skali.example.com/api"},
+		"lab":  {Master: "https://lab.example/api"},
 	})
 	command := newRemoteUseCommand()
 	command.SetOut(io.Discard)

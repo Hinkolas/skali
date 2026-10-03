@@ -18,7 +18,7 @@ import (
 // before skalid starts, repopulate the registry, and finish with the same
 // ready summary as init. Hidden until it exists: today it only prints that
 // contract and fails, which is worse than absent in the disaster it is
-// meant for. Tracked in ROADMAP.md under "Documented recovery runbook".
+// meant for. Tracked in issue #111.
 func newClusterRestoreCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:    "restore",

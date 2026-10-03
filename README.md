@@ -309,7 +309,7 @@ the release your project's cluster runs.
 | [Versioning](docs/versioning.md) | How the CLI matches the release of each cluster |
 | [Security](docs/security.md) | Trust boundaries and key recovery |
 | [Limitations](docs/limitations.md) | What skali does not do yet, and workarounds |
-| [Roadmap](ROADMAP.md) | What exists and what comes next |
+| [Roadmap](ROADMAP.md) | What comes next |
 
 ## How it fits together
 

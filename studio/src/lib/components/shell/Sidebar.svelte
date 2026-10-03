@@ -50,11 +50,12 @@
 	<!-- px-1 lines the logo box up with the nav pill edge (same inset as the
 	     nav item containers), not the item icons. -->
 	<div class="flex h-14 flex-none items-center gap-2.5 px-1">
-		<!-- Tile and wordmark are one link home: the cluster dashboard. -->
+		<!-- Tile and wordmark are one link home: the projects list, until the
+		     cluster dashboard ships and takes its place. -->
 		<a
-			href={resolve('/(app)/[section]', { section: 'dashboard' })}
+			href={resolve('/(app)/projects')}
 			class="flex items-center gap-2.5 rounded-lg transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
-			aria-label="skali dashboard"
+			aria-label="skali home"
 		>
 			<div
 				class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135"
