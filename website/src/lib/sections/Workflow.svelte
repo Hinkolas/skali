@@ -29,42 +29,73 @@
 	let list: HTMLOListElement;
 	let tracing = $state(false);
 
-	// Scroll progress of the trace, per step: `--p` is how far along its
-	// stretch of the rule the trace is, `--d` how lit its dot is. Above one
-	// column, the steps take turns in one stretch of the list's passage up the
-	// screen, so the trace reads as a single line across a row; in one column,
-	// each step follows its own passage.
+	// The trace follows scroll, eased: scrolling sets where it should be, and
+	// it glides there no faster than about a step and a half a second, so even
+	// a quick scroll shows the tip travelling from dot to dot. Per step, `--p`
+	// is how far along its stretch of the rule the trace is and `--d` how lit
+	// its dot is. Above one column the steps take turns over one long stretch
+	// of the list's passage up the screen, so the trace reads as a single line
+	// across a row; in one column each step follows its own passage.
 	onMount(() => {
 		if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 		tracing = true;
 
 		const items = [...list.children] as HTMLElement[];
 		const single = matchMedia('(width < 48rem)');
-		const clamp = (x: number) => Math.min(1, Math.max(0, x));
+		const clamp = (x: number, max = 1) => Math.min(max, Math.max(0, x));
 		// 0 when the element's top enters at the bottom of the screen, 1 when
 		// its bottom leaves at the top.
 		const passage = (el: Element) => {
 			const box = el.getBoundingClientRect();
 			return (innerHeight - box.top) / (innerHeight + box.height);
 		};
+		const span = (at: number, from: number, to: number) => clamp((at - from) / (to - from));
+
+		// Where the trace is: steps along the whole rule above one column, and
+		// per step in one.
+		let along = 0;
+		const each = items.map(() => 0);
+
+		const approach = (current: number, target: number, dt: number) => {
+			const eased = (target - current) * (1 - Math.exp(-dt / 240));
+			const cap = (1.6 * dt) / 1000;
+			const next = current + Math.min(cap, Math.max(-cap, eased));
+			return Math.abs(target - next) < 0.0005 ? target : next;
+		};
+
+		const paint = (i: number, p: number) => {
+			items[i].style.setProperty('--p', p.toFixed(4));
+			items[i].style.setProperty('--d', clamp(p / 0.15).toFixed(4));
+		};
 
 		let frame = 0;
-		const measure = () => {
-			frame = 0;
-			const whole = passage(list);
-			items.forEach((item, i) => {
-				const [at, from, to] = single.matches
-					? [passage(item), 0.22, 0.46]
-					: [whole, 0.12 + i * 0.0825, 0.2025 + i * 0.0825];
-				item.style.setProperty('--p', clamp((at - from) / (to - from)).toFixed(4));
-				item.style.setProperty('--d', clamp((at - from) / ((to - from) * 0.15)).toFixed(4));
-			});
+		let last = 0;
+		const tick = (now: number) => {
+			const dt = Math.min(64, now - last);
+			last = now;
+			let settled = true;
+			if (single.matches) {
+				items.forEach((item, i) => {
+					const target = span(passage(item), 0.15, 0.55);
+					each[i] = approach(each[i], target, dt);
+					settled &&= each[i] === target;
+					paint(i, each[i]);
+				});
+			} else {
+				const target = span(passage(list), 0.08, 0.62) * items.length;
+				along = approach(along, target, dt);
+				settled = along === target;
+				items.forEach((_, i) => paint(i, clamp(along - i)));
+			}
+			frame = settled ? 0 : requestAnimationFrame(tick);
 		};
 		const schedule = () => {
-			frame ||= requestAnimationFrame(measure);
+			if (frame) return;
+			last = performance.now();
+			frame = requestAnimationFrame(tick);
 		};
 
-		measure();
+		schedule();
 		addEventListener('scroll', schedule, { passive: true });
 		addEventListener('resize', schedule);
 		return () => {
@@ -153,11 +184,11 @@
 	}
 
 	/* A streak brightening to a lit tip at the band's left edge; the band
-	   slides right with the fill so the tip leads it, fading in as it leaves
-	   the dot and out as it reaches the next one. */
+	   slides right with the fill so the tip leads it. It is lit only while
+	   its step is under way, handing over to the next step's at the dot. */
 	.head {
 		transform: translateX(calc(var(--p, 0) * 100%));
-		opacity: min(1, calc(var(--p, 0) / 0.08), calc((1 - var(--p, 0)) / 0.12));
+		opacity: min(1, calc(var(--p, 0) / 0.02), calc((1 - var(--p, 0)) / 0.02));
 	}
 	.head::before,
 	.head::after {
