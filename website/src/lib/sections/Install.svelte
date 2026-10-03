@@ -89,7 +89,7 @@
 			</span>
 			<span class="flex flex-wrap gap-x-7 gap-y-3">
 				<span class="text-text-faint">
-					Early alpha.
+					Initial development.
 					<a
 						href={links.limitations}
 						rel="external"
