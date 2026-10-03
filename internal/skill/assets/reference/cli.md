@@ -111,6 +111,24 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   inside the window retires the older keypair at once; a bucket a restore
   is rewriting cannot be rotated until the restore finishes.
 
+## Databases
+
+- `skali database rotate <key> [--environment <name>] [--retire-after 1h]`
+  issues a new login role for the database declared as `databases.<key>`
+  (environment maintain, recent login). The pool accepts both roles, the
+  applications referencing the database restart with the new username and
+  password (the run streams like a deploy and succeeds once they all run
+  with them), and after the window the previous login role is retired: its
+  open sessions are terminated and the role is dropped (`1m` at least for
+  a leaked password, `7d` at most). The database and everything in it stay
+  owned by the owner role the login roles act as, so migrations and
+  restores are unaffected; the username changes with every rotation.
+  Processes holding the old credentials outside the cluster (`skali dev`
+  host runs, a revealed copy) must fetch them again. Rotating again inside
+  the window retires the older login role at once.
+- `skali database list`, `show <pool>` and `set <pool>` inspect and tune
+  the database pools (admin only).
+
 ## Routes
 
 - `skali route list` shows each route of the environment with its URL,
