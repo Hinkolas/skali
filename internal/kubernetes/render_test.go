@@ -556,6 +556,102 @@ applications:
 	}
 }
 
+// The release Job waits for every database and bucket its application
+// references before the command runs: network policy enforcement refuses
+// a fresh pod's connections until it registered the pod's address, and the
+// command gets a single attempt.
+func TestRenderReleaseJobWaitsForServices(t *testing.T) {
+	t.Parallel()
+	render := func(t *testing.T, environmentYAML string, options Options) *batchv1.Job {
+		t.Helper()
+		document, err := manifest.Parse([]byte(`
+name: shop
+applications:
+  web:
+    image: example.invalid/web:1
+    ports:
+      http:
+        port: 3000
+    deployment:
+      releaseCommand:
+        command: ["/bin/migrate"]
+`+environmentYAML+`
+databases:
+  data:
+    engine: postgres
+    version: 17
+  audit:
+    engine: postgres
+    version: 17
+buckets:
+  files: {}
+`), "skali.yml")
+		require.NoError(t, err)
+		result, err := compiler.Compile(document)
+		require.NoError(t, err)
+		options.Namespace = "skali-shop-production"
+		options.EnvironmentID = "0198f2f4-0000-7000-8000-000000000002"
+		options.RevisionChecksum = "6ee3b68d021fb92ebccc3ea7c5bfab6c88d85dae5970aa5c92a7a74e99b2cef2"
+		objects, err := Render(result, options)
+		require.NoError(t, err)
+		for _, obj := range objects {
+			if job, ok := obj.(*batchv1.Job); ok {
+				return job
+			}
+		}
+		t.Fatal("no release Job rendered")
+		return nil
+	}
+	const environment = `
+    environment:
+      DATABASE_URL: "{{ databases.data.url }}"
+      AUDIT_URL: "{{ databases.audit.url }}"
+      S3_BUCKET: "{{ buckets.files.name }}"
+      PLAIN: "value"
+`
+
+	job := render(t, environment, Options{WaitImage: "registry.invalid/skalid:1"})
+	require.Len(t, job.Spec.Template.Spec.InitContainers, 1)
+	wait := job.Spec.Template.Spec.InitContainers[0]
+	require.Equal(t, "wait-for-services", wait.Name)
+	require.Equal(t, "registry.invalid/skalid:1", wait.Image)
+	// Dependencies are sorted (buckets.files, databases.audit,
+	// databases.data), and every target is assembled from the output Secret
+	// keys whichever outputs the application itself binds.
+	require.Equal(t, []string{"net-wait", "--timeout", "1m0s",
+		"$(SKALI_WAIT_0_INTERNAL_ENDPOINT)",
+		"$(SKALI_WAIT_1_HOST):$(SKALI_WAIT_1_PORT)",
+		"$(SKALI_WAIT_2_HOST):$(SKALI_WAIT_2_PORT)",
+	}, wait.Args)
+	refs := map[string]string{}
+	for _, variable := range wait.Env {
+		require.NotNil(t, variable.ValueFrom)
+		require.NotNil(t, variable.ValueFrom.SecretKeyRef)
+		ref := variable.ValueFrom.SecretKeyRef
+		require.True(t, *ref.Optional)
+		refs[variable.Name] = ref.Name + "/" + ref.Key
+	}
+	require.Equal(t, map[string]string{
+		"SKALI_WAIT_0_INTERNAL_ENDPOINT": OutputSecretName("buckets", "files") + "/internal_endpoint",
+		"SKALI_WAIT_1_HOST":              OutputSecretName("databases", "audit") + "/host",
+		"SKALI_WAIT_1_PORT":              OutputSecretName("databases", "audit") + "/port",
+		"SKALI_WAIT_2_HOST":              OutputSecretName("databases", "data") + "/host",
+		"SKALI_WAIT_2_PORT":              OutputSecretName("databases", "data") + "/port",
+	}, refs)
+	require.True(t, *wait.SecurityContext.RunAsNonRoot)
+	require.False(t, *wait.SecurityContext.AllowPrivilegeEscalation)
+	// The command container is untouched.
+	require.Equal(t, []string{"/bin/migrate"}, job.Spec.Template.Spec.Containers[0].Args)
+
+	// Offline rendering (no wait image) and applications without service
+	// references render no wait.
+	require.Empty(t, render(t, environment, Options{}).Spec.Template.Spec.InitContainers)
+	require.Empty(t, render(t, `
+    environment:
+      PLAIN: "value"
+`, Options{WaitImage: "registry.invalid/skalid:1"}).Spec.Template.Spec.InitContainers)
+}
+
 // Long project and application keys make the application name maximal
 // (30-byte prefix plus hash). The release pod's name label is derived
 // through the same helper rather than by appending a suffix, so it stays

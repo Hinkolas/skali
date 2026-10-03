@@ -137,6 +137,11 @@ type Options struct {
 	// stored in the revision. Empty renders no field, so offline rendering
 	// and clusters without the bundle classes stay clean.
 	PriorityClassName string
+
+	// WaitImage is the image of the release Job's reachability wait (the
+	// skalid image, which carries `skalid net-wait`). Empty renders no wait,
+	// so offline rendering stays independent of a live platform.
+	WaitImage string
 }
 
 // revisionHistoryLimit bounds retained ReplicaSets. Rollback re-renders old
@@ -817,6 +822,9 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, image string,
 			},
 		},
 	}
+	if wait := renderReleaseWait(project, key, options.WaitImage); wait != nil {
+		job.Spec.Template.Spec.InitContainers = []corev1.Container{*wait}
+	}
 	if options.PriorityClassName != "" {
 		job.Spec.Template.Spec.PriorityClassName = options.PriorityClassName
 	}
@@ -827,6 +835,86 @@ func renderReleaseJob(project compiler.ProjectDefinition, key, image string,
 	}
 	job.Spec.Template.Spec.Affinity = renderArchAffinity(options, key)
 	return job
+}
+
+// ReleaseWaitTimeout bounds the release Job's reachability wait. The wait
+// fails open, so the budget only caps how long a really unreachable
+// service delays the release command's own failure.
+const ReleaseWaitTimeout = 60 * time.Second
+
+// releaseWaitOutputs names, per service collection, the output keys whose
+// values address the service from inside the cluster.
+var releaseWaitOutputs = map[string][]string{
+	"databases": {"host", "port"},
+	"buckets":   {"internal_endpoint"},
+}
+
+// renderReleaseWait renders the release Job's init container that waits
+// until every database and bucket the application references accepts
+// connections. Network policy enforcement registers a fresh pod's address
+// asynchronously and refuses its connections until then; the release
+// command runs once and would fail on a refused first connection. Init
+// containers share the pod's address, so once the wait gets through the
+// command does too. The addresses come from the same output Secrets the
+// application reads, through Kubernetes' $(VAR) argument expansion, so
+// the wait works whichever outputs the application binds.
+func renderReleaseWait(project compiler.ProjectDefinition, key, image string) *corev1.Container {
+	if image == "" {
+		return nil
+	}
+	var env []corev1.EnvVar
+	args := []string{"net-wait", "--timeout", ReleaseWaitTimeout.String()}
+	for _, dependency := range project.Dependencies["applications."+key] {
+		collection, service, ok := strings.Cut(dependency, ".")
+		outputs := releaseWaitOutputs[collection]
+		if !ok || len(outputs) == 0 {
+			continue
+		}
+		names := make([]string, len(outputs))
+		for index, output := range outputs {
+			names[index] = fmt.Sprintf("SKALI_WAIT_%d_%s", len(args)-3, strings.ToUpper(output))
+			env = append(env, corev1.EnvVar{Name: names[index], ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: OutputSecretName(collection, service)},
+					Key:                  output,
+					// A missing key leaves its $(VAR) reference
+					// unexpanded, which the wait skips rather than
+					// blocking the pod on the absent Secret key.
+					Optional: new(true),
+				},
+			}})
+		}
+		target := "$(" + names[0] + ")"
+		if len(names) == 2 {
+			target += ":$(" + names[1] + ")"
+		}
+		args = append(args, target)
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return &corev1.Container{
+		Name:            "wait-for-services",
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            args,
+		Env:             env,
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("16Mi"),
+			},
+			Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot:             new(true),
+			RunAsUser:                new(int64(65534)),
+			RunAsGroup:               new(int64(65534)),
+			AllowPrivilegeEscalation: new(false),
+			ReadOnlyRootFilesystem:   new(true),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+	}
 }
 
 // renderEnvironment binds one application's environment variables: service
