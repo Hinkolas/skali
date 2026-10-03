@@ -1214,6 +1214,9 @@ type BucketConnection struct {
 	Bucket            string `json:"bucket,omitempty"`
 	Region            string `json:"region,omitempty"`
 	CredentialVersion int64  `json:"credential_version,omitempty"`
+	// CredentialRetireAt is set while a rotation's previous keypair is
+	// still accepted: the instant it retires.
+	CredentialRetireAt *time.Time `json:"credential_retire_at,omitempty"`
 }
 
 func (c *Client) BucketConnection(ctx context.Context, environmentID, key string) (*BucketConnection, error) {
@@ -1222,4 +1225,19 @@ func (c *Client) BucketConnection(ctx context.Context, environmentID, key string
 		return nil, err
 	}
 	return &res, nil
+}
+
+// RotateBucketCredentials issues a new keypair for the bucket service as a
+// journaled run (POST .../credentials/rotate) and returns the run id; the
+// previous keypair stays accepted for retireAfterSeconds. Sudo-gated.
+func (c *Client) RotateBucketCredentials(ctx context.Context, environmentID, key string, retireAfterSeconds int64) (string, error) {
+	var res struct {
+		RunID string `json:"run_id"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/buckets/"+url.PathEscape(key)+"/credentials/rotate",
+		map[string]int64{"retire_after_seconds": retireAfterSeconds}, &res)
+	if err != nil {
+		return "", err
+	}
+	return res.RunID, nil
 }

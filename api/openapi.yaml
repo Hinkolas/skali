@@ -1977,9 +1977,81 @@ paths:
                   bucket: { type: string }
                   region: { type: string }
                   credential_version: { type: integer }
+                  credential_retire_at:
+                    type: string
+                    format: date-time
+                    description: |
+                      Present while a rotation's previous keypair is still
+                      accepted: the instant it retires.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/buckets/{key}/credentials/rotate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: rotateBucketCredentials
+      summary: Rotate a bucket's S3 keypair
+      description: |
+        Issues a new keypair for the bucket as a journaled run of kind
+        `rotation`: the store accepts both keypairs, the environment's
+        mirror carries the new one, the applications referencing the
+        bucket restart with it, and after the overlap window the previous
+        keypair is retired for good. Requests and presigned URLs signed
+        with the previous keypair fail from that instant on, so the window
+        must cover the longest URL the application issues. Rotating again
+        inside the window retires the older keypair at once. Requires
+        recent authentication (sudo mode).
+      tags: [buckets]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                retire_after_seconds:
+                  type: integer
+                  minimum: 60
+                  maximum: 604800
+                  default: 3600
+                  description: |
+                    How long the previous keypair stays accepted after the
+                    rotation starts, in whole seconds; one hour when
+                    omitted.
+      responses:
+        "202":
+          description: Rotation accepted; attach to the returned run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The bucket is not provisioned yet (`bucket_not_provisioned`),
+            a restore holds it (`bucket_fenced`), or another run is in
+            flight for the environment (`run_in_flight`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/environments/{id}/buckets/{key}/credentials/reveal:
     parameters:
@@ -4405,7 +4477,7 @@ components:
           format: uuid
         kind:
           type: string
-          description: "deployment, rollback, restart, reconcile, teardown, backup, or restore."
+          description: "deployment, rollback, restart, reconcile, teardown, backup, restore, or rotation."
         bypass_protection:
           type: boolean
           description: |

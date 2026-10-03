@@ -34,8 +34,10 @@ import (
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
 	"github.com/Hinkolas/skali/internal/registrytoken"
+	"github.com/Hinkolas/skali/internal/rotation"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/substrate"
 	"github.com/Hinkolas/skali/internal/testdb"
 	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/valuestore"
@@ -171,6 +173,10 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 			Store: st, Journal: journalSvc, Values: values,
 			DB: dbstore.New(st), Deploy: deploySvc, Targets: backupTargets,
 		}, backup.Config{}),
+		Rotation: rotation.New(rotation.Deps{
+			Store: st, Journal: journalSvc, DB: dbstore.New(st), Revisions: deploySvc,
+			Buckets: fakeRotator{}, Status: kernel.Status,
+		}, rotation.Config{}),
 		Metrics:      &metrics.Service{Store: st},
 		Version:      version,
 		InstanceName: "Test Instance",
@@ -786,6 +792,10 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 			Store: a.st, Journal: journalSvc, Values: values,
 			DB: dbstore.New(a.st), Deploy: deploySvc, Targets: backupTargets,
 		}, backup.Config{}),
+		Rotation: rotation.New(rotation.Deps{
+			Store: a.st, Journal: journalSvc, DB: dbstore.New(a.st), Revisions: deploySvc,
+			Buckets: fakeRotator{},
+		}, rotation.Config{}),
 		Metrics:   &metrics.Service{Store: a.st},
 		Updates:   &updates.Service{Store: a.st, Version: "test"},
 		Databases: dbstore.New(a.st),
@@ -809,5 +819,14 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 102, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 103, routes, "route count changed; update the OpenAPI spec and this number")
+}
+
+// fakeRotator is the substrate commit the API tests never reach: the
+// rotation controller's worker is not running there, so an accepted run
+// stays running.
+type fakeRotator struct{}
+
+func (fakeRotator) RotateBucketCredentials(_ context.Context, _ uuid.UUID, _ string, retireAfter time.Duration) (substrate.BucketRotation, error) {
+	return substrate.BucketRotation{AccessKey: "AKNEW", RetireAt: time.Now().Add(retireAfter)}, nil
 }

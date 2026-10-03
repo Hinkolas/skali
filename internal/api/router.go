@@ -29,6 +29,7 @@ import (
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/registry"
 	"github.com/Hinkolas/skali/internal/registrytoken"
+	"github.com/Hinkolas/skali/internal/rotation"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/updates"
@@ -110,6 +111,9 @@ type Deps struct {
 	// Backups executes backup and restore operations; nil (API-only mode,
 	// no cluster) hides the backup routes.
 	Backups *backup.Controller
+	// Rotation executes credential rotations; nil (API-only mode, no
+	// cluster) hides the rotate route. Needs Databases.
+	Rotation *rotation.Controller
 	// Metrics serves usage series from stored samples; nil hides the
 	// routes (tests without a store).
 	Metrics *metrics.Service
@@ -425,6 +429,13 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 					ac.route(r, "DELETE", "/projects/{id}/members/{user}", classProjectAdmin, ah.deleteMember)
 					ac.route(r, "PUT", "/environments/{id}/access/{user}", classEnvAdmin, ah.putEnvironmentAccess)
 					ac.route(r, "DELETE", "/environments/{id}/access/{user}", classEnvAdmin, ah.deleteEnvironmentAccess)
+
+					// Rotating a bucket's keypair retires the current one;
+					// like reveal it needs sudo mode.
+					if d.Rotation != nil && d.Databases != nil {
+						bh := &bucketsHandlers{db: d.Databases, secrets: d.SecretReader, rotation: d.Rotation}
+						ac.route(r, "POST", "/environments/{id}/buckets/{key}/credentials/rotate", classEnvMaintain, bh.rotate)
+					}
 
 					// Restore replaces the environment's data; like
 					// teardown it needs sudo mode.
