@@ -230,6 +230,8 @@ func TestProvisionTakesPendingLoginRole(t *testing.T) {
 // (later ones), and the row forgets it once a later pass has read the
 // state back from the pool. Teardown drops everything the same way.
 func TestProvisionRetiresPreviousLoginRole(t *testing.T) {
+	roleSettleDelay = 0
+	t.Cleanup(func() { roleSettleDelay = 15 * time.Second })
 	fx := newSettleFixture(t)
 	ctx := context.Background()
 	tenant := fx.provisioned(t)
@@ -282,44 +284,49 @@ func TestProvisionRetiresPreviousLoginRole(t *testing.T) {
 	_, err := fx.control.RotateDatabaseCredentials(ctx, fx.envID, "data", time.Hour)
 	require.ErrorIs(t, err, ErrRotationInFlight)
 
-	// First pass: the Secret goes, the SQL runs, the row waits for the
-	// confirmation.
+	// First pass: the Secret goes, and the worker waits for the operator
+	// to close the owner's login from the spec; no SQL yet.
 	requeue, _ := fx.pass(t)
 	require.Equal(t, requeueWait, requeue)
-	require.Contains(t, fx.control.WaitingReason(fx.claim.ID), "confirming on the next pass")
+	require.Contains(t, fx.control.WaitingReason(fx.claim.ID), "waiting for the pool to close its login")
 	require.NotNil(t, fx.tenant(t).PreviousLoginRole)
 	_, err = fx.fake.GetSecret(ctx, Namespace, ownerSecret)
 	require.Error(t, err, "the owner's Secret is gone")
 	require.Contains(t, fx.fake.deleted, ownerSecret)
-	scripts := fx.fake.scripts()
-	require.Equal(t, cnpg.RetireOwnerLoginSQL(tenant.RoleName), scripts[len(scripts)-1],
-		"the first rotation closes the owner's login and drops nothing")
-	for _, script := range scripts {
-		require.NotContains(t, script, "DROP ROLE")
+	for _, script := range fx.fake.scripts() {
+		require.NotContains(t, script, "NOLOGIN", "nothing is changed behind the operator")
 	}
 
-	// A stale sync reopened the login: the SQL runs again, no finish.
-	requeue, _ = fx.pass(t)
-	require.Equal(t, requeueWait, requeue)
-	require.NotNil(t, fx.tenant(t).PreviousLoginRole)
-	require.Equal(t, cnpg.RetireOwnerLoginSQL(tenant.RoleName), fx.fake.scripts()[len(fx.fake.scripts())-1])
-
-	// Confirmed closed: the row forgets the role.
+	// Closed by the operator: the owner's sessions are terminated and the
+	// row forgets the role.
 	logins[tenant.RoleName] = "f"
 	requeue, _ = fx.pass(t)
 	require.Zero(t, requeue, "nothing left to wake for")
+	scripts := fx.fake.scripts()
+	require.Equal(t, cnpg.RetireOwnerLoginSQL(tenant.RoleName), scripts[len(scripts)-1],
+		"the first rotation closes the owner's sessions and drops nothing")
+	for _, script := range scripts {
+		require.NotContains(t, script, "DROP ROLE")
+	}
 	retired := fx.tenant(t)
 	require.Nil(t, retired.PreviousLoginRole)
 	require.Nil(t, retired.PreviousCredentialSecret)
 	require.Nil(t, retired.CredentialRetireAt)
 	require.Equal(t, v2.LoginRole, retired.LoginRole)
 
-	// The second rotation retires a login role: dropped in the tenant's
-	// database, confirmed absent on the next pass.
+	// The second rotation retires a login role: once the spec has
+	// settled it is dropped in the tenant's database, and confirmed absent
+	// on the next pass.
 	v3 := take(t)
 	require.NoError(t, fx.control.RetireDatabaseCredentials(ctx, fx.envID, "data"))
+	roleSettleDelay = time.Hour
 	requeue, _ = fx.pass(t)
 	require.Equal(t, requeueWait, requeue)
+	require.Contains(t, fx.control.WaitingReason(fx.claim.ID), "waiting for the pool to settle")
+	roleSettleDelay = 0
+	requeue, _ = fx.pass(t)
+	require.Equal(t, requeueWait, requeue)
+	require.Contains(t, fx.control.WaitingReason(fx.claim.ID), "confirming on the next pass")
 	require.NotNil(t, fx.tenant(t).PreviousLoginRole)
 	last := fx.fake.execs[len(fx.fake.execs)-1]
 	require.Equal(t, cnpg.RetireLoginRoleSQL(v2.LoginRole, tenant.RoleName), last.command[len(last.command)-1])

@@ -191,15 +191,46 @@ func (c *Controller) takePendingLoginRole(ctx context.Context, row store.Databas
 	return current, nil
 }
 
+// roleSettleDelay is how long a drop waits after the role left the Cluster
+// spec before it runs: the operator's synchronizer only acts on
+// configuration changes and one still carrying the previous spec can land
+// a few seconds after the apply, recreating what it listed; by then it
+// has seen the new spec. Tests shorten it.
+var roleSettleDelay = 15 * time.Second
+
+// settled reports whether a drop keyed by id has waited out the settle
+// delay since it was first attempted; the first call starts the clock.
+// The clock lives in memory only: a restart waits once more, which is
+// harmless.
+func (c *Controller) settled(id uuid.UUID, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.settling == nil {
+		c.settling = map[uuid.UUID]time.Time{}
+	}
+	since, ok := c.settling[id]
+	if !ok {
+		c.settling[id] = now
+		return roleSettleDelay <= 0
+	}
+	return !now.Before(since.Add(roleSettleDelay))
+}
+
+func (c *Controller) forgetSettle(id uuid.UUID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.settling, id)
+}
+
 // retirePreviousLoginRole retires the previous login role once its window
 // has passed and returns the row as it stands afterwards. This pass's pool
-// apply already left the role out of the Cluster spec and its Secret is
-// deleted, then the SQL closes it: the owner keeps its ownership and loses
-// its login, any other login role is dropped. The operator's synchronizer
-// only runs on configuration changes, and one still carrying the previous
-// spec can land right after the SQL and undo it, so the row forgets the
-// role only once a later pass has read the state back from the pool;
-// until then the SQL is simply run again. Every step is idempotent.
+// apply already left the role out of the Cluster spec (an owner is listed
+// without a login and with its password wiped), and its Secret is gone.
+// The operator closes the owner's login itself from that spec; the worker
+// waits for it and then only terminates the owner's sessions, so a
+// synchronizer still carrying the previous spec can never reopen what the
+// worker closed. Any other login role is dropped by SQL once the spec has
+// settled and confirmed gone on the next pass. Every step is idempotent.
 func (c *Controller) retirePreviousLoginRole(ctx context.Context, row store.DatabaseClaim, pool store.DatabaseCluster, tenant store.DatabaseTenant, now time.Time) (*store.DatabaseTenant, error) {
 	if tenant.PreviousLoginRole == nil {
 		return &tenant, nil
@@ -219,24 +250,26 @@ func (c *Controller) retirePreviousLoginRole(ctx context.Context, row store.Data
 	if err != nil {
 		return nil, err
 	}
-	retired := login == ""
 	if previous == tenant.RoleName {
-		retired = login == "f"
-	}
-	if !retired {
-		if previous == tenant.RoleName {
-			err = c.execPrimarySQL(ctx, pool, "postgres", cnpg.RetireOwnerLoginSQL(previous))
-		} else {
-			err = c.execPrimarySQL(ctx, pool, tenant.DatabaseName, cnpg.RetireLoginRoleSQL(previous, tenant.RoleName))
+		if login != "f" {
+			return nil, errWaiting{reason: fmt.Sprintf("role %s: waiting for the pool to close its login", previous)}
 		}
-		if err != nil {
+		if err := c.execPrimarySQL(ctx, pool, "postgres", cnpg.RetireOwnerLoginSQL(previous)); err != nil {
 			return nil, err
 		}
-		return nil, errWaiting{reason: fmt.Sprintf("role %s: retired, confirming on the next pass", previous)}
+	} else if login != "" {
+		if !c.settled(tenant.ID, now) {
+			return nil, errWaiting{reason: fmt.Sprintf("role %s: waiting for the pool to settle", previous)}
+		}
+		if err := c.execPrimarySQL(ctx, pool, tenant.DatabaseName, cnpg.RetireLoginRoleSQL(previous, tenant.RoleName)); err != nil {
+			return nil, err
+		}
+		return nil, errWaiting{reason: fmt.Sprintf("role %s: dropped, confirming on the next pass", previous)}
 	}
 	if err := c.deps.DB.FinishTenantCredentialRotation(ctx, tenant.ID); err != nil {
 		return nil, err
 	}
+	c.forgetSettle(tenant.ID)
 	slog.Info("substrate: database login role retired", "database", tenant.DatabaseName, "loginRole", previous)
 	return c.deps.DB.LiveTenant(ctx, row.ID)
 }

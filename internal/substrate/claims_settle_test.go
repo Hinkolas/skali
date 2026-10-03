@@ -274,6 +274,9 @@ type settleFixture struct {
 
 func newSettleFixture(t *testing.T) *settleFixture {
 	t.Helper()
+	// Role drops wait for the pool to settle in production; the fake pool
+	// has nothing to settle.
+	roleSettleDelay = 0
 	ctx := context.Background()
 	pool := testdb.New(t)
 	st := store.NewStore(pool)

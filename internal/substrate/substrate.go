@@ -192,6 +192,9 @@ type Controller struct {
 	mu        sync.Mutex
 	waiting   map[uuid.UUID]string // claim id -> current waiting reason
 	probePoke func()               // provider observer re-poll, set by SetProbePoke
+	// settling records when a role drop first waited for the pool to
+	// settle, keyed by the tenant (a retirement) or the claim (a release).
+	settling map[uuid.UUID]time.Time
 	// pendingExtensions holds, per provisioned claim whose extension list
 	// just changed, the desired encoding until a pass applied exactly it.
 	// See markExtensionsPending.

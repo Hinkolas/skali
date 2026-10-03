@@ -123,8 +123,9 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 	roles := tenantRoleNames(*tenant)
 	present, err := c.queryPrimary(ctx, *pool, "postgres", cnpg.RolesPresentQuery(roles))
 	if err == nil && present != "0" {
-		err = c.execPrimarySQL(ctx, *pool, "postgres", cnpg.DropTenantRolesSQL(roles))
-		if err == nil {
+		if !c.settled(row.ID, time.Now()) {
+			err = errWaiting{reason: "waiting for the pool to settle before dropping the roles"}
+		} else if err = c.execPrimarySQL(ctx, *pool, "postgres", cnpg.DropTenantRolesSQL(roles)); err == nil {
 			err = errWaiting{reason: "roles dropped, confirming on the next pass"}
 		}
 	}
@@ -136,6 +137,7 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 		}
 		return 0, err
 	}
+	c.forgetSettle(row.ID)
 	if row.OwnerKind == dbstore.OwnerService {
 		if _, _, service, ok := ownerNames(row.OwnerRef); ok && row.EnvironmentID != nil {
 			if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
