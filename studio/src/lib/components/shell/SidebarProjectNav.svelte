@@ -4,7 +4,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import type { ServiceView } from '$lib/models/service';
 	import type { Project } from '$lib/types/project';
-	import { PROJECT_TABS } from '$lib/navigation';
+	import { PROJECT_TABS, shipped } from '$lib/navigation';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import StatusDot from '$lib/components/ui/StatusDot.svelte';
@@ -30,7 +30,7 @@
 
 <NavSection label="Project" />
 <div class="flex flex-col gap-0.5 px-1">
-	{#each PROJECT_TABS as tab (tab.slug)}
+	{#each shipped(PROJECT_TABS) as tab (tab.slug)}
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
 		<!-- Active check matches the bare path; the href carries ?env=. -->
 		<NavItem

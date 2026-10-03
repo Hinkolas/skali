@@ -10,29 +10,29 @@ import (
 )
 
 func TestEnvironmentLookupFollowsRename(t *testing.T) {
-	environments := []client.Environment{{ID: "same-id", Name: "kilohertz", PreviousNames: []string{"production"}}}
+	environments := []client.Environment{{ID: "same-id", Name: "staging", PreviousNames: []string{"production"}}}
 	require.Equal(t, "same-id", findEnvironment(environments, "production").ID)
-	require.Equal(t, "same-id", findEnvironment(environments, "kilohertz").ID)
+	require.Equal(t, "same-id", findEnvironment(environments, "staging").ID)
 	require.Nil(t, findEnvironment(environments, "different"))
 }
 
 func TestEnvRenameKeepsBoundCheckoutUsable(t *testing.T) {
 	install := seedAccessScope(t)
 	install.reauthRequired = true
-	out, err := runCommand(t, newEnvCommand(), "hunter2\n", "rename", "production", "kilohertz")
+	out, err := runCommand(t, newEnvCommand(), "hunter2\n", "rename", "production", "staging")
 	require.NoError(t, err)
 	require.Contains(t, out, "Confirm your password")
-	require.Contains(t, out, "renamed environment production to kilohertz")
+	require.Contains(t, out, "renamed environment production to staging")
 	require.Equal(t, []string{"settings:p1-e1"}, install.posts)
 	// The checkout remains bound to the old name; lookup follows the alias.
 	out, err = runCommand(t, newEnvCommand(), "", "ls")
 	require.NoError(t, err)
-	require.Contains(t, out, "kilohertz (bound)")
+	require.Contains(t, out, "staging (bound)")
 	out, err = runCommand(t, newEnvCommand(), "", "set", "--yes", "--max-role", "read")
 	require.NoError(t, err)
-	require.Contains(t, out, "kilohertz")
+	require.Contains(t, out, "staging")
 	require.Equal(t, []string{"settings:p1-e1", "settings:p1-e1"}, install.posts)
-	_, err = runCommand(t, newEnvCommand(), "", "rename", "kilohertz", "Bad Name")
+	_, err = runCommand(t, newEnvCommand(), "", "rename", "staging", "Bad Name")
 	require.Error(t, err)
 	require.Len(t, install.posts, 2)
 }

@@ -11,7 +11,7 @@
 # Environment:
 #   SKALI_CHANNEL   stable (default), or beta to include alpha/beta/rc releases
 #   SKALI_VERSION   optional exact release tag; overrides channel selection
-#   GITHUB_TOKEN    optional; required while the repository is private
+#   GITHUB_TOKEN    optional; authenticates GitHub API requests (higher rate limit)
 #   SKALI_SHELL     shell for completions and PATH instructions (default: $SHELL)
 #   SKALI_COMPLETIONS  none to skip installing shell completions
 #   SKALI_BASE_URL  override the download base URL (testing only)
@@ -126,14 +126,14 @@ if [ -z "$version" ]; then
   else
     if [ "$channel" = stable ]; then
       api_get "${API}/latest" "$tmp/release.json" \
-        || fail "cannot find a stable release (use SKALI_CHANNEL=beta for prereleases; check GITHUB_TOKEN for private repositories)"
+        || fail "cannot find a stable release (use SKALI_CHANNEL=beta for prereleases; set GITHUB_TOKEN if GitHub rate-limits this address)"
       metadata releases < "$tmp/release.json" > "$tmp/releases.tsv" || fail "invalid release metadata"
     else
       page=1
       : > "$tmp/releases.tsv"
       while :; do
         api_get "${API}?per_page=100&page=${page}" "$tmp/page.json" \
-          || fail "cannot list releases (check network access and GITHUB_TOKEN for private repositories)"
+          || fail "cannot list releases (check network access; set GITHUB_TOKEN if GitHub rate-limits this address)"
         metadata releases < "$tmp/page.json" > "$tmp/page.tsv" || fail "invalid release metadata"
         cat "$tmp/page.tsv" >> "$tmp/releases.tsv"
         [ "$(wc -l < "$tmp/page.tsv" | tr -d " ")" -eq 100 ] || break
@@ -182,7 +182,7 @@ fetch() {
   else
     url="https://github.com/${REPO}/releases/download/${version}/$1"
     curl -fsSL -o "$2" "$url" \
-      || fail "download failed: $url (private repository? set GITHUB_TOKEN)"
+      || fail "download failed: $url"
   fi
 }
 
