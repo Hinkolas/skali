@@ -1,7 +1,8 @@
 # Known limitations
 
 Things skali does not do yet, stated so nobody finds out the hard way.
-Each one is deliberate for now and tracked in [`ROADMAP.md`](../ROADMAP.md).
+Each one is deliberate for now and tracked in [`ROADMAP.md`](../ROADMAP.md)
+and the issues it links.
 
 ## Volumes are never reclaimed automatically
 

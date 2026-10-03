@@ -50,8 +50,8 @@ After this branch is reviewed and merged, run `task release:check`, then
 `task release:tag V=v0.1.0-rc.11` from a clean, synchronized `main`. Pushing the
 tag publishes release binaries and images through the release workflow.
 
-Before the stable tag, complete the released-binary rehearsal recorded in
-[ROADMAP.md](../ROADMAP.md): clean Linux and Mac installs, development outside
+Before the stable tag, complete the released-binary rehearsal tracked in
+[#110](https://github.com/Hinkolas/skali/issues/110): clean Linux and Mac installs, development outside
 the repository, upgrades from the preceding release, joining a node without a
 local hostd, password reset, and a Studio software update. Local tests and the
 nonpublishing snapshot rehearsal do not substitute for those checks.
