@@ -5,24 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
-	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/utils"
-)
-
-// The overlap window of a rotation: how long the previous keypair stays
-// accepted. The API enforces the same bounds.
-const (
-	defaultRetireAfter = time.Hour
-	minRetireAfter     = time.Minute
-	maxRetireAfter     = 7 * 24 * time.Hour
 )
 
 func newBucketCommand() *cobra.Command {
@@ -153,27 +143,6 @@ func newBucketRotateCommand() *cobra.Command {
 	command.Flags().BoolVar(&detach, "detach", false, "start the rotation and return without following it")
 	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
-}
-
-// parseRetireAfter reads an overlap window such as 30m, 1h, or 2d.
-func parseRetireAfter(text string) (time.Duration, error) {
-	milliseconds, err := compiler.ParseDuration(strings.TrimSpace(text))
-	if err != nil {
-		return 0, err
-	}
-	if milliseconds <= 0 || milliseconds%1000 != 0 {
-		return 0, errors.New("must be a positive duration in whole seconds such as 30m, 1h, or 2d")
-	}
-	window := time.Duration(milliseconds) * time.Millisecond
-	if window < minRetireAfter || window > maxRetireAfter {
-		return 0, fmt.Errorf("must be between %s and %s", describeWindow(minRetireAfter), describeWindow(maxRetireAfter))
-	}
-	return window, nil
-}
-
-// describeWindow words a window in its largest exact unit: 7d, 36h, 90m.
-func describeWindow(window time.Duration) string {
-	return shortRetention(int64(window / time.Second))
 }
 
 // completeBucketArg completes the manifest's bucket keys as the sole

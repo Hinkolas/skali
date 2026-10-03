@@ -82,9 +82,11 @@
 </div>
 
 <div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-	<h2 class="text-text-primary text-xl font-semibold">Recent backups</h2>
+	<h2 class="text-text-primary text-xl font-semibold">Recent operations</h2>
 	<div class="text-text-muted text-md">
-		snapshots of this environment{backup ? ` · ${describeCron(backup.schedule)} UTC` : ''}
+		snapshots and credential rotations of this environment{backup
+			? ` · ${describeCron(backup.schedule)} UTC`
+			: ''}
 	</div>
 </div>
 
@@ -92,9 +94,9 @@
 	<RunsSection
 		{envId}
 		seed={runs}
-		kinds={['backup', 'restore']}
+		kinds={['backup', 'restore', 'rotation']}
 		limit={RECENT_BACKUPS}
-		emptyTitle="No backups yet"
-		emptyDescription="snapshots and restores of this environment appear here"
+		emptyTitle="No operations yet"
+		emptyDescription="snapshots, restores, and credential rotations of this environment appear here"
 	/>
 </div>

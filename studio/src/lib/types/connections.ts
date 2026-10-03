@@ -11,6 +11,8 @@ export interface DatabaseConnection {
 	port?: number;
 	database?: string;
 	credential_version?: number;
+	/** Set while a rotation's previous login role is still accepted: the instant it retires. */
+	credential_retire_at?: string;
 }
 
 /** Sudo-gated reveal; values are shown once and never stored client-side. */
