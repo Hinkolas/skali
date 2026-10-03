@@ -337,13 +337,19 @@ func (q *Queries) ListLiveDatabaseClaimsByEnvironment(ctx context.Context, envir
 }
 
 const listUnsettledDatabaseClaims = `-- name: ListUnsettledDatabaseClaims :many
-SELECT id, owner_kind, project_id, environment_id, service_key, system_key, owner_ref, engine, major, isolation, availability, storage_bytes, extensions, pitr_seconds, phase, created_at, updated_at FROM database_claims
-WHERE phase IN ('pending', 'bound', 'releasing')
-ORDER BY created_at
+SELECT c.id, c.owner_kind, c.project_id, c.environment_id, c.service_key, c.system_key, c.owner_ref, c.engine, c.major, c.isolation, c.availability, c.storage_bytes, c.extensions, c.pitr_seconds, c.phase, c.created_at, c.updated_at FROM database_claims c
+WHERE c.phase IN ('pending', 'bound', 'releasing')
+   OR EXISTS (
+       SELECT 1 FROM database_tenants t
+       WHERE t.claim_id = c.id AND t.released_at IS NULL
+         AND (t.pending_login_role IS NOT NULL OR t.previous_login_role IS NOT NULL)
+   )
+ORDER BY c.created_at
 `
 
 // Claims with reconciliation work outstanding; the substrate boot pass
-// enqueues these instead of trusting memory.
+// enqueues these instead of trusting memory. A provisioned claim mid
+// credential rotation (a login role to take or to retire) counts.
 func (q *Queries) ListUnsettledDatabaseClaims(ctx context.Context) ([]DatabaseClaim, error) {
 	rows, err := q.db.Query(ctx, listUnsettledDatabaseClaims)
 	if err != nil {

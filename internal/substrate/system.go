@@ -9,15 +9,15 @@ import (
 
 // SystemClaimOutputs is what an internal consumer (the object-storage
 // metadata dependency) receives: connection identity plus the NAME of the
-// credential Secret in skali-platform. The password itself stays in the
-// Secret; consumers mount or read it themselves.
+// credential Secret in skali-platform. The username and password stay in
+// the Secret (the username is the current login role); consumers mount or
+// read it themselves.
 type SystemClaimOutputs struct {
 	Provisioned      bool
 	Waiting          string
 	Host             string
 	Port             int
 	Database         string
-	Username         string
 	CredentialSecret string
 }
 
@@ -49,7 +49,6 @@ func (c *Controller) EnsureSystemClaim(ctx context.Context, key string, spec dbs
 		Host:             tenant.Host,
 		Port:             int(tenant.Port),
 		Database:         tenant.DatabaseName,
-		Username:         tenant.RoleName,
 		CredentialSecret: tenant.CredentialSecret,
 	}, nil
 }

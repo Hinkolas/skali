@@ -91,6 +91,17 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 	if _, err := c.deps.Cluster.ApplyAs(ctx, object, kube.FieldManagerPlatform, false); err != nil {
 		return 0, fmt.Errorf("substrate: apply database removal: %w", err)
 	}
+	// A session still open on the database (a host process holding
+	// revealed credentials; the consumers are gone) would keep the drop
+	// failing; the tenant's roles are done for, so their sessions end.
+	if err := c.execPrimarySQL(ctx, *pool, "postgres", cnpg.TerminateSessionsSQL(tenantRoleNames(*tenant))); err != nil {
+		var waiting errWaiting
+		if errors.As(err, &waiting) {
+			c.setWaiting(row.ID, waiting.reason)
+			return requeueWait, nil
+		}
+		return 0, err
+	}
 	dropped, reason, err := c.databaseApplied(ctx, *tenant)
 	if err != nil {
 		return 0, err
@@ -104,11 +115,40 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 	}); err != nil {
 		return 0, fmt.Errorf("substrate: delete database object: %w", err)
 	}
-	if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
-		GVK: secretGVK, Namespace: Namespace, Name: tenant.CredentialSecret,
-	}); err != nil {
-		return 0, fmt.Errorf("substrate: delete credential secret: %w", err)
+	// The roles go the way a retired login role does: out of the Cluster
+	// spec first (the releasing claim's tenant is not rendered), their
+	// Secrets deleted, then dropped by SQL, login roles before the owner,
+	// and confirmed gone on a later pass since a stale operator sync can
+	// recreate what the previous spec listed. The row keeps their names
+	// until the claim closes, so a crash here is redone.
+	if _, err := c.ensurePool(ctx, *pool, time.Now()); err != nil {
+		return 0, err
 	}
+	for _, name := range tenantSecretNames(*tenant) {
+		if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
+			GVK: secretGVK, Namespace: Namespace, Name: name,
+		}); err != nil {
+			return 0, fmt.Errorf("substrate: delete credential secret: %w", err)
+		}
+	}
+	roles := tenantRoleNames(*tenant)
+	present, err := c.queryPrimary(ctx, *pool, "postgres", cnpg.RolesPresentQuery(roles))
+	if err == nil && present != "0" {
+		if !c.settled(row.ID, time.Now()) {
+			err = errWaiting{reason: "waiting for the pool to settle before dropping the roles"}
+		} else if err = c.execPrimarySQL(ctx, *pool, "postgres", cnpg.DropTenantRolesSQL(roles)); err == nil {
+			err = errWaiting{reason: "roles dropped, confirming on the next pass"}
+		}
+	}
+	if err != nil {
+		var waiting errWaiting
+		if errors.As(err, &waiting) {
+			c.setWaiting(row.ID, waiting.reason)
+			return requeueWait, nil
+		}
+		return 0, err
+	}
+	c.forgetSettle(row.ID)
 	if row.OwnerKind == dbstore.OwnerService {
 		if _, _, service, ok := ownerNames(row.OwnerRef); ok && row.EnvironmentID != nil {
 			if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
@@ -152,7 +192,7 @@ func (c *Controller) finishClaimRelease(ctx context.Context, row store.DatabaseC
 	// The shared pool survives its tenants; re-apply so the role list
 	// shrinks. A pool still waiting for node memory is picked up by the
 	// enqueue below.
-	if _, err := c.ensurePool(ctx, *pool); err != nil {
+	if _, err := c.ensurePool(ctx, *pool, time.Now()); err != nil {
 		return err
 	}
 	c.EnqueuePool(poolID)

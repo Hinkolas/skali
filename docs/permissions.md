@@ -419,7 +419,7 @@ their environment first):
 | `GET .../exec` (S when promote-only) | E:maintain |
 | `GET .../databases/{key}/connection`, `.../buckets/{key}/connection` | E:read |
 | `POST .../credentials/reveal` (S) | E:maintain |
-| `POST .../buckets/{key}/credentials/rotate` (S) | E:maintain |
+| `POST .../databases/{key}/credentials/rotate`, `.../buckets/{key}/credentials/rotate` (S) | E:maintain |
 | `GET .../applications/{key}/environment` (S) | E:maintain |
 | `POST .../backups` | E:deploy |
 | `GET .../backups` | E:read |

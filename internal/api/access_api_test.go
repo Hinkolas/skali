@@ -209,14 +209,15 @@ var notFoundAllowed = map[string]bool{
 // destructiveRoutes would change the fixture when let through; their allowed
 // side is covered by focused tests.
 var destructiveRoutes = map[string]bool{
-	"DELETE /v1/projects/{id}":                                    true,
-	"DELETE /v1/environments/{id}":                                true,
-	"POST /v1/environments/{id}/teardown":                         true,
-	"DELETE /v1/auth/sessions/{id}":                               true,
-	"POST /v1/auth/logout":                                        true,
-	"DELETE /v1/system/backup-target":                             true,
-	"DELETE /v1/environments/{id}/values/{name}":                  true,
-	"POST /v1/environments/{id}/buckets/{key}/credentials/rotate": true,
+	"DELETE /v1/projects/{id}":                                      true,
+	"DELETE /v1/environments/{id}":                                  true,
+	"POST /v1/environments/{id}/teardown":                           true,
+	"DELETE /v1/auth/sessions/{id}":                                 true,
+	"POST /v1/auth/logout":                                          true,
+	"DELETE /v1/system/backup-target":                               true,
+	"DELETE /v1/environments/{id}/values/{name}":                    true,
+	"POST /v1/environments/{id}/buckets/{key}/credentials/rotate":   true,
+	"POST /v1/environments/{id}/databases/{key}/credentials/rotate": true,
 }
 
 func TestAccessMatrix(t *testing.T) {

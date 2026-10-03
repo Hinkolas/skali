@@ -13,6 +13,10 @@
 	import RevealCredentialsModal, {
 		modalOptions as revealModalOptions
 	} from './RevealCredentialsModal.svelte';
+	import RotateCredentialsModal, {
+		modalOptions as rotateModalOptions
+	} from './RotateCredentialsModal.svelte';
+	import { formatDateTime } from '$lib/format';
 
 	let {
 		service,
@@ -26,12 +30,22 @@
 
 	let revealing = $state(false);
 
-	// Credentials are configuration: maintain on the environment reveals them.
+	// Credentials are configuration: maintain on the environment reveals
+	// and rotates them.
 	const env = $derived(page.data.env as Environment | null);
 	const mayReveal = $derived(roleAtLeast(env?.access, 'maintain'));
 	const revealTitle = $derived(
 		mayReveal ? undefined : requiredTitle('maintain', 'environment', env?.name ?? '')
 	);
+
+	function rotate() {
+		if (!envId) return;
+		modal.open(
+			RotateCredentialsModal,
+			{ collection: 'databases', envId, serviceKey: service.key, serviceName: service.name },
+			rotateModalOptions
+		);
+	}
 
 	// Sudo-gated one-time reveal; the interceptor in the api client handles
 	// the reauth prompt. Values go straight into the modal props and nowhere
@@ -73,7 +87,15 @@
 				private network
 			</span>
 		</div>
-		<div class="flex-none">
+		<div class="flex flex-none items-center gap-2">
+			<Button
+				size="sm"
+				disabled={!connection?.host || !mayReveal}
+				title={revealTitle}
+				onclick={rotate}
+			>
+				Rotate credentials
+			</Button>
 			<Button
 				size="sm"
 				busy={revealing}
@@ -101,6 +123,19 @@
 					phase {connection?.phase ?? 'unknown'} · connection facts appear once the claim settles
 				</div>
 			</div>
+		</div>
+	{/if}
+	<!-- A rotation inside its overlap window: the previous login role is
+	     still accepted until the instant shown; after it, only the current
+	     one. -->
+	{#if connection?.credential_retire_at}
+		<div class="border-border-subtle mt-4 flex items-center gap-2.5 border-t pt-3.5">
+			<span class="text-text-muted text-md">Rotation</span>
+			<span class="font-mono text-text-faint text-sm">
+				credentials v{connection.credential_version ?? '?'} · previous login role retires {formatDateTime(
+					connection.credential_retire_at
+				)}
+			</span>
 		</div>
 	{/if}
 	<!-- Public access is a planned feature; until it exists the fact that the

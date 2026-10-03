@@ -135,10 +135,10 @@ Ordered loosely by how often I have wanted them.
 - [ ] Push-to-deploy: git integration and a managed builder so a push
       deploys without a laptop CLI.
 - [ ] API/CI tokens (membership already exists, tokens become subjects).
-- [ ] Credential rotation for databases (#78; buckets rotate on demand
-      with `skali bucket rotate` since the overlap of two keypairs is
-      native to S3, a PostgreSQL role holds one password and needs a
-      second role or a short switch). A rotation schedule is a follow-up.
+- [x] Credential rotation on demand (#78): `skali bucket rotate` and
+      `skali database rotate` (a database alternates login roles under
+      an owner role that never logs in). A rotation schedule is a
+      follow-up.
 - [ ] Scheduled jobs (cron) and one-off commands per application.
 - [ ] Sidecars or multiple processes per application, if a real app needs
       it.

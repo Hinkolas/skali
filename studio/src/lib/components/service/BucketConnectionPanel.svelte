@@ -45,7 +45,7 @@
 		if (!envId) return;
 		modal.open(
 			RotateCredentialsModal,
-			{ envId, serviceKey: service.key, serviceName: service.name },
+			{ collection: 'buckets', envId, serviceKey: service.key, serviceName: service.name },
 			rotateModalOptions
 		);
 	}

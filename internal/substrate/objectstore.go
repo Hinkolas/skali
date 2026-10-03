@@ -252,19 +252,20 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		return requeueWait, nil
 	}
 
-	// The filer's store config is Secret-to-Secret: the password is read
-	// from the claim's credential Secret and lands only in the filer store
-	// Secret.
+	// The filer's store config is Secret-to-Secret: the login role and its
+	// password are read from the claim's credential Secret and land only
+	// in the filer store Secret.
 	credential, err := c.deps.Cluster.GetSecret(ctx, Namespace, outputs.CredentialSecret)
 	if err != nil {
 		return 0, fmt.Errorf("substrate: read metadata credential: %w", err)
 	}
+	username := string(credential.Data[corev1.BasicAuthUsernameKey])
 	password := string(credential.Data[corev1.BasicAuthPasswordKey])
-	if password == "" {
+	if username == "" || password == "" {
 		return requeueWait, nil
 	}
 	storeSecret := seaweed.RenderFilerStoreSecret(Namespace,
-		outputs.Host, outputs.Port, outputs.Username, password, outputs.Database)
+		outputs.Host, outputs.Port, username, password, outputs.Database)
 	if _, err := c.deps.Cluster.ApplyAs(ctx, storeSecret, kube.FieldManagerPlatform, false); err != nil {
 		return 0, fmt.Errorf("substrate: ensure filer store secret: %w", err)
 	}

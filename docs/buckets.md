@@ -363,9 +363,8 @@ projection (the Studio's connection panel, the connection API) shows the
 credential version and, inside a window, the instant the previous keypair
 retires.
 
-Database credentials cannot be rotated this way yet: a PostgreSQL role has
-one password, so there is no overlap to rotate through. That is tracked
-separately.
+Databases rotate the same way with a login role instead of a keypair; see
+[databases.md](databases.md#credential-rotation).
 
 ## Deleting a bucket
 

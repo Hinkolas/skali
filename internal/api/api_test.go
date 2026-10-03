@@ -175,7 +175,7 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 		}, backup.Config{}),
 		Rotation: rotation.New(rotation.Deps{
 			Store: st, Journal: journalSvc, DB: dbstore.New(st), Revisions: deploySvc,
-			Buckets: fakeRotator{}, Status: kernel.Status,
+			Buckets: fakeRotator{}, Databases: fakeRotator{}, Status: kernel.Status,
 		}, rotation.Config{}),
 		Metrics:      &metrics.Service{Store: st},
 		Version:      version,
@@ -794,7 +794,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		}, backup.Config{}),
 		Rotation: rotation.New(rotation.Deps{
 			Store: a.st, Journal: journalSvc, DB: dbstore.New(a.st), Revisions: deploySvc,
-			Buckets: fakeRotator{},
+			Buckets: fakeRotator{}, Databases: fakeRotator{},
 		}, rotation.Config{}),
 		Metrics:   &metrics.Service{Store: a.st},
 		Updates:   &updates.Service{Store: a.st, Version: "test"},
@@ -819,7 +819,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 103, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 104, routes, "route count changed; update the OpenAPI spec and this number")
 }
 
 // fakeRotator is the substrate commit the API tests never reach: the
@@ -830,3 +830,9 @@ type fakeRotator struct{}
 func (fakeRotator) RotateBucketCredentials(_ context.Context, _ uuid.UUID, _ string, retireAfter time.Duration) (substrate.BucketRotation, error) {
 	return substrate.BucketRotation{AccessKey: "AKNEW", RetireAt: time.Now().Add(retireAfter)}, nil
 }
+
+func (fakeRotator) RotateDatabaseCredentials(_ context.Context, _ uuid.UUID, _ string, retireAfter time.Duration) (substrate.DatabaseRotation, error) {
+	return substrate.DatabaseRotation{LoginRole: "u_data_v2", RetireAt: time.Now().Add(retireAfter)}, nil
+}
+
+func (fakeRotator) RetireDatabaseCredentials(context.Context, uuid.UUID, string) error { return nil }

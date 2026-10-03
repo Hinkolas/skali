@@ -1822,9 +1822,83 @@ paths:
                   port: { type: integer }
                   database: { type: string }
                   credential_version: { type: integer }
+                  credential_retire_at:
+                    type: string
+                    format: date-time
+                    description: |
+                      Set while a rotation's previous login role is still
+                      accepted: the instant it retires.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/environments/{id}/databases/{key}/credentials/rotate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: rotateDatabaseCredentials
+      summary: Rotate a database's credentials
+      description: |
+        Issues a new login role for the database as a journaled run of kind
+        `rotation`: the pool holds both roles, the environment's mirror
+        carries the new username and password, the applications
+        referencing the database restart with them, and after the overlap
+        window the previous login role is retired for good: its open
+        sessions are terminated and the role is dropped. The database and
+        everything in it stay owned by the tenant's owner role, which the
+        login roles act as. Rotating again inside the window retires the
+        older login role at once. Requires recent authentication (sudo
+        mode).
+      tags: [databases]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                retire_after_seconds:
+                  type: integer
+                  minimum: 60
+                  maximum: 604800
+                  default: 3600
+                  description: |
+                    How long the previous login role stays accepted after
+                    the rotation starts, in whole seconds; one hour when
+                    omitted.
+      responses:
+        "202":
+          description: Rotation accepted; attach to the returned run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The database is not provisioned yet
+            (`database_not_provisioned`), the previous login role of an
+            earlier rotation is still retiring (`rotation_in_flight`), or
+            another run is in flight for the environment (`run_in_flight`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/environments/{id}/databases/{key}/credentials/reveal:
     parameters:

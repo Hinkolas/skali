@@ -145,12 +145,70 @@ and measured size. The exporter figures are the primary's view: replica
 reads are not observed. `skali database show <name>` prints the same
 instances and databases.
 
+## Credential rotation
+
+`skali database rotate <key>` (or the database's "Rotate credentials"
+button in the Studio) issues new credentials for one database without
+touching its data. The rotation is a journaled run of kind `rotation` and
+needs `maintain` on the environment and a recent login, like a reveal.
+
+A PostgreSQL role holds one password and ownership cannot be shared, so
+the overlap a rotation needs comes from two login roles under one owner.
+The role a database is provisioned with is its owner: it owns the logical
+database and everything the application creates in it. From the first
+rotation on it never logs in again; login roles named after the credential
+version (`<owner>_v2`, `<owner>_v3`, ...) alternate as its members, and
+every session of a login role acts as the owner, so tables the application
+creates still belong to the owner, migrations keep their privileges, and a
+retired login role is dropped without leaving anything behind. The
+`username` output changes with every rotation: read it from the outputs,
+never pin it.
+
+What happens, in order:
+
+1. The pool creates the next login role with a new password and accepts
+   both: the new one and the one it replaces.
+2. The environment's outputs carry the new username and password and the
+   credential version advances, so exactly the applications referencing
+   the database restart with them (`blue-green` brings up the new color
+   before the switch, `rolling` rolls). The run succeeds once every
+   consumer runs only with the new credentials.
+3. After the overlap window the previous login role is retired for good:
+   its open sessions are terminated and the role is dropped (the owner
+   role keeps its ownership and loses its login after the first rotation).
+   The retirement happens on the platform's own clock, whether or not the
+   run succeeded.
+
+`--retire-after` sets the window (`1h` by default, `1m` at least, `7d` at
+most). It must cover the consumer restart; `1m` is the setting for a
+password known to be leaked: until the consumers have restarted, new
+connections from pods still holding the old credentials may already be
+refused. Rotating again inside the window retires the older login role at
+once; there is never more than one previous login role.
+
+Only pods started after the rotation hold the new credentials. Anything
+that fetched them earlier must fetch them again: a `skali dev` host run
+picks them up at its next start, and a copy taken through "Reveal
+credentials" is simply stale. A backup or restore Job created before the
+rotation and still running when the window ends loses its session; the
+run fails and can be re-run.
+
+Rotation and restore exclude each other through the environment's run
+slot: one waits for the other. A restore runs as the current login role
+acting as the owner, so it drops and recreates the database's objects
+exactly as before. The connection projection (the Studio's connection
+panel, the connection API) shows the credential version and, inside a
+window, the instant the previous login role retires.
+
+Object storage rotates the same way, with a keypair instead of a login
+role; see [buckets.md](buckets.md#credential-rotation).
+
 ## Deleting a database
 
 Removing a database from the definition is a destructive change: the plan
 marks it, deploy requires explicit confirmation, and teardown drops the
-logical database and its credentials. Dedicated and project pools are
-removed with their last database; the shared pool remains.
+logical database, its credentials and its roles. Dedicated and project
+pools are removed with their last database; the shared pool remains.
 
 Object storage works the same way through the `buckets:` collection; see
 [buckets.md](buckets.md).

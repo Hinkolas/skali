@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/pgtune"
 	"github.com/Hinkolas/skali/internal/utils"
 )
@@ -25,15 +27,164 @@ import (
 func newDatabaseCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:               "database",
-		Short:             "Inspect and tune the managed database pools",
+		Short:             "Operate the managed databases and their pools",
 		ValidArgsFunction: cobra.NoFileCompletions,
-		Long: "Managed PostgreSQL pools and their tuning. Every pool runs a parameter\n" +
-			"set derived from its memory budget (automatic from the smallest\n" +
-			"database node, or set explicitly) with per-parameter overrides on top.\n" +
-			"Admin only.",
+		Long: "Managed PostgreSQL databases and the pools they run on. `rotate` acts\n" +
+			"on one database of an environment, declared in skali.yml. `list`,\n" +
+			"`show` and `set` inspect and tune the pools: every pool runs a\n" +
+			"parameter set derived from its memory budget (automatic from the\n" +
+			"smallest database node, or set explicitly) with per-parameter\n" +
+			"overrides on top; those three are admin only.",
 	}
-	command.AddCommand(newDatabaseListCommand(), newDatabaseShowCommand(), newDatabaseSetCommand())
+	command.AddCommand(newDatabaseRotateCommand(), newDatabaseListCommand(), newDatabaseShowCommand(), newDatabaseSetCommand())
 	return command
+}
+
+func newDatabaseRotateCommand() *cobra.Command {
+	var (
+		environment string
+		remote      string
+		retireAfter string
+		detach      bool
+		yes         bool
+	)
+	command := &cobra.Command{
+		Use:   "rotate <database>",
+		Short: "Issue new credentials for a database and retire the current ones",
+		Long: "Issues a new login role for the database named by its manifest key. The\n" +
+			"pool accepts both roles, the applications referencing the database\n" +
+			"restart with the new username and password, and after the overlap\n" +
+			"window the previous login role is retired for good: its open sessions\n" +
+			"are terminated and the role is dropped (1h by default, 1m for a\n" +
+			"password known to be leaked, 7d at most). The database and everything\n" +
+			"in it stay owned by the owner role the login roles act as, so\n" +
+			"migrations and restores are unaffected. Processes holding the old\n" +
+			"credentials outside the cluster (skali dev host runs, anyone who\n" +
+			"revealed them) must fetch them again. Rotating again inside the window\n" +
+			"retires the older login role at once.\n\n" +
+			"The run streams like a deploy and succeeds once every consumer runs\n" +
+			"with the new credentials; the previous login role retires on schedule\n" +
+			"either way. Needs maintain on the environment and a recent login.",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeDatabaseArg,
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
+			out := command.OutOrStdout()
+			style := clirender.StyleFor(out)
+			in := bufio.NewReader(command.InOrStdin())
+			window, err := parseRetireAfter(retireAfter)
+			if err != nil {
+				return fmt.Errorf("--retire-after %q: %w", retireAfter, err)
+			}
+			start, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			target, err := resolveQueryTarget(ctx, start, environment, remote)
+			if err != nil {
+				return err
+			}
+			key := args[0]
+			printHeader(out, style,
+				headerRow{"remote", target.remoteName, target.master},
+				headerRow{"project", target.project, ""},
+				headerRow{"environment", target.environment, ""},
+				headerRow{"database", key, "previous login role retires after " + describeWindow(window)})
+			if !yes {
+				confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
+					Title: fmt.Sprintf("Rotate the credentials of database %s in %s?", key, target.environment),
+					Description: fmt.Sprintf("A new login role is issued and the applications using databases.%s restart "+
+						"with it. Connections opened with the current credentials keep working for %s; then they are "+
+						"terminated and the role is dropped.", key, describeWindow(window)),
+					Default: true,
+				})
+				if err != nil {
+					return confirmError(err)
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
+			}
+			seconds := int64(window / time.Second)
+			runID, err := target.api.RotateDatabaseCredentials(ctx, target.environmentID, key, seconds)
+			if isReauthRequired(err) {
+				if err = reauthSession(ctx, out, in, target.api); err != nil {
+					return err
+				}
+				runID, err = target.api.RotateDatabaseCredentials(ctx, target.environmentID, key, seconds)
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s %s  rotate the credentials of databases.%s in %s\n", style.Dim("run"),
+				style.Bold(runID), key, target.environment)
+			if detach {
+				fmt.Fprintf(out, "the rotation continues on the server; attach with: %s\n", runAttachHint(remote, runID))
+				return nil
+			}
+			outcome, err := attachRun(ctx, out, target.api, runID, remote)
+			if err != nil {
+				return err
+			}
+			switch outcome.Status {
+			case "succeeded":
+				detail := ""
+				if connection, err := target.api.DatabaseConnection(ctx, target.environmentID, key); err == nil {
+					detail = fmt.Sprintf("  credentials v%d", connection.CredentialVersion)
+					if connection.CredentialRetireAt != nil {
+						detail += " · previous login role retires at " + connection.CredentialRetireAt.Local().Format("2006-01-02 15:04")
+					}
+				}
+				fmt.Fprintf(out, "\n%s%s%s\n", style.Check(), style.Bold(style.Green("credentials rotated")), detail)
+				return nil
+			case "failed":
+				return fmt.Errorf("%w; the new credentials stand and the previous login role retires on schedule",
+					failedRunError(runID, outcome.Failure))
+			case "cancelled":
+				return fmt.Errorf("run %s was cancelled; the new credentials stand and the previous login role retires on schedule", runID)
+			default:
+				return nil
+			}
+		},
+	}
+	command.Flags().StringVar(&environment, "environment", "", "environment holding the database; defaults to the checkout binding")
+	command.Flags().StringVar(&remote, "remote", "",
+		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
+	command.Flags().StringVar(&retireAfter, "retire-after", "1h",
+		"how long the previous login role stays accepted, such as 30m, 1h, or 2d (at least 1m, at most 7d)")
+	command.Flags().BoolVar(&detach, "detach", false, "start the rotation and return without following it")
+	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
+	return command
+}
+
+// completeDatabaseArg completes the manifest's database keys as the sole
+// positional, read without compiling so a half-edited manifest still
+// completes what it declares.
+func completeDatabaseArg(_ *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return noCompletions()
+	}
+	var values []cobra.Completion
+	for _, key := range utils.SortedKeys(manifestDatabases()) {
+		values = append(values, cobra.Completion(key))
+	}
+	return filterCompletions(values, toComplete)
+}
+
+func manifestDatabases() map[string]manifest.Database {
+	start, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	path, err := manifest.Discover("", start)
+	if err != nil {
+		return nil
+	}
+	document, err := manifest.ParseFile(path)
+	if err != nil {
+		return nil
+	}
+	return document.Project.Databases
 }
 
 func newDatabaseListCommand() *cobra.Command {

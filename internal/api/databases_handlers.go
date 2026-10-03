@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/rotation"
 )
 
 // databasesHandlers serves database-service connection projections. The
@@ -22,6 +24,8 @@ type databasesHandlers struct {
 	// secrets reads one Secret's data; nil without a cluster (API-only),
 	// which disables reveal.
 	secrets func(ctx context.Context, namespace, name string) (map[string][]byte, error)
+	// rotation accepts credential rotations; nil hides the route.
+	rotation *rotation.Controller
 }
 
 type databaseConnectionPayload struct {
@@ -35,6 +39,9 @@ type databaseConnectionPayload struct {
 	Port              int32  `json:"port,omitempty"`
 	Database          string `json:"database,omitempty"`
 	CredentialVersion int64  `json:"credential_version,omitempty"`
+	// CredentialRetireAt is set while a rotation's previous login role is
+	// still accepted: the instant it retires.
+	CredentialRetireAt *time.Time `json:"credential_retire_at,omitempty"`
 }
 
 type databaseCredentialsPayload struct {
@@ -71,8 +78,17 @@ func (h *databasesHandlers) connection(w http.ResponseWriter, r *http.Request) {
 		payload.Port = tenant.Port
 		payload.Database = tenant.DatabaseName
 		payload.CredentialVersion = tenant.CredentialVersion
+		if tenant.PreviousLoginRole != nil {
+			payload.CredentialRetireAt = tenant.CredentialRetireAt
+		}
 	}
 	writeJSON(w, http.StatusOK, payload)
+}
+
+// POST /v1/environments/{id}/databases/{key}/credentials/rotate: issue a
+// new login role as a journaled run of kind rotation; see rotate.
+func (h *databasesHandlers) rotate(w http.ResponseWriter, r *http.Request) {
+	rotate(h.rotation, rotation.CollectionDatabases, w, r)
 }
 
 func (h *databasesHandlers) reveal(w http.ResponseWriter, r *http.Request) {

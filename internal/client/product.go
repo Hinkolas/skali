@@ -1202,6 +1202,49 @@ func (c *Client) PutDatabasePoolSettings(ctx context.Context, name string, input
 	return &res.Pool, nil
 }
 
+// DatabaseConnection is a database's published connection data: the
+// in-cluster host, port and database name, and the credential version
+// consumers see; never a credential value.
+type DatabaseConnection struct {
+	Service           string `json:"service"`
+	Phase             string `json:"phase"`
+	Engine            string `json:"engine"`
+	Major             int32  `json:"major"`
+	Isolation         string `json:"isolation"`
+	Availability      string `json:"availability"`
+	Host              string `json:"host,omitempty"`
+	Port              int32  `json:"port,omitempty"`
+	Database          string `json:"database,omitempty"`
+	CredentialVersion int64  `json:"credential_version,omitempty"`
+	// CredentialRetireAt is set while a rotation's previous login role is
+	// still accepted: the instant it retires.
+	CredentialRetireAt *time.Time `json:"credential_retire_at,omitempty"`
+}
+
+func (c *Client) DatabaseConnection(ctx context.Context, environmentID, key string) (*DatabaseConnection, error) {
+	var res DatabaseConnection
+	if err := c.do(ctx, http.MethodGet, "/v1/environments/"+environmentID+"/databases/"+url.PathEscape(key)+"/connection", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// RotateDatabaseCredentials issues a new login role for the database
+// service as a journaled run (POST .../credentials/rotate) and returns the
+// run id; the previous login role stays accepted for retireAfterSeconds.
+// Sudo-gated.
+func (c *Client) RotateDatabaseCredentials(ctx context.Context, environmentID, key string, retireAfterSeconds int64) (string, error) {
+	var res struct {
+		RunID string `json:"run_id"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/databases/"+url.PathEscape(key)+"/credentials/rotate",
+		map[string]int64{"retire_after_seconds": retireAfterSeconds}, &res)
+	if err != nil {
+		return "", err
+	}
+	return res.RunID, nil
+}
+
 // BucketConnection is a bucket's published connection data: the endpoint
 // consumers sign against (its route's origin, or the in-cluster gateway),
 // the allocated bucket name, and the region.

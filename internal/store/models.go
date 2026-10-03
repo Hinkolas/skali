@@ -207,17 +207,23 @@ type DatabasePlacement struct {
 }
 
 type DatabaseTenant struct {
-	ID                uuid.UUID
-	ClaimID           uuid.UUID
-	ClusterID         uuid.UUID
-	DatabaseName      string
-	RoleName          string
-	CredentialSecret  string
-	CredentialVersion int64
-	Host              string
-	Port              int32
-	CreatedAt         time.Time
-	ReleasedAt        *time.Time
+	ID                       uuid.UUID
+	ClaimID                  uuid.UUID
+	ClusterID                uuid.UUID
+	DatabaseName             string
+	RoleName                 string
+	CredentialSecret         string
+	CredentialVersion        int64
+	Host                     string
+	Port                     int32
+	CreatedAt                time.Time
+	ReleasedAt               *time.Time
+	LoginRole                string
+	PendingLoginRole         *string
+	PendingCredentialSecret  *string
+	PreviousLoginRole        *string
+	PreviousCredentialSecret *string
+	CredentialRetireAt       *time.Time
 }
 
 type DefinitionVersion struct {

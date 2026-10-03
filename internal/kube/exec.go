@@ -3,6 +3,7 @@ package kube
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -78,11 +79,17 @@ func (c *Client) execExecutor(req *rest.Request) (remotecommand.Executor, error)
 	return exec, nil
 }
 
+// ErrNoReadyPod reports that no running, ready pod matched an exec
+// selector; callers that wait out a restart or failover match on it.
+var ErrNoReadyPod = errors.New("kube: no ready pod matches")
+
 // ExecInPod runs one command in the first ready pod matching the selector
 // and returns its stdout. The exec subresource rides the API server like
 // everything else skalid does. Built for the object store's identity
 // administration (`weed shell s3.configure`): SeaweedFS applies identity
-// changes through the filer's admin channel, not file writes.
+// changes through the filer's admin channel, not file writes. The
+// database substrate uses it the same way for the one role setting CNPG
+// cannot express (`psql` over the instance's local socket).
 func (c *Client) ExecInPod(ctx context.Context, namespace, selector, container string, command []string) (string, error) {
 	pods, err := c.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
@@ -104,7 +111,7 @@ func (c *Client) ExecInPod(ctx context.Context, namespace, selector, container s
 		}
 	}
 	if pod == "" {
-		return "", fmt.Errorf("kube: no ready pod matches %s in %s", selector, namespace)
+		return "", fmt.Errorf("%w: %s in %s", ErrNoReadyPod, selector, namespace)
 	}
 
 	req := c.Clientset.CoreV1().RESTClient().Post().
