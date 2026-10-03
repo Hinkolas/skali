@@ -231,10 +231,18 @@ func TestLiveBucketCredentialRotation(t *testing.T) {
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, `UPDATE bucket_allocations SET credential_retire_at = now() - interval '1 second' WHERE id = $1`, files.ID)
 	require.NoError(t, err)
-	require.Zero(t, controller.queue.Len())
+	// No worker loop runs here, so the queue still holds what earlier
+	// passes enqueued; drain it to see exactly what the probe adds.
+	for controller.queue.Len() > 0 {
+		key, _ := controller.queue.Get()
+		controller.queue.Done(key)
+	}
 	_, err = controller.SeaweedProbe()(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, controller.queue.Len(), "the probe wakes the worker for a passed instant")
+	woken, _ := controller.queue.Get()
+	controller.queue.Done(woken)
+	require.Equal(t, workKey{kind: workBucket, id: claimRow.ID}, woken)
 	pass()
 	require.Equal(t, []string{rotation.AccessKey}, identityKeys(), "the previous keypair is retired")
 	retired := readSecret()
