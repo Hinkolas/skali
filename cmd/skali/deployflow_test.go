@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -557,6 +558,19 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 		case sub == "backups" && r.Method == http.MethodPost:
 			f.posts = append(f.posts, "backup:"+env.ID)
 			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-backup-1", "backup_id": "snap-1"})
+		case sub == "buckets" && len(parts) == 5 && parts[3] == "credentials" && parts[4] == "rotate":
+			if !gate(w) {
+				return
+			}
+			var req map[string]int64
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.posts = append(f.posts, fmt.Sprintf("rotate:%s:%s:%d", env.ID, parts[2], req["retire_after_seconds"]))
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-rotate-1"})
+		case sub == "buckets" && len(parts) == 4 && parts[3] == "connection":
+			retireAt := time.Date(2026, 10, 3, 15, 4, 0, 0, time.UTC)
+			_ = json.NewEncoder(w).Encode(client.BucketConnection{Service: "buckets." + parts[2], Phase: "provisioned",
+				Endpoint: "http://s3", Bucket: "b-" + parts[2], CredentialVersion: 2, CredentialRetireAt: &retireAt})
 		case sub == "access" && len(parts) == 3:
 			if !gate(w) {
 				return
