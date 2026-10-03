@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import type { ServiceView } from '$lib/models/service';
 	import type { Project } from '$lib/types/project';
-	import { SERVICE_TABS } from '$lib/navigation';
+	import { SERVICE_TABS, shipped } from '$lib/navigation';
 	import { withEnv } from '$lib/urls';
 
 	let { project, service }: { project: Project; service: ServiceView } = $props();
@@ -28,7 +28,7 @@
 	aria-label="Service"
 	class="border-border-default -mx-4 mb-6 flex items-center gap-1 overflow-x-auto overflow-y-hidden border-b px-1 [scrollbar-width:none]"
 >
-	{#each SERVICE_TABS[service.type] as tab (tab.slug)}
+	{#each shipped(SERVICE_TABS[service.type]) as tab (tab.slug)}
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
 		{@const active = tab.slug ? pathname.startsWith(path) : pathname === base}
 		{@const Icon = tab.icon}

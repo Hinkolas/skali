@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { ORG_NAV } from '$lib/navigation';
+	import { ORG_NAV, shipped } from '$lib/navigation';
 	import NavItem from './NavItem.svelte';
 	import NavSection from './NavSection.svelte';
 
@@ -15,7 +15,7 @@
 	const groups = $derived(
 		ORG_NAV.map((group) => ({
 			...group,
-			items: group.items.filter((item) => !item.adminOnly || isAdmin)
+			items: shipped(group.items).filter((item) => !item.adminOnly || isAdmin)
 		})).filter((group) => group.items.length > 0)
 	);
 </script>

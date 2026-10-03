@@ -35,8 +35,8 @@ Working and used daily:
 - Metrics: cpu/mem per node and per service, storage per node and per
   project (volumes, databases, objects, temporary), in the API and Studio.
 - Studio on real APIs: projects, services, deployments, runs (cancel,
-  redeploy, promote), metrics, values, users, nodes, account/2FA; every
-  other tab is an honest placeholder.
+  redeploy, promote), metrics, values, users, nodes, account/2FA; pages
+  that have not been built are hidden until they are.
 - Agent skill (`skali skill install`, references served at the target's
   release by `skali skill read`), kept in step with the compiler by tests.
 - Release plumbing: goreleaser, `install.sh`, published images, prerelease
@@ -110,20 +110,24 @@ The goal of this block: I can put a paying workload on skali and sleep.
 
 ## 2. Studio catch-up
 
-Make the Studio honest: every tab is real or gone.
+Make the Studio honest: every tab is real or gone. Unbuilt pages stay
+listed as `planned` in `studio/src/lib/navigation.ts` and appear once their
+route exists.
 
-- [ ] Service logs, environment (resolved values), domains, and deployments
-      detail on the existing APIs. Deployments are real; logs, environment,
-      and domains are placeholders.
+- [ ] Service logs, environment (resolved values), and deployments detail
+      on the existing APIs. Deployments are real; logs and environment are
+      not built yet.
 - [ ] Project activity from runs; environment overview with health, active
       revision, pending changes.
 - [ ] Dashboard and system pages from observation and node data (what the
-      CLI already knows).
+      CLI already knows). The dashboard replaces the projects list as the
+      Studio's home page once it ships.
 - [x] Backups page (targets, list, trigger, restore, delete).
 - [ ] Domains and certificates overview.
 - [x] Remove or hide until real: the service graph mock and the access
-      tokens control are gone; scaling, alerts, and the rest are honest
-      placeholders. Left: the sidebar collapse toast.
+      tokens control are gone, and every unbuilt page (dashboard, alerts,
+      service graph, activity, logs, scaling, and the rest) is hidden from
+      navigation and answers 404 until it ships.
 - [ ] Web terminal (exec) and rollback from the Studio. Run cancel,
       redeploy, and promote are done.
 - [x] Decided: the Studio is a status and operations surface; `skali.yaml`
