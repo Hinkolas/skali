@@ -56,7 +56,7 @@ func (c *Controller) process(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return c.failRow(ctx, row.ID, fmt.Sprintf("build redactor: %v", err))
 	}
-	scope := &runScope{journal: c.deps.Journal, redactor: redactor, runID: *row.RunID}
+	scope := journal.NewScope(c.deps.Journal, redactor, *row.RunID)
 
 	switch row.Kind {
 	case KindBackup:
@@ -73,11 +73,11 @@ func (c *Controller) process(ctx context.Context, id uuid.UUID) error {
 		if errors.Is(err, errCancelled) {
 			status, message = journal.RunCancelled, "cancelled"
 		}
-		scope.finish(ctx, status, message)
+		scope.Finish(ctx, status, message)
 		c.cleanupJobs(ctx, &row)
 		return c.failRow(ctx, row.ID, message)
 	}
-	scope.finish(ctx, journal.RunSucceeded, "")
+	scope.Finish(ctx, journal.RunSucceeded, "")
 	c.cleanupJobs(ctx, &row)
 	if _, err := c.deps.Store.SetBackupStatus(ctx, store.SetBackupStatusParams{
 		ID: row.ID, ToStatus: StatusSucceeded, FromStatus: StatusRunning,
@@ -124,13 +124,13 @@ func (c *Controller) workerImageFor(ctx context.Context, bctx *backupContext) (s
 
 // executeBackup drives one snapshot: target check, every component in
 // deterministic order, then the manifest write that certifies completion.
-func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *store.Backup) error {
+func (c *Controller) executeBackup(ctx context.Context, scope *journal.Scope, row *store.Backup) error {
 	credentials, err := c.deps.Targets.credentials(ctx, DefaultTargetName)
 	if err != nil {
 		return err
 	}
 	bctx := &backupContext{row: row, credentials: credentials, snapshotID: row.ID.String()}
-	if err := scope.step(ctx, "target", "Check backup target", func(ctx context.Context, log *stepLog) error {
+	if err := scope.Step(ctx, "target", "Check backup target", func(ctx context.Context, log *journal.StepLog) error {
 		bctx.target, err = c.openStore(targetLocation(credentials))
 		if err != nil {
 			return err
@@ -153,7 +153,7 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 		revisionDoc *revision.Revision
 		components  []Component
 	)
-	if err := scope.step(ctx, "plan", "Plan snapshot contents", func(ctx context.Context, log *stepLog) error {
+	if err := scope.Step(ctx, "plan", "Plan snapshot contents", func(ctx context.Context, log *journal.StepLog) error {
 		if row.RevisionID == nil {
 			return errors.New("row carries no revision")
 		}
@@ -175,7 +175,7 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 	}
 
 	for i := range components {
-		if scope.cancelled(ctx) {
+		if scope.Cancelled(ctx) {
 			return errCancelled
 		}
 		component := &components[i]
@@ -197,7 +197,7 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 		Strategy:         row.Strategy,
 		Components:       components,
 	}
-	if err := scope.step(ctx, "manifest", "Write snapshot manifest", func(ctx context.Context, log *stepLog) error {
+	if err := scope.Step(ctx, "manifest", "Write snapshot manifest", func(ctx context.Context, log *journal.StepLog) error {
 		revisionJSON, err := json.Marshal(revisionDoc)
 		if err != nil {
 			return fmt.Errorf("encode revision: %w", err)
@@ -236,7 +236,7 @@ func (c *Controller) executeBackup(ctx context.Context, scope *runScope, row *st
 	// force when the run was accepted. A failure here fails the run so it
 	// is seen, and the next scheduled run sweeps again.
 	retention := time.Duration(row.RetentionSeconds) * time.Second
-	return scope.step(ctx, "retention", "Apply retention", func(ctx context.Context, log *stepLog) error {
+	return scope.Step(ctx, "retention", "Apply retention", func(ctx context.Context, log *journal.StepLog) error {
 		return c.applyRetention(ctx, log, bctx, retention, manifest.CreatedAt)
 	})
 }
@@ -261,22 +261,22 @@ func planComponents(definition *compiler.ProjectDefinition) []Component {
 	return components
 }
 
-func (c *Controller) backupComponent(ctx context.Context, scope *runScope, bctx *backupContext, component *Component) error {
+func (c *Controller) backupComponent(ctx context.Context, scope *journal.Scope, bctx *backupContext, component *Component) error {
 	label := componentLabel(*component)
 	switch component.Kind {
 	case ComponentBucket:
 		title := "Back up bucket " + component.ServiceKey
-		return scope.step(ctx, label, title, func(ctx context.Context, log *stepLog) error {
+		return scope.Step(ctx, label, title, func(ctx context.Context, log *journal.StepLog) error {
 			return c.backupBucket(ctx, log, bctx, component)
 		})
 	case ComponentDatabase:
 		title := "Back up database " + component.ServiceKey
-		return scope.step(ctx, label, title, func(ctx context.Context, log *stepLog) error {
+		return scope.Step(ctx, label, title, func(ctx context.Context, log *journal.StepLog) error {
 			return c.backupDatabase(ctx, log, bctx, component)
 		})
 	default:
 		title := fmt.Sprintf("Back up volume %s of %s", component.Volume, component.Application)
-		return scope.step(ctx, label, title, func(ctx context.Context, log *stepLog) error {
+		return scope.Step(ctx, label, title, func(ctx context.Context, log *journal.StepLog) error {
 			return c.backupVolume(ctx, log, bctx, component)
 		})
 	}
@@ -286,7 +286,7 @@ func (c *Controller) backupComponent(ctx context.Context, scope *runScope, bctx 
 // included, into the target under the snapshot's bucket prefix. The read
 // side is the platform identity: a bucket that is full (read-only for its
 // own identity) or fenced still backs up.
-func (c *Controller) backupBucket(ctx context.Context, log *stepLog, bctx *backupContext, component *Component) error {
+func (c *Controller) backupBucket(ctx context.Context, log *journal.StepLog, bctx *backupContext, component *Component) error {
 	row, target := bctx.row, bctx.target
 	source, bucketName, err := c.openBucket(ctx, row.EnvironmentID, component.ServiceKey)
 	if err != nil {
@@ -345,7 +345,7 @@ func (c *Controller) openServiceBucket(ctx context.Context, environmentID uuid.U
 // namespace: the pool's own pinned postgres image runs pg_dump into an
 // emptyDir, the worker container uploads the dump with its sha256. Bulk
 // bytes never transit the daemon.
-func (c *Controller) backupDatabase(ctx context.Context, log *stepLog, bctx *backupContext, component *Component) error {
+func (c *Controller) backupDatabase(ctx context.Context, log *journal.StepLog, bctx *backupContext, component *Component) error {
 	row := bctx.row
 	identity, err := c.databaseIdentity(ctx, row.EnvironmentID, component.ServiceKey)
 	if err != nil {
@@ -405,7 +405,7 @@ func (c *Controller) databaseIdentity(ctx context.Context, environmentID uuid.UU
 // backupVolume archives one application volume through a Job in the
 // environment namespace. The PVC mount is read-only and the bound PV's
 // node affinity co-schedules the Job with the data.
-func (c *Controller) backupVolume(ctx context.Context, log *stepLog, bctx *backupContext, component *Component) error {
+func (c *Controller) backupVolume(ctx context.Context, log *journal.StepLog, bctx *backupContext, component *Component) error {
 	row := bctx.row
 	workerImage, err := c.workerImageFor(ctx, bctx)
 	if err != nil {
