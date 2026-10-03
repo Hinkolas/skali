@@ -96,6 +96,21 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   snapshot for good. Restore and remove need `maintain` on the environment
   and a recent login.
 
+## Buckets
+
+- `skali bucket rotate <key> [--environment <name>] [--retire-after 1h]`
+  issues a new S3 keypair for the bucket declared as `buckets.<key>`
+  (environment maintain, recent login). The store accepts both keypairs,
+  the applications referencing the bucket restart with the new one (the
+  run streams like a deploy and succeeds once they all run with it), and
+  after the window the previous keypair is retired: requests and presigned
+  URLs signed with it fail from then on, so the window must cover the
+  longest URL the application issues (`1m` at least for a leaked key, `7d`
+  at most). Processes holding the old keypair outside the cluster (`skali
+  dev` host runs, a revealed copy) must fetch it again. Rotating again
+  inside the window retires the older keypair at once; a bucket a restore
+  is rewriting cannot be rotated until the restore finishes.
+
 ## Routes
 
 - `skali route list` shows each route of the environment with its URL,

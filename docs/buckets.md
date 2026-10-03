@@ -315,10 +315,57 @@ The quota flag is lifted for the restore's own writes and re-evaluated by
 the next probe. When the bucket is restored the identity comes back with
 its unchanged keypair: URLs signed before the restore work again from that
 moment, because the key that signed them is the same key. Only a
-credential rotation retires them for good. A restore that fails leaves the
-environment down and the bucket fenced on purpose; re-running the restore
-is the way forward, and a deploy that brings the environment back instead
-finds the fence lifted within one probe interval.
+[credential rotation](#credential-rotation) retires them for good. A
+restore that fails leaves the environment down and the bucket fenced on
+purpose; re-running the restore is the way forward, and a deploy that
+brings the environment back instead finds the fence lifted within one
+probe interval.
+
+## Credential rotation
+
+`skali bucket rotate <key>` (or the bucket's "Rotate keypair" button in
+the Studio) issues a new keypair for one bucket without touching its
+data. The rotation is a journaled run of kind `rotation` and needs
+`maintain` on the environment and a recent login, like a reveal. What
+happens, in order:
+
+1. A new keypair is issued and the store accepts both: the new one and
+   the one it replaces.
+2. The environment's outputs carry the new keypair and the credential
+   version advances, so exactly the applications referencing the bucket
+   restart with it (`blue-green` brings up the new color before the
+   switch, `rolling` rolls). The run succeeds once every consumer runs
+   only with the new keypair.
+3. After the overlap window the previous keypair is retired for good.
+   Requests signed with it, including every presigned URL it signed, fail
+   from that instant on. The retirement happens on the platform's own
+   clock, whether or not the run succeeded.
+
+`--retire-after` sets the window (`1h` by default, `1m` at least, `7d` at
+most, the presign maximum). It must cover the consumer restart plus the
+longest URL the application issues; an application that signs day-long
+download links needs a day-long window. `1m` is the setting for a key
+known to be leaked: until the consumers have restarted, requests they sign
+with the old keypair may already be refused. Rotating again inside the
+window retires the older keypair at once; there is never more than one
+previous keypair.
+
+Only pods started after the rotation hold the new keypair. Anything that
+fetched the keypair earlier must fetch it again: a `skali dev` host run
+picks it up at its next start, and a copy taken through "Reveal keypair"
+is simply stale.
+
+Rotation and restore exclude each other: a bucket a restore is rewriting
+cannot be rotated until the restore has finished (`bucket_fenced`), and a
+restore started inside a window brings back both keypairs when it lifts
+the fence, with the retirement still on schedule. The connection
+projection (the Studio's connection panel, the connection API) shows the
+credential version and, inside a window, the instant the previous keypair
+retires.
+
+Database credentials cannot be rotated this way yet: a PostgreSQL role has
+one password, so there is no overlap to rotate through. That is tracked
+separately.
 
 ## Deleting a bucket
 

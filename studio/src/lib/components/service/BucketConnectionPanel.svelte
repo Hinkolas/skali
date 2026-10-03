@@ -13,9 +13,14 @@
 	import RevealCredentialsModal, {
 		modalOptions as revealModalOptions
 	} from './RevealCredentialsModal.svelte';
+	import RotateCredentialsModal, {
+		modalOptions as rotateModalOptions
+	} from './RotateCredentialsModal.svelte';
+	import { formatDateTime } from '$lib/format';
 
 	// How to reach the bucket over S3: endpoint, bucket name, and region as
-	// copy fields, the keypair behind a sudo-gated one-time reveal.
+	// copy fields, the keypair behind a sudo-gated one-time reveal, and a
+	// rotation that issues a new one.
 	let {
 		service,
 		connection,
@@ -28,12 +33,22 @@
 
 	let revealing = $state(false);
 
-	// Credentials are configuration: maintain on the environment reveals them.
+	// Credentials are configuration: maintain on the environment reveals
+	// and rotates them.
 	const env = $derived(page.data.env as Environment | null);
 	const mayReveal = $derived(roleAtLeast(env?.access, 'maintain'));
 	const revealTitle = $derived(
 		mayReveal ? undefined : requiredTitle('maintain', 'environment', env?.name ?? '')
 	);
+
+	function rotate() {
+		if (!envId) return;
+		modal.open(
+			RotateCredentialsModal,
+			{ envId, serviceKey: service.key, serviceName: service.name },
+			rotateModalOptions
+		);
+	}
 
 	async function reveal() {
 		if (!envId) return;
@@ -66,7 +81,15 @@
 <Card class="flex flex-col p-5">
 	<div class="mb-4 flex items-center gap-2.5">
 		<h3 class="text-text-primary text-xl font-semibold">S3 connection</h3>
-		<div class="ml-auto">
+		<div class="ml-auto flex items-center gap-2">
+			<Button
+				size="sm"
+				disabled={!connection?.endpoint || !mayReveal}
+				title={revealTitle}
+				onclick={rotate}
+			>
+				Rotate keypair
+			</Button>
 			<Button
 				size="sm"
 				busy={revealing}
@@ -97,6 +120,18 @@
 					phase {connection?.phase ?? 'unknown'} · connection facts appear once the claim settles
 				</div>
 			</div>
+		</div>
+	{/if}
+	<!-- A rotation inside its overlap window: the previous keypair is still
+	     accepted until the instant shown; after it, only the current one. -->
+	{#if connection?.credential_retire_at}
+		<div class="border-border-subtle mt-4 flex items-center gap-2.5 border-t pt-3.5">
+			<span class="text-text-muted text-md">Rotation</span>
+			<span class="font-mono text-text-faint text-sm">
+				credentials v{connection.credential_version ?? '?'} · previous key retires {formatDateTime(
+					connection.credential_retire_at
+				)}
+			</span>
 		</div>
 	{/if}
 	<!-- Visibility is set in skali.yaml; the footer states what it means for
