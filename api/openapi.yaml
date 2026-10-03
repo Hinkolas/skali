@@ -152,6 +152,93 @@ paths:
                     type: string
                     format: uuid
 
+  /openapi.yaml:
+    get:
+      operationId: openAPISpec
+      summary: This specification
+      description: |
+        Serves this document as the running daemon embeds it, so a client
+        reads the API of the release it talks to. Public, and outside `/v1`
+        like `/healthz`, so no client version is refused.
+      security: []
+      tags: [status]
+      responses:
+        "200":
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /token:
+    get:
+      operationId: registryToken
+      summary: Registry bearer token
+      description: |
+        The token realm of the cluster registry, following the Docker
+        registry token authentication protocol; the registry domain routes
+        `/token` here. Registered only on production installations, where a
+        signing key is configured.
+
+        Credentials arrive as HTTP Basic: a user's session token as the
+        password (any username), or the node user `skali-node` with the
+        node secret. Each requested `scope` is narrowed to what the caller
+        holds (docs/permissions.md): release repositories
+        `skali/<project>/<app>` are pull and push for the project's
+        deployers and pull for its other members, the shared import cache
+        is pull and push for anyone who deploys somewhere, and nodes pull
+        only. Scopes the caller holds nothing on are left out of the token
+        rather than refused. Errors use the registry's `errors` envelope,
+        not the API's.
+      security:
+        - registryBasic: []
+      tags: [deployments]
+      parameters:
+        - name: service
+          in: query
+          required: true
+          description: The registry service name.
+          schema:
+            type: string
+            enum: [skali-registry]
+        - name: scope
+          in: query
+          required: false
+          description: A requested scope, `repository:<name>:<actions>`; repeatable.
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: A signed token valid for 15 minutes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, access_token, expires_in, issued_at]
+                properties:
+                  token: { type: string }
+                  access_token:
+                    type: string
+                    description: The same token, for OAuth-style clients.
+                  expires_in:
+                    type: integer
+                    description: Lifetime in seconds.
+                  issued_at:
+                    type: string
+                    format: date-time
+        "401":
+          description: Unknown service, missing or invalid credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegistryTokenError" }
+        "500":
+          description: The authorization check or token minting failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegistryTokenError" }
+
   /v1/auth/login:
     post:
       operationId: login
@@ -3932,6 +4019,10 @@ components:
       type: http
       scheme: bearer
       description: Opaque session token from login / 2FA verify.
+    registryBasic:
+      type: http
+      scheme: basic
+      description: Registry credentials for `/token`; a session token as the password, or the node user and secret.
 
   responses:
     BadRequest:
@@ -4123,9 +4214,9 @@ components:
       properties:
         role: { $ref: "#/components/schemas/AccessRole" }
         cell:
-          nullable: true
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/AccessRole"
+            - type: "null"
           description: The explicit per-environment role, null when the role is inherited.
 
     User:
@@ -4340,6 +4431,22 @@ components:
       required: [error]
       properties:
         error: { $ref: "#/components/schemas/ErrorDetail" }
+
+    RegistryTokenError:
+      type: object
+      description: The Docker registry error envelope, used only by `/token`.
+      required: [errors]
+      properties:
+        errors:
+          type: array
+          items:
+            type: object
+            required: [code, message]
+            properties:
+              code:
+                type: string
+                enum: [UNAUTHORIZED, UNAVAILABLE]
+              message: { type: string }
 
     Project:
       type: object
@@ -4894,7 +5001,9 @@ components:
         addresses:
           type: array
           items: { type: string }
-          description: One line per resolved address with its verdict, e.g. "203.0.113.10: answered by another server (HTTP 301 without Skali-Instance)".
+          description: >-
+            One line per resolved address with its verdict, e.g. "203.0.113.10:
+            answered by another server (HTTP 301 without Skali-Instance)".
         deferred:
           type: boolean
           description: >
@@ -5343,10 +5452,10 @@ components:
         key: { type: string }
         cpu_millicores:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         memory_bytes:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         edge:
           type: object
           description: |
@@ -5358,13 +5467,13 @@ components:
           properties:
             requests:
               type: array
-              items: { type: integer, nullable: true }
+              items: { type: [integer, "null"] }
             request_bytes:
               type: array
-              items: { type: integer, nullable: true }
+              items: { type: [integer, "null"] }
             response_bytes:
               type: array
-              items: { type: integer, nullable: true }
+              items: { type: [integer, "null"] }
 
     NodeMetrics:
       type: object
@@ -5397,10 +5506,10 @@ components:
               memory_allocatable_bytes: { type: integer }
               cpu_millicores:
                 type: array
-                items: { type: integer, nullable: true }
+                items: { type: [integer, "null"] }
               memory_bytes:
                 type: array
-                items: { type: integer, nullable: true }
+                items: { type: [integer, "null"] }
 
     NodesStorage:
       type: object
@@ -5476,7 +5585,7 @@ components:
               environment_id: { type: string, format: uuid }
               service_key: { type: string }
               kind: { type: string, enum: [volume, database, bucket, temporary] }
-              used_bytes: { type: integer, nullable: true }
+              used_bytes: { type: [integer, "null"] }
               capacity_bytes: { type: integer }
               sampled_at: { type: string, format: date-time }
 
@@ -5714,34 +5823,34 @@ components:
           items: { type: string, format: date-time }
         cpu_millicores:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         memory_bytes:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         connections:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         commits:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         rollbacks:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         blks_hit:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         blks_read:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         cache_hit_ratio:
           type: array
-          items: { type: number, nullable: true }
+          items: { type: [number, "null"] }
         database_bytes:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         instances_ready:
           type: array
-          items: { type: integer, nullable: true }
+          items: { type: [integer, "null"] }
         current:
           type: [object, "null"]
           description: The newest sample within the last minutes, with the denominators the Studio draws against.
