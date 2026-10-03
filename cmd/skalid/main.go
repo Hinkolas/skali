@@ -351,8 +351,9 @@ func runServe() error {
 			Enqueue: func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
 			Version: versionpkg.Version,
 		}, backup.Config{
-			WorkerImage: cfg.BackupWorkerImage,
-			JobTimeout:  cfg.BackupJobTimeout,
+			WorkerImage:     cfg.BackupWorkerImage,
+			JobTimeout:      cfg.BackupJobTimeout,
+			CopyConcurrency: cfg.BackupCopyConcurrency,
 		})
 		if err := backupCtl.RecoverOnBoot(ctx); err != nil {
 			return fmt.Errorf("recover backups: %w", err)

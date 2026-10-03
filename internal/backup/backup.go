@@ -306,7 +306,7 @@ func (c *Controller) backupBucket(ctx context.Context, log *journal.StepLog, bct
 
 	destinationPrefix := bucketPrefixKey(bctx.prefix(), row.ProjectName, row.EnvironmentName,
 		component.ServiceKey, bctx.snapshotID)
-	copied, copiedBytes, err := copyObjects(ctx, log, source, target, "", destinationPrefix, total)
+	copied, copiedBytes, err := copyObjects(ctx, log, source, target, "", destinationPrefix, total, c.copyOptions())
 	if err != nil {
 		return err
 	}

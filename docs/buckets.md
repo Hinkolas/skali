@@ -303,9 +303,21 @@ run as the platform's own S3 identity, so a bucket that is full (read-only
 for its application) still backs up, and a restore never depends on the
 application's keys.
 
+Objects copy with bounded concurrency, 16 at a time by default
+(`SKALI_BACKUP_COPY_CONCURRENCY` on the daemon; lower it for a target that
+throttles parallel requests). The copy is bound by round trips to the
+target rather than by bandwidth, so a bucket of many small objects moves
+in minutes instead of tens of minutes. A transient failure on one object (a
+server error, throttling, a dropped connection) is retried a few times
+with backoff before it fails the run; a denied or invalid request fails the
+run at once with the object's key in the error. A restore clears the live
+bucket with batched deletes before the copy back.
+
 A snapshot of a live bucket is loosely consistent: objects written or
-deleted while the copy runs may or may not be in it. Stop the environment
-first (a restore does) when an exact cut matters.
+deleted while the copy runs may or may not be in it. An object the listing
+named that is gone by the time the copy reaches it is skipped, and the run
+notes how many were skipped. Stop the environment first (a restore does)
+when an exact cut matters.
 
 A restore fences the bucket while it rewrites it. The bucket's own
 identity is deleted for the duration, so the application's mirrored keys

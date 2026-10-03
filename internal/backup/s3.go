@@ -36,6 +36,11 @@ type objectStore interface {
 	// RemovePrefix deletes every object under prefix (which must end in a
 	// slash) and returns how many it removed.
 	RemovePrefix(ctx context.Context, prefix string) (int64, error)
+	// RemoveAll deletes every object in the bucket and returns how many it
+	// removed. Only the restore's clear of a fenced service bucket uses it;
+	// RemovePrefix keeps refusing the empty prefix so nothing wipes the
+	// backup target by accident.
+	RemoveAll(ctx context.Context) (int64, error)
 	// Reachable verifies the bucket exists and answers.
 	Reachable(ctx context.Context) error
 }
@@ -251,13 +256,21 @@ func (s *minioStore) Remove(ctx context.Context, key string) error {
 	return nil
 }
 
-// RemovePrefix streams the listing into minio's bulk delete (1000 keys per
-// request). The error channel is drained fully: minio-go leaks the sender
-// otherwise.
 func (s *minioStore) RemovePrefix(ctx context.Context, prefix string) (int64, error) {
 	if err := checkRemovePrefix(prefix); err != nil {
 		return 0, err
 	}
+	return s.removeListing(ctx, prefix)
+}
+
+func (s *minioStore) RemoveAll(ctx context.Context) (int64, error) {
+	return s.removeListing(ctx, "")
+}
+
+// removeListing streams the listing under prefix into minio's bulk delete
+// (1000 keys per request). The error channel is drained fully: minio-go
+// leaks the sender otherwise.
+func (s *minioStore) removeListing(ctx context.Context, prefix string) (int64, error) {
 	objects := make(chan minio.ObjectInfo)
 	var listed int64
 	var listErr error
