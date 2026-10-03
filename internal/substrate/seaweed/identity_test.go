@@ -100,3 +100,50 @@ func TestSamePolicyIsStructural(t *testing.T) {
 	require.True(t, samePolicy("", ""))
 	require.False(t, samePolicy(`{"Version":"1"}`, `{"Version":"2012-10-17"}`))
 }
+
+// A rotation's overlap adds the new keypair beside the old one without
+// touching it; retiring is the explicit delete of exactly the dropped key.
+// Settled ignores the order the engine lists keypairs in.
+func TestEnsureIdentityRotatesKeypairs(t *testing.T) {
+	t.Parallel()
+	actions := BucketActions("b-files-1")
+	doer := &recordingDoer{identities: IdentityConfig{Identities: []Identity{{
+		Name:        "b-files-1",
+		Credentials: []Credential{{AccessKey: "AKOLD", SecretKey: "SKOLD"}},
+		Actions:     actions,
+	}}}}
+	client := NewClient(doer, "skali-platform")
+	client.SetFilerTarget("app=seaweed", "seaweed")
+
+	// Add: the overlap lists the current pair first.
+	require.NoError(t, client.EnsureIdentity(context.Background(), Identity{
+		Name:        "b-files-1",
+		Credentials: []Credential{{AccessKey: "AKNEW", SecretKey: "SKNEW"}, {AccessKey: "AKOLD", SecretKey: "SKOLD"}},
+		Actions:     actions,
+	}))
+	require.Len(t, doer.scripts, 1)
+	require.Contains(t, doer.scripts[0], "-access_key=AKNEW -secret_key=SKNEW")
+	require.Contains(t, doer.scripts[0], "-access_key=AKOLD -secret_key=SKOLD")
+	require.NotContains(t, doer.scripts[0], "-delete", "the overlap keeps the old key")
+
+	// Settled: the engine appended the new pair after the old one.
+	doer.identities.Identities[0].Credentials = []Credential{
+		{AccessKey: "AKOLD", SecretKey: "SKOLD"}, {AccessKey: "AKNEW", SecretKey: "SKNEW"}}
+	doer.scripts = nil
+	require.NoError(t, client.EnsureIdentity(context.Background(), Identity{
+		Name:        "b-files-1",
+		Credentials: []Credential{{AccessKey: "AKNEW", SecretKey: "SKNEW"}, {AccessKey: "AKOLD", SecretKey: "SKOLD"}},
+		Actions:     actions,
+	}))
+	require.Empty(t, doer.scripts, "keypair order is the engine's business")
+
+	// Retire: exactly the dropped key is deleted.
+	require.NoError(t, client.EnsureIdentity(context.Background(), Identity{
+		Name:        "b-files-1",
+		Credentials: []Credential{{AccessKey: "AKNEW", SecretKey: "SKNEW"}},
+		Actions:     actions,
+	}))
+	require.Len(t, doer.scripts, 1)
+	require.Contains(t, doer.scripts[0], "s3.configure -user=b-files-1 -access_key=AKOLD -delete -apply")
+	require.NotContains(t, doer.scripts[0], "-access_key=AKNEW -delete")
+}

@@ -99,18 +99,19 @@ type BackupTarget struct {
 }
 
 type BucketAllocation struct {
-	ID                uuid.UUID
-	ClaimID           uuid.UUID
-	StoreID           uuid.UUID
-	BucketName        string
-	AccessKeyID       string
-	CredentialSecret  string
-	CredentialVersion int64
-	Endpoint          string
-	Region            string
-	CreatedAt         time.Time
-	ReleasedAt        *time.Time
-	FencedAt          *time.Time
+	ID                 uuid.UUID
+	ClaimID            uuid.UUID
+	StoreID            uuid.UUID
+	BucketName         string
+	AccessKeyID        string
+	CredentialSecret   string
+	CredentialVersion  int64
+	Endpoint           string
+	Region             string
+	CreatedAt          time.Time
+	ReleasedAt         *time.Time
+	FencedAt           *time.Time
+	CredentialRetireAt *time.Time
 }
 
 type BucketClaim struct {

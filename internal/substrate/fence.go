@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -77,9 +78,10 @@ func (c *Controller) FenceBucket(ctx context.Context, environmentID uuid.UUID, s
 }
 
 // UnfenceBucket restores the bucket's identity with its unchanged keypair
-// and clears the fence. Presigned URLs signed before the fence work again
-// once they do (the keypair is the same); only a rotation retires them.
-// The quota flag is re-evaluated by the next probe.
+// (or keypairs: a rotation's previous pair comes back too while its window
+// is open) and clears the fence. Presigned URLs signed before the fence
+// work again once they do (the keypair is the same); only a rotation
+// retires them. The quota flag is re-evaluated by the next probe.
 func (c *Controller) UnfenceBucket(ctx context.Context, environmentID uuid.UUID, serviceKey string) error {
 	allocation, err := c.serviceAllocation(ctx, environmentID, serviceKey)
 	if err != nil {
@@ -97,12 +99,9 @@ func (c *Controller) unfence(ctx context.Context, allocation *store.BucketAlloca
 		return fmt.Errorf("substrate: read bucket credentials: %w", err)
 	}
 	if err := c.deps.Seaweed.EnsureIdentity(ctx, seaweed.Identity{
-		Name: allocation.BucketName,
-		Credentials: []seaweed.Credential{{
-			AccessKey: string(secret.Data["access_key"]),
-			SecretKey: string(secret.Data["secret_key"]),
-		}},
-		Actions: seaweed.BucketActions(allocation.BucketName),
+		Name:        allocation.BucketName,
+		Credentials: desiredCredentials(secret, time.Now()),
+		Actions:     seaweed.BucketActions(allocation.BucketName),
 	}); err != nil {
 		return fmt.Errorf("substrate: unfence %s: %w", allocation.BucketName, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -130,15 +131,27 @@ func (s *Service) SetAllocationEndpoint(ctx context.Context, allocationID uuid.U
 	return nil
 }
 
-// BumpAllocationCredentialVersion records a rotation; the new secret key
-// lives only in the credential Secret.
-func (s *Service) BumpAllocationCredentialVersion(ctx context.Context, allocationID uuid.UUID) error {
-	rows, err := s.st.BumpBucketAllocationCredentialVersion(ctx, allocationID)
+// BeginAllocationCredentialRotation commits a rotated keypair the
+// credential Secret already holds: the new access key id, the
+// consumer-visible version bump, and the instant the previous keypair
+// retires, atomically and exactly once per key. It reports whether this
+// call committed (false when the row already carries the key, so a
+// repeated pass is a no-op). The secret key lives only in the Secret.
+func (s *Service) BeginAllocationCredentialRotation(ctx context.Context, allocationID uuid.UUID, accessKeyID string, retireAt time.Time) (bool, error) {
+	rows, err := s.st.BeginBucketAllocationCredentialRotation(ctx, store.BeginBucketAllocationCredentialRotationParams{
+		ID: allocationID, AccessKeyID: accessKeyID, CredentialRetireAt: &retireAt,
+	})
 	if err != nil {
-		return fmt.Errorf("dbstore: bump allocation credential version: %w", err)
+		return false, fmt.Errorf("dbstore: begin allocation credential rotation: %w", err)
 	}
-	if rows == 0 {
-		return ErrNotFound
+	return rows > 0, nil
+}
+
+// FinishAllocationCredentialRotation clears the overlap once the previous
+// keypair is retired; no overlap is not an error.
+func (s *Service) FinishAllocationCredentialRotation(ctx context.Context, allocationID uuid.UUID) error {
+	if _, err := s.st.FinishBucketAllocationCredentialRotation(ctx, allocationID); err != nil {
+		return fmt.Errorf("dbstore: finish allocation credential rotation: %w", err)
 	}
 	return nil
 }

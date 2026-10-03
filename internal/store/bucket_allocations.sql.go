@@ -7,20 +7,32 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
-const bumpBucketAllocationCredentialVersion = `-- name: BumpBucketAllocationCredentialVersion :execrows
+const beginBucketAllocationCredentialRotation = `-- name: BeginBucketAllocationCredentialRotation :execrows
 UPDATE bucket_allocations
-SET credential_version = credential_version + 1
-WHERE id = $1 AND released_at IS NULL
+SET access_key_id = $2,
+    credential_version = credential_version + 1,
+    credential_retire_at = $3
+WHERE id = $1 AND released_at IS NULL AND access_key_id <> $2
 `
 
-// Rotation bookkeeping: the version is the consumer-visible change signal;
-// the new secret key itself lives only in the credential Secret.
-func (q *Queries) BumpBucketAllocationCredentialVersion(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, bumpBucketAllocationCredentialVersion, id)
+type BeginBucketAllocationCredentialRotationParams struct {
+	ID                 uuid.UUID
+	AccessKeyID        string
+	CredentialRetireAt *time.Time
+}
+
+// Rotation bookkeeping. Begin commits the keypair the credential Secret
+// already holds: the new access key id, the consumer-visible version bump,
+// and the instant the previous keypair retires, in one statement and
+// exactly once per key (the guard makes a repeated pass a no-op). Secret
+// keys never enter rows.
+func (q *Queries) BeginBucketAllocationCredentialRotation(ctx context.Context, arg BeginBucketAllocationCredentialRotationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, beginBucketAllocationCredentialRotation, arg.ID, arg.AccessKeyID, arg.CredentialRetireAt)
 	if err != nil {
 		return 0, err
 	}
@@ -44,7 +56,7 @@ INSERT INTO bucket_allocations (
     id, claim_id, store_id, bucket_name, access_key_id,
     credential_secret, endpoint, region
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at
+RETURNING id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at
 `
 
 type CreateBucketAllocationParams struct {
@@ -83,6 +95,7 @@ func (q *Queries) CreateBucketAllocation(ctx context.Context, arg CreateBucketAl
 		&i.CreatedAt,
 		&i.ReleasedAt,
 		&i.FencedAt,
+		&i.CredentialRetireAt,
 	)
 	return i, err
 }
@@ -103,8 +116,23 @@ func (q *Queries) FenceBucketAllocation(ctx context.Context, id uuid.UUID) (int6
 	return result.RowsAffected(), nil
 }
 
+const finishBucketAllocationCredentialRotation = `-- name: FinishBucketAllocationCredentialRotation :execrows
+UPDATE bucket_allocations
+SET credential_retire_at = NULL
+WHERE id = $1 AND credential_retire_at IS NOT NULL
+`
+
+// Finish clears the overlap once the previous keypair is retired.
+func (q *Queries) FinishBucketAllocationCredentialRotation(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, finishBucketAllocationCredentialRotation, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getLiveBucketAllocationByClaim = `-- name: GetLiveBucketAllocationByClaim :one
-SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at FROM bucket_allocations
+SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at FROM bucket_allocations
 WHERE claim_id = $1 AND released_at IS NULL
 `
 
@@ -124,12 +152,13 @@ func (q *Queries) GetLiveBucketAllocationByClaim(ctx context.Context, claimID uu
 		&i.CreatedAt,
 		&i.ReleasedAt,
 		&i.FencedAt,
+		&i.CredentialRetireAt,
 	)
 	return i, err
 }
 
 const listLiveBucketAllocationsByStore = `-- name: ListLiveBucketAllocationsByStore :many
-SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at FROM bucket_allocations
+SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at FROM bucket_allocations
 WHERE store_id = $1 AND released_at IS NULL
 ORDER BY bucket_name
 `
@@ -156,6 +185,7 @@ func (q *Queries) ListLiveBucketAllocationsByStore(ctx context.Context, storeID 
 			&i.CreatedAt,
 			&i.ReleasedAt,
 			&i.FencedAt,
+			&i.CredentialRetireAt,
 		); err != nil {
 			return nil, err
 		}

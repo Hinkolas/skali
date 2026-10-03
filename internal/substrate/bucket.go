@@ -130,19 +130,22 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 		}
 		allocation.Endpoint = endpoint
 	}
-	accessKey, secretKey, err := c.ensureBucketCredentialSecret(ctx, row, *allocation)
+	credential, err := c.ensureBucketCredentialSecret(ctx, row, *allocation)
 	if err != nil {
 		return false, err
 	}
+	now := time.Now()
 	if err := c.deps.Seaweed.EnsureBucket(ctx, allocation.BucketName); err != nil {
 		return false, err
 	}
 	// A fenced bucket (a restore rewriting it) keeps its identity absent
-	// until the fence is lifted; the platform identity alone writes.
+	// until the fence is lifted; the platform identity alone writes. The
+	// key set comes from the Secret alone (desiredCredentials): the current
+	// pair, plus a rotation's previous pair inside its overlap window.
 	if allocation.FencedAt == nil {
 		if err := c.deps.Seaweed.EnsureIdentity(ctx, seaweed.Identity{
 			Name:        allocation.BucketName,
-			Credentials: []seaweed.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+			Credentials: desiredCredentials(credential, now),
 			Actions:     seaweed.BucketActions(allocation.BucketName),
 		}); err != nil {
 			return false, err
@@ -168,7 +171,15 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if len(repaired) > 0 {
 		slog.Info("substrate: bucket configuration reset", "bucket", allocation.BucketName, "settings", repaired)
 	}
-	if err := c.ensureBucketOutputMirror(ctx, row, *allocation, accessKey, secretKey); err != nil {
+	pair := currentCredential(credential)
+	if err := c.ensureBucketOutputMirror(ctx, row, *allocation, pair.AccessKey, pair.SecretKey); err != nil {
+		return false, err
+	}
+	// Rotation bookkeeping rides every pass once the identity and the
+	// mirror hold the Secret's keys: commit a new key to the row (the bump
+	// that rolls the consumers), retire a previous pair whose instant
+	// passed.
+	if err := c.reconcileCredentialRotation(ctx, row, allocation, credential, now); err != nil {
 		return false, err
 	}
 
@@ -232,17 +243,17 @@ func InternalBucketEndpoint() string {
 }
 
 // ensureBucketCredentialSecret creates the claim's keypair Secret on first
-// provisioning and returns the current keys. Secret keys exist only in
-// Secrets; they are never logged or persisted elsewhere.
-func (c *Controller) ensureBucketCredentialSecret(ctx context.Context, row store.BucketClaim, allocation store.BucketAllocation) (string, string, error) {
+// provisioning and returns the Secret as it is: the one source of truth
+// for the keys the identity accepts (see rotation.go). Secret keys exist
+// only in Secrets; they are never logged or persisted elsewhere.
+func (c *Controller) ensureBucketCredentialSecret(ctx context.Context, row store.BucketClaim, allocation store.BucketAllocation) (*corev1.Secret, error) {
 	existing, err := c.deps.Cluster.GetSecret(ctx, Namespace, allocation.CredentialSecret)
 	if err == nil {
-		return string(existing.Data["access_key"]), string(existing.Data["secret_key"]), nil
+		return existing, nil
 	}
 	if !apierrors.IsNotFound(err) {
-		return "", "", fmt.Errorf("substrate: read bucket credential secret: %w", err)
+		return nil, fmt.Errorf("substrate: read bucket credential secret: %w", err)
 	}
-	secretKey := seaweed.GenerateSecretKey()
 	secret := &corev1.Secret{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -252,14 +263,18 @@ func (c *Controller) ensureBucketCredentialSecret(ctx context.Context, row store
 		},
 		Type: corev1.SecretTypeOpaque,
 		StringData: map[string]string{
-			"access_key": allocation.AccessKeyID,
-			"secret_key": secretKey,
+			credentialAccessKey: allocation.AccessKeyID,
+			credentialSecretKey: seaweed.GenerateSecretKey(),
 		},
 	}
 	if _, err := c.deps.Cluster.ApplyAs(ctx, secret, kube.FieldManagerPlatform, false); err != nil {
-		return "", "", fmt.Errorf("substrate: apply bucket credential secret: %w", err)
+		return nil, fmt.Errorf("substrate: apply bucket credential secret: %w", err)
 	}
-	return allocation.AccessKeyID, secretKey, nil
+	created, err := c.deps.Cluster.GetSecret(ctx, Namespace, allocation.CredentialSecret)
+	if err != nil {
+		return nil, fmt.Errorf("substrate: read bucket credential secret: %w", err)
+	}
+	return created, nil
 }
 
 // ensureBucketOutputMirror writes the service claim's connection outputs

@@ -3,6 +3,7 @@ package dbstore
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -199,13 +200,32 @@ func TestBucketAllocationIdentityImmutable(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	require.NoError(t, f.svc.BumpAllocationCredentialVersion(ctx, allocation.ID))
+	// A rotation commits the key the Secret holds exactly once: the
+	// version bumps, the key id follows, the overlap deadline is recorded,
+	// and a repeated pass with the same key changes nothing.
+	retireAt := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	committed, err := f.svc.BeginAllocationCredentialRotation(ctx, allocation.ID, "AKROTATED", retireAt)
+	require.NoError(t, err)
+	require.True(t, committed)
+	committed, err = f.svc.BeginAllocationCredentialRotation(ctx, allocation.ID, "AKROTATED", retireAt.Add(time.Hour))
+	require.NoError(t, err)
+	require.False(t, committed, "the same key commits once")
 	require.NoError(t, f.svc.SetAllocationEndpoint(ctx, allocation.ID, "https://s3.example.test"))
 	live, err := f.svc.LiveAllocation(ctx, created.ID)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, live.CredentialVersion)
+	require.Equal(t, "AKROTATED", live.AccessKeyID)
+	require.NotNil(t, live.CredentialRetireAt)
+	require.True(t, live.CredentialRetireAt.Equal(retireAt))
 	require.Equal(t, "https://s3.example.test", live.Endpoint)
-	require.Equal(t, "s3cred-01", live.CredentialSecret)
+	require.Equal(t, "s3cred-01", live.CredentialSecret, "the credential Secret name never changes")
+
+	require.NoError(t, f.svc.FinishAllocationCredentialRotation(ctx, allocation.ID))
+	require.NoError(t, f.svc.FinishAllocationCredentialRotation(ctx, allocation.ID), "no overlap is not an error")
+	live, err = f.svc.LiveAllocation(ctx, created.ID)
+	require.NoError(t, err)
+	require.Nil(t, live.CredentialRetireAt)
+	require.EqualValues(t, 2, live.CredentialVersion)
 
 	allocations, err := f.svc.ListStoreAllocations(ctx, sw.ID)
 	require.NoError(t, err)

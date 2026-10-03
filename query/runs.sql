@@ -53,3 +53,10 @@ WHERE status IN ('succeeded', 'failed', 'cancelled') AND finished_at < $1;
 -- deployment, restore, or restart the control-plane roll would interrupt.
 -- name: CountRunningRuns :one
 SELECT count(*) FROM runs WHERE status = 'running';
+
+-- Boot recovery for controllers that own runs of one kind without a
+-- durable row of their own (credential rotations): a running run whose
+-- worker died with the previous process would hold the environment's
+-- one-running-run slot forever.
+-- name: ListRunningRunsByKind :many
+SELECT * FROM runs WHERE kind = $1 AND status = 'running' ORDER BY created_at;

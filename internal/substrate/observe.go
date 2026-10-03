@@ -109,6 +109,12 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 			if err := c.liftStaleFence(ctx, claimRow, allocation); err != nil {
 				return nil, err
 			}
+			// A rotation's previous keypair retires on the claim worker's
+			// pass, the one writer of credential Secrets; the probe only
+			// notices the instant has passed and wakes it.
+			if allocation.CredentialRetireAt != nil && !time.Now().Before(*allocation.CredentialRetireAt) {
+				c.EnqueueBucketClaim(claimRow.ID)
+			}
 			stat := sizes[allocation.BucketName]
 			readOnly, err := c.enforceBucketQuota(ctx, claimRow.StorageQuotaBytes, allocation.BucketName,
 				stat.LiveBytes, allocation.FencedAt != nil)
