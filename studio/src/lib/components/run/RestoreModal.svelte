@@ -53,12 +53,16 @@
 	}
 
 	// svelte-ignore state_referenced_locally
-	const origin = environments.find((e) => e.name === snapshot.environment) ?? null;
+	const origin = snapshot.orphaned
+		? null
+		: (environments.find((e) => e.name === snapshot.environment) ?? null);
 	let target = $state<Environment | null>(origin && !refusal(origin) ? origin : null);
 	let typed = $state('');
 	let restoring = $state(false);
 
-	const crossEnvironment = $derived(!!target && target.name !== snapshot.environment);
+	const crossEnvironment = $derived(
+		!!target && (snapshot.orphaned || target.name !== snapshot.environment)
+	);
 	const armed = $derived(!!target && typed.trim() === target.name && !restoring);
 
 	async function restore() {
@@ -118,7 +122,7 @@
 					<span class="font-mono text-md {reason ? 'text-text-ghost' : 'text-text-primary'}">
 						{e.name}
 					</span>
-					{#if e.name === snapshot.environment}
+					{#if !snapshot.orphaned && e.name === snapshot.environment}
 						<Pill text="origin" />
 					{/if}
 					{#if reason}

@@ -94,7 +94,9 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   typed confirmation; the environment stops while data is written and stays
   down if the restore fails. `skali backup remove <snapshot-id>` deletes a
   snapshot for good. Restore and remove need `maintain` on the environment
-  and a recent login.
+  and a recent login. Snapshots whose original environment was purged need
+  project admin; restore requires an explicit `--environment` target. Renamed
+  environments keep their snapshots and list them under their current name.
 
 ## Buckets
 
@@ -155,6 +157,11 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   --environment <name> --max-role read --deploy-policy promote-only`, and
   `skali env remove <name>` (purge) configure them. Writes need a recent login;
   the CLI asks for the password when it has aged.
+- `skali env rename <environment> <new-name>` renames without redeploying or
+  moving data (environment admin, recent login). Promotion rules follow the new
+  name; old checkout bindings remain valid through reserved name aliases until
+  the environment is purged. `--project` and `--remote` select another project
+  or installation. Studio exposes Rename in environment settings.
 - A deploy needs `deploy` on the environment for an unchanged definition and
   `maintain` to change the definition or stage values; refusals name the
   required role. A promote-only environment refuses direct deploys and

@@ -367,7 +367,7 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 // published before the IngressRoute rework carried under the route's
 // name. Nothing renders them any more; the list exists so an upgrade
 // removes what an earlier release left behind. Drop it once no supported
-// release can still carry the objects (first stable release).
+// release can still carry the objects, including direct upgrades from rc.10.
 func legacyS3EdgeRefs() []kube.ObjectRef {
 	return []kube.ObjectRef{
 		{GVK: edge.IngressRouteGVK, Namespace: Namespace, Name: "seaweed-s3"},
@@ -434,7 +434,7 @@ func (c *Controller) ensureS3AccessForLiveStore(ctx context.Context) error {
 // the policy that opened the S3 port to every pod before claim holders
 // were admitted by name (seaweed.LegacyS3OpenPolicy). Policies union, so
 // an upgraded installation would otherwise keep the port open beside the
-// new policy. Drop with the first stable release, like legacyS3EdgeRefs.
+// new policy. Retain while upgrades from releases carrying it are supported.
 func (c *Controller) sweepLegacyS3Open(ctx context.Context) error {
 	if c.legacyS3OpenSwept {
 		return nil

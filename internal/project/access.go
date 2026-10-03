@@ -190,6 +190,22 @@ func (s *Service) UpdateEnvironmentSettings(ctx context.Context, environmentID u
 	if err != nil {
 		return nil, err
 	}
+	var updated *store.Environment
+	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+		if _, err := q.GetProjectForUpdate(ctx, env.ProjectID); err != nil {
+			return fmt.Errorf("project: lock environment settings: %w", err)
+		}
+		current, err := q.GetEnvironmentByID(ctx, environmentID)
+		if err != nil {
+			return err
+		}
+		updated, err = updateEnvironmentSettings(ctx, q, &current, settings)
+		return err
+	})
+	return updated, err
+}
+
+func updateEnvironmentSettings(ctx context.Context, q *store.Queries, env *store.Environment, settings authz.Settings) (*store.Environment, error) {
 	if !authz.ValidMaxRole(settings.MaxRole.String()) {
 		return nil, fmt.Errorf("%w: max_role", ErrInvalidSettings)
 	}
@@ -219,33 +235,38 @@ func (s *Service) UpdateEnvironmentSettings(ctx context.Context, environmentID u
 			return nil, fmt.Errorf("%w: backup.strategy must be %s", ErrInvalidSettings, authz.BackupStrategyComplete)
 		}
 	}
-	promoteFrom := settings.PromoteFrom
+	promoteFrom := append([]string(nil), settings.PromoteFrom...)
 	if promoteFrom == nil {
 		promoteFrom = []string{}
 	}
 	if len(promoteFrom) > 0 {
-		siblings, err := s.st.ListEnvironments(ctx, env.ProjectID)
+		siblings, err := q.ListEnvironments(ctx, env.ProjectID)
 		if err != nil {
 			return nil, fmt.Errorf("project: list environments: %w", err)
 		}
-		known := make(map[string]bool, len(siblings))
+		known := make(map[string]string, len(siblings))
 		for _, sibling := range siblings {
 			if sibling.ID != env.ID {
-				known[sibling.Name] = true
+				known[sibling.Name] = sibling.Name
+				for _, alias := range sibling.PreviousNames {
+					known[alias] = sibling.Name
+				}
 			}
 		}
 		seen := make(map[string]bool, len(promoteFrom))
-		for _, name := range promoteFrom {
-			if !known[name] {
+		for i, name := range promoteFrom {
+			canonical, ok := known[name]
+			if !ok {
 				return nil, fmt.Errorf("%w: promote_from names %q, which is not another environment of the project", ErrInvalidSettings, name)
 			}
-			if seen[name] {
+			if seen[canonical] {
 				return nil, fmt.Errorf("%w: promote_from lists %q twice", ErrInvalidSettings, name)
 			}
-			seen[name] = true
+			seen[canonical] = true
+			promoteFrom[i] = canonical
 		}
 	}
-	updated, err := s.st.UpdateEnvironmentSettings(ctx, store.UpdateEnvironmentSettingsParams{
+	updated, err := q.UpdateEnvironmentSettings(ctx, store.UpdateEnvironmentSettingsParams{
 		ID:           env.ID,
 		MaxRole:      settings.MaxRole.String(),
 		DeployPolicy: settings.DeployPolicy,

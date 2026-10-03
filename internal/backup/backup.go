@@ -122,6 +122,15 @@ func (c *Controller) workerImageFor(ctx context.Context, bctx *backupContext) (s
 	return image, nil
 }
 
+// backupNamespace retains pre-rename paths, including rows accepted by an
+// older daemon during rollout overlap.
+func backupNamespace(row *store.Backup) string {
+	if row.EnvironmentNamespace != "" {
+		return row.EnvironmentNamespace
+	}
+	return row.EnvironmentName
+}
+
 // executeBackup drives one snapshot: target check, every component in
 // deterministic order, then the manifest write that certifies completion.
 func (c *Controller) executeBackup(ctx context.Context, scope *journal.Scope, row *store.Backup) error {
@@ -192,6 +201,7 @@ func (c *Controller) executeBackup(ctx context.Context, scope *journal.Scope, ro
 		SkaliVersion:     c.deps.Version,
 		Project:          row.ProjectName,
 		Environment:      row.EnvironmentName,
+		EnvironmentID:    row.EnvironmentID.String(),
 		RevisionChecksum: revisionDoc.Checksum,
 		Trigger:          row.Trigger,
 		Strategy:         row.Strategy,
@@ -208,7 +218,7 @@ func (c *Controller) executeBackup(ctx context.Context, scope *journal.Scope, ro
 		if err != nil {
 			return err
 		}
-		key := manifestKey(credentials.Prefix, row.ProjectName, row.EnvironmentName, snapshotID)
+		key := manifestKey(credentials.Prefix, row.ProjectName, backupNamespace(row), snapshotID)
 		if err := bctx.target.Put(ctx, key, bytes.NewReader(data), int64(len(data))); err != nil {
 			return err
 		}
@@ -304,9 +314,11 @@ func (c *Controller) backupBucket(ctx context.Context, log *journal.StepLog, bct
 		return err
 	}
 
-	destinationPrefix := bucketPrefixKey(bctx.prefix(), row.ProjectName, row.EnvironmentName,
+	destinationPrefix := bucketPrefixKey(bctx.prefix(), row.ProjectName, backupNamespace(row),
 		component.ServiceKey, bctx.snapshotID)
-	copied, copiedBytes, err := copyObjects(ctx, log, source, target, "", destinationPrefix, total, c.copyOptions())
+	opts := c.copyOptions()
+	opts.SkipMissing = true
+	copied, copiedBytes, err := copyObjects(ctx, log, source, target, "", destinationPrefix, total, opts)
 	if err != nil {
 		return err
 	}
@@ -358,7 +370,7 @@ func (c *Controller) backupDatabase(ctx context.Context, log *journal.StepLog, b
 	if err := c.ensureTargetSecret(ctx, substrate.Namespace, bctx.credentials); err != nil {
 		return err
 	}
-	key := databaseKey(bctx.prefix(), row.ProjectName, row.EnvironmentName,
+	key := databaseKey(bctx.prefix(), row.ProjectName, backupNamespace(row),
 		component.ServiceKey, bctx.snapshotID)
 	identity.WorkerImage = workerImage
 	identity.TargetSecret = targetSecretName
@@ -416,7 +428,7 @@ func (c *Controller) backupVolume(ctx context.Context, log *journal.StepLog, bct
 		return err
 	}
 	claimName := kubernetes.VolumeClaimName(row.ProjectName, component.Application, component.Volume)
-	key := volumeKey(bctx.prefix(), row.ProjectName, row.EnvironmentName,
+	key := volumeKey(bctx.prefix(), row.ProjectName, backupNamespace(row),
 		component.Application, component.Volume, bctx.snapshotID)
 	name := jobName("skali-backup", row.ID.String(), "vol", component.Application, component.Volume)
 	log.Info(ctx, "archiving volume claim "+claimName)

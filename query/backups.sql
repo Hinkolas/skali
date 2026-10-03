@@ -1,7 +1,8 @@
 -- name: CreateBackup :one
 INSERT INTO backups (id, kind, environment_id, project_name, environment_name,
-                     revision_id, run_id, trigger, strategy, retention_seconds)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     revision_id, run_id, trigger, strategy, retention_seconds, environment_namespace)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        (SELECT backup_namespace FROM environments WHERE id = $3))
 RETURNING *;
 
 -- name: GetBackup :one

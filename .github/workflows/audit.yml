@@ -20,6 +20,13 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
+      - name: Audit example modules
+        shell: bash
+        run: |
+          while IFS= read -r manifest; do
+            echo "Auditing $manifest"
+            (cd "$(dirname "$manifest")" && go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...)
+          done < <(git ls-files 'examples/**/go.mod')
 
   studio:
     runs-on: ubuntu-latest

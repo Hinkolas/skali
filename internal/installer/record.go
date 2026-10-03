@@ -216,8 +216,8 @@ type Endpoints struct {
 	// LegacyS3 is the installation-wide S3 endpoint domain releases before
 	// the per-bucket routes recorded as endpoints.s3. It is read so an
 	// upgrade can say what happens to buckets that published it, never
-	// written: Init records the endpoints afresh without it. Remove with
-	// the first stable release.
+	// written: Init records the endpoints afresh without it. Retain while
+	// upgrades from releases carrying it are supported.
 	LegacyS3 string `yaml:"s3,omitempty"`
 }
 

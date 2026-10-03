@@ -37,6 +37,9 @@ const (
 
 // copyOptions tunes copyObjects; the zero value takes the defaults.
 type copyOptions struct {
+	// SkipMissing tolerates objects deleted from a live source during a
+	// backup. Snapshot sources used by restores must remain complete.
+	SkipMissing bool
 	// Concurrency bounds the objects in flight at once.
 	Concurrency int
 	// Attempts is how often one object is tried before its error fails the
@@ -78,7 +81,7 @@ func defaultCopyBackoff(attempt int) time.Duration {
 // target, not by bandwidth. Transient failures are retried per object; the
 // first permanent error cancels the remaining work and is returned. An
 // object the listing named but the source no longer holds is skipped and
-// noted: the documented loose consistency of a live snapshot.
+// noted only with SkipMissing: the loose consistency of a live backup.
 func copyObjects(ctx context.Context, log copyLog, source, destination objectStore,
 	sourcePrefix, destinationPrefix string, expected int64, opts copyOptions) (count, bytes int64, err error) {
 	opts = opts.withDefaults()
@@ -86,16 +89,16 @@ func copyObjects(ctx context.Context, log copyLog, source, destination objectSto
 		copied, copiedBytes, skipped atomic.Int64
 		progress                     = progressReporter{log: log, total: expected}
 	)
-	group, ctx := errgroup.WithContext(ctx)
+	group, workerCtx := errgroup.WithContext(ctx)
 	objects := make(chan objectInfo)
 	group.Go(func() error {
 		defer close(objects)
-		return source.List(ctx, sourcePrefix, func(info objectInfo) error {
+		return source.List(workerCtx, sourcePrefix, func(info objectInfo) error {
 			select {
 			case objects <- info:
 				return nil
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-workerCtx.Done():
+				return workerCtx.Err()
 			}
 		})
 	})
@@ -103,14 +106,14 @@ func copyObjects(ctx context.Context, log copyLog, source, destination objectSto
 		group.Go(func() error {
 			for info := range objects {
 				key := destinationPrefix + info.Key[len(sourcePrefix):]
-				switch err := copyOne(ctx, source, destination, info.Key, key, info.Size, opts); {
-				case errors.Is(err, errNotFound):
+				switch err := copyOne(workerCtx, source, destination, info.Key, key, info.Size, opts); {
+				case opts.SkipMissing && errors.Is(err, errNotFound):
 					skipped.Add(1)
 				case err != nil:
-					return err
+					return fmt.Errorf("copy %s: %w", info.Key, err)
 				default:
 					copiedBytes.Add(info.Size)
-					progress.report(ctx, copied.Add(1))
+					progress.report(workerCtx, copied.Add(1))
 				}
 			}
 			return nil

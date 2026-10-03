@@ -18,15 +18,17 @@ import (
 )
 
 type quietLog struct {
-	mu       sync.Mutex
-	progress []int64
-	infos    []string
+	mu         sync.Mutex
+	progress   []int64
+	infos      []string
+	infoErrors []error
 }
 
-func (l *quietLog) Info(_ context.Context, message string) {
+func (l *quietLog) Info(ctx context.Context, message string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.infos = append(l.infos, message)
+	l.infoErrors = append(l.infoErrors, ctx.Err())
 }
 
 func (l *quietLog) Progress(_ context.Context, current, _ int64) {
@@ -231,6 +233,9 @@ func TestCopyObjectsNotesDrift(t *testing.T) {
 		require.NoError(t, err)
 		require.EqualValues(t, 20, count)
 		require.Equal(t, []string{"listing changed during the copy: expected 25 objects, copied 20"}, log.notes())
+		for _, err := range log.infoErrors {
+			require.NoError(t, err, "the journal must receive an active context after the workers finish")
+		}
 	})
 
 	t.Run("ObjectVanished", func(t *testing.T) {
@@ -239,7 +244,7 @@ func TestCopyObjectsNotesDrift(t *testing.T) {
 		fillStore(t, inner, "", 20)
 		source := &vanishingStore{memoryStore: inner, gone: "object-007"}
 		log := &quietLog{}
-		count, bytes, err := copyObjects(ctx, log, source, destination, "", "", 20, copyOptions{Concurrency: 4})
+		count, bytes, err := copyObjects(ctx, log, source, destination, "", "", 20, copyOptions{Concurrency: 4, SkipMissing: true})
 		require.NoError(t, err, "an object deleted during the copy is not a failure")
 		require.EqualValues(t, 19, count)
 		require.EqualValues(t, 19*len("object-000"), bytes)
@@ -249,6 +254,19 @@ func TestCopyObjectsNotesDrift(t *testing.T) {
 			"listing changed during the copy: expected 20 objects, copied 19",
 		}, log.notes())
 	})
+}
+
+// A snapshot is not a live source: an object disappearing while restoring
+// must fail rather than silently reporting a partial restore as successful.
+func TestCopyObjectsMissingSnapshotObjectFails(t *testing.T) {
+	t.Parallel()
+	inner, destination := newMemoryStore(), newMemoryStore()
+	fillStore(t, inner, "snapshot/", 2)
+	source := &vanishingStore{memoryStore: inner, gone: "snapshot/object-000"}
+	_, _, err := copyObjects(context.Background(), &quietLog{}, source, destination,
+		"snapshot/", "", 2, copyOptions{})
+	require.ErrorIs(t, err, errNotFound)
+	require.ErrorContains(t, err, "snapshot/object-000")
 }
 
 // TestCopyObjectsRetriesTransientFailures: a throttled or failing target

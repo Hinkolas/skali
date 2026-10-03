@@ -34,7 +34,7 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 	const requested = url.searchParams.get('env');
 	const open = environments.filter((e) => e.access !== 'none');
 	const env =
-		environments.find((e) => e.name === requested) ??
+		environments.find((e) => e.name === requested || e.previous_names?.includes(requested ?? '')) ??
 		open.find((e) => e.name === 'production') ??
 		open[0] ??
 		environments[0] ??

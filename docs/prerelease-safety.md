@@ -80,6 +80,39 @@ Release verification: `scripts/check-release-snapshot.sh` builds a nonpublishing
 snapshot and checks its metadata against the binaries and installer pin. CI also
 verifies metadata downloaded from the exact tag after a real publication.
 
+## Final RC upgrade contract
+
+Keep the legacy `seaweed-s3-open` policy sweep, the installation-wide S3 edge
+sweep, and the `endpoints.s3` installation-record reader through the first stable
+release. `v0.1.0-rc.10` can still carry those resources, so direct upgrades need
+the cleanup. Removing the open policy is necessary for claim-holder isolation:
+Kubernetes combines the permissions of all matching policies. Retire these
+paths only when upgrades from every release carrying them are unsupported.
+Bucket data is never deleted by these sweeps. Replace the old installation-wide
+public S3 endpoint with the per-bucket routes described in [buckets](buckets.md).
+
+Migration `00012` adds environment-name aliases and immutable backup namespaces.
+`skali env rename <old-name> <new-name>` (or Rename in Studio settings) needs
+environment admin and a recent login. It preserves the environment UUID,
+namespace, credentials, workloads, volumes, schedules and backup objects, and
+updates promotion sources atomically. Previous names remain reserved aliases
+while the environment exists, so existing checkout bindings keep resolving the
+same identity. Renaming back is allowed; purging the environment releases its
+names. Use the matching upgraded CLI and daemon when renaming; an older daemon
+cannot maintain these alias and promotion-rule guarantees.
+
+Existing environments retain their original name-based backup directory. New
+environments use their UUID as the directory, so a recreated display name cannot
+inherit a deleted environment's snapshots. Manifests retain the name recorded
+when each snapshot was taken; listings show the current name for live owners.
+Snapshots without a live owner remain discoverable at project level, require
+project admin for access, and need an explicitly selected restore target. This
+also supports discovery on a fresh installation without rewriting S3 objects.
+
+Bucket restores now refuse missing snapshot objects and a restored object count
+that differs from the manifest. Failure keeps the bucket fenced. Skipping an
+object deleted during a live backup remains supported and is recorded in its run.
+
 ## Reconciliation ownership protection
 
 Environment-owned applies retry resource-version conflicts at most five times,

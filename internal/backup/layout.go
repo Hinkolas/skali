@@ -6,9 +6,11 @@ import (
 	"strings"
 )
 
-// The S3 layout is self-describing and keyed by project and environment
-// NAME, not UUID: a fresh installation, whose database knows nothing about
-// old snapshots, lists and restores purely from the bucket.
+// The S3 layout is self-describing and keyed by project name and immutable
+// environment backup namespace: the original name for upgraded environments,
+// the UUID for new ones. Renames never move objects. Snapshot manifests carry
+// display names, so a fresh installation can discover and restore them from
+// the bucket without its original control-plane database.
 //
 //	<prefix>/skali/v1/<project>/<environment>/snapshots/<snapshot-id>.json
 //	<prefix>/skali/v1/<project>/<environment>/databases/<service-key>/<snapshot-id>.dump

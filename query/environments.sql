@@ -1,10 +1,27 @@
 -- name: CreateEnvironment :one
-INSERT INTO environments (id, project_id, name, max_role, priority)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO environments (id, project_id, name, max_role, priority, backup_namespace)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(project_id), sqlc.arg(name), sqlc.arg(max_role), sqlc.arg(priority), sqlc.arg(id)::uuid::text)
 RETURNING *;
 
 -- name: GetEnvironmentByID :one
 SELECT * FROM environments WHERE id = $1;
+
+-- name: GetEnvironmentNameOwner :one
+SELECT * FROM environments
+WHERE project_id = $1 AND (name = $2 OR $2 = ANY(previous_names));
+
+-- name: RenameEnvironment :one
+UPDATE environments
+SET previous_names = array_remove(array_append(previous_names, name), $2),
+    name = $2,
+    backup_namespace = CASE WHEN backup_namespace = '' THEN name ELSE backup_namespace END,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: RenamePromotionSources :exec
+UPDATE environments SET promote_from = array_replace(promote_from, $2::text, $3::text), updated_at = now()
+WHERE project_id = $1 AND $2::text = ANY(promote_from);
 
 -- name: ListEnvironments :many
 SELECT * FROM environments WHERE project_id = $1 ORDER BY name;
