@@ -256,7 +256,7 @@ The faint grid recurs as a motif: 72px behind the hero, 56px in the install card
 
 The page moves the way the product does, and only where motion says something.
 
-- **Opening:** the grid and halo come up, the headline arrives word by word out of a blur, the lead and actions follow, then the Studio frame rises into the light and its charts draw. Plain CSS on load, about 3s end to end, ease-out (`cubic-bezier(0.16, 1, 0.3, 1)`).
+- **Opening:** the grid and halo come up, the headline arrives word by word out of a blur, the lead and actions follow, then the Studio frame rises into the light and, once it has settled, its charts draw. Plain CSS on load, about 4s end to end, ease-out (`cubic-bezier(0.16, 1, 0.3, 1)`).
 - **Live mocks:** the overview's charts stream samples and the deployment run plays through to `succeeded` and loops, both using Studio's own motion (spinner, progress sheen, step clocks).
 - **Scroll-linked:** the workflow trace and the Under the hood read-through follow scroll position, so they run as fast as the visitor reads.
 - **Reveals:** section headers, Platform copy and panels, workflow steps and the install card rise 28px into place once, via `$lib/motion`'s `reveal`. Only what is below the fold at hydration is held back. The promote dialog opens (scale from 0.96, slight blur) rather than rises.

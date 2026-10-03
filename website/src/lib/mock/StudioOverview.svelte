@@ -121,7 +121,7 @@
 		const drawing = [...root.querySelectorAll('.chart, .storage')].flatMap((el) =>
 			el.getAnimations()
 		);
-		const drawn = 2850; // until the last chart has drawn, from load
+		const drawn = 4150; // until the last chart has drawn, from load
 		let streamFrom = performance.now() + drawn;
 		if (charts.getBoundingClientRect().bottom > innerHeight) {
 			streamFrom = Infinity;
@@ -131,7 +131,7 @@
 			}
 		}
 		// Drawn on scroll rather than on load, the opening's wait is skipped.
-		const skip = 1150;
+		const skip = 1850;
 		const draw = () => {
 			if (streamFrom !== Infinity) return;
 			for (const animation of drawing) {
@@ -500,14 +500,14 @@
 	@media (prefers-reduced-motion: no-preference) {
 		.chart,
 		.storage {
-			animation: reveal 1.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+			animation: reveal 1.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 		}
 		.chart {
-			animation-delay: calc(1300ms + var(--i) * 110ms);
+			animation-delay: calc(2050ms + var(--i) * 160ms);
 		}
 		.storage {
-			animation-duration: 1.1s;
-			animation-delay: 1750ms;
+			animation-duration: 1.2s;
+			animation-delay: 2650ms;
 		}
 	}
 
