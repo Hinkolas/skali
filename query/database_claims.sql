@@ -33,11 +33,17 @@ WHERE phase <> 'released'
 ORDER BY created_at;
 
 -- Claims with reconciliation work outstanding; the substrate boot pass
--- enqueues these instead of trusting memory.
+-- enqueues these instead of trusting memory. A provisioned claim mid
+-- credential rotation (a login role to take or to retire) counts.
 -- name: ListUnsettledDatabaseClaims :many
-SELECT * FROM database_claims
-WHERE phase IN ('pending', 'bound', 'releasing')
-ORDER BY created_at;
+SELECT c.* FROM database_claims c
+WHERE c.phase IN ('pending', 'bound', 'releasing')
+   OR EXISTS (
+       SELECT 1 FROM database_tenants t
+       WHERE t.claim_id = c.id AND t.released_at IS NULL
+         AND (t.pending_login_role IS NOT NULL OR t.previous_login_role IS NOT NULL)
+   )
+ORDER BY c.created_at;
 
 -- Compare-and-swap phase change guarded by internal/claim.Phases in the
 -- domain service; the WHERE guard turns a lost race into a 0-row no-op.

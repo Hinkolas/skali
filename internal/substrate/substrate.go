@@ -88,6 +88,11 @@ type Cluster interface {
 	// are read live because instance pods carry no managed label and so
 	// never enter the observed store.
 	ListPods(ctx context.Context, namespace, selector string) ([]corev1.Pod, error)
+	// ExecInPod runs one command in the first ready pod matching the
+	// selector and returns its stdout; kube.ErrNoReadyPod when none is.
+	// The database substrate runs `psql` in a pool's primary through it
+	// for the role settings CNPG cannot express.
+	ExecInPod(ctx context.Context, namespace, selector, container string, command []string) (string, error)
 }
 
 // KubeCluster adapts *kube.Client to the Cluster interface.
@@ -129,6 +134,10 @@ func (k KubeCluster) ListPods(ctx context.Context, namespace, selector string) (
 		return nil, err
 	}
 	return list.Items, nil
+}
+
+func (k KubeCluster) ExecInPod(ctx context.Context, namespace, selector, container string, command []string) (string, error) {
+	return k.Client.ExecInPod(ctx, namespace, selector, container, command)
 }
 
 type Deps struct {
@@ -560,7 +569,7 @@ func (c *Controller) reconcilePool(ctx context.Context, id uuid.UUID) (time.Dura
 	case dbstore.StateReleasing:
 		return 0, c.releasePool(ctx, *pool)
 	}
-	return c.ensurePool(ctx, *pool)
+	return c.ensurePool(ctx, *pool, time.Now())
 }
 
 func hasCapability(capabilities []string, capability string) bool {

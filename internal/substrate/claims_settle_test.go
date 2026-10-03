@@ -48,12 +48,57 @@ type fakeCluster struct {
 	poolReady int64
 	// databaseApplied shapes the DatabaseGVR read.
 	databaseApplied bool
+	// roleStatus shapes the ClusterGVR read's managedRolesStatus: the
+	// roles CNPG reports reconciled and the password Secret resource
+	// version it applied for each.
+	roleStatus map[string]string
+	// execs records every ExecInPod call; execErr is returned by each.
+	execs   []fakeExec
+	execErr error
+	// deleted records every Delete call's object name.
+	deleted []string
+}
+
+// fakeExec is one recorded ExecInPod call.
+type fakeExec struct {
+	selector  string
+	container string
+	command   []string
 }
 
 func (f *fakeCluster) set(phase string, ready int64, applied bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.poolPhase, f.poolReady, f.databaseApplied = phase, ready, applied
+}
+
+// reconcileRole makes the ClusterGVR read report the role reconciled with
+// the password Secret at the given resource version.
+func (f *fakeCluster) reconcileRole(role, secretVersion string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.roleStatus == nil {
+		f.roleStatus = map[string]string{}
+	}
+	f.roleStatus[role] = secretVersion
+}
+
+func (f *fakeCluster) ExecInPod(_ context.Context, _ string, selector, container string, command []string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.execs = append(f.execs, fakeExec{selector: selector, container: container, command: append([]string(nil), command...)})
+	return "", f.execErr
+}
+
+// scripts returns the SQL of every recorded exec, in order.
+func (f *fakeCluster) scripts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.execs))
+	for _, call := range f.execs {
+		out = append(out, call.command[len(call.command)-1])
+	}
+	return out
 }
 
 func (f *fakeCluster) ApplyAs(_ context.Context, obj runtime.Object, _ string, _ bool) (kube.ApplyResult, error) {
@@ -117,7 +162,16 @@ func (f *fakeCluster) UpdateSecret(_ context.Context, secret *corev1.Secret) (*c
 	return copied.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Delete(context.Context, kube.ObjectRef) (bool, error) {
+func (f *fakeCluster) Delete(_ context.Context, ref kube.ObjectRef) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, ref.Name)
+	if ref.GVK.Kind == "Secret" {
+		if _, ok := f.secrets[ref.Namespace+"/"+ref.Name]; ok {
+			delete(f.secrets, ref.Namespace+"/"+ref.Name)
+			return true, nil
+		}
+	}
 	return false, nil
 }
 
@@ -142,14 +196,27 @@ func (f *fakeCluster) GetObject(_ context.Context, gvr schema.GroupVersionResour
 		if f.poolPhase == "" {
 			return nil, apierrors.NewNotFound(schema.GroupResource{Group: gvr.Group, Resource: gvr.Resource}, name)
 		}
+		status := map[string]any{
+			"phase":          f.poolPhase,
+			"readyInstances": f.poolReady,
+		}
+		if len(f.roleStatus) > 0 {
+			reconciled := make([]any, 0, len(f.roleStatus))
+			passwords := map[string]any{}
+			for role, version := range f.roleStatus {
+				reconciled = append(reconciled, role)
+				passwords[role] = map[string]any{"resourceVersion": version}
+			}
+			status["managedRolesStatus"] = map[string]any{
+				"byStatus":       map[string]any{"reconciled": reconciled},
+				"passwordStatus": passwords,
+			}
+		}
 		return &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "postgresql.cnpg.io/v1",
 			"kind":       "Cluster",
 			"metadata":   map[string]any{"name": name, "namespace": namespace},
-			"status": map[string]any{
-				"phase":          f.poolPhase,
-				"readyInstances": f.poolReady,
-			},
+			"status":     status,
 		}}, nil
 	case cnpg.DatabaseGVR:
 		return &unstructured.Unstructured{Object: map[string]any{

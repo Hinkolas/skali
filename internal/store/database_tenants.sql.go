@@ -12,16 +12,25 @@ import (
 	"github.com/google/uuid"
 )
 
-const bumpDatabaseTenantCredentialVersion = `-- name: BumpDatabaseTenantCredentialVersion :execrows
+const beginDatabaseTenantCredentialRotation = `-- name: BeginDatabaseTenantCredentialRotation :execrows
 UPDATE database_tenants
-SET credential_version = credential_version + 1
-WHERE id = $1 AND released_at IS NULL
+SET previous_login_role = login_role,
+    previous_credential_secret = credential_secret,
+    login_role = pending_login_role,
+    credential_secret = pending_credential_secret,
+    pending_login_role = NULL,
+    pending_credential_secret = NULL,
+    credential_version = credential_version + 1,
+    credential_retire_at = GREATEST(credential_retire_at, now() + interval '1 minute')
+WHERE id = $1 AND released_at IS NULL AND pending_login_role IS NOT NULL
 `
 
-// Rotation bookkeeping: the version is the consumer-visible change signal;
-// the new password itself lives only in the credential Secret.
-func (q *Queries) BumpDatabaseTenantCredentialVersion(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, bumpDatabaseTenantCredentialVersion, id)
+// The swap: the pending role becomes current, the current one previous,
+// and the version advances, exactly once per pending role (a repeated pass
+// is a 0-row no-op). The window is only meaningful from the swap on, so a
+// deadline a stalled worker let pass is pushed out by a minute.
+func (q *Queries) BeginDatabaseTenantCredentialRotation(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, beginDatabaseTenantCredentialRotation, id)
 	if err != nil {
 		return 0, err
 	}
@@ -42,10 +51,10 @@ func (q *Queries) CountLiveDatabaseTenantsByCluster(ctx context.Context, cluster
 
 const createDatabaseTenant = `-- name: CreateDatabaseTenant :one
 INSERT INTO database_tenants (
-    id, claim_id, cluster_id, database_name, role_name,
+    id, claim_id, cluster_id, database_name, role_name, login_role,
     credential_secret, host, port
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, claim_id, cluster_id, database_name, role_name, credential_secret, credential_version, host, port, created_at, released_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, claim_id, cluster_id, database_name, role_name, credential_secret, credential_version, host, port, created_at, released_at, login_role, pending_login_role, pending_credential_secret, previous_login_role, previous_credential_secret, credential_retire_at
 `
 
 type CreateDatabaseTenantParams struct {
@@ -54,6 +63,7 @@ type CreateDatabaseTenantParams struct {
 	ClusterID        uuid.UUID
 	DatabaseName     string
 	RoleName         string
+	LoginRole        string
 	CredentialSecret string
 	Host             string
 	Port             int32
@@ -66,6 +76,7 @@ func (q *Queries) CreateDatabaseTenant(ctx context.Context, arg CreateDatabaseTe
 		arg.ClusterID,
 		arg.DatabaseName,
 		arg.RoleName,
+		arg.LoginRole,
 		arg.CredentialSecret,
 		arg.Host,
 		arg.Port,
@@ -83,12 +94,32 @@ func (q *Queries) CreateDatabaseTenant(ctx context.Context, arg CreateDatabaseTe
 		&i.Port,
 		&i.CreatedAt,
 		&i.ReleasedAt,
+		&i.LoginRole,
+		&i.PendingLoginRole,
+		&i.PendingCredentialSecret,
+		&i.PreviousLoginRole,
+		&i.PreviousCredentialSecret,
+		&i.CredentialRetireAt,
 	)
 	return i, err
 }
 
+const finishDatabaseTenantCredentialRotation = `-- name: FinishDatabaseTenantCredentialRotation :execrows
+UPDATE database_tenants
+SET previous_login_role = NULL, previous_credential_secret = NULL, credential_retire_at = NULL
+WHERE id = $1 AND previous_login_role IS NOT NULL
+`
+
+func (q *Queries) FinishDatabaseTenantCredentialRotation(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, finishDatabaseTenantCredentialRotation, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getLiveDatabaseTenantByClaim = `-- name: GetLiveDatabaseTenantByClaim :one
-SELECT id, claim_id, cluster_id, database_name, role_name, credential_secret, credential_version, host, port, created_at, released_at FROM database_tenants
+SELECT id, claim_id, cluster_id, database_name, role_name, credential_secret, credential_version, host, port, created_at, released_at, login_role, pending_login_role, pending_credential_secret, previous_login_role, previous_credential_secret, credential_retire_at FROM database_tenants
 WHERE claim_id = $1 AND released_at IS NULL
 `
 
@@ -107,6 +138,12 @@ func (q *Queries) GetLiveDatabaseTenantByClaim(ctx context.Context, claimID uuid
 		&i.Port,
 		&i.CreatedAt,
 		&i.ReleasedAt,
+		&i.LoginRole,
+		&i.PendingLoginRole,
+		&i.PendingCredentialSecret,
+		&i.PreviousLoginRole,
+		&i.PreviousCredentialSecret,
+		&i.CredentialRetireAt,
 	)
 	return i, err
 }
@@ -202,7 +239,7 @@ func (q *Queries) ListLiveDatabaseTenantDetailsByCluster(ctx context.Context, ar
 }
 
 const listLiveDatabaseTenantsByCluster = `-- name: ListLiveDatabaseTenantsByCluster :many
-SELECT id, claim_id, cluster_id, database_name, role_name, credential_secret, credential_version, host, port, created_at, released_at FROM database_tenants
+SELECT id, claim_id, cluster_id, database_name, role_name, credential_secret, credential_version, host, port, created_at, released_at, login_role, pending_login_role, pending_credential_secret, previous_login_role, previous_credential_secret, credential_retire_at FROM database_tenants
 WHERE cluster_id = $1 AND released_at IS NULL
 ORDER BY role_name
 `
@@ -228,6 +265,60 @@ func (q *Queries) ListLiveDatabaseTenantsByCluster(ctx context.Context, clusterI
 			&i.Port,
 			&i.CreatedAt,
 			&i.ReleasedAt,
+			&i.LoginRole,
+			&i.PendingLoginRole,
+			&i.PendingCredentialSecret,
+			&i.PreviousLoginRole,
+			&i.PreviousCredentialSecret,
+			&i.CredentialRetireAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedDatabaseTenantsByCluster = `-- name: ListManagedDatabaseTenantsByCluster :many
+SELECT t.id, t.claim_id, t.cluster_id, t.database_name, t.role_name, t.credential_secret, t.credential_version, t.host, t.port, t.created_at, t.released_at, t.login_role, t.pending_login_role, t.pending_credential_secret, t.previous_login_role, t.previous_credential_secret, t.credential_retire_at FROM database_tenants t
+JOIN database_claims c ON c.id = t.claim_id
+WHERE t.cluster_id = $1 AND t.released_at IS NULL AND c.phase <> 'releasing'
+ORDER BY t.role_name
+`
+
+// The tenants whose roles a pool's Cluster spec lists: live, and not on a
+// claim being torn down (teardown drops the roles itself, which the spec
+// must not undo).
+func (q *Queries) ListManagedDatabaseTenantsByCluster(ctx context.Context, clusterID uuid.UUID) ([]DatabaseTenant, error) {
+	rows, err := q.db.Query(ctx, listManagedDatabaseTenantsByCluster, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DatabaseTenant
+	for rows.Next() {
+		var i DatabaseTenant
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClaimID,
+			&i.ClusterID,
+			&i.DatabaseName,
+			&i.RoleName,
+			&i.CredentialSecret,
+			&i.CredentialVersion,
+			&i.Host,
+			&i.Port,
+			&i.CreatedAt,
+			&i.ReleasedAt,
+			&i.LoginRole,
+			&i.PendingLoginRole,
+			&i.PendingCredentialSecret,
+			&i.PreviousLoginRole,
+			&i.PreviousCredentialSecret,
+			&i.CredentialRetireAt,
 		); err != nil {
 			return nil, err
 		}
@@ -247,6 +338,51 @@ WHERE id = $1 AND released_at IS NULL
 
 func (q *Queries) ReleaseDatabaseTenant(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, releaseDatabaseTenant, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireDatabaseTenantCredentials = `-- name: RetireDatabaseTenantCredentials :execrows
+UPDATE database_tenants
+SET credential_retire_at = now()
+WHERE id = $1 AND previous_login_role IS NOT NULL
+`
+
+func (q *Queries) RetireDatabaseTenantCredentials(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, retireDatabaseTenantCredentials, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setDatabaseTenantPendingCredential = `-- name: SetDatabaseTenantPendingCredential :execrows
+UPDATE database_tenants
+SET pending_login_role = $2, pending_credential_secret = $3, credential_retire_at = $4
+WHERE id = $1 AND released_at IS NULL
+  AND pending_login_role IS NULL AND previous_login_role IS NULL
+`
+
+type SetDatabaseTenantPendingCredentialParams struct {
+	ID                      uuid.UUID
+	PendingLoginRole        *string
+	PendingCredentialSecret *string
+	CredentialRetireAt      *time.Time
+}
+
+// Rotation bookkeeping. The API commits the next login role as pending;
+// the claim worker takes it (the swap below) once the pool holds the role
+// with its password and the output mirror carries it; the version is the
+// consumer-visible change signal. Passwords live only in the Secrets.
+func (q *Queries) SetDatabaseTenantPendingCredential(ctx context.Context, arg SetDatabaseTenantPendingCredentialParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setDatabaseTenantPendingCredential,
+		arg.ID,
+		arg.PendingLoginRole,
+		arg.PendingCredentialSecret,
+		arg.CredentialRetireAt,
+	)
 	if err != nil {
 		return 0, err
 	}

@@ -32,11 +32,19 @@ var (
 	DatabaseGVR = schema.GroupVersionResource{Group: "postgresql.cnpg.io", Version: "v1", Resource: "databases"}
 )
 
-// Role is one managed login role on a pool, its password held by a
-// basic-auth Secret in the pool's namespace.
+// Role is one managed role on a pool. A login role's password is held by
+// a basic-auth Secret in the pool's namespace; a role without a Secret is
+// left alone by the operator unless DisablePassword wipes it. InRoles
+// makes the role a member (inheriting privileges) of the listed roles: a
+// tenant's login roles are members of its owner role after a rotation.
 type Role struct {
 	Name       string
 	SecretName string
+	Login      bool
+	InRoles    []string
+	// DisablePassword sets the role's password to NULL: a tenant's owner
+	// role once it no longer logs in.
+	DisablePassword bool
 }
 
 // ClusterSpec is the desired shape of one pool.
@@ -67,12 +75,26 @@ type ClusterSpec struct {
 func RenderCluster(spec ClusterSpec) *unstructured.Unstructured {
 	roles := make([]any, 0, len(spec.Roles))
 	for _, role := range spec.Roles {
-		roles = append(roles, map[string]any{
-			"name":           role.Name,
-			"ensure":         "present",
-			"login":          true,
-			"passwordSecret": map[string]any{"name": role.SecretName},
-		})
+		entry := map[string]any{
+			"name":    role.Name,
+			"ensure":  "present",
+			"login":   role.Login,
+			"inherit": true,
+		}
+		if role.SecretName != "" {
+			entry["passwordSecret"] = map[string]any{"name": role.SecretName}
+		}
+		if len(role.InRoles) > 0 {
+			members := make([]any, 0, len(role.InRoles))
+			for _, name := range role.InRoles {
+				members = append(members, name)
+			}
+			entry["inRoles"] = members
+		}
+		if role.DisablePassword {
+			entry["disablePassword"] = true
+		}
+		roles = append(roles, entry)
 	}
 	object := map[string]any{
 		"apiVersion": ClusterGVK.GroupVersion().String(),

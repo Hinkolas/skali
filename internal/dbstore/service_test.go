@@ -3,6 +3,7 @@ package dbstore
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -318,14 +319,116 @@ func TestTenantIdentityIsImmutable(t *testing.T) {
 	require.Equal(t, tenant.ID, repeat.ID)
 	require.Equal(t, "db_data", repeat.DatabaseName, "generated identity never changes once recorded")
 	require.EqualValues(t, 1, tenant.CredentialVersion)
-
-	require.NoError(t, f.svc.BumpCredentialVersion(ctx, tenant.ID))
-	live, err := f.svc.LiveTenant(ctx, created.ID)
-	require.NoError(t, err)
-	require.EqualValues(t, 2, live.CredentialVersion)
-	require.Equal(t, "cred-data", live.CredentialSecret)
+	require.Equal(t, "u_data", tenant.LoginRole, "the owner logs in until the first rotation")
 
 	tenants, err := f.svc.ListClusterTenants(ctx, pool.ID)
 	require.NoError(t, err)
 	require.Len(t, tenants, 1)
+}
+
+func TestTenantCredentialRotationBookkeeping(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	pool := f.cluster(t, "pg17-shared")
+	created, err := f.svc.EnsureClaim(ctx, f.owner("data"), spec())
+	require.NoError(t, err)
+	_, err = f.svc.BindClaim(ctx, created.ID, pool.ID)
+	require.NoError(t, err)
+	tenant, err := f.svc.RecordTenant(ctx, TenantInput{
+		ClaimID: created.ID, ClusterID: pool.ID,
+		DatabaseName: "db_data", RoleName: "u_data",
+		CredentialSecret: "cred-data", Host: "h", Port: 5432,
+	})
+	require.NoError(t, err)
+	_, err = f.svc.TransitionClaim(ctx, created.ID, claim.PhaseProvisioned)
+	require.NoError(t, err)
+
+	// Nothing to take or retire: begin, retire and finish are no-ops.
+	took, err := f.svc.BeginTenantCredentialRotation(ctx, tenant.ID)
+	require.NoError(t, err)
+	require.False(t, took)
+	require.NoError(t, f.svc.RetireTenantCredentials(ctx, tenant.ID))
+	require.NoError(t, f.svc.FinishTenantCredentialRotation(ctx, tenant.ID))
+
+	// The commit records the next login role; a second commit is refused
+	// while one is pending.
+	deadline := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	set, err := f.svc.SetTenantPendingCredential(ctx, tenant.ID, "u_data_v2", "cred-data-v2", deadline)
+	require.NoError(t, err)
+	require.True(t, set)
+	set, err = f.svc.SetTenantPendingCredential(ctx, tenant.ID, "u_data_v3", "cred-data-v3", deadline)
+	require.NoError(t, err)
+	require.False(t, set, "one rotation at a time")
+	live, err := f.svc.LiveTenant(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "u_data", live.LoginRole)
+	require.NotNil(t, live.PendingLoginRole)
+	require.Equal(t, "u_data_v2", *live.PendingLoginRole)
+	require.EqualValues(t, 1, live.CredentialVersion, "the version moves at the swap, not the commit")
+
+	// The swap: exactly once, bumping the version.
+	took, err = f.svc.BeginTenantCredentialRotation(ctx, tenant.ID)
+	require.NoError(t, err)
+	require.True(t, took)
+	took, err = f.svc.BeginTenantCredentialRotation(ctx, tenant.ID)
+	require.NoError(t, err)
+	require.False(t, took, "a repeated pass is a no-op")
+	live, err = f.svc.LiveTenant(ctx, created.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, live.CredentialVersion)
+	require.Equal(t, "u_data_v2", live.LoginRole)
+	require.Equal(t, "cred-data-v2", live.CredentialSecret)
+	require.Nil(t, live.PendingLoginRole)
+	require.NotNil(t, live.PreviousLoginRole)
+	require.Equal(t, "u_data", *live.PreviousLoginRole)
+	require.Equal(t, "cred-data", *live.PreviousCredentialSecret)
+	require.True(t, live.CredentialRetireAt.Equal(deadline), "a window still ahead is kept")
+	require.Equal(t, "u_data", live.RoleName, "the owner never changes")
+
+	// A new commit is refused while the previous role is retiring.
+	set, err = f.svc.SetTenantPendingCredential(ctx, tenant.ID, "u_data_v3", "cred-data-v3", deadline)
+	require.NoError(t, err)
+	require.False(t, set)
+
+	// Retire now, then finish.
+	require.NoError(t, f.svc.RetireTenantCredentials(ctx, tenant.ID))
+	live, err = f.svc.LiveTenant(ctx, created.ID)
+	require.NoError(t, err)
+	require.False(t, time.Now().Before(*live.CredentialRetireAt))
+	require.NoError(t, f.svc.FinishTenantCredentialRotation(ctx, tenant.ID))
+	live, err = f.svc.LiveTenant(ctx, created.ID)
+	require.NoError(t, err)
+	require.Nil(t, live.PreviousLoginRole)
+	require.Nil(t, live.PreviousCredentialSecret)
+	require.Nil(t, live.CredentialRetireAt)
+
+	// A deadline a stalled worker let pass is pushed out at the swap.
+	past := time.Now().Add(-time.Hour)
+	set, err = f.svc.SetTenantPendingCredential(ctx, tenant.ID, "u_data_v3", "cred-data-v3", past)
+	require.NoError(t, err)
+	require.True(t, set)
+	took, err = f.svc.BeginTenantCredentialRotation(ctx, tenant.ID)
+	require.NoError(t, err)
+	require.True(t, took)
+	live, err = f.svc.LiveTenant(ctx, created.ID)
+	require.NoError(t, err)
+	require.True(t, live.CredentialRetireAt.After(time.Now().Add(30*time.Second)))
+	require.EqualValues(t, 3, live.CredentialVersion)
+
+	// Rotating tenants keep their claim in the unsettled list.
+	unsettled, err := f.svc.ListUnsettledClaims(ctx)
+	require.NoError(t, err)
+	ids := make([]uuid.UUID, 0, len(unsettled))
+	for _, row := range unsettled {
+		ids = append(ids, row.ID)
+	}
+	require.Contains(t, ids, created.ID)
+	require.NoError(t, f.svc.FinishTenantCredentialRotation(ctx, tenant.ID))
+	unsettled, err = f.svc.ListUnsettledClaims(ctx)
+	require.NoError(t, err)
+	for _, row := range unsettled {
+		require.NotEqual(t, created.ID, row.ID, "a settled claim leaves the list")
+	}
 }

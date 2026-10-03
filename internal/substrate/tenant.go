@@ -46,7 +46,7 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 		return c.teardownClaim(ctx, *row)
 	}
 
-	transitioned, err := c.provision(ctx, *row)
+	transitioned, wakeup, err := c.provision(ctx, *row)
 	requeue := time.Duration(0)
 	switch waiting, ok := errors.AsType[errWaiting](err); {
 	case ok:
@@ -59,6 +59,9 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 		// The pass applied the row it read at the top; only that encoding
 		// settles a pending extension change.
 		c.settleExtensions(id, row.Extensions)
+		// A rotation in flight wakes the worker again on its own: for the
+		// retirement at the window's end, nothing else is guaranteed to.
+		requeue = wakeup
 	}
 
 	// Publish the fresh phase before poking the environment so its next
@@ -84,67 +87,85 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 }
 
 // provision walks a pending/bound/provisioned claim through placement, pool
-// readiness, tenant objects, and the output mirror. Every step is
-// idempotent, so provisioned claims re-run it as drift repair. It reports
-// whether the claim reached provisioned in this pass.
-func (c *Controller) provision(ctx context.Context, row store.DatabaseClaim) (bool, error) {
+// readiness, tenant objects, the credential rotation steps and the output
+// mirror. Every step is idempotent, so provisioned claims re-run it as
+// drift repair. It reports whether the claim reached provisioned in this
+// pass and when the worker must look again on its own (a retirement
+// ahead), zero when nothing is scheduled.
+func (c *Controller) provision(ctx context.Context, row store.DatabaseClaim) (bool, time.Duration, error) {
+	now := time.Now()
 	pool, err := c.place(ctx, row)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	if err := c.ensureNamespace(ctx); err != nil {
-		return false, err
+		return false, 0, err
 	}
 
 	tenant, err := c.ensureTenantRecord(ctx, row, pool)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
-	password, err := c.ensureCredentialSecret(ctx, row, *tenant)
+	credential, err := c.ensureCredentialSecret(ctx, row, *tenant)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
-	wait, err := c.ensurePool(ctx, *pool)
+	wait, err := c.ensurePool(ctx, *pool, now)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	if wait > 0 {
-		return false, errWaiting{reason: "waiting for database node memory to size the pool"}
+		return false, 0, errWaiting{reason: "waiting for database node memory to size the pool"}
 	}
 	ready, reason, err := c.poolReady(ctx, *pool)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	if !ready {
-		return false, errWaiting{reason: reason}
+		return false, 0, errWaiting{reason: reason}
 	}
 	if err := c.ensureDatabaseObject(ctx, row, *pool, *tenant); err != nil {
-		return false, err
+		return false, 0, err
 	}
 	applied, reason, err := c.databaseApplied(ctx, *tenant)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	if !applied {
-		return false, errWaiting{reason: reason}
+		return false, 0, errWaiting{reason: reason}
 	}
-	if err := c.ensureOutputMirror(ctx, row, *tenant, password); err != nil {
-		return false, err
+	// A committed rotation is taken here, after the pool holds the new
+	// login role and before the mirror is written from the current one.
+	tenant, err = c.takePendingLoginRole(ctx, row, *pool, *tenant)
+	if err != nil {
+		return false, 0, err
+	}
+	if tenant.CredentialSecret != credential.Name {
+		if credential, err = c.ensureCredentialSecret(ctx, row, *tenant); err != nil {
+			return false, 0, err
+		}
+	}
+	if err := c.ensureOutputMirror(ctx, row, *tenant, credential); err != nil {
+		return false, 0, err
+	}
+	tenant, err = c.retirePreviousLoginRole(ctx, row, *pool, *tenant, now)
+	if err != nil {
+		return false, 0, err
 	}
 
 	// place may have bound the claim mid-pass; the transition test needs the
 	// fresh phase or the pass that binds and completes can never settle.
 	current, err := c.deps.DB.GetClaim(ctx, row.ID)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	if claim.Phase(current.Phase) == claim.PhaseBound {
 		if _, err := c.deps.DB.TransitionClaim(ctx, row.ID, claim.PhaseProvisioned); err != nil {
-			return false, err
+			return false, 0, err
 		}
-		return true, nil
+		return true, 0, nil
 	}
-	return false, nil
+	return false, rotationWakeup(*tenant, now), nil
 }
 
 // ensureTenantRecord generates and durably records the tenant identity once.
@@ -162,27 +183,32 @@ func (c *Controller) ensureTenantRecord(ctx context.Context, row store.DatabaseC
 	})
 }
 
-// ensureCredentialSecret creates the tenant's basic-auth Secret on first
-// provisioning and returns the current password. The password exists only
-// in Secrets; it is never logged or persisted elsewhere.
-func (c *Controller) ensureCredentialSecret(ctx context.Context, row store.DatabaseClaim, tenant store.DatabaseTenant) (string, error) {
+// ensureCredentialSecret creates the login role's basic-auth Secret on
+// first provisioning and returns the Secret as the cluster holds it (the
+// username is the login role, the password exists only there; neither is
+// logged or persisted elsewhere).
+func (c *Controller) ensureCredentialSecret(ctx context.Context, row store.DatabaseClaim, tenant store.DatabaseTenant) (*corev1.Secret, error) {
 	existing, err := c.deps.Cluster.GetSecret(ctx, Namespace, tenant.CredentialSecret)
 	if err == nil {
-		return string(existing.Data[corev1.BasicAuthPasswordKey]), nil
+		return existing, nil
 	}
 	if !apierrors.IsNotFound(err) {
-		return "", fmt.Errorf("substrate: read credential secret: %w", err)
+		return nil, fmt.Errorf("substrate: read credential secret: %w", err)
 	}
 	password, err := generatePassword()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	secret := cnpg.RenderCredentialSecret(Namespace, tenant.CredentialSecret,
-		tenantPool(tenant), tenant.RoleName, password, claimLabels(row))
+		tenantPool(tenant), tenant.LoginRole, password, claimLabels(row))
 	if _, err := c.deps.Cluster.ApplyAs(ctx, secret, kube.FieldManagerPlatform, false); err != nil {
-		return "", fmt.Errorf("substrate: apply credential secret: %w", err)
+		return nil, fmt.Errorf("substrate: apply credential secret: %w", err)
 	}
-	return password, nil
+	applied, err := c.deps.Cluster.GetSecret(ctx, Namespace, tenant.CredentialSecret)
+	if err != nil {
+		return nil, fmt.Errorf("substrate: read credential secret: %w", err)
+	}
+	return applied, nil
 }
 
 func (c *Controller) ensureDatabaseObject(ctx context.Context, row store.DatabaseClaim, pool store.DatabaseCluster, tenant store.DatabaseTenant) error {
@@ -228,9 +254,10 @@ func (c *Controller) databaseApplied(ctx context.Context, tenant store.DatabaseT
 }
 
 // ensureOutputMirror writes the service claim's connection outputs into its
-// environment namespace. System claims publish outputs through the internal
-// claim API instead.
-func (c *Controller) ensureOutputMirror(ctx context.Context, row store.DatabaseClaim, tenant store.DatabaseTenant, password string) error {
+// environment namespace from a credential Secret (its username is the
+// login role). System claims publish outputs through the internal claim
+// API instead.
+func (c *Controller) ensureOutputMirror(ctx context.Context, row store.DatabaseClaim, tenant store.DatabaseTenant, credential *corev1.Secret) error {
 	if row.OwnerKind != dbstore.OwnerService {
 		return nil
 	}
@@ -242,15 +269,17 @@ func (c *Controller) ensureOutputMirror(ctx context.Context, row store.DatabaseC
 	if row.EnvironmentID != nil {
 		environmentID = row.EnvironmentID.String()
 	}
+	username := string(credential.Data[corev1.BasicAuthUsernameKey])
+	password := string(credential.Data[corev1.BasicAuthPasswordKey])
 	port := strconv.Itoa(int(tenant.Port))
-	url := "postgresql://" + tenant.RoleName + ":" + password + "@" +
+	url := "postgresql://" + username + ":" + password + "@" +
 		tenant.Host + ":" + port + "/" + tenant.DatabaseName
 	secret := kubernetes.RenderOutputSecret(project, environment, environmentID,
 		"databases", service, map[string][]byte{
 			"host":     []byte(tenant.Host),
 			"port":     []byte(port),
 			"name":     []byte(tenant.DatabaseName),
-			"username": []byte(tenant.RoleName),
+			"username": []byte(username),
 			"password": []byte(password),
 			"url":      []byte(url),
 		})

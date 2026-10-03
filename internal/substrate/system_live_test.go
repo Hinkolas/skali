@@ -76,10 +76,10 @@ func TestLiveSystemClaimSameSubstrate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "pg17-shared-rw.skali-platform.svc.cluster.local", outputs.Host)
 	require.Equal(t, tenant.DatabaseName, outputs.Database)
-	require.Equal(t, tenant.RoleName, outputs.Username)
 	credential, err := client.Clientset.CoreV1().Secrets(Namespace).
 		Get(ctx, outputs.CredentialSecret, metav1.GetOptions{})
 	require.NoError(t, err)
+	require.Equal(t, tenant.LoginRole, string(credential.Data["username"]))
 	require.NotEmpty(t, credential.Data["password"])
 
 	// The installer-owned bootstrap surface stays untouched: no substrate

@@ -18,9 +18,44 @@ func clusterSpec() ClusterSpec {
 		Instances:    1,
 		StorageBytes: 10 << 30,
 		Roles: []Role{
-			{Name: "u_data_abcd1234", SecretName: "dbcred-abcd1234"},
+			{Name: "u_data_abcd1234", SecretName: "dbcred-abcd1234", Login: true},
 		},
 	}
+}
+
+// TestRenderClusterRotationRoles pins the role shapes a credential rotation
+// renders: an owner that no longer logs in (password wiped, no Secret), a
+// login role under it with its own Secret, and nothing else CNPG could act
+// on behind the worker's back.
+func TestRenderClusterRotationRoles(t *testing.T) {
+	t.Parallel()
+	spec := clusterSpec()
+	spec.Roles = []Role{
+		{Name: "u_data_abcd1234", DisablePassword: true},
+		{Name: "u_data_abcd1234_v2", SecretName: "dbcred-abcd1234-v2", Login: true, InRoles: []string{"u_data_abcd1234"}},
+	}
+	object := RenderCluster(spec).Object
+	roles, _, _ := unstructured.NestedSlice(object, "spec", "managed", "roles")
+	require.Len(t, roles, 2)
+
+	owner := roles[0].(map[string]any)
+	require.Equal(t, "u_data_abcd1234", owner["name"])
+	require.Equal(t, "present", owner["ensure"])
+	require.Equal(t, false, owner["login"])
+	require.Equal(t, true, owner["inherit"])
+	require.Equal(t, true, owner["disablePassword"])
+	_, hasSecret := owner["passwordSecret"]
+	require.False(t, hasSecret, "an owner without a login has no Secret to point at")
+	_, hasMembers := owner["inRoles"]
+	require.False(t, hasMembers)
+
+	login := roles[1].(map[string]any)
+	require.Equal(t, "u_data_abcd1234_v2", login["name"])
+	require.Equal(t, true, login["login"])
+	require.Equal(t, map[string]any{"name": "dbcred-abcd1234-v2"}, login["passwordSecret"])
+	require.Equal(t, []any{"u_data_abcd1234"}, login["inRoles"])
+	_, disabled := login["disablePassword"]
+	require.False(t, disabled)
 }
 
 func TestRenderClusterSingle(t *testing.T) {

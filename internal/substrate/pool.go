@@ -27,20 +27,21 @@ const clusterHealthyPhase = "Cluster in healthy state"
 // under the platform manager. On a managed cluster the pool waits (requeue)
 // until a database node's memory is observed: applying an untuned spec
 // first and the tuned one a minute later would restart the pool twice.
-func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster) (time.Duration, error) {
+// now decides which rotating roles are still inside their window.
+func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster, now time.Time) (time.Duration, error) {
 	// The access policy converges first: it does not depend on the memory
 	// budget below, and a released environment must not stay admitted (nor
 	// a new holder stay blocked) while the pool waits for node memory.
 	if err := c.ensurePoolAccess(ctx, pool); err != nil {
 		return 0, err
 	}
-	tenants, err := c.deps.DB.ListClusterTenants(ctx, pool.ID)
+	tenants, err := c.deps.DB.ListManagedClusterTenants(ctx, pool.ID)
 	if err != nil {
 		return 0, err
 	}
 	roles := make([]cnpg.Role, 0, len(tenants))
 	for _, tenant := range tenants {
-		roles = append(roles, cnpg.Role{Name: tenant.RoleName, SecretName: tenant.CredentialSecret})
+		roles = append(roles, tenantRoles(tenant, now)...)
 	}
 	budgets, ok, err := c.PoolBudgets(ctx)
 	if err != nil {
@@ -85,6 +86,52 @@ func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster)
 		}
 	}
 	return 0, nil
+}
+
+// tenantRoles renders one tenant's managed roles as the pool must hold
+// them now. The owner role (role_name) owns the database; it logs in only
+// while it is the login role (every tenant before its first rotation) or
+// the previous login role inside a window. A login role other than the
+// owner is a member of it with its own password Secret: the current one,
+// a pending one the worker has not taken yet, and the previous one until
+// its window ends. A role that left the window is no longer rendered at
+// all: CNPG never drops roles, the worker does by SQL, and a role still in
+// the spec would be recreated behind it.
+func tenantRoles(tenant store.DatabaseTenant, now time.Time) []cnpg.Role {
+	inWindow := tenant.CredentialRetireAt != nil && now.Before(*tenant.CredentialRetireAt)
+	previous := ""
+	previousSecret := ""
+	if tenant.PreviousLoginRole != nil && inWindow {
+		previous = *tenant.PreviousLoginRole
+		if tenant.PreviousCredentialSecret != nil {
+			previousSecret = *tenant.PreviousCredentialSecret
+		}
+	}
+	owner := cnpg.Role{Name: tenant.RoleName}
+	switch {
+	case tenant.LoginRole == tenant.RoleName:
+		owner.Login = true
+		owner.SecretName = tenant.CredentialSecret
+	case previous == tenant.RoleName:
+		owner.Login = true
+		owner.SecretName = previousSecret
+	default:
+		owner.DisablePassword = true
+	}
+	roles := []cnpg.Role{owner}
+	login := func(name, secret string) cnpg.Role {
+		return cnpg.Role{Name: name, SecretName: secret, Login: true, InRoles: []string{tenant.RoleName}}
+	}
+	if tenant.LoginRole != tenant.RoleName {
+		roles = append(roles, login(tenant.LoginRole, tenant.CredentialSecret))
+	}
+	if tenant.PendingLoginRole != nil && tenant.PendingCredentialSecret != nil {
+		roles = append(roles, login(*tenant.PendingLoginRole, *tenant.PendingCredentialSecret))
+	}
+	if previous != "" && previous != tenant.RoleName {
+		roles = append(roles, login(previous, previousSecret))
+	}
+	return roles
 }
 
 // ensurePoolAccess applies the policy admitting the pool's instance pods to
