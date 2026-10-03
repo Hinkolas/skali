@@ -237,8 +237,10 @@ once the fleet can hold one is tracked on the roadmap.
 
 `skali backup` copies a bucket object by object while the application may
 still be writing: objects added or deleted during the copy may or may not
-be in the snapshot. Stop the environment first when an exact cut matters
-(a restore does). Volumes and databases have their own notes in
+be in the snapshot. An object that was listed but deleted before the copy
+reached it is skipped and counted in the run's log rather than failing the
+backup. Stop the environment first when an exact cut matters (a restore
+does). Volumes and databases have their own notes in
 [prerelease safety](prerelease-safety.md).
 
 ## Builds run on your machine

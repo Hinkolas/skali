@@ -359,13 +359,13 @@ func (c *Controller) restoreBucket(ctx context.Context, log *journal.StepLog, bc
 		return err
 	}
 	log.Info(ctx, "clearing bucket "+bucketName)
-	if err := destination.List(ctx, "", func(info objectInfo) error {
-		return destination.Remove(ctx, info.Key)
-	}); err != nil {
+	cleared, err := destination.RemoveAll(ctx)
+	if err != nil {
 		return err
 	}
+	log.Info(ctx, fmt.Sprintf("cleared %d objects from bucket %s", cleared, bucketName))
 	restored, restoredBytes, err := copyObjects(ctx, log, bctx.target, destination,
-		component.ObjectPrefix, "", component.ObjectCount)
+		component.ObjectPrefix, "", component.ObjectCount, c.copyOptions())
 	if err != nil {
 		return err
 	}

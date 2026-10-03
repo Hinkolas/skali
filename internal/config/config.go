@@ -199,6 +199,12 @@ type API struct {
 	// upload, or volume archive) before it fails as stuck.
 	BackupJobTimeout time.Duration `env:"SKALI_BACKUP_JOB_TIMEOUT,default=1h"`
 
+	// BackupCopyConcurrency is how many objects a bucket backup or restore
+	// copies at once. The copy is bound by round trips to the target, so
+	// this is the lever for its speed; lower it for a target that
+	// throttles parallel requests.
+	BackupCopyConcurrency int `env:"SKALI_BACKUP_COPY_CONCURRENCY,default=16"`
+
 	// BackupScheduler runs the environments' backup schedules. Off is for
 	// tests and debugging; a cluster without schedules or without a backup
 	// target idles either way.

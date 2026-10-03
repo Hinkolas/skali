@@ -63,6 +63,9 @@ type Config struct {
 	// revision to become healthy before the run fails (the target stays,
 	// reconciliation continues).
 	ReconvergeTimeout time.Duration
+	// CopyConcurrency is how many objects a bucket backup or restore copies
+	// at once; zero takes the default.
+	CopyConcurrency int
 }
 
 // Controller executes backup and restore rows. Create with New, start with
@@ -93,6 +96,9 @@ func New(deps Deps, cfg Config) *Controller {
 	if cfg.ReconvergeTimeout <= 0 {
 		cfg.ReconvergeTimeout = 10 * time.Minute
 	}
+	if cfg.CopyConcurrency <= 0 {
+		cfg.CopyConcurrency = defaultCopyConcurrency
+	}
 	c := &Controller{
 		deps: deps,
 		cfg:  cfg,
@@ -105,6 +111,11 @@ func New(deps Deps, cfg Config) *Controller {
 		c.revisions = deps.Deploy
 	}
 	return c
+}
+
+// copyOptions is how bucket copies run under this controller's settings.
+func (c *Controller) copyOptions() copyOptions {
+	return copyOptions{Concurrency: c.cfg.CopyConcurrency}
 }
 
 // Enqueue schedules one backup row's execution.
