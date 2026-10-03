@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import SectionHeader from '$lib/components/SectionHeader.svelte';
+	import { reveal } from '$lib/motion';
 
 	const steps = [
 		{
@@ -77,7 +78,7 @@
 <section id="workflow" class="mx-auto flex max-w-330 scroll-mt-6 flex-col gap-16 px-6 py-35">
 	<!-- As in Platform: the timeline runs wider so each command fits on one
 	     line, while the header keeps the measure of the other sections. -->
-	<div class="mx-auto w-full max-w-288">
+	<div use:reveal class="mx-auto w-full max-w-288">
 		<SectionHeader
 			index="01"
 			label="Workflow"
@@ -101,7 +102,11 @@
 		class="m-0 grid list-none gap-y-10 p-0 md:grid-cols-2 xl:grid-cols-4"
 	>
 		{#each steps as step, i (step.label)}
-			<li class="relative flex flex-col gap-3.5 border-t border-white/10 pt-8 pr-7" style:--i={i}>
+			<li
+				use:reveal={{ delay: 90 * i }}
+				class="relative flex flex-col gap-3.5 border-t border-white/10 pt-8 pr-7"
+				style:--i={i}
+			>
 				<span aria-hidden="true" class="trace"
 					><span class="fill"></span><span class="head"></span></span
 				>

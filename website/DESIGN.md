@@ -205,7 +205,7 @@ Category hues come from Studio and keep Studio's meaning. Use them only to label
 - **Display** (500, clamp 44–96px, line-height 1, tracking −0.055em): the hero headline only, with a deliberate line break.
 - **Headline** (500, clamp 32–52px, 1.05, −0.04em): section headings beside the numbered label. The install heading runs slightly larger and tighter (clamp 34–56px, 1.02, −0.05em) with balanced wrapping.
 - **Title** (500, clamp 28–40px, 1.1, −0.03em): the headings of the Platform rows.
-- **Statement** (400, clamp 26–40px, 1.3, −0.03em): the Under the hood paragraph, set in `text-ghost` with the named components lifted to `text-primary`.
+- **Statement** (400, clamp 26–40px, 1.3, −0.03em): the Under the hood paragraph, set in `text-ghost` with the named components lifted to `text-primary`. As it scrolls up the screen it is read out word by word from a dimmer gray, ending exactly in that state.
 - **Lead** (400, clamp 17–20px, 1.6): the hero paragraph, max ~520px, in `text-muted`.
 - **Body** (400, 17–18px, 1.6–1.65): section leads and row copy, max ~500–560px.
 - **Body small** (400, 15px, 1.6): workflow step text and fact lists.
@@ -251,6 +251,24 @@ Tonal first, lift on float. Surfaces sit flat and are separated by stepping thro
 Generous, consistent rounding on hairline-bordered containers; nothing sharp, nothing pill-shaped except dots and badges. Radius grows with the container's size: controls 10px, the command bar and dialogs 16px, feature panels and the hero frame 22px (the frame rounds only its top corners and runs off the bottom of the section), the install card 28px. Status dots, timeline dots and badges are fully round. Mocks keep Studio's own radii (15px cards, 11px list rows, 6px keycaps) rather than the site scale.
 
 The faint grid recurs as a motif: 72px behind the hero, 56px in the install card, both masked to fade from one corner or edge.
+
+## Motion
+
+The page moves the way the product does, and only where motion says something.
+
+- **Opening:** the grid and halo come up, the headline arrives word by word out of a blur, the lead and actions follow, then the Studio frame rises into the light and its charts draw. Plain CSS on load, about 3s end to end, ease-out (`cubic-bezier(0.16, 1, 0.3, 1)`).
+- **Live mocks:** the overview's charts stream samples and the deployment run plays through to `succeeded` and loops, both using Studio's own motion (spinner, progress sheen, step clocks).
+- **Scroll-linked:** the workflow trace and the Under the hood read-through follow scroll position, so they run as fast as the visitor reads.
+- **Reveals:** section headers, Platform copy and panels, workflow steps and the install card rise 28px into place once, via `$lib/motion`'s `reveal`. Only what is below the fold at hydration is held back. The promote dialog opens (scale from 0.96, slight blur) rather than rises.
+- **Small feedback:** arrows on the hero and install links nudge 2px on hover; the install command's block caret blinks six times, then rests.
+
+### Named Rules
+
+**The Already Visible Rule.** The default render is the finished state. Scripts only ever hold back what is offscreen, so a page whose scripts fail is whole.
+
+**The Reduced Motion Rule.** With reduced motion the page is the prerendered still: no opening, no streaming, no reveals, no traces; the dots, statement and mocks show their designed state.
+
+**The Offscreen Rule.** Loops pause when offscreen or in a hidden tab.
 
 ## Components
 
