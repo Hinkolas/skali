@@ -141,6 +141,16 @@ func (m *memoryStore) RemovePrefix(_ context.Context, prefix string) (int64, err
 	return removed, nil
 }
 
+func (m *memoryStore) RemoveAll(context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ops = append(m.ops, "remove-all")
+	removed := int64(len(m.objects))
+	clear(m.objects)
+	clear(m.meta)
+	return removed, nil
+}
+
 func (m *memoryStore) Reachable(context.Context) error { return nil }
 
 func (m *memoryStore) has(key string) bool {
