@@ -29,9 +29,9 @@ curl -fsSL https://skali.dev/install.sh | sh
 ```
 
 > [!WARNING]
-> **skali is early alpha.** Until v1.0.0 the manifest schema, CLI, API, and
-> on-disk formats may change in breaking ways, and upgrades may need manual
-> steps. Do not use it for workloads you cannot afford to lose. Read the
+> **skali is in initial development.** Until v1.0.0 the manifest schema, CLI,
+> API, and on-disk formats may change in breaking ways, and upgrades may need
+> manual steps. Do not use it for workloads you cannot afford to lose. Read the
 > [known limitations](docs/limitations.md) and the
 > [prerelease safety notes](docs/prerelease-safety.md) first. Project roles do
 > not isolate hostile workloads; see [security boundaries](docs/security.md).
