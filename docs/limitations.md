@@ -1,8 +1,9 @@
 # Known limitations
 
 Things skali does not do yet, stated so nobody finds out the hard way.
-Each one is deliberate for now and tracked in [`ROADMAP.md`](../ROADMAP.md)
-and the issues it links.
+Each one is deliberate for now; the larger directions are in
+[`ROADMAP.md`](../ROADMAP.md) and the concrete work in
+[issues](https://github.com/Hinkolas/skali/issues).
 
 ## Volumes are never reclaimed automatically
 
