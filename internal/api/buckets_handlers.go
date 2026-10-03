@@ -14,15 +14,6 @@ import (
 	"github.com/Hinkolas/skali/internal/substrate"
 )
 
-// Bounds of a rotation's overlap window: below a minute the previous key
-// would be revoked before any consumer rolled; above seven days nothing
-// legitimately holds it (the SigV4 presign maximum).
-const (
-	defaultRetireAfter = time.Hour
-	minRetireAfter     = time.Minute
-	maxRetireAfter     = 7 * 24 * time.Hour
-)
-
 // bucketsHandlers serves bucket-service connection projections, mirroring
 // the database pair. The connection endpoint reads durable rows only;
 // credential reveal is the sanctioned request-time cluster read behind
@@ -126,62 +117,7 @@ func (h *bucketsHandlers) reveal(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /v1/environments/{id}/buckets/{key}/credentials/rotate: issue a new
-// keypair as a journaled run of kind rotation. The consumers roll onto it
-// and the previous keypair retires after the overlap window; URLs signed
-// with it fail from then on, so the route sits behind sudo mode.
+// keypair as a journaled run of kind rotation; see rotate.
 func (h *bucketsHandlers) rotate(w http.ResponseWriter, r *http.Request) {
-	environmentID, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		RetireAfterSeconds *int64 `json:"retire_after_seconds"`
-	}
-	if r.ContentLength != 0 {
-		if err := decodeJSON(w, r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
-			return
-		}
-	}
-	retireAfter := defaultRetireAfter
-	if req.RetireAfterSeconds != nil {
-		retireAfter = time.Duration(*req.RetireAfterSeconds) * time.Second
-		if retireAfter < minRetireAfter || retireAfter > maxRetireAfter {
-			writeError(w, http.StatusBadRequest, codeBadRequest,
-				"retire_after_seconds must be between 60 (one minute) and 604800 (seven days)")
-			return
-		}
-	}
-	runID, err := h.rotation.Create(r.Context(), rotation.Input{
-		EnvironmentID: environmentID,
-		ServiceKey:    chi.URLParam(r, "key"),
-		RetireAfter:   retireAfter,
-		Actor:         UserFrom(r.Context()).ID.String(),
-	})
-	if err != nil {
-		writeRotationError(w, chi.URLParam(r, "key"), err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, struct {
-		RunID string `json:"run_id"`
-	}{runID.String()})
-}
-
-func writeRotationError(w http.ResponseWriter, key string, err error) {
-	switch {
-	case errors.Is(err, rotation.ErrEnvironmentNotFound):
-		writeError(w, http.StatusNotFound, codeNotFound, "environment not found")
-	case errors.Is(err, rotation.ErrBucketNotFound):
-		writeError(w, http.StatusNotFound, codeNotFound, "no live bucket claim for "+key)
-	case errors.Is(err, substrate.ErrBucketNotProvisioned):
-		writeError(w, http.StatusConflict, codeBucketNotProvisioned, "the bucket is not provisioned yet")
-	case errors.Is(err, substrate.ErrBucketFenced):
-		writeError(w, http.StatusConflict, codeBucketFenced,
-			"a restore holds the bucket; rotate once it has finished")
-	case errors.Is(err, rotation.ErrRunInFlight):
-		writeError(w, http.StatusConflict, codeRunInFlight,
-			"another run is in flight for this environment; wait for it or cancel it")
-	default:
-		writeError(w, http.StatusInternalServerError, codeInternal, "starting the rotation failed")
-	}
+	rotate(h.rotation, rotation.CollectionBuckets, w, r)
 }

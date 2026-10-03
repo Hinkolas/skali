@@ -430,10 +430,12 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 					ac.route(r, "PUT", "/environments/{id}/access/{user}", classEnvAdmin, ah.putEnvironmentAccess)
 					ac.route(r, "DELETE", "/environments/{id}/access/{user}", classEnvAdmin, ah.deleteEnvironmentAccess)
 
-					// Rotating a bucket's keypair retires the current one;
-					// like reveal it needs sudo mode.
+					// Rotating a bucket's keypair or a database's login role
+					// retires the current one; like reveal it needs sudo mode.
 					if d.Rotation != nil && d.Databases != nil {
+						dbh := &databasesHandlers{db: d.Databases, secrets: d.SecretReader, rotation: d.Rotation}
 						bh := &bucketsHandlers{db: d.Databases, secrets: d.SecretReader, rotation: d.Rotation}
+						ac.route(r, "POST", "/environments/{id}/databases/{key}/credentials/rotate", classEnvMaintain, dbh.rotate)
 						ac.route(r, "POST", "/environments/{id}/buckets/{key}/credentials/rotate", classEnvMaintain, bh.rotate)
 					}
 

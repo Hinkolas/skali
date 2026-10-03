@@ -2,6 +2,7 @@ package rotation
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -214,7 +215,7 @@ func TestRotationRollsConsumers(t *testing.T) {
 	fx := newFixture(t)
 	ctx := context.Background()
 
-	runID, err := fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour, Actor: "alice"})
+	runID, err := fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour, Actor: "alice"})
 	require.NoError(t, err)
 	require.Equal(t, "running", fx.run(t, runID).Status)
 	require.NoError(t, fx.control.process(ctx, runID))
@@ -235,7 +236,7 @@ func TestRotationRollsConsumers(t *testing.T) {
 
 	// A second run on the same environment is possible again: the slot is
 	// free.
-	again, err := fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour})
+	again, err := fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour})
 	require.NoError(t, err)
 	require.NotEqual(t, runID, again)
 }
@@ -245,13 +246,13 @@ func TestCreateRefusals(t *testing.T) {
 	fx := newFixture(t)
 	ctx := context.Background()
 
-	_, err := fx.control.Create(ctx, Input{EnvironmentID: uuid.Must(uuid.NewV7()), ServiceKey: "files"})
+	_, err := fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: uuid.Must(uuid.NewV7()), ServiceKey: "files"})
 	require.ErrorIs(t, err, ErrEnvironmentNotFound)
-	_, err = fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "uploads"})
+	_, err = fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "uploads"})
 	require.ErrorIs(t, err, ErrBucketNotFound)
 
 	require.NoError(t, fx.db.FenceAllocation(ctx, fx.alloc.ID))
-	_, err = fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "files"})
+	_, err = fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "files"})
 	require.ErrorIs(t, err, substrate.ErrBucketFenced)
 	require.NoError(t, fx.db.UnfenceAllocation(ctx, fx.alloc.ID))
 
@@ -260,7 +261,7 @@ func TestCreateRefusals(t *testing.T) {
 		Visibility: "private", StorageQuotaBytes: 1 << 30, Versioning: "disabled",
 	})
 	require.NoError(t, err)
-	_, err = fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "uploads"})
+	_, err = fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "uploads"})
 	require.ErrorIs(t, err, substrate.ErrBucketNotProvisioned)
 
 	// A run in flight (a deployment here) holds the slot; the refused
@@ -268,7 +269,7 @@ func TestCreateRefusals(t *testing.T) {
 	other, err := fx.journal.CreateRun(ctx, journal.RunInput{Kind: "deployment", ProjectID: fx.projectID, EnvironmentID: fx.envID, Actor: "x"})
 	require.NoError(t, err)
 	require.NoError(t, fx.journal.StartRun(ctx, other.ID))
-	_, err = fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "files"})
+	_, err = fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "files"})
 	require.ErrorIs(t, err, ErrRunInFlight)
 	runs, err := fx.journal.ListRuns(ctx, fx.envID)
 	require.NoError(t, err)
@@ -285,7 +286,7 @@ func TestRotationSkipsRollWhenNotActive(t *testing.T) {
 	fx.status.old.State = deploy.EnvironmentStateDown
 	fx.status.rolled = nil
 
-	runID, err := fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour})
+	runID, err := fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour})
 	require.NoError(t, err)
 	require.NoError(t, fx.control.process(ctx, runID))
 	require.Equal(t, "succeeded", fx.run(t, runID).Status)
@@ -300,7 +301,7 @@ func TestRotationFailsWhenConsumersDoNotRoll(t *testing.T) {
 	ctx := context.Background()
 	fx.status.rolled = nil
 
-	runID, err := fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour})
+	runID, err := fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour})
 	require.NoError(t, err)
 	require.NoError(t, fx.control.process(ctx, runID))
 	run := fx.run(t, runID)
@@ -319,7 +320,7 @@ func TestRotationFailsWhenCommitIsNotTaken(t *testing.T) {
 	ctx := context.Background()
 	fx.rotator.commit = false
 
-	runID, err := fx.control.Create(ctx, Input{EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour})
+	runID, err := fx.control.Create(ctx, Input{Collection: CollectionBuckets, EnvironmentID: fx.envID, ServiceKey: "files", RetireAfter: time.Hour})
 	require.NoError(t, err)
 	require.NoError(t, fx.control.process(ctx, runID))
 	run := fx.run(t, runID)
@@ -349,6 +350,212 @@ func TestRecoverOnBootFailsOrphanedRuns(t *testing.T) {
 	require.Equal(t, "failed", recovered.Status)
 	require.Contains(t, *recovered.Failure, "the daemon restarted during the rotation")
 	require.Equal(t, "running", fx.run(t, deployment.ID).Status)
+}
+
+// fakeDatabaseRotator stands in for the substrate's database side: it
+// records the commits and, when commit is set, plays the claim worker's
+// part (the pending role is taken right away); retire clears the previous
+// role when retireClears is set.
+type fakeDatabaseRotator struct {
+	mu           sync.Mutex
+	db           *dbstore.Service
+	calls        []Input
+	retires      int
+	commit       bool
+	retireClears bool
+	err          error
+}
+
+func (f *fakeDatabaseRotator) tenant(ctx context.Context, environmentID uuid.UUID, serviceKey string) (*store.DatabaseTenant, error) {
+	claimRow, err := f.db.LiveServiceClaim(ctx, environmentID, serviceKey)
+	if err != nil {
+		return nil, err
+	}
+	return f.db.LiveTenant(ctx, claimRow.ID)
+}
+
+func (f *fakeDatabaseRotator) RotateDatabaseCredentials(ctx context.Context, environmentID uuid.UUID, serviceKey string, retireAfter time.Duration) (substrate.DatabaseRotation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, Input{EnvironmentID: environmentID, ServiceKey: serviceKey, RetireAfter: retireAfter})
+	if f.err != nil {
+		return substrate.DatabaseRotation{}, f.err
+	}
+	tenant, err := f.tenant(ctx, environmentID, serviceKey)
+	if err != nil {
+		return substrate.DatabaseRotation{}, err
+	}
+	if tenant.PreviousLoginRole != nil {
+		return substrate.DatabaseRotation{}, substrate.ErrRotationInFlight
+	}
+	retireAt := time.Now().Add(retireAfter).UTC().Truncate(time.Second)
+	login := fmt.Sprintf("%s_v%d", tenant.RoleName, tenant.CredentialVersion+1)
+	if _, err := f.db.SetTenantPendingCredential(ctx, tenant.ID, login, "dbcred-x-v2", retireAt); err != nil {
+		return substrate.DatabaseRotation{}, err
+	}
+	if f.commit {
+		if _, err := f.db.BeginTenantCredentialRotation(ctx, tenant.ID); err != nil {
+			return substrate.DatabaseRotation{}, err
+		}
+	}
+	return substrate.DatabaseRotation{LoginRole: login, RetireAt: retireAt}, nil
+}
+
+func (f *fakeDatabaseRotator) RetireDatabaseCredentials(ctx context.Context, environmentID uuid.UUID, serviceKey string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.retires++
+	tenant, err := f.tenant(ctx, environmentID, serviceKey)
+	if err != nil {
+		return err
+	}
+	if err := f.db.RetireTenantCredentials(ctx, tenant.ID); err != nil {
+		return err
+	}
+	if f.retireClears {
+		return f.db.FinishTenantCredentialRotation(ctx, tenant.ID)
+	}
+	return nil
+}
+
+// withDatabase adds a provisioned database claim "data" to the fixture,
+// consumed by "api", and a database rotator to the controller.
+func (fx *fixture) withDatabase(t *testing.T) *fakeDatabaseRotator {
+	t.Helper()
+	ctx := context.Background()
+	owner := dbstore.ServiceOwner(fx.projectID, fx.envID, "demo", "production", "data")
+	claimRow, err := fx.db.EnsureClaim(ctx, owner, dbstore.ClaimSpec{
+		Engine: "postgres", Major: 17, Isolation: "project", Availability: "single",
+	})
+	require.NoError(t, err)
+	pool, err := fx.db.CreateCluster(ctx, dbstore.ClusterInput{
+		Name: "pg17-shared", Engine: "postgres", Major: 17, Class: dbstore.ClassShared,
+		Instances: 1, StorageBytes: 1 << 30, Image: "img",
+	})
+	require.NoError(t, err)
+	_, err = fx.db.BindClaim(ctx, claimRow.ID, pool.ID)
+	require.NoError(t, err)
+	_, err = fx.db.RecordTenant(ctx, dbstore.TenantInput{
+		ClaimID: claimRow.ID, ClusterID: pool.ID, DatabaseName: "db_data", RoleName: "u_data",
+		CredentialSecret: "dbcred-x", Host: "h", Port: 5432,
+	})
+	require.NoError(t, err)
+	_, err = fx.db.TransitionClaim(ctx, claimRow.ID, claim.PhaseProvisioned)
+	require.NoError(t, err)
+
+	dbOutput := func(service, output string) compiler.Expression {
+		return compiler.Expression{Parts: []compiler.ExpressionPart{{
+			Kind: "service_output", Collection: "databases", Service: service, Output: output}}}
+	}
+	rev := &revision.Revision{Definition: compiler.ProjectDefinition{Applications: map[string]compiler.Application{
+		"web": {Environment: map[string]compiler.Expression{"S3_SECRET_KEY": output("files", "secret_key")}},
+		"api": {Environment: map[string]compiler.Expression{"DATABASE_URL": dbOutput("data", "url")}},
+	}}}
+	old := time.Now().Add(-time.Hour)
+	fx.status.old.Services = append(fx.status.old.Services, reconcile.ServiceStatus{
+		Key: "api", Type: "application", Health: module.HealthHealthy,
+		Pods: []reconcile.PodInfo{{Name: "api-blue-1", Started: old, Serving: true}}})
+	if fx.status.rolled != nil {
+		fx.status.rolled.Services = append(fx.status.rolled.Services, reconcile.ServiceStatus{
+			Key: "api", Type: "application", Health: module.HealthHealthy,
+			Pods: []reconcile.PodInfo{{Name: "api-green-1", Started: time.Now().Add(time.Minute), Serving: true}}})
+	}
+	rotator := &fakeDatabaseRotator{db: fx.db, commit: true, retireClears: true}
+	fx.control = New(Deps{
+		Store: fx.st, Journal: fx.journal, DB: fx.db,
+		Revisions: fakeRevisions{rev: rev}, Buckets: fx.rotator, Databases: rotator, Status: fx.status.status,
+	}, Config{CommitTimeout: 300 * time.Millisecond, RollTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond})
+	return rotator
+}
+
+// The database happy path: the commit lands, the worker takes it, the
+// database's consumer rolls and the bucket's does not matter; the
+// narration speaks of login roles.
+func TestDatabaseRotationRollsConsumers(t *testing.T) {
+	t.Parallel()
+	fx := newFixture(t)
+	rotator := fx.withDatabase(t)
+	ctx := context.Background()
+
+	runID, err := fx.control.Create(ctx, Input{Collection: CollectionDatabases, EnvironmentID: fx.envID, ServiceKey: "data", RetireAfter: time.Hour, Actor: "alice"})
+	require.NoError(t, err)
+	require.NoError(t, fx.control.process(ctx, runID))
+
+	run := fx.run(t, runID)
+	require.Equal(t, "succeeded", run.Status, "failure: %v", run.Failure)
+	require.Equal(t, map[string]string{"rotate": "succeeded", "roll": "succeeded"}, fx.steps(t, runID))
+	require.Equal(t, []Input{{EnvironmentID: fx.envID, ServiceKey: "data", RetireAfter: time.Hour}}, rotator.calls)
+	require.Zero(t, rotator.retires, "nothing to retire early on a first rotation")
+	rotate := fx.stepMessages(t, runID, "rotate")
+	require.Contains(t, rotate[0], "new login role u_data_v2 committed for databases.data")
+	require.Contains(t, rotate[1], "the pool holds both roles")
+	require.Contains(t, rotate[1], "credentials v2")
+	roll := fx.stepMessages(t, runID, "roll")
+	require.Contains(t, roll[0], "waiting for api to restart with the new login role")
+	require.Contains(t, roll, "every consumer runs with the new login role")
+	require.Empty(t, fx.rotator.calls, "the bucket side is untouched")
+}
+
+// A second rotation inside the window retires the older login role first,
+// then commits; the bucket rule, kept.
+func TestDatabaseRotationRetiresPreviousFirst(t *testing.T) {
+	t.Parallel()
+	fx := newFixture(t)
+	rotator := fx.withDatabase(t)
+	ctx := context.Background()
+	fx.status.old.State = deploy.EnvironmentStateDown // no roll to wait for
+
+	first, err := fx.control.Create(ctx, Input{Collection: CollectionDatabases, EnvironmentID: fx.envID, ServiceKey: "data", RetireAfter: time.Hour})
+	require.NoError(t, err)
+	require.NoError(t, fx.control.process(ctx, first))
+	require.Equal(t, "succeeded", fx.run(t, first).Status)
+
+	second, err := fx.control.Create(ctx, Input{Collection: CollectionDatabases, EnvironmentID: fx.envID, ServiceKey: "data", RetireAfter: time.Hour})
+	require.NoError(t, err)
+	require.NoError(t, fx.control.process(ctx, second))
+	run := fx.run(t, second)
+	require.Equal(t, "succeeded", run.Status, "failure: %v", run.Failure)
+	require.Equal(t, 1, rotator.retires)
+	require.Len(t, rotator.calls, 2)
+	messages := fx.stepMessages(t, second, "rotate")
+	require.Contains(t, messages[0], "retiring u_data from the previous rotation first")
+	require.Contains(t, messages[1], "new login role u_data_v3 committed")
+
+	// A worker that never retires fails the step with the way forward.
+	rotator.retireClears = false
+	third, err := fx.control.Create(ctx, Input{Collection: CollectionDatabases, EnvironmentID: fx.envID, ServiceKey: "data", RetireAfter: time.Hour})
+	require.NoError(t, err)
+	require.NoError(t, fx.control.process(ctx, third))
+	run = fx.run(t, third)
+	require.Equal(t, "failed", run.Status)
+	require.Contains(t, *run.Failure, "did not retire the previous login role in time")
+	require.Len(t, rotator.calls, 2, "no commit before the retirement")
+}
+
+func TestDatabaseCreateRefusals(t *testing.T) {
+	t.Parallel()
+	fx := newFixture(t)
+	fx.withDatabase(t)
+	ctx := context.Background()
+
+	_, err := fx.control.Create(ctx, Input{Collection: CollectionDatabases, EnvironmentID: fx.envID, ServiceKey: "cache"})
+	require.ErrorIs(t, err, ErrDatabaseNotFound)
+	_, err = fx.control.Create(ctx, Input{Collection: "caches", EnvironmentID: fx.envID, ServiceKey: "data"})
+	require.Error(t, err)
+
+	owner := dbstore.ServiceOwner(fx.projectID, fx.envID, "demo", "production", "cache")
+	_, err = fx.db.EnsureClaim(ctx, owner, dbstore.ClaimSpec{Engine: "postgres", Major: 17, Isolation: "project", Availability: "single"})
+	require.NoError(t, err)
+	_, err = fx.control.Create(ctx, Input{Collection: CollectionDatabases, EnvironmentID: fx.envID, ServiceKey: "cache"})
+	require.ErrorIs(t, err, substrate.ErrDatabaseNotProvisioned)
+
+	// Without a database rotator the collection is unavailable, not a panic.
+	bare := New(Deps{Store: fx.st, Journal: fx.journal, DB: fx.db, Buckets: fx.rotator, Status: fx.status.status}, Config{})
+	_, err = bare.Create(ctx, Input{Collection: CollectionDatabases, EnvironmentID: fx.envID, ServiceKey: "data"})
+	require.Error(t, err)
+	runs, err := fx.journal.ListRuns(ctx, fx.envID)
+	require.NoError(t, err)
+	require.Empty(t, runs, "a refused rotation leaves no run behind")
 }
 
 func TestPendingConsumers(t *testing.T) {

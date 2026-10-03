@@ -63,10 +63,12 @@ const (
 	codeSnapshotNotFound         = "snapshot_not_found"
 	codeSnapshotInUse            = "snapshot_in_use"
 
-	// Buckets.
-	codeBucketNotProvisioned = "bucket_not_provisioned"
-	codeBucketFenced         = "bucket_fenced"
-	codeRunInFlight          = "run_in_flight"
+	// Buckets and databases (credential rotation).
+	codeBucketNotProvisioned   = "bucket_not_provisioned"
+	codeBucketFenced           = "bucket_fenced"
+	codeDatabaseNotProvisioned = "database_not_provisioned"
+	codeRotationInFlight       = "rotation_in_flight"
+	codeRunInFlight            = "run_in_flight"
 
 	// Exec.
 	codeNoReadyPod = "no_ready_pod"

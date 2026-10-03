@@ -1,10 +1,12 @@
 // Package rotation drives managed credential rotations as journaled runs.
-// A rotation is committed by the substrate (the new keypair lands in the
-// credential Secret and the claim worker converges the store, the mirror,
-// and the version bump from it); the controller here owns the run that
+// A rotation is committed by the substrate (a bucket's new keypair lands
+// in the credential Secret, a database's next login role in the tenant
+// row, and the claim worker converges the store or pool, the mirror, and
+// the version bump from it); the controller here owns the run that
 // explains it: it issues the commit, waits for the substrate to take it,
-// and waits for the consuming applications to roll onto the new keys. The
-// previous keypair retires on the substrate's own clock, run or no run.
+// and waits for the consuming applications to roll onto the new
+// credentials. The previous ones retire on the substrate's own clock, run
+// or no run.
 package rotation
 
 import (
@@ -36,10 +38,19 @@ import (
 // Kind is the journal run kind of a credential rotation.
 const Kind = "rotation"
 
+// Collections a rotation applies to: the service collections of the
+// definition.
+const (
+	CollectionBuckets   = "buckets"
+	CollectionDatabases = "databases"
+)
+
 var (
 	ErrEnvironmentNotFound = errors.New("rotation: environment not found")
-	// ErrBucketNotFound: the environment has no live claim for the service.
+	// ErrBucketNotFound: the environment has no live bucket claim for the service.
 	ErrBucketNotFound = errors.New("rotation: no live bucket claim for the service")
+	// ErrDatabaseNotFound: the environment has no live database claim for the service.
+	ErrDatabaseNotFound = errors.New("rotation: no live database claim for the service")
 	// ErrRunInFlight: the environment already has a running run (a
 	// deployment, a backup, another rotation); the journal's
 	// one-running-run index is the arbiter.
@@ -48,9 +59,17 @@ var (
 	errCancelled = errors.New("rotation: cancelled")
 )
 
-// BucketRotator is the substrate's commit; *substrate.Controller implements it.
+// BucketRotator is the substrate's bucket commit; *substrate.Controller implements it.
 type BucketRotator interface {
 	RotateBucketCredentials(ctx context.Context, environmentID uuid.UUID, serviceKey string, retireAfter time.Duration) (substrate.BucketRotation, error)
+}
+
+// DatabaseRotator is the substrate's database commit and the early
+// retirement a second rotation inside a window needs; *substrate.Controller
+// implements it.
+type DatabaseRotator interface {
+	RotateDatabaseCredentials(ctx context.Context, environmentID uuid.UUID, serviceKey string, retireAfter time.Duration) (substrate.DatabaseRotation, error)
+	RetireDatabaseCredentials(ctx context.Context, environmentID uuid.UUID, serviceKey string) error
 }
 
 // revisionLoader is the slice of deploy.Service the controller reads.
@@ -66,6 +85,7 @@ type Deps struct {
 	// deploy service in production.
 	Revisions revisionLoader
 	Buckets   BucketRotator
+	Databases DatabaseRotator
 	// Status projects one environment's health; the reconcile kernel's
 	// Status in production.
 	Status func(ctx context.Context, environmentID uuid.UUID) (*reconcile.Status, error)
@@ -74,17 +94,21 @@ type Deps struct {
 type Config struct {
 	Workers int
 	// CommitTimeout bounds how long the run waits for the claim worker to
-	// take the committed keypair (store, mirror, version bump).
+	// take the committed credentials (store or pool, mirror, version bump),
+	// and for an early retirement a second rotation inside a window needs.
 	CommitTimeout time.Duration
 	// RollTimeout bounds how long the run waits for the consumers to roll
-	// onto the new keys; on timeout the run fails but the rotation stands.
+	// onto the new credentials; on timeout the run fails but the rotation
+	// stands.
 	RollTimeout time.Duration
-	// PollInterval paces both waits.
+	// PollInterval paces the waits.
 	PollInterval time.Duration
 }
 
 // Input names one rotation and who asked for it.
 type Input struct {
+	// Collection is CollectionBuckets or CollectionDatabases.
+	Collection    string
 	EnvironmentID uuid.UUID
 	ServiceKey    string
 	RetireAfter   time.Duration
@@ -128,10 +152,10 @@ func New(deps Deps, cfg Config) *Controller {
 	}
 }
 
-// Create accepts a bucket credential rotation: the claim must be live,
-// provisioned, and not fenced by a restore, and the environment must have
-// no run in flight. The run is journaled and queued; the caller attaches
-// to it.
+// Create accepts a credential rotation: the claim must be live and
+// provisioned (a bucket also not fenced by a restore), and the environment
+// must have no run in flight. The run is journaled and queued; the caller
+// attaches to it.
 func (c *Controller) Create(ctx context.Context, in Input) (uuid.UUID, error) {
 	environment, err := c.deps.Store.GetEnvironmentByID(ctx, in.EnvironmentID)
 	if err != nil {
@@ -140,25 +164,17 @@ func (c *Controller) Create(ctx context.Context, in Input) (uuid.UUID, error) {
 		}
 		return uuid.Nil, fmt.Errorf("rotation: get environment: %w", err)
 	}
-	claimRow, err := c.deps.DB.LiveServiceBucketClaim(ctx, in.EnvironmentID, in.ServiceKey)
-	if err != nil {
-		if errors.Is(err, dbstore.ErrNotFound) {
-			return uuid.Nil, ErrBucketNotFound
+	switch in.Collection {
+	case CollectionBuckets:
+		if err := c.checkBucket(ctx, in); err != nil {
+			return uuid.Nil, err
 		}
-		return uuid.Nil, err
-	}
-	if claim.Phase(claimRow.Phase) != claim.PhaseProvisioned {
-		return uuid.Nil, substrate.ErrBucketNotProvisioned
-	}
-	allocation, err := c.deps.DB.LiveAllocation(ctx, claimRow.ID)
-	if err != nil {
-		if errors.Is(err, dbstore.ErrNotFound) {
-			return uuid.Nil, substrate.ErrBucketNotProvisioned
+	case CollectionDatabases:
+		if err := c.checkDatabase(ctx, in); err != nil {
+			return uuid.Nil, err
 		}
-		return uuid.Nil, err
-	}
-	if allocation.FencedAt != nil {
-		return uuid.Nil, substrate.ErrBucketFenced
+	default:
+		return uuid.Nil, fmt.Errorf("rotation: unknown collection %q", in.Collection)
 	}
 
 	run, err := c.deps.Journal.CreateRun(ctx, journal.RunInput{
@@ -184,10 +200,60 @@ func (c *Controller) Create(ctx context.Context, in Input) (uuid.UUID, error) {
 	return run.ID, nil
 }
 
+func (c *Controller) checkBucket(ctx context.Context, in Input) error {
+	if c.deps.Buckets == nil {
+		return errors.New("rotation: bucket rotation is not available")
+	}
+	claimRow, err := c.deps.DB.LiveServiceBucketClaim(ctx, in.EnvironmentID, in.ServiceKey)
+	if err != nil {
+		if errors.Is(err, dbstore.ErrNotFound) {
+			return ErrBucketNotFound
+		}
+		return err
+	}
+	if claim.Phase(claimRow.Phase) != claim.PhaseProvisioned {
+		return substrate.ErrBucketNotProvisioned
+	}
+	allocation, err := c.deps.DB.LiveAllocation(ctx, claimRow.ID)
+	if err != nil {
+		if errors.Is(err, dbstore.ErrNotFound) {
+			return substrate.ErrBucketNotProvisioned
+		}
+		return err
+	}
+	if allocation.FencedAt != nil {
+		return substrate.ErrBucketFenced
+	}
+	return nil
+}
+
+func (c *Controller) checkDatabase(ctx context.Context, in Input) error {
+	if c.deps.Databases == nil {
+		return errors.New("rotation: database rotation is not available")
+	}
+	claimRow, err := c.deps.DB.LiveServiceClaim(ctx, in.EnvironmentID, in.ServiceKey)
+	if err != nil {
+		if errors.Is(err, dbstore.ErrNotFound) {
+			return ErrDatabaseNotFound
+		}
+		return err
+	}
+	if claim.Phase(claimRow.Phase) != claim.PhaseProvisioned {
+		return substrate.ErrDatabaseNotProvisioned
+	}
+	if _, err := c.deps.DB.LiveTenant(ctx, claimRow.ID); err != nil {
+		if errors.Is(err, dbstore.ErrNotFound) {
+			return substrate.ErrDatabaseNotProvisioned
+		}
+		return err
+	}
+	return nil
+}
+
 // RecoverOnBoot fails every rotation run the previous process left
 // running: its input died with that process, and a run left running
 // would hold the environment's one-running-run slot forever. The rotation
-// itself is unaffected, the substrate converges it from the Secret.
+// itself is unaffected, the substrate converges it from its own state.
 func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 	runs, err := c.deps.Store.ListRunningRunsByKind(ctx, Kind)
 	if err != nil {
@@ -195,7 +261,7 @@ func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 	}
 	for _, run := range runs {
 		message := "the daemon restarted during the rotation; the substrate completes it on its own " +
-			"and the previous key retires at its scheduled time"
+			"and the previous credentials retire at their scheduled time"
 		if err := c.deps.Journal.FailRun(ctx, run.ID, nil, message); err != nil &&
 			!errors.Is(err, journal.ErrInvalidTransition) && !errors.Is(err, journal.ErrNotFound) {
 			slog.WarnContext(ctx, "rotation: finish interrupted run", "run", run.ID, "err", err)
@@ -254,23 +320,38 @@ func (c *Controller) process(ctx context.Context, runID uuid.UUID) error {
 	return nil
 }
 
+// words is the vocabulary one collection's run speaks in.
+type words struct {
+	credential string // "keypair", "login role"
+	previous   string // "the previous key", "the previous login role"
+	engine     string // "the store accepts both keys", "the pool holds both roles"
+}
+
+func vocabulary(collection string) words {
+	if collection == CollectionDatabases {
+		return words{credential: "login role", previous: "the previous login role", engine: "the pool holds both roles"}
+	}
+	return words{credential: "keypair", previous: "the previous key", engine: "the store accepts both keys"}
+}
+
 func (c *Controller) execute(ctx context.Context, scope *journal.Scope, in Input) error {
-	var result substrate.BucketRotation
+	w := vocabulary(in.Collection)
+	var retireAt time.Time
 	var bumpedAt time.Time
-	if err := scope.Step(ctx, "rotate", "Issue a new keypair", func(ctx context.Context, log *journal.StepLog) error {
+	if err := scope.Step(ctx, "rotate", "Issue a new "+w.credential, func(ctx context.Context, log *journal.StepLog) error {
+		var version int64
 		var err error
-		result, err = c.deps.Buckets.RotateBucketCredentials(ctx, in.EnvironmentID, in.ServiceKey, in.RetireAfter)
-		if err != nil {
-			return err
+		switch in.Collection {
+		case CollectionDatabases:
+			retireAt, version, err = c.rotateDatabase(ctx, scope, log, in)
+		default:
+			retireAt, version, err = c.rotateBucket(ctx, scope, log, in)
 		}
-		log.Info(ctx, fmt.Sprintf("new keypair committed for buckets.%s; the previous key retires at %s",
-			in.ServiceKey, result.RetireAt.Format(time.RFC3339)))
-		version, err := c.awaitCommit(ctx, scope, in, result.AccessKey)
 		if err != nil {
 			return err
 		}
 		bumpedAt = c.now()
-		log.Info(ctx, fmt.Sprintf("the store accepts both keys and the environment mirrors the new one; credentials v%d", version))
+		log.Info(ctx, fmt.Sprintf("%s and the environment mirrors the new one; credentials v%d", w.engine, version))
 		return nil
 	}); err != nil {
 		return err
@@ -288,39 +369,114 @@ func (c *Controller) execute(ctx context.Context, scope *journal.Scope, in Input
 	if err != nil {
 		return fmt.Errorf("load target revision: %w", err)
 	}
-	consumers := compiler.ServiceConsumers(&rev.Definition, "buckets", in.ServiceKey)
+	consumers := compiler.ServiceConsumers(&rev.Definition, in.Collection, in.ServiceKey)
 	if len(consumers) == 0 {
-		scope.Skip(ctx, "roll", fmt.Sprintf("Roll the consuming applications (no application references buckets.%s)", in.ServiceKey))
+		scope.Skip(ctx, "roll", fmt.Sprintf("Roll the consuming applications (no application references %s.%s)", in.Collection, in.ServiceKey))
 		return nil
 	}
 	return scope.Step(ctx, "roll", "Roll the consuming applications", func(ctx context.Context, log *journal.StepLog) error {
-		return c.awaitRoll(ctx, scope, log, in, consumers, bumpedAt, result.RetireAt)
+		return c.awaitRoll(ctx, scope, log, in, consumers, bumpedAt, retireAt)
 	})
 }
 
-// awaitCommit polls the allocation until the claim worker has taken the
-// committed key: by then the store accepts both keys, the mirror holds the
-// new pair, and the version bump is visible to the kernel.
-func (c *Controller) awaitCommit(ctx context.Context, scope *journal.Scope, in Input, accessKey string) (int64, error) {
-	deadline := c.now().Add(c.cfg.CommitTimeout)
-	for {
+// rotateBucket commits a bucket rotation and waits for the worker to take
+// it; it returns the retirement instant and the new credential version.
+func (c *Controller) rotateBucket(ctx context.Context, scope *journal.Scope, log *journal.StepLog, in Input) (time.Time, int64, error) {
+	result, err := c.deps.Buckets.RotateBucketCredentials(ctx, in.EnvironmentID, in.ServiceKey, in.RetireAfter)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	log.Info(ctx, fmt.Sprintf("new keypair committed for buckets.%s; the previous key retires at %s",
+		in.ServiceKey, result.RetireAt.Format(time.RFC3339)))
+	version, err := c.await(ctx, scope, "the substrate did not take the new keypair in time; it will on its next pass, "+
+		"and the previous key still retires at its scheduled time", func(ctx context.Context) (int64, bool, error) {
 		claimRow, err := c.deps.DB.LiveServiceBucketClaim(ctx, in.EnvironmentID, in.ServiceKey)
 		if err != nil {
-			return 0, fmt.Errorf("the bucket claim went away: %w", err)
+			return 0, false, fmt.Errorf("the bucket claim went away: %w", err)
 		}
 		allocation, err := c.deps.DB.LiveAllocation(ctx, claimRow.ID)
 		if err != nil {
-			return 0, fmt.Errorf("the bucket allocation went away: %w", err)
+			return 0, false, fmt.Errorf("the bucket allocation went away: %w", err)
 		}
-		if allocation.AccessKeyID == accessKey {
-			return allocation.CredentialVersion, nil
+		return allocation.CredentialVersion, allocation.AccessKeyID == result.AccessKey, nil
+	})
+	return result.RetireAt, version, err
+}
+
+// rotateDatabase commits a database rotation and waits for the worker to
+// take it. A previous login role still inside an earlier rotation's window
+// is retired first (rotating again inside the window retires the older
+// credentials at once, as for buckets), since a tenant carries one
+// previous role at a time.
+func (c *Controller) rotateDatabase(ctx context.Context, scope *journal.Scope, log *journal.StepLog, in Input) (time.Time, int64, error) {
+	tenant, err := c.liveTenant(ctx, in)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	if tenant.PreviousLoginRole != nil && tenant.PendingLoginRole == nil {
+		log.Info(ctx, fmt.Sprintf("retiring %s from the previous rotation first", *tenant.PreviousLoginRole))
+		if err := c.deps.Databases.RetireDatabaseCredentials(ctx, in.EnvironmentID, in.ServiceKey); err != nil {
+			return time.Time{}, 0, err
+		}
+		if _, err := c.await(ctx, scope, "the substrate did not retire the previous login role in time; "+
+			"it will on its next pass, after which the rotation can be run again", func(ctx context.Context) (int64, bool, error) {
+			tenant, err := c.liveTenant(ctx, in)
+			if err != nil {
+				return 0, false, err
+			}
+			return tenant.CredentialVersion, tenant.PreviousLoginRole == nil, nil
+		}); err != nil {
+			return time.Time{}, 0, err
+		}
+	}
+	result, err := c.deps.Databases.RotateDatabaseCredentials(ctx, in.EnvironmentID, in.ServiceKey, in.RetireAfter)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	log.Info(ctx, fmt.Sprintf("new login role %s committed for databases.%s; the previous login role retires at %s",
+		result.LoginRole, in.ServiceKey, result.RetireAt.Format(time.RFC3339)))
+	version, err := c.await(ctx, scope, "the substrate did not take the new login role in time; it will on its next pass, "+
+		"and the previous login role still retires at its scheduled time", func(ctx context.Context) (int64, bool, error) {
+		tenant, err := c.liveTenant(ctx, in)
+		if err != nil {
+			return 0, false, err
+		}
+		return tenant.CredentialVersion, tenant.LoginRole == result.LoginRole, nil
+	})
+	return result.RetireAt, version, err
+}
+
+func (c *Controller) liveTenant(ctx context.Context, in Input) (*store.DatabaseTenant, error) {
+	claimRow, err := c.deps.DB.LiveServiceClaim(ctx, in.EnvironmentID, in.ServiceKey)
+	if err != nil {
+		return nil, fmt.Errorf("the database claim went away: %w", err)
+	}
+	tenant, err := c.deps.DB.LiveTenant(ctx, claimRow.ID)
+	if err != nil {
+		return nil, fmt.Errorf("the database tenant went away: %w", err)
+	}
+	return tenant, nil
+}
+
+// await polls check until it reports done, bounded by CommitTimeout; by
+// then the claim worker has taken the committed credentials (store or
+// pool, mirror, version bump) and the version is visible to the kernel.
+func (c *Controller) await(ctx context.Context, scope *journal.Scope, timeoutMessage string,
+	check func(ctx context.Context) (int64, bool, error)) (int64, error) {
+	deadline := c.now().Add(c.cfg.CommitTimeout)
+	for {
+		version, done, err := check(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if done {
+			return version, nil
 		}
 		if scope.Cancelled(ctx) {
 			return 0, errCancelled
 		}
 		if !c.now().Before(deadline) {
-			return 0, errors.New("the substrate did not take the new keypair in time; it will on its next pass, " +
-				"and the previous key still retires at its scheduled time")
+			return 0, errors.New(timeoutMessage)
 		}
 		select {
 		case <-ctx.Done():
@@ -333,10 +489,11 @@ func (c *Controller) awaitCommit(ctx context.Context, scope *journal.Scope, in I
 // awaitRoll polls the environment projection until every consumer runs
 // only pods started after the bump, healthy. On timeout the run fails but
 // the rotation stands: reconciliation keeps rolling the consumers and the
-// previous key retires on schedule.
+// previous credentials retire on schedule.
 func (c *Controller) awaitRoll(ctx context.Context, scope *journal.Scope, log *journal.StepLog, in Input,
 	consumers []string, since, retireAt time.Time) error {
-	log.Info(ctx, "waiting for "+strings.Join(consumers, ", ")+" to restart with the new keypair")
+	w := vocabulary(in.Collection)
+	log.Info(ctx, "waiting for "+strings.Join(consumers, ", ")+" to restart with the new "+w.credential)
 	deadline := c.now().Add(c.cfg.RollTimeout)
 	lastPending := ""
 	for {
@@ -349,7 +506,7 @@ func (c *Controller) awaitRoll(ctx context.Context, scope *journal.Scope, log *j
 		}
 		pending := pendingConsumers(status, consumers, since)
 		if len(pending) == 0 {
-			log.Info(ctx, "every consumer runs with the new keypair")
+			log.Info(ctx, "every consumer runs with the new "+w.credential)
 			return nil
 		}
 		if joined := strings.Join(pending, ", "); joined != lastPending {
@@ -360,8 +517,8 @@ func (c *Controller) awaitRoll(ctx context.Context, scope *journal.Scope, log *j
 			return errCancelled
 		}
 		if !c.now().Before(deadline) {
-			return fmt.Errorf("%s did not roll in time; reconciliation continues and the previous key still retires at %s",
-				strings.Join(pending, ", "), retireAt.Format(time.RFC3339))
+			return fmt.Errorf("%s did not roll in time; reconciliation continues and %s still retires at %s",
+				strings.Join(pending, ", "), w.previous, retireAt.Format(time.RFC3339))
 		}
 		select {
 		case <-ctx.Done():
@@ -374,10 +531,10 @@ func (c *Controller) awaitRoll(ctx context.Context, scope *journal.Scope, log *j
 // pendingConsumers names the consumers that still run a pod started
 // before since, are not healthy, or are not projected yet. Every pod
 // counts, serving or not: a blue-green drain's old-color pods still hold
-// the previous key. An intercepted application (served by a host process)
-// and one scaled to zero replicas hold no pod to roll. Health alone would
-// not do: a rolling application reads healthy between the version bump
-// and the informer delivering the new generation.
+// the previous credentials. An intercepted application (served by a host
+// process) and one scaled to zero replicas hold no pod to roll. Health
+// alone would not do: a rolling application reads healthy between the
+// version bump and the informer delivering the new generation.
 func pendingConsumers(status *reconcile.Status, consumers []string, since time.Time) []string {
 	since = since.Truncate(time.Second) // pod start times carry seconds
 	services := make(map[string]reconcile.ServiceStatus, len(status.Services))

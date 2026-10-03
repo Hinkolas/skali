@@ -369,6 +369,7 @@ func runServe() error {
 			DB:        dbstore.New(st),
 			Revisions: deploySvc,
 			Buckets:   substrateCtl,
+			Databases: substrateCtl,
 			Status:    kernel.Status,
 		}, rotation.Config{})
 		if err := rotationCtl.RecoverOnBoot(ctx); err != nil {
