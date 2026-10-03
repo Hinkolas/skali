@@ -106,9 +106,10 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 	}
 	// The roles go the way a retired login role does: out of the Cluster
 	// spec first (the releasing claim's tenant is not rendered), their
-	// Secrets deleted so a stale operator sync cannot recreate them, then
-	// dropped by SQL, login roles before the owner. The row keeps their
-	// names until the claim closes, so a crash here is redone.
+	// Secrets deleted, then dropped by SQL, login roles before the owner,
+	// and confirmed gone on a later pass since a stale operator sync can
+	// recreate what the previous spec listed. The row keeps their names
+	// until the claim closes, so a crash here is redone.
 	if _, err := c.ensurePool(ctx, *pool, time.Now()); err != nil {
 		return 0, err
 	}
@@ -119,18 +120,15 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 			return 0, fmt.Errorf("substrate: delete credential secret: %w", err)
 		}
 	}
-	cluster, err := c.deps.Cluster.GetObject(ctx, cnpg.ClusterGVR, Namespace, pool.Name)
-	if err != nil {
-		return 0, fmt.Errorf("substrate: read pool %s: %w", pool.Name, err)
-	}
 	roles := tenantRoleNames(*tenant)
-	for _, role := range roles {
-		if !cnpg.RoleUnmanaged(cluster, role) {
-			c.setWaiting(row.ID, fmt.Sprintf("role %s: waiting for the pool to release it", role))
-			return requeueWait, nil
+	present, err := c.queryPrimary(ctx, *pool, "postgres", cnpg.RolesPresentQuery(roles))
+	if err == nil && present != "0" {
+		err = c.execPrimarySQL(ctx, *pool, "postgres", cnpg.DropTenantRolesSQL(roles))
+		if err == nil {
+			err = errWaiting{reason: "roles dropped, confirming on the next pass"}
 		}
 	}
-	if err := c.execPrimarySQL(ctx, *pool, "postgres", cnpg.DropTenantRolesSQL(roles)); err != nil {
+	if err != nil {
 		var waiting errWaiting
 		if errors.As(err, &waiting) {
 			c.setWaiting(row.ID, waiting.reason)

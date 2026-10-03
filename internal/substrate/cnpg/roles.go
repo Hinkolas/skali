@@ -35,6 +35,27 @@ func PSQLCommand(database, script string) []string {
 	return []string{"psql", "-v", "ON_ERROR_STOP=1", "-X", "-q", "-U", "postgres", "-d", database, "-c", script}
 }
 
+// PSQLQuery is the argv running one query whose bare result (no header,
+// no alignment) comes back on stdout.
+func PSQLQuery(database, query string) []string {
+	return []string{"psql", "-v", "ON_ERROR_STOP=1", "-X", "-q", "-t", "-A", "-U", "postgres", "-d", database, "-c", query}
+}
+
+// RoleLoginQuery answers "t" or "f" for the role's LOGIN attribute, and
+// nothing when the role does not exist.
+func RoleLoginQuery(role string) string {
+	return "SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = " + quoteLiteral(role)
+}
+
+// RolesPresentQuery counts how many of the roles exist.
+func RolesPresentQuery(roles []string) string {
+	literals := make([]string, 0, len(roles))
+	for _, role := range roles {
+		literals = append(literals, quoteLiteral(role))
+	}
+	return "SELECT count(*) FROM pg_catalog.pg_roles WHERE rolname IN (" + strings.Join(literals, ", ") + ")"
+}
+
 // LoginRoleName is the login role a tenant takes at the given credential
 // version: the owner role with a version suffix.
 func LoginRoleName(owner string, version int64) string {
@@ -148,26 +169,4 @@ func RoleReconciled(cluster *unstructured.Unstructured, role, secretVersion stri
 		return false, fmt.Sprintf("role %s: waiting for the pool to apply its password", role)
 	}
 	return true, ""
-}
-
-// RoleUnmanaged reports whether CNPG no longer manages the role: it is in
-// no managed state (reconciled, pending, or failing). A role dropped by
-// SQL while still managed would be recreated on the next sync, so a drop
-// waits for this.
-func RoleUnmanaged(cluster *unstructured.Unstructured, role string) bool {
-	byStatus, _, _ := unstructured.NestedMap(cluster.Object, "status", "managedRolesStatus", "byStatus")
-	for state, entry := range byStatus {
-		if state == "not-managed" {
-			continue
-		}
-		names, _ := entry.([]any)
-		for _, name := range names {
-			if name == role {
-				return false
-			}
-		}
-	}
-	failures, _, _ := unstructured.NestedMap(cluster.Object, "status", "managedRolesStatus", "cannotReconcile")
-	_, failing := failures[role]
-	return !failing
 }

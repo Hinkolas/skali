@@ -192,12 +192,14 @@ func (c *Controller) takePendingLoginRole(ctx context.Context, row store.Databas
 }
 
 // retirePreviousLoginRole retires the previous login role once its window
-// has passed and returns the row as it stands afterwards. This pass's pool apply already left the role out of the
-// Cluster spec; deleting its Secret first means a stale operator sync can
-// neither recreate it nor reopen its login, then the SQL closes it (the
-// owner keeps its ownership and loses its login; any other login role is
-// dropped) and the row forgets it. Each step is idempotent, so a crash
-// between two of them is redone on the next pass.
+// has passed and returns the row as it stands afterwards. This pass's pool
+// apply already left the role out of the Cluster spec and its Secret is
+// deleted, then the SQL closes it: the owner keeps its ownership and loses
+// its login, any other login role is dropped. The operator's synchronizer
+// only runs on configuration changes, and one still carrying the previous
+// spec can land right after the SQL and undo it, so the row forgets the
+// role only once a later pass has read the state back from the pool;
+// until then the SQL is simply run again. Every step is idempotent.
 func (c *Controller) retirePreviousLoginRole(ctx context.Context, row store.DatabaseClaim, pool store.DatabaseCluster, tenant store.DatabaseTenant, now time.Time) (*store.DatabaseTenant, error) {
 	if tenant.PreviousLoginRole == nil {
 		return &tenant, nil
@@ -213,21 +215,24 @@ func (c *Controller) retirePreviousLoginRole(ctx context.Context, row store.Data
 			return nil, fmt.Errorf("substrate: delete retired credential secret: %w", err)
 		}
 	}
-	cluster, err := c.deps.Cluster.GetObject(ctx, cnpg.ClusterGVR, Namespace, pool.Name)
+	login, err := c.queryPrimary(ctx, pool, "postgres", cnpg.RoleLoginQuery(previous))
 	if err != nil {
-		return nil, fmt.Errorf("substrate: read pool %s: %w", pool.Name, err)
+		return nil, err
 	}
+	retired := login == ""
 	if previous == tenant.RoleName {
-		if err := c.execPrimarySQL(ctx, pool, "postgres", cnpg.RetireOwnerLoginSQL(previous)); err != nil {
+		retired = login == "f"
+	}
+	if !retired {
+		if previous == tenant.RoleName {
+			err = c.execPrimarySQL(ctx, pool, "postgres", cnpg.RetireOwnerLoginSQL(previous))
+		} else {
+			err = c.execPrimarySQL(ctx, pool, tenant.DatabaseName, cnpg.RetireLoginRoleSQL(previous, tenant.RoleName))
+		}
+		if err != nil {
 			return nil, err
 		}
-	} else {
-		if !cnpg.RoleUnmanaged(cluster, previous) {
-			return nil, errWaiting{reason: fmt.Sprintf("role %s: waiting for the pool to release it", previous)}
-		}
-		if err := c.execPrimarySQL(ctx, pool, tenant.DatabaseName, cnpg.RetireLoginRoleSQL(previous, tenant.RoleName)); err != nil {
-			return nil, err
-		}
+		return nil, errWaiting{reason: fmt.Sprintf("role %s: retired, confirming on the next pass", previous)}
 	}
 	if err := c.deps.DB.FinishTenantCredentialRotation(ctx, tenant.ID); err != nil {
 		return nil, err
@@ -264,6 +269,20 @@ func (c *Controller) execPrimarySQL(ctx context.Context, pool store.DatabaseClus
 		return errWaiting{reason: fmt.Sprintf("pool %s has no ready primary", pool.Name)}
 	}
 	return errWaiting{reason: fmt.Sprintf("pool %s refused a role change: %s", pool.Name, errorTail(err))}
+}
+
+// queryPrimary runs one query in the pool's primary and returns its bare
+// result, trimmed; failures surface as waits like execPrimarySQL's.
+func (c *Controller) queryPrimary(ctx context.Context, pool store.DatabaseCluster, database, query string) (string, error) {
+	out, err := c.deps.Cluster.ExecInPod(ctx, Namespace, cnpg.PrimarySelector(pool.Name), cnpg.PostgresContainer,
+		cnpg.PSQLQuery(database, query))
+	if err != nil {
+		if errors.Is(err, kube.ErrNoReadyPod) {
+			return "", errWaiting{reason: fmt.Sprintf("pool %s has no ready primary", pool.Name)}
+		}
+		return "", errWaiting{reason: fmt.Sprintf("pool %s refused a role query: %s", pool.Name, errorTail(err))}
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // errorTail keeps the last line of an exec error, where psql puts its

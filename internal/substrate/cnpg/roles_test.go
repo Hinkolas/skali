@@ -30,6 +30,12 @@ func TestPSQLCommand(t *testing.T) {
 	require.Equal(t, "-d", command[len(command)-4])
 	require.Equal(t, "db_data", command[len(command)-3])
 	require.Equal(t, "cnpg.io/cluster=pg17-shared,cnpg.io/instanceRole=primary", PrimarySelector("pg17-shared"))
+	query := PSQLQuery("postgres", RoleLoginQuery("u_data"))
+	require.Contains(t, query, "-t")
+	require.Contains(t, query, "-A")
+	require.Equal(t, "SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = 'u_data'", query[len(query)-1])
+	require.Equal(t, "SELECT count(*) FROM pg_catalog.pg_roles WHERE rolname IN ('u_data_v2', 'u_data')",
+		RolesPresentQuery([]string{"u_data_v2", "u_data"}))
 }
 
 func TestRoleScripts(t *testing.T) {
@@ -109,14 +115,4 @@ func TestRoleReconciled(t *testing.T) {
 
 	ready, _ = RoleReconciled(&unstructured.Unstructured{Object: map[string]any{}}, "u_data_v2", "1")
 	require.False(t, ready, "a pool without role status has not created anything")
-}
-
-func TestRoleUnmanaged(t *testing.T) {
-	t.Parallel()
-	cluster := clusterWithRoles([]any{"u_data_v2"}, nil, map[string]any{"u_data_v4": []any{"owner of database x"}})
-	require.False(t, RoleUnmanaged(cluster, "u_data_v2"), "a reconciled role would be recreated after a drop")
-	require.False(t, RoleUnmanaged(cluster, "u_data_v4"), "a failing role is still managed")
-	require.True(t, RoleUnmanaged(cluster, "u_other"), "a role only the database knows is not managed")
-	require.True(t, RoleUnmanaged(cluster, "u_data_v3"))
-	require.True(t, RoleUnmanaged(&unstructured.Unstructured{Object: map[string]any{}}, "u_data_v2"))
 }

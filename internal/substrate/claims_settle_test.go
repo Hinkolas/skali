@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -52,9 +53,11 @@ type fakeCluster struct {
 	// roles CNPG reports reconciled and the password Secret resource
 	// version it applied for each.
 	roleStatus map[string]string
-	// execs records every ExecInPod call; execErr is returned by each.
+	// execs records every ExecInPod call; execErr is returned by each;
+	// answer, when set, supplies the stdout of a call (role queries).
 	execs   []fakeExec
 	execErr error
+	answer  func(command []string) string
 	// deleted records every Delete call's object name.
 	deleted []string
 }
@@ -87,7 +90,18 @@ func (f *fakeCluster) ExecInPod(_ context.Context, _ string, selector, container
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.execs = append(f.execs, fakeExec{selector: selector, container: container, command: append([]string(nil), command...)})
-	return "", f.execErr
+	if f.execErr != nil {
+		return "", f.execErr
+	}
+	if f.answer != nil {
+		return f.answer(command), nil
+	}
+	// Without an answer the pool holds no role: counts are zero, lookups
+	// find nothing.
+	if strings.HasPrefix(command[len(command)-1], "SELECT count(*)") {
+		return "0", nil
+	}
+	return "", nil
 }
 
 // scripts returns the SQL of every recorded exec, in order.

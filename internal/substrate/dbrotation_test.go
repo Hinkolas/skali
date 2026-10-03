@@ -2,6 +2,7 @@ package substrate
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -226,12 +227,41 @@ func TestProvisionTakesPendingLoginRole(t *testing.T) {
 
 // The retirement: past the deadline the previous Secret is deleted, the
 // owner loses its login (first rotation) or the login role is dropped
-// (later ones), and the row forgets it. Teardown drops everything.
+// (later ones), and the row forgets it once a later pass has read the
+// state back from the pool. Teardown drops everything the same way.
 func TestProvisionRetiresPreviousLoginRole(t *testing.T) {
 	fx := newSettleFixture(t)
 	ctx := context.Background()
 	tenant := fx.provisioned(t)
 	ownerSecret := tenant.CredentialSecret
+
+	// The fake pool: role queries answer from a table the test keeps,
+	// which the retire and drop scripts do not touch by themselves (a
+	// stale operator sync could have undone them), so the test moves it.
+	logins := map[string]string{tenant.RoleName: "t"}
+	fx.fake.mu.Lock()
+	fx.fake.answer = func(command []string) string {
+		query := command[len(command)-1]
+		if !strings.HasPrefix(query, "SELECT") {
+			return ""
+		}
+		if strings.HasPrefix(query, "SELECT count(*)") {
+			count := 0
+			for role := range logins {
+				if strings.Contains(query, "'"+role+"'") {
+					count++
+				}
+			}
+			return fmt.Sprint(count)
+		}
+		for role, login := range logins {
+			if strings.Contains(query, "'"+role+"'") {
+				return login
+			}
+		}
+		return ""
+	}
+	fx.fake.mu.Unlock()
 
 	take := func(t *testing.T) DatabaseRotation {
 		t.Helper()
@@ -239,6 +269,7 @@ func TestProvisionRetiresPreviousLoginRole(t *testing.T) {
 		require.NoError(t, err)
 		pending := fx.secret(t, *fx.tenant(t).PendingCredentialSecret)
 		fx.fake.reconcileRole(result.LoginRole, pending.ResourceVersion)
+		logins[result.LoginRole] = "t"
 		fx.pass(t)
 		require.Equal(t, result.LoginRole, fx.tenant(t).LoginRole)
 		return result
@@ -251,13 +282,12 @@ func TestProvisionRetiresPreviousLoginRole(t *testing.T) {
 	_, err := fx.control.RotateDatabaseCredentials(ctx, fx.envID, "data", time.Hour)
 	require.ErrorIs(t, err, ErrRotationInFlight)
 
+	// First pass: the Secret goes, the SQL runs, the row waits for the
+	// confirmation.
 	requeue, _ := fx.pass(t)
-	require.Zero(t, requeue, "nothing left to wake for")
-	retired := fx.tenant(t)
-	require.Nil(t, retired.PreviousLoginRole)
-	require.Nil(t, retired.PreviousCredentialSecret)
-	require.Nil(t, retired.CredentialRetireAt)
-	require.Equal(t, v2.LoginRole, retired.LoginRole)
+	require.Equal(t, requeueWait, requeue)
+	require.Contains(t, fx.control.WaitingReason(fx.claim.ID), "confirming on the next pass")
+	require.NotNil(t, fx.tenant(t).PreviousLoginRole)
 	_, err = fx.fake.GetSecret(ctx, Namespace, ownerSecret)
 	require.Error(t, err, "the owner's Secret is gone")
 	require.Contains(t, fx.fake.deleted, ownerSecret)
@@ -268,42 +298,54 @@ func TestProvisionRetiresPreviousLoginRole(t *testing.T) {
 		require.NotContains(t, script, "DROP ROLE")
 	}
 
-	// The second rotation retires a login role: still managed by the pool
-	// (a stale status) it waits; released, it is dropped in the tenant's
-	// database.
+	// A stale sync reopened the login: the SQL runs again, no finish.
+	requeue, _ = fx.pass(t)
+	require.Equal(t, requeueWait, requeue)
+	require.NotNil(t, fx.tenant(t).PreviousLoginRole)
+	require.Equal(t, cnpg.RetireOwnerLoginSQL(tenant.RoleName), fx.fake.scripts()[len(fx.fake.scripts())-1])
+
+	// Confirmed closed: the row forgets the role.
+	logins[tenant.RoleName] = "f"
+	requeue, _ = fx.pass(t)
+	require.Zero(t, requeue, "nothing left to wake for")
+	retired := fx.tenant(t)
+	require.Nil(t, retired.PreviousLoginRole)
+	require.Nil(t, retired.PreviousCredentialSecret)
+	require.Nil(t, retired.CredentialRetireAt)
+	require.Equal(t, v2.LoginRole, retired.LoginRole)
+
+	// The second rotation retires a login role: dropped in the tenant's
+	// database, confirmed absent on the next pass.
 	v3 := take(t)
 	require.NoError(t, fx.control.RetireDatabaseCredentials(ctx, fx.envID, "data"))
 	requeue, _ = fx.pass(t)
 	require.Equal(t, requeueWait, requeue)
-	require.Contains(t, fx.control.WaitingReason(fx.claim.ID), "waiting for the pool to release it")
 	require.NotNil(t, fx.tenant(t).PreviousLoginRole)
-	fx.fake.mu.Lock()
-	delete(fx.fake.roleStatus, v2.LoginRole)
-	fx.fake.mu.Unlock()
+	last := fx.fake.execs[len(fx.fake.execs)-1]
+	require.Equal(t, cnpg.RetireLoginRoleSQL(v2.LoginRole, tenant.RoleName), last.command[len(last.command)-1])
+	require.Equal(t, tenant.DatabaseName, last.command[len(last.command)-3], "objects a reset role created live in the tenant's database")
+	delete(logins, v2.LoginRole)
 	requeue, _ = fx.pass(t)
 	require.Zero(t, requeue)
 	require.Nil(t, fx.tenant(t).PreviousLoginRole)
 	require.Equal(t, v3.LoginRole, fx.tenant(t).LoginRole)
-	last := fx.fake.execs[len(fx.fake.execs)-1]
-	require.Equal(t, cnpg.RetireLoginRoleSQL(v2.LoginRole, tenant.RoleName), last.command[len(last.command)-1])
-	require.Equal(t, tenant.DatabaseName, last.command[len(last.command)-3], "objects a reset role created live in the tenant's database")
 
 	// Teardown: every Secret deleted, every role dropped, login roles
-	// before the owner, waiting for the pool to release them first.
+	// before the owner, confirmed gone before the claim closes.
 	currentSecret := fx.tenant(t).CredentialSecret
 	_, err = fx.db.ReleaseClaim(ctx, fx.claim.ID)
 	require.NoError(t, err)
 	requeue, _ = fx.pass(t)
-	require.Equal(t, requeueWait, requeue, "the pool still lists the current role")
-	fx.fake.mu.Lock()
-	fx.fake.roleStatus = nil
-	fx.fake.mu.Unlock()
-	_, phase := fx.pass(t)
-	require.Equal(t, claim.PhaseReleased, phase)
+	require.Equal(t, requeueWait, requeue, "the roles still exist")
+	require.Contains(t, fx.control.WaitingReason(fx.claim.ID), "roles dropped")
 	drop := fx.fake.scripts()[len(fx.fake.scripts())-1]
 	require.Equal(t, cnpg.DropTenantRolesSQL([]string{v3.LoginRole, tenant.RoleName}), drop)
 	require.Less(t, strings.Index(drop, v3.LoginRole), strings.Index(drop, `DROP ROLE "`+tenant.RoleName+`"`))
 	require.Contains(t, fx.fake.deleted, currentSecret)
+	delete(logins, v3.LoginRole)
+	delete(logins, tenant.RoleName)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseReleased, phase)
 }
 
 // The filer's system claim takes its username from the Secret, so a
