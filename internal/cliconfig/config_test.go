@@ -125,7 +125,7 @@ func TestOldContextKeysAreIgnored(t *testing.T) {
 
 	path := filepath.Join(dir, "skali", "config.yaml")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-	old := "current_context: khz\ncontexts:\n  khz:\n    master: https://skali.example.com\n    token: stale-token\n"
+	old := "current_context: acme\ncontexts:\n  acme:\n    master: https://skali.example.com\n    token: stale-token\n"
 	require.NoError(t, os.WriteFile(path, []byte(old), 0o600))
 
 	cfg, err := Load()

@@ -24,7 +24,7 @@ func TestEnsureCLIFromFeed(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0")
 	feed := f.serveFeed(t, "v0.4.0")
 
-	fetch, err := f.d.ensureCLI(context.Background(), "khz", "v0.4.0")
+	fetch, err := f.d.ensureCLI(context.Background(), "acme", "v0.4.0")
 	require.NoError(t, err)
 	require.True(t, fetch.fetched)
 	require.Equal(t, "v0.4.0", fetch.version)
@@ -32,11 +32,11 @@ func TestEnsureCLIFromFeed(t *testing.T) {
 	require.Equal(t, installer.CLICachePath(f.cache, "v0.4.0"), fetch.path)
 	assertCached(t, f.cache, "v0.4.0", binary)
 	require.Contains(t, feed.requested(), "/Hinkolas/skali/releases/download/v0.4.0/checksums.txt")
-	require.Equal(t, "fetching skali v0.4.0 for remote khz\n", f.stderr.String())
+	require.Equal(t, "fetching skali v0.4.0 for remote acme\n", f.stderr.String())
 
 	// The second call is a cache hit and never touches the feed.
 	before := len(feed.requested())
-	fetch, err = f.d.ensureCLI(context.Background(), "khz", "v0.4.0")
+	fetch, err = f.d.ensureCLI(context.Background(), "acme", "v0.4.0")
 	require.NoError(t, err)
 	require.False(t, fetch.fetched)
 	require.Len(t, feed.requested(), before)
@@ -49,7 +49,7 @@ func TestEnsureCLIFeedChecksumMismatch(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0")
 	f.d.releaseBase, f.d.feedClient = feed.URL, feed.Client()
 
-	_, err := f.d.ensureCLI(context.Background(), "khz", "v0.4.0")
+	_, err := f.d.ensureCLI(context.Background(), "acme", "v0.4.0")
 	require.Error(t, err)
 	f.d.failure(err)
 	require.Contains(t, f.stderr.String(), "error: skali v0.4.0 from the release feed did not match its published checksum")
@@ -61,7 +61,7 @@ func TestEnsureCLIReleaseMissing(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0")
 	f.serveFeed(t, "v0.9.0") // v0.4.0 is not on the feed
 
-	_, err := f.d.ensureCLI(context.Background(), "khz", "v0.4.0")
+	_, err := f.d.ensureCLI(context.Background(), "acme", "v0.4.0")
 	f.d.failure(err)
 	require.Contains(t, f.stderr.String(), "error: the release feed has no skali v0.4.0 (release v0.4.0 was not found); "+
 		"install it from your own distribution")
@@ -70,7 +70,7 @@ func TestEnsureCLIReleaseMissing(t *testing.T) {
 func TestEnsureCLIFeedUnreachable(t *testing.T) {
 	f := newDispatchFixture(t, "v0.5.0") // the fixture's feed is a dead URL
 
-	_, err := f.d.ensureCLI(context.Background(), "khz", "v0.4.0")
+	_, err := f.d.ensureCLI(context.Background(), "acme", "v0.4.0")
 	require.Error(t, err)
 	f.d.failure(err)
 	require.Contains(t, f.stderr.String(), "error: could not fetch skali v0.4.0 from the release feed: ")
@@ -82,11 +82,11 @@ func TestUpgradeHomeReplacesWritableExecutable(t *testing.T) {
 	dir := t.TempDir()
 	f.d.executable = writeExecutable(t, dir, "skali", fakeCLI("v0.3.2"))
 
-	require.NoError(t, f.d.upgradeHome(context.Background(), fakeCLI("v0.4.0"), "v0.4.0", "khz"))
+	require.NoError(t, f.d.upgradeHome(context.Background(), fakeCLI("v0.4.0"), "v0.4.0", "acme"))
 	installed, err := os.ReadFile(f.d.executable)
 	require.NoError(t, err)
 	require.Equal(t, fakeCLI("v0.4.0"), installed)
-	require.Equal(t, "upgraded skali v0.3.2 -> v0.4.0 (remote khz runs skalid v0.4.0)\n", f.stderr.String())
+	require.Equal(t, "upgraded skali v0.3.2 -> v0.4.0 (remote acme runs skalid v0.4.0)\n", f.stderr.String())
 }
 
 func TestRequireUpgradeUnwritableDirNamesSudo(t *testing.T) {
@@ -100,8 +100,8 @@ func TestRequireUpgradeUnwritableDirNamesSudo(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	f.consent(t, true)
 
-	err := f.d.requireUpgrade(context.Background(), preparseArgs(f.d.args, f.d.root), "khz", "v0.4.0")
-	require.EqualError(t, err, "remote khz runs skali v0.4.0, newer than this CLI v0.3.2, and "+dir+" is not writable; run sudo skali upgrade --version v0.4.0 first, or install skali under ~/.local/bin")
+	err := f.d.requireUpgrade(context.Background(), preparseArgs(f.d.args, f.d.root), "acme", "v0.4.0")
+	require.EqualError(t, err, "remote acme runs skali v0.4.0, newer than this CLI v0.3.2, and "+dir+" is not writable; run sudo skali upgrade --version v0.4.0 first, or install skali under ~/.local/bin")
 	unchanged, err := os.ReadFile(f.d.executable)
 	require.NoError(t, err)
 	require.Equal(t, fakeCLI("v0.3.2"), unchanged)
@@ -112,7 +112,7 @@ func TestUpgradeHomeVerifyFailureRestores(t *testing.T) {
 	dir := t.TempDir()
 	f.d.executable = writeExecutable(t, dir, "skali", fakeCLI("v0.3.2"))
 
-	err := f.d.upgradeHome(context.Background(), fakeCLI("v0.3.9"), "v0.4.0", "khz")
+	err := f.d.upgradeHome(context.Background(), fakeCLI("v0.3.9"), "v0.4.0", "acme")
 	require.ErrorContains(t, err, "upgrade "+f.d.executable+" to skali v0.4.0:")
 	require.ErrorContains(t, err, "the previous binary was restored; run skali upgrade --version v0.4.0")
 	restored, err := os.ReadFile(f.d.executable)

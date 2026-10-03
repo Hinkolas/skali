@@ -20,9 +20,9 @@ func checkoutSaveForTest(root, master string) error {
 
 func TestResolveRemoteTarget(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	cfg := &cliconfig.Config{CurrentRemote: "khz", Remotes: map[string]*cliconfig.Remote{
-		"khz": {Master: "https://khz.example/api", Version: "v0.4.0"},
-		"lab": {Master: "https://lab.example/api", Version: "v0.3.2"},
+	cfg := &cliconfig.Config{CurrentRemote: "acme", Remotes: map[string]*cliconfig.Remote{
+		"acme": {Master: "https://acme.example/api", Version: "v0.4.0"},
+		"lab":  {Master: "https://lab.example/api", Version: "v0.3.2"},
 	}}
 	outside := t.TempDir()
 
@@ -36,7 +36,7 @@ func TestResolveRemoteTarget(t *testing.T) {
 
 	target, err = resolveRemoteTarget(cfg, "", outside, "")
 	require.NoError(t, err)
-	require.Equal(t, "khz", target.Name, "the current remote outside a checkout")
+	require.Equal(t, "acme", target.Name, "the current remote outside a checkout")
 
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "skali.yml"), []byte("project:\n  name: demo\n"), 0o644))
@@ -73,17 +73,17 @@ func TestRemoteClientRecordsVersion(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 	srv := fakeMaster(t, mux)
-	seedConfig(t, &cliconfig.Config{CurrentRemote: "khz", Remotes: map[string]*cliconfig.Remote{
-		"khz": {Master: srv.URL, Token: "tok"},
+	seedConfig(t, &cliconfig.Config{CurrentRemote: "acme", Remotes: map[string]*cliconfig.Remote{
+		"acme": {Master: srv.URL, Token: "tok"},
 	}})
 
 	_, _, c, err := currentClient()
 	require.NoError(t, err)
 	require.NoError(t, c.Health(context.Background()))
-	stored := loadConfig(t).Remotes["khz"]
+	stored := loadConfig(t).Remotes["acme"]
 	require.Equal(t, "v0.4.0", stored.Version, "the observed daemon version is recorded for dispatch")
 	require.Equal(t, "inst-1", stored.Instance)
 	remote, server := skew.snapshot()
-	require.Equal(t, "khz", remote)
+	require.Equal(t, "acme", remote)
 	require.Equal(t, "v0.4.0", server)
 }

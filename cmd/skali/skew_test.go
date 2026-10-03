@@ -12,15 +12,15 @@ import (
 
 func TestSkewHintRemote(t *testing.T) {
 	require.Equal(t,
-		"hint: remote khz runs skalid v0.4.0 and this CLI is v0.3.2; run skali upgrade --version v0.4.0 to match it, or download it from https://github.com/Hinkolas/skali/releases/tag/v0.4.0",
-		skewHint("khz", "v0.3.2", "v0.4.0"))
+		"hint: remote acme runs skalid v0.4.0 and this CLI is v0.3.2; run skali upgrade --version v0.4.0 to match it, or download it from https://github.com/Hinkolas/skali/releases/tag/v0.4.0",
+		skewHint("acme", "v0.3.2", "v0.4.0"))
 	// The fix is the same command in both directions: upgrade pins any
 	// exact release, downgrades included.
 	require.Equal(t,
-		"hint: remote khz runs skalid v0.3.0 and this CLI is v0.4.0; run skali upgrade --version v0.3.0 to match it, or download it from https://github.com/Hinkolas/skali/releases/tag/v0.3.0",
-		skewHint("khz", "v0.4.0", "v0.3.0"))
+		"hint: remote acme runs skalid v0.3.0 and this CLI is v0.4.0; run skali upgrade --version v0.3.0 to match it, or download it from https://github.com/Hinkolas/skali/releases/tag/v0.3.0",
+		skewHint("acme", "v0.4.0", "v0.3.0"))
 	// A prerelease of the same number is another release.
-	require.Contains(t, skewHint("khz", "v0.4.0-rc.1", "v0.4.0"), "--version v0.4.0 ")
+	require.Contains(t, skewHint("acme", "v0.4.0-rc.1", "v0.4.0"), "--version v0.4.0 ")
 	// A master that matches no stored remote still gets a sentence.
 	require.Contains(t, skewHint("", "v0.3.2", "v0.4.0"), "hint: the remote runs skalid v0.4.0")
 }
@@ -46,7 +46,7 @@ func TestSkewHintQuiet(t *testing.T) {
 		{"v0.4.0", "test"},
 		{"v0.4.0", ""},
 	} {
-		require.Empty(t, skewHint("khz", c.cli, c.server), "cli %q server %q", c.cli, c.server)
+		require.Empty(t, skewHint("acme", c.cli, c.server), "cli %q server %q", c.cli, c.server)
 		require.Empty(t, skewHint(localRemoteName, c.cli, c.server), "local, cli %q server %q", c.cli, c.server)
 	}
 }

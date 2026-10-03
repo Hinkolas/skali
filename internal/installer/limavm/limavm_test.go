@@ -314,9 +314,9 @@ func TestRemoveLaunchAgent(t *testing.T) {
 func TestAutoLoginUser(t *testing.T) {
 	t.Parallel()
 	enabled := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
-		"defaults": func(host.Command) (host.Result, error) { return host.Result{Stdout: "nhinke\n"}, nil },
+		"defaults": func(host.Command) (host.Result, error) { return host.Result{Stdout: "alice\n"}, nil },
 	}}
-	require.Equal(t, "nhinke", AutoLoginUser(context.Background(), enabled))
+	require.Equal(t, "alice", AutoLoginUser(context.Background(), enabled))
 
 	disabled := &host.Fake{Handlers: map[string]func(host.Command) (host.Result, error){
 		"defaults": func(host.Command) (host.Result, error) {

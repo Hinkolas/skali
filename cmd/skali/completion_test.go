@@ -36,19 +36,19 @@ func complete(t *testing.T, args ...string) ([]string, string) {
 const noFiles = ":4" // cobra.ShellCompDirectiveNoFileComp
 
 func TestCompleteRemotesOffline(t *testing.T) {
-	stageRemotes(t, "khz", map[string]*cliconfig.Remote{
-		"khz":   {Master: "https://skali.khz.dev/api"},
+	stageRemotes(t, "acme", map[string]*cliconfig.Remote{
+		"acme":  {Master: "https://skali.example.com/api"},
 		"lab":   {Master: "https://lab.example/api"},
 		"local": {Master: "http://127.0.0.1:7070"},
 	})
 	values, directive := complete(t, "remote", "use", "")
-	require.Equal(t, []string{"khz\thttps://skali.khz.dev/api", "lab\thttps://lab.example/api"}, values,
+	require.Equal(t, []string{"acme\thttps://skali.example.com/api", "lab\thttps://lab.example/api"}, values,
 		"the dev-owned local remote is never a target")
 	require.Equal(t, noFiles, directive)
 
 	values, _ = complete(t, "deploy", "--remote", "l")
 	require.Equal(t, []string{"lab\thttps://lab.example/api"}, values)
-	values, _ = complete(t, "remote", "remove", "khz", "")
+	values, _ = complete(t, "remote", "remove", "acme", "")
 	require.Empty(t, values, "a second remote name is not an argument")
 	values, _ = complete(t, "remote", "add", "")
 	require.Empty(t, values, "a new remote's name is the user's to type")
