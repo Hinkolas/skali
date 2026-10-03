@@ -30,7 +30,7 @@
 	let tracing = $state(false);
 
 	// The trace follows scroll, eased: scrolling sets where it should be, and
-	// it glides there no faster than about a step and a half a second, so even
+	// it glides there no faster than about two and a half steps a second, so even
 	// a quick scroll shows the tip travelling from dot to dot. Per step, `--p`
 	// is how far along its stretch of the rule the trace is and `--d` how lit
 	// its dot is. Above one column the steps take turns over one long stretch
@@ -57,8 +57,8 @@
 		const each = items.map(() => 0);
 
 		const approach = (current: number, target: number, dt: number) => {
-			const eased = (target - current) * (1 - Math.exp(-dt / 240));
-			const cap = (1.6 * dt) / 1000;
+			const eased = (target - current) * (1 - Math.exp(-dt / 180));
+			const cap = (2.5 * dt) / 1000;
 			const next = current + Math.min(cap, Math.max(-cap, eased));
 			return Math.abs(target - next) < 0.0005 ? target : next;
 		};
