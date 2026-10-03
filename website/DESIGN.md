@@ -291,7 +291,7 @@ The numbered mono label (`01 Workflow`, `03 Under the hood`): index in `accent-l
 
 ### Workflow timeline
 
-An ordered list of steps on a shared 10% white rule, each with a 7px violet dot on the rule, a Mono label in faint, the command in Mono 17px primary, and a 15px muted explanation. Where scroll-driven animation is supported, a violet trace with a lit tip runs along the rule as the list scrolls up the screen, lighting each dot as it arrives (one stretch per step; on phones each step follows its own scroll). Without support or with reduced motion, the dots are simply lit.
+An ordered list of steps on a shared 10% white rule, each with a 7px violet dot on the rule, a Mono label in faint, the command in Mono 17px primary, and a 15px muted explanation. A violet trace with a lit tip runs along the rule as the list scrolls up the screen, lighting each dot as it arrives (one stretch per step; on phones each step follows its own scroll). Without scripts or with reduced motion, the dots are simply lit.
 
 ### Studio mocks
 
