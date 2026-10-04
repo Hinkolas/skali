@@ -255,7 +255,11 @@ capability (one on a single node). Filers keep no state of their own but
 answer every S3 request with round trips to the metadata database, so they
 run on the object-storage nodes too, never on a distant node that merely
 has room: a listing walks the bucket one directory at a time, and each
-directory costs the filer's network distance to the database.
+directory costs the filer's network distance to the database. Each filer
+keeps up to eight metadata connections open between requests and never
+holds more than ten, so parallel requests reuse connections instead of
+reconnecting while two filers stay within a shared pool's connection
+budget.
 The shape follows the fleet as it grows: a second capable node brings the
 second gateway and turns replication on, and a third forms the master
 quorum.

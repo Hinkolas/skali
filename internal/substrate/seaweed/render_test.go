@@ -235,3 +235,13 @@ func TestRenderPlacementIsRequired(t *testing.T) {
 	}
 	require.Equal(t, 2, checked, "masters and filers both carry the rule")
 }
+
+// The filer keeps enough metadata connections idle for parallel S3 load
+// instead of reconnecting for every few queries, and caps them so two
+// filers stay within a shared pool's connection budget.
+func TestRenderFilerStorePool(t *testing.T) {
+	t.Parallel()
+	secret := RenderFilerStoreSecret("ns", "pg", 5432, "user", "secret", "meta")
+	require.Equal(t, "8", secret.StringData["WEED_POSTGRES2_CONNECTION_MAX_IDLE"])
+	require.Equal(t, "10", secret.StringData["WEED_POSTGRES2_CONNECTION_MAX_OPEN"])
+}
