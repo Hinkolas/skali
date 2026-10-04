@@ -1168,6 +1168,11 @@ rules:
   - apiGroups: [apps]
     resources: [deployments, statefulsets, daemonsets]
     verbs: ["*"]
+  # Replicated object storage applies disruption budgets before creating
+  # its platform identity; teardown removes them again.
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, create, patch, delete]
   - apiGroups: [networking.k8s.io]
     resources: [ingresses, networkpolicies]
     verbs: ["*"]
