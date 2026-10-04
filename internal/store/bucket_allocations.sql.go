@@ -39,6 +39,27 @@ func (q *Queries) BeginBucketAllocationCredentialRotation(ctx context.Context, a
 	return result.RowsAffected(), nil
 }
 
+const bucketOutputPublication = `-- name: BucketOutputPublication :one
+SELECT count(*) FILTER (WHERE outputs_published_at IS NULL)::bigint AS unpublished,
+       coalesce(max(outputs_published_at), 'epoch'::timestamptz)::timestamptz AS last_published_at
+FROM bucket_allocations
+WHERE released_at IS NULL
+`
+
+type BucketOutputPublicationRow struct {
+	Unpublished     int64
+	LastPublishedAt time.Time
+}
+
+// The legacy-edge gate: how many live allocations have not confirmed
+// their mirror yet, and when the last one changed.
+func (q *Queries) BucketOutputPublication(ctx context.Context) (BucketOutputPublicationRow, error) {
+	row := q.db.QueryRow(ctx, bucketOutputPublication)
+	var i BucketOutputPublicationRow
+	err := row.Scan(&i.Unpublished, &i.LastPublishedAt)
+	return i, err
+}
+
 const countLiveBucketAllocationsByStore = `-- name: CountLiveBucketAllocationsByStore :one
 SELECT count(*) FROM bucket_allocations
 WHERE store_id = $1 AND released_at IS NULL
@@ -56,7 +77,7 @@ INSERT INTO bucket_allocations (
     id, claim_id, store_id, bucket_name, access_key_id,
     credential_secret, endpoint, region
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at
+RETURNING id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at, output_version, outputs_published_at
 `
 
 type CreateBucketAllocationParams struct {
@@ -96,6 +117,8 @@ func (q *Queries) CreateBucketAllocation(ctx context.Context, arg CreateBucketAl
 		&i.ReleasedAt,
 		&i.FencedAt,
 		&i.CredentialRetireAt,
+		&i.OutputVersion,
+		&i.OutputsPublishedAt,
 	)
 	return i, err
 }
@@ -132,7 +155,7 @@ func (q *Queries) FinishBucketAllocationCredentialRotation(ctx context.Context, 
 }
 
 const getLiveBucketAllocationByClaim = `-- name: GetLiveBucketAllocationByClaim :one
-SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at FROM bucket_allocations
+SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at, output_version, outputs_published_at FROM bucket_allocations
 WHERE claim_id = $1 AND released_at IS NULL
 `
 
@@ -153,12 +176,14 @@ func (q *Queries) GetLiveBucketAllocationByClaim(ctx context.Context, claimID uu
 		&i.ReleasedAt,
 		&i.FencedAt,
 		&i.CredentialRetireAt,
+		&i.OutputVersion,
+		&i.OutputsPublishedAt,
 	)
 	return i, err
 }
 
 const listLiveBucketAllocationsByStore = `-- name: ListLiveBucketAllocationsByStore :many
-SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at FROM bucket_allocations
+SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at, output_version, outputs_published_at FROM bucket_allocations
 WHERE store_id = $1 AND released_at IS NULL
 ORDER BY bucket_name
 `
@@ -186,6 +211,8 @@ func (q *Queries) ListLiveBucketAllocationsByStore(ctx context.Context, storeID 
 			&i.ReleasedAt,
 			&i.FencedAt,
 			&i.CredentialRetireAt,
+			&i.OutputVersion,
+			&i.OutputsPublishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -197,6 +224,52 @@ func (q *Queries) ListLiveBucketAllocationsByStore(ctx context.Context, storeID 
 	return items, nil
 }
 
+const publishBucketAllocationOutputs = `-- name: PublishBucketAllocationOutputs :one
+UPDATE bucket_allocations
+SET endpoint = $1,
+    output_version = output_version
+        + CASE WHEN $2::boolean OR endpoint <> $1 THEN 1 ELSE 0 END,
+    outputs_published_at = CASE
+        WHEN $2::boolean OR endpoint <> $1 OR outputs_published_at IS NULL THEN now()
+        ELSE outputs_published_at
+    END
+WHERE id = $3 AND released_at IS NULL
+RETURNING id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at, output_version, outputs_published_at
+`
+
+type PublishBucketAllocationOutputsParams struct {
+	Endpoint string
+	Changed  bool
+	ID       uuid.UUID
+}
+
+// Publication commits what the output mirror now holds, only after the
+// mirror holds it: the endpoint, and an output_version bump when the
+// mirror changed or the endpoint moved (the bump rolls the consumers).
+// The first confirmation after an upgrade only stamps the time.
+func (q *Queries) PublishBucketAllocationOutputs(ctx context.Context, arg PublishBucketAllocationOutputsParams) (BucketAllocation, error) {
+	row := q.db.QueryRow(ctx, publishBucketAllocationOutputs, arg.Endpoint, arg.Changed, arg.ID)
+	var i BucketAllocation
+	err := row.Scan(
+		&i.ID,
+		&i.ClaimID,
+		&i.StoreID,
+		&i.BucketName,
+		&i.AccessKeyID,
+		&i.CredentialSecret,
+		&i.CredentialVersion,
+		&i.Endpoint,
+		&i.Region,
+		&i.CreatedAt,
+		&i.ReleasedAt,
+		&i.FencedAt,
+		&i.CredentialRetireAt,
+		&i.OutputVersion,
+		&i.OutputsPublishedAt,
+	)
+	return i, err
+}
+
 const releaseBucketAllocation = `-- name: ReleaseBucketAllocation :execrows
 UPDATE bucket_allocations
 SET released_at = now()
@@ -205,27 +278,6 @@ WHERE id = $1 AND released_at IS NULL
 
 func (q *Queries) ReleaseBucketAllocation(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, releaseBucketAllocation, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const setBucketAllocationEndpoint = `-- name: SetBucketAllocationEndpoint :execrows
-UPDATE bucket_allocations
-SET endpoint = $2
-WHERE id = $1 AND released_at IS NULL
-`
-
-type SetBucketAllocationEndpointParams struct {
-	ID       uuid.UUID
-	Endpoint string
-}
-
-// The endpoint is republished when the bucket gains, changes, or loses
-// its route; consumers roll through the mirror Secret change.
-func (q *Queries) SetBucketAllocationEndpoint(ctx context.Context, arg SetBucketAllocationEndpointParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setBucketAllocationEndpoint, arg.ID, arg.Endpoint)
 	if err != nil {
 		return 0, err
 	}

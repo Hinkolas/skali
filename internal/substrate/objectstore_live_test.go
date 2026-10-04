@@ -137,8 +137,9 @@ func TestLiveObjectStoreLegacyEdgeSwept(t *testing.T) {
 	installCertManager(t, client)
 
 	controller := &Controller{
-		cfg:  Config{Managed: true},
-		deps: Deps{Cluster: KubeCluster{Client: client}},
+		cfg: Config{Managed: true},
+		// No bucket is allocated, so the serving edge gates on nothing.
+		deps: Deps{Cluster: KubeCluster{Client: client}, DB: dbstore.New(store.NewStore(testdb.New(t)))},
 	}
 	require.NoError(t, controller.ensureNamespace(ctx))
 
@@ -194,7 +195,9 @@ func TestLiveObjectStoreLegacyEdgeSwept(t *testing.T) {
 	require.True(t, exists(ingressRoutes, "seaweed-s3") && exists(ingressRoutes, "seaweed-s3-http") &&
 		exists(middlewares, edge.RedirectMiddlewareName) && exists(certificates, "seaweed-s3-tls"))
 
-	require.NoError(t, controller.sweepLegacyS3Edge(ctx))
+	wait, err := controller.sweepLegacyS3Edge(ctx)
+	require.NoError(t, err)
+	require.Zero(t, wait)
 	for _, name := range []string{"seaweed-s3", "seaweed-s3-http"} {
 		require.False(t, exists(ingressRoutes, name), "%s must be gone", name)
 	}
@@ -206,9 +209,11 @@ func TestLiveObjectStoreLegacyEdgeSwept(t *testing.T) {
 
 	// A later pass of the same process and the first pass of a fresh one
 	// (nothing left to find) both succeed.
-	require.NoError(t, controller.sweepLegacyS3Edge(ctx))
+	_, err = controller.sweepLegacyS3Edge(ctx)
+	require.NoError(t, err)
 	fresh := &Controller{cfg: Config{Managed: true}, deps: Deps{Cluster: KubeCluster{Client: client}}}
-	require.NoError(t, fresh.sweepLegacyS3Edge(ctx))
+	_, err = fresh.sweepLegacyS3Edge(ctx)
+	require.NoError(t, err)
 }
 
 // installCertManager applies the pinned cert-manager bundle so the
