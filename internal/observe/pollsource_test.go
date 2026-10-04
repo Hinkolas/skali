@@ -1,8 +1,11 @@
 package observe
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,4 +88,38 @@ func TestPollSourcePokeCoalesces(t *testing.T) {
 	source.Poke()
 	source.Poke()
 	require.Len(t, source.poke, 1, "pokes coalesce into one pending re-poll")
+}
+
+// A failing probe says why: the first failure is logged with its error,
+// a persisting one is not repeated every poll, and the recovery is
+// logged once.
+func TestPollSourceLogsFailures(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	var fail error
+	source := NewPollSource(store, func(context.Context) ([]Object, error) { return nil, fail }, PollOptions{
+		Source: "seaweedfs", Interval: time.Hour,
+	})
+	var logs bytes.Buffer
+	source.log = slog.New(slog.NewTextHandler(&logs, nil))
+	store.RegisterSource("seaweedfs")
+
+	source.pollOnce(context.Background())
+	require.Empty(t, logs.String(), "a healthy probe logs nothing")
+
+	fail = errors.New("context deadline exceeded")
+	source.pollOnce(context.Background())
+	source.pollOnce(context.Background())
+	require.Equal(t, 1, strings.Count(logs.String(), "observe: probe failed"))
+	require.Contains(t, logs.String(), "context deadline exceeded")
+	require.Contains(t, logs.String(), "source=seaweedfs")
+
+	source.lastLogged = time.Now().Add(-failureLogEvery)
+	source.pollOnce(context.Background())
+	require.Equal(t, 2, strings.Count(logs.String(), "observe: probe failed"), "a persisting failure is repeated once a minute")
+
+	fail = nil
+	source.pollOnce(context.Background())
+	source.pollOnce(context.Background())
+	require.Equal(t, 1, strings.Count(logs.String(), "observe: probe recovered"))
 }

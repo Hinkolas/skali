@@ -2,6 +2,7 @@ package observe
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,7 +44,17 @@ type PollSource struct {
 	probe Probe
 	opts  PollOptions
 	poke  chan struct{}
+
+	// Failure logging, touched only by the polling goroutine: the first
+	// failure after a success is logged, a persisting one at most once
+	// per failureLogEvery, and the recovery once.
+	log        *slog.Logger
+	failing    bool
+	lastLogged time.Time
 }
+
+// failureLogEvery paces the log line of a probe that keeps failing.
+const failureLogEvery = time.Minute
 
 func NewPollSource(store *Store, probe Probe, opts PollOptions) *PollSource {
 	if opts.Interval <= 0 {
@@ -55,7 +66,7 @@ func NewPollSource(store *Store, probe Probe, opts PollOptions) *PollSource {
 	if opts.Timeout <= 0 {
 		opts.Timeout = defaultProbeTimeout
 	}
-	return &PollSource{store: store, probe: probe, opts: opts, poke: make(chan struct{}, 1)}
+	return &PollSource{store: store, probe: probe, opts: opts, poke: make(chan struct{}, 1), log: slog.Default()}
 }
 
 // Poke requests an immediate re-poll; concurrent pokes coalesce into one.
@@ -97,9 +108,18 @@ func (p *PollSource) pollOnce(ctx context.Context) {
 	objects, err := p.probe(probeCtx)
 	cancel()
 	if err != nil {
+		if now := time.Now(); !p.failing || now.Sub(p.lastLogged) >= failureLogEvery {
+			p.log.Warn("observe: probe failed", "source", p.opts.Source, "timeout", p.opts.Timeout.String(), "error", err)
+			p.lastLogged = now
+		}
+		p.failing = true
 		p.store.MarkFailure(p.opts.Source)
 		p.store.EvaluateFreshness(p.opts.Source, p.opts.StaleThreshold)
 		return
+	}
+	if p.failing {
+		p.log.Info("observe: probe recovered", "source", p.opts.Source)
+		p.failing = false
 	}
 	if !p.store.SourceReady(p.opts.Source) {
 		p.store.MarkReady(p.opts.Source)

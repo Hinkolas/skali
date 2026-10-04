@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"path"
@@ -316,10 +317,73 @@ func (c *Client) DeleteIdentity(ctx context.Context, name string) error {
 }
 
 // Conf reads the per-path configuration document; absent reads as empty.
+// A read takes no lock: the filer serves whole documents, and only
+// read-modify-writes need serializing. Observation must never queue behind
+// an identity write's shell exec.
 func (c *Client) Conf(ctx context.Context) (FilerConf, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	return c.confLocked(ctx)
+}
+
+// SetReadOnlyPaths converges the read-only flag of every bucket path in
+// one read-modify-write: true marks the bucket's path read-only, false
+// reopens it. Buckets not named are left alone. It reports whether the
+// document changed.
+func (c *Client) SetReadOnlyPaths(ctx context.Context, readOnly map[string]bool) (bool, error) {
+	changed := false
+	err := c.UpdateConf(ctx, func(conf *FilerConf) bool {
+		for _, bucket := range slices.Sorted(maps.Keys(readOnly)) {
+			over := readOnly[bucket]
+			prefix := BucketsPrefix + bucket + "/"
+			entry := conf.Find(prefix)
+			switch {
+			case over && entry == nil:
+				conf.Locations = append(conf.Locations, PathConf{LocationPrefix: prefix, ReadOnly: true})
+				changed = true
+			case over && !entry.ReadOnly:
+				entry.ReadOnly = true
+				changed = true
+			case !over && entry != nil && entry.ReadOnly:
+				entry.ReadOnly = false
+				changed = true
+			}
+		}
+		return changed
+	})
+	return changed, err
+}
+
+// BucketNames lists the bucket directories under /buckets/ in one paged
+// filer listing: the probe's existence check for every bucket at once.
+func (c *Client) BucketNames(ctx context.Context) (map[string]bool, error) {
+	names := map[string]bool{}
+	last := ""
+	for {
+		query := url.Values{"limit": {"1000"}}
+		if last != "" {
+			query.Set("lastFileName", last)
+		}
+		data, status, err := c.filer(ctx, http.MethodGet, BucketsPrefix, query, nil)
+		if err != nil {
+			return nil, fmt.Errorf("seaweed: list buckets: %w", err)
+		}
+		if status == http.StatusNotFound {
+			return names, nil // no bucket was ever created
+		}
+		if status < 200 || status >= 300 {
+			return nil, fmt.Errorf("seaweed: list buckets: status %d", status)
+		}
+		var listing uploadListing
+		if err := json.Unmarshal(data, &listing); err != nil {
+			return nil, fmt.Errorf("seaweed: parse bucket listing: %w", err)
+		}
+		for _, entry := range listing.Entries {
+			names[path.Base(entry.FullPath)] = true
+		}
+		if !listing.ShouldDisplayLoadMore || listing.LastFileName == "" || listing.LastFileName == last {
+			return names, nil
+		}
+		last = listing.LastFileName
+	}
 }
 
 // UpdateConf read-modify-writes filer.conf (the replication setting,
@@ -384,6 +448,28 @@ func (c *Client) CollectionSizes(ctx context.Context) (map[string]CollectionStat
 		return nil, fmt.Errorf("seaweed: parse volume status: %w", err)
 	}
 	return collectionStats(vs), nil
+}
+
+// VolumeReport reads the master's volume listing once for both the
+// per-collection footprint (CollectionSizes) and the replica accounting
+// against the recorded replication code (VolumeHealth).
+func (c *Client) VolumeReport(ctx context.Context, replication string) (map[string]CollectionStat, VolumeHealth, error) {
+	desired, err := parseReplication(replication)
+	if err != nil {
+		return nil, VolumeHealth{}, err
+	}
+	data, status, err := c.master(ctx, "/vol/status", nil)
+	if err != nil {
+		return nil, VolumeHealth{}, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, VolumeHealth{}, fmt.Errorf("seaweed: volume status: status %d", status)
+	}
+	var vs volStatus
+	if err := json.Unmarshal(data, &vs); err != nil {
+		return nil, VolumeHealth{}, fmt.Errorf("seaweed: parse volume status: %w", err)
+	}
+	return collectionStats(vs), volumeHealth(vs, desired), nil
 }
 
 // VolumeSizesByNode reads each volume server's on-disk data footprint from

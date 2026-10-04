@@ -97,8 +97,11 @@ func runBucketCORSAndUploads(t *testing.T, fixture *bucketLiveFixture) {
 	spec.CORS = []byte(`{"allowedOrigins":["https://app.example","https://admin.example"],"allowedMethods":["GET","PUT"]}`)
 	_, err = dbSvc.EnsureBucketClaim(ctx, owner, spec)
 	require.NoError(t, err)
+	// One upkeep pass repairs and records drift (and sweeps uploads); the
+	// probe that follows reports it.
 	probe := controller.SeaweedProbe()
 	observeBucket := func() *module.BucketStatus {
+		controller.maintainStorage(ctx)
 		objects, err := probe(ctx)
 		require.NoError(t, err)
 		for _, object := range objects {
@@ -118,7 +121,7 @@ func runBucketCORSAndUploads(t *testing.T, fixture *bucketLiveFixture) {
 	require.Empty(t, observeBucket().ConfigurationDrift, "a converged bucket is a read-only pass")
 
 	// Abandoned multipart uploads: one started before the threshold is
-	// swept by the probe, one started just now survives it.
+	// swept by the upkeep pass, one started just now survives it.
 	core := &minio.Core{Client: app}
 	stale, err := core.NewMultipartUpload(ctx, bucket, "stale", minio.PutObjectOptions{})
 	require.NoError(t, err)
