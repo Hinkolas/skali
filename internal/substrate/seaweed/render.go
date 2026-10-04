@@ -535,9 +535,15 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 				ObjectMeta: templateMeta(spec, labels),
 				Spec: corev1.PodSpec{
 					PriorityClassName: layout.PriorityClassCritical,
-					// Gateways apart from each other: the second filer
-					// exists only once a second node does. Filers are
-					// stateless and not pinned to capable nodes.
+					// Filers keep no state, but every S3 request costs
+					// them sequential round trips to the metadata
+					// database, and a listing costs one per directory: a
+					// filer on a distant node multiplies that latency by
+					// the bucket's directory count. They run where the
+					// rest of the store runs, apart from each other: the
+					// second filer exists only once a second
+					// object-storage node does.
+					NodeSelector:              capabilitySelector(),
 					TopologySpreadConstraints: spreadAcrossNodes(FilerService),
 					Containers: []corev1.Container{{
 						Name:  "filer",

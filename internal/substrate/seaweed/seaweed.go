@@ -111,8 +111,8 @@ func MastersForNodes(nodes int) int {
 }
 
 // FilersForNodes derives the filer (S3 gateway) count from the number of
-// schedulable nodes: two, one per node, as soon as the fleet can hold
-// them apart, so losing a node leaves a gateway serving; one on a single
+// object-storage nodes: two, one per node, as soon as they can be held
+// apart, so losing a node leaves a gateway serving; one on a single
 // node, where a second would only share the node's fate and its
 // disruption budget would block every drain. Rollouts are zero-downtime
 // at either count (the new pod is ready before the old one goes).
