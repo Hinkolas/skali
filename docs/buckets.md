@@ -30,10 +30,12 @@ passes through definitions, revisions, or logs.
 
 Outputs are delivered to pods as environment variables, which a process
 reads once at start. Skali folds a non-secret identity of each referenced
-service's outputs (its endpoints and credential version) into the pod
-template, so when an endpoint is republished or a credential rotates,
-exactly the applications referencing that service roll and start with the
-new values; nothing else restarts.
+service's outputs (its endpoints, credential version, and output version)
+into the pod template, so when an endpoint is republished or a credential
+rotates, exactly the applications referencing that service roll and start
+with the new values; nothing else restarts. The identity advances only
+after the output Secret holds the new values, so a pod never starts on
+values it is about to stop reading.
 
 ## The v1 surface
 
@@ -153,10 +155,12 @@ data is never touched by a route change.
 
 Upgrading from a release that had an installation-wide S3 endpoint
 (`endpoints.s3` at `skali cluster init`): that endpoint no longer exists.
-The first store pass of the new release deletes its routers and
-certificate, skalid releases the hostname's reservation at start so an
-environment can claim it as a bucket route, and every bucket without a
-route publishes the in-cluster gateway from then on. Declare `route` on
+Every bucket without a route publishes the in-cluster gateway, and the
+applications referencing it roll onto it. The old routers and certificate
+keep serving until every bucket's outputs are confirmed and fifteen
+minutes have passed since the last change, so nothing reads the old host
+when it goes away; skalid releases the hostname's reservation at start so
+an environment can claim it as a bucket route. Declare `route` on
 each bucket that needs a public hostname and deploy before upgrading;
 `skali cluster upgrade` lists the buckets still published on the old host
 before it asks for confirmation. A stale `endpoints.s3` in an init config

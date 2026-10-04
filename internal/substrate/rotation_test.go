@@ -18,6 +18,7 @@ import (
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
+	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
@@ -374,4 +375,94 @@ func TestRotateBucketCredentialsRetriesConflict(t *testing.T) {
 	after := fx.secret(t)
 	require.Equal(t, result.AccessKey, string(after.Data[credentialAccessKey]))
 	require.Equal(t, "x", string(after.Data["marker"]), "the commit builds on the latest read")
+}
+
+// mirrorEndpoint reads the endpoint the claim's output mirror holds.
+func (fx *rotationFixture) mirrorEndpoint(t *testing.T) string {
+	t.Helper()
+	fx.fake.mu.Lock()
+	defer fx.fake.mu.Unlock()
+	name := kubernetes.OutputSecretName("buckets", "files")
+	for _, secret := range fx.fake.secrets {
+		if secret.Name == name {
+			return string(secret.Data["endpoint"])
+		}
+	}
+	t.Fatalf("no output mirror %s", name)
+	return ""
+}
+
+// publishPass runs the tail of a provisioning pass: the mirror, then the
+// record of what it holds.
+func (fx *rotationFixture) publishPass(t *testing.T, endpoint string) {
+	t.Helper()
+	ctx := context.Background()
+	allocation := fx.liveAllocation(t)
+	changed, err := fx.control.ensureBucketOutputMirror(ctx, *fx.claim, *allocation, endpoint, "AKOLD", "SKOLD")
+	require.NoError(t, err)
+	require.NoError(t, fx.control.publishBucketOutputs(ctx, *fx.claim, allocation, endpoint, changed))
+}
+
+func (fx *rotationFixture) generation(t *testing.T) string {
+	t.Helper()
+	generations, err := fx.control.Generations(context.Background(), fx.envID)
+	require.NoError(t, err)
+	return generations["buckets.files"]
+}
+
+// The rc.11 incident: the row already carried the in-cluster endpoint
+// while the mirror still held the retired public one (the pass that would
+// rewrite it waited on the platform identity), so consumers rolled onto
+// the old value and never rolled again once the mirror changed. The
+// consumers' identity must follow the mirror, not the row.
+func TestBucketOutputsRollConsumersAfterTheMirror(t *testing.T) {
+	t.Parallel()
+	fx := newRotationFixture(t)
+	ctx := context.Background()
+	legacy := "https://s3.legacy.test"
+
+	// The mirror as an earlier release left it.
+	_, err := fx.control.ensureBucketOutputMirror(ctx, *fx.claim, *fx.allocation, legacy, "AKOLD", "SKOLD")
+	require.NoError(t, err)
+	require.Equal(t, legacy, fx.mirrorEndpoint(t))
+	before := fx.generation(t)
+
+	fx.publishPass(t, InternalBucketEndpoint())
+	require.Equal(t, InternalBucketEndpoint(), fx.mirrorEndpoint(t))
+	live := fx.liveAllocation(t)
+	require.EqualValues(t, 2, live.OutputVersion)
+	require.NotNil(t, live.OutputsPublishedAt)
+	require.NotEqual(t, before, fx.generation(t), "the mirror change rolls the consumers")
+	require.Equal(t, []uuid.UUID{fx.envID}, *fx.poked, "and wakes their environment")
+
+	// A converged pass changes nothing and wakes nobody.
+	after := fx.generation(t)
+	fx.publishPass(t, InternalBucketEndpoint())
+	require.EqualValues(t, 2, fx.liveAllocation(t).OutputVersion)
+	require.Equal(t, after, fx.generation(t))
+	require.Len(t, *fx.poked, 1)
+}
+
+// A republished endpoint (a route gained) reaches the row only with the
+// mirror: until the mirror holds it, the consumers' identity stays put, so
+// no pod can start on values it cannot read yet.
+func TestBucketEndpointCommitsOnlyWithTheMirror(t *testing.T) {
+	t.Parallel()
+	fx := newRotationFixture(t)
+	fx.publishPass(t, InternalBucketEndpoint())
+	before := fx.generation(t)
+	poked := len(*fx.poked)
+
+	routed := *fx.claim
+	routed.Route = []byte(`{"domain":"files.example.com","tls":"automatic"}`)
+	endpoint, err := fx.control.bucketEndpoint(routed)
+	require.NoError(t, err)
+	require.Equal(t, InternalBucketEndpoint(), fx.liveAllocation(t).Endpoint, "computing the endpoint commits nothing")
+	require.Equal(t, before, fx.generation(t))
+
+	fx.publishPass(t, endpoint)
+	require.Equal(t, endpoint, fx.mirrorEndpoint(t))
+	require.Equal(t, endpoint, fx.liveAllocation(t).Endpoint)
+	require.NotEqual(t, before, fx.generation(t))
+	require.Len(t, *fx.poked, poked+1)
 }

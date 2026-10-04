@@ -113,6 +113,8 @@ type BucketAllocation struct {
 	ReleasedAt         *time.Time
 	FencedAt           *time.Time
 	CredentialRetireAt *time.Time
+	OutputVersion      int64
+	OutputsPublishedAt *time.Time
 }
 
 type BucketClaim struct {

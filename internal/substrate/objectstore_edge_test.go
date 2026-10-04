@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -52,7 +53,7 @@ func TestSweepLegacyS3EdgeRemoves(t *testing.T) {
 	t.Parallel()
 	cluster := &edgeCluster{}
 	c := &Controller{cfg: Config{Managed: true}, deps: Deps{Cluster: cluster}}
-	require.NoError(t, c.sweepLegacyS3Edge(context.Background()))
+	require.NoError(t, sweepLegacyEdge(c))
 	require.Empty(t, cluster.applied)
 	require.ElementsMatch(t, []string{
 		"IngressRoute/seaweed-s3",
@@ -64,20 +65,73 @@ func TestSweepLegacyS3EdgeRemoves(t *testing.T) {
 	require.Equal(t, InternalBucketEndpoint(), mustEndpoint(t, c, store.BucketClaim{}))
 }
 
+// sweepLegacyEdge runs one sweep and expects it not to wait: the fake
+// clusters serve no legacy route, so nothing gates the deletes.
+func sweepLegacyEdge(c *Controller) error {
+	wait, err := c.sweepLegacyS3Edge(context.Background())
+	if wait != 0 {
+		return fmt.Errorf("unexpected wait %s", wait)
+	}
+	return err
+}
+
+// servingEdgeCluster still carries the retired edge's TLS route.
+type servingEdgeCluster struct{ edgeCluster }
+
+func (s *servingEdgeCluster) GetObject(_ context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error) {
+	if gvr == edge.IngressRouteGVR && namespace == Namespace && name == "seaweed-s3" {
+		return &unstructured.Unstructured{Object: map[string]any{}}, nil
+	}
+	return s.edgeCluster.GetObject(context.Background(), gvr, namespace, name)
+}
+
+// TestSweepLegacyS3EdgeWaitsForConsumers: while the retired edge still
+// serves, it outlives every bucket whose output mirror is unconfirmed and
+// then the settle window after the last republication, so consumers that
+// read the old endpoint roll onto the new one before it stops answering.
+func TestSweepLegacyS3EdgeWaitsForConsumers(t *testing.T) {
+	t.Parallel()
+	fx := newRotationFixture(t)
+	ctx := context.Background()
+	cluster := &servingEdgeCluster{}
+	c := &Controller{cfg: Config{Managed: true}, deps: Deps{Cluster: cluster, DB: fx.db}}
+
+	wait, err := c.sweepLegacyS3Edge(ctx)
+	require.NoError(t, err)
+	require.Equal(t, legacyEdgeRecheck, wait, "an unconfirmed mirror keeps the edge")
+	require.Empty(t, cluster.deleted)
+
+	_, err = fx.db.PublishAllocationOutputs(ctx, fx.allocation.ID, InternalBucketEndpoint(), true)
+	require.NoError(t, err)
+	wait, err = c.sweepLegacyS3Edge(ctx)
+	require.NoError(t, err)
+	require.InDelta(t, legacyEdgeSettle.Seconds(), wait.Seconds(), 5, "consumers get the settle window")
+	require.Empty(t, cluster.deleted)
+	require.False(t, c.legacyEdgeSwept)
+
+	_, err = fx.pool.Exec(ctx, "UPDATE bucket_allocations SET outputs_published_at = now() - interval '16 minutes'")
+	require.NoError(t, err)
+	wait, err = c.sweepLegacyS3Edge(ctx)
+	require.NoError(t, err)
+	require.Zero(t, wait)
+	require.Contains(t, cluster.deleted, "IngressRoute/seaweed-s3")
+	require.True(t, c.legacyEdgeSwept)
+}
+
 // TestSweepLegacyS3EdgeOnce: the sweep runs once per process; later passes
 // do not repeat the deletes. A failed sweep is retried on the next pass.
 func TestSweepLegacyS3EdgeOnce(t *testing.T) {
 	t.Parallel()
 	cluster := &edgeCluster{}
 	c := &Controller{cfg: Config{Managed: true}, deps: Deps{Cluster: cluster}}
-	require.NoError(t, c.sweepLegacyS3Edge(context.Background()))
+	require.NoError(t, sweepLegacyEdge(c))
 	first := len(cluster.deleted)
-	require.NoError(t, c.sweepLegacyS3Edge(context.Background()))
+	require.NoError(t, sweepLegacyEdge(c))
 	require.Len(t, cluster.deleted, first)
 
 	failing := &failingCluster{edgeCluster: edgeCluster{}, err: errors.New("boom")}
 	c = &Controller{cfg: Config{Managed: true}, deps: Deps{Cluster: failing}}
-	require.ErrorContains(t, c.sweepLegacyS3Edge(context.Background()), "boom")
+	require.ErrorContains(t, sweepLegacyEdge(c), "boom")
 	require.False(t, c.legacyEdgeSwept, "a failed sweep is not recorded as done")
 }
 
@@ -87,7 +141,7 @@ func TestSweepLegacyS3EdgeUnmanaged(t *testing.T) {
 	t.Parallel()
 	cluster := &edgeCluster{}
 	c := &Controller{cfg: Config{Managed: false}, deps: Deps{Cluster: cluster}}
-	require.NoError(t, c.sweepLegacyS3Edge(context.Background()))
+	require.NoError(t, sweepLegacyEdge(c))
 	require.Empty(t, cluster.applied)
 	require.Empty(t, cluster.deleted)
 	require.Equal(t, InternalBucketEndpoint(), mustEndpoint(t, c, store.BucketClaim{}))
@@ -100,7 +154,7 @@ func TestSweepLegacyS3EdgeToleratesMissingKinds(t *testing.T) {
 	t.Parallel()
 	cluster := &edgeCluster{unknown: map[schema.GroupVersionKind]bool{edge.CertificateGVK: true}}
 	c := &Controller{cfg: Config{Managed: true}, deps: Deps{Cluster: cluster}}
-	require.NoError(t, c.sweepLegacyS3Edge(context.Background()))
+	require.NoError(t, sweepLegacyEdge(c))
 	require.NotContains(t, cluster.deleted, "Certificate/seaweed-s3-tls")
 	require.Contains(t, cluster.deleted, "IngressRoute/seaweed-s3")
 	require.True(t, c.legacyEdgeSwept)
