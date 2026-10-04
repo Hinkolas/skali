@@ -169,7 +169,7 @@ func (s *Store) upsertLocked(obj Object) []uuid.UUID {
 	if previous != nil && previous.Environment != obj.Environment {
 		affected = append(affected, previous.Environment)
 	}
-	if obj.Environment == uuid.Nil && obj.SharedKey != "" {
+	if sharedResource(obj) {
 		affected = append(affected, s.environmentsForSharedKeyLocked(obj.SharedKey)...)
 	}
 	return affected
@@ -194,10 +194,24 @@ func (s *Store) removeLocked(key objectKey) []uuid.UUID {
 	s.unindexLocked(key, previous)
 	delete(s.objects, key)
 	affected := []uuid.UUID{previous.Environment}
-	if previous.Environment == uuid.Nil && previous.SharedKey != "" {
+	if sharedResource(*previous) {
 		affected = append(affected, s.environmentsForSharedKeyLocked(previous.SharedKey)...)
 	}
 	return affected
+}
+
+// sharedResource reports whether an object is the shared resource its key
+// names: a database pool's Cluster or the object store, which every
+// environment referencing the key reads. A platform-scoped object can
+// carry the key only as a reference: the object store's own metadata
+// database is a system tenant on a shared pool, labelled with the pool
+// like every tenant. Letting it register under the key replaced the pool
+// for every environment on it until the pool's next status update.
+func sharedResource(obj Object) bool {
+	if obj.Environment != uuid.Nil || obj.SharedKey == "" {
+		return false
+	}
+	return obj.Kind == module.KindDatabaseCluster || obj.Kind == module.KindObjectStore
 }
 
 // ReplaceSource reconciles one named source's object set to exactly the
@@ -269,7 +283,7 @@ func (s *Store) indexLocked(key objectKey, obj *Object) {
 		}
 		return
 	}
-	if obj.SharedKey != "" {
+	if sharedResource(*obj) {
 		s.sharedObjects[obj.SharedKey] = key
 	}
 }
@@ -314,7 +328,7 @@ func (s *Store) unindexLocked(key objectKey, obj *Object) {
 		}
 		return
 	}
-	if obj.SharedKey != "" && s.sharedObjects[obj.SharedKey] == key {
+	if sharedResource(*obj) && s.sharedObjects[obj.SharedKey] == key {
 		delete(s.sharedObjects, obj.SharedKey)
 	}
 }

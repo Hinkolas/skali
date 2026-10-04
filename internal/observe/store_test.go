@@ -223,6 +223,42 @@ func TestSharedObject(t *testing.T) {
 	require.False(t, ok)
 }
 
+// A system tenant on a shared pool (the object store's metadata database)
+// is platform-scoped and labelled with the pool like every tenant. It must
+// not take the pool's place: environments on the pool would lose their pool
+// observation, and read as waiting for it, every time the tenant updated.
+func TestSystemTenantDoesNotReplaceItsPool(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	environment := uuid.New()
+	cluster := kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"},
+		Namespace: "skali-platform", Name: "pg17-shared"}
+	database := schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"}
+	store.Upsert(Object{Ref: cluster, Kind: module.KindDatabaseCluster, Name: "pg17-shared", SharedKey: "pg17-shared",
+		DatabaseCluster: &module.DatabaseClusterStatus{Instances: 2, ReadyInstances: 2}})
+	store.Upsert(Object{Ref: kube.ObjectRef{GVK: database, Namespace: "skali-platform", Name: "db-app"},
+		Kind: module.KindDatabaseTenant, Name: "app", Environment: environment, Service: "databases.data",
+		SharedKey: "pg17-shared", DatabaseTenant: &module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"}})
+	system := kube.ObjectRef{GVK: database, Namespace: "skali-platform", Name: "db-system"}
+	store.Upsert(Object{Ref: system, Kind: module.KindDatabaseTenant, Name: "seaweed",
+		SharedKey: "pg17-shared", DatabaseTenant: &module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"}})
+
+	obj, ok := store.SharedObject("pg17-shared")
+	require.True(t, ok)
+	require.Equal(t, module.KindDatabaseCluster, obj.Kind, "the pool keeps its key after the system tenant updated")
+	pools := 0
+	for _, resource := range store.Snapshot(environment).ForService("databases.data") {
+		if resource.Kind == module.KindDatabaseCluster {
+			pools++
+		}
+	}
+	require.Equal(t, 1, pools, "the environment's snapshot carries the pool")
+
+	store.Remove(system)
+	_, ok = store.SharedObject("pg17-shared")
+	require.True(t, ok, "removing the system tenant leaves the pool in place")
+}
+
 func TestStalenessEvaluation(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1700000000, 0)
