@@ -122,9 +122,11 @@ func (c *Controller) RotateBucketCredentials(ctx context.Context, environmentID 
 // key, and only now that the mirror is right), retires the previous pair
 // once its instant has passed, and clears a deadline whose previous pair
 // is already gone. Every branch is derived from the Secret, so a pass
-// interrupted anywhere converges on the next one.
+// interrupted anywhere converges on the next one. wake asks the commit to
+// wake the environment itself; the pass leaves that to the publication
+// when the mirror changed in it.
 func (c *Controller) reconcileCredentialRotation(ctx context.Context, row store.BucketClaim,
-	allocation *store.BucketAllocation, secret *corev1.Secret, now time.Time) error {
+	allocation *store.BucketAllocation, secret *corev1.Secret, now time.Time, wake bool) error {
 	current := currentCredential(secret)
 	retireAt, hasDeadline := credentialRetireAt(secret)
 	if allocation.AccessKeyID != current.AccessKey {
@@ -142,7 +144,7 @@ func (c *Controller) reconcileCredentialRotation(ctx context.Context, row store.
 			allocation.CredentialRetireAt = &deadline
 			slog.Info("substrate: bucket credential version bumped", "bucket", allocation.BucketName,
 				"version", allocation.CredentialVersion, "retireAt", deadline.Format(time.RFC3339))
-			if c.deps.Enqueue != nil && row.EnvironmentID != nil {
+			if wake && c.deps.Enqueue != nil && row.EnvironmentID != nil {
 				c.deps.Enqueue(*row.EnvironmentID)
 			}
 		}

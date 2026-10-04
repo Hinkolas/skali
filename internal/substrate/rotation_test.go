@@ -283,7 +283,7 @@ func TestReconcileCredentialRotation(t *testing.T) {
 	require.NoError(t, err)
 
 	allocation := fx.liveAllocation(t)
-	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, allocation, fx.secret(t), now))
+	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, allocation, fx.secret(t), now, true))
 	require.Equal(t, "AKNEW", allocation.AccessKeyID)
 	require.EqualValues(t, 2, allocation.CredentialVersion)
 	require.True(t, allocation.CredentialRetireAt.Equal(retireAt))
@@ -296,7 +296,7 @@ func TestReconcileCredentialRotation(t *testing.T) {
 	require.Equal(t, "AKOLD", string(fx.secret(t).Data[credentialPreviousAccessKey]), "the overlap stays open")
 
 	// Repeated inside the window: nothing changes, nobody is poked.
-	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), now.Add(time.Minute)))
+	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), now.Add(time.Minute), true))
 	require.EqualValues(t, 2, fx.liveAllocation(t).CredentialVersion)
 	require.Len(t, *fx.poked, 1)
 	require.Empty(t, fx.doer.scripts)
@@ -305,7 +305,7 @@ func TestReconcileCredentialRotation(t *testing.T) {
 	// Secret loses the previous pair and the instant, the row's deadline
 	// clears.
 	fx.doer.identities.Identities[0].Credentials = []seaweed.Credential{previous, current}
-	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), retireAt))
+	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), retireAt, true))
 	require.Len(t, fx.doer.scripts, 1)
 	require.Contains(t, fx.doer.scripts[0], "-access_key=AKOLD -delete -apply")
 	require.NotContains(t, fx.doer.scripts[0], "-access_key=AKNEW -delete")
@@ -321,7 +321,7 @@ func TestReconcileCredentialRotation(t *testing.T) {
 
 	// Steady state is a read-only pass.
 	fx.doer.scripts = nil
-	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), retireAt.Add(time.Hour)))
+	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), retireAt.Add(time.Hour), true))
 	require.Empty(t, fx.doer.scripts)
 	require.EqualValues(t, 2, fx.liveAllocation(t).CredentialVersion)
 
@@ -334,7 +334,7 @@ func TestReconcileCredentialRotation(t *testing.T) {
 	require.NoError(t, err)
 	live = fx.liveAllocation(t)
 	require.NotNil(t, live.CredentialRetireAt)
-	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), now))
+	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), now, true))
 	require.Nil(t, fx.liveAllocation(t).CredentialRetireAt)
 
 	// Fenced with an expired overlap: the identity is absent and stays
@@ -345,7 +345,7 @@ func TestReconcileCredentialRotation(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, fx.db.FenceAllocation(ctx, allocation.ID))
 	live = fx.liveAllocation(t)
-	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), now))
+	require.NoError(t, fx.control.reconcileCredentialRotation(ctx, *fx.claim, live, fx.secret(t), now, true))
 	require.Empty(t, fx.doer.scripts, "a fenced bucket has no identity to prune")
 	require.NotContains(t, fx.secret(t).Data, credentialPreviousAccessKey)
 	require.Nil(t, fx.liveAllocation(t).CredentialRetireAt)
@@ -465,4 +465,54 @@ func TestBucketEndpointCommitsOnlyWithTheMirror(t *testing.T) {
 	require.Equal(t, endpoint, fx.liveAllocation(t).Endpoint)
 	require.NotEqual(t, before, fx.generation(t))
 	require.Len(t, *fx.poked, poked+1)
+}
+
+// A rotation's pass rewrites the mirror (an output-version bump) and
+// commits the new key (a credential-version bump). The consumers must see
+// both in one roll: the environment is woken once, after both bumps, so it
+// can never roll on the first and again on the second.
+func TestBucketRotationRollsConsumersOnce(t *testing.T) {
+	t.Parallel()
+	fx := newRotationFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	fx.publishPass(t, InternalBucketEndpoint())
+	*fx.poked = nil
+	before := fx.generation(t)
+
+	current := seaweed.Credential{AccessKey: "AKNEW", SecretKey: "SKNEW"}
+	previous := seaweed.Credential{AccessKey: "AKOLD", SecretKey: "SKOLD"}
+	secret := fx.secret(t)
+	updated := credentialSecret(&current, &previous, now.Add(time.Hour).Format(time.RFC3339))
+	updated.ResourceVersion = secret.ResourceVersion
+	_, err := fx.fake.UpdateSecret(ctx, updated)
+	require.NoError(t, err)
+
+	allocation := fx.liveAllocation(t)
+	require.NoError(t, fx.control.settleBucketOutputs(ctx, *fx.claim, allocation, fx.secret(t), InternalBucketEndpoint(), now))
+	live := fx.liveAllocation(t)
+	require.EqualValues(t, 2, live.CredentialVersion)
+	require.EqualValues(t, 3, live.OutputVersion)
+	require.NotEqual(t, before, fx.generation(t))
+	require.Equal(t, []uuid.UUID{fx.envID}, *fx.poked, "one wake after both bumps")
+
+	// Settled: nothing moves, nobody is woken.
+	require.NoError(t, fx.control.settleBucketOutputs(ctx, *fx.claim, live, fx.secret(t), InternalBucketEndpoint(), now.Add(time.Minute)))
+	require.Len(t, *fx.poked, 1)
+
+	// A pass interrupted after the mirror took the key but before the row
+	// did: the mirror does not change again, so the commit wakes the
+	// environment itself.
+	next := seaweed.Credential{AccessKey: "AKNEXT", SecretKey: "SKNEXT"}
+	secret = fx.secret(t)
+	updated = credentialSecret(&next, &current, now.Add(time.Hour).Format(time.RFC3339))
+	updated.ResourceVersion = secret.ResourceVersion
+	_, err = fx.fake.UpdateSecret(ctx, updated)
+	require.NoError(t, err)
+	_, err = fx.control.ensureBucketOutputMirror(ctx, *fx.claim, *live, InternalBucketEndpoint(), next.AccessKey, next.SecretKey)
+	require.NoError(t, err)
+	live = fx.liveAllocation(t)
+	require.NoError(t, fx.control.settleBucketOutputs(ctx, *fx.claim, live, fx.secret(t), InternalBucketEndpoint(), now.Add(2*time.Minute)))
+	require.EqualValues(t, 3, fx.liveAllocation(t).CredentialVersion)
+	require.Len(t, *fx.poked, 2, "the commit wakes the environment when the mirror already held the key")
 }
