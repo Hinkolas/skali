@@ -187,8 +187,9 @@ previous setting until it lands.
 
 ## Node-failure tolerance of the object store
 
-What the managed object store survives depends on how many nodes the
-fleet has; the platform never promises more than the fleet can hold.
+What the managed object store survives depends on how many nodes carry
+the object-storage capability (every store component, gateways included,
+runs only on those); the platform never promises more than they can hold.
 
 - **One node.** No node-failure tolerance: one master, one gateway, one
   volume server, no replication. Everything goes down with the node and

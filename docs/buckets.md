@@ -250,11 +250,15 @@ Production derives the store's shape from the fleet: three raft masters
 when three or more nodes carry the object-storage capability (else one),
 one volume server per capable node using the node's disk, one replica on
 a different node when two or more nodes carry the capability (none on a
-single node), and two filer/S3 gateways as soon as the cluster has two
-nodes (one on a single node; filers are stateless and run on any node).
-The shape follows the fleet as it grows: adding a second node brings the
-second gateway, a second capable node turns replication on, and a third
-forms the master quorum.
+single node), and two filer/S3 gateways as soon as two nodes carry the
+capability (one on a single node). Filers keep no state of their own but
+answer every S3 request with round trips to the metadata database, so they
+run on the object-storage nodes too, never on a distant node that merely
+has room: a listing walks the bucket one directory at a time, and each
+directory costs the filer's network distance to the database.
+The shape follows the fleet as it grows: a second capable node brings the
+second gateway and turns replication on, and a third forms the master
+quorum.
 The recorded shape is the desired state; on every reconcile pass the
 platform compares it with the store itself (the bucket path's replication
 setting and each volume's placement) and moves whatever still differs, so
