@@ -302,23 +302,22 @@ func (c *Controller) backupBucket(ctx context.Context, log *journal.StepLog, bct
 	if err != nil {
 		return err
 	}
-	log.Info(ctx, "copying bucket "+bucketName)
-
-	// Metadata pre-pass for real progress totals; the bucket may drift
-	// during the copy, which is the documented loose-consistency property.
-	var total int64
-	if err := source.List(ctx, "", func(objectInfo) error {
-		total++
-		return nil
-	}); err != nil {
+	log.Info(ctx, "counting objects in bucket "+bucketName)
+	// Keep the metadata pre-pass for real totals, but replay its inventory
+	// during the copy instead of walking the slow source listing twice.
+	inventory, total, err := inventoryBucket(ctx, log, source)
+	if err != nil {
 		return err
 	}
+	defer inventory.Close()
+	log.Info(ctx, fmt.Sprintf("copying %d objects from bucket %s", total, bucketName))
+	log.Progress(ctx, 0, total)
 
 	destinationPrefix := bucketPrefixKey(bctx.prefix(), row.ProjectName, backupNamespace(row),
 		component.ServiceKey, bctx.snapshotID)
 	opts := c.copyOptions()
 	opts.SkipMissing = true
-	copied, copiedBytes, err := copyObjects(ctx, log, source, target, "", destinationPrefix, total, opts)
+	copied, copiedBytes, err := copyObjects(ctx, log, inventory, target, "", destinationPrefix, total, opts)
 	if err != nil {
 		return err
 	}
