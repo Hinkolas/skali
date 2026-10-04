@@ -166,19 +166,7 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if len(repaired) > 0 {
 		slog.Info("substrate: bucket configuration reset", "bucket", allocation.BucketName, "settings", repaired)
 	}
-	pair := currentCredential(credential)
-	changed, err := c.ensureBucketOutputMirror(ctx, row, *allocation, endpoint, pair.AccessKey, pair.SecretKey)
-	if err != nil {
-		return false, err
-	}
-	if err := c.publishBucketOutputs(ctx, row, allocation, endpoint, changed); err != nil {
-		return false, err
-	}
-	// Rotation bookkeeping rides every pass once the identity and the
-	// mirror hold the Secret's keys: commit a new key to the row (the bump
-	// that rolls the consumers), retire a previous pair whose instant
-	// passed.
-	if err := c.reconcileCredentialRotation(ctx, row, allocation, credential, now); err != nil {
+	if err := c.settleBucketOutputs(ctx, row, allocation, credential, endpoint, now); err != nil {
 		return false, err
 	}
 
@@ -274,6 +262,29 @@ func (c *Controller) ensureBucketCredentialSecret(ctx context.Context, row store
 		return nil, fmt.Errorf("substrate: read bucket credential secret: %w", err)
 	}
 	return created, nil
+}
+
+// settleBucketOutputs brings the consumers' view of the bucket up to date
+// once the identity holds the Secret's keys: the output mirror, the
+// rotation bookkeeping, then the publication. Rotation bookkeeping (commit
+// a new key to the row, retire a previous pair whose instant passed) runs
+// before the publication so that a rotation's two bumps, the credential
+// version and the output version of the rewritten mirror, reach the
+// consumers as one roll: the publication wakes the environment after both.
+// Only a pass that commits a key the mirror already held (one interrupted
+// after writing it) has no publication to do that, so the commit wakes the
+// environment itself.
+func (c *Controller) settleBucketOutputs(ctx context.Context, row store.BucketClaim, allocation *store.BucketAllocation,
+	credential *corev1.Secret, endpoint string, now time.Time) error {
+	pair := currentCredential(credential)
+	changed, err := c.ensureBucketOutputMirror(ctx, row, *allocation, endpoint, pair.AccessKey, pair.SecretKey)
+	if err != nil {
+		return err
+	}
+	if err := c.reconcileCredentialRotation(ctx, row, allocation, credential, now, !changed); err != nil {
+		return err
+	}
+	return c.publishBucketOutputs(ctx, row, allocation, endpoint, changed)
 }
 
 // publishBucketOutputs records on the allocation what the output mirror
