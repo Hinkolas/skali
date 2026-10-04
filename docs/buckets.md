@@ -58,8 +58,9 @@ settings behind the platform, and in particular cannot open the bucket to
 anonymous reads. The settings Skali currently enforces are: that policy,
 the declared CORS configuration (or none), no lifecycle rules on the
 store itself (cleanup runs in the platform), and versioning not enabled.
-They converge when the bucket is provisioned and on every observation
-pass; anything found changed is reset and the service reports a
+They converge when the bucket is provisioned and on every storage upkeep
+pass (every 15 seconds, separate from health observation so slow upkeep
+never makes storage health stale); anything found changed is reset and the service reports a
 `configuration-drift` warning naming what was reset.
 
 Skali speaks S3 to the store as its own platform identity for this, for
@@ -79,14 +80,14 @@ ignored. Its guarantees, exactly:
   for the vacuum that reclaims the disk later. Replicas do not count. The
   parts of a multipart upload count while the upload is in progress and
   until it completes or is aborted.
-- **When it applies.** Usage is read on the observation cadence, so an
-  overshoot of up to one interval plus whatever was in flight lands before
-  the flag takes effect.
+- **When it applies.** Usage is read on the upkeep cadence (every 15
+  seconds), so an overshoot of up to one interval plus whatever was in
+  flight lands before the flag takes effect.
 - **What the flag does.** At or over the quota the bucket refuses uploads
   (PUT, multipart) from the application's identity; reads, listings and
   deletes keep working, so space can always be freed. The service reports
   degraded with its usage. Once usage drops under the quota the next
-  observation lifts the flag.
+  upkeep pass lifts the flag.
 - **What is reported.** The usage diagnostic carries the live bytes and an
   approximate entry count: a large object is stored as several entries, so
   the count is an upper bound on objects, not an object count. The store's
@@ -224,7 +225,7 @@ buckets:
 A declared policy is reconciled onto the bucket like its other settings:
 a preflight from an origin that is not listed is refused, the listed
 methods and headers are the ones admitted, and a change behind the
-platform is reset on the next observation and reported as
+platform is reset on the next upkeep pass and reported as
 `configuration-drift`.
 
 Multipart uploads a browser started and never completed keep their parts

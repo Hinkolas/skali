@@ -315,14 +315,7 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		return 0, err
 	}
 
-	// Point the admin channel at the current filer pods.
-	if c.deps.Seaweed != nil {
-		if c.cfg.Managed {
-			c.deps.Seaweed.SetFilerTarget("app="+seaweed.FilerService, "filer")
-		} else {
-			c.deps.Seaweed.SetFilerTarget("app="+seaweed.AllInOneApp, "seaweed")
-		}
-	}
+	c.pointFilerTarget()
 
 	ready, reason, err := c.objectStoreReady(ctx, row)
 	if err != nil {
@@ -358,6 +351,20 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		}
 	}
 	return 0, nil
+}
+
+// pointFilerTarget points the admin channel at the filer pods of the
+// installation's shape. New sets it, so claim work that runs before the
+// first store pass has a target; the store pass re-asserts it.
+func (c *Controller) pointFilerTarget() {
+	if c.deps.Seaweed == nil {
+		return
+	}
+	if c.cfg.Managed {
+		c.deps.Seaweed.SetFilerTarget("app="+seaweed.FilerService, "filer")
+	} else {
+		c.deps.Seaweed.SetFilerTarget("app="+seaweed.AllInOneApp, "seaweed")
+	}
 }
 
 // legacyS3EdgeRefs are the edge objects the installation-wide S3 endpoint

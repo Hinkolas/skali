@@ -205,6 +205,10 @@ type Controller struct {
 	// legacyS3OpenSwept records that this process already deleted the
 	// policy that opened the S3 port to every pod; see sweepLegacyS3Open.
 	legacyS3OpenSwept bool
+	// driftMu guards drift: per bucket, the settings the last storage
+	// upkeep pass reset, reported by the observation probe.
+	driftMu sync.Mutex
+	drift   map[string][]string
 	// accessMu serialises every list-render-apply of a platform access
 	// policy (ensureS3Access, ensurePoolAccess): claim, pool and store
 	// passes run on separate workers, and a listing applied after a newer
@@ -281,7 +285,7 @@ func New(deps Deps, cfg Config) *Controller {
 	// The failure backoff is capped at the waiting cadence: a transient
 	// error must never park in-flight claim work longer than an ordinary
 	// waiting pass.
-	return &Controller{
+	c := &Controller{
 		deps: deps,
 		cfg:  cfg,
 		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
@@ -289,6 +293,8 @@ func New(deps Deps, cfg Config) *Controller {
 		waiting:           make(map[uuid.UUID]string),
 		pendingExtensions: make(map[uuid.UUID][]byte),
 	}
+	c.pointFilerTarget()
+	return c
 }
 
 // EnqueueClaim schedules one claim's reconciliation.
@@ -388,6 +394,9 @@ func (c *Controller) Run(ctx context.Context) {
 			for c.processNext(ctx) {
 			}
 		})
+	}
+	if c.deps.Seaweed != nil {
+		wg.Go(func() { c.runStorageMaintenance(ctx) })
 	}
 
 	ticker := time.NewTicker(c.cfg.Resync)

@@ -45,10 +45,12 @@ func runBucketQuota(t *testing.T, fixture *bucketLiveFixture) {
 	})
 	require.NoError(t, err)
 
-	// The probe is driven by hand: one pass reads the store, enforces the
-	// flag, and returns the bucket projection.
+	// Upkeep and probe are driven by hand: one upkeep pass enforces the
+	// flag, the probe then reads the store and returns the bucket
+	// projection.
 	probe := controller.SeaweedProbe()
 	observeBucket := func() *module.BucketStatus {
+		controller.maintainStorage(ctx)
 		objects, err := probe(ctx)
 		require.NoError(t, err)
 		for _, object := range objects {
