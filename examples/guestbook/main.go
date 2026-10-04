@@ -107,14 +107,29 @@ func main() {
 		}
 	})
 	// Notes live in the bucket: PUT stores the body as an object, GET reads
-	// it back through the same injected credentials.
+	// it back through the same injected credentials. Names are object keys
+	// and may nest like paths; GET /notes/ lists every key.
 	http.HandleFunc("/notes/", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/notes/")
-		if name == "" || strings.Contains(name, "/") {
-			http.Error(w, "note name required", http.StatusBadRequest)
+		ctx := r.Context()
+		if name == "" {
+			if r.Method != http.MethodGet {
+				http.Error(w, "note name required", http.StatusBadRequest)
+				return
+			}
+			var keys []string
+			for object := range s3.ListObjects(ctx, bucket, minio.ListObjectsOptions{Recursive: true}) {
+				if object.Err != nil {
+					http.Error(w, object.Err.Error(), http.StatusInternalServerError)
+					return
+				}
+				keys = append(keys, object.Key)
+			}
+			for _, key := range keys {
+				fmt.Fprintln(w, key)
+			}
 			return
 		}
-		ctx := r.Context()
 		switch r.Method {
 		case http.MethodPut, http.MethodPost:
 			_, err := s3.PutObject(ctx, bucket, name, r.Body, r.ContentLength,

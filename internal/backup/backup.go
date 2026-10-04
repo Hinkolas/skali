@@ -349,6 +349,7 @@ func (c *Controller) openServiceBucket(ctx context.Context, environmentID uuid.U
 	if err != nil {
 		return nil, "", err
 	}
+	source.walk = true
 	return source, access.Bucket, nil
 }
 
