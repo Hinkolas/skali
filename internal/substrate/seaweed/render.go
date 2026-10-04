@@ -674,6 +674,19 @@ func renderAllInOne(spec StoreSpec) *appsv1.Deployment {
 	}
 }
 
+// The filer's metadata connection pool. Every S3 request is a handful of
+// sequential metadata queries, and the store's default of two idle
+// connections made a filer under parallel load (a backup listing eight
+// directories and copying sixteen objects at once) open and close a
+// connection for about every fifth query, a TCP and authentication
+// handshake to the pool each time. Eight idle connections cover that load;
+// the ceiling of ten per filer keeps two filers within a shared pool's
+// connection budget, and requests beyond it wait for a connection.
+const (
+	filerStoreMaxIdle = 8
+	filerStoreMaxOpen = 10
+)
+
 // RenderFilerStoreSecret derives the filer's postgres2 store config from
 // the metadata claim's outputs. createTable is what makes bucket deletion a
 // DROP TABLE (table-per-bucket). The image ships a default filer.toml with
@@ -685,14 +698,16 @@ func RenderFilerStoreSecret(namespace, host string, port int, username, password
 		ObjectMeta: objectMeta(namespace, FilerStoreSecret, FilerService),
 		Type:       corev1.SecretTypeOpaque,
 		StringData: map[string]string{
-			"WEED_LEVELDB2_ENABLED":   "false",
-			"WEED_POSTGRES2_ENABLED":  "true",
-			"WEED_POSTGRES2_HOSTNAME": host,
-			"WEED_POSTGRES2_PORT":     fmt.Sprint(port),
-			"WEED_POSTGRES2_USERNAME": username,
-			"WEED_POSTGRES2_PASSWORD": password,
-			"WEED_POSTGRES2_DATABASE": database,
-			"WEED_POSTGRES2_SSLMODE":  "disable",
+			"WEED_LEVELDB2_ENABLED":              "false",
+			"WEED_POSTGRES2_ENABLED":             "true",
+			"WEED_POSTGRES2_HOSTNAME":            host,
+			"WEED_POSTGRES2_PORT":                fmt.Sprint(port),
+			"WEED_POSTGRES2_USERNAME":            username,
+			"WEED_POSTGRES2_PASSWORD":            password,
+			"WEED_POSTGRES2_DATABASE":            database,
+			"WEED_POSTGRES2_SSLMODE":             "disable",
+			"WEED_POSTGRES2_CONNECTION_MAX_IDLE": fmt.Sprint(filerStoreMaxIdle),
+			"WEED_POSTGRES2_CONNECTION_MAX_OPEN": fmt.Sprint(filerStoreMaxOpen),
 			"WEED_POSTGRES2_CREATETABLE": `CREATE TABLE IF NOT EXISTS "%s" (` +
 				`dirhash BIGINT, name VARCHAR(65535), directory VARCHAR(65535), meta bytea, ` +
 				`PRIMARY KEY (dirhash, name))`,
