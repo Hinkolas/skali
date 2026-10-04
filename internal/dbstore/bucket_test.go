@@ -210,7 +210,8 @@ func TestBucketAllocationIdentityImmutable(t *testing.T) {
 	committed, err = f.svc.BeginAllocationCredentialRotation(ctx, allocation.ID, "AKROTATED", retireAt.Add(time.Hour))
 	require.NoError(t, err)
 	require.False(t, committed, "the same key commits once")
-	require.NoError(t, f.svc.SetAllocationEndpoint(ctx, allocation.ID, "https://s3.example.test"))
+	_, err = f.svc.PublishAllocationOutputs(ctx, allocation.ID, "https://s3.example.test", false)
+	require.NoError(t, err)
 	live, err := f.svc.LiveAllocation(ctx, created.ID)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, live.CredentialVersion)
@@ -230,6 +231,64 @@ func TestBucketAllocationIdentityImmutable(t *testing.T) {
 	allocations, err := f.svc.ListStoreAllocations(ctx, sw.ID)
 	require.NoError(t, err)
 	require.Len(t, allocations, 1)
+}
+
+// Publication records what the output mirror holds: the version that
+// rolls consumers advances only when the mirror changed or the endpoint
+// moved, and the first confirmation after the upgrade only stamps the
+// time the legacy-edge gate waits on.
+func TestBucketAllocationOutputPublication(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	sw := f.objectStore(t)
+
+	unpublished, last, err := f.svc.OutputPublication(ctx)
+	require.NoError(t, err)
+	require.Zero(t, unpublished)
+	require.True(t, last.Equal(time.Unix(0, 0)), "no allocation reads as the epoch")
+
+	created, err := f.svc.EnsureBucketClaim(ctx, f.owner("files"), bucketSpec())
+	require.NoError(t, err)
+	allocation, err := f.svc.RecordAllocation(ctx, AllocationInput{
+		ClaimID: created.ID, StoreID: sw.ID, BucketName: "b-files-01",
+		AccessKeyID: "AKFILES", CredentialSecret: "s3cred-01",
+		Endpoint: "https://s3.legacy.test", Region: "us-east-1",
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, allocation.OutputVersion)
+	require.Nil(t, allocation.OutputsPublishedAt)
+	unpublished, _, err = f.svc.OutputPublication(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, unpublished)
+
+	// An unchanged mirror only confirms.
+	row, err := f.svc.PublishAllocationOutputs(ctx, allocation.ID, "https://s3.legacy.test", false)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, row.OutputVersion)
+	require.NotNil(t, row.OutputsPublishedAt)
+	confirmed := *row.OutputsPublishedAt
+	row, err = f.svc.PublishAllocationOutputs(ctx, allocation.ID, "https://s3.legacy.test", false)
+	require.NoError(t, err)
+	require.True(t, row.OutputsPublishedAt.Equal(confirmed), "a repeated confirmation keeps the stamp")
+
+	// A changed mirror bumps, and so does an endpoint that moved while the
+	// mirror already held it (a pass interrupted between the two writes).
+	row, err = f.svc.PublishAllocationOutputs(ctx, allocation.ID, "https://s3.legacy.test", true)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, row.OutputVersion)
+	row, err = f.svc.PublishAllocationOutputs(ctx, allocation.ID, "http://internal.test", false)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, row.OutputVersion)
+	require.Equal(t, "http://internal.test", row.Endpoint)
+
+	unpublished, last, err = f.svc.OutputPublication(ctx)
+	require.NoError(t, err)
+	require.Zero(t, unpublished)
+	require.True(t, last.Equal(*row.OutputsPublishedAt))
+
+	_, err = f.svc.PublishAllocationOutputs(ctx, uuid.New(), "http://internal.test", false)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestObjectStoreLifecycle(t *testing.T) {

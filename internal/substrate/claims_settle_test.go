@@ -1,8 +1,10 @@
 package substrate
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,9 +138,19 @@ func (f *fakeCluster) ApplyAs(_ context.Context, obj runtime.Object, _ string, _
 			copied.Data[key] = []byte(value)
 		}
 		copied.StringData = nil
+		// Like a server-side apply, an identical Secret is a no-op that
+		// keeps its resource version and reports no change.
+		if existing, ok := f.secrets[copied.Namespace+"/"+copied.Name]; ok && sameSecretContent(existing, copied) {
+			return kube.ApplyResult{}, nil
+		}
 		f.storeSecret(copied)
 	}
 	return kube.ApplyResult{Changed: true}, nil
+}
+
+func sameSecretContent(a, b *corev1.Secret) bool {
+	return maps.EqualFunc(a.Data, b.Data, bytes.Equal) &&
+		maps.Equal(a.Labels, b.Labels) && maps.Equal(a.Annotations, b.Annotations)
 }
 
 // storeSecret retains a Secret under a fresh resource version, the

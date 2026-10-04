@@ -115,20 +115,35 @@ func (s *Service) CountStoreAllocations(ctx context.Context, storeID uuid.UUID) 
 	return count, nil
 }
 
-// SetAllocationEndpoint republishes the endpoint after the bucket gains,
-// changes, or loses its route.
-func (s *Service) SetAllocationEndpoint(ctx context.Context, allocationID uuid.UUID, endpoint string) error {
-	rows, err := s.st.SetBucketAllocationEndpoint(ctx, store.SetBucketAllocationEndpointParams{
+// PublishAllocationOutputs records what the output mirror now holds; call
+// it only after the mirror holds it. The endpoint is committed, and the
+// output version advances when the mirror changed or the endpoint moved:
+// that bump is what rolls the consumers, so it must never run ahead of the
+// Secret they read.
+func (s *Service) PublishAllocationOutputs(ctx context.Context, allocationID uuid.UUID, endpoint string, changed bool) (*store.BucketAllocation, error) {
+	row, err := s.st.PublishBucketAllocationOutputs(ctx, store.PublishBucketAllocationOutputsParams{
 		ID:       allocationID,
 		Endpoint: endpoint,
+		Changed:  changed,
 	})
 	if err != nil {
-		return fmt.Errorf("dbstore: set allocation endpoint: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("dbstore: publish allocation outputs: %w", err)
 	}
-	if rows == 0 {
-		return ErrNotFound
+	return &row, nil
+}
+
+// OutputPublication reports how many live allocations have not confirmed
+// their output mirror since the publication record existed, and when the
+// last confirmed change happened (the epoch when none did).
+func (s *Service) OutputPublication(ctx context.Context) (unpublished int64, lastPublished time.Time, err error) {
+	row, err := s.st.BucketOutputPublication(ctx)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("dbstore: bucket output publication: %w", err)
 	}
-	return nil
+	return row.Unpublished, row.LastPublishedAt, nil
 }
 
 // BeginAllocationCredentialRotation commits a rotated keypair the

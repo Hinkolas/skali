@@ -117,18 +117,13 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if err := c.ensureS3Access(ctx, sw.ID); err != nil {
 		return false, err
 	}
-	// The published endpoint follows the claim's route and the
-	// installation: gaining, changing, or losing either republishes it,
-	// and consumers roll through the mirror change.
+	// The published endpoint follows the claim's route: gaining,
+	// changing, or losing it republishes the endpoint. The row records it
+	// only after the mirror holds it (publishBucketOutputs), because the
+	// row is what rolls the consumers.
 	endpoint, err := c.bucketEndpoint(row)
 	if err != nil {
 		return false, err
-	}
-	if allocation.Endpoint != endpoint {
-		if err := c.deps.DB.SetAllocationEndpoint(ctx, allocation.ID, endpoint); err != nil {
-			return false, err
-		}
-		allocation.Endpoint = endpoint
 	}
 	credential, err := c.ensureBucketCredentialSecret(ctx, row, *allocation)
 	if err != nil {
@@ -172,7 +167,11 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 		slog.Info("substrate: bucket configuration reset", "bucket", allocation.BucketName, "settings", repaired)
 	}
 	pair := currentCredential(credential)
-	if err := c.ensureBucketOutputMirror(ctx, row, *allocation, pair.AccessKey, pair.SecretKey); err != nil {
+	changed, err := c.ensureBucketOutputMirror(ctx, row, *allocation, endpoint, pair.AccessKey, pair.SecretKey)
+	if err != nil {
+		return false, err
+	}
+	if err := c.publishBucketOutputs(ctx, row, allocation, endpoint, changed); err != nil {
 		return false, err
 	}
 	// Rotation bookkeeping rides every pass once the identity and the
@@ -277,17 +276,42 @@ func (c *Controller) ensureBucketCredentialSecret(ctx context.Context, row store
 	return created, nil
 }
 
-// ensureBucketOutputMirror writes the service claim's connection outputs
-// into its environment namespace; the six keys mirror the compiler's
-// bucket output catalog. System claims publish outputs through the internal
-// claim API instead.
-func (c *Controller) ensureBucketOutputMirror(ctx context.Context, row store.BucketClaim, allocation store.BucketAllocation, accessKey, secretKey string) error {
-	if row.OwnerKind != dbstore.OwnerService {
+// publishBucketOutputs records on the allocation what the output mirror
+// now holds, once it holds it. The output version advances when the mirror
+// changed or the endpoint moved, and the environment is woken so its
+// consumers roll onto the values they will now read; rolling them before
+// the mirror changed would start pods on the old values and never roll
+// them again.
+func (c *Controller) publishBucketOutputs(ctx context.Context, row store.BucketClaim, allocation *store.BucketAllocation, endpoint string, changed bool) error {
+	if !changed && allocation.Endpoint == endpoint && allocation.OutputsPublishedAt != nil {
 		return nil
+	}
+	published, err := c.deps.DB.PublishAllocationOutputs(ctx, allocation.ID, endpoint, changed)
+	if err != nil {
+		return err
+	}
+	if published.OutputVersion != allocation.OutputVersion {
+		slog.Info("substrate: bucket outputs republished", "bucket", published.BucketName,
+			"endpoint", published.Endpoint, "outputVersion", published.OutputVersion)
+		if c.deps.Enqueue != nil && row.EnvironmentID != nil {
+			c.deps.Enqueue(*row.EnvironmentID)
+		}
+	}
+	*allocation = *published
+	return nil
+}
+
+// ensureBucketOutputMirror writes the service claim's connection outputs
+// into its environment namespace and reports whether that changed the
+// Secret; the six keys mirror the compiler's bucket output catalog. System
+// claims publish outputs through the internal claim API instead.
+func (c *Controller) ensureBucketOutputMirror(ctx context.Context, row store.BucketClaim, allocation store.BucketAllocation, endpoint, accessKey, secretKey string) (bool, error) {
+	if row.OwnerKind != dbstore.OwnerService {
+		return false, nil
 	}
 	project, environment, service, ok := ownerNames(row.OwnerRef)
 	if !ok {
-		return fmt.Errorf("substrate: malformed owner ref %q", row.OwnerRef)
+		return false, fmt.Errorf("substrate: malformed owner ref %q", row.OwnerRef)
 	}
 	environmentID := ""
 	if row.EnvironmentID != nil {
@@ -295,22 +319,23 @@ func (c *Controller) ensureBucketOutputMirror(ctx context.Context, row store.Buc
 	}
 	secret := kubernetes.RenderOutputSecret(project, environment, environmentID,
 		"buckets", service, map[string][]byte{
-			"endpoint":          []byte(allocation.Endpoint),
+			"endpoint":          []byte(endpoint),
 			"internal_endpoint": []byte(InternalBucketEndpoint()),
 			"name":              []byte(allocation.BucketName),
 			"region":            []byte(allocation.Region),
 			"access_key":        []byte(accessKey),
 			"secret_key":        []byte(secretKey),
 		})
-	if _, err := c.deps.Cluster.ApplyAs(ctx, secret, kube.FieldManagerPlatform, false); err != nil {
+	result, err := c.deps.Cluster.ApplyAs(ctx, secret, kube.FieldManagerPlatform, false)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// The environment namespace is created by the environment
 			// reconciler; until it exists the claim visibly waits.
-			return errWaiting{reason: "environment namespace not created yet"}
+			return false, errWaiting{reason: "environment namespace not created yet"}
 		}
-		return fmt.Errorf("substrate: apply bucket output mirror: %w", err)
+		return false, fmt.Errorf("substrate: apply bucket output mirror: %w", err)
 	}
-	return nil
+	return result.Changed, nil
 }
 
 // teardownBucketClaim executes the persisted destructive decision: identity

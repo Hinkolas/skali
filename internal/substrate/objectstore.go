@@ -46,6 +46,7 @@ func metadataClaimSpec() dbstore.ClaimSpec {
 
 var (
 	deploymentsGVR  = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	ingressesGVR    = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}
 	statefulSetsGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}
 )
 
@@ -308,7 +309,8 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 	if err := c.ensureS3Access(ctx, row.ID); err != nil {
 		return 0, err
 	}
-	if err := c.sweepLegacyS3Edge(ctx); err != nil {
+	legacyWait, err := c.sweepLegacyS3Edge(ctx)
+	if err != nil {
 		return 0, err
 	}
 	if err := c.sweepLegacyS3Open(ctx); err != nil {
@@ -357,7 +359,8 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 			return 0, err
 		}
 	}
-	return 0, nil
+	// A retired edge still waiting on its consumers brings the pass back.
+	return legacyWait, nil
 }
 
 // legacyS3EdgeRefs are the edge objects the installation-wide S3 endpoint
@@ -378,26 +381,73 @@ func legacyS3EdgeRefs() []kube.ObjectRef {
 	}
 }
 
+// legacyEdgeSettle is how long the retired edge keeps serving after the
+// last bucket output republication: longer than a rollout deadline, so
+// every consumer that read the old endpoint has rolled onto the new one
+// before the old one stops answering.
+const legacyEdgeSettle = 15 * time.Minute
+
+// legacyEdgeRecheck paces the store pass while the sweep waits for a
+// bucket whose outputs were not confirmed yet.
+const legacyEdgeRecheck = time.Minute
+
 // sweepLegacyS3Edge deletes the objects of the removed installation-wide
-// S3 endpoint once per process, on the first store pass. One sweep is
-// enough: nothing can recreate the objects, and deleting by name every
-// pass would only cost API calls. An unmanaged installation never rendered
-// the edge, so it has nothing to sweep either: looking for the Certificate
-// kind on a cluster without cert-manager would only reset the discovery
-// cache. Bucket data is untouched: the refs name edge objects only.
-func (c *Controller) sweepLegacyS3Edge(ctx context.Context) error {
+// S3 endpoint once per process. While the edge still serves, consumers may
+// be running on the old endpoint, so the sweep waits until every live
+// bucket's output mirror is confirmed and the last republication settled;
+// it reports how long until it should be tried again. An unmanaged
+// installation never rendered the edge, so it has nothing to sweep:
+// looking for the Certificate kind on a cluster without cert-manager would
+// only reset the discovery cache. Bucket data is untouched: the refs name
+// edge objects only.
+func (c *Controller) sweepLegacyS3Edge(ctx context.Context) (time.Duration, error) {
 	if !c.cfg.Managed || c.legacyEdgeSwept {
-		return nil
+		return 0, nil
+	}
+	serving, err := c.legacyS3EdgeServing(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if serving {
+		unpublished, last, err := c.deps.DB.OutputPublication(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if unpublished > 0 {
+			slog.Debug("substrate: legacy S3 edge kept until bucket outputs are confirmed", "unconfirmed", unpublished)
+			return legacyEdgeRecheck, nil
+		}
+		if wait := legacyEdgeSettle - time.Since(last); wait > 0 {
+			slog.Debug("substrate: legacy S3 edge kept while consumers roll", "remaining", wait.Round(time.Second).String())
+			return wait, nil
+		}
 	}
 	removed, err := c.deleteRefs(ctx, legacyS3EdgeRefs())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	c.legacyEdgeSwept = true
 	if removed > 0 {
 		slog.Info("substrate: legacy public S3 edge removed", "objects", removed)
 	}
-	return nil
+	return 0, nil
+}
+
+// legacyS3EdgeServing reports whether a route of the retired edge still
+// routes traffic to the gateway. The redirect, middleware and certificate
+// serve nothing on their own.
+func (c *Controller) legacyS3EdgeServing(ctx context.Context) (bool, error) {
+	for _, gvr := range []schema.GroupVersionResource{edge.IngressRouteGVR, ingressesGVR} {
+		_, err := c.deps.Cluster.GetObject(ctx, gvr, Namespace, "seaweed-s3")
+		switch {
+		case err == nil:
+			return true, nil
+		case apierrors.IsNotFound(err) || meta.IsNoMatchError(err):
+		default:
+			return false, fmt.Errorf("substrate: read legacy S3 edge: %w", err)
+		}
+	}
+	return false, nil
 }
 
 // ensureS3Access applies the policy admitting the S3 port to the

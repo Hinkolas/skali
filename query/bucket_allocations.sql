@@ -23,12 +23,29 @@ UPDATE bucket_allocations
 SET released_at = now()
 WHERE id = $1 AND released_at IS NULL;
 
--- The endpoint is republished when the bucket gains, changes, or loses
--- its route; consumers roll through the mirror Secret change.
--- name: SetBucketAllocationEndpoint :execrows
+-- Publication commits what the output mirror now holds, only after the
+-- mirror holds it: the endpoint, and an output_version bump when the
+-- mirror changed or the endpoint moved (the bump rolls the consumers).
+-- The first confirmation after an upgrade only stamps the time.
+-- name: PublishBucketAllocationOutputs :one
 UPDATE bucket_allocations
-SET endpoint = $2
-WHERE id = $1 AND released_at IS NULL;
+SET endpoint = sqlc.arg(endpoint),
+    output_version = output_version
+        + CASE WHEN sqlc.arg(changed)::boolean OR endpoint <> sqlc.arg(endpoint) THEN 1 ELSE 0 END,
+    outputs_published_at = CASE
+        WHEN sqlc.arg(changed)::boolean OR endpoint <> sqlc.arg(endpoint) OR outputs_published_at IS NULL THEN now()
+        ELSE outputs_published_at
+    END
+WHERE id = sqlc.arg(id) AND released_at IS NULL
+RETURNING *;
+
+-- The legacy-edge gate: how many live allocations have not confirmed
+-- their mirror yet, and when the last one changed.
+-- name: BucketOutputPublication :one
+SELECT count(*) FILTER (WHERE outputs_published_at IS NULL)::bigint AS unpublished,
+       coalesce(max(outputs_published_at), 'epoch'::timestamptz)::timestamptz AS last_published_at
+FROM bucket_allocations
+WHERE released_at IS NULL;
 
 -- Rotation bookkeeping. Begin commits the keypair the credential Secret
 -- already holds: the new access key id, the consumer-visible version bump,

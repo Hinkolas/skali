@@ -285,9 +285,13 @@ func (c *Controller) Generations(ctx context.Context, environmentID uuid.UUID) (
 			}
 			return nil, err
 		}
+		// The output version advances only once the mirror Secret holds
+		// new values (publishBucketOutputs), so consumers never roll ahead
+		// of what they read.
 		generations["buckets."+row.ServiceKey] = outputGeneration(
 			"endpoint="+allocation.Endpoint, "internal_endpoint="+InternalBucketEndpoint(),
-			fmt.Sprintf("credential=v%d", allocation.CredentialVersion))
+			fmt.Sprintf("credential=v%d", allocation.CredentialVersion),
+			fmt.Sprintf("outputs=v%d", allocation.OutputVersion))
 	}
 	return generations, nil
 }
