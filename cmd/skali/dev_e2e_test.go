@@ -842,6 +842,16 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "store note: %s", body)
 	status, body = h.request(http.MethodPut, "/disk/e2e", "disk note survives reinstall")
 	require.Equal(t, http.StatusOK, status, "store disk file: %s", body)
+	// A tree of nested notes and a folder marker: the backup walks the
+	// bucket one directory level at a time, and the restored bucket must
+	// list exactly what the gateway's own recursive listing lists now.
+	for _, name := range []string{"tree/a/one", "tree/a/b/two", "tree/c/three", "tree/marker/"} {
+		status, body = h.request(http.MethodPut, "/notes/"+name, "")
+		require.Equal(t, http.StatusOK, status, "store note %s: %s", name, body)
+	}
+	status, notes := h.route("/notes/")
+	require.Equal(t, http.StatusOK, status, "list notes: %s", notes)
+	require.Contains(t, notes, "tree/a/b/two\n")
 	// Pad the history so the fresh environment (whose own health polls
 	// insert a few rows) can never catch up to the snapshot's count.
 	h.route("/")
@@ -898,8 +908,13 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 	run = h.run(false, "", "backup", "ls", "--remote", "local", "--environment", "nothing")
 	require.Contains(t, run, "no snapshots of environment nothing")
 
-	// Restore defaults to the environment the snapshot was taken from.
-	run = h.run(false, "", "backup", "restore", snapshot, "--remote", "local", "--yes")
+	// The purge took the snapshot's environment with it: the redeployed
+	// local is a new environment under the same name, so restore does not
+	// pick it by default and the target must be named.
+	out, code := h.runExit("", "backup", "restore", snapshot, "--remote", "local", "--yes")
+	require.NotZero(t, code, "restore into a purged environment by default: %s", out)
+	require.Contains(t, out, "which the snapshot was taken from, does not exist")
+	run = h.run(false, "", "backup", "restore", snapshot, "--remote", "local", "--environment", "local", "--yes")
 	require.Contains(t, run, "restore "+snapshot+" (local) into local")
 	require.Contains(t, run, "restore complete")
 
@@ -915,6 +930,8 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 		_, body := h.route("/notes/e2e")
 		return body == "bucket note survives reinstall"
 	}, 2*time.Minute, 3*time.Second, "the bucket note must be restored")
+	_, restored := h.route("/notes/")
+	require.Equal(t, notes, restored, "the restored bucket lists the same keys")
 	// Object metadata rides along: the note comes back under the content
 	// type it was stored with, not the gateway's default.
 	_, header, _ := h.requestEncoded(http.MethodGet, "/notes/e2e", "")

@@ -308,6 +308,15 @@ run as the platform's own S3 identity, so a bucket that is full (read-only
 for its application) still backs up, and a restore never depends on the
 application's keys.
 
+A backup first counts the bucket, so the run can show real progress.
+The count walks the bucket one directory level at a time, eight levels at
+once: the gateway answers a recursive listing by visiting directories one
+after another, each visit a round trip to the metadata database, which
+for an application that keeps every upload in its own directory meant one
+round trip per object. The restore's clear of the live bucket walks it the
+same way. Listings of the backup target stay flat, since a hosted target
+bills every listing request.
+
 Objects copy with bounded concurrency, 16 at a time by default
 (`SKALI_BACKUP_COPY_CONCURRENCY` on the daemon; lower it for a target that
 throttles parallel requests). The copy is bound by round trips to the

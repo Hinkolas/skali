@@ -10,6 +10,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"golang.org/x/sync/errgroup"
 )
 
 // objectStore is the narrow S3 surface the backup engine uses, against one
@@ -26,7 +27,8 @@ type objectStore interface {
 	GetWithMeta(ctx context.Context, key string) (io.ReadCloser, objectMeta, error)
 	// Stat returns the object's size and recorded sha256, or errNotFound.
 	Stat(ctx context.Context, key string) (objectStat, error)
-	// List calls fn for every object under prefix; fn errors abort.
+	// List calls fn for every object under prefix, one call at a time and
+	// in no particular order; fn errors abort.
 	List(ctx context.Context, prefix string, fn func(objectInfo) error) error
 	// ListPrefixes returns the immediate "directories" under prefix (the
 	// common prefixes one level down), each ending in a slash.
@@ -99,6 +101,10 @@ func targetLocation(c *Credentials) s3Location {
 type minioStore struct {
 	client *minio.Client
 	bucket string
+	// walk lists one directory level at a time, several levels at once,
+	// instead of one recursive stream: see walkObjects. Only the in-cluster
+	// gateway sets it; a target bills every listing request.
+	walk bool
 }
 
 func newObjectStore(loc s3Location) (*minioStore, error) {
@@ -223,6 +229,9 @@ func (s *minioStore) Stat(ctx context.Context, key string) (objectStat, error) {
 const objectListPageSize = 100
 
 func (s *minioStore) List(ctx context.Context, prefix string, fn func(objectInfo) error) error {
+	if s.walk {
+		return s.walkObjects(ctx, prefix, fn)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for object := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
@@ -238,6 +247,109 @@ func (s *minioStore) List(ctx context.Context, prefix string, fn func(objectInfo
 		}
 	}
 	return nil
+}
+
+// walkConcurrency is how many directory levels a walk lists at once.
+const walkConcurrency = 8
+
+// walkObjects lists prefix as a tree, one directory level per request
+// and walkConcurrency levels at a time. SeaweedFS serves a recursive
+// listing by visiting the bucket's directories one after another, each
+// visit a round trip from the filer to the metadata database, so a
+// bucket with a directory per object lists at one round trip per object
+// however fast the database answers. A level listing is one visit, and
+// the levels of different directories proceed side by side. Objects
+// arrive in no particular order; fn is still called one at a time.
+func (s *minioStore) walkObjects(ctx context.Context, prefix string, fn func(objectInfo) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	group, ctx := errgroup.WithContext(ctx)
+	work := make(chan string)
+	found := make(chan []string)
+	objects := make(chan objectInfo, objectListPageSize)
+
+	// The dispatcher hands out directories and collects the ones each
+	// listing finds; the walk ends when none are queued or being listed.
+	group.Go(func() error {
+		defer close(work)
+		queue, busy := []string{prefix}, 0
+		for len(queue) > 0 || busy > 0 {
+			var next chan<- string
+			var head string
+			if len(queue) > 0 {
+				next, head = work, queue[len(queue)-1]
+			}
+			select {
+			case next <- head:
+				queue = queue[:len(queue)-1]
+				busy++
+			case directories := <-found:
+				queue = append(queue, directories...)
+				busy--
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+	for range walkConcurrency {
+		group.Go(func() error {
+			for directory := range work {
+				directories, err := s.listLevel(ctx, directory, objects)
+				if err != nil {
+					return err
+				}
+				select {
+				case found <- directories:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		})
+	}
+	walked := make(chan error, 1)
+	go func() {
+		walked <- group.Wait()
+		close(objects)
+	}()
+
+	for info := range objects {
+		if err := fn(info); err != nil {
+			cancel()
+			for range objects {
+			}
+			<-walked
+			return err
+		}
+	}
+	return <-walked
+}
+
+// listLevel sends the objects directly under directory and returns the
+// directories one level down. A key ending in a slash is a directory,
+// except the directory's own key: that is a marker object somebody put,
+// and a recursive listing reports it as one.
+func (s *minioStore) listLevel(ctx context.Context, directory string, objects chan<- objectInfo) ([]string, error) {
+	var directories []string
+	for object := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    directory,
+		Recursive: false,
+	}) {
+		if object.Err != nil {
+			return nil, fmt.Errorf("backup: list %s: %w", directory, object.Err)
+		}
+		if strings.HasSuffix(object.Key, "/") && object.Key != directory {
+			directories = append(directories, object.Key)
+			continue
+		}
+		select {
+		case objects <- objectInfo{Key: object.Key, Size: object.Size}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return directories, nil
 }
 
 func (s *minioStore) ListPrefixes(ctx context.Context, prefix string) ([]string, error) {
@@ -286,16 +398,15 @@ func (s *minioStore) removeListing(ctx context.Context, prefix string) (int64, e
 	var listErr error
 	go func() {
 		defer close(objects)
-		for object := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
-			Prefix: prefix, Recursive: true,
-		}) {
-			if object.Err != nil {
-				listErr = fmt.Errorf("backup: list %s: %w", prefix, object.Err)
-				return
+		listErr = s.List(ctx, prefix, func(info objectInfo) error {
+			select {
+			case objects <- minio.ObjectInfo{Key: info.Key}:
+				listed++
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
 			}
-			listed++
-			objects <- object
-		}
+		})
 	}()
 	var removeErr error
 	for failure := range s.client.RemoveObjects(ctx, s.bucket, objects, minio.RemoveObjectsOptions{}) {
