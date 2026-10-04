@@ -53,25 +53,31 @@ func TestSharedNodes(t *testing.T) {
 	require.Empty(t, sharedNodes("filer", []corev1.Pod{servingPod("filer-a", "node-a"), leaving, pending, notReady, unscheduled}, 2, 2))
 }
 
-// TestFleetNodesDriveFilerCount: the filer count follows the nodes the
-// cluster has, not their momentary readiness, so a node outage does not
-// resize the gateway tier; a controller without node observations
-// renders the single-node shape.
-func TestFleetNodesDriveFilerCount(t *testing.T) {
+// TestObjectStorageNodesDriveFilerCount: the filer count follows the
+// object-storage nodes the cluster has, not their momentary readiness, so
+// a node outage does not resize the gateway tier, and nodes without the
+// capability never count, since filers cannot run there; a controller
+// without node observations renders the single-node shape.
+func TestObjectStorageNodesDriveFilerCount(t *testing.T) {
 	t.Parallel()
 	bare := &Controller{cfg: Config{Managed: true}}
-	require.Equal(t, 0, bare.fleetNodes())
-	require.Equal(t, 1, seaweed.FilersForNodes(bare.fleetNodes()))
+	require.Equal(t, 0, bare.objectStorageNodes())
+	require.Equal(t, 1, seaweed.FilersForNodes(bare.objectStorageNodes()))
 
 	observed := observe.NewStore(nil)
-	observed.SetNodeRecord(observe.NodeRecord{Name: "node-a", Ready: true, Schedulable: true,
-		Capabilities: []string{layout.CapabilityObjectStorage}})
+	observed.SetNodeRecord(observe.NodeRecord{Name: "node-a", Ready: true, Schedulable: true})
+	observed.SetNodeCapabilities("node-a", []string{layout.CapabilityObjectStorage})
 	controller := &Controller{cfg: Config{Managed: true}, deps: Deps{Observed: observed}}
-	require.Equal(t, 1, seaweed.FilersForNodes(controller.fleetNodes()))
+	require.Equal(t, 1, seaweed.FilersForNodes(controller.objectStorageNodes()))
+
+	observed.SetNodeRecord(observe.NodeRecord{Name: "registry", Ready: true, Schedulable: true})
+	observed.SetNodeCapabilities("registry", []string{layout.CapabilityRegistry})
+	require.Equal(t, 1, seaweed.FilersForNodes(controller.objectStorageNodes()), "a node without the capability holds no filer")
 
 	observed.SetNodeRecord(observe.NodeRecord{Name: "node-b", Ready: false, Schedulable: true})
-	require.Equal(t, 2, seaweed.FilersForNodes(controller.fleetNodes()), "a node in an outage keeps its place")
+	observed.SetNodeCapabilities("node-b", []string{layout.CapabilityObjectStorage})
+	require.Equal(t, 2, seaweed.FilersForNodes(controller.objectStorageNodes()), "a node in an outage keeps its place")
 
 	observed.RemoveNode("node-b")
-	require.Equal(t, 1, seaweed.FilersForNodes(controller.fleetNodes()), "a removed node leaves the shape")
+	require.Equal(t, 1, seaweed.FilersForNodes(controller.objectStorageNodes()), "a removed node leaves the shape")
 }

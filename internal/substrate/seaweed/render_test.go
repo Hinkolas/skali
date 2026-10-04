@@ -49,7 +49,8 @@ func TestRenderProductionShape(t *testing.T) {
 
 	require.NotNil(t, filer)
 	require.EqualValues(t, 2, *filer.Spec.Replicas)
-	require.Empty(t, filer.Spec.Template.Spec.NodeSelector, "filers are stateless and float across the fleet")
+	require.Equal(t, "true", filer.Spec.Template.Spec.NodeSelector["skali.dev/capability-object-storage"],
+		"filers sit with the store, not on whichever node has room")
 	require.Contains(t, filer.Spec.Template.Spec.Containers[0].Args, "-s3")
 	require.Equal(t, FilerStoreSecret, filer.Spec.Template.Spec.Containers[0].EnvFrom[0].SecretRef.Name)
 

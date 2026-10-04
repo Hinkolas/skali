@@ -13,16 +13,17 @@ import (
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
 )
 
-// fleetNodes counts the nodes the cluster has, the domains a stateless
-// component spreads across. Every known node counts, ready or not: a
-// node in a transient outage keeps its place in the shape (its pods are
-// replaced on the survivors, taints are honored by the spread rule) and
-// the count only moves when a node joins or is removed.
-func (c *Controller) fleetNodes() int {
+// objectStorageNodes counts the nodes carrying the object-storage
+// capability, the domains every store component spreads across. Every
+// labelled node counts, ready or not: a node in a transient outage keeps
+// its place in the shape (its pods are replaced on the survivors, taints
+// are honored by the spread rule) and the count only moves when a node
+// joins, is removed, or changes its capabilities.
+func (c *Controller) objectStorageNodes() int {
 	if c.deps.Observed == nil {
 		return 0
 	}
-	return len(c.deps.Observed.Nodes())
+	return len(c.deps.Observed.CapableNodes(layout.CapabilityObjectStorage))
 }
 
 // placementShortfalls reports the store components whose pods share a
@@ -31,19 +32,19 @@ func (c *Controller) fleetNodes() int {
 // was down lands on a survivor, and nothing moves it back when the node
 // returns, so the shortfall persists silently until the probe names it.
 // Only components with more than one replica and more than one eligible
-// node can fall short: masters spread over the object-storage nodes,
-// filers over the whole fleet.
+// node can fall short; masters and filers both spread over the
+// object-storage nodes.
 func (c *Controller) placementShortfalls(ctx context.Context, row store.ObjectStore) ([]module.ComponentPlacement, error) {
 	if c.deps.Observed == nil || c.deps.Cluster == nil {
 		return nil, nil
 	}
-	fleet := c.fleetNodes()
+	capable := c.objectStorageNodes()
 	components := []struct {
 		app, name         string
 		desired, eligible int
 	}{
-		{seaweed.MasterService, "master", int(row.Masters), len(c.deps.Observed.CapableNodes(layout.CapabilityObjectStorage))},
-		{seaweed.FilerService, "filer", seaweed.FilersForNodes(fleet), fleet},
+		{seaweed.MasterService, "master", int(row.Masters), capable},
+		{seaweed.FilerService, "filer", seaweed.FilersForNodes(capable), capable},
 	}
 	var shortfalls []module.ComponentPlacement
 	for _, component := range components {

@@ -279,7 +279,7 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 	spec := seaweed.StoreSpec{
 		Namespace:   Namespace,
 		Masters:     int(row.Masters),
-		Filers:      seaweed.FilersForNodes(c.fleetNodes()),
+		Filers:      seaweed.FilersForNodes(c.objectStorageNodes()),
 		Replication: row.Replication,
 		Managed:     c.cfg.Managed,
 		// The filer reads its store config only at start: hashing the
