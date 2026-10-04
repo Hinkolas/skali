@@ -215,10 +215,20 @@ func (s *minioStore) Stat(ctx context.Context, key string) (objectStat, error) {
 	return objectStat{Size: info.Size, SHA256: info.UserMetadata["Sha256"]}, nil
 }
 
+// Recursive SeaweedFS listings walk directory metadata before sending any
+// response headers. A default 1,000-object page can exceed the SDK's one-minute
+// header timeout on buckets with many directories, retrying the same page
+// without making progress. Keep each page small; continuation tokens still
+// enumerate the whole prefix.
+const objectListPageSize = 100
+
 func (s *minioStore) List(ctx context.Context, prefix string, fn func(objectInfo) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	for object := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
 		Prefix:    prefix,
 		Recursive: true,
+		MaxKeys:   objectListPageSize,
 	}) {
 		if object.Err != nil {
 			return fmt.Errorf("backup: list %s: %w", prefix, object.Err)
