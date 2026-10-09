@@ -287,6 +287,7 @@ completion and inline errors in any editor with YAML language support.
 | [`guestbook`](examples/guestbook) | An app with a database, a bucket, and a volume |
 | [`file-sharing`](examples/file-sharing) | Browsers uploading and downloading through presigned bucket URLs |
 | [`dev-loop`](examples/dev-loop) | The local hot-reload loop |
+| [`deployment-timing`](examples/deployment-timing) | A release migration, a database, and a bucket, with a collector that times each deployment stage |
 
 ### With a coding agent
 

@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=../../schemas/skali.schema.json
+name: deployment-timing
+description: Small PostgreSQL and S3 service with timestamped release migrations and readiness
+applications:
+  web:
+    build:
+      context: .
+    command: ["/timing-probe", "serve"]
+    environment:
+      DATABASE_URL: "{{databases.data.url}}"
+      S3_ENDPOINT: "{{buckets.files.internal_endpoint}}"
+      S3_BUCKET: "{{buckets.files.name}}"
+      S3_REGION: "{{buckets.files.region}}"
+      S3_ACCESS_KEY: "{{buckets.files.access_key}}"
+      S3_SECRET_KEY: "{{buckets.files.secret_key}}"
+      BENCH_TOKEN: "${BENCH_TOKEN}"
+    ports:
+      http: {port: 8080, protocol: http}
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        port: http
+        tls: automatic
+    health:
+      startup:
+        http: {port: http, path: /health/startup}
+      readiness:
+        http: {port: http, path: /health/ready}
+      liveness:
+        http: {port: http, path: /health/live}
+    resources:
+      requests: {cpu: 0.05, memory: 64MiB, temporaryStorage: 64MiB}
+      limits: {cpu: 0.5, memory: 256MiB, temporaryStorage: 128MiB}
+    scaling:
+      replicas: {min: 1, max: 1}
+    deployment:
+      releaseCommand:
+        command: ["/timing-probe", "migrate"]
+        timeout: 2m
+databases:
+  data:
+    engine: postgres
+    version: 17
+    isolation: shared
+    availability: single
+buckets:
+  files:
+    visibility: private
+    quotas: {storage: 1GB}
