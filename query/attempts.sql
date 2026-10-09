@@ -13,6 +13,16 @@ SELECT * FROM attempts WHERE id = $1 FOR UPDATE;
 -- name: MarkAttemptFinished :exec
 UPDATE attempts SET status = $2, finished_at = now() WHERE id = $1;
 
+-- FinishAttempt is the guarded close: it applies only from one of
+-- from_statuses, in one statement, and returns the run to notify; no row
+-- returns otherwise.
+-- name: FinishAttempt :one
+UPDATE attempts SET status = sqlc.arg(status)::text, finished_at = now()
+FROM steps
+WHERE attempts.id = sqlc.arg(id) AND steps.id = attempts.step_id
+  AND attempts.status = ANY(sqlc.arg(from_statuses)::text[])
+RETURNING steps.run_id;
+
 -- name: ListAttemptsByRun :many
 SELECT attempts.* FROM attempts
 JOIN steps ON steps.id = attempts.step_id

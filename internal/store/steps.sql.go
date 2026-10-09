@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -29,6 +30,70 @@ func (q *Queries) CloseRunningSteps(ctx context.Context, arg CloseRunningStepsPa
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const completeStep = `-- name: CompleteStep :one
+WITH step AS (
+    UPDATE steps SET
+        status = $1::text,
+        started_at = COALESCE(started_at, now()),
+        finished_at = now()
+    WHERE steps.id = $2
+      AND steps.status = ANY($3::text[])
+      AND NOT EXISTS (
+          SELECT 1 FROM attempts WHERE attempts.step_id = steps.id AND attempts.status = 'running')
+    RETURNING steps.id
+), attempt AS (
+    INSERT INTO attempts (id, step_id, number, status, executor_id, finished_at)
+    SELECT $4::uuid, step.id,
+           (SELECT COALESCE(MAX(number), 0) + 1 FROM attempts WHERE attempts.step_id = step.id),
+           $5::text, $6::text, now()
+    FROM step
+    RETURNING attempts.id, attempts.number
+), entries AS (
+    -- entries is a JSON array of {id, level, message, fields}; its order
+    -- is the sequence.
+    INSERT INTO run_logs (id, attempt_id, seq, level, message, fields)
+    SELECT (entry.value->>'id')::uuid, attempt.id, entry.seq,
+           entry.value->>'level', entry.value->>'message', entry.value->'fields'
+    FROM attempt, jsonb_array_elements($7::jsonb) WITH ORDINALITY AS entry(value, seq)
+)
+SELECT attempt.number, now()::timestamptz AS logged_at FROM attempt
+`
+
+type CompleteStepParams struct {
+	Status        string
+	ID            uuid.UUID
+	FromStatuses  []string
+	AttemptID     uuid.UUID
+	AttemptStatus string
+	ExecutorID    string
+	Entries       []byte
+}
+
+type CompleteStepRow struct {
+	Number   int64
+	LoggedAt time.Time
+}
+
+// CompleteStep journals work that already happened in one statement: the
+// step moves as if through running to status, with one finished attempt
+// carrying the log entries. It writes only while the step's status is one
+// of from_statuses and no attempt of the step is running; otherwise
+// nothing is written and no row returns.
+func (q *Queries) CompleteStep(ctx context.Context, arg CompleteStepParams) (CompleteStepRow, error) {
+	row := q.db.QueryRow(ctx, completeStep,
+		arg.Status,
+		arg.ID,
+		arg.FromStatuses,
+		arg.AttemptID,
+		arg.AttemptStatus,
+		arg.ExecutorID,
+		arg.Entries,
+	)
+	var i CompleteStepRow
+	err := row.Scan(&i.Number, &i.LoggedAt)
+	return i, err
 }
 
 const countDeferredRoutesByRun = `-- name: CountDeferredRoutesByRun :many
@@ -71,6 +136,73 @@ func (q *Queries) CountDeferredRoutesByRun(ctx context.Context, runIds []uuid.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const ensureStep = `-- name: EnsureStep :one
+
+WITH inserted AS (
+    INSERT INTO steps (id, run_id, parent_id, key, title)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (run_id, key) DO NOTHING
+    RETURNING id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at
+)
+SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM inserted
+UNION ALL
+SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE run_id = $2 AND key = $4
+`
+
+type EnsureStepParams struct {
+	ID       uuid.UUID
+	RunID    uuid.UUID
+	ParentID *uuid.UUID
+	Key      string
+	Title    string
+}
+
+type EnsureStepRow struct {
+	ID              uuid.UUID
+	RunID           uuid.UUID
+	ParentID        *uuid.UUID
+	Key             string
+	Title           string
+	Status          string
+	ProgressCurrent *int64
+	ProgressTotal   *int64
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+}
+
+// Steps are addressed by their deterministic (run_id, key); creation is
+// idempotent so a restarted controller reattaches instead of duplicating.
+// EnsureStep creates the step unless its (run_id, key) exists and returns
+// the step either way, in one round trip. The select cannot see this
+// statement's own insert, so the two halves never both return; a step
+// another transaction created concurrently can be missing from its
+// snapshot too, and then no row returns and the caller reads it.
+func (q *Queries) EnsureStep(ctx context.Context, arg EnsureStepParams) (EnsureStepRow, error) {
+	row := q.db.QueryRow(ctx, ensureStep,
+		arg.ID,
+		arg.RunID,
+		arg.ParentID,
+		arg.Key,
+		arg.Title,
+	)
+	var i EnsureStepRow
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.ParentID,
+		&i.Key,
+		&i.Title,
+		&i.Status,
+		&i.ProgressCurrent,
+		&i.ProgressTotal,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+	)
+	return i, err
 }
 
 const getStepByID = `-- name: GetStepByID :one
@@ -124,60 +256,6 @@ func (q *Queries) GetStepByRunAndKey(ctx context.Context, arg GetStepByRunAndKey
 	return i, err
 }
 
-const getStepForUpdate = `-- name: GetStepForUpdate :one
-SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE id = $1 FOR UPDATE
-`
-
-func (q *Queries) GetStepForUpdate(ctx context.Context, id uuid.UUID) (Step, error) {
-	row := q.db.QueryRow(ctx, getStepForUpdate, id)
-	var i Step
-	err := row.Scan(
-		&i.ID,
-		&i.RunID,
-		&i.ParentID,
-		&i.Key,
-		&i.Title,
-		&i.Status,
-		&i.ProgressCurrent,
-		&i.ProgressTotal,
-		&i.CreatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
-	)
-	return i, err
-}
-
-const insertStep = `-- name: InsertStep :execrows
-
-INSERT INTO steps (id, run_id, parent_id, key, title)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (run_id, key) DO NOTHING
-`
-
-type InsertStepParams struct {
-	ID       uuid.UUID
-	RunID    uuid.UUID
-	ParentID *uuid.UUID
-	Key      string
-	Title    string
-}
-
-// Steps are addressed by their deterministic (run_id, key); creation is
-// idempotent so a restarted controller reattaches instead of duplicating.
-func (q *Queries) InsertStep(ctx context.Context, arg InsertStepParams) (int64, error) {
-	result, err := q.db.Exec(ctx, insertStep,
-		arg.ID,
-		arg.RunID,
-		arg.ParentID,
-		arg.Key,
-		arg.Title,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const listStepsByRun = `-- name: ListStepsByRun :many
 SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE run_id = $1 ORDER BY created_at
 `
@@ -229,24 +307,30 @@ func (q *Queries) SetStepProgress(ctx context.Context, arg SetStepProgressParams
 	return err
 }
 
-const setStepStatus = `-- name: SetStepStatus :exec
+const setStepStatus = `-- name: SetStepStatus :one
 UPDATE steps SET
-    status = $2,
-    started_at = CASE WHEN $2::text = 'running' THEN COALESCE(started_at, now()) ELSE started_at END,
-    finished_at = CASE WHEN $2::text IN ('succeeded', 'failed', 'skipped', 'cancelled') THEN now() ELSE finished_at END
-WHERE id = $1
+    status = $1::text,
+    started_at = CASE WHEN $1::text = 'running' THEN COALESCE(started_at, now()) ELSE started_at END,
+    finished_at = CASE WHEN $1::text IN ('succeeded', 'failed', 'skipped', 'cancelled') THEN now() ELSE finished_at END
+WHERE id = $2 AND status = ANY($3::text[])
+RETURNING run_id
 `
 
 type SetStepStatusParams struct {
-	ID     uuid.UUID
-	Status string
+	Status       string
+	ID           uuid.UUID
+	FromStatuses []string
 }
 
 // started_at is stamped on the first entry into running; finished_at on
-// reaching a terminal status.
-func (q *Queries) SetStepStatus(ctx context.Context, arg SetStepStatusParams) error {
-	_, err := q.db.Exec(ctx, setStepStatus, arg.ID, arg.Status)
-	return err
+// reaching a terminal status. The update applies only from one of
+// from_statuses, which the journal derives from its step machine, so the
+// guard and the change are one statement; otherwise no row returns.
+func (q *Queries) SetStepStatus(ctx context.Context, arg SetStepStatusParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, setStepStatus, arg.Status, arg.ID, arg.FromStatuses)
+	var run_id uuid.UUID
+	err := row.Scan(&run_id)
+	return run_id, err
 }
 
 const skipUnstartedSteps = `-- name: SkipUnstartedSteps :execrows

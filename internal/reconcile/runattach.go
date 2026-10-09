@@ -175,38 +175,19 @@ func (a *runAttachment) completeStepFields(ctx context.Context, key, title strin
 		warn("ensure step", err, "key", key)
 		return
 	}
-	current := journal.StepStatus(step.Status)
-	if journal.Steps.Terminal(current) {
+	if journal.Steps.Terminal(journal.StepStatus(step.Status)) {
 		return
 	}
-	if current == journal.StepPending || current == journal.StepWaiting {
-		if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
-			warn("start step", err, "key", key)
-			return
-		}
-	}
-	attempt, err := a.journal.StartAttempt(ctx, step.ID)
-	if err != nil {
-		warn("start attempt", err, "key", key)
-		return
-	}
-	writer := a.journal.Writer(attempt.ID, a.redactor)
-	for _, line := range logs {
-		level := "info"
-		if status == journal.StepFailed {
-			level = "error"
-		}
-		_ = writer.Log(ctx, level, line, fields)
-	}
-	attemptStatus := journal.AttemptSucceeded
+	level := "info"
 	if status == journal.StepFailed {
-		attemptStatus = journal.AttemptFailed
+		level = "error"
 	}
-	if err := a.journal.FinishAttempt(ctx, attempt.ID, attemptStatus); err != nil {
-		warn("finish attempt", err, "key", key)
+	entries := make([]journal.LogEntry, 0, len(logs))
+	for _, line := range logs {
+		entries = append(entries, journal.LogEntry{Level: level, Message: line, Fields: fields})
 	}
-	if err := a.journal.SetStepStatus(ctx, step.ID, status); err != nil {
-		warn("finish step", err, "key", key)
+	if err := a.journal.CompleteStep(ctx, step, a.redactor, status, entries); err != nil {
+		warn("complete step", err, "key", key)
 	}
 }
 

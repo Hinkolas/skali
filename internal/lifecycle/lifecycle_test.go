@@ -26,6 +26,8 @@ func TestHelpers(t *testing.T) {
 	require.True(t, m.Can("a", "b"))
 	require.False(t, m.Can("b", "a"))
 	require.False(t, m.Can("c", "a"))
+	require.Equal(t, []string{"a", "b"}, m.Sources("c"))
+	require.Empty(t, m.Sources("a"))
 }
 
 func TestVerifyViolations(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/redact"
@@ -142,6 +143,102 @@ func TestStepAndAttemptGuards(t *testing.T) {
 	require.NoError(t, f.svc.FinishAttempt(ctx, retry.ID, AttemptSucceeded))
 	require.NoError(t, f.svc.SetStepStatus(ctx, step.ID, StepSucceeded))
 	require.NoError(t, f.svc.FinishRun(ctx, run.ID, RunSucceeded))
+
+	require.ErrorIs(t, f.svc.SetStepStatus(ctx, uuid.New(), StepRunning), ErrNotFound)
+	require.ErrorIs(t, f.svc.FinishAttempt(ctx, uuid.New(), AttemptSucceeded), ErrNotFound)
+}
+
+// Concurrent writers ensuring one step all get the same row, including
+// those whose statement snapshot predates the winner's insert.
+func TestEnsureStepConcurrently(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+
+	ids := make([]uuid.UUID, 8)
+	var group errgroup.Group
+	for i := range ids {
+		group.Go(func() error {
+			step, err := f.svc.EnsureStep(ctx, run.ID, nil, "apply:web", "Apply web")
+			if err == nil {
+				ids[i] = step.ID
+			}
+			return err
+		})
+	}
+	require.NoError(t, group.Wait())
+	for _, id := range ids {
+		require.Equal(t, ids[0], id)
+	}
+}
+
+// CompleteStep writes a step, its one finished attempt, and the attempt's
+// redacted entries at once, or nothing at all.
+func TestCompleteStep(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+	redactor := redact.New(map[string]string{"s3cr3t": "DB_PASSWORD"})
+
+	step, err := f.svc.EnsureStep(ctx, run.ID, nil, "apply:web", "Apply web")
+	require.NoError(t, err)
+	subscription, err := f.svc.Subscribe(ctx, step.ID, Cursor{})
+	require.NoError(t, err)
+	defer subscription.Cancel()
+	require.NoError(t, f.svc.CompleteStep(ctx, step, redactor, StepSucceeded, []LogEntry{
+		{Level: "info", Message: "applied with s3cr3t"},
+		{Level: "warn", Message: "slow", Fields: map[string]any{"detail": "s3cr3t", "count": 2}},
+	}))
+
+	tree, err := f.svc.RunTree(ctx, run.ID)
+	require.NoError(t, err)
+	done := tree.Steps[0].Step
+	require.Equal(t, "succeeded", done.Status)
+	require.NotNil(t, done.StartedAt)
+	require.NotNil(t, done.FinishedAt)
+	events, err := f.svc.StepLogs(ctx, step.ID, Cursor{}, 10)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	require.Equal(t, int64(1), events[0].AttemptNumber)
+	require.Equal(t, []int64{1, 2}, []int64{events[0].Seq, events[1].Seq})
+	require.Equal(t, "applied with [redacted:DB_PASSWORD]", events[0].Message)
+	require.Equal(t, "warn", events[1].Level)
+	require.JSONEq(t, `{"count": 2, "detail": "[redacted:DB_PASSWORD]"}`, string(events[1].Fields))
+	live := <-subscription.Events
+	require.Equal(t, events[0].Message, live.Message)
+	require.Equal(t, int64(1), live.Seq)
+	var status string
+	require.NoError(t, f.st.Pool.QueryRow(ctx,
+		"SELECT status FROM attempts WHERE step_id = $1", step.ID).Scan(&status))
+	require.Equal(t, "succeeded", status)
+
+	// A terminal step is refused, and so is a step with a running attempt;
+	// neither gains an attempt.
+	require.ErrorIs(t, f.svc.CompleteStep(ctx, step, nil, StepFailed, nil), ErrInvalidTransition)
+	busy, err := f.svc.EnsureStep(ctx, run.ID, nil, "apply:worker", "Apply worker")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetStepStatus(ctx, busy.ID, StepRunning))
+	_, err = f.svc.StartAttempt(ctx, busy.ID)
+	require.NoError(t, err)
+	require.ErrorIs(t, f.svc.CompleteStep(ctx, busy, nil, StepSucceeded, nil), ErrAttemptConflict)
+	var attempts int
+	require.NoError(t, f.st.Pool.QueryRow(ctx, `SELECT count(*) FROM attempts
+		JOIN steps ON steps.id = attempts.step_id WHERE steps.run_id = $1`, run.ID).Scan(&attempts))
+	require.Equal(t, 2, attempts)
+
+	// A waiting step completes too, failed here, and only succeeded or
+	// failed are completions.
+	waiting, err := f.svc.EnsureStep(ctx, run.ID, nil, "verify", "Verify health")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetStepStatus(ctx, waiting.ID, StepWaiting))
+	require.ErrorIs(t, f.svc.CompleteStep(ctx, waiting, nil, StepSkipped, nil), ErrInvalidTransition)
+	require.NoError(t, f.svc.CompleteStep(ctx, waiting, nil, StepFailed,
+		[]LogEntry{{Level: "error", Message: "unhealthy"}}))
+	failed, err := f.svc.EnsureStep(ctx, run.ID, nil, "verify", "Verify health")
+	require.NoError(t, err)
+	require.Equal(t, "failed", failed.Status)
 }
 
 func TestFinishRunForcesTerminality(t *testing.T) {

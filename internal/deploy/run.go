@@ -104,24 +104,23 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	// candidate's staged ones; every log line passes through it.
 	redactor, err := s.values.Redactor(ctx, in.EnvironmentID, in.CandidateID)
 	if err != nil {
-		return result, s.fail(ctx, in, runID, nil, nil, err)
+		return result, s.fail(ctx, in, runID, nil, err)
 	}
+
+	// Each step shows running while its work runs; its log lines are
+	// journaled with its outcome in one write (journal.CompleteStep).
+	info := func(message string) journal.LogEntry { return journal.LogEntry{Level: "info", Message: message} }
+	warn := func(message string) journal.LogEntry { return journal.LogEntry{Level: "warn", Message: message} }
 
 	// Step 1: create the immutable revision.
 	prepareStep, err := in.Journal.EnsureStep(ctx, runID, nil, "revision", "Create revision")
 	if err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepRunning); err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, err)
 	}
-	attempt, err := in.Journal.StartAttempt(ctx, prepareStep.ID)
-	if err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
-	}
-	writer := in.Journal.Writer(attempt.ID, redactor)
-
-	_ = writer.Info(ctx, "resolving artifacts and building the revision")
+	prepareLog := []journal.LogEntry{info("resolving artifacts and building the revision")}
 	prepared, err := s.Prepare(ctx, PrepareInput{
 		EnvironmentID:       in.EnvironmentID,
 		DefinitionVersionID: in.DefinitionVersionID,
@@ -135,63 +134,49 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		// The diagnostic must land even when ctx is what failed.
 		cctx, cancel := detached(ctx)
 		defer cancel()
-		_ = writer.Error(cctx, "preparation failed: "+err.Error())
-		_ = in.Journal.FinishAttempt(cctx, attempt.ID, journal.AttemptFailed)
-		_ = in.Journal.SetStepStatus(cctx, prepareStep.ID, journal.StepFailed)
-		return result, s.fail(cctx, in, runID, redactor, writer, err)
+		_ = in.Journal.CompleteStep(cctx, prepareStep, redactor, journal.StepFailed,
+			append(prepareLog, journal.LogEntry{Level: "error", Message: "preparation failed: " + err.Error()}))
+		return result, s.fail(cctx, in, runID, redactor, err)
 	}
 	for _, warning := range compiler.Warnings(prepared.Revision.Definition) {
-		if err := writer.Warn(ctx, warning.Code+": "+warning.Message); err != nil {
-			return result, s.fail(ctx, in, runID, redactor, writer, err)
-		}
+		prepareLog = append(prepareLog, warn(warning.Code+": "+warning.Message))
 	}
 	result.RevisionID = prepared.RevisionID
 	if len(prepared.Orphaned) > 0 {
-		_ = writer.Warn(ctx, "ignoring stored values not referenced by this definition: "+strings.Join(prepared.Orphaned, ", "))
+		prepareLog = append(prepareLog, warn("ignoring stored values not referenced by this definition: "+strings.Join(prepared.Orphaned, ", ")))
 	}
-	_ = writer.Info(ctx, "revision "+prepared.Revision.Checksum+" stored")
-	if err := in.Journal.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded); err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
-	}
-	if err := in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepSucceeded); err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
+	prepareLog = append(prepareLog, info("revision "+prepared.Revision.Checksum+" stored"))
+	if err := in.Journal.CompleteStep(ctx, prepareStep, redactor, journal.StepSucceeded, prepareLog); err != nil {
+		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 
 	// Step 2: promote atomically.
 	promoteStep, err := in.Journal.EnsureStep(ctx, runID, nil, "promote", "Promote revision")
 	if err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 	if err := in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepRunning); err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
+		return result, s.fail(ctx, in, runID, redactor, err)
 	}
-	promoteAttempt, err := in.Journal.StartAttempt(ctx, promoteStep.ID)
-	if err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
-	}
-	promoteWriter := in.Journal.Writer(promoteAttempt.ID, redactor)
 	prepared.Restart = in.Restart
 	prepared.DeploymentID = in.DeploymentID
+	var promoteLog []journal.LogEntry
 	if in.Restart {
-		_ = promoteWriter.Info(ctx, "forced deployment: application workloads will restart")
+		promoteLog = append(promoteLog, info("forced deployment: application workloads will restart"))
 	}
 	if len(prepared.Pruned) > 0 {
-		_ = promoteWriter.Info(ctx, "pruning stored values not referenced by this definition: "+strings.Join(prepared.Pruned, ", "))
+		promoteLog = append(promoteLog, info("pruning stored values not referenced by this definition: "+strings.Join(prepared.Pruned, ", ")))
 	}
 	if err := s.Promote(ctx, prepared); err != nil {
 		cctx, cancel := detached(ctx)
 		defer cancel()
-		_ = promoteWriter.Error(cctx, "promotion failed: "+err.Error())
-		_ = in.Journal.FinishAttempt(cctx, promoteAttempt.ID, journal.AttemptFailed)
-		_ = in.Journal.SetStepStatus(cctx, promoteStep.ID, journal.StepFailed)
-		return result, s.fail(cctx, in, runID, redactor, promoteWriter, err)
+		_ = in.Journal.CompleteStep(cctx, promoteStep, redactor, journal.StepFailed,
+			append(promoteLog, journal.LogEntry{Level: "error", Message: "promotion failed: " + err.Error()}))
+		return result, s.fail(cctx, in, runID, redactor, err)
 	}
-	_ = promoteWriter.Info(ctx, "target set to revision "+prepared.Revision.Checksum)
-	if err := in.Journal.FinishAttempt(ctx, promoteAttempt.ID, journal.AttemptSucceeded); err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
-	}
-	if err := in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepSucceeded); err != nil {
-		return result, s.fail(ctx, in, runID, redactor, nil, err)
+	promoteLog = append(promoteLog, info("target set to revision "+prepared.Revision.Checksum))
+	if err := in.Journal.CompleteStep(ctx, promoteStep, redactor, journal.StepSucceeded, promoteLog); err != nil {
+		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 
 	// With a kernel wired, the run stays running: the reconcile worker owns
@@ -200,7 +185,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	// tests), promotion concludes the run.
 	if s.enqueuer != nil {
 		if _, err := in.Journal.EnsureStep(ctx, runID, nil, "rollout", "Roll out revision"); err != nil {
-			return result, s.fail(ctx, in, runID, redactor, nil, err)
+			return result, s.fail(ctx, in, runID, redactor, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)
 		return result, nil
@@ -219,12 +204,12 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 // because a prepare or promote error can echo staged secrets. It runs
 // detached from ctx's cancellation: the cause may well be that ctx died,
 // and a run that stays running would wedge the environment.
-func (s *Service) fail(ctx context.Context, in ExecuteInput, runID uuid.UUID, redactor *redact.Redactor, writer *journal.Writer, cause error) error {
+func (s *Service) fail(ctx context.Context, in ExecuteInput, runID uuid.UUID, redactor *redact.Redactor, cause error) error {
 	ctx, cancel := detached(ctx)
 	defer cancel()
 	if in.CandidateID != uuid.Nil {
 		if err := s.values.DiscardCandidate(ctx, in.EnvironmentID, in.CandidateID); err != nil {
-			_ = writer.Error(ctx, "discarding the staged candidate failed: "+err.Error())
+			slog.WarnContext(ctx, "deploy: discard staged candidate", "run", runID, "err", err)
 		}
 	}
 	if err := in.Journal.FailRun(ctx, runID, redactor, cause.Error()); err != nil &&

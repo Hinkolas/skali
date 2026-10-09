@@ -2,8 +2,10 @@ package journal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -31,7 +33,9 @@ var (
 )
 
 // Service is the sole write path into the journal tables. Every status
-// change locks the row and consults the lifecycle machine before updating.
+// change consults the lifecycle machine: either under a row lock, or as one
+// conditional update that applies only from the statuses the machine
+// allows.
 type Service struct {
 	st         *store.Store
 	executorID string
@@ -218,14 +222,16 @@ func (s *Service) EnsureStep(ctx context.Context, runID uuid.UUID, parentID *uui
 	if err != nil {
 		return nil, fmt.Errorf("journal: generate id: %w", err)
 	}
-	if _, err := s.st.InsertStep(ctx, store.InsertStepParams{
+	row, err := s.st.EnsureStep(ctx, store.EnsureStepParams{
 		ID: id, RunID: runID, ParentID: parentID, Key: key, Title: title,
-	}); err != nil {
-		return nil, fmt.Errorf("journal: insert step: %w", err)
+	})
+	step := store.Step(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Another writer created it after the statement's snapshot.
+		step, err = s.st.GetStepByRunAndKey(ctx, store.GetStepByRunAndKeyParams{RunID: runID, Key: key})
 	}
-	step, err := s.st.GetStepByRunAndKey(ctx, store.GetStepByRunAndKeyParams{RunID: runID, Key: key})
 	if err != nil {
-		return nil, fmt.Errorf("journal: read step: %w", err)
+		return nil, fmt.Errorf("journal: ensure step: %w", err)
 	}
 	s.notifyRun(runID)
 	return &step, nil
@@ -245,23 +251,118 @@ func (s *Service) FindStep(ctx context.Context, runID uuid.UUID, key string) (*s
 }
 
 func (s *Service) SetStepStatus(ctx context.Context, stepID uuid.UUID, to StepStatus) error {
-	var runID uuid.UUID
-	err := s.st.WithTx(ctx, func(q *store.Queries) error {
-		step, err := q.GetStepForUpdate(ctx, stepID)
-		if err != nil {
-			return notFoundOr(err, "lock step")
-		}
-		if err := guard(Steps, StepStatus(step.Status), to); err != nil {
-			return err
-		}
-		runID = step.RunID
-		return q.SetStepStatus(ctx, store.SetStepStatusParams{ID: stepID, Status: string(to)})
+	runID, err := s.st.SetStepStatus(ctx, store.SetStepStatusParams{
+		ID: stepID, Status: string(to), FromStatuses: statuses(Steps.Sources(to)),
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s.refusedStep(ctx, stepID, to)
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("journal: set step status: %w", err)
 	}
 	s.notifyRun(runID)
 	return nil
+}
+
+// LogEntry is one log line of a step journaled by CompleteStep.
+type LogEntry struct {
+	Level   string
+	Message string
+	Fields  map[string]any
+}
+
+// CompleteStep journals work that already happened: the step moves as if
+// through running to succeeded or failed, with one finished attempt carrying
+// entries, redacted and bounded like Append's. It is one guarded statement
+// where opening the attempt, appending each line, and closing the attempt
+// and step took a transaction each. A step whose status does not allow the
+// change is refused with ErrInvalidTransition, and one with a running
+// attempt with ErrAttemptConflict; neither writes anything.
+func (s *Service) CompleteStep(ctx context.Context, step *store.Step, redactor *redact.Redactor, to StepStatus, entries []LogEntry) error {
+	attemptStatus := AttemptSucceeded
+	switch to {
+	case StepSucceeded:
+	case StepFailed:
+		attemptStatus = AttemptFailed
+	default:
+		return fmt.Errorf("%w: a completed step succeeds or fails, got %s", ErrInvalidTransition, to)
+	}
+	attemptID, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("journal: generate id: %w", err)
+	}
+	type line struct {
+		ID      uuid.UUID       `json:"id"`
+		Level   string          `json:"level"`
+		Message string          `json:"message"`
+		Fields  json.RawMessage `json:"fields"`
+	}
+	lines := make([]line, 0, len(entries))
+	for _, entry := range entries {
+		if !validLevel(entry.Level) {
+			return fmt.Errorf("journal: invalid log level %q", entry.Level)
+		}
+		fields, err := encodeFields(redactor, entry.Fields)
+		if err != nil {
+			return err
+		}
+		id, err := uuid.NewV7()
+		if err != nil {
+			return fmt.Errorf("journal: generate id: %w", err)
+		}
+		lines = append(lines, line{ID: id, Level: entry.Level, Message: boundEntry(redactor.Redact(entry.Message)), Fields: fields})
+	}
+	if len(lines) > MaxEntriesPerAttempt {
+		lines = lines[:MaxEntriesPerAttempt]
+		lines[MaxEntriesPerAttempt-1] = line{ID: lines[MaxEntriesPerAttempt-1].ID, Level: "warn",
+			Message: "log truncated: entry cap reached", Fields: json.RawMessage("{}")}
+	}
+	encoded, err := json.Marshal(lines)
+	if err != nil {
+		return fmt.Errorf("journal: encode entries: %w", err)
+	}
+	from := append(Steps.Sources(StepRunning), StepRunning)
+	row, err := s.st.CompleteStep(ctx, store.CompleteStepParams{
+		ID: step.ID, Status: string(to), FromStatuses: statuses(from),
+		AttemptID: attemptID, AttemptStatus: string(attemptStatus), ExecutorID: s.executorID,
+		Entries: encoded,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		current, err := s.st.GetStepByID(ctx, step.ID)
+		if err != nil {
+			return notFoundOr(err, "get step")
+		}
+		if slices.Contains(from, StepStatus(current.Status)) {
+			return ErrAttemptConflict
+		}
+		return fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, current.Status, to)
+	}
+	if err != nil {
+		return fmt.Errorf("journal: complete step: %w", err)
+	}
+	for i, line := range lines {
+		s.broadcast.Publish(step.ID, LogEvent{
+			StepID:        step.ID,
+			AttemptNumber: row.Number,
+			Seq:           int64(i + 1),
+			TS:            row.LoggedAt,
+			Level:         line.Level,
+			Message:       line.Message,
+			Fields:        line.Fields,
+		})
+	}
+	s.notifyRun(step.RunID)
+	return nil
+}
+
+// refusedStep explains a guarded step update that changed nothing: the
+// step is gone, or its status does not allow the change.
+func (s *Service) refusedStep(ctx context.Context, stepID uuid.UUID, to StepStatus) error {
+	step, err := s.st.GetStepByID(ctx, stepID)
+	if err != nil {
+		return notFoundOr(err, "get step")
+	}
+	return fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, step.Status, to)
 }
 
 func (s *Service) SetStepProgress(ctx context.Context, stepID uuid.UUID, current, total int64) error {
@@ -309,22 +410,20 @@ func (s *Service) StartAttempt(ctx context.Context, stepID uuid.UUID) (*store.At
 }
 
 func (s *Service) FinishAttempt(ctx context.Context, attemptID uuid.UUID, to AttemptStatus) error {
-	var stepID uuid.UUID
-	err := s.st.WithTx(ctx, func(q *store.Queries) error {
-		attempt, err := q.GetAttemptForUpdate(ctx, attemptID)
-		if err != nil {
-			return notFoundOr(err, "lock attempt")
-		}
-		if err := guard(Attempts, AttemptStatus(attempt.Status), to); err != nil {
-			return err
-		}
-		stepID = attempt.StepID
-		return q.MarkAttemptFinished(ctx, store.MarkAttemptFinishedParams{ID: attemptID, Status: string(to)})
+	runID, err := s.st.FinishAttempt(ctx, store.FinishAttemptParams{
+		ID: attemptID, Status: string(to), FromStatuses: statuses(Attempts.Sources(to)),
 	})
-	if err != nil {
-		return err
+	if errors.Is(err, pgx.ErrNoRows) {
+		attempt, err := s.st.GetAttemptByID(ctx, attemptID)
+		if err != nil {
+			return notFoundOr(err, "get attempt")
+		}
+		return fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, attempt.Status, to)
 	}
-	s.notifyRunOfStep(ctx, stepID)
+	if err != nil {
+		return fmt.Errorf("journal: finish attempt: %w", err)
+	}
+	s.notifyRun(runID)
 	return nil
 }
 
@@ -387,6 +486,15 @@ func guard[S comparable](machine lifecycle.Machine[S], from, to S) error {
 		return fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, from, to)
 	}
 	return nil
+}
+
+// statuses spells a machine's statuses for a conditional update's guard.
+func statuses[S ~string](list []S) []string {
+	spelled := make([]string, len(list))
+	for i, status := range list {
+		spelled[i] = string(status)
+	}
+	return spelled
 }
 
 func notFoundOr(err error, what string) error {

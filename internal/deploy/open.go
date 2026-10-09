@@ -1457,18 +1457,8 @@ func (s *Service) instantStep(ctx context.Context, jsvc *journal.Service, runID 
 	if err != nil {
 		return err
 	}
-	if err := jsvc.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
-		return err
-	}
-	attempt, err := jsvc.StartAttempt(ctx, step.ID)
-	if err != nil {
-		return err
-	}
-	_ = jsvc.Writer(attempt.ID, redactor).Info(ctx, message)
-	if err := jsvc.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded); err != nil {
-		return err
-	}
-	return jsvc.SetStepStatus(ctx, step.ID, journal.StepSucceeded)
+	return jsvc.CompleteStep(ctx, step, redactor, journal.StepSucceeded,
+		[]journal.LogEntry{{Level: "info", Message: message}})
 }
 
 // closeArtifactsStep concludes the artifacts parent step once every
@@ -1483,21 +1473,18 @@ func (s *Service) closeArtifactsStep(ctx context.Context, jsvc *journal.Service,
 	if err != nil {
 		return err
 	}
-	if step.Status == string(journal.StepPending) || step.Status == string(journal.StepWaiting) {
-		if err := jsvc.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
-			return err
-		}
+	entries := make([]journal.LogEntry, 0, len(actions))
+	for _, action := range actions {
+		entries = append(entries, journal.LogEntry{Level: "info", Message: action.Application + ": " + action.Action + " verified"})
 	}
-	attempt, err := jsvc.StartAttempt(ctx, step.ID)
-	if err != nil && !errors.Is(err, journal.ErrAttemptConflict) {
+	err = jsvc.CompleteStep(ctx, step, redactor, journal.StepSucceeded, entries)
+	if !errors.Is(err, journal.ErrAttemptConflict) {
 		return err
 	}
-	if attempt != nil {
-		writer := jsvc.Writer(attempt.ID, redactor)
-		for _, action := range actions {
-			_ = writer.Info(ctx, action.Application+": "+action.Action+" verified")
-		}
-		if err := jsvc.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded); err != nil {
+	// An attempt the client still holds open stays as it is; the step
+	// closes without the summary.
+	if step.Status == string(journal.StepPending) || step.Status == string(journal.StepWaiting) {
+		if err := jsvc.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
 			return err
 		}
 	}

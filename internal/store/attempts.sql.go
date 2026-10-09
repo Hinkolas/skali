@@ -58,6 +58,30 @@ func (q *Queries) CreateAttempt(ctx context.Context, arg CreateAttemptParams) (A
 	return i, err
 }
 
+const finishAttempt = `-- name: FinishAttempt :one
+UPDATE attempts SET status = $1::text, finished_at = now()
+FROM steps
+WHERE attempts.id = $2 AND steps.id = attempts.step_id
+  AND attempts.status = ANY($3::text[])
+RETURNING steps.run_id
+`
+
+type FinishAttemptParams struct {
+	Status       string
+	ID           uuid.UUID
+	FromStatuses []string
+}
+
+// FinishAttempt is the guarded close: it applies only from one of
+// from_statuses, in one statement, and returns the run to notify; no row
+// returns otherwise.
+func (q *Queries) FinishAttempt(ctx context.Context, arg FinishAttemptParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, finishAttempt, arg.Status, arg.ID, arg.FromStatuses)
+	var run_id uuid.UUID
+	err := row.Scan(&run_id)
+	return run_id, err
+}
+
 const getAttemptByID = `-- name: GetAttemptByID :one
 SELECT id, step_id, number, status, executor_id, started_at, finished_at FROM attempts WHERE id = $1
 `
