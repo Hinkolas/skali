@@ -383,18 +383,24 @@ type namedSourcePayload struct {
 }
 
 type systemObservationPayload struct {
-	Mode        string               `json:"mode"`
-	Ready       bool                 `json:"ready"`
-	Observation observationPayload   `json:"observation"`
-	Sources     []namedSourcePayload `json:"sources"`
-	Kinds       []kindSyncPayload    `json:"kinds"`
-	QueueDepth  int                  `json:"queue_depth"`
-	Workers     int                  `json:"workers"`
+	Mode          string               `json:"mode"`
+	Ready         bool                 `json:"ready"`
+	Observation   observationPayload   `json:"observation"`
+	Sources       []namedSourcePayload `json:"sources"`
+	Kinds         []kindSyncPayload    `json:"kinds"`
+	QueueDepth    int                  `json:"queue_depth"`
+	Workers       int                  `json:"workers"`
+	RequestBudget requestBudgetPayload `json:"request_budget"`
 	// Queues, Passes and Requests account for background work since the
 	// process started; a sampler subtracts two readings to see an interval.
 	Queues   map[string]queuePayload `json:"queues"`
 	Passes   []passTotalsPayload     `json:"passes"`
 	Requests []requestTotalsPayload  `json:"requests"`
+}
+
+type requestBudgetPayload struct {
+	QPS   float32 `json:"qps"`
+	Burst int     `json:"burst"`
 }
 
 type queuePayload struct {
@@ -472,16 +478,17 @@ func newHistogramPayload(h workstats.Histogram) histogramPayload {
 func (h *statusHandlers) system(w http.ResponseWriter, r *http.Request) {
 	info := h.reconcile.Observation()
 	payload := systemObservationPayload{
-		Mode:        info.Mode,
-		Ready:       info.Ready,
-		Observation: newObservationPayload(info.Source),
-		Sources:     make([]namedSourcePayload, 0, len(info.Sources)),
-		Kinds:       make([]kindSyncPayload, 0, len(info.Kinds)),
-		QueueDepth:  info.QueueDepth,
-		Workers:     info.Workers,
-		Queues:      map[string]queuePayload{"kernel": newQueuePayload(info.Queue)},
-		Passes:      make([]passTotalsPayload, 0, len(info.Passes)),
-		Requests:    make([]requestTotalsPayload, 0, len(info.Requests)),
+		Mode:          info.Mode,
+		Ready:         info.Ready,
+		Observation:   newObservationPayload(info.Source),
+		Sources:       make([]namedSourcePayload, 0, len(info.Sources)),
+		Kinds:         make([]kindSyncPayload, 0, len(info.Kinds)),
+		QueueDepth:    info.QueueDepth,
+		Workers:       info.Workers,
+		RequestBudget: requestBudgetPayload{QPS: info.RequestBudget.QPS, Burst: info.RequestBudget.Burst},
+		Queues:        map[string]queuePayload{"kernel": newQueuePayload(info.Queue)},
+		Passes:        make([]passTotalsPayload, 0, len(info.Passes)),
+		Requests:      make([]requestTotalsPayload, 0, len(info.Requests)),
 	}
 	if info.Substrate != nil {
 		payload.Queues["substrate"] = newQueuePayload(*info.Substrate)

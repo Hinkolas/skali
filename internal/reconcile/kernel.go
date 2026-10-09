@@ -191,6 +191,9 @@ type Config struct {
 	// production bundle (ACME) and the local platform (private CA) set it;
 	// only a bare skalid without cert-manager leaves it false.
 	Certificates bool
+	// RequestBudget is the Kubernetes client's configured request budget,
+	// reported by the system observation endpoint.
+	RequestBudget kube.RequestBudget
 	// RetireDrain is how long a Deployment that stopped serving (the
 	// previous blue-green color, a superseded pending color, a legacy
 	// workload) keeps running before it is pruned; zero means the default
@@ -416,6 +419,8 @@ type ObservationInfo struct {
 	Kinds      []observe.KindSync
 	QueueDepth int
 	Workers    int
+	// RequestBudget is the Kubernetes client's effective request budget.
+	RequestBudget kube.RequestBudget
 	// Queue and Substrate account for the kernel's and the substrate's work
 	// queues (Substrate is nil without one); Passes and Requests for what
 	// their passes and the Kubernetes requests cost (see workstats).
@@ -450,14 +455,15 @@ func (k *Kernel) DatabaseCluster(name string) (*module.DatabaseClusterStatus, bo
 
 func (k *Kernel) Observation() ObservationInfo {
 	info := ObservationInfo{
-		Mode:       "api-only",
-		Ready:      k.deps.Observed.Ready(),
-		Source:     k.deps.Observed.Source(),
-		Sources:    k.deps.Observed.Sources(),
-		QueueDepth: k.queue.Len(),
-		Workers:    k.cfg.Workers,
-		Passes:     workstats.Totals(),
-		Requests:   workstats.Requests(),
+		Mode:          "api-only",
+		Ready:         k.deps.Observed.Ready(),
+		Source:        k.deps.Observed.Source(),
+		Sources:       k.deps.Observed.Sources(),
+		QueueDepth:    k.queue.Len(),
+		Workers:       k.cfg.Workers,
+		RequestBudget: k.cfg.RequestBudget.Effective(),
+		Passes:        workstats.Totals(),
+		Requests:      workstats.Requests(),
 	}
 	info.Queue = k.queue.Stats()
 	info.Queue.Workers = k.cfg.Workers

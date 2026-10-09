@@ -83,6 +83,13 @@ type API struct {
 	// silently attach to whatever cluster the developer's shell points at.
 	KubeconfigPath string `env:"SKALI_KUBECONFIG,default="`
 
+	// KubeQPS and KubeBurst are the Kubernetes client's request budget,
+	// shared by the kernel, the substrate, and observation: requests per
+	// second sustained, and momentarily. Zero QPS keeps client-go's default
+	// of 5 per second with a burst of 10.
+	KubeQPS   float32 `env:"SKALI_KUBE_QPS,default=50"`
+	KubeBurst int     `env:"SKALI_KUBE_BURST,default=100"`
+
 	// UpdateScan enables the daily release scan behind the Studio's Updates
 	// page; false keeps the daemon free of any outbound request to the
 	// release feed (air-gapped installations).
@@ -224,6 +231,12 @@ func (a *API) Validate() error {
 	}
 	if a.ReauthWindow <= 0 {
 		return fmt.Errorf("REAUTH_WINDOW: must be positive")
+	}
+	if a.KubeQPS < 0 {
+		return fmt.Errorf("SKALI_KUBE_QPS: must not be negative")
+	}
+	if a.KubeQPS > 0 && a.KubeBurst < 1 {
+		return fmt.Errorf("SKALI_KUBE_BURST: must be at least 1 when SKALI_KUBE_QPS is set")
 	}
 	if a.ReconcileResync <= 0 {
 		return fmt.Errorf("RECONCILE_RESYNC_INTERVAL: must be positive")

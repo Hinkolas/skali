@@ -209,7 +209,8 @@ func runServe() error {
 	// Cluster access is optional in development: without SKALI_KUBECONFIG or
 	// in-cluster credentials skalid runs API-only, observation reports
 	// unknown, and the reconcile workers idle.
-	kubeClient, err := kube.New(cfg.KubeconfigPath)
+	budget := kube.RequestBudget{QPS: cfg.KubeQPS, Burst: cfg.KubeBurst}
+	kubeClient, err := kube.NewWithBudget(cfg.KubeconfigPath, budget)
 	if err != nil {
 		if !errors.Is(err, kube.ErrNoCluster) {
 			return err
@@ -354,6 +355,7 @@ func runServe() error {
 		StorageClass:       cfg.StorageClass,
 		PlatformPreference: cfg.PlatformPreference,
 		Certificates:       cfg.CertManager,
+		RequestBudget:      budget,
 	}
 	kernel = reconcile.New(kernelDeps, reconcileCfg)
 	deploySvc.SetEnqueuer(kernel)

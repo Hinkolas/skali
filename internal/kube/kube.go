@@ -85,22 +85,47 @@ type Client struct {
 	proxyErr  error
 }
 
+// RequestBudget is the client-side limit on requests to the API server:
+// QPS sustained, Burst momentarily. With QPS set, the typed clientset shares
+// one budget and the dynamic and metadata clients get one each; zero keeps
+// client-go's default of 5 per second with a burst of 10 for every client.
+type RequestBudget struct {
+	QPS   float32
+	Burst int
+}
+
+// Effective resolves the zero budget to client-go's default.
+func (b RequestBudget) Effective() RequestBudget {
+	if b.QPS <= 0 {
+		return RequestBudget{QPS: rest.DefaultQPS, Burst: rest.DefaultBurst}
+	}
+	return b
+}
+
 // New resolves cluster credentials. A set kubeconfigPath must load or the
 // call fails; with it unset, in-cluster configuration is attempted and
 // ErrNoCluster reports its absence. The ambient KUBECONFIG variable is
-// deliberately never consulted.
+// deliberately never consulted. The clients keep client-go's default
+// request budget.
 func New(kubeconfigPath string) (*Client, error) {
+	return NewWithBudget(kubeconfigPath, RequestBudget{})
+}
+
+// NewWithBudget is New with an explicit request budget.
+func NewWithBudget(kubeconfigPath string, budget RequestBudget) (*Client, error) {
 	if kubeconfigPath != "" {
 		config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("kube: load kubeconfig %s: %w", kubeconfigPath, err)
 		}
+		config.QPS, config.Burst = budget.QPS, budget.Burst
 		return NewFromConfig(config)
 	}
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, ErrNoCluster
 	}
+	config.QPS, config.Burst = budget.QPS, budget.Burst
 	client, err := NewFromConfig(config)
 	if err != nil {
 		return nil, err
