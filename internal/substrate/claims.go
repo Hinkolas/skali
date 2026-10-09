@@ -22,7 +22,9 @@ import (
 )
 
 // Ensure implements reconcile.ClaimManager: it records the revision's
-// database claims, enqueues their reconciliation, and reports readiness.
+// database claims, enqueues the reconciliation of new, changed, and
+// unsettled ones, and reports readiness. A settled claim is repaired on the
+// substrate's own cadence (repairEnqueue), not on every environment pass.
 // The kernel never sees claim mechanics; the substrate never sees the
 // deployment state machine.
 func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) ([]reconcile.ClaimState, error) {
@@ -57,7 +59,7 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		} else if !errors.Is(err, dbstore.ErrNotFound) {
 			return nil, err
 		}
-		row, err := c.deps.DB.EnsureClaim(ctx, owner, dbstore.ClaimSpec{
+		row, changed, err := c.deps.DB.EnsureClaimChanged(ctx, owner, dbstore.ClaimSpec{
 			Engine:       database.Engine,
 			Major:        major,
 			Isolation:    database.Isolation,
@@ -77,7 +79,9 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if extensionsChanged {
 			c.markExtensionsPending(row.ID, desiredExtensions)
 		}
-		c.EnqueueClaim(row.ID, reasonEnsure)
+		if changed || claim.Phase(row.Phase) != claim.PhaseProvisioned || c.extensionsPending(row.ID) {
+			c.EnqueueClaim(row.ID, reasonEnsure)
+		}
 		c.publishClaim(*row)
 
 		state := reconcile.ClaimState{Service: dotted,
@@ -167,7 +171,7 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 				return nil, fmt.Errorf("substrate: encode route for %s: %w", dotted, err)
 			}
 		}
-		row, err := c.deps.DB.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
+		row, changed, err := c.deps.DB.EnsureBucketClaimChanged(ctx, owner, dbstore.BucketSpec{
 			Visibility:                   bucket.Visibility,
 			StorageQuotaBytes:            bucket.StorageQuotaBytes,
 			ObjectQuota:                  int64(bucket.ObjectQuota),
@@ -186,7 +190,9 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 		if err != nil {
 			return nil, err
 		}
-		c.EnqueueBucketClaim(row.ID, reasonEnsure)
+		if changed || claim.Phase(row.Phase) != claim.PhaseProvisioned {
+			c.EnqueueBucketClaim(row.ID, reasonEnsure)
+		}
 		c.publishBucketClaim(*row)
 
 		state := reconcile.ClaimState{Service: dotted,

@@ -21,7 +21,16 @@ import (
 // those select the physical home, and replacing it is a destructive decision
 // that belongs to plan/deploy, not to reconciliation.
 func (s *Service) EnsureClaim(ctx context.Context, owner Owner, spec ClaimSpec) (*store.DatabaseClaim, error) {
+	row, _, err := s.EnsureClaimChanged(ctx, owner, spec)
+	return row, err
+}
+
+// EnsureClaimChanged is EnsureClaim that also reports whether the call
+// created the claim or folded a spec change into it: a settled claim needs
+// a reconciliation pass only then.
+func (s *Service) EnsureClaimChanged(ctx context.Context, owner Owner, spec ClaimSpec) (*store.DatabaseClaim, bool, error) {
 	var row store.DatabaseClaim
+	changed := false
 	err := s.st.WithTx(ctx, func(q *store.Queries) error {
 		existing, err := s.liveClaim(ctx, q, owner)
 		switch {
@@ -49,6 +58,7 @@ func (s *Service) EnsureClaim(ctx context.Context, owner Owner, spec ClaimSpec) 
 			if err != nil {
 				return fmt.Errorf("dbstore: create claim: %w", err)
 			}
+			changed = true
 			return nil
 		case err != nil:
 			return fmt.Errorf("dbstore: lookup claim: %w", err)
@@ -78,14 +88,15 @@ func (s *Service) EnsureClaim(ctx context.Context, owner Owner, spec ClaimSpec) 
 			if err != nil {
 				return fmt.Errorf("dbstore: reload claim: %w", err)
 			}
+			changed = true
 		}
 		row = existing
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return &row, nil
+	return &row, changed, nil
 }
 
 func (s *Service) liveClaim(ctx context.Context, q *store.Queries, owner Owner) (store.DatabaseClaim, error) {

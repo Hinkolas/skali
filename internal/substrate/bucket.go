@@ -92,12 +92,14 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if err != nil {
 		return false, err
 	}
-	c.EnqueueObjectStore(reasonBucket)
 	ready, reason, err := c.objectStoreReady(ctx, *sw)
 	if err != nil {
 		return false, err
 	}
 	if !ready {
+		// The store's own pass brings it up; a ready store keeps its own
+		// cadence, and this pass applies the S3 access policy itself.
+		c.EnqueueObjectStore(reasonBucket)
 		if reason == "" {
 			reason = "waiting for the object store"
 		}

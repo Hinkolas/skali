@@ -21,7 +21,16 @@ import (
 // the bucket's externally observable contract, and replacing it is a
 // destructive decision that belongs to plan/deploy, not to reconciliation.
 func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec BucketSpec) (*store.BucketClaim, error) {
+	row, _, err := s.EnsureBucketClaimChanged(ctx, owner, spec)
+	return row, err
+}
+
+// EnsureBucketClaimChanged is EnsureBucketClaim that also reports whether
+// the call created the claim or folded a spec change into it: a settled
+// claim needs a reconciliation pass only then.
+func (s *Service) EnsureBucketClaimChanged(ctx context.Context, owner Owner, spec BucketSpec) (*store.BucketClaim, bool, error) {
 	var row store.BucketClaim
+	changed := false
 	err := s.st.WithTx(ctx, func(q *store.Queries) error {
 		existing, err := s.liveBucketClaim(ctx, q, owner)
 		switch {
@@ -51,6 +60,7 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 			if err != nil {
 				return fmt.Errorf("dbstore: create bucket claim: %w", err)
 			}
+			changed = true
 			return nil
 		case err != nil:
 			return fmt.Errorf("dbstore: lookup bucket claim: %w", err)
@@ -84,14 +94,15 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 			if err != nil {
 				return fmt.Errorf("dbstore: reload bucket claim: %w", err)
 			}
+			changed = true
 		}
 		row = existing
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return &row, nil
+	return &row, changed, nil
 }
 
 func (s *Service) liveBucketClaim(ctx context.Context, q *store.Queries, owner Owner) (store.BucketClaim, error) {

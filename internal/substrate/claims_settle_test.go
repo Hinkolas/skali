@@ -466,3 +466,70 @@ func TestExtensionsPendingSettlesOnlyOnTheAppliedEncoding(t *testing.T) {
 	fx.control.clearExtensions(id)
 	require.False(t, fx.control.extensionsPending(id))
 }
+
+// drain empties the controller's queue without running passes and reports
+// the keys it held.
+func (fx *settleFixture) drain() []workKey {
+	var keys []workKey
+	for fx.control.queue.Len() > 0 {
+		key, _ := fx.control.queue.Get()
+		fx.control.queue.Done(key)
+		fx.control.queue.Forget(key)
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// TestEnsureEnqueuesOnlyClaimsWithWorkDue pins the environment pass's
+// contract with the substrate: it enqueues a claim that is new, changed, or
+// unsettled, and leaves a settled one to the repair cadence.
+func TestEnsureEnqueuesOnlyClaimsWithWorkDue(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	claimKey := workKey{kind: workClaim, id: fx.claim.ID}
+
+	_, err := fx.control.Ensure(ctx, fx.ensureInput())
+	require.NoError(t, err)
+	require.Equal(t, []workKey{claimKey}, fx.drain(), "a pending claim is enqueued")
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+	fx.drain()
+
+	_, err = fx.control.Ensure(ctx, fx.ensureInput())
+	require.NoError(t, err)
+	require.Empty(t, fx.drain(), "a settled, unchanged claim is not enqueued")
+
+	// A spec change is due now, and stays due while the extension is
+	// pending, even once the spec matches.
+	fx.fake.set(clusterHealthyPhase, 1, false)
+	_, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.Equal(t, []workKey{claimKey}, fx.drain())
+	_, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.Equal(t, []workKey{claimKey}, fx.drain())
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	fx.pass(t)
+	_, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.Empty(t, fx.drain(), "settled again once the extension applied")
+}
+
+// TestRepairSchedulesEveryLiveClaim pins the cadence that replaces per-pass
+// repair: every live claim is scheduled, spread over the interval rather
+// than runnable at once.
+func TestRepairSchedulesEveryLiveClaim(t *testing.T) {
+	fx := newSettleFixture(t)
+	fx.control.repairEnqueue(context.Background())
+	require.Zero(t, fx.control.queue.Len(), "repairs are spread over the interval")
+	var arrivals map[string]uint64
+	for _, kind := range fx.control.QueueStats().Kinds {
+		if kind.Kind == string(workClaim) {
+			arrivals = kind.Arrivals
+		}
+	}
+	require.Equal(t, map[string]uint64{reasonRepair: 1}, arrivals)
+}

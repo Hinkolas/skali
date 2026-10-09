@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
@@ -196,6 +197,7 @@ const (
 	reasonTeardown    = "teardown"     // an environment's removal releases its claims
 	reasonBoot        = "boot"         // startup, or the default pool's creation
 	reasonResync      = "resync"       // the periodic sweep of unsettled work
+	reasonRepair      = "repair"       // the periodic drift repair of every live claim
 	reasonAPI         = "api"          // an API handler's request
 	reasonRequeue     = "requeue"      // a pass asked to run again after a delay
 	reasonRetry       = "retry"        // a failed pass, after its backoff
@@ -419,6 +421,7 @@ func (c *Controller) Run(ctx context.Context) {
 
 	c.queue.Add(workKey{kind: workBoot}, reasonBoot)
 	c.resyncEnqueue(ctx)
+	c.repairEnqueue(ctx)
 
 	var wg sync.WaitGroup
 	for range c.cfg.Workers {
@@ -433,6 +436,8 @@ func (c *Controller) Run(ctx context.Context) {
 
 	ticker := time.NewTicker(c.cfg.Resync)
 	defer ticker.Stop()
+	repair := time.NewTicker(repairInterval)
+	defer repair.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -441,7 +446,34 @@ func (c *Controller) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			c.resyncEnqueue(ctx)
+		case <-repair.C:
+			c.repairEnqueue(ctx)
 		}
+	}
+}
+
+// repairInterval bounds how long drift on a settled claim goes unrepaired
+// (a deleted output Secret, a changed bucket policy): environment passes
+// reconcile only new, changed, and unsettled claims, so every live claim
+// gets a pass once per interval instead.
+const repairInterval = 10 * time.Minute
+
+// repairEnqueue schedules every live claim's drift repair, each at a random
+// point of the interval so the passes never arrive at once.
+func (c *Controller) repairEnqueue(ctx context.Context) {
+	claims, err := c.deps.DB.ListLiveClaims(ctx)
+	if err != nil {
+		slog.Warn("substrate: list live claims", "error", err)
+	}
+	for _, row := range claims {
+		c.queue.AddAfter(workKey{kind: workClaim, id: row.ID}, rand.N(repairInterval), reasonRepair)
+	}
+	buckets, err := c.deps.DB.ListLiveBucketClaims(ctx)
+	if err != nil {
+		slog.Warn("substrate: list live bucket claims", "error", err)
+	}
+	for _, row := range buckets {
+		c.queue.AddAfter(workKey{kind: workBucket, id: row.ID}, rand.N(repairInterval), reasonRepair)
 	}
 }
 
