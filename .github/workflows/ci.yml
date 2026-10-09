@@ -105,8 +105,10 @@ jobs:
     services:
       # DB-backed tests create an ephemeral database per test on this
       # server (internal/testdb); without TEST_DATABASE_URL they skip.
+      # The official image through ECR Public's mirror: Docker Hub's
+      # anonymous pull limit on shared runners failed whole releases.
       postgres:
-        image: postgres:17
+        image: public.ecr.aws/docker/library/postgres:17
         env:
           POSTGRES_USER: dev
           POSTGRES_PASSWORD: dev
