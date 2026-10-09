@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/Hinkolas/skali/internal/layout"
@@ -128,4 +129,19 @@ func TestRefreshSkipsEndedConnections(t *testing.T) {
 	_, registered := k.current["KindA"]
 	k.mu.Unlock()
 	require.False(t, registered, "an ended connection must deregister itself")
+}
+
+// Only a delivery at the version the cache already held is a resync; typed
+// and unstructured objects both carry it.
+func TestResynced(t *testing.T) {
+	pod := func(version string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web", ResourceVersion: version}}
+	}
+	require.True(t, resynced(pod("7"), pod("7")))
+	require.False(t, resynced(pod("7"), pod("8")))
+	require.False(t, resynced("not an object", pod("7")))
+
+	cluster := &unstructured.Unstructured{}
+	cluster.SetResourceVersion("41")
+	require.True(t, resynced(cluster, cluster.DeepCopy()))
 }

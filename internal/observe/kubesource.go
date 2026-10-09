@@ -29,19 +29,20 @@ import (
 	"github.com/Hinkolas/skali/internal/module"
 )
 
-// SourceOptions tunes the Kubernetes watch source.
 // Reasons the source enqueues an environment (SourceOptions.Enqueue).
 const (
-	EnqueueWatch  = "watch"           // one of the environment's objects changed
-	EnqueueShared = "shared"          // a shared object it references (a pool, the object store) changed
-	EnqueueNode   = "node"            // a node it runs on changed
-	EnqueueEvent  = "event"           // a Kubernetes Event about one of its objects arrived
-	EnqueueResync = "informer-resync" // an informer's periodic resync redelivered an unchanged object
+	EnqueueWatch     = "watch"     // one of the environment's objects changed
+	EnqueueShared    = "shared"    // a shared object it references (a pool, the object store) changed
+	EnqueueNode      = "node"      // a node it runs on changed
+	EnqueueEvent     = "event"     // a Kubernetes Event about one of its objects arrived
+	EnqueueRecovered = "recovered" // the cluster watch recovered from stale
 )
 
+// SourceOptions tunes the Kubernetes watch source.
 type SourceOptions struct {
-	// Resync re-fires update handlers for every cached object: the
-	// correctness backstop against missed watch edits.
+	// Resync is the informers' resync interval. A resync redelivers cached
+	// objects unchanged, so the handlers skip it (see resynced); the
+	// kernel's resync and audit are the correctness backstop.
 	Resync time.Duration
 	// StaleThreshold is how long after a list/watch failure without a
 	// successful re-establishment the source reports stale.
@@ -302,7 +303,7 @@ func (k *KubeSource) listWatch(
 				k.store.MarkFailure(SourceKubernetes)
 				return nil, err
 			}
-			k.store.MarkContact(SourceKubernetes)
+			k.contact()
 			return result, nil
 		},
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
@@ -341,7 +342,7 @@ func (k *KubeSource) trackContact(kind string, inner watch.Interface) watch.Inte
 		for event := range inner.ResultChan() {
 			if !delivered && event.Type != watch.Error {
 				delivered = true
-				k.store.MarkContact(SourceKubernetes)
+				k.contact()
 			}
 			forwarder.out <- event
 		}
@@ -420,13 +421,16 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 		AddFunc: func(raw any) {
 			if obj, ok := convert(raw); ok {
 				k.store.Upsert(obj)
-				k.enqueueAffected(obj, false)
+				k.enqueueAffected(obj)
 			}
 		},
 		UpdateFunc: func(old, raw any) {
+			if resynced(old, raw) {
+				return
+			}
 			if obj, ok := convert(raw); ok {
 				k.store.Upsert(obj)
-				k.enqueueAffected(obj, resynced(old, raw))
+				k.enqueueAffected(obj)
 			}
 		},
 		DeleteFunc: func(raw any) {
@@ -435,7 +439,7 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 			}
 			if obj, ok := convert(raw); ok {
 				k.store.Remove(obj.Ref)
-				k.enqueueAffected(obj, false)
+				k.enqueueAffected(obj)
 			}
 		},
 	})
@@ -444,23 +448,21 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 
 // enqueueAffected pokes the object's environment; a platform-scoped shared
 // object (a database pool) fans out to every environment referencing it.
-// resync marks an informer's periodic redelivery of an unchanged object.
-func (k *KubeSource) enqueueAffected(obj Object, resync bool) {
-	own, shared := EnqueueWatch, EnqueueShared
-	if resync {
-		own, shared = EnqueueResync, EnqueueResync
-	}
+func (k *KubeSource) enqueueAffected(obj Object) {
 	if obj.Environment != uuid.Nil || obj.SharedKey == "" {
-		k.enqueue(obj.Environment, own)
+		k.enqueue(obj.Environment, EnqueueWatch)
 		return
 	}
 	for _, environment := range k.store.EnvironmentsForSharedKey(obj.SharedKey) {
-		k.enqueue(environment, shared)
+		k.enqueue(environment, EnqueueShared)
 	}
 }
 
-// resynced reports an informer's periodic resync: the same object version
-// delivered again as an update.
+// resynced reports an update that changed nothing on the cluster: an
+// informer's periodic resync, or a relist after a reconnect, delivering an
+// object at the resource version the cache already held. Every handler
+// skips it; a real change always carries a new version, and the kernel's
+// resync and audit remain the correctness floor.
 func resynced(old, cur any) bool {
 	before, err := meta.Accessor(old)
 	if err != nil {
@@ -496,11 +498,9 @@ func (k *KubeSource) addNodeInformer(lw cache.ListerWatcher) {
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(raw any) { upsert(raw, EnqueueNode) },
 		UpdateFunc: func(old, raw any) {
-			reason := EnqueueNode
-			if resynced(old, raw) {
-				reason = EnqueueResync
+			if !resynced(old, raw) {
+				upsert(raw, EnqueueNode)
 			}
-			upsert(raw, reason)
 		},
 		DeleteFunc: func(raw any) {
 			if node, ok := asNode(raw); ok {
@@ -595,8 +595,12 @@ func (k *KubeSource) addEventInformer(lw cache.ListerWatcher) {
 		k.enqueue(environment, EnqueueEvent)
 	}
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    record,
-		UpdateFunc: func(_, raw any) { record(raw) },
+		AddFunc: record,
+		UpdateFunc: func(old, raw any) {
+			if !resynced(old, raw) {
+				record(raw)
+			}
+		},
 	})
 	k.informers = append(k.informers, namedInformer{kind: "Event", informer: informer})
 }
@@ -605,6 +609,18 @@ func (k *KubeSource) watchErrors(informer cache.SharedIndexInformer) {
 	_ = informer.SetWatchErrorHandler(func(_ *cache.Reflector, _ error) {
 		k.store.MarkFailure(SourceKubernetes)
 	})
+}
+
+// contact marks the cluster reachable. A recovery from stale wakes every
+// environment holding objects: their passes were gated on freshness, and
+// the relist that follows a reconnect delivers no update for an object
+// that did not change meanwhile.
+func (k *KubeSource) contact() {
+	if k.store.MarkContact(SourceKubernetes) {
+		for _, environment := range k.store.environments() {
+			k.enqueue(environment, EnqueueRecovered)
+		}
+	}
 }
 
 func (k *KubeSource) enqueue(environmentID uuid.UUID, reason string) {

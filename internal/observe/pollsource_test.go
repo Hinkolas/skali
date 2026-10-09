@@ -56,6 +56,10 @@ func TestPollSourceLifecycle(t *testing.T) {
 	require.Equal(t, []uuid.UUID{envID}, enqueued)
 	require.Len(t, store.Snapshot(envID).Objects, 1)
 
+	// An identical probe changes no projection and enqueues nothing.
+	source.pollOnce(context.Background())
+	require.Equal(t, []uuid.UUID{envID}, enqueued)
+
 	// A failure inside the threshold keeps the source fresh.
 	fail = true
 	source.pollOnce(context.Background())
@@ -73,12 +77,14 @@ func TestPollSourceLifecycle(t *testing.T) {
 	// The kubernetes source never noticed any of it.
 	require.Equal(t, module.SourceUnknown, store.Source().State)
 
-	// A successful probe recovers.
+	// A successful probe recovers, and wakes the environment although its
+	// snapshot is identical: its passes waited on the source.
 	fail = false
 	source.pollOnce(context.Background())
 	status, _ = store.SourceNamed("seaweedfs")
 	require.Equal(t, module.SourceFresh, status.State)
 	require.True(t, status.StaleSince.IsZero())
+	require.Equal(t, []uuid.UUID{envID, envID}, enqueued)
 }
 
 func TestPollSourcePokeCoalesces(t *testing.T) {

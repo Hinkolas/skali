@@ -102,8 +102,9 @@ type API struct {
 	// for its downloads. Mirrors point it elsewhere.
 	ReleaseBase string `env:"SKALI_RELEASE_BASE,default=https://github.com"`
 
-	// ReconcileResync re-fires informer updates for every cached object as the
-	// correctness backstop against missed watch edits.
+	// ReconcileResync is the cadence of the kernel's sweep of environments not
+	// yet at their target and the substrate's sweep of unsettled work: the
+	// correctness backstop against missed watch events.
 	ReconcileResync time.Duration `env:"RECONCILE_RESYNC_INTERVAL,default=5m"`
 
 	// ReconcileAudit lists all environment targets from the database and

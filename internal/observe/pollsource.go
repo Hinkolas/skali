@@ -25,7 +25,8 @@ type PollOptions struct {
 	StaleThreshold time.Duration
 	// Timeout bounds one probe.
 	Timeout time.Duration
-	// Enqueue receives every environment whose projections a probe changed.
+	// Enqueue receives every environment whose projections a probe changed,
+	// and every environment once when the source recovers from stale.
 	Enqueue func(environmentID uuid.UUID)
 }
 
@@ -121,12 +122,18 @@ func (p *PollSource) pollOnce(ctx context.Context) {
 		p.log.Info("observe: probe recovered", "source", p.opts.Source)
 		p.failing = false
 	}
+	recovered := false
 	if !p.store.SourceReady(p.opts.Source) {
 		p.store.MarkReady(p.opts.Source)
 	} else {
-		p.store.MarkContact(p.opts.Source)
+		recovered = p.store.MarkContact(p.opts.Source)
 	}
 	affected := p.store.ReplaceSource(p.opts.Source, objects)
+	if recovered {
+		// Passes waited on this source while it was stale; an identical
+		// probe after the outage changes no projection, so wake them all.
+		affected = p.store.environments()
+	}
 	if p.opts.Enqueue != nil {
 		for _, environment := range affected {
 			p.opts.Enqueue(environment)
