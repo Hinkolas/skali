@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/util/workqueue"
@@ -65,6 +66,22 @@ func TestQueueWaitStartsWhenTheDelayEnds(t *testing.T) {
 	_, _, _ = q.Take()
 	q.Done("b")
 	require.Equal(t, map[string]uint64{"requeue": 1, "retry": 1}, q.Stats().Kinds[0].Arrivals)
+}
+
+// A sweep's phases are stable per key, inside the interval, and spread.
+func TestPhaseIsStableAndSpread(t *testing.T) {
+	interval := 10 * time.Minute
+	id := uuid.New()
+	require.Equal(t, Phase(id, interval), Phase(id, interval))
+	require.Zero(t, Phase(id, 0))
+
+	var halves [2]int
+	for range 1000 {
+		phase := Phase(uuid.New(), interval)
+		require.True(t, phase >= 0 && phase < interval)
+		halves[phase*2/interval]++
+	}
+	require.InDelta(t, 500, halves[0], 100, "phases spread across the interval")
 }
 
 func TestHistogramIsCumulative(t *testing.T) {

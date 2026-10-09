@@ -109,6 +109,8 @@ type API struct {
 
 	// ReconcileAudit lists all environment targets from the database and
 	// enqueues them, catching divergence with no cluster object to fire on.
+	// Each environment's pass lands at a fixed point of the interval, so
+	// every environment is audited once per interval without a burst.
 	ReconcileAudit time.Duration `env:"RECONCILE_AUDIT_INTERVAL,default=30m"`
 
 	// RolloutDeadline bounds how long a promoted revision may stay unhealthy

@@ -1,11 +1,13 @@
 package workstats
 
 import (
+	"hash/fnv"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"k8s.io/client-go/util/workqueue"
 )
 
@@ -87,6 +89,20 @@ func (q *Queue[K]) AddAfter(key K, delay time.Duration, reason string) {
 	}
 	q.mu.Unlock()
 	q.queue.AddAfter(key, delay)
+}
+
+// Phase is id's fixed offset within interval, for periodic sweeps: a sweep
+// that schedules every key AddAfter its phase spreads its passes across the
+// interval and still reaches each key exactly one interval apart, which a
+// fresh random offset per sweep would not (up to two intervals apart).
+// Phase is zero for a non-positive interval.
+func Phase(id uuid.UUID, interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return 0
+	}
+	hash := fnv.New64a()
+	_, _ = hash.Write(id[:])
+	return time.Duration(hash.Sum64() % uint64(interval))
 }
 
 // AddRateLimited re-adds key after the limiter's backoff, exactly as the

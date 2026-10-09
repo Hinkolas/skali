@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
@@ -458,22 +457,22 @@ func (c *Controller) Run(ctx context.Context) {
 // gets a pass once per interval instead.
 const repairInterval = 10 * time.Minute
 
-// repairEnqueue schedules every live claim's drift repair, each at a random
-// point of the interval so the passes never arrive at once.
+// repairEnqueue schedules every live claim's drift repair, each at its own
+// fixed phase of the interval so the passes never arrive at once.
 func (c *Controller) repairEnqueue(ctx context.Context) {
 	claims, err := c.deps.DB.ListLiveClaims(ctx)
 	if err != nil {
 		slog.Warn("substrate: list live claims", "error", err)
 	}
 	for _, row := range claims {
-		c.queue.AddAfter(workKey{kind: workClaim, id: row.ID}, rand.N(repairInterval), reasonRepair)
+		c.queue.AddAfter(workKey{kind: workClaim, id: row.ID}, workstats.Phase(row.ID, repairInterval), reasonRepair)
 	}
 	buckets, err := c.deps.DB.ListLiveBucketClaims(ctx)
 	if err != nil {
 		slog.Warn("substrate: list live bucket claims", "error", err)
 	}
 	for _, row := range buckets {
-		c.queue.AddAfter(workKey{kind: workBucket, id: row.ID}, rand.N(repairInterval), reasonRepair)
+		c.queue.AddAfter(workKey{kind: workBucket, id: row.ID}, workstats.Phase(row.ID, repairInterval), reasonRepair)
 	}
 }
 

@@ -129,7 +129,7 @@ func TestAuditSweepsForgottenEnvironments(t *testing.T) {
 
 	_, err := f.st.DeleteEnvironmentByID(ctx, f.environmentID)
 	require.NoError(t, err)
-	f.kernel.audit(ctx)
+	f.kernel.audit(ctx, 0)
 
 	_, ok := f.kernel.EnvironmentHealth(f.environmentID)
 	require.False(t, ok, "the audit retires verdicts of environments whose rows vanished")

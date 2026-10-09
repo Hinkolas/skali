@@ -315,7 +315,9 @@ func (k *Kernel) Run(ctx context.Context) error {
 			k.worker(ctx)
 		}()
 	}
-	k.audit(ctx)
+	// The boot audit runs every environment at once: after a restart no
+	// health verdict exists until a pass derives it.
+	k.audit(ctx, 0)
 
 	auditTicker := time.NewTicker(k.cfg.Audit)
 	defer auditTicker.Stop()
@@ -328,7 +330,7 @@ func (k *Kernel) Run(ctx context.Context) error {
 			workers.Wait()
 			return nil
 		case <-auditTicker.C:
-			k.audit(ctx)
+			k.audit(ctx, k.cfg.Audit)
 		case <-resyncTicker.C:
 			k.resync(ctx)
 		}
@@ -379,11 +381,13 @@ func (k *Kernel) worker(ctx context.Context) {
 }
 
 // audit enqueues every environment from Postgres: the slower correctness
-// backstop that catches divergence with no cluster object to fire on. It
-// also surfaces orphaned managed namespaces as diagnostics and touches
-// nothing (removal is a destructive transition that does not exist yet;
-// see docs/limitations.md).
-func (k *Kernel) audit(ctx context.Context) {
+// backstop that catches divergence with no cluster object to fire on. Each
+// environment is scheduled at its fixed phase of spread, so a periodic
+// audit trickles through the queue instead of parking a deploy behind every
+// environment's pass. It also surfaces orphaned managed namespaces as
+// diagnostics and touches nothing (removal is a destructive transition that
+// does not exist yet; see docs/limitations.md).
+func (k *Kernel) audit(ctx context.Context, spread time.Duration) {
 	listedAt := time.Now()
 	targets, err := k.deps.Store.ListEnvironmentTargets(ctx)
 	if err != nil {
@@ -393,7 +397,7 @@ func (k *Kernel) audit(ctx context.Context) {
 	known := make(map[uuid.UUID]bool, len(targets))
 	for _, target := range targets {
 		known[target.EnvironmentID] = true
-		k.queue.Add(target.EnvironmentID, ReasonAudit)
+		k.queue.AddAfter(target.EnvironmentID, workstats.Phase(target.EnvironmentID, spread), ReasonAudit)
 	}
 	// The same authoritative set retires health verdicts of environments
 	// whose rows vanished without a pass.
