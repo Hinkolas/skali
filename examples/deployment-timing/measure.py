@@ -87,7 +87,10 @@ class API:
         parsed = json.loads(subprocess.check_output(['ruby', '-ryaml', '-rjson', '-e', 'puts JSON.generate(YAML.load_file(ARGV[0]))', str(config)]))
         selected = parsed['remotes'][remote]
         self.master = selected['master'].rstrip('/')
-        self.headers = {'Authorization': 'Bearer ' + selected['token'], 'Skali-Client-Version': selected['version']}
+        # The daemon requires the installed CLI's own release, which the
+        # remote's recorded skalid version only matches until either moves.
+        cli = subprocess.check_output(['skali', 'version'], text=True).split()[2]
+        self.headers = {'Authorization': 'Bearer ' + selected['token'], 'Skali-Client-Version': cli}
 
     def request(self, path):
         return urllib.request.Request(self.master + path, headers=self.headers)
