@@ -487,12 +487,16 @@ func (k *KubeSource) addNodeInformer(lw cache.ListerWatcher) {
 			k.enqueue(environment, reason)
 		}
 	}
+	// Only a change to the recorded facts fans out: heartbeats, image lists,
+	// and annotations update the node every few minutes and would otherwise
+	// wake every environment placed on it.
 	upsert := func(raw any, reason string) {
 		if node, ok := asNode(raw); ok {
 			k.store.SetNodeArch(node.Name, nodeArch(node))
 			k.store.SetNodeCapabilities(node.Name, nodeCapabilities(node))
-			k.store.SetNodeRecord(nodeRecord(node))
-			fanOut(node, reason)
+			if k.store.SetNodeRecord(nodeRecord(node)) {
+				fanOut(node, reason)
+			}
 		}
 	}
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{

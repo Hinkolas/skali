@@ -142,7 +142,8 @@ func TestNodeRecords(t *testing.T) {
 	store := NewStore(nil)
 	require.Empty(t, store.Nodes())
 
-	store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: true, Schedulable: true})
+	require.True(t, store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: true, Schedulable: true}),
+		"a new node is a change")
 	store.SetNodeRecord(NodeRecord{Name: "a", Role: "server", Arch: "arm64", Ready: true, Schedulable: true})
 
 	nodes := store.Nodes()
@@ -151,8 +152,15 @@ func TestNodeRecords(t *testing.T) {
 	require.Equal(t, "server", nodes[0].Role)
 	require.Equal(t, "b", nodes[1].Name)
 
+	// A heartbeat alone is stored but is no change.
+	heartbeat := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	require.False(t, store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: true,
+		Schedulable: true, LastHeartbeat: heartbeat}))
+	require.Equal(t, heartbeat, store.Nodes()[1].LastHeartbeat)
+
 	// An update replaces the record in place.
-	store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: false, Schedulable: false})
+	require.True(t, store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: false,
+		Schedulable: false, LastHeartbeat: heartbeat}))
 	nodes = store.Nodes()
 	require.Len(t, nodes, 2)
 	require.False(t, nodes[1].Ready)

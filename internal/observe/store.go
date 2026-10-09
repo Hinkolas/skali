@@ -703,11 +703,16 @@ type NodeRecord struct {
 	MemoryAllocatableBytes int64
 }
 
-// SetNodeRecord stores one node's projection, keyed by name.
-func (s *Store) SetNodeRecord(record NodeRecord) {
+// SetNodeRecord stores one node's projection, keyed by name, and reports
+// whether it changed beyond the heartbeat: the kubelet's periodic status
+// reports move only the heartbeat, and nothing downstream acts on it.
+func (s *Store) SetNodeRecord(record NodeRecord) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous, known := s.nodeRecords[record.Name]
 	s.nodeRecords[record.Name] = record
+	previous.LastHeartbeat = record.LastHeartbeat
+	return !known || !reflect.DeepEqual(previous, record)
 }
 
 // Nodes lists the observed node records sorted by name.
